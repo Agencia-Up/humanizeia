@@ -35,6 +35,10 @@ interface AppState {
     google: boolean;
   };
   setConnectedAccount: (platform: 'meta' | 'google', connected: boolean) => void;
+
+  // Polling interval (minutes)
+  pollingIntervalMinutes: number;
+  setPollingIntervalMinutes: (minutes: number) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -88,6 +92,10 @@ export const useAppStore = create<AppState>()(
             [platform]: connected,
           },
         })),
+
+      // Polling interval (default 5 min)
+      pollingIntervalMinutes: 5,
+      setPollingIntervalMinutes: (minutes) => set({ pollingIntervalMinutes: minutes }),
     }),
     {
       name: 'humanizeai-storage',
@@ -95,6 +103,7 @@ export const useAppStore = create<AppState>()(
         isDarkMode: state.isDarkMode,
         sidebarOpen: state.sidebarOpen,
         openSidebarGroups: state.openSidebarGroups,
+        pollingIntervalMinutes: state.pollingIntervalMinutes,
       }),
     }
   )

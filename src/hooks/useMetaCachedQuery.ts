@@ -2,12 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useAppStore } from '@/store/appStore';
 
 interface UseMetaCachedQueryOptions<T> {
   cacheKey: string;
   fetchFn: () => Promise<T>;
   enabled?: boolean;
   alwaysReadCache?: boolean;
+  pollingEnabled?: boolean;
 }
 
 interface MetaCachedResult<T> {
@@ -22,8 +24,9 @@ interface MetaCachedResult<T> {
 export function useMetaCachedQuery<T = any>(
   options: UseMetaCachedQueryOptions<T>
 ): MetaCachedResult<T> {
-  const { cacheKey, fetchFn, enabled = true, alwaysReadCache = false } = options;
+  const { cacheKey, fetchFn, enabled = true, alwaysReadCache = false, pollingEnabled = true } = options;
   const { user } = useAuth();
+  const pollingIntervalMinutes = useAppStore((s) => s.pollingIntervalMinutes);
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [freshData, setFreshData] = useState<T | undefined>(undefined);
@@ -107,6 +110,16 @@ export function useMetaCachedQuery<T = any>(
       fetchFresh();
     }
   }, [enabled, user, fetchFresh]);
+
+  // Polling: auto-refresh at configurable interval
+  useEffect(() => {
+    if (!pollingEnabled || !enabled || !user || pollingIntervalMinutes <= 0) return;
+    const intervalMs = pollingIntervalMinutes * 60 * 1000;
+    const timer = setInterval(() => {
+      fetchFresh();
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [pollingEnabled, enabled, user, pollingIntervalMinutes, fetchFresh]);
 
   const cachedData = cacheQuery.data?.data as T | undefined;
   const cachedUpdatedAt = cacheQuery.data?.updated_at
