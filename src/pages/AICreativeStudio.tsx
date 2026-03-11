@@ -39,6 +39,45 @@ import { ResizeTab } from '@/components/creative-studio/ResizeTab';
 import { motion, AnimatePresence } from 'framer-motion';
 import { StudioHeader } from '@/components/layout/StudioHeader';
 
+const quickTemplates = [
+  {
+    name: '🛍️ Anúncio de Produto',
+    prompt: 'Produto em destaque com fundo limpo e iluminação profissional de estúdio, composição comercial premium',
+    format: 'feed-1x1',
+    style: 'photorealistic',
+    headline: 'Lançamento Exclusivo',
+    ctaText: 'Comprar Agora',
+    includeCTA: true,
+  },
+  {
+    name: '🔥 Oferta Especial',
+    prompt: 'Banner promocional vibrante com cores chamativas, elementos gráficos de desconto e urgência visual',
+    format: 'stories-9x16',
+    style: 'neon',
+    headline: '🔥 50% OFF — Só Hoje!',
+    ctaText: 'Aproveitar',
+    includeCTA: true,
+  },
+  {
+    name: '⭐ Depoimento',
+    prompt: 'Layout elegante para depoimento de cliente, com fundo suave e espaço para texto e foto de perfil',
+    format: 'feed-1x1',
+    style: 'minimal',
+    headline: '"Melhor compra que já fiz!"',
+    ctaText: 'Ver Mais',
+    includeCTA: true,
+  },
+  {
+    name: '📊 Antes e Depois',
+    prompt: 'Layout dividido ao meio mostrando comparação antes e depois, estilo clean com linha divisória central',
+    format: 'feed-4x5',
+    style: 'photorealistic',
+    headline: 'Resultado Real',
+    ctaText: 'Saiba Como',
+    includeCTA: true,
+  },
+];
+
 const formats = [
   { value: 'feed-1x1', label: 'Feed 1:1 (1080x1080)' },
   { value: 'feed-4x5', label: 'Feed 4:5 (1080x1350)' },
@@ -241,6 +280,22 @@ export default function AICreativeStudio() {
     }
   };
 
+  const handleApplyTemplate = (template: typeof quickTemplates[0]) => {
+    setPrompt(template.prompt);
+    setFormat(template.format);
+    setStyle(template.style);
+    setCustomStyle('');
+    setHeadline(template.headline);
+    setCtaText(template.ctaText);
+    setIncludeCTA(template.includeCTA);
+    toast({ title: `✅ Template "${template.name}" aplicado!`, description: 'Edite os campos se quiser e clique em Gerar.' });
+  };
+
+  const handleGenerateCopy = (image: GeneratedImage) => {
+    const copyPrompt = encodeURIComponent(image.description || prompt);
+    window.location.href = `/copywriter?prompt=${copyPrompt}`;
+  };
+
   const handleSendToRemoveBg = (image: GeneratedImage) => {
     setRemoveBgImage({ url: image.imageUrl, name: `criativo-${Date.now()}` });
     setActiveTab('remove-bg');
@@ -256,7 +311,23 @@ export default function AICreativeStudio() {
               <CardTitle className="text-lg">Configuração</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* Prompt — most important, comes first */}
+              {/* Quick Templates */}
+              <div className="space-y-2">
+                <Label>Templates Rápidos</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {quickTemplates.map((t) => (
+                    <button
+                      key={t.name}
+                      onClick={() => handleApplyTemplate(t)}
+                      className="rounded-lg border border-border/50 bg-muted/30 p-2.5 text-left text-xs font-medium transition-all hover:border-primary/50 hover:bg-primary/5"
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Prompt — most important */}
               <div className="space-y-2">
                 <Label>Descrição da Imagem</Label>
                 <Textarea
@@ -479,6 +550,9 @@ export default function AICreativeStudio() {
                             </Button>
                             <Button size="icon" variant="secondary" title="Remover Fundo" onClick={(e) => { e.stopPropagation(); handleSendToRemoveBg(image); }}>
                               <Eraser className="h-4 w-4" />
+                            </Button>
+                            <Button size="icon" variant="secondary" title="Gerar Copy" onClick={(e) => { e.stopPropagation(); handleGenerateCopy(image); }}>
+                              <Pencil className="h-4 w-4" />
                             </Button>
                           </div>
                           <Badge className="absolute left-2 top-2 bg-black/50">
