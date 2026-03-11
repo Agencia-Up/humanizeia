@@ -187,7 +187,11 @@ export default function CampaignOptimizer() {
   const { sendMessage: sendDiag } = useClaudeChat({
     context: 'optimizer',
     onDelta: (d) => { diagDelta.current += d; setDiagnosticMd(diagDelta.current); },
-    onComplete: () => setIsDiagnosing(false),
+    onComplete: (fullResponse) => {
+      setIsDiagnosing(false);
+      // Parse MIDAS actions from response
+      parseMidasActions(fullResponse);
+    },
     onError: () => setIsDiagnosing(false),
   });
 
