@@ -84,12 +84,13 @@ const PLATFORMS: PlatformDef[] = [
     description: 'Pesquisa, Display, YouTube e Shopping',
     status: 'available',
     steps: [
-      { title: 'Clique em "Conectar"', description: 'Você será redirecionado para a página de login do Google.' },
-      { title: 'Faça login na sua conta', description: 'Use a mesma conta que você usa no Google Ads.' },
-      { title: 'Autorize o acesso', description: 'O Google vai pedir permissão para acessar dados de campanhas.' },
-      { title: 'Selecione sua conta', description: 'Se tiver mais de uma conta, escolha qual deseja usar.' },
-      { title: 'Pronto!', description: 'Suas campanhas, métricas e conversões serão carregadas no Dashboard.' },
+      { title: 'Clique em "Conectar"', description: 'Um botão simples — sem precisar instalar nada no seu computador.' },
+      { title: 'Faça login no Google', description: 'Use o mesmo e-mail e senha que você já usa no Google Ads. Nenhum código ou API é necessário.' },
+      { title: 'Permita o acesso (clique em "Permitir")', description: 'O Google vai perguntar se o HumanizeAI pode ver seus dados de anúncios. Basta clicar "Permitir". Suas senhas nunca são compartilhadas.' },
+      { title: 'Escolha sua conta de anúncios', description: 'Se você tem mais de uma conta no Google Ads, é só clicar na que deseja usar.' },
+      { title: '✅ Pronto! Tudo conectado', description: 'Suas campanhas, gastos e resultados aparecerão automaticamente no seu Dashboard.' },
     ],
+    warning: 'Você precisa ter uma conta ativa no Google Ads. Se não sabe qual é seu login, é o mesmo e-mail que você usa para acessar ads.google.com.',
   },
   {
     id: 'google_analytics',
@@ -222,7 +223,11 @@ export function ConnectionsTab() {
         await meta.startOAuth();
         break;
       case 'google_ads':
-        await google.startOAuth();
+        try {
+          await google.startOAuth();
+        } catch (err: any) {
+          // Error is already handled by the hook's toast
+        }
         break;
       case 'tiktok':
         setTiktokLoading(true);

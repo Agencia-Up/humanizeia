@@ -72,13 +72,25 @@ export function useGoogleAdsConnection() {
       });
 
       if (error) throw error;
+
+      // Handle not_configured error from edge function
+      if (data?.error === 'not_configured') {
+        toast({
+          title: 'Google Ads ainda não disponível',
+          description: 'A integração com o Google Ads está sendo configurada. Entre em contato com o suporte para mais informações.',
+          variant: 'destructive',
+        });
+        setIsConnecting(false);
+        return;
+      }
+
       if (data?.url) {
         window.location.href = data.url;
       }
     } catch (err: any) {
       toast({
         title: 'Erro ao conectar',
-        description: err.message || 'Não foi possível iniciar a autenticação com o Google.',
+        description: err.message || 'Não foi possível iniciar a autenticação com o Google. Tente novamente em alguns minutos.',
         variant: 'destructive',
       });
       setIsConnecting(false);
