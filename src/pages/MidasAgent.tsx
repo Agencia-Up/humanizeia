@@ -359,7 +359,7 @@ export default function MidasAgent() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground mt-2 text-center">
-                MIDAS usa IA para análise de campanhas. Sempre valide recomendações com seus dados reais.
+                Apollo usa IA para análise de campanhas. Sempre valide recomendações com seus dados reais.
               </p>
             </div>
           </CardContent>

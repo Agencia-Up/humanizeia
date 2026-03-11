@@ -46,7 +46,7 @@ export interface CreativeAlert {
   hookRate?: number;
 }
 
-export const midasBenchmarks = {
+export const apolloBenchmarks = {
   cpa: { green: 85, yellow: 105, red: 106 },
   cpaMeta: 55,
   merMeta: 4.0,

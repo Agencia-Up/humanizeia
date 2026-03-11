@@ -51,7 +51,7 @@ export function Topbar() {
 
       <div className="flex items-center gap-2">
         <Button onClick={() => navigate('/midas')} className="flex gradient-primary text-primary-foreground gap-2 font-semibold" size="sm">
-          <Sparkles className="h-4 w-4" /><span className="hidden md:inline">MIDAS</span>
+          <Sparkles className="h-4 w-4" /><span className="hidden md:inline">APOLLO</span>
         </Button>
         <Button variant="ghost" size="icon" onClick={toggleDarkMode} className="text-muted-foreground hover:text-foreground">
           {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}

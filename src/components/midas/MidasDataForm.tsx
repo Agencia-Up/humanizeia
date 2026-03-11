@@ -382,7 +382,7 @@ export function MidasDataForm({ open, onOpenChange, onSubmit }: MidasDataFormPro
             className="w-full bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700"
           >
             <Send className="h-4 w-4 mr-2" />
-            Enviar para MIDAS
+            Enviar para Apollo
           </Button>
         </div>
       </SheetContent>

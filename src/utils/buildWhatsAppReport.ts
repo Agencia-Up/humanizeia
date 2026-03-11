@@ -42,7 +42,7 @@ export function buildWhatsAppReport(params: ReportParams): string {
     lines.push(``);
   }
 
-  lines.push(`✅ Relatório gerado por MIDAS AI`);
+  lines.push(`✅ Relatório gerado por Apollo AI`);
 
   return lines.join('\n');
 }
