@@ -1014,6 +1014,11 @@ function CampaignDetail({
               )}
             </AnimatePresence>
           </div>
+
+          {/* MIDAS Action Cards */}
+          {midasActions.length > 0 && (
+            <MidasActionList actions={midasActions} onExecute={onExecuteAction} />
+          )}
         </div>
       </div>
     </div>
