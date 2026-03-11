@@ -346,7 +346,7 @@ export default function MidasAgent() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Digite sua pergunta para o MIDAS..."
+                  placeholder="Digite sua pergunta para o Apollo..."
                   className="min-h-[50px] max-h-[150px] resize-none"
                   disabled={isLoading}
                 />
