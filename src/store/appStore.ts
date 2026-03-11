@@ -90,7 +90,7 @@ export const useAppStore = create<AppState>()(
         })),
     }),
     {
-      name: 'trafficai-storage',
+      name: 'humanizeai-storage',
       partialize: (state) => ({
         isDarkMode: state.isDarkMode,
         sidebarOpen: state.sidebarOpen,
