@@ -245,6 +245,67 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
   const adData = parseAdData();
   const dailySpendData = parseDailySpend();
 
+  // Anomaly detection based on KPI changes
+  const detectAnomalies = (): Anomaly[] => {
+    const anomalies: Anomaly[] = [];
+    const THRESHOLD_WARNING = 30; // 30% change
+    const THRESHOLD_DANGER = 50;  // 50% change
+
+    const anomalyConfig: Record<string, { name: string; lowerIsBetter: boolean }> = {
+      gasto: { name: 'Investimento', lowerIsBetter: false },
+      ctr: { name: 'Taxa de Cliques (CTR)', lowerIsBetter: false },
+      cpc: { name: 'Custo por Clique (CPC)', lowerIsBetter: true },
+      cpm: { name: 'Custo por Mil (CPM)', lowerIsBetter: true },
+      roas: { name: 'Retorno (ROAS)', lowerIsBetter: false },
+      cpa: { name: 'Custo por Ação (CPA)', lowerIsBetter: true },
+    };
+
+    for (const kpi of kpis) {
+      const config = anomalyConfig[kpi.id];
+      if (!config || kpi.change === 0) continue;
+
+      const absChange = Math.abs(kpi.change);
+      if (absChange < THRESHOLD_WARNING) continue;
+
+      const isGettingWorse = config.lowerIsBetter
+        ? kpi.change > 0  // increasing cost = bad
+        : kpi.change < 0; // decreasing performance = bad
+
+      const severity = absChange >= THRESHOLD_DANGER ? 'danger' : 'warning';
+      const direction = kpi.change > 0 ? 'subiu' : 'caiu';
+
+      if (isGettingWorse) {
+        anomalies.push({
+          id: `anomaly-${kpi.id}`,
+          type: severity,
+          metric: kpi.id,
+          title: `${config.name} ${direction} ${absChange.toFixed(0)}%`,
+          description: config.lowerIsBetter
+            ? `O ${config.name} aumentou significativamente. Revise suas campanhas para otimizar custos.`
+            : `O ${config.name} caiu bastante em relação ao período anterior. Investigue possíveis causas.`,
+          changePercent: kpi.change,
+        });
+      } else if (absChange >= THRESHOLD_DANGER) {
+        // Big positive change — info alert
+        anomalies.push({
+          id: `anomaly-${kpi.id}`,
+          type: 'info',
+          metric: kpi.id,
+          title: `${config.name} ${direction} ${absChange.toFixed(0)}% 🎉`,
+          description: `Ótima notícia! O ${config.name} melhorou significativamente em relação ao período anterior.`,
+          changePercent: kpi.change,
+        });
+      }
+    }
+
+    return anomalies.sort((a, b) => {
+      const order = { danger: 0, warning: 1, info: 2 };
+      return order[a.type] - order[b.type];
+    });
+  };
+
+  const anomalies = detectAnomalies();
+
   const sortedByCTR = [...adData].sort((a, b) => b.ctr - a.ctr);
   const sortedByCPC = [...adData].filter(a => a.cpc > 0).sort((a, b) => b.cpc - a.cpc);
   const bestCreatives = sortedByCTR.slice(0, 3);
@@ -290,11 +351,11 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
     bestCreatives,
     worstCreatives,
     performanceSummary,
+    anomalies,
     isTrendLoading: dailyInsights.isLoading,
     isCampaignLoading: campaignInsights.isLoading,
     isAdLoading: adInsights.isLoading,
     isSpendLoading: dailySpend.isLoading,
-    // New cache-related props
     isRefreshing,
     lastUpdated,
     refreshAll,
