@@ -3,12 +3,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   User, 
   MessageCircle,
-  Building2
+  Building2,
+  Sparkles
 } from 'lucide-react';
 import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
 import { MetaAdsSettingsTab } from '@/components/settings/MetaAdsSettingsTab';
+import { AISettingsTab } from '@/components/settings/AISettingsTab';
 
 export default function SettingsPage() {
   return (
@@ -31,6 +33,10 @@ export default function SettingsPage() {
               <User className="h-4 w-4" />
               Perfil
             </TabsTrigger>
+            <TabsTrigger value="ai" className="gap-2">
+              <Sparkles className="h-4 w-4" />
+              IA
+            </TabsTrigger>
             <TabsTrigger value="meta-ads" className="gap-2">
               <span className="text-base">📘</span>
               Meta Ads
@@ -47,6 +53,10 @@ export default function SettingsPage() {
 
           <TabsContent value="profile">
             <ProfileSettingsTab />
+          </TabsContent>
+
+          <TabsContent value="ai">
+            <AISettingsTab />
           </TabsContent>
 
           <TabsContent value="meta-ads">
