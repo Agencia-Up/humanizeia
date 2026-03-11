@@ -11,6 +11,7 @@ import { SpendDistributionChart } from '@/components/dashboard/SpendDistribution
 import { EfficiencyScatterChart } from '@/components/dashboard/EfficiencyScatterChart';
 import { WeekdayHeatmap } from '@/components/dashboard/WeekdayHeatmap';
 import { AIInsightsCard } from '@/components/dashboard/AIInsightsCard';
+import { AnomalyAlertsWidget } from '@/components/dashboard/AnomalyAlertsWidget';
 import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
 import { useMetaDashboard, MetaDatePreset } from '@/hooks/useMetaDashboard';
 import { useAuth } from '@/hooks/useAuth';
@@ -34,6 +35,7 @@ export default function Dashboard() {
   const {
     isConnected, isLoading, kpis, trendData, campaignData,
     dailySpendData, bestCreatives, worstCreatives, performanceSummary,
+    anomalies,
     isTrendLoading, isCampaignLoading, isAdLoading, isSpendLoading,
     isRefreshing, lastUpdated, refreshAll,
   } = useMetaDashboard(dateRange);
@@ -199,6 +201,9 @@ export default function Dashboard() {
             kpis.map((kpi, index) => <DashboardKPICard key={kpi.id} kpi={kpi} index={index} />)
           )}
         </div>
+
+        {/* Anomaly Alerts */}
+        <AnomalyAlertsWidget anomalies={anomalies} />
 
         {/* Performance Summary */}
         {performanceSummary && (

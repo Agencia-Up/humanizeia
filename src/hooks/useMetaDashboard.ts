@@ -13,6 +13,15 @@ export interface DashboardKPI {
   sparkline: number[];
 }
 
+export interface Anomaly {
+  id: string;
+  type: 'warning' | 'danger' | 'info';
+  metric: string;
+  title: string;
+  description: string;
+  changePercent: number;
+}
+
 function getPreviousPeriodRange(datePreset: MetaDatePreset): { since: string; until: string } {
   const today = new Date();
   const fmt = (d: Date) => d.toISOString().split('T')[0];
@@ -68,14 +77,14 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
   const accountInsights = useMetaInsights({
     accountId,
     datePreset,
-    fields: 'spend,impressions,clicks,ctr,cpc,cpm,reach,frequency',
+    fields: 'spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,actions,cost_per_action_type,action_values',
     enabled: isConnected,
   });
 
   const previousInsights = useMetaInsights({
     accountId,
     timeRange: previousRange,
-    fields: 'spend,impressions,clicks,ctr,cpc,cpm,reach,frequency',
+    fields: 'spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,actions,cost_per_action_type,action_values',
     enabled: isConnected,
   });
 
@@ -111,6 +120,37 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
     enabled: isConnected,
   });
 
+  // Helper to extract CPA and ROAS from Meta actions data
+  const extractConversionMetrics = (data: any) => {
+    let cpa = 0;
+    let roas = 0;
+    const spend = Number(data.spend || 0);
+
+    // CPA from cost_per_action_type
+    if (data.cost_per_action_type) {
+      const purchaseAction = data.cost_per_action_type.find(
+        (a: any) => a.action_type === 'purchase' || a.action_type === 'offsite_conversion.fb_pixel_purchase'
+      );
+      const leadAction = data.cost_per_action_type.find(
+        (a: any) => a.action_type === 'lead' || a.action_type === 'offsite_conversion.fb_pixel_lead'
+      );
+      const anyAction = data.cost_per_action_type[0];
+      cpa = Number(purchaseAction?.value || leadAction?.value || anyAction?.value || 0);
+    }
+
+    // ROAS from action_values
+    if (data.action_values && spend > 0) {
+      const purchaseValue = data.action_values.find(
+        (a: any) => a.action_type === 'purchase' || a.action_type === 'offsite_conversion.fb_pixel_purchase'
+      );
+      if (purchaseValue) {
+        roas = Number(purchaseValue.value) / spend;
+      }
+    }
+
+    return { cpa, roas };
+  };
+
   // Parse KPIs
   const parseKPIs = (): DashboardKPI[] => {
     const data = accountInsights.data?.data?.[0] || accountInsights.data?.[0];
@@ -125,6 +165,7 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
     const cpm = Number(data.cpm || 0);
     const reach = Number(data.reach || 0);
     const frequency = Number(data.frequency || 0);
+    const { cpa, roas } = extractConversionMetrics(data);
 
     const pSpend = Number(prev.spend || 0);
     const pImpressions = Number(prev.impressions || 0);
@@ -134,6 +175,7 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
     const pCpm = Number(prev.cpm || 0);
     const pReach = Number(prev.reach || 0);
     const pFrequency = Number(prev.frequency || 0);
+    const { cpa: pCpa, roas: pRoas } = prev.spend ? extractConversionMetrics(prev) : { cpa: 0, roas: 0 };
 
     return [
       { id: 'gasto', label: 'Total Gasto', value: spend, formattedValue: `R$ ${spend.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`, change: calcChange(spend, pSpend), sparkline: [] },
@@ -142,8 +184,8 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
       { id: 'ctr', label: 'CTR', value: ctr, formattedValue: `${ctr.toFixed(2)}%`, change: calcChange(ctr, pCtr), sparkline: [] },
       { id: 'cpc', label: 'CPC', value: cpc, formattedValue: `R$ ${cpc.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: calcChange(cpc, pCpc), sparkline: [] },
       { id: 'cpm', label: 'CPM', value: cpm, formattedValue: `R$ ${cpm.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: calcChange(cpm, pCpm), sparkline: [] },
-      { id: 'alcance', label: 'Alcance', value: reach, formattedValue: reach >= 1000 ? `${(reach / 1000).toFixed(1)}k` : reach.toLocaleString('pt-BR'), change: calcChange(reach, pReach), sparkline: [] },
-      { id: 'frequencia', label: 'Frequência', value: frequency, formattedValue: frequency.toFixed(2), change: calcChange(frequency, pFrequency), sparkline: [] },
+      { id: 'roas', label: 'ROAS', value: roas, formattedValue: roas > 0 ? `${roas.toFixed(2)}x` : '—', change: calcChange(roas, pRoas), sparkline: [] },
+      { id: 'cpa', label: 'CPA', value: cpa, formattedValue: cpa > 0 ? `R$ ${cpa.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—', change: calcChange(cpa, pCpa), sparkline: [] },
     ];
   };
 
@@ -203,6 +245,67 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
   const adData = parseAdData();
   const dailySpendData = parseDailySpend();
 
+  // Anomaly detection based on KPI changes
+  const detectAnomalies = (): Anomaly[] => {
+    const anomalies: Anomaly[] = [];
+    const THRESHOLD_WARNING = 30; // 30% change
+    const THRESHOLD_DANGER = 50;  // 50% change
+
+    const anomalyConfig: Record<string, { name: string; lowerIsBetter: boolean }> = {
+      gasto: { name: 'Investimento', lowerIsBetter: false },
+      ctr: { name: 'Taxa de Cliques (CTR)', lowerIsBetter: false },
+      cpc: { name: 'Custo por Clique (CPC)', lowerIsBetter: true },
+      cpm: { name: 'Custo por Mil (CPM)', lowerIsBetter: true },
+      roas: { name: 'Retorno (ROAS)', lowerIsBetter: false },
+      cpa: { name: 'Custo por Ação (CPA)', lowerIsBetter: true },
+    };
+
+    for (const kpi of kpis) {
+      const config = anomalyConfig[kpi.id];
+      if (!config || kpi.change === 0) continue;
+
+      const absChange = Math.abs(kpi.change);
+      if (absChange < THRESHOLD_WARNING) continue;
+
+      const isGettingWorse = config.lowerIsBetter
+        ? kpi.change > 0  // increasing cost = bad
+        : kpi.change < 0; // decreasing performance = bad
+
+      const severity = absChange >= THRESHOLD_DANGER ? 'danger' : 'warning';
+      const direction = kpi.change > 0 ? 'subiu' : 'caiu';
+
+      if (isGettingWorse) {
+        anomalies.push({
+          id: `anomaly-${kpi.id}`,
+          type: severity,
+          metric: kpi.id,
+          title: `${config.name} ${direction} ${absChange.toFixed(0)}%`,
+          description: config.lowerIsBetter
+            ? `O ${config.name} aumentou significativamente. Revise suas campanhas para otimizar custos.`
+            : `O ${config.name} caiu bastante em relação ao período anterior. Investigue possíveis causas.`,
+          changePercent: kpi.change,
+        });
+      } else if (absChange >= THRESHOLD_DANGER) {
+        // Big positive change — info alert
+        anomalies.push({
+          id: `anomaly-${kpi.id}`,
+          type: 'info',
+          metric: kpi.id,
+          title: `${config.name} ${direction} ${absChange.toFixed(0)}% 🎉`,
+          description: `Ótima notícia! O ${config.name} melhorou significativamente em relação ao período anterior.`,
+          changePercent: kpi.change,
+        });
+      }
+    }
+
+    return anomalies.sort((a, b) => {
+      const order = { danger: 0, warning: 1, info: 2 };
+      return order[a.type] - order[b.type];
+    });
+  };
+
+  const anomalies = detectAnomalies();
+
   const sortedByCTR = [...adData].sort((a, b) => b.ctr - a.ctr);
   const sortedByCPC = [...adData].filter(a => a.cpc > 0).sort((a, b) => b.cpc - a.cpc);
   const bestCreatives = sortedByCTR.slice(0, 3);
@@ -248,11 +351,11 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
     bestCreatives,
     worstCreatives,
     performanceSummary,
+    anomalies,
     isTrendLoading: dailyInsights.isLoading,
     isCampaignLoading: campaignInsights.isLoading,
     isAdLoading: adInsights.isLoading,
     isSpendLoading: dailySpend.isLoading,
-    // New cache-related props
     isRefreshing,
     lastUpdated,
     refreshAll,

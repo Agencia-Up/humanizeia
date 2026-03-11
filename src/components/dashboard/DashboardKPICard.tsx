@@ -11,8 +11,8 @@ const iconMap: Record<string, React.ElementType> = {
   ctr: Percent,
   cpc: CreditCard,
   cpm: BarChart3,
-  alcance: Users,
-  frequencia: Repeat,
+  roas: TrendingUp,
+  cpa: CreditCard,
 };
 
 const tooltipMap: Record<string, string> = {
@@ -22,8 +22,8 @@ const tooltipMap: Record<string, string> = {
   ctr: 'Porcentagem de pessoas que viram e clicaram. Quanto maior, melhor!',
   cpc: 'Quanto você pagou, em média, por cada clique. Quanto menor, melhor!',
   cpm: 'Custo para exibir seu anúncio 1.000 vezes. Quanto menor, melhor!',
-  alcance: 'Quantas pessoas diferentes viram seus anúncios.',
-  frequencia: 'Em média, quantas vezes cada pessoa viu seu anúncio.',
+  roas: 'Retorno sobre o investimento em anúncios. Ex: 3x = para cada R$1 investido, voltaram R$3.',
+  cpa: 'Quanto você pagou, em média, por cada conversão (compra, lead, etc). Quanto menor, melhor!',
 };
 
 const friendlyLabelMap: Record<string, string> = {
@@ -33,12 +33,12 @@ const friendlyLabelMap: Record<string, string> = {
   ctr: '🎯 Taxa de Cliques',
   cpc: '💳 Custo por Clique',
   cpm: '📊 Custo por Mil',
-  alcance: '👥 Alcance',
-  frequencia: '🔄 Frequência',
+  roas: '📈 Retorno (ROAS)',
+  cpa: '🛒 Custo por Ação',
 };
 
 // For CPC, CPM, Frequency — lower is better (down = green)
-const lowerIsBetter = new Set(['cpc', 'cpm', 'frequencia']);
+const lowerIsBetter = new Set(['cpc', 'cpm', 'cpa']);
 
 interface DashboardKPICardProps {
   kpi: DashboardKPI;
