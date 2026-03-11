@@ -324,14 +324,16 @@ export default function CampaignOptimizer() {
   const handleDiagnose = useCallback(async () => {
     if (!selected) return;
     setIsDiagnosing(true);
+    setMidasActions([]);
     diagDelta.current = '';
     setDiagnosticMd('');
     await sendDiag([{
       role: 'user',
-      content: `Você é um analista sênior de tráfego pago. Analise esta campanha do Meta Ads e forneça um diagnóstico completo usando os benchmarks MIDAS (CTR saudável >= 1.5%, CPC saudável <= R$1.50, CPM saudável <= R$15, Frequência saudável <= 3).
+      content: `Você é o MIDAS, analista sênior de tráfego pago. Analise esta campanha do Meta Ads e forneça um diagnóstico completo usando os benchmarks MIDAS (CTR saudável >= 1.5%, CPC saudável <= R$1.50, CPM saudável <= R$15, Frequência saudável <= 3).
 
 Dados da campanha:
 - Nome: ${selected.name}
+- ID: ${selected.id}
 - Status: ${selected.effective_status}
 - Objetivo: ${selected.objective}
 - Orçamento diário: ${fmtBudget(selected.daily_budget)}
@@ -349,8 +351,15 @@ Métricas últimos 7 dias:
 Responda em Markdown com:
 1. **Health Score** (0-100) e resumo de 1 linha
 2. **Diagnóstico por área** (Criativo, Público, Orçamento, Entrega) com status 🟢🟡🔴 em formato de tabela markdown
-3. **Top 3 Ações Prioritárias** com impacto estimado
-4. **Previsão**: O que acontece se continuar assim vs implementar as ações`
+3. **Top 3 Ações Prioritárias** — para cada ação, inclua uma tag no formato exato:
+   [ACTION:tipo:prioridade] descrição da ação | impacto estimado
+   Tipos válidos: pause, activate, increase_budget, decrease_budget, notify
+   Prioridades: high, medium, low
+   Exemplo: [ACTION:pause:high] CTR muito baixo e frequência alta indicam saturação | Economia estimada de R$200/dia
+   Exemplo: [ACTION:increase_budget:medium] ROAS excelente, há espaço para escalar | +30% de conversões estimadas
+4. **Previsão**: O que acontece se continuar assim vs implementar as ações
+
+IMPORTANTE: Sempre inclua pelo menos 2 tags [ACTION:...] com ações específicas e executáveis.`
     }]);
   }, [selected, sendDiag]);
 
