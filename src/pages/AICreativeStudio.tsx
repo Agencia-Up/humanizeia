@@ -76,6 +76,42 @@ const quickTemplates = [
     ctaText: 'Saiba Como',
     includeCTA: true,
   },
+  {
+    name: '🎬 Capa de Reels',
+    prompt: 'Thumbnail vertical dinâmica para Reels com efeito de movimento, texto grande e bold centralizado, fundo vibrante com gradiente',
+    format: 'reels-9x16',
+    style: 'neon',
+    headline: 'Você PRECISA ver isso!',
+    ctaText: '',
+    includeCTA: false,
+  },
+  {
+    name: '🎯 Lead Magnet',
+    prompt: 'Design profissional de ebook ou material gratuito, com capa 3D do material flutuando, elementos de confiança e escassez',
+    format: 'feed-4x5',
+    style: '3d',
+    headline: 'Guia GRATUITO',
+    ctaText: 'Baixar Agora',
+    includeCTA: true,
+  },
+  {
+    name: '📱 Carousel Slide',
+    prompt: 'Slide de carrossel clean e educativo, com ícone ilustrativo, texto legível, fundo sólido com acento de cor, numeração de slide',
+    format: 'feed-1x1',
+    style: 'flat',
+    headline: 'Dica #1',
+    ctaText: 'Arraste →',
+    includeCTA: true,
+  },
+  {
+    name: '⏰ Urgência/Escassez',
+    prompt: 'Design de contagem regressiva com timer visual, cores de alerta vermelho/laranja, elementos de urgência e FOMO',
+    format: 'stories-9x16',
+    style: 'neon',
+    headline: 'ÚLTIMAS HORAS!',
+    ctaText: 'Garantir Agora',
+    includeCTA: true,
+  },
 ];
 
 const formats = [
