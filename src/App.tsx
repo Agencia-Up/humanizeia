@@ -21,6 +21,7 @@ import AIAcademy from "./pages/AIAcademy";
 import Settings from "./pages/Settings";
 import MidasAgent from "./pages/MidasAgent";
 import Onboarding from "./pages/Onboarding";
+import ConnectAccounts from "./pages/ConnectAccounts";
 import NotFound from "./pages/NotFound";
 
 
@@ -37,6 +38,7 @@ const App = () => (
           <Route path="/auth" element={<Auth />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/connect-accounts" element={<ProtectedRoute><ConnectAccounts /></ProtectedRoute>} />
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/copywriter" element={<ProtectedRoute><AICopywriter /></ProtectedRoute>} />
           <Route path="/creative-studio" element={<ProtectedRoute><AICreativeStudio /></ProtectedRoute>} />
