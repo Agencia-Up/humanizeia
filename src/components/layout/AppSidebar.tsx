@@ -168,7 +168,7 @@ export function AppSidebar() {
         {collapsed ? (
           <div className="flex justify-center">
             <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
-              <Menu className="h-5 w-5 text-muted-foreground" />
+              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-8 w-8 object-contain" />
             </button>
           </div>
         ) : (
