@@ -202,6 +202,9 @@ export default function Dashboard() {
           )}
         </div>
 
+        {/* Anomaly Alerts */}
+        <AnomalyAlertsWidget anomalies={anomalies} />
+
         {/* Performance Summary */}
         {performanceSummary && (
           <PerformanceSummary {...performanceSummary} />
