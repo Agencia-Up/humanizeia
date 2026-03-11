@@ -6,20 +6,14 @@ import {
   Building2,
   Sparkles,
   RefreshCw,
-  Music2,
-  LineChart,
-  Tag
+  Plug,
 } from 'lucide-react';
 import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
-import { MetaAdsSettingsTab } from '@/components/settings/MetaAdsSettingsTab';
-import { GoogleAdsSettingsTab } from '@/components/settings/GoogleAdsSettingsTab';
-import { GoogleAnalyticsSettingsTab } from '@/components/settings/GoogleAnalyticsSettingsTab';
-import { GoogleTagManagerSettingsTab } from '@/components/settings/GoogleTagManagerSettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
-import { TikTokAdsSettingsTab } from '@/components/settings/TikTokAdsSettingsTab';
+import { ConnectionsTab } from '@/components/settings/ConnectionsTab';
 
 export default function SettingsPage() {
   return (
@@ -32,8 +26,12 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        <Tabs defaultValue="profile" className="space-y-6">
+        <Tabs defaultValue="connections" className="space-y-6">
           <TabsList className="flex-wrap bg-muted/50">
+            <TabsTrigger value="connections" className="gap-2">
+              <Plug className="h-4 w-4" />
+              Conexões
+            </TabsTrigger>
             <TabsTrigger value="company" className="gap-2">
               <Building2 className="h-4 w-4" />
               Empresa
@@ -46,26 +44,6 @@ export default function SettingsPage() {
               <Sparkles className="h-4 w-4" />
               IA
             </TabsTrigger>
-            <TabsTrigger value="meta-ads" className="gap-2">
-              <span className="text-base">📘</span>
-              Meta Ads
-            </TabsTrigger>
-            <TabsTrigger value="google-ads" className="gap-2">
-              <span className="text-base">🔵</span>
-              Google Ads
-            </TabsTrigger>
-            <TabsTrigger value="google-analytics" className="gap-2">
-              <LineChart className="h-4 w-4" />
-              Analytics
-            </TabsTrigger>
-            <TabsTrigger value="google-gtm" className="gap-2">
-              <Tag className="h-4 w-4" />
-              Tag Manager
-            </TabsTrigger>
-            <TabsTrigger value="tiktok-ads" className="gap-2">
-              <Music2 className="h-4 w-4" />
-              TikTok Ads
-            </TabsTrigger>
             <TabsTrigger value="whatsapp" className="gap-2">
               <MessageCircle className="h-4 w-4" />
               WhatsApp
@@ -75,6 +53,10 @@ export default function SettingsPage() {
               Sincronização
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="connections">
+            <ConnectionsTab />
+          </TabsContent>
 
           <TabsContent value="company">
             <CompanySettingsTab />
@@ -86,26 +68,6 @@ export default function SettingsPage() {
 
           <TabsContent value="ai">
             <AISettingsTab />
-          </TabsContent>
-
-          <TabsContent value="meta-ads">
-            <MetaAdsSettingsTab />
-          </TabsContent>
-
-          <TabsContent value="google-ads">
-            <GoogleAdsSettingsTab />
-          </TabsContent>
-
-          <TabsContent value="google-analytics">
-            <GoogleAnalyticsSettingsTab />
-          </TabsContent>
-
-          <TabsContent value="google-gtm">
-            <GoogleTagManagerSettingsTab />
-          </TabsContent>
-
-          <TabsContent value="tiktok-ads">
-            <TikTokAdsSettingsTab />
           </TabsContent>
 
           <TabsContent value="whatsapp">
