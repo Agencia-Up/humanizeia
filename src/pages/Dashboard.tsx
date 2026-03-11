@@ -50,6 +50,7 @@ export default function Dashboard() {
     }
   }, [anomalies, processAnomalies]);
 
+  const handleSendWhatsApp = async () => {
     setIsSending(true);
     try {
       const spend = kpis.find(k => k.id === 'gasto')?.value || 0;
