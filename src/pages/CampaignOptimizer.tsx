@@ -849,6 +849,8 @@ function CampaignDetail({
   isDiagnosing,
   budgetEditId,
   budgetValue,
+  midasActions,
+  onExecuteAction,
   onDiagnose,
   onToggleStatus,
   onBudgetEdit,
@@ -863,6 +865,8 @@ function CampaignDetail({
   isDiagnosing: boolean;
   budgetEditId: string | null;
   budgetValue: string;
+  midasActions: MidasAction[];
+  onExecuteAction: (action: MidasAction) => Promise<void>;
   onDiagnose: () => void;
   onToggleStatus: (id: string, status: string) => void;
   onBudgetEdit: (id: string) => void;
