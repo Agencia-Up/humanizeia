@@ -280,6 +280,22 @@ export default function AICreativeStudio() {
     }
   };
 
+  const handleApplyTemplate = (template: typeof quickTemplates[0]) => {
+    setPrompt(template.prompt);
+    setFormat(template.format);
+    setStyle(template.style);
+    setCustomStyle('');
+    setHeadline(template.headline);
+    setCtaText(template.ctaText);
+    setIncludeCTA(template.includeCTA);
+    toast({ title: `✅ Template "${template.name}" aplicado!`, description: 'Edite os campos se quiser e clique em Gerar.' });
+  };
+
+  const handleGenerateCopy = (image: GeneratedImage) => {
+    const copyPrompt = encodeURIComponent(image.description || prompt);
+    window.location.href = `/copywriter?prompt=${copyPrompt}`;
+  };
+
   const handleSendToRemoveBg = (image: GeneratedImage) => {
     setRemoveBgImage({ url: image.imageUrl, name: `criativo-${Date.now()}` });
     setActiveTab('remove-bg');
