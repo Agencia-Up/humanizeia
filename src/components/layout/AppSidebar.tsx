@@ -22,6 +22,7 @@ import {
   Zap,
   Cog,
   Library,
+  Plug,
   GripVertical,
   LogOut,
 } from 'lucide-react';
