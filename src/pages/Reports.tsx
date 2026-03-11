@@ -241,9 +241,10 @@ export default function Reports() {
         )}
 
         <Tabs defaultValue="templates">
-          <TabsList>
+          <TabsList className="flex-wrap">
             <TabsTrigger value="templates"><Settings2 className="mr-1.5 h-4 w-4" /> Templates</TabsTrigger>
             <TabsTrigger value="agendamento"><Clock className="mr-1.5 h-4 w-4" /> Agendamento</TabsTrigger>
+            <TabsTrigger value="pdf"><Download className="mr-1.5 h-4 w-4" /> PDF / Branding</TabsTrigger>
             <TabsTrigger value="historico"><History className="mr-1.5 h-4 w-4" /> Histórico</TabsTrigger>
           </TabsList>
 
