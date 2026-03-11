@@ -24,8 +24,9 @@ interface MetaCachedResult<T> {
 export function useMetaCachedQuery<T = any>(
   options: UseMetaCachedQueryOptions<T>
 ): MetaCachedResult<T> {
-  const { cacheKey, fetchFn, enabled = true, alwaysReadCache = false } = options;
+  const { cacheKey, fetchFn, enabled = true, alwaysReadCache = false, pollingEnabled = true } = options;
   const { user } = useAuth();
+  const pollingIntervalMinutes = useAppStore((s) => s.pollingIntervalMinutes);
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [freshData, setFreshData] = useState<T | undefined>(undefined);
