@@ -22,6 +22,7 @@ import {
   Zap,
   Cog,
   Library,
+  Plug,
   GripVertical,
   LogOut,
 } from 'lucide-react';
@@ -69,6 +70,7 @@ const libraryItems = [
   { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
   { title: 'Relatórios', url: '/reports', icon: FileText },
   { title: 'Pixel Unificado', url: '/pixel', icon: Layers },
+  { title: 'Integrações', url: '/integrations', icon: Plug },
 ];
 
 const learnItems = [

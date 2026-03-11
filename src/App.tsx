@@ -23,6 +23,7 @@ import MidasAgent from "./pages/MidasAgent";
 import Onboarding from "./pages/Onboarding";
 import ConnectAccounts from "./pages/ConnectAccounts";
 import UnifiedPixel from "./pages/UnifiedPixel";
+import Integrations from "./pages/Integrations";
 import NotFound from "./pages/NotFound";
 
 
@@ -54,6 +55,7 @@ const App = () => (
           <Route path="/academy" element={<ProtectedRoute><AIAcademy /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
           <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
+          <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
           <Route path="/midas" element={<ProtectedRoute><MidasAgent /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
