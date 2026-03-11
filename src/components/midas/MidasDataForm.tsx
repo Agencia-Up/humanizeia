@@ -158,7 +158,7 @@ export function MidasDataForm({ open, onOpenChange, onSubmit }: MidasDataFormPro
       if (changeMadeToday) message += `Mudança feita hoje: ${changeMadeToday}\n`;
     }
 
-    message += `\n[SALA DE GUERRA MIDAS]\nClassifique a situação atual (🔴🟡🟢) e me dê o próximo passo imediato para escalar ou estancar o prejuízo.`;
+    message += `\n[SALA DE GUERRA APOLLO]\nClassifique a situação atual (🔴🟡🟢) e me dê o próximo passo imediato para escalar ou estancar o prejuízo.`;
 
     onSubmit(message);
     resetForm();
