@@ -286,6 +286,7 @@ export default function AICreativeStudio() {
         'feed-1x1': '1080x1080',
         'feed-4x5': '1080x1350',
         'stories-9x16': '1080x1920',
+        'reels-9x16': '1080x1920',
         'landscape-16x9': '1920x1080',
         'display-300x250': '300x250',
         'display-728x90': '728x90',
