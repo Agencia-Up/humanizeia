@@ -92,6 +92,10 @@ export const useAppStore = create<AppState>()(
             [platform]: connected,
           },
         })),
+
+      // Polling interval (default 5 min)
+      pollingIntervalMinutes: 5,
+      setPollingIntervalMinutes: (minutes) => set({ pollingIntervalMinutes: minutes }),
     }),
     {
       name: 'humanizeai-storage',
