@@ -185,11 +185,9 @@ export default function Auth() {
       <div className="w-full max-w-md space-y-6">
         {/* Logo */}
         <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl gradient-primary">
-            <Sparkles className="h-6 w-6 text-primary-foreground" />
-          </div>
-          <h1 className="text-2xl font-bold text-foreground">TrafficAI Pro</h1>
-          <p className="text-sm text-muted-foreground">Plataforma de IA para gestão de tráfego pago</p>
+          <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-14 w-14 rounded-xl object-contain" />
+          <h1 className="text-2xl font-bold text-foreground">HumanizeAI</h1>
+          <p className="text-sm text-muted-foreground">Plataforma inteligente de marketing e IA</p>
         </div>
 
         <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
