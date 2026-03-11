@@ -9,8 +9,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -20,11 +22,12 @@ import { useMetaConnection } from '@/hooks/useMetaConnection';
 import { useClaudeChat } from '@/hooks/useClaudeChat';
 import { useToast } from '@/hooks/use-toast';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Settings2, Plus, Pause, Trash2, Copy, Edit, Clock, Zap,
   Play, Sparkles, Brain, AlertCircle, X, Loader2, Eye, EyeOff,
-  TrendingUp, TrendingDown, Shield, Activity,
+  TrendingUp, TrendingDown, Shield, Activity, ChevronDown, ChevronUp,
+  CheckCircle2, XCircle, FileText, History, ListChecks, Filter,
 } from 'lucide-react';
 
 /* ─── types ─── */
@@ -48,6 +51,18 @@ interface RuleFormData {
   simulationMode: boolean;
 }
 
+interface EvaluationResult {
+  ruleId: string;
+  ruleName: string;
+  triggered: boolean;
+  simulationMode: boolean;
+  conditionResults: { condition: Condition; met: boolean; currentValue: number | null }[];
+  actionType: string;
+  actionConfig: any;
+  campaignsAffected: string[];
+  timestamp: Date;
+}
+
 const EMPTY_FORM: RuleFormData = {
   name: '',
   description: '',
@@ -62,17 +77,17 @@ const EMPTY_FORM: RuleFormData = {
 };
 
 const METRICS = [
-  { value: 'cpa', label: 'CPA (Custo por Resultado)', friendly: 'custo por resultado' },
-  { value: 'ctr', label: 'CTR (%)', friendly: 'taxa de cliques' },
-  { value: 'roas', label: 'ROAS', friendly: 'retorno sobre investimento' },
-  { value: 'cpc', label: 'CPC', friendly: 'custo por clique' },
-  { value: 'cpm', label: 'CPM', friendly: 'custo por mil impressões' },
-  { value: 'spend', label: 'Gasto (R$)', friendly: 'gasto' },
-  { value: 'impressions', label: 'Impressões', friendly: 'impressões' },
-  { value: 'clicks', label: 'Cliques', friendly: 'cliques' },
-  { value: 'conversions', label: 'Conversões', friendly: 'conversões' },
-  { value: 'frequency', label: 'Frequência', friendly: 'frequência' },
-  { value: 'reach', label: 'Alcance', friendly: 'alcance' },
+  { value: 'cpa', label: 'CPA (Custo por Resultado)', friendly: 'custo por resultado', unit: 'R$' },
+  { value: 'ctr', label: 'CTR (%)', friendly: 'taxa de cliques', unit: '%' },
+  { value: 'roas', label: 'ROAS', friendly: 'retorno sobre investimento', unit: 'x' },
+  { value: 'cpc', label: 'CPC', friendly: 'custo por clique', unit: 'R$' },
+  { value: 'cpm', label: 'CPM', friendly: 'custo por mil impressões', unit: 'R$' },
+  { value: 'spend', label: 'Gasto (R$)', friendly: 'gasto', unit: 'R$' },
+  { value: 'impressions', label: 'Impressões', friendly: 'impressões', unit: '' },
+  { value: 'clicks', label: 'Cliques', friendly: 'cliques', unit: '' },
+  { value: 'conversions', label: 'Conversões', friendly: 'conversões', unit: '' },
+  { value: 'frequency', label: 'Frequência', friendly: 'frequência', unit: '' },
+  { value: 'reach', label: 'Alcance', friendly: 'alcance', unit: '' },
 ];
 
 const OPERATORS = [
@@ -170,6 +185,23 @@ function buildFriendlyDescription(conditions: Condition[], conditionLogic: strin
   return `Quando ${condParts.join(connector)}, ${action}`;
 }
 
+/* ─── condition evaluator ─── */
+function evaluateCondition(operator: string, currentValue: number, targetValue: number): boolean {
+  switch (operator) {
+    case '>': return currentValue > targetValue;
+    case '<': return currentValue < targetValue;
+    case '>=': return currentValue >= targetValue;
+    case '<=': return currentValue <= targetValue;
+    case '=': return Math.abs(currentValue - targetValue) < 0.01;
+    default: return false;
+  }
+}
+
+function extractMetricFromCampaign(campaign: any, metric: string): number | null {
+  const val = Number(campaign[metric]);
+  return isNaN(val) ? null : val;
+}
+
 export default function AutomatedRules() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -182,16 +214,15 @@ export default function AutomatedRules() {
   const [editingRule, setEditingRule] = useState<any | null>(null);
   const [formData, setFormData] = useState<RuleFormData>(EMPTY_FORM);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [aiExecution, setAiExecution] = useState('');
   const [aiSuggestion, setAiSuggestion] = useState('');
   const [manualData, setManualData] = useState('');
+  const [evaluationResults, setEvaluationResults] = useState<EvaluationResult[]>([]);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [logFilter, setLogFilter] = useState<'all' | 'success' | 'error' | 'simulation'>('all');
+  const [activeTab, setActiveTab] = useState('rules');
 
   /* ─── AI hooks ─── */
-  const { sendSingleMessage: sendExecution, isLoading: isExecuting } = useClaudeChat({
-    context: 'optimizer',
-    onDelta: (d) => setAiExecution((p) => p + d),
-  });
-
   const { sendSingleMessage: sendSuggestion, isLoading: isSuggesting } = useClaudeChat({
     context: 'optimizer',
     onDelta: (d) => setAiSuggestion((p) => p + d),
@@ -211,7 +242,7 @@ export default function AutomatedRules() {
   const { data: logs, isLoading: isLoadingLogs } = useQuery({
     queryKey: ['rule-execution-logs', user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from('rule_execution_log').select('*, automation_rules(name)').order('triggered_at', { ascending: false }).limit(20);
+      const { data, error } = await supabase.from('rule_execution_log').select('*, automation_rules(name)').order('triggered_at', { ascending: false }).limit(100);
       if (error) throw error;
       return data || [];
     },
@@ -374,55 +405,115 @@ export default function AutomatedRules() {
     });
   };
 
-  /* ─── AI execution ─── */
-  const handleExecuteRules = async () => {
+  /* ─── Rule evaluation engine ─── */
+  const evaluateRules = useCallback(async () => {
     const activeRules = rules?.filter((r: any) => r.is_active) || [];
     if (!activeRules.length) {
-      toast({ title: 'Nenhuma regra ativa para executar', variant: 'destructive' });
+      toast({ title: 'Nenhuma regra ativa para avaliar', variant: 'destructive' });
       return;
     }
 
-    const metricsData = manualData.trim() || JSON.stringify({
-      campanhas: campaignInsights.data?.data?.slice(0, 20) || [],
-    });
+    const campaignData = campaignInsights.data?.data || [];
+    if (!campaignData.length && !manualData.trim()) {
+      toast({ title: 'Sem dados de campanhas disponíveis', description: 'Conecte Meta Ads ou insira dados manualmente.', variant: 'destructive' });
+      return;
+    }
 
-    const rulesData = activeRules.map((r: any) => ({
-      name: r.name,
-      conditions: r.conditions,
-      condition_logic: r.condition_logic,
-      action_type: r.action_type,
-      action_config: r.action_config,
-      simulationMode: r.action_config?.simulationMode ?? false,
-    }));
+    setIsEvaluating(true);
+    const results: EvaluationResult[] = [];
 
-    const hasSimulation = rulesData.some((r) => r.simulationMode);
+    for (const rule of activeRules) {
+      const conditions: Condition[] = Array.isArray(rule.conditions) ? rule.conditions : [];
+      const logic = rule.condition_logic || 'AND';
+      const isSimulation = rule.action_config?.simulationMode === true;
+      const affectedCampaigns: string[] = [];
 
-    setAiExecution('');
-    await sendExecution(
-      `Você é um analista de automação de campanhas Meta Ads.
+      // Evaluate against each campaign
+      for (const campaign of campaignData) {
+        const conditionResults = conditions.map((cond) => {
+          const currentValue = extractMetricFromCampaign(campaign, cond.metric);
+          const met = currentValue !== null ? evaluateCondition(cond.operator, currentValue, cond.value) : false;
+          return { condition: cond, met, currentValue };
+        });
 
-Analise estas REGRAS AUTOMÁTICAS vs as MÉTRICAS ATUAIS e determine quais regras seriam disparadas:
+        const allMet = logic === 'AND'
+          ? conditionResults.every((r) => r.met)
+          : conditionResults.some((r) => r.met);
 
-## Regras Configuradas:
-${JSON.stringify(rulesData, null, 2)}
+        if (allMet) {
+          affectedCampaigns.push(campaign.campaign_name || campaign.campaign_id);
+        }
+      }
 
-## Métricas Atuais das Campanhas:
-${metricsData}
+      const triggered = affectedCampaigns.length > 0;
 
-Para cada regra, responda:
-1. ✅ ou ❌ se seria disparada
-2. Quais condições foram atendidas
-3. Qual ação seria executada
-4. Impacto estimado
+      const conditionResults = conditions.map((cond) => {
+        // Aggregate: use average across campaigns
+        const values = campaignData.map((c: any) => extractMetricFromCampaign(c, cond.metric)).filter((v: any): v is number => v !== null);
+        const avgValue = values.length ? values.reduce((a: number, b: number) => a + b, 0) / values.length : null;
+        const met = avgValue !== null ? evaluateCondition(cond.operator, avgValue, cond.value) : false;
+        return { condition: cond, met, currentValue: avgValue };
+      });
 
-${hasSimulation ? '⚠️ IMPORTANTE: Regras em MODO SIMULAÇÃO devem ser marcadas com 🔍 e mostrar "SIMULAÇÃO: Esta ação NÃO seria executada, apenas sugerida".' : ''}
+      results.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        triggered,
+        simulationMode: isSimulation,
+        conditionResults,
+        actionType: rule.action_type,
+        actionConfig: rule.action_config,
+        campaignsAffected: affectedCampaigns,
+        timestamp: new Date(),
+      });
 
-Formate em Markdown com headers, emojis e tabelas quando possível.
-Use linguagem simples e acessível para não-técnicos.
-No final, liste as ações recomendadas de forma clara.`
-    );
-  };
+      // Log execution if triggered and NOT simulation
+      if (triggered) {
+        const actionLabel = ACTION_TYPES.find((a) => a.value === rule.action_type)?.friendly || rule.action_type;
+        const logEntry = {
+          rule_id: rule.id,
+          action_taken: isSimulation
+            ? `[SIMULAÇÃO] Sugestão: ${actionLabel} para ${affectedCampaigns.length} campanha(s)`
+            : `${actionLabel} em ${affectedCampaigns.length} campanha(s)`,
+          conditions_met: conditionResults.map((r) => ({
+            metric: r.condition.metric,
+            operator: r.condition.operator,
+            target: r.condition.value,
+            actual: r.currentValue,
+            met: r.met,
+          })),
+          success: true,
+          metrics_snapshot: { campaigns: affectedCampaigns, evaluatedAt: new Date().toISOString() },
+          action_result: isSimulation ? 'simulation_only' : 'pending_execution',
+        };
 
+        await supabase.from('rule_execution_log').insert(logEntry);
+
+        // Update rule trigger count
+        await supabase.from('automation_rules').update({
+          trigger_count: (rule.trigger_count || 0) + 1,
+          last_triggered_at: new Date().toISOString(),
+        }).eq('id', rule.id);
+
+        // Toast notification
+        if (rule.notify_on_trigger) {
+          toast({
+            title: isSimulation ? `🔍 Sugestão: ${rule.name}` : `⚡ Regra disparada: ${rule.name}`,
+            description: `${affectedCampaigns.length} campanha(s) afetada(s)`,
+            variant: isSimulation ? 'default' : 'destructive',
+          });
+        }
+      }
+    }
+
+    setEvaluationResults(results);
+    queryClient.invalidateQueries({ queryKey: ['rule-execution-logs'] });
+    queryClient.invalidateQueries({ queryKey: ['automation-rules'] });
+    setIsEvaluating(false);
+    setActiveTab('results');
+  }, [rules, campaignInsights.data, manualData, toast, queryClient]);
+
+  /* ─── AI Suggest ─── */
   const handleSuggestRules = async () => {
     const metricsData = manualData.trim() || JSON.stringify({
       campanhas: campaignInsights.data?.data?.slice(0, 20) || [],
@@ -442,6 +533,7 @@ Para cada sugestão, forneça:
 - **Quando** (descreva a condição de forma humana, ex: "Quando o custo por venda passar de R$50")
 - **Então** (ação, ex: "pausar a campanha")
 - **Por quê** (justificativa baseada nos dados)
+- **Modo sugerido**: Sugerir ou Executar
 
 Formate em Markdown com emojis e bullet points. Use linguagem simples e acessível.`
     );
@@ -457,6 +549,18 @@ Formate em Markdown com emojis e bullet points. Use linguagem simples e acessív
 
   const isSimulationRule = (rule: any) => rule.action_config?.simulationMode === true;
 
+  const activeRulesCount = rules?.filter((r: any) => r.is_active).length || 0;
+  const simulationRulesCount = rules?.filter((r: any) => r.is_active && isSimulationRule(r)).length || 0;
+  const executeRulesCount = activeRulesCount - simulationRulesCount;
+
+  const filteredLogs = (logs || []).filter((log: any) => {
+    if (logFilter === 'all') return true;
+    if (logFilter === 'success') return log.success && !log.action_result?.includes('simulation');
+    if (logFilter === 'error') return !log.success;
+    if (logFilter === 'simulation') return log.action_result === 'simulation_only';
+    return true;
+  });
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -466,15 +570,63 @@ Formate em Markdown com emojis e bullet points. Use linguagem simples e acessív
             <h1 className="text-2xl font-bold lg:text-3xl">Regras Automáticas</h1>
             <p className="text-muted-foreground">Automatize decisões sobre suas campanhas com regras inteligentes</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button variant="outline" onClick={handleSuggestRules} disabled={isSuggesting}>
               {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
               Sugerir com IA
             </Button>
             <Button className="gradient-primary" onClick={() => openCreate()}>
-              <Plus className="mr-2 h-4 w-4" /> Criar Nova Regra
+              <Plus className="mr-2 h-4 w-4" /> Criar Regra
             </Button>
           </div>
+        </div>
+
+        {/* ─── Stats row ─── */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+            <CardContent className="p-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/20">
+                <ListChecks className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{rules?.length || 0}</p>
+                <p className="text-xs text-muted-foreground">Total de Regras</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+            <CardContent className="p-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/20">
+                <Zap className="h-5 w-5 text-green-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{executeRulesCount}</p>
+                <p className="text-xs text-muted-foreground">Modo Executar</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+            <CardContent className="p-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/20">
+                <Eye className="h-5 w-5 text-accent-foreground" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{simulationRulesCount}</p>
+                <p className="text-xs text-muted-foreground">Modo Sugerir</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+            <CardContent className="p-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/20">
+                <History className="h-5 w-5 text-blue-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{logs?.length || 0}</p>
+                <p className="text-xs text-muted-foreground">Execuções</p>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* ─── Connection warning ─── */}
@@ -484,159 +636,455 @@ Formate em Markdown com emojis e bullet points. Use linguagem simples e acessív
               <AlertCircle className="h-5 w-5 text-accent-foreground shrink-0" />
               <div className="flex-1">
                 <p className="text-sm font-medium">Meta Ads não conectado</p>
-                <p className="text-xs text-muted-foreground">Conecte sua conta em Configurações ou use o modo manual abaixo para analisar com IA.</p>
+                <p className="text-xs text-muted-foreground">Conecte sua conta em Configurações ou use o modo manual para analisar com IA.</p>
               </div>
             </CardContent>
           </Card>
         )}
 
-        {/* ─── Main grid ─── */}
-        <div className="grid gap-6 lg:grid-cols-3 overflow-hidden">
-          {/* Rules list */}
-          <div className="lg:col-span-2 space-y-4 min-w-0">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Suas Regras ({rules?.length || 0})</h2>
-              <Button variant="outline" size="sm" onClick={handleExecuteRules} disabled={isExecuting || !rules?.length}>
-                {isExecuting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-                Simular Execução
-              </Button>
-            </div>
+        {/* ─── Main Tabs ─── */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsList className="bg-muted/50">
+            <TabsTrigger value="rules" className="gap-2">
+              <ListChecks className="h-4 w-4" /> Regras
+              {rules?.length ? <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">{rules.length}</Badge> : null}
+            </TabsTrigger>
+            <TabsTrigger value="results" className="gap-2">
+              <Play className="h-4 w-4" /> Resultados
+              {evaluationResults.length ? <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">{evaluationResults.filter(r => r.triggered).length}</Badge> : null}
+            </TabsTrigger>
+            <TabsTrigger value="history" className="gap-2">
+              <History className="h-4 w-4" /> Histórico
+              {logs?.length ? <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">{logs.length}</Badge> : null}
+            </TabsTrigger>
+          </TabsList>
 
-            {isLoadingRules ? (
-              Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-lg" />)
-            ) : !rules?.length ? (
-              <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-                <CardContent className="flex flex-col items-center gap-4 py-16">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                    <Settings2 className="h-8 w-8 text-muted-foreground" />
-                  </div>
-                  <div className="text-center">
-                    <h3 className="font-semibold">Nenhuma regra criada ainda</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">Crie regras para automatizar suas campanhas ou use um template pronto.</p>
-                  </div>
-                  <Button variant="outline" onClick={() => openCreate()}>
-                    <Plus className="mr-2 h-4 w-4" /> Criar Primeira Regra
+          {/* ─── RULES TAB ─── */}
+          <TabsContent value="rules">
+            <div className="grid gap-6 lg:grid-cols-3 overflow-hidden">
+              {/* Rules list */}
+              <div className="lg:col-span-2 space-y-4 min-w-0">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Suas Regras</h2>
+                  <Button variant="outline" size="sm" onClick={evaluateRules} disabled={isEvaluating || !rules?.length}>
+                    {isEvaluating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+                    Avaliar Agora
                   </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              rules.map((rule: any, index: number) => (
-                <motion.div key={rule.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}>
-                  <Card className={`border-border/50 bg-card/50 backdrop-blur-sm transition-all ${rule.is_active ? 'border-primary/30' : 'opacity-60'} ${isSimulationRule(rule) ? 'border-dashed' : ''}`}>
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 space-y-2 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="font-semibold">{rule.name}</h3>
-                            <Badge variant={rule.is_active ? 'default' : 'secondary'}>
-                              {rule.is_active ? 'Ativa' : 'Pausada'}
-                            </Badge>
-                            {isSimulationRule(rule) && (
-                              <Badge variant="outline" className="text-xs border-accent text-accent-foreground">
-                                <Eye className="h-3 w-3 mr-1" /> Simulação
-                              </Badge>
-                            )}
-                          </div>
+                </div>
 
-                          {/* Friendly description */}
-                          <p className="text-sm text-muted-foreground italic">
-                            "{getRuleFriendlyText(rule)}"
-                          </p>
-
-                          {/* Conditions preview */}
-                          <div className="flex flex-wrap gap-1">
-                            {Array.isArray(rule.conditions) && rule.conditions.map((c: any, i: number) => (
-                              <Badge key={i} variant="outline" className="text-xs font-mono">
-                                {c.metric} {c.operator} {c.value}{c.period ? ` (${c.period})` : ''}
-                              </Badge>
-                            ))}
-                            {Array.isArray(rule.conditions) && rule.conditions.length > 1 && (
-                              <Badge variant="outline" className="text-xs">{rule.condition_logic || 'AND'}</Badge>
-                            )}
-                          </div>
-
-                          <div className="flex gap-4 text-xs text-muted-foreground">
-                            <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {FREQUENCIES.find((f) => f.value === rule.check_frequency)?.label || rule.check_frequency || '1h'}</span>
-                            <span>Disparada {rule.trigger_count || 0}x</span>
-                            {rule.last_triggered_at && (
-                              <span>Última: {new Date(rule.last_triggered_at).toLocaleDateString('pt-BR')}</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-2 shrink-0">
-                          <Switch checked={rule.is_active} onCheckedChange={(checked) => toggleRule.mutate({ id: rule.id, is_active: checked })} />
-                          <div className="flex gap-1">
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(rule)} title="Editar">
-                              <Edit className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => duplicateRule.mutate(rule)} title="Duplicar">
-                              <Copy className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteConfirmId(rule.id)} title="Excluir">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </div>
+                {isLoadingRules ? (
+                  Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-lg" />)
+                ) : !rules?.length ? (
+                  <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                    <CardContent className="flex flex-col items-center gap-4 py-16">
+                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                        <Settings2 className="h-8 w-8 text-muted-foreground" />
                       </div>
+                      <div className="text-center">
+                        <h3 className="font-semibold">Nenhuma regra criada ainda</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">Crie regras para automatizar suas campanhas ou use um template pronto.</p>
+                      </div>
+                      <Button variant="outline" onClick={() => openCreate()}>
+                        <Plus className="mr-2 h-4 w-4" /> Criar Primeira Regra
+                      </Button>
                     </CardContent>
                   </Card>
-                </motion.div>
-              ))
-            )}
-          </div>
+                ) : (
+                  rules.map((rule: any, index: number) => (
+                    <motion.div key={rule.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}>
+                      <Card className={`border-border/50 bg-card/50 backdrop-blur-sm transition-all ${rule.is_active ? 'border-primary/30' : 'opacity-60'} ${isSimulationRule(rule) ? 'border-dashed' : ''}`}>
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1 space-y-2 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="font-semibold">{rule.name}</h3>
+                                <Badge variant={rule.is_active ? 'default' : 'secondary'}>
+                                  {rule.is_active ? 'Ativa' : 'Pausada'}
+                                </Badge>
+                                {isSimulationRule(rule) ? (
+                                  <Badge variant="outline" className="text-xs border-accent text-accent-foreground">
+                                    <Eye className="h-3 w-3 mr-1" /> Sugerir
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-xs border-green-500/50 text-green-400">
+                                    <Zap className="h-3 w-3 mr-1" /> Executar
+                                  </Badge>
+                                )}
+                              </div>
 
-          {/* Templates sidebar */}
-          <div className="space-y-4 min-w-0">
-            <h2 className="text-lg font-semibold">Templates Prontos</h2>
-            <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-              <CardContent className="p-3 space-y-2">
-                {ruleTemplates.map((template, index) => (
-                  <button
-                    key={index}
-                    className="w-full rounded-lg border border-border/50 bg-muted/20 p-3 text-left transition-all hover:border-primary/50 hover:bg-primary/5"
-                    onClick={() => openCreate(template.form)}
-                  >
-                    <div className="flex items-center gap-2">
-                      <template.icon className="h-4 w-4 shrink-0 text-primary" />
-                      <span className="text-sm font-medium truncate">{template.name}</span>
+                              <p className="text-sm text-muted-foreground italic">
+                                "{getRuleFriendlyText(rule)}"
+                              </p>
+
+                              <div className="flex flex-wrap gap-1">
+                                {Array.isArray(rule.conditions) && rule.conditions.map((c: any, i: number) => (
+                                  <Badge key={i} variant="outline" className="text-xs font-mono">
+                                    {c.metric} {c.operator} {c.value}{c.period ? ` (${c.period})` : ''}
+                                  </Badge>
+                                ))}
+                                {Array.isArray(rule.conditions) && rule.conditions.length > 1 && (
+                                  <Badge variant="outline" className="text-xs">{rule.condition_logic || 'AND'}</Badge>
+                                )}
+                              </div>
+
+                              <div className="flex gap-4 text-xs text-muted-foreground">
+                                <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {FREQUENCIES.find((f) => f.value === rule.check_frequency)?.label || rule.check_frequency || '1h'}</span>
+                                <span>Disparada {rule.trigger_count || 0}x</span>
+                                {rule.last_triggered_at && (
+                                  <span>Última: {new Date(rule.last_triggered_at).toLocaleDateString('pt-BR')}</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-2 shrink-0">
+                              <Switch checked={rule.is_active} onCheckedChange={(checked) => toggleRule.mutate({ id: rule.id, is_active: checked })} />
+                              <div className="flex gap-1">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(rule)} title="Editar">
+                                  <Edit className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => duplicateRule.mutate(rule)} title="Duplicar">
+                                  <Copy className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteConfirmId(rule.id)} title="Excluir">
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </motion.div>
+                  ))
+                )}
+              </div>
+
+              {/* Templates sidebar */}
+              <div className="space-y-4 min-w-0">
+                <h2 className="text-lg font-semibold">Templates Prontos</h2>
+                <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                  <CardContent className="p-3 space-y-2">
+                    {ruleTemplates.map((template, index) => (
+                      <button
+                        key={index}
+                        className="w-full rounded-lg border border-border/50 bg-muted/20 p-3 text-left transition-all hover:border-primary/50 hover:bg-primary/5"
+                        onClick={() => openCreate(template.form)}
+                      >
+                        <div className="flex items-center gap-2">
+                          <template.icon className="h-4 w-4 shrink-0 text-primary" />
+                          <span className="text-sm font-medium truncate">{template.name}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">{template.description}</p>
+                      </button>
+                    ))}
+                  </CardContent>
+                </Card>
+
+                {/* Manual mode */}
+                {!hasConnection && (
+                  <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                    <CardHeader className="pb-2"><CardTitle className="text-sm">Modo Manual</CardTitle></CardHeader>
+                    <CardContent className="space-y-2">
+                      <p className="text-xs text-muted-foreground">Cole métricas das campanhas para análise com IA</p>
+                      <Textarea
+                        placeholder="Cole aqui os dados das campanhas..."
+                        className="text-xs min-h-[120px]"
+                        value={manualData}
+                        onChange={(e) => setManualData(e.target.value)}
+                      />
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* ─── RESULTS TAB ─── */}
+          <TabsContent value="results">
+            <div className="space-y-4">
+              {evaluationResults.length === 0 ? (
+                <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                  <CardContent className="flex flex-col items-center gap-4 py-16">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                      <Play className="h-8 w-8 text-muted-foreground" />
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{template.description}</p>
-                  </button>
-                ))}
+                    <div className="text-center">
+                      <h3 className="font-semibold">Nenhuma avaliação executada</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">Clique em "Avaliar Agora" na aba de regras para verificar quais condições seriam disparadas.</p>
+                    </div>
+                    <Button variant="outline" onClick={() => setActiveTab('rules')}>
+                      <ListChecks className="mr-2 h-4 w-4" /> Ir para Regras
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold">
+                      Resultado da Avaliação
+                      <span className="text-sm font-normal text-muted-foreground ml-2">
+                        {evaluationResults[0]?.timestamp.toLocaleString('pt-BR')}
+                      </span>
+                    </h2>
+                    <div className="flex gap-2">
+                      <Badge variant="outline" className="text-green-400 border-green-500/50">
+                        {evaluationResults.filter((r) => r.triggered).length} disparada(s)
+                      </Badge>
+                      <Badge variant="outline" className="text-muted-foreground">
+                        {evaluationResults.filter((r) => !r.triggered).length} ok
+                      </Badge>
+                    </div>
+                  </div>
+
+                  {evaluationResults.map((result) => (
+                    <Card key={result.ruleId} className={`border-border/50 bg-card/50 backdrop-blur-sm transition-all ${result.triggered ? 'border-destructive/40' : 'border-green-500/30'}`}>
+                      <CardContent className="p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            {result.triggered ? (
+                              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-destructive/20">
+                                <AlertCircle className="h-4 w-4 text-destructive" />
+                              </div>
+                            ) : (
+                              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-500/20">
+                                <CheckCircle2 className="h-4 w-4 text-green-400" />
+                              </div>
+                            )}
+                            <div>
+                              <h3 className="font-semibold">{result.ruleName}</h3>
+                              <p className="text-xs text-muted-foreground">
+                                {result.triggered ? `${result.campaignsAffected.length} campanha(s) afetada(s)` : 'Nenhuma campanha atingiu as condições'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {result.simulationMode ? (
+                              <Badge variant="outline" className="text-xs border-accent text-accent-foreground">
+                                <Eye className="h-3 w-3 mr-1" /> Sugerir
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-xs border-green-500/50 text-green-400">
+                                <Zap className="h-3 w-3 mr-1" /> Executar
+                              </Badge>
+                            )}
+                            <Badge variant={result.triggered ? 'destructive' : 'secondary'}>
+                              {result.triggered ? 'Disparada' : 'OK'}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {/* Condition details */}
+                        <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-2">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Condições Avaliadas</p>
+                          {result.conditionResults.map((cr, i) => {
+                            const metricInfo = METRICS.find((m) => m.value === cr.condition.metric);
+                            return (
+                              <div key={i} className="flex items-center justify-between text-sm">
+                                <div className="flex items-center gap-2">
+                                  {cr.met ? (
+                                    <CheckCircle2 className="h-3.5 w-3.5 text-destructive" />
+                                  ) : (
+                                    <XCircle className="h-3.5 w-3.5 text-green-400" />
+                                  )}
+                                  <span>{metricInfo?.label || cr.condition.metric}</span>
+                                </div>
+                                <div className="flex items-center gap-3 text-xs font-mono">
+                                  <span className="text-muted-foreground">
+                                    Atual: <span className="text-foreground">{cr.currentValue !== null ? cr.currentValue.toFixed(2) : 'N/A'}</span>
+                                  </span>
+                                  <span className="text-muted-foreground">
+                                    Meta: {cr.condition.operator} {cr.condition.value}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Action to take */}
+                        {result.triggered && (
+                          <div className={`rounded-lg p-3 ${result.simulationMode ? 'bg-accent/10 border border-accent/30' : 'bg-destructive/10 border border-destructive/30'}`}>
+                            <div className="flex items-center gap-2">
+                              {result.simulationMode ? (
+                                <Eye className="h-4 w-4 text-accent-foreground" />
+                              ) : (
+                                <Zap className="h-4 w-4 text-destructive" />
+                              )}
+                              <span className="text-sm font-medium">
+                                {result.simulationMode ? 'Sugestão' : 'Ação executada'}:
+                              </span>
+                              <span className="text-sm">
+                                {ACTION_TYPES.find((a) => a.value === result.actionType)?.friendly || result.actionType}
+                                {result.actionConfig?.percentage ? ` em ${result.actionConfig.percentage}%` : ''}
+                              </span>
+                            </div>
+                            {result.campaignsAffected.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {result.campaignsAffected.slice(0, 5).map((name, i) => (
+                                  <Badge key={i} variant="outline" className="text-xs">{name}</Badge>
+                                ))}
+                                {result.campaignsAffected.length > 5 && (
+                                  <Badge variant="outline" className="text-xs">+{result.campaignsAffected.length - 5} mais</Badge>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* ─── HISTORY TAB ─── */}
+          <TabsContent value="history">
+            <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+              <CardHeader className="flex-row items-center justify-between pb-4">
+                <CardTitle className="text-lg">Histórico de Ações</CardTitle>
+                <div className="flex gap-1">
+                  {(['all', 'success', 'simulation', 'error'] as const).map((f) => (
+                    <Button
+                      key={f}
+                      variant={logFilter === f ? 'default' : 'ghost'}
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setLogFilter(f)}
+                    >
+                      {f === 'all' && 'Todos'}
+                      {f === 'success' && '✅ Executados'}
+                      {f === 'simulation' && '🔍 Sugestões'}
+                      {f === 'error' && '❌ Erros'}
+                    </Button>
+                  ))}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isLoadingLogs ? (
+                  <Skeleton className="h-48 w-full" />
+                ) : !filteredLogs.length ? (
+                  <div className="flex flex-col items-center gap-2 py-10">
+                    <Clock className="h-8 w-8 text-muted-foreground" />
+                    <p className="text-muted-foreground">Nenhuma ação registrada{logFilter !== 'all' ? ' nesta categoria' : ''}.</p>
+                  </div>
+                ) : (
+                  <ScrollArea className="h-[500px]">
+                    <div className="space-y-2">
+                      {filteredLogs.map((log: any) => {
+                        const isExpanded = expandedLogId === log.id;
+                        const isSimLog = log.action_result === 'simulation_only';
+                        const conditionsMet = log.conditions_met;
+                        const metricsSnapshot = log.metrics_snapshot;
+
+                        return (
+                          <div key={log.id} className="rounded-lg border border-border/50 transition-all hover:border-border">
+                            <button
+                              className="w-full flex items-center gap-4 p-3 text-left"
+                              onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                            >
+                              <div className={`flex h-8 w-8 items-center justify-center rounded-full shrink-0 ${
+                                isSimLog ? 'bg-accent/20' : log.success ? 'bg-primary/20' : 'bg-destructive/20'
+                              }`}>
+                                {isSimLog ? (
+                                  <Eye className="h-4 w-4 text-accent-foreground" />
+                                ) : log.success ? (
+                                  <Zap className="h-4 w-4 text-primary" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 text-destructive" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate">{(log as any).automation_rules?.name || 'Regra'}</p>
+                                <p className="text-xs text-muted-foreground truncate">{log.action_taken}</p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <Badge variant="secondary" className={`text-xs ${
+                                  isSimLog ? 'bg-accent/20 text-accent-foreground' :
+                                  log.success ? 'bg-primary/20 text-primary' : 'bg-destructive/20 text-destructive'
+                                }`}>
+                                  {isSimLog ? '🔍 Sugestão' : log.success ? '✅ Executado' : '❌ Erro'}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                  {new Date(log.triggered_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                                {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                              </div>
+                            </button>
+
+                            <AnimatePresence>
+                              {isExpanded && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="px-3 pb-3 space-y-3 border-t border-border/50 pt-3">
+                                    {/* Conditions met */}
+                                    {Array.isArray(conditionsMet) && conditionsMet.length > 0 && (
+                                      <div>
+                                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Condições Avaliadas</p>
+                                        <div className="space-y-1">
+                                          {conditionsMet.map((cm: any, i: number) => {
+                                            const metricInfo = METRICS.find((m) => m.value === cm.metric);
+                                            return (
+                                              <div key={i} className="flex items-center justify-between text-xs bg-muted/20 rounded-md px-2 py-1.5">
+                                                <div className="flex items-center gap-1.5">
+                                                  {cm.met ? (
+                                                    <CheckCircle2 className="h-3 w-3 text-destructive" />
+                                                  ) : (
+                                                    <XCircle className="h-3 w-3 text-green-400" />
+                                                  )}
+                                                  <span>{metricInfo?.label || cm.metric}</span>
+                                                </div>
+                                                <span className="font-mono">
+                                                  {cm.actual !== null && cm.actual !== undefined ? Number(cm.actual).toFixed(2) : 'N/A'} {cm.operator} {cm.target}
+                                                </span>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Metrics snapshot */}
+                                    {metricsSnapshot?.campaigns && (
+                                      <div>
+                                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Campanhas Afetadas</p>
+                                        <div className="flex flex-wrap gap-1">
+                                          {metricsSnapshot.campaigns.map((name: string, i: number) => (
+                                            <Badge key={i} variant="outline" className="text-xs">{name}</Badge>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Error message */}
+                                    {log.error_message && (
+                                      <div className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">
+                                        {log.error_message}
+                                      </div>
+                                    )}
+
+                                    <p className="text-xs text-muted-foreground">
+                                      {new Date(log.triggered_at).toLocaleString('pt-BR')}
+                                    </p>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                )}
               </CardContent>
             </Card>
+          </TabsContent>
+        </Tabs>
 
-            {/* Manual mode */}
-            {!hasConnection && (
-              <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-                <CardHeader className="pb-2"><CardTitle className="text-sm">Modo Manual</CardTitle></CardHeader>
-                <CardContent className="space-y-2">
-                  <p className="text-xs text-muted-foreground">Cole métricas das campanhas para análise com IA</p>
-                  <Textarea
-                    placeholder="Cole aqui os dados das campanhas..."
-                    className="text-xs min-h-[120px]"
-                    value={manualData}
-                    onChange={(e) => setManualData(e.target.value)}
-                  />
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </div>
-
-        {/* ─── AI Results ─── */}
-        {aiExecution && (
-          <Card className="border-primary/30 bg-card/50 backdrop-blur-sm">
-            <CardHeader className="flex-row items-center justify-between pb-2">
-              <CardTitle className="text-lg flex items-center gap-2"><Brain className="h-5 w-5 text-primary" /> Resultado da Simulação</CardTitle>
-              <Button variant="ghost" size="icon" onClick={() => setAiExecution('')}><X className="h-4 w-4" /></Button>
-            </CardHeader>
-            <CardContent>
-              <MarkdownRenderer content={aiExecution} />
-            </CardContent>
-          </Card>
-        )}
-
+        {/* ─── AI Suggestions ─── */}
         {aiSuggestion && (
           <Card className="border-primary/30 bg-card/50 backdrop-blur-sm">
             <CardHeader className="flex-row items-center justify-between pb-2">
@@ -648,42 +1096,6 @@ Formate em Markdown com emojis e bullet points. Use linguagem simples e acessív
             </CardContent>
           </Card>
         )}
-
-        {/* ─── Execution Log ─── */}
-        <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-          <CardHeader><CardTitle className="text-lg">📋 Log de Execuções</CardTitle></CardHeader>
-          <CardContent>
-            {isLoadingLogs ? <Skeleton className="h-48 w-full" /> : !logs?.length ? (
-              <div className="flex flex-col items-center gap-2 py-10">
-                <Clock className="h-8 w-8 text-muted-foreground" />
-                <p className="text-muted-foreground">Nenhuma execução registrada ainda.</p>
-                <p className="text-xs text-muted-foreground">As ações das regras aparecerão aqui quando forem disparadas.</p>
-              </div>
-            ) : (
-              <ScrollArea className="h-64">
-                <div className="space-y-2">
-                  {logs.map((log: any) => (
-                    <div key={log.id} className="flex items-center gap-4 rounded-lg border border-border/50 p-3">
-                      <div className={`flex h-8 w-8 items-center justify-center rounded-full shrink-0 ${log.success ? 'bg-primary/20' : 'bg-destructive/20'}`}>
-                        <Zap className={`h-4 w-4 ${log.success ? 'text-primary' : 'text-destructive'}`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm truncate"><span className="font-medium">{(log as any).automation_rules?.name || 'Regra'}</span></p>
-                        <p className="text-xs text-muted-foreground truncate">{log.action_taken}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <Badge variant="secondary" className={log.success ? 'bg-primary/20 text-primary' : 'bg-destructive/20 text-destructive'}>
-                          {log.success ? '✅ Executado' : '❌ Erro'}
-                        </Badge>
-                        <p className="mt-1 text-xs text-muted-foreground">{new Date(log.triggered_at).toLocaleString('pt-BR')}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
-          </CardContent>
-        </Card>
       </div>
 
       {/* ─── Create/Edit Dialog ─── */}
@@ -707,18 +1119,40 @@ Formate em Markdown com emojis e bullet points. Use linguagem simples e acessív
               </div>
             </div>
 
-            {/* Simulation mode */}
-            <div className="flex items-center justify-between rounded-lg border border-accent/30 bg-accent/5 p-3">
-              <div className="flex items-center gap-2">
-                {formData.simulationMode ? <Eye className="h-4 w-4 text-accent-foreground" /> : <EyeOff className="h-4 w-4 text-muted-foreground" />}
-                <div>
-                  <p className="text-sm font-medium">Modo Simulação</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formData.simulationMode ? 'Apenas sugere ações, não executa automaticamente' : 'A regra executará ações automaticamente'}
-                  </p>
-                </div>
+            {/* Execution mode — Sugerir vs Executar */}
+            <div className="rounded-lg border border-border/50 overflow-hidden">
+              <div className="grid grid-cols-2">
+                <button
+                  type="button"
+                  className={`flex items-center justify-center gap-2 p-3 text-sm font-medium transition-all ${
+                    formData.simulationMode
+                      ? 'bg-accent/10 border-r border-border/50 text-accent-foreground'
+                      : 'bg-muted/10 border-r border-border/50 text-muted-foreground hover:bg-muted/20'
+                  }`}
+                  onClick={() => setFormData((p) => ({ ...p, simulationMode: true }))}
+                >
+                  <Eye className="h-4 w-4" />
+                  <div className="text-left">
+                    <p className="font-semibold">Sugerir</p>
+                    <p className="text-xs opacity-70">Apenas notifica, não executa</p>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className={`flex items-center justify-center gap-2 p-3 text-sm font-medium transition-all ${
+                    !formData.simulationMode
+                      ? 'bg-green-500/10 text-green-400'
+                      : 'bg-muted/10 text-muted-foreground hover:bg-muted/20'
+                  }`}
+                  onClick={() => setFormData((p) => ({ ...p, simulationMode: false }))}
+                >
+                  <Zap className="h-4 w-4" />
+                  <div className="text-left">
+                    <p className="font-semibold">Executar</p>
+                    <p className="text-xs opacity-70">Executa ações automaticamente</p>
+                  </div>
+                </button>
               </div>
-              <Switch checked={formData.simulationMode} onCheckedChange={(v) => setFormData((p) => ({ ...p, simulationMode: v }))} />
             </div>
 
             {/* Conditions — SE */}
