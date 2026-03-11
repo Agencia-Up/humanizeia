@@ -80,6 +80,10 @@ export default function SettingsPage() {
             <MetaAdsSettingsTab />
           </TabsContent>
 
+          <TabsContent value="google">
+            <GoogleSettingsTab />
+          </TabsContent>
+
           <TabsContent value="tiktok-ads">
             <TikTokAdsSettingsTab />
           </TabsContent>

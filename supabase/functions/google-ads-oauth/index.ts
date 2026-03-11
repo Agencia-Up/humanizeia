@@ -26,6 +26,8 @@ function handleAuthorize(redirect_uri: string, state?: string) {
   const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
   const scopes = [
     "https://www.googleapis.com/auth/adwords",
+    "https://www.googleapis.com/auth/analytics.readonly",
+    "https://www.googleapis.com/auth/tagmanager.readonly",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
   ].join(" ");
