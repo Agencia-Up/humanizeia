@@ -184,7 +184,7 @@ export default function MidasAgent() {
             </div>
             <div>
               <h1 className="text-2xl font-bold gradient-text flex items-center gap-2">
-                MIDAS
+                APOLLO
                 <Badge variant="secondary" className="bg-amber-500/10 text-amber-600">
                   AI Agent
                 </Badge>
