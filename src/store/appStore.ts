@@ -103,6 +103,7 @@ export const useAppStore = create<AppState>()(
         isDarkMode: state.isDarkMode,
         sidebarOpen: state.sidebarOpen,
         openSidebarGroups: state.openSidebarGroups,
+        pollingIntervalMinutes: state.pollingIntervalMinutes,
       }),
     }
   )
