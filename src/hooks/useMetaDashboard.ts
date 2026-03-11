@@ -13,6 +13,15 @@ export interface DashboardKPI {
   sparkline: number[];
 }
 
+export interface Anomaly {
+  id: string;
+  type: 'warning' | 'danger' | 'info';
+  metric: string;
+  title: string;
+  description: string;
+  changePercent: number;
+}
+
 function getPreviousPeriodRange(datePreset: MetaDatePreset): { since: string; until: string } {
   const today = new Date();
   const fmt = (d: Date) => d.toISOString().split('T')[0];
