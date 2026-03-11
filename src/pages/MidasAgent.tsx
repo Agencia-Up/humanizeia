@@ -156,7 +156,7 @@ export default function MidasAgent() {
       const { data, error } = await supabase.functions.invoke('send-whatsapp-report', {
         body: {
           action: 'send_report',
-          reportContent: `📊 *RELATÓRIO MIDAS*\n\n${lastReport}`,
+          reportContent: `📊 *RELATÓRIO APOLLO*\n\n${lastReport}`,
         },
       });
 
