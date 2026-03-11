@@ -311,7 +311,23 @@ export default function AICreativeStudio() {
               <CardTitle className="text-lg">Configuração</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* Prompt — most important, comes first */}
+              {/* Quick Templates */}
+              <div className="space-y-2">
+                <Label>Templates Rápidos</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {quickTemplates.map((t) => (
+                    <button
+                      key={t.name}
+                      onClick={() => handleApplyTemplate(t)}
+                      className="rounded-lg border border-border/50 bg-muted/30 p-2.5 text-left text-xs font-medium transition-all hover:border-primary/50 hover:bg-primary/5"
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Prompt — most important */}
               <div className="space-y-2">
                 <Label>Descrição da Imagem</Label>
                 <Textarea
