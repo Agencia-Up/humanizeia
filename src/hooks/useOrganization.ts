@@ -69,63 +69,19 @@ export function useOrganization() {
   };
 
   const createOrganization = async (name: string) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    const currentUser = session?.user ?? user;
-    if (!currentUser) return { error: new Error('Not authenticated') };
+    const trimmedName = name.trim();
+    if (!trimmedName) return { error: new Error('Organization name is required') };
 
-    // Step 1: Ensure profile exists FIRST (may not exist if trigger failed)
-    const { error: profileEnsureError } = await supabase
-      .from('profiles')
-      .upsert(
-        { id: currentUser.id, full_name: currentUser.user_metadata?.full_name || null },
-        { onConflict: 'id', ignoreDuplicates: true }
-      );
+    const { data, error } = await (supabase as any).rpc('create_organization_with_owner', {
+      org_name: trimmedName,
+    });
 
-    if (profileEnsureError) {
-      console.error('Step 1 - Profile ensure error:', profileEnsureError);
-      return { error: profileEnsureError };
+    if (error) {
+      console.error('Organization creation error:', error);
+      return { error };
     }
 
-    // Step 2: Create organization
-    const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    const suffix = Math.random().toString(36).substring(2, 6);
-    const slug = `${base}-${suffix}`;
-
-    const { data: org, error: orgError } = await supabase
-      .from('organizations')
-      .insert({ name, slug, created_by: currentUser.id })
-      .select()
-      .single();
-
-    if (orgError) {
-      console.error('Step 2 - Org creation error:', orgError);
-      return { error: orgError };
-    }
-
-    // Step 3: Add creator as owner member
-    const { error: memberError } = await supabase
-      .from('organization_members')
-      .insert({
-        organization_id: org.id,
-        user_id: currentUser.id,
-        role: 'owner' as any,
-      });
-
-    if (memberError) {
-      console.error('Step 3 - Member insert error:', memberError);
-      return { error: memberError };
-    }
-
-    // Step 4: Update profile with organization_id
-    const { error: profileUpdateError } = await supabase
-      .from('profiles')
-      .update({ organization_id: org.id })
-      .eq('id', currentUser.id);
-
-    if (profileUpdateError) {
-      console.error('Step 4 - Profile update error:', profileUpdateError);
-    }
-
+    const org = data as Organization;
     setOrganization(org);
     return { error: null, organization: org };
   };
