@@ -158,7 +158,7 @@ export function MidasDataForm({ open, onOpenChange, onSubmit }: MidasDataFormPro
       if (changeMadeToday) message += `Mudança feita hoje: ${changeMadeToday}\n`;
     }
 
-    message += `\n[SALA DE GUERRA MIDAS]\nClassifique a situação atual (🔴🟡🟢) e me dê o próximo passo imediato para escalar ou estancar o prejuízo.`;
+    message += `\n[SALA DE GUERRA APOLLO]\nClassifique a situação atual (🔴🟡🟢) e me dê o próximo passo imediato para escalar ou estancar o prejuízo.`;
 
     onSubmit(message);
     resetForm();
@@ -176,7 +176,7 @@ export function MidasDataForm({ open, onOpenChange, onSubmit }: MidasDataFormPro
             Alimentar Brain Trust
           </SheetTitle>
           <SheetDescription>
-            Preencha os dados de performance para análise da Sala de Guerra MIDAS.
+            Preencha os dados de performance para análise da Sala de Guerra Apollo.
           </SheetDescription>
         </SheetHeader>
 
@@ -382,7 +382,7 @@ export function MidasDataForm({ open, onOpenChange, onSubmit }: MidasDataFormPro
             className="w-full bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700"
           >
             <Send className="h-4 w-4 mr-2" />
-            Enviar para MIDAS
+            Enviar para Apollo
           </Button>
         </div>
       </SheetContent>

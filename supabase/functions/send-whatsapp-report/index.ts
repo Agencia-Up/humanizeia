@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
     let messageText: string;
 
     if (action === 'test') {
-      messageText = '🤖 *MIDAS - Teste de Conexão*\n\n✅ Conexão com WhatsApp via Evolution API configurada com sucesso!\n\nVocê receberá relatórios de performance diretamente aqui.';
+      messageText = '🤖 *Apollo - Teste de Conexão*\n\n✅ Conexão com WhatsApp via Evolution API configurada com sucesso!\n\nVocê receberá relatórios de performance diretamente aqui.';
     } else if (action === 'send_report' && reportContent) {
       messageText = reportContent;
     } else {

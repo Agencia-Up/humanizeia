@@ -181,7 +181,7 @@ function buildReportMessage(
   }
 
   lines.push("");
-  lines.push(template.footer_template || "✅ Report gerado por MIDAS AI");
+  lines.push(template.footer_template || "✅ Report gerado por Apollo AI");
 
   return lines.join("\n");
 }

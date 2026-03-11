@@ -47,7 +47,7 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 
 const mainNavItems = [
   { title: 'Painel', url: '/', icon: Home },
-  { title: 'Agente MIDAS', url: '/midas', icon: Bot },
+  { title: 'Agente Apollo', url: '/midas', icon: Bot },
   { title: 'Copywriter IA', url: '/copywriter', icon: PenTool },
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
 ];

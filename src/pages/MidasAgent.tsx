@@ -76,7 +76,7 @@ export default function MidasAgent() {
     },
     onError: (error) => {
       setStreamingContent('');
-      toast({ title: 'Erro no MIDAS', description: error, variant: 'destructive' });
+      toast({ title: 'Erro no Apollo', description: error, variant: 'destructive' });
     },
   });
 
@@ -147,7 +147,7 @@ export default function MidasAgent() {
   const sendReportToWhatsApp = async () => {
     const lastReport = getLastAssistantMessage();
     if (!lastReport) {
-      toast({ title: 'Nenhum relatório para enviar', description: 'Peça ao MIDAS gerar um relatório primeiro.', variant: 'destructive' });
+      toast({ title: 'Nenhum relatório para enviar', description: 'Peça ao Apollo gerar um relatório primeiro.', variant: 'destructive' });
       return;
     }
 
@@ -156,7 +156,7 @@ export default function MidasAgent() {
       const { data, error } = await supabase.functions.invoke('send-whatsapp-report', {
         body: {
           action: 'send_report',
-          reportContent: `📊 *RELATÓRIO MIDAS*\n\n${lastReport}`,
+          reportContent: `📊 *RELATÓRIO APOLLO*\n\n${lastReport}`,
         },
       });
 
@@ -184,7 +184,7 @@ export default function MidasAgent() {
             </div>
             <div>
               <h1 className="text-2xl font-bold gradient-text flex items-center gap-2">
-                MIDAS
+                APOLLO
                 <Badge variant="secondary" className="bg-amber-500/10 text-amber-600">
                   AI Agent
                 </Badge>
@@ -229,7 +229,7 @@ export default function MidasAgent() {
           <CardHeader className="border-b py-3">
             <div className="flex items-center gap-2">
               <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-sm text-muted-foreground">MIDAS está online e pronto para ajudar</span>
+              <span className="text-sm text-muted-foreground">Apollo está online e pronto para ajudar</span>
             </div>
           </CardHeader>
 
@@ -240,7 +240,7 @@ export default function MidasAgent() {
                   <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-amber-500/20 to-yellow-600/20 mb-6">
                     <Sparkles className="h-10 w-10 text-amber-500" />
                   </div>
-                  <h2 className="text-xl font-semibold mb-2">Olá! Eu sou o MIDAS 🔥</h2>
+                  <h2 className="text-xl font-semibold mb-2">Olá! Eu sou o Apollo 🔥</h2>
                   <p className="text-muted-foreground text-center max-w-md mb-8">
                     Seu Analista Senior de Mídia Paga. Gerenciei mais de R$500 milhões em Meta Ads e Google Ads.
                     Como posso ajudar você hoje?
@@ -327,7 +327,7 @@ export default function MidasAgent() {
                       <div className="rounded-2xl px-4 py-3 bg-muted">
                         <div className="flex items-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                          <span className="text-sm text-muted-foreground">MIDAS está analisando...</span>
+                          <span className="text-sm text-muted-foreground">Apollo está analisando...</span>
                         </div>
                       </div>
                     </div>
@@ -346,7 +346,7 @@ export default function MidasAgent() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Digite sua pergunta para o MIDAS..."
+                  placeholder="Digite sua pergunta para o Apollo..."
                   className="min-h-[50px] max-h-[150px] resize-none"
                   disabled={isLoading}
                 />
@@ -359,7 +359,7 @@ export default function MidasAgent() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground mt-2 text-center">
-                MIDAS usa IA para análise de campanhas. Sempre valide recomendações com seus dados reais.
+                Apollo usa IA para análise de campanhas. Sempre valide recomendações com seus dados reais.
               </p>
             </div>
           </CardContent>
