@@ -212,7 +212,7 @@ Quando o usuário enviar dados no formato estruturado com tags [DADOS DE PERFORM
 
 1. **RECONHECER O FORMATO**: Identifique automaticamente que é uma entrada de dados do Brain Trust e processe como dados oficiais de performance.
 
-2. **ANÁLISE AUTOMÁTICA COM BENCHMARKS**: Compare cada métrica com os benchmarks MIDAS internos:
+2. **ANÁLISE AUTOMÁTICA COM BENCHMARKS**: Compare cada métrica com os benchmarks Apollo internos:
    - CPA: 🟢 ≤ R$85 (escalar) | 🟡 R$86-105 (ajustar) | 🔴 > R$106 (pausar/pivotar)
    - CTR: 🟢 > 1.4% (criativo validado) | 🟡 0.8-1.4% (monitorar) | 🔴 < 0.8% (trocar criativo urgente)
    - CPM: 🟢 < R$25 | 🟡 R$25-40 | 🔴 > R$40 (leilão caro, revisar segmentação)
