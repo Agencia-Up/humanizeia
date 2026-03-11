@@ -129,6 +129,7 @@ export default function CampaignOptimizer() {
   // Connections
   const { connectedAccount: metaAccount, isLoading: metaLoading } = useMetaConnection();
   const { connectedAccount: googleAccount, isLoading: googleLoading } = useGoogleAdsConnection();
+  const { callMetaApi } = useMetaApi();
   const isMetaConnected = !!metaAccount;
   const isGoogleConnected = !!googleAccount;
 
