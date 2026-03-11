@@ -124,6 +124,7 @@ export default function CampaignOptimizer() {
   const [budgetValue, setBudgetValue] = useState('');
   const [manualOppData, setManualOppData] = useState('');
   const [manualAudData, setManualAudData] = useState('');
+  const [midasActions, setMidasActions] = useState<MidasAction[]>([]);
 
   // Connections
   const { connectedAccount: metaAccount, isLoading: metaLoading } = useMetaConnection();
