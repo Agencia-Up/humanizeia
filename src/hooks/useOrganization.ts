@@ -96,11 +96,17 @@ export function useOrganization() {
 
     if (memberError) return { error: memberError };
 
-    // Update profile
-    await supabase
+    // Ensure profile exists and update organization_id
+    const { error: profileError } = await supabase
       .from('profiles')
-      .update({ organization_id: org.id })
-      .eq('id', currentUser.id);
+      .upsert(
+        { id: currentUser.id, organization_id: org.id },
+        { onConflict: 'id' }
+      );
+
+    if (profileError) {
+      console.error('Profile update error:', profileError);
+    }
 
     setOrganization(org);
     return { error: null, organization: org };
