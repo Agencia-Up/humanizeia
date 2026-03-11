@@ -12,11 +12,6 @@ import { EfficiencyScatterChart } from '@/components/dashboard/EfficiencyScatter
 import { WeekdayHeatmap } from '@/components/dashboard/WeekdayHeatmap';
 import { AIInsightsCard } from '@/components/dashboard/AIInsightsCard';
 import { AnomalyAlertsWidget } from '@/components/dashboard/AnomalyAlertsWidget';
-import { PerformanceSummary } from '@/components/dashboard/RevenueProjection';
-import { SpendDistributionChart } from '@/components/dashboard/SpendDistributionChart';
-import { EfficiencyScatterChart } from '@/components/dashboard/EfficiencyScatterChart';
-import { WeekdayHeatmap } from '@/components/dashboard/WeekdayHeatmap';
-import { AIInsightsCard } from '@/components/dashboard/AIInsightsCard';
 import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
 import { useMetaDashboard, MetaDatePreset } from '@/hooks/useMetaDashboard';
 import { useAuth } from '@/hooks/useAuth';
