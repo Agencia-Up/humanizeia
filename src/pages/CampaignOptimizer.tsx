@@ -181,7 +181,115 @@ export default function CampaignOptimizer() {
 
   const selected = enrichedCampaigns.find((c) => c.id === selectedId) || null;
 
-  // ── AI hooks ───────────────────────────────────────────
+  // ── MIDAS Action Parsing ─────────────────────────────────
+  const parseMidasActions = useCallback((text: string) => {
+    if (!selected) return;
+    const actions: MidasAction[] = [];
+    
+    // Parse structured actions from AI response
+    // Look for action blocks: [ACTION:type:priority] reason | impact
+    const actionRegex = /\[ACTION:(pause|activate|increase_budget|decrease_budget|notify):?(high|medium|low)?\]([^|]+)\|([^\n]+)/gi;
+    let match;
+    while ((match = actionRegex.exec(text)) !== null) {
+      actions.push({
+        id: `${selected.id}-${match[1]}-${Date.now()}-${actions.length}`,
+        type: match[1] as MidasAction['type'],
+        campaignId: selected.id,
+        campaignName: selected.name,
+        reason: match[3].trim(),
+        impact: match[4].trim(),
+        priority: (match[2] as MidasAction['priority']) || 'medium',
+        percentage: match[1].includes('budget') ? 20 : undefined,
+      });
+    }
+
+    // Fallback: detect action patterns from natural language
+    if (actions.length === 0) {
+      const patterns = [
+        { regex: /pausar.*campanha|parar.*campanha|desativar/i, type: 'pause' as const, priority: 'high' as const },
+        { regex: /ativar.*campanha|reativar|ligar/i, type: 'activate' as const, priority: 'medium' as const },
+        { regex: /aumentar.*orçamento|escalar|investir mais|subir.*budget/i, type: 'increase_budget' as const, priority: 'medium' as const },
+        { regex: /reduzir.*orçamento|diminuir.*budget|cortar.*gasto/i, type: 'decrease_budget' as const, priority: 'high' as const },
+        { regex: /monitorar|acompanhar|observar/i, type: 'notify' as const, priority: 'low' as const },
+      ];
+
+      // Split into action items (look for numbered lists or bullet points)
+      const lines = text.split('\n');
+      for (const line of lines) {
+        if (!/^\s*(\d+[\.\)]|\-|\*|•)/.test(line)) continue;
+        for (const { regex, type, priority } of patterns) {
+          if (regex.test(line)) {
+            const cleanLine = line.replace(/^\s*(\d+[\.\)]|\-|\*|•)\s*\**/, '').replace(/\*+/g, '').trim();
+            if (cleanLine.length > 10 && !actions.find(a => a.type === type)) {
+              actions.push({
+                id: `${selected.id}-${type}-${Date.now()}`,
+                type,
+                campaignId: selected.id,
+                campaignName: selected.name,
+                reason: cleanLine.slice(0, 150),
+                impact: 'Melhoria estimada na performance geral',
+                priority,
+                percentage: type.includes('budget') ? 20 : undefined,
+              });
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    setMidasActions(actions);
+  }, [selected]);
+
+  // ── Execute MIDAS Action via Meta API ──────────────────
+  const executeMidasAction = useCallback(async (action: MidasAction) => {
+    if (action.type === 'pause') {
+      await callMetaApi({
+        endpoint: action.campaignId,
+        method: 'POST',
+        body: { status: 'PAUSED' },
+      });
+      toast({ title: '⏸️ Campanha pausada com sucesso!', description: action.campaignName });
+    } else if (action.type === 'activate') {
+      await callMetaApi({
+        endpoint: action.campaignId,
+        method: 'POST',
+        body: { status: 'ACTIVE' },
+      });
+      toast({ title: '▶️ Campanha ativada com sucesso!', description: action.campaignName });
+    } else if (action.type === 'increase_budget') {
+      const campaign = enrichedCampaigns.find(c => c.id === action.campaignId);
+      if (campaign?.daily_budget) {
+        const currentBudget = Number(campaign.daily_budget);
+        const pct = action.percentage || 20;
+        const newBudget = Math.round(currentBudget * (1 + pct / 100));
+        await callMetaApi({
+          endpoint: action.campaignId,
+          method: 'POST',
+          body: { daily_budget: newBudget },
+        });
+        toast({ title: '📈 Orçamento aumentado!', description: `${fmtBudget(campaign.daily_budget)} → ${fmtBudget(String(newBudget))}` });
+      }
+    } else if (action.type === 'decrease_budget') {
+      const campaign = enrichedCampaigns.find(c => c.id === action.campaignId);
+      if (campaign?.daily_budget) {
+        const currentBudget = Number(campaign.daily_budget);
+        const pct = action.percentage || 20;
+        const newBudget = Math.round(currentBudget * (1 - pct / 100));
+        await callMetaApi({
+          endpoint: action.campaignId,
+          method: 'POST',
+          body: { daily_budget: Math.max(newBudget, 100) }, // min R$1
+        });
+        toast({ title: '📉 Orçamento reduzido!', description: `${fmtBudget(campaign.daily_budget)} → ${fmtBudget(String(newBudget))}` });
+      }
+    } else if (action.type === 'notify') {
+      toast({ title: '🔔 Alerta registrado', description: `Monitorando: ${action.campaignName}` });
+    }
+
+    // Refresh campaign data after action
+    refetch();
+  }, [callMetaApi, enrichedCampaigns, toast, refetch]);
 
   const diagDelta = useRef('');
   const { sendMessage: sendDiag } = useClaudeChat({
