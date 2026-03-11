@@ -39,6 +39,45 @@ import { ResizeTab } from '@/components/creative-studio/ResizeTab';
 import { motion, AnimatePresence } from 'framer-motion';
 import { StudioHeader } from '@/components/layout/StudioHeader';
 
+const quickTemplates = [
+  {
+    name: '🛍️ Anúncio de Produto',
+    prompt: 'Produto em destaque com fundo limpo e iluminação profissional de estúdio, composição comercial premium',
+    format: 'feed-1x1',
+    style: 'photorealistic',
+    headline: 'Lançamento Exclusivo',
+    ctaText: 'Comprar Agora',
+    includeCTA: true,
+  },
+  {
+    name: '🔥 Oferta Especial',
+    prompt: 'Banner promocional vibrante com cores chamativas, elementos gráficos de desconto e urgência visual',
+    format: 'stories-9x16',
+    style: 'neon',
+    headline: '🔥 50% OFF — Só Hoje!',
+    ctaText: 'Aproveitar',
+    includeCTA: true,
+  },
+  {
+    name: '⭐ Depoimento',
+    prompt: 'Layout elegante para depoimento de cliente, com fundo suave e espaço para texto e foto de perfil',
+    format: 'feed-1x1',
+    style: 'minimal',
+    headline: '"Melhor compra que já fiz!"',
+    ctaText: 'Ver Mais',
+    includeCTA: true,
+  },
+  {
+    name: '📊 Antes e Depois',
+    prompt: 'Layout dividido ao meio mostrando comparação antes e depois, estilo clean com linha divisória central',
+    format: 'feed-4x5',
+    style: 'photorealistic',
+    headline: 'Resultado Real',
+    ctaText: 'Saiba Como',
+    includeCTA: true,
+  },
+];
+
 const formats = [
   { value: 'feed-1x1', label: 'Feed 1:1 (1080x1080)' },
   { value: 'feed-4x5', label: 'Feed 4:5 (1080x1350)' },
