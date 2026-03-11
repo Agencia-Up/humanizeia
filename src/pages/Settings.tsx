@@ -6,13 +6,17 @@ import {
   Building2,
   Sparkles,
   RefreshCw,
-  Music2
+  Music2,
+  LineChart,
+  Tag
 } from 'lucide-react';
 import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
 import { MetaAdsSettingsTab } from '@/components/settings/MetaAdsSettingsTab';
-import { GoogleSettingsTab } from '@/components/settings/GoogleSettingsTab';
+import { GoogleAdsSettingsTab } from '@/components/settings/GoogleAdsSettingsTab';
+import { GoogleAnalyticsSettingsTab } from '@/components/settings/GoogleAnalyticsSettingsTab';
+import { GoogleTagManagerSettingsTab } from '@/components/settings/GoogleTagManagerSettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
 import { TikTokAdsSettingsTab } from '@/components/settings/TikTokAdsSettingsTab';
@@ -46,9 +50,17 @@ export default function SettingsPage() {
               <span className="text-base">📘</span>
               Meta Ads
             </TabsTrigger>
-            <TabsTrigger value="google" className="gap-2">
+            <TabsTrigger value="google-ads" className="gap-2">
               <span className="text-base">🔵</span>
-              Google
+              Google Ads
+            </TabsTrigger>
+            <TabsTrigger value="google-analytics" className="gap-2">
+              <LineChart className="h-4 w-4" />
+              Analytics
+            </TabsTrigger>
+            <TabsTrigger value="google-gtm" className="gap-2">
+              <Tag className="h-4 w-4" />
+              Tag Manager
             </TabsTrigger>
             <TabsTrigger value="tiktok-ads" className="gap-2">
               <Music2 className="h-4 w-4" />
@@ -80,8 +92,16 @@ export default function SettingsPage() {
             <MetaAdsSettingsTab />
           </TabsContent>
 
-          <TabsContent value="google">
-            <GoogleSettingsTab />
+          <TabsContent value="google-ads">
+            <GoogleAdsSettingsTab />
+          </TabsContent>
+
+          <TabsContent value="google-analytics">
+            <GoogleAnalyticsSettingsTab />
+          </TabsContent>
+
+          <TabsContent value="google-gtm">
+            <GoogleTagManagerSettingsTab />
           </TabsContent>
 
           <TabsContent value="tiktok-ads">
