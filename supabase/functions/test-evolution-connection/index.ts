@@ -21,6 +21,17 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Validate that api_url is actually a URL
+    if (!api_url.startsWith('http://') && !api_url.startsWith('https://')) {
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: 'URL inválida. A URL deve começar com http:// ou https:// (ex: https://sua-evolution-api.com)' 
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     const baseUrl = api_url.replace(/\/$/, '');
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
