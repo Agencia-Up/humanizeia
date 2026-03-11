@@ -70,8 +70,12 @@ ${includeLogo ? "- Include space for a logo in the corner" : ""}
     console.log("Generating", variations, "images with aspect ratio:", selectedAspectRatio);
 
     // Generate images in parallel
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+
     const imagePromises = Array.from({ length: variations }, async (_, i) => {
       try {
+        const variationPrompt = `${imagePrompt}\n\nVariation ${i + 1} of ${variations}. Make this variation unique with slightly different composition or emphasis.`;
+
         const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -80,26 +84,52 @@ ${includeLogo ? "- Include space for a logo in the corner" : ""}
           },
           body: JSON.stringify({
             model: "google/gemini-2.5-flash-image",
-            messages: [
-              {
-                role: "user",
-                content: `${imagePrompt}\n\nVariation ${i + 1} of ${variations}. Make this variation unique with slightly different composition or emphasis.`,
-              },
-            ],
+            messages: [{ role: "user", content: variationPrompt }],
             modalities: ["image", "text"],
-            image_config: {
-              aspect_ratio: selectedAspectRatio,
-            },
+            image_config: { aspect_ratio: selectedAspectRatio },
           }),
         });
 
+        // Fallback to direct Gemini Imagen API on 429/402
+        if ((response.status === 429 || response.status === 402) && GEMINI_API_KEY) {
+          console.log(`Image ${i}: Lovable AI returned ${response.status}, falling back to Gemini direct...`);
+          await response.text();
+
+          const geminiImgUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`;
+          const geminiResponse = await fetch(geminiImgUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: variationPrompt }] }],
+              generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+            }),
+          });
+
+          if (geminiResponse.ok) {
+            const geminiData = await geminiResponse.json();
+            const parts = geminiData.candidates?.[0]?.content?.parts || [];
+            const imgPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
+            const txtPart = parts.find((p: any) => p.text);
+            if (imgPart) {
+              const b64 = imgPart.inlineData.data;
+              const mime = imgPart.inlineData.mimeType;
+              return { index: i, imageUrl: `data:${mime};base64,${b64}`, description: txtPart?.text || "" };
+            }
+          } else {
+            const errText = await geminiResponse.text();
+            console.error(`Image ${i} Gemini fallback failed:`, geminiResponse.status, errText);
+          }
+          return { index: i, error: response.status === 429 ? "rate_limit" : "payment_required", message: `Lovable AI: ${response.status}, Gemini fallback also failed` };
+        }
+
+        if (response.status === 429) {
+          return { index: i, error: "rate_limit", message: "Rate limit exceeded" };
+        }
+        if (response.status === 402) {
+          return { index: i, error: "payment_required", message: "Credits exhausted" };
+        }
+
         if (!response.ok) {
-          if (response.status === 429) {
-            return { index: i, error: "rate_limit", message: "Rate limit exceeded" };
-          }
-          if (response.status === 402) {
-            return { index: i, error: "payment_required", message: "Credits exhausted" };
-          }
           const text = await response.text();
           console.error(`Image ${i} generation failed:`, response.status, text);
           return { index: i, error: "generation_failed", message: `Failed: ${response.status}` };

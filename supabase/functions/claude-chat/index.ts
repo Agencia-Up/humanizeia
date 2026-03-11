@@ -357,7 +357,7 @@ Deno.serve(async (req) => {
 
     console.log('Calling Lovable AI Gateway...', { temperature, creativityLevel });
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    let response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${LOVABLE_API_KEY}`,
@@ -372,26 +372,63 @@ Deno.serve(async (req) => {
       })
     });
 
+    // Fallback to direct Gemini API on 429/402
+    if (response.status === 429 || response.status === 402) {
+      const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+      if (GEMINI_API_KEY) {
+        console.log(`Lovable AI returned ${response.status}, falling back to direct Gemini API...`);
+        await response.text(); // consume body
+
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const geminiBody = {
+          contents: aiMessages.map(m => ({
+            role: m.role === 'system' ? 'user' : m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.role === 'system' ? `[System Instructions]\n${m.content}` : m.content }]
+          })),
+          generationConfig: {
+            temperature: parseFloat(temperature.toFixed(2)),
+            maxOutputTokens: 4096,
+          },
+        };
+
+        const geminiResponse = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(geminiBody),
+        });
+
+        if (geminiResponse.ok) {
+          const geminiData = await geminiResponse.json();
+          const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          // Return in OpenAI-compatible format (non-streaming fallback)
+          const compatResponse = {
+            choices: [{ message: { role: 'assistant', content: text } }],
+            _fallback: 'gemini-direct',
+          };
+          return new Response(JSON.stringify(compatResponse), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        } else {
+          const errText = await geminiResponse.text();
+          console.error('Gemini fallback also failed:', geminiResponse.status, errText);
+        }
+      }
+
+      // If fallback not available or also failed
+      const statusMsg = response.status === 429
+        ? 'Limite de requisições atingido. Tente novamente em alguns segundos.'
+        : 'Créditos insuficientes. Adicione créditos ao workspace.';
+      return new Response(
+        JSON.stringify({ error: statusMsg }),
+        { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Lovable AI error:', response.status, errorText);
-      
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: 'Payment required. Please add funds to your Lovable workspace.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
       return new Response(
-        JSON.stringify({ error: 'AI service error', details: errorText }),
+        JSON.stringify({ error: 'Erro no serviço de IA', details: errorText }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
