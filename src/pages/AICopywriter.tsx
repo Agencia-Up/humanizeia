@@ -213,7 +213,7 @@ Tom: ${tone}
 Objetivo: ${objective}
 Incluir emojis: ${includeEmojis ? 'sim' : 'não'}
 Incluir CTA: ${includeCTA ? 'sim' : 'não'}
-Criatividade: ${creativity[0]}/10${formulaContext ? `\nFórmula de Copy: ${formulaContext.fullName}\nDescrição da fórmula: ${formulaContext.description}\nEstrutura: ${formulaContext.example.replace(/\n/g, ' | ')}` : ''}`;
+Criatividade: ${creativity[0]}/10${selectedTriggers.length > 0 ? `\nGatilhos mentais obrigatórios: ${selectedTriggers.map(t => mentalTriggers.find(mt => mt.value === t)?.label || t).join(', ')}. Use esses gatilhos de forma natural no texto.` : ''}${formulaContext ? `\nFórmula de Copy: ${formulaContext.fullName}\nDescrição da fórmula: ${formulaContext.description}\nEstrutura: ${formulaContext.example.replace(/\n/g, ' | ')}` : ''}`;
 
     // Build swipe file context for the AI
     const swipeFileExamples = swipeFiles
