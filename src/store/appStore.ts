@@ -102,7 +102,7 @@ export const useAppStore = create<AppState>()(
 
 // Initialize dark mode on load
 if (typeof window !== 'undefined') {
-  const stored = localStorage.getItem('trafficai-storage');
+  const stored = localStorage.getItem('humanizeai-storage');
   if (stored) {
     const parsed = JSON.parse(stored);
     if (parsed.state?.isDarkMode) {
