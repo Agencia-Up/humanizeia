@@ -4,13 +4,15 @@ import {
   User, 
   MessageCircle,
   Building2,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
 import { MetaAdsSettingsTab } from '@/components/settings/MetaAdsSettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
+import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
 
 export default function SettingsPage() {
   return (
