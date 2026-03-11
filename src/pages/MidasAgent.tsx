@@ -229,7 +229,7 @@ export default function MidasAgent() {
           <CardHeader className="border-b py-3">
             <div className="flex items-center gap-2">
               <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-sm text-muted-foreground">MIDAS está online e pronto para ajudar</span>
+              <span className="text-sm text-muted-foreground">Apollo está online e pronto para ajudar</span>
             </div>
           </CardHeader>
 
