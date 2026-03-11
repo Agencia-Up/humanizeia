@@ -47,6 +47,10 @@ export default function SettingsPage() {
               <MessageCircle className="h-4 w-4" />
               WhatsApp
             </TabsTrigger>
+            <TabsTrigger value="sync" className="gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Sincronização
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="company">
@@ -67,6 +71,10 @@ export default function SettingsPage() {
 
           <TabsContent value="whatsapp">
             <WhatsAppSettingsTab />
+          </TabsContent>
+
+          <TabsContent value="sync">
+            <DataSyncSettingsTab />
           </TabsContent>
         </Tabs>
       </div>
