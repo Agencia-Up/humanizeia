@@ -588,6 +588,8 @@ Responda em Markdown com:
                           isDiagnosing={isDiagnosing}
                           budgetEditId={budgetEditId}
                           budgetValue={budgetValue}
+                          midasActions={midasActions}
+                          onExecuteAction={executeMidasAction}
                           onDiagnose={handleDiagnose}
                           onToggleStatus={handleToggleStatus}
                           onBudgetEdit={(id) => {
