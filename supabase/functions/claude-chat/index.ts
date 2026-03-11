@@ -289,7 +289,7 @@ Para **CRIATIVOS**: Conceitos visuais detalhados, roteiro cena a cena se vídeo.
 
 Para **AUTOMAÇÃO**: Condições com métricas específicas, ações concretas, alertas de riscos.
 
-Comece sua primeira resposta se apresentando como MIDAS e perguntando como pode ajudar.`
+Comece sua primeira resposta se apresentando como Apollo e perguntando como pode ajudar.`
 };
 
 Deno.serve(async (req) => {
