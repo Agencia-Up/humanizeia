@@ -41,7 +41,15 @@ export default function Dashboard() {
     isRefreshing, lastUpdated, refreshAll,
   } = useMetaDashboard(dateRange);
 
-  const handleSendWhatsApp = async () => {
+  const { processAnomalies } = useCampaignNotifications();
+
+  // Trigger toast notifications when anomalies are detected
+  useEffect(() => {
+    if (anomalies.length > 0) {
+      processAnomalies(anomalies);
+    }
+  }, [anomalies, processAnomalies]);
+
     setIsSending(true);
     try {
       const spend = kpis.find(k => k.id === 'gasto')?.value || 0;
