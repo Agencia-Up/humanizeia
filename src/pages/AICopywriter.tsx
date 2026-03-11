@@ -77,6 +77,17 @@ const objectives = [
   { value: 'leads', label: 'Leads' },
 ];
 
+const mentalTriggers = [
+  { value: 'scarcity', label: '⏰ Escassez', desc: 'Últimas unidades, tempo limitado' },
+  { value: 'social_proof', label: '👥 Prova Social', desc: 'Milhares já usam, depoimentos' },
+  { value: 'authority', label: '🏆 Autoridade', desc: 'Especialistas recomendam, líder do mercado' },
+  { value: 'reciprocity', label: '🎁 Reciprocidade', desc: 'Bônus grátis, materiais extras' },
+  { value: 'curiosity', label: '🔍 Curiosidade', desc: 'Segredos revelados, descubra como' },
+  { value: 'fear_of_loss', label: '😰 Medo de Perder', desc: 'FOMO, oportunidade única' },
+  { value: 'exclusivity', label: '👑 Exclusividade', desc: 'Apenas para membros, acesso VIP' },
+  { value: 'transformation', label: '🔄 Transformação', desc: 'Antes/depois, mudança de vida' },
+];
+
 export default function AICopywriter() {
   const { toast } = useToast();
   const [platform, setPlatform] = useState('meta');

@@ -115,12 +115,13 @@ const quickTemplates = [
 ];
 
 const formats = [
-  { value: 'feed-1x1', label: 'Feed 1:1 (1080x1080)' },
-  { value: 'feed-4x5', label: 'Feed 4:5 (1080x1350)' },
-  { value: 'stories-9x16', label: 'Stories 9:16 (1080x1920)' },
-  { value: 'landscape-16x9', label: 'Landscape 16:9 (1920x1080)' },
-  { value: 'display-300x250', label: 'Display 300x250' },
-  { value: 'display-728x90', label: 'Display 728x90' },
+  { value: 'feed-1x1', label: '📐 Feed 1:1 (1080x1080)' },
+  { value: 'feed-4x5', label: '📐 Feed 4:5 (1080x1350)' },
+  { value: 'stories-9x16', label: '📱 Stories 9:16 (1080x1920)' },
+  { value: 'reels-9x16', label: '🎬 Reels 9:16 (1080x1920)' },
+  { value: 'landscape-16x9', label: '🖥️ Landscape 16:9 (1920x1080)' },
+  { value: 'display-300x250', label: '📊 Display 300x250' },
+  { value: 'display-728x90', label: '📊 Display 728x90' },
 ];
 
 const styles = [
