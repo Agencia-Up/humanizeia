@@ -22,6 +22,7 @@ import Settings from "./pages/Settings";
 import MidasAgent from "./pages/MidasAgent";
 import Onboarding from "./pages/Onboarding";
 import ConnectAccounts from "./pages/ConnectAccounts";
+import UnifiedPixel from "./pages/UnifiedPixel";
 import NotFound from "./pages/NotFound";
 
 
