@@ -33,9 +33,11 @@ export default function ConnectAccounts() {
     if (metaCode && isMetaCallback) {
       setActivePlatform('meta');
       meta.handleCallback(metaCode);
+      setCurrentStep(2);
     } else if (metaCode && isGoogleCallback) {
       setActivePlatform('google');
       google.handleCallback(metaCode);
+      setCurrentStep(2);
     }
   }, [searchParams]);
 

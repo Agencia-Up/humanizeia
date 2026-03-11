@@ -24,6 +24,73 @@ async function getAuthenticatedUser(req: Request) {
   return data.claims.sub as string;
 }
 
+async function fetchMetaResource(endpoint: string, token: string) {
+  try {
+    const res = await fetch(`${META_GRAPH_URL}/${endpoint}&access_token=${token}`);
+    const data = await res.json();
+    if (data.error) return [];
+    return data.data || [];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchFullAccountData(token: string) {
+  const [adAccounts, pixels, pages, businesses] = await Promise.all([
+    fetchMetaResource("me/adaccounts?fields=id,name,currency,timezone_name,account_status,business_name,amount_spent", token),
+    fetchMetaResource("me/adaccounts?fields=id,name,adspixels{id,name,last_fired_time,is_unavailable}", token),
+    fetchMetaResource("me/accounts?fields=id,name,category,fan_count,picture{url}", token),
+    fetchMetaResource("me/businesses?fields=id,name,profile_picture_uri,verification_status,created_time", token),
+  ]);
+
+  // Extract pixels from ad accounts
+  const allPixels: any[] = [];
+  const pixelSeen = new Set<string>();
+  for (const acc of pixels) {
+    if (acc.adspixels?.data) {
+      for (const px of acc.adspixels.data) {
+        if (!pixelSeen.has(px.id)) {
+          pixelSeen.add(px.id);
+          allPixels.push({
+            id: px.id,
+            name: px.name,
+            last_fired_time: px.last_fired_time || null,
+            is_unavailable: px.is_unavailable || false,
+            ad_account_id: acc.id,
+            ad_account_name: acc.name,
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    ad_accounts: adAccounts.map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      currency: a.currency,
+      timezone_name: a.timezone_name,
+      account_status: a.account_status,
+      business_name: a.business_name || null,
+      amount_spent: a.amount_spent || "0",
+    })),
+    pixels: allPixels,
+    pages: (pages || []).map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      category: p.category || null,
+      fan_count: p.fan_count || 0,
+      picture_url: p.picture?.data?.url || null,
+    })),
+    businesses: (businesses || []).map((b: any) => ({
+      id: b.id,
+      name: b.name,
+      picture_url: b.profile_picture_uri || null,
+      verification_status: b.verification_status || null,
+    })),
+  };
+}
+
 async function handleAuthorize(redirect_uri: string, state?: string) {
   const appId = Deno.env.get("META_APP_ID")!;
   const scopes = [
@@ -31,6 +98,7 @@ async function handleAuthorize(redirect_uri: string, state?: string) {
     "ads_read",
     "read_insights",
     "business_management",
+    "pages_show_list",
   ].join(",");
 
   const authUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(
@@ -82,23 +150,16 @@ async function handleCallback(req: Request, code: string, redirect_uri: string) 
 
   const longLivedToken = longData.access_token;
 
-  // Get ad accounts
-  const accountsRes = await fetch(
-    `${META_GRAPH_URL}/me/adaccounts?fields=id,name,currency,timezone_name,account_status&access_token=${longLivedToken}`
-  );
-  const accountsData = await accountsRes.json();
-  if (accountsData.error) {
-    return new Response(JSON.stringify({ error: accountsData.error.message }), {
-      status: 400,
-      headers: corsHeaders,
-    });
-  }
+  // Fetch all account data
+  const accountData = await fetchFullAccountData(longLivedToken);
 
   return new Response(
     JSON.stringify({
       token: longLivedToken,
-      accounts: accountsData.data || [],
       expires_in: longData.expires_in,
+      ...accountData,
+      // Keep backward compat
+      accounts: accountData.ad_accounts,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
@@ -123,7 +184,7 @@ async function handleConnectWithToken(req: Request, access_token: string, accoun
     );
   }
 
-  // If account_id provided, fetch that specific account
+  // If account_id provided, fetch and save directly
   if (account_id) {
     const cleanId = account_id.replace("act_", "");
     const actRes = await fetch(
@@ -137,7 +198,6 @@ async function handleConnectWithToken(req: Request, access_token: string, accoun
       );
     }
 
-    // Save directly
     const result = await saveAdAccount(userId, {
       account_id: cleanId,
       account_name: actData.name || `act_${cleanId}`,
@@ -159,23 +219,15 @@ async function handleConnectWithToken(req: Request, access_token: string, accoun
     );
   }
 
-  // No account_id: return list for selection
-  const accountsRes = await fetch(
-    `${META_GRAPH_URL}/me/adaccounts?fields=id,name,currency,timezone_name,account_status&access_token=${access_token}`
-  );
-  const accountsData = await accountsRes.json();
-  if (accountsData.error) {
-    return new Response(
-      JSON.stringify({ error: accountsData.error.message }),
-      { status: 400, headers: corsHeaders }
-    );
-  }
+  // No account_id: return full data for selection
+  const accountData = await fetchFullAccountData(access_token);
 
   return new Response(
     JSON.stringify({
       token: access_token,
-      accounts: accountsData.data || [],
       needs_selection: true,
+      ...accountData,
+      accounts: accountData.ad_accounts,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
@@ -218,7 +270,6 @@ async function saveAdAccount(
     .single();
 
   if (error) {
-    // Try insert if upsert fails
     const { data: insertData, error: insertError } = await adminClient
       .from("ad_accounts")
       .insert({

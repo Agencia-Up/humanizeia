@@ -3,12 +3,38 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 
-interface MetaAdAccount {
+export interface MetaAdAccount {
   id: string;
   name: string;
   currency: string;
   timezone_name: string;
   account_status: number;
+  business_name?: string | null;
+  amount_spent?: string;
+}
+
+export interface MetaPixel {
+  id: string;
+  name: string;
+  last_fired_time: string | null;
+  is_unavailable: boolean;
+  ad_account_id: string;
+  ad_account_name: string;
+}
+
+export interface MetaPage {
+  id: string;
+  name: string;
+  category: string | null;
+  fan_count: number;
+  picture_url: string | null;
+}
+
+export interface MetaBusiness {
+  id: string;
+  name: string;
+  picture_url: string | null;
+  verification_status: string | null;
 }
 
 interface ConnectedAccount {
@@ -29,6 +55,9 @@ export function useMetaConnection() {
   const [connectedAccount, setConnectedAccount] = useState<ConnectedAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [availableAccounts, setAvailableAccounts] = useState<MetaAdAccount[]>([]);
+  const [pixels, setPixels] = useState<MetaPixel[]>([]);
+  const [pages, setPages] = useState<MetaPage[]>([]);
+  const [businesses, setBusinesses] = useState<MetaBusiness[]>([]);
   const [pendingToken, setPendingToken] = useState<string | null>(null);
 
   const fetchConnectedAccount = useCallback(async () => {
@@ -60,6 +89,16 @@ export function useMetaConnection() {
     fetchConnectedAccount();
   }, [fetchConnectedAccount]);
 
+  const processResponse = (data: any) => {
+    if (data?.ad_accounts || data?.accounts) {
+      setAvailableAccounts(data.ad_accounts || data.accounts || []);
+    }
+    if (data?.pixels) setPixels(data.pixels);
+    if (data?.pages) setPages(data.pages);
+    if (data?.businesses) setBusinesses(data.businesses);
+    if (data?.token) setPendingToken(data.token);
+  };
+
   const connectWithToken = async (accessToken: string, accountId?: string) => {
     setIsConnecting(true);
     try {
@@ -74,7 +113,6 @@ export function useMetaConnection() {
       if (error) throw error;
 
       if (data?.saved) {
-        // Account was saved directly
         await fetchConnectedAccount();
         toast({
           title: 'Conta conectada!',
@@ -83,12 +121,12 @@ export function useMetaConnection() {
         return { success: true, needsSelection: false };
       }
 
-      if (data?.needs_selection && data?.accounts) {
-        setAvailableAccounts(data.accounts);
-        setPendingToken(data.token);
+      if (data?.needs_selection) {
+        processResponse(data);
+        const count = (data.ad_accounts || data.accounts || []).length;
         toast({
           title: 'Token validado!',
-          description: `${data.accounts.length} conta(s) encontrada(s). Selecione a que deseja usar.`,
+          description: `${count} conta(s) encontrada(s). Selecione a que deseja usar.`,
         });
         return { success: true, needsSelection: true };
       }
@@ -145,14 +183,13 @@ export function useMetaConnection() {
       });
 
       if (error) throw error;
-      if (data?.accounts) {
-        setAvailableAccounts(data.accounts);
-        setPendingToken(data.token);
-        toast({
-          title: 'Autenticação concluída!',
-          description: `${data.accounts.length} conta(s) encontrada(s). Selecione a que deseja usar.`,
-        });
-      }
+      processResponse(data);
+
+      const count = (data?.ad_accounts || data?.accounts || []).length;
+      toast({
+        title: 'Autenticação concluída!',
+        description: `${count} conta(s), ${data?.pixels?.length || 0} pixel(s), ${data?.pages?.length || 0} página(s) encontrada(s).`,
+      });
     } catch (err: any) {
       toast({
         title: 'Erro no callback',
@@ -168,7 +205,7 @@ export function useMetaConnection() {
     if (!pendingToken) return;
     setIsConnecting(true);
     try {
-      const { data, error } = await supabase.functions.invoke('meta-oauth', {
+      const { error } = await supabase.functions.invoke('meta-oauth', {
         body: {
           action: 'save_account',
           account_id: account.id,
@@ -180,11 +217,14 @@ export function useMetaConnection() {
       });
 
       if (error) throw error;
-      
+
       setPendingToken(null);
       setAvailableAccounts([]);
+      setPixels([]);
+      setPages([]);
+      setBusinesses([]);
       await fetchConnectedAccount();
-      
+
       toast({
         title: 'Conta conectada!',
         description: `${account.name} foi conectada com sucesso.`,
@@ -228,6 +268,9 @@ export function useMetaConnection() {
     isLoading,
     connectedAccount,
     availableAccounts,
+    pixels,
+    pages,
+    businesses,
     startOAuth,
     handleCallback,
     selectAccount,
