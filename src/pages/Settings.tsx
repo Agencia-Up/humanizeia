@@ -12,6 +12,7 @@ import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
 import { MetaAdsSettingsTab } from '@/components/settings/MetaAdsSettingsTab';
+import { GoogleSettingsTab } from '@/components/settings/GoogleSettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
 import { TikTokAdsSettingsTab } from '@/components/settings/TikTokAdsSettingsTab';
@@ -45,6 +46,10 @@ export default function SettingsPage() {
               <span className="text-base">📘</span>
               Meta Ads
             </TabsTrigger>
+            <TabsTrigger value="google" className="gap-2">
+              <span className="text-base">🔵</span>
+              Google
+            </TabsTrigger>
             <TabsTrigger value="tiktok-ads" className="gap-2">
               <Music2 className="h-4 w-4" />
               TikTok Ads
@@ -73,6 +78,10 @@ export default function SettingsPage() {
 
           <TabsContent value="meta-ads">
             <MetaAdsSettingsTab />
+          </TabsContent>
+
+          <TabsContent value="google">
+            <GoogleSettingsTab />
           </TabsContent>
 
           <TabsContent value="tiktok-ads">
