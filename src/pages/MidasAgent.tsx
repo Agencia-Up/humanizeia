@@ -327,7 +327,7 @@ export default function MidasAgent() {
                       <div className="rounded-2xl px-4 py-3 bg-muted">
                         <div className="flex items-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                          <span className="text-sm text-muted-foreground">MIDAS está analisando...</span>
+                          <span className="text-sm text-muted-foreground">Apollo está analisando...</span>
                         </div>
                       </div>
                     </div>
