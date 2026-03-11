@@ -76,15 +76,52 @@ const quickTemplates = [
     ctaText: 'Saiba Como',
     includeCTA: true,
   },
+  {
+    name: '🎬 Capa de Reels',
+    prompt: 'Thumbnail vertical dinâmica para Reels com efeito de movimento, texto grande e bold centralizado, fundo vibrante com gradiente',
+    format: 'reels-9x16',
+    style: 'neon',
+    headline: 'Você PRECISA ver isso!',
+    ctaText: '',
+    includeCTA: false,
+  },
+  {
+    name: '🎯 Lead Magnet',
+    prompt: 'Design profissional de ebook ou material gratuito, com capa 3D do material flutuando, elementos de confiança e escassez',
+    format: 'feed-4x5',
+    style: '3d',
+    headline: 'Guia GRATUITO',
+    ctaText: 'Baixar Agora',
+    includeCTA: true,
+  },
+  {
+    name: '📱 Carousel Slide',
+    prompt: 'Slide de carrossel clean e educativo, com ícone ilustrativo, texto legível, fundo sólido com acento de cor, numeração de slide',
+    format: 'feed-1x1',
+    style: 'flat',
+    headline: 'Dica #1',
+    ctaText: 'Arraste →',
+    includeCTA: true,
+  },
+  {
+    name: '⏰ Urgência/Escassez',
+    prompt: 'Design de contagem regressiva com timer visual, cores de alerta vermelho/laranja, elementos de urgência e FOMO',
+    format: 'stories-9x16',
+    style: 'neon',
+    headline: 'ÚLTIMAS HORAS!',
+    ctaText: 'Garantir Agora',
+    includeCTA: true,
+  },
 ];
 
 const formats = [
-  { value: 'feed-1x1', label: 'Feed 1:1 (1080x1080)' },
-  { value: 'feed-4x5', label: 'Feed 4:5 (1080x1350)' },
-  { value: 'stories-9x16', label: 'Stories 9:16 (1080x1920)' },
-  { value: 'landscape-16x9', label: 'Landscape 16:9 (1920x1080)' },
-  { value: 'display-300x250', label: 'Display 300x250' },
-  { value: 'display-728x90', label: 'Display 728x90' },
+  { value: 'feed-1x1', label: '📐 Feed 1:1 (1080x1080)' },
+  { value: 'feed-4x5', label: '📐 Feed 4:5 (1080x1350)' },
+  { value: 'stories-9x16', label: '📱 Stories 9:16 (1080x1920)' },
+  { value: 'reels-9x16', label: '🎬 Reels 9:16 (1080x1920)' },
+  { value: 'landscape-16x9', label: '🖥️ Landscape 16:9 (1920x1080)' },
+  { value: 'display-300x250', label: '📊 Display 300x250' },
+  { value: 'display-728x90', label: '📊 Display 728x90' },
 ];
 
 const styles = [
@@ -249,6 +286,7 @@ export default function AICreativeStudio() {
         'feed-1x1': '1080x1080',
         'feed-4x5': '1080x1350',
         'stories-9x16': '1080x1920',
+        'reels-9x16': '1080x1920',
         'landscape-16x9': '1920x1080',
         'display-300x250': '300x250',
         'display-728x90': '728x90',
@@ -509,7 +547,7 @@ export default function AICreativeStudio() {
                       {Array.from({ length: variations }).map((_, i) => {
                         const skeletonAspect = format === 'feed-1x1' || format === 'display-300x250' ? 'aspect-square'
                           : format === 'feed-4x5' ? 'aspect-[4/5]'
-                          : format === 'stories-9x16' ? 'aspect-[9/16]'
+                          : format === 'stories-9x16' || format === 'reels-9x16' ? 'aspect-[9/16]'
                           : format === 'landscape-16x9' || format === 'display-728x90' ? 'aspect-video'
                           : 'aspect-square';
                         return <Skeleton key={i} className={`${skeletonAspect} rounded-lg`} />;

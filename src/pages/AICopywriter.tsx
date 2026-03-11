@@ -77,6 +77,17 @@ const objectives = [
   { value: 'leads', label: 'Leads' },
 ];
 
+const mentalTriggers = [
+  { value: 'scarcity', label: '⏰ Escassez', desc: 'Últimas unidades, tempo limitado' },
+  { value: 'social_proof', label: '👥 Prova Social', desc: 'Milhares já usam, depoimentos' },
+  { value: 'authority', label: '🏆 Autoridade', desc: 'Especialistas recomendam, líder do mercado' },
+  { value: 'reciprocity', label: '🎁 Reciprocidade', desc: 'Bônus grátis, materiais extras' },
+  { value: 'curiosity', label: '🔍 Curiosidade', desc: 'Segredos revelados, descubra como' },
+  { value: 'fear_of_loss', label: '😰 Medo de Perder', desc: 'FOMO, oportunidade única' },
+  { value: 'exclusivity', label: '👑 Exclusividade', desc: 'Apenas para membros, acesso VIP' },
+  { value: 'transformation', label: '🔄 Transformação', desc: 'Antes/depois, mudança de vida' },
+];
+
 export default function AICopywriter() {
   const { toast } = useToast();
   const [platform, setPlatform] = useState('meta');
@@ -103,6 +114,7 @@ export default function AICopywriter() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{ title: string; content: string; notes: string }>({ title: '', content: '', notes: '' });
   const [selectedFormula, setSelectedFormula] = useState<string | null>(null);
+  const [selectedTriggers, setSelectedTriggers] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('generate');
   const [showFormulaForm, setShowFormulaForm] = useState(false);
   const [newFormula, setNewFormula] = useState({ name: '', full_name: '', description: '', example: '' });
@@ -201,7 +213,7 @@ Tom: ${tone}
 Objetivo: ${objective}
 Incluir emojis: ${includeEmojis ? 'sim' : 'não'}
 Incluir CTA: ${includeCTA ? 'sim' : 'não'}
-Criatividade: ${creativity[0]}/10${formulaContext ? `\nFórmula de Copy: ${formulaContext.fullName}\nDescrição da fórmula: ${formulaContext.description}\nEstrutura: ${formulaContext.example.replace(/\n/g, ' | ')}` : ''}`;
+Criatividade: ${creativity[0]}/10${selectedTriggers.length > 0 ? `\nGatilhos mentais obrigatórios: ${selectedTriggers.map(t => mentalTriggers.find(mt => mt.value === t)?.label || t).join(', ')}. Use esses gatilhos de forma natural no texto.` : ''}${formulaContext ? `\nFórmula de Copy: ${formulaContext.fullName}\nDescrição da fórmula: ${formulaContext.description}\nEstrutura: ${formulaContext.example.replace(/\n/g, ' | ')}` : ''}`;
 
     // Build swipe file context for the AI
     const swipeFileExamples = swipeFiles
@@ -553,6 +565,37 @@ Retorne APENAS um JSON no formato: {"headline": "...", "description": "...", "ct
                   <div className="flex items-center justify-between">
                     <Label>Incluir CTA</Label>
                     <Switch checked={includeCTA} onCheckedChange={setIncludeCTA} />
+                  </div>
+
+                  {/* Mental Triggers */}
+                  <div className="space-y-2">
+                    <Label>Gatilhos Mentais</Label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {mentalTriggers.map((trigger) => {
+                        const isSelected = selectedTriggers.includes(trigger.value);
+                        return (
+                          <button
+                            key={trigger.value}
+                            onClick={() => setSelectedTriggers(prev =>
+                              isSelected ? prev.filter(t => t !== trigger.value) : [...prev, trigger.value]
+                            )}
+                            className={`rounded-full px-2.5 py-1 text-xs transition-colors border ${
+                              isSelected
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-muted/50 text-muted-foreground border-border/50 hover:border-primary/50 hover:text-foreground'
+                            }`}
+                            title={trigger.desc}
+                          >
+                            {trigger.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {selectedTriggers.length > 0 && (
+                      <p className="text-[10px] text-muted-foreground">
+                        {selectedTriggers.length} gatilho(s) selecionado(s) — serão integrados na copy
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
