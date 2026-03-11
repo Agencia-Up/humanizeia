@@ -268,6 +268,83 @@ export default function ABTestingLab() {
     }
   };
 
+  // Auto-scale/pause logic
+  const autoScaleMutation = useMutation({
+    mutationFn: async ({ testId }: { testId: string }) => {
+      const test = tests?.find((t: any) => t.id === testId);
+      if (!test) throw new Error('Teste não encontrado');
+      const variants = test.ab_test_variants?.filter((v: any) => v.meta_ad_id) || [];
+      if (variants.length < 2) throw new Error('Precisa de pelo menos 2 variantes');
+
+      // Fetch current insights
+      const since = test.start_date || startDate;
+      const until = test.end_date || new Date().toISOString().split('T')[0];
+
+      const results: Record<string, any> = {};
+      await Promise.all(variants.map(async (v: any) => {
+        try {
+          const data = await callMetaApi({
+            endpoint: `${v.meta_ad_id}/insights`,
+            params: {
+              fields: 'impressions,clicks,ctr,cpc,spend,actions',
+              time_range: JSON.stringify({ since, until }),
+            },
+          });
+          results[v.meta_ad_id] = data?.data?.[0] || {};
+        } catch { results[v.meta_ad_id] = {}; }
+      }));
+
+      // Determine winner/loser by CTR (primary) and CPC (secondary)
+      const scored = variants.map((v: any) => {
+        const insight = results[v.meta_ad_id] || {};
+        const ctr = parseFloat(insight.ctr || '0');
+        const cpc = parseFloat(insight.cpc || '999');
+        const impressions = parseInt(insight.impressions || '0', 10);
+        return { ...v, ctr, cpc, impressions, score: ctr * 100 - cpc };
+      }).filter((v: any) => v.impressions > 100); // min impressions threshold
+
+      if (scored.length < 2) throw new Error('Dados insuficientes — aguarde mais impressões');
+
+      scored.sort((a, b) => b.score - a.score);
+      const winner = scored[0];
+      const losers = scored.slice(1);
+
+      const actions: string[] = [];
+
+      // Pause losers with significantly worse performance
+      for (const loser of losers) {
+        if (winner.ctr > 0 && loser.ctr < winner.ctr * 0.7) {
+          // Loser has < 70% of winner's CTR — pause it
+          try {
+            await callMetaApi({ endpoint: loser.meta_ad_id, method: 'POST', body: { status: 'PAUSED' } });
+            actions.push(`⏸️ Pausado: ${loser.name} (CTR ${loser.ctr.toFixed(2)}% vs ${winner.ctr.toFixed(2)}%)`);
+          } catch (err: any) {
+            actions.push(`❌ Erro ao pausar ${loser.name}: ${err.message}`);
+          }
+        }
+      }
+
+      // Declare winner
+      await supabase.from('ab_tests').update({
+        winner_variant_id: winner.id,
+        status: 'winner_selected' as const,
+        learnings: `Vencedor: ${winner.name} (CTR: ${winner.ctr.toFixed(2)}%, CPC: R$${winner.cpc.toFixed(2)})`,
+      }).eq('id', testId);
+
+      return { winner: winner.name, actions };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['ab-tests'] });
+      toast({
+        title: `🏆 Vencedor: ${result.winner}`,
+        description: result.actions.length > 0 ? result.actions.join('\n') : 'Nenhuma ação automática necessária.',
+      });
+    },
+    onError: (err: any) => {
+      toast({ title: 'Erro na auto-otimização', description: err.message, variant: 'destructive' });
+    },
+  });
+
   // Mutations
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: "running" | "paused" | "completed" | "winner_selected" }) => {
