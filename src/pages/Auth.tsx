@@ -251,7 +251,7 @@ export default function Auth() {
               {/* Signup Tab */}
               <TabsContent value="signup" className="mt-0 space-y-4">
                 <CardTitle className="text-lg">Criar sua conta</CardTitle>
-                <CardDescription>Comece a usar o TrafficAI Pro</CardDescription>
+                <CardDescription>Comece a usar o HumanizeAI</CardDescription>
                 <form onSubmit={handleSignup} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="signup-name">Nome completo</Label>

@@ -2,30 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
-/* TrafficAI Pro Design System - Dark Mode First */
+/* HumanizeAI Design System - Dark Mode First */
 
 @layer base {
   :root {
     /* Light mode */
-    --background: 210 20% 98%;
-    --foreground: 222 47% 11%;
+    --background: 160 20% 98%;
+    --foreground: 200 47% 11%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 200 47% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
+    --popover-foreground: 200 47% 11%;
 
-    --primary: 217 91% 60%;
+    --primary: 168 80% 40%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 263 70% 58%;
+    --secondary: 174 62% 47%;
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
+    --muted: 160 30% 96%;
+    --muted-foreground: 170 16% 47%;
 
-    --accent: 263 70% 58%;
+    --accent: 174 62% 47%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
@@ -37,55 +37,55 @@
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 0%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 217 91% 60%;
+    --border: 170 25% 90%;
+    --input: 170 25% 90%;
+    --ring: 168 80% 40%;
 
     --radius: 0.75rem;
 
     /* Gradient colors */
-    --gradient-start: 217 91% 60%;
-    --gradient-end: 263 70% 58%;
+    --gradient-start: 168 80% 40%;
+    --gradient-end: 174 62% 47%;
 
     /* Sidebar */
     --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 222 47% 11%;
-    --sidebar-primary: 217 91% 60%;
+    --sidebar-foreground: 200 47% 11%;
+    --sidebar-primary: 168 80% 40%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 210 40% 96%;
-    --sidebar-accent-foreground: 222 47% 11%;
-    --sidebar-border: 214 32% 91%;
-    --sidebar-ring: 217 91% 60%;
+    --sidebar-accent: 160 30% 96%;
+    --sidebar-accent-foreground: 200 47% 11%;
+    --sidebar-border: 170 25% 90%;
+    --sidebar-ring: 168 80% 40%;
 
     /* Chart colors */
-    --chart-1: 217 91% 60%;
-    --chart-2: 263 70% 58%;
-    --chart-3: 160 84% 39%;
+    --chart-1: 168 80% 40%;
+    --chart-2: 174 62% 47%;
+    --chart-3: 200 70% 50%;
     --chart-4: 38 92% 50%;
     --chart-5: 0 84% 60%;
   }
 
   .dark {
-    /* Dark mode - TrafficAI Pro Theme */
-    --background: 222 47% 6%;
-    --foreground: 210 40% 96%;
+    /* Dark mode - HumanizeAI Theme */
+    --background: 200 40% 6%;
+    --foreground: 160 30% 96%;
 
-    --card: 217 33% 12%;
-    --card-foreground: 210 40% 96%;
+    --card: 195 33% 12%;
+    --card-foreground: 160 30% 96%;
 
-    --popover: 217 33% 12%;
-    --popover-foreground: 210 40% 96%;
+    --popover: 195 33% 12%;
+    --popover-foreground: 160 30% 96%;
 
-    --primary: 217 91% 60%;
+    --primary: 168 80% 40%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 263 70% 58%;
+    --secondary: 174 62% 47%;
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
+    --muted: 195 33% 17%;
+    --muted-foreground: 170 20% 65%;
 
-    --accent: 263 70% 58%;
+    --accent: 174 62% 47%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 63% 31%;
@@ -97,28 +97,28 @@
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 0%;
 
-    --border: 217 33% 21%;
-    --input: 217 33% 17%;
-    --ring: 217 91% 60%;
+    --border: 195 33% 21%;
+    --input: 195 33% 17%;
+    --ring: 168 80% 40%;
 
     /* Gradient colors */
-    --gradient-start: 217 91% 60%;
-    --gradient-end: 263 70% 58%;
+    --gradient-start: 168 80% 40%;
+    --gradient-end: 174 62% 47%;
 
     /* Sidebar */
-    --sidebar-background: 222 47% 6%;
-    --sidebar-foreground: 210 40% 96%;
-    --sidebar-primary: 217 91% 60%;
+    --sidebar-background: 200 40% 6%;
+    --sidebar-foreground: 160 30% 96%;
+    --sidebar-primary: 168 80% 40%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 217 33% 17%;
-    --sidebar-accent-foreground: 210 40% 96%;
-    --sidebar-border: 217 33% 21%;
-    --sidebar-ring: 217 91% 60%;
+    --sidebar-accent: 195 33% 17%;
+    --sidebar-accent-foreground: 160 30% 96%;
+    --sidebar-border: 195 33% 21%;
+    --sidebar-ring: 168 80% 40%;
 
     /* Chart colors */
-    --chart-1: 217 91% 60%;
-    --chart-2: 263 70% 58%;
-    --chart-3: 160 84% 39%;
+    --chart-1: 168 80% 40%;
+    --chart-2: 174 62% 47%;
+    --chart-3: 200 70% 50%;
     --chart-4: 38 92% 50%;
     --chart-5: 0 84% 60%;
   }
