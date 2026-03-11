@@ -76,7 +76,7 @@ export default function MidasAgent() {
     },
     onError: (error) => {
       setStreamingContent('');
-      toast({ title: 'Erro no MIDAS', description: error, variant: 'destructive' });
+      toast({ title: 'Erro no Apollo', description: error, variant: 'destructive' });
     },
   });
 
