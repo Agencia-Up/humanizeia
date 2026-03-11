@@ -5,7 +5,8 @@ import {
   MessageCircle,
   Building2,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  Music2
 } from 'lucide-react';
 import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
@@ -13,6 +14,7 @@ import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
 import { MetaAdsSettingsTab } from '@/components/settings/MetaAdsSettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
+import { TikTokAdsSettingsTab } from '@/components/settings/TikTokAdsSettingsTab';
 
 export default function SettingsPage() {
   return (
@@ -43,6 +45,10 @@ export default function SettingsPage() {
               <span className="text-base">📘</span>
               Meta Ads
             </TabsTrigger>
+            <TabsTrigger value="tiktok-ads" className="gap-2">
+              <Music2 className="h-4 w-4" />
+              TikTok Ads
+            </TabsTrigger>
             <TabsTrigger value="whatsapp" className="gap-2">
               <MessageCircle className="h-4 w-4" />
               WhatsApp
@@ -67,6 +73,10 @@ export default function SettingsPage() {
 
           <TabsContent value="meta-ads">
             <MetaAdsSettingsTab />
+          </TabsContent>
+
+          <TabsContent value="tiktok-ads">
+            <TikTokAdsSettingsTab />
           </TabsContent>
 
           <TabsContent value="whatsapp">

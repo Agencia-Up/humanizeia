@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Plus, Clock, Send, Eye, Trash2, History, CheckCircle, XCircle, Settings2, AlertTriangle, Plug } from 'lucide-react';
+import { FileText, Plus, Clock, Send, Eye, Trash2, History, CheckCircle, XCircle, Settings2, AlertTriangle, Plug, Download, Palette } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
@@ -241,9 +241,10 @@ export default function Reports() {
         )}
 
         <Tabs defaultValue="templates">
-          <TabsList>
+          <TabsList className="flex-wrap">
             <TabsTrigger value="templates"><Settings2 className="mr-1.5 h-4 w-4" /> Templates</TabsTrigger>
             <TabsTrigger value="agendamento"><Clock className="mr-1.5 h-4 w-4" /> Agendamento</TabsTrigger>
+            <TabsTrigger value="pdf"><Download className="mr-1.5 h-4 w-4" /> PDF / Branding</TabsTrigger>
             <TabsTrigger value="historico"><History className="mr-1.5 h-4 w-4" /> Histórico</TabsTrigger>
           </TabsList>
 
@@ -320,6 +321,111 @@ export default function Reports() {
                 ))}
               </div>
             )}
+          </TabsContent>
+
+          {/* ── Tab: PDF / Branding ── */}
+          <TabsContent value="pdf" className="space-y-6">
+            <div className="grid gap-6 md:grid-cols-2">
+              <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Palette className="h-5 w-5 text-primary" />
+                    Branding do PDF
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label>Nome da Empresa</Label>
+                    <Input placeholder="Minha Agência" />
+                  </div>
+                  <div>
+                    <Label>URL do Logo (para cabeçalho do PDF)</Label>
+                    <Input placeholder="https://example.com/logo.png" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label>Cor Primária</Label>
+                      <div className="flex gap-2 items-center mt-1">
+                        <input type="color" defaultValue="#06b6d4" className="h-8 w-8 rounded cursor-pointer border-0" />
+                        <Input defaultValue="#06b6d4" className="font-mono text-xs" />
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Cor Secundária</Label>
+                      <div className="flex gap-2 items-center mt-1">
+                        <input type="color" defaultValue="#f97316" className="h-8 w-8 rounded cursor-pointer border-0" />
+                        <Input defaultValue="#f97316" className="font-mono text-xs" />
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <Label>Texto de Rodapé</Label>
+                    <Input placeholder="Relatório gerado por MIDAS AI" defaultValue="Relatório gerado por MIDAS AI" />
+                  </div>
+                  <Button className="w-full gap-2">
+                    <CheckCircle className="h-4 w-4" />
+                    Salvar Branding
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Download className="h-5 w-5 text-primary" />
+                    Gerar PDF Manual
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Selecione um template e gere um PDF com suas métricas atuais, pronto para download ou envio.
+                  </p>
+                  {templates.length === 0 ? (
+                    <p className="text-sm text-muted-foreground italic">Crie um template primeiro.</p>
+                  ) : (
+                    <>
+                      <div>
+                        <Label>Template</Label>
+                        <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm mt-1">
+                          {templates.map((t: any) => (
+                            <option key={t.id} value={t.id}>{t.nome}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button variant="outline" className="gap-2">
+                          <Eye className="h-4 w-4" />
+                          Preview
+                        </Button>
+                        <Button className="gap-2">
+                          <Download className="h-4 w-4" />
+                          Baixar PDF
+                        </Button>
+                      </div>
+                    </>
+                  )}
+
+                  <div className="pt-4 border-t border-border/50">
+                    <h4 className="text-sm font-medium mb-2">Formatos de Agendamento</h4>
+                    <div className="space-y-2">
+                      {[
+                        { label: 'Diário', desc: 'Enviado todo dia no horário configurado', badge: '📅' },
+                        { label: 'Semanal', desc: 'Enviado na segunda-feira com resumo da semana', badge: '📊' },
+                        { label: 'Mensal', desc: 'Enviado no 1º dia do mês com overview completo', badge: '📈' },
+                      ].map(f => (
+                        <div key={f.label} className="flex items-center gap-3 rounded-lg border border-border/40 p-3 bg-muted/20">
+                          <span className="text-lg">{f.badge}</span>
+                          <div>
+                            <p className="text-sm font-medium">{f.label}</p>
+                            <p className="text-xs text-muted-foreground">{f.desc}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           {/* ── Tab: Histórico ── */}
