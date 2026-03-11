@@ -20,6 +20,10 @@ export default function Onboarding() {
   const [isLoading, setIsLoading] = useState(false);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
 
+  if (!user) {
+    return <Navigate to="/auth" replace />;
+  }
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!orgName.trim()) {
