@@ -38,7 +38,7 @@ const friendlyLabelMap: Record<string, string> = {
 };
 
 // For CPC, CPM, Frequency — lower is better (down = green)
-const lowerIsBetter = new Set(['cpc', 'cpm', 'frequencia']);
+const lowerIsBetter = new Set(['cpc', 'cpm', 'cpa']);
 
 interface DashboardKPICardProps {
   kpi: DashboardKPI;
