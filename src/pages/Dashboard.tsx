@@ -40,6 +40,7 @@ export default function Dashboard() {
   const {
     isConnected, isLoading, kpis, trendData, campaignData,
     dailySpendData, bestCreatives, worstCreatives, performanceSummary,
+    anomalies,
     isTrendLoading, isCampaignLoading, isAdLoading, isSpendLoading,
     isRefreshing, lastUpdated, refreshAll,
   } = useMetaDashboard(dateRange);
