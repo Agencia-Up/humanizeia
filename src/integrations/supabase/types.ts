@@ -1842,6 +1842,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_organization_with_owner: {
+        Args: { org_name: string }
+        Returns: {
+          created_at: string
+          created_by: string
+          id: string
+          name: string
+          slug: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organizations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       get_user_email: { Args: { _user_id: string }; Returns: string }
       is_org_member: {
         Args: { _organization_id: string; _user_id: string }
