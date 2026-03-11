@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { DashboardKPICard } from '@/components/dashboard/DashboardKPICard';
@@ -14,6 +14,7 @@ import { AIInsightsCard } from '@/components/dashboard/AIInsightsCard';
 import { AnomalyAlertsWidget } from '@/components/dashboard/AnomalyAlertsWidget';
 import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
 import { useMetaDashboard, MetaDatePreset } from '@/hooks/useMetaDashboard';
+import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
 import { useAuth } from '@/hooks/useAuth';
 import { Sparkles, MessageCircle, Loader2, Plug, ShieldCheck, BarChart3, TrendingUp, ArrowRight } from 'lucide-react';
 import { MetaRefreshIndicator } from '@/components/dashboard/MetaRefreshIndicator';
@@ -39,6 +40,15 @@ export default function Dashboard() {
     isTrendLoading, isCampaignLoading, isAdLoading, isSpendLoading,
     isRefreshing, lastUpdated, refreshAll,
   } = useMetaDashboard(dateRange);
+
+  const { processAnomalies } = useCampaignNotifications();
+
+  // Trigger toast notifications when anomalies are detected
+  useEffect(() => {
+    if (anomalies.length > 0) {
+      processAnomalies(anomalies);
+    }
+  }, [anomalies, processAnomalies]);
 
   const handleSendWhatsApp = async () => {
     setIsSending(true);

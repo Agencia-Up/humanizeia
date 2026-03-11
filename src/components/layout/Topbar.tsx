@@ -1,4 +1,4 @@
-import { Bell, Search, Moon, Sun, Menu, Sparkles, LogOut } from 'lucide-react';
+import { Bell, Search, Moon, Sun, Menu, Sparkles, LogOut, CheckCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -10,29 +10,13 @@ import { Badge } from '@/components/ui/badge';
 import { useAppStore } from '@/store/appStore';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
-import { useQuery } from '@tanstack/react-query';
+import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
 
 export function Topbar() {
   const navigate = useNavigate();
   const { isDarkMode, toggleDarkMode, user } = useAppStore();
   const { signOut, user: authUser } = useAuth();
-
-  const { data: notifications } = useQuery({
-    queryKey: ['notifications', authUser?.id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(10);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!authUser,
-  });
-
-  const unreadCount = notifications?.filter((n: any) => !n.is_read).length || 0;
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useCampaignNotifications();
 
   const handleSignOut = async () => {
     await signOut();
@@ -69,11 +53,23 @@ export function Topbar() {
           <DropdownMenuContent align="end" className="w-80">
             <DropdownMenuLabel className="flex items-center justify-between">
               Notificações
-              <Badge variant="secondary" className="text-xs">{unreadCount} novas</Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="text-xs">{unreadCount} novas</Badge>
+                {unreadCount > 0 && (
+                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-muted-foreground" onClick={markAllAsRead}>
+                    <CheckCheck className="mr-1 h-3 w-3" />
+                    Ler todas
+                  </Button>
+                )}
+              </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {notifications?.length ? notifications.map((n: any) => (
-              <DropdownMenuItem key={n.id} className="flex flex-col items-start gap-1 p-3">
+            {notifications?.length ? notifications.slice(0, 10).map((n: any) => (
+              <DropdownMenuItem 
+                key={n.id} 
+                className="flex flex-col items-start gap-1 p-3 cursor-pointer"
+                onClick={() => !n.is_read && markAsRead(n.id)}
+              >
                 <div className="flex items-center gap-2">
                   {!n.is_read && <div className="h-2 w-2 rounded-full bg-primary" />}
                   <span className="font-medium">{n.title}</span>

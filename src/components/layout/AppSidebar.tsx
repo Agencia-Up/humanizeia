@@ -28,7 +28,9 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
 import { useAuth } from '@/hooks/useAuth';
+import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
 import { NavLink } from '@/components/NavLink';
+import { Badge } from '@/components/ui/badge';
 import {
   Sidebar,
   SidebarContent,
@@ -73,13 +75,15 @@ const learnItems = [
   { title: 'Configurações', url: '/settings', icon: Settings },
 ];
 
-type NavItem = { title: string; url: string; icon: React.ComponentType<{ className?: string }> };
+type NavItem = { title: string; url: string; icon: React.ComponentType<{ className?: string }>; badge?: number };
 
 function NavGroup({ 
   label, items, collapsed, isOpen, onToggle, triggerIcon: TriggerIcon 
 }: { 
   label: string; items: NavItem[]; collapsed?: boolean; isOpen?: boolean; onToggle?: () => void; triggerIcon: React.ComponentType<{ className?: string }>;
 }) {
+  const groupBadge = items.reduce((sum, item) => sum + (item.badge || 0), 0);
+
   if (collapsed) {
     return (
       <Collapsible open={isOpen} onOpenChange={onToggle}>
@@ -87,8 +91,13 @@ function NavGroup({
           <SidebarMenu>
             <SidebarMenuItem>
               <CollapsibleTrigger asChild>
-                <SidebarMenuButton tooltip={label} className="text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+                <SidebarMenuButton tooltip={label} className="relative text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
                   <TriggerIcon className="h-4 w-4" />
+                  {groupBadge > 0 && (
+                    <Badge className="absolute -right-1 -top-1 h-4 w-4 rounded-full p-0 text-[9px] gradient-primary border-0 flex items-center justify-center">
+                      {groupBadge}
+                    </Badge>
+                  )}
                 </SidebarMenuButton>
               </CollapsibleTrigger>
             </SidebarMenuItem>
@@ -99,10 +108,15 @@ function NavGroup({
                     <NavLink
                       to={item.url}
                       end={item.url === '/'}
-                      className="text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
+                      className="relative text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
                       activeClassName="bg-primary/10 text-primary font-medium"
                     >
                       <item.icon className="h-4 w-4" />
+                      {(item.badge || 0) > 0 && (
+                        <Badge className="absolute -right-1 -top-1 h-4 w-4 rounded-full p-0 text-[9px] gradient-primary border-0 flex items-center justify-center">
+                          {item.badge}
+                        </Badge>
+                      )}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -131,7 +145,12 @@ function NavGroup({
                   activeClassName="bg-primary/10 text-primary font-medium"
                 >
                   <item.icon className="h-4 w-4" />
-                  <span>{item.title}</span>
+                  <span className="flex-1">{item.title}</span>
+                  {(item.badge || 0) > 0 && (
+                    <Badge className="ml-auto h-5 min-w-5 rounded-full px-1.5 text-[10px] gradient-primary border-0 flex items-center justify-center text-primary-foreground">
+                      {item.badge}
+                    </Badge>
+                  )}
                 </NavLink>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -145,6 +164,7 @@ function NavGroup({
 export function AppSidebar() {
   const { isDarkMode, toggleDarkMode, openSidebarGroups, toggleSidebarGroup } = useAppStore();
   const { signOut } = useAuth();
+  const { unreadCount } = useCampaignNotifications();
   const navigate = useNavigate();
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === 'collapsed';
@@ -154,8 +174,14 @@ export function AppSidebar() {
     navigate('/auth');
   };
 
+  // Inject badges into nav items
+  const mainWithBadges = mainNavItems.map((item) => ({
+    ...item,
+    badge: item.url === '/' ? unreadCount : 0,
+  }));
+
   const groups = [
-    { label: 'Principal', items: mainNavItems, triggerIcon: Sparkles },
+    { label: 'Principal', items: mainWithBadges, triggerIcon: Sparkles },
     { label: 'Otimização', items: optimizationItems, triggerIcon: Zap },
     { label: 'Automação', items: automationItems, triggerIcon: Cog },
     { label: 'Biblioteca', items: libraryItems, triggerIcon: Library },
