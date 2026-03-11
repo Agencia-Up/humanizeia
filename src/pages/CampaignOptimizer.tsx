@@ -34,11 +34,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useMetaCampaigns } from '@/hooks/useMetaCampaigns';
 import { useMetaInsights } from '@/hooks/useMetaInsights';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
+import { useMetaApi } from '@/hooks/useMetaApi';
 import { useGoogleAdsConnection } from '@/hooks/useGoogleAdsConnection';
 import { useClaudeChat } from '@/hooks/useClaudeChat';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
+import { MidasActionList, type MidasAction } from '@/components/optimizer/MidasActionCard';
 
 // ── Helpers ──────────────────────────────────────────────
 
