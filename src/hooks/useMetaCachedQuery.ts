@@ -111,6 +111,16 @@ export function useMetaCachedQuery<T = any>(
     }
   }, [enabled, user, fetchFresh]);
 
+  // Polling: auto-refresh at configurable interval
+  useEffect(() => {
+    if (!pollingEnabled || !enabled || !user || pollingIntervalMinutes <= 0) return;
+    const intervalMs = pollingIntervalMinutes * 60 * 1000;
+    const timer = setInterval(() => {
+      fetchFresh();
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [pollingEnabled, enabled, user, pollingIntervalMinutes, fetchFresh]);
+
   const cachedData = cacheQuery.data?.data as T | undefined;
   const cachedUpdatedAt = cacheQuery.data?.updated_at
     ? new Date(cacheQuery.data.updated_at)
