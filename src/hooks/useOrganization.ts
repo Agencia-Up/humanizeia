@@ -73,6 +73,20 @@ export function useOrganization() {
     const currentUser = session?.user ?? user;
     if (!currentUser) return { error: new Error('Not authenticated') };
 
+    // Step 1: Ensure profile exists FIRST (may not exist if trigger failed)
+    const { error: profileEnsureError } = await supabase
+      .from('profiles')
+      .upsert(
+        { id: currentUser.id, full_name: currentUser.user_metadata?.full_name || null },
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+
+    if (profileEnsureError) {
+      console.error('Step 1 - Profile ensure error:', profileEnsureError);
+      return { error: profileEnsureError };
+    }
+
+    // Step 2: Create organization
     const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const suffix = Math.random().toString(36).substring(2, 6);
     const slug = `${base}-${suffix}`;
@@ -83,9 +97,12 @@ export function useOrganization() {
       .select()
       .single();
 
-    if (orgError) return { error: orgError };
+    if (orgError) {
+      console.error('Step 2 - Org creation error:', orgError);
+      return { error: orgError };
+    }
 
-    // Add creator as owner
+    // Step 3: Add creator as owner member
     const { error: memberError } = await supabase
       .from('organization_members')
       .insert({
@@ -94,18 +111,19 @@ export function useOrganization() {
         role: 'owner' as any,
       });
 
-    if (memberError) return { error: memberError };
+    if (memberError) {
+      console.error('Step 3 - Member insert error:', memberError);
+      return { error: memberError };
+    }
 
-    // Ensure profile exists and update organization_id
-    const { error: profileError } = await supabase
+    // Step 4: Update profile with organization_id
+    const { error: profileUpdateError } = await supabase
       .from('profiles')
-      .upsert(
-        { id: currentUser.id, organization_id: org.id },
-        { onConflict: 'id' }
-      );
+      .update({ organization_id: org.id })
+      .eq('id', currentUser.id);
 
-    if (profileError) {
-      console.error('Profile update error:', profileError);
+    if (profileUpdateError) {
+      console.error('Step 4 - Profile update error:', profileUpdateError);
     }
 
     setOrganization(org);
