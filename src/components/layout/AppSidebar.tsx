@@ -28,7 +28,9 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
 import { useAuth } from '@/hooks/useAuth';
+import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
 import { NavLink } from '@/components/NavLink';
+import { Badge } from '@/components/ui/badge';
 import {
   Sidebar,
   SidebarContent,
