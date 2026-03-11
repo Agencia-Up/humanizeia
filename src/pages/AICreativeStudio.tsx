@@ -551,6 +551,9 @@ export default function AICreativeStudio() {
                             <Button size="icon" variant="secondary" title="Remover Fundo" onClick={(e) => { e.stopPropagation(); handleSendToRemoveBg(image); }}>
                               <Eraser className="h-4 w-4" />
                             </Button>
+                            <Button size="icon" variant="secondary" title="Gerar Copy" onClick={(e) => { e.stopPropagation(); handleGenerateCopy(image); }}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
                           </div>
                           <Badge className="absolute left-2 top-2 bg-black/50">
                             #{index + 1}
