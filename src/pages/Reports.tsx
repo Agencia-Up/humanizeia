@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Plus, Clock, Send, Eye, Trash2, History, CheckCircle, XCircle, Settings2, AlertTriangle, Plug } from 'lucide-react';
+import { FileText, Plus, Clock, Send, Eye, Trash2, History, CheckCircle, XCircle, Settings2, AlertTriangle, Plug, Download, Palette } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
