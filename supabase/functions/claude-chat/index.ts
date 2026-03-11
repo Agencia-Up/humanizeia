@@ -235,7 +235,7 @@ Quando o usuário enviar dados no formato estruturado com tags [DADOS DE PERFORM
    - Alerta antecipado de problemas
 
 6. **FORMATO DA RESPOSTA para dados estruturados**: Use sempre o formato abaixo:
-   ## 📊 RELATÓRIO SALA DE GUERRA MIDAS
+   ## 📊 RELATÓRIO SALA DE GUERRA APOLLO
    **Status Geral: [🔴/🟡/🟢] [CLASSIFICAÇÃO]**
    ### Análise de Métricas (tabela com métrica, valor, benchmark, semáforo)
    ### Diagnóstico (o que está acontecendo e por quê)
