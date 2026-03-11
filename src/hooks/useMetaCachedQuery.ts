@@ -2,12 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useAppStore } from '@/store/appStore';
 
 interface UseMetaCachedQueryOptions<T> {
   cacheKey: string;
   fetchFn: () => Promise<T>;
   enabled?: boolean;
   alwaysReadCache?: boolean;
+  pollingEnabled?: boolean;
 }
 
 interface MetaCachedResult<T> {
