@@ -223,7 +223,11 @@ export function ConnectionsTab() {
         await meta.startOAuth();
         break;
       case 'google_ads':
-        await google.startOAuth();
+        try {
+          await google.startOAuth();
+        } catch (err: any) {
+          // Error is already handled by the hook's toast
+        }
         break;
       case 'tiktok':
         setTiktokLoading(true);
