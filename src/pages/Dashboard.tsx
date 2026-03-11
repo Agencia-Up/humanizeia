@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { DashboardKPICard } from '@/components/dashboard/DashboardKPICard';
 import { TrendChart } from '@/components/dashboard/TrendChart';
@@ -13,14 +14,14 @@ import { AIInsightsCard } from '@/components/dashboard/AIInsightsCard';
 import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
 import { useMetaDashboard, MetaDatePreset } from '@/hooks/useMetaDashboard';
 import { useAuth } from '@/hooks/useAuth';
-import { Sparkles, MessageCircle, Loader2, LinkIcon } from 'lucide-react';
+import { Sparkles, MessageCircle, Loader2, Plug, ShieldCheck, BarChart3, TrendingUp, ArrowRight } from 'lucide-react';
 import { MetaRefreshIndicator } from '@/components/dashboard/MetaRefreshIndicator';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Card, CardContent } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { useNavigate } from 'react-router-dom';
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -70,18 +71,84 @@ export default function Dashboard() {
     }
   };
 
+  // Empty State
   if (!isConnected && !isLoading) {
     return (
       <MainLayout>
-        <div className="flex flex-col items-center justify-center gap-4 py-20">
-          <LinkIcon className="h-12 w-12 text-muted-foreground" />
-          <h2 className="text-xl font-semibold">Conecte seu Meta Ads</h2>
-          <p className="text-muted-foreground text-center max-w-md">
-            Para ver seus dados reais, conecte sua conta do Meta Ads nas configurações.
-          </p>
-          <Button onClick={() => navigate('/settings')} className="gradient-primary">
-            Ir para Configurações
-          </Button>
+        <div className="flex flex-1 items-center justify-center py-10">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-lg"
+          >
+            <Card className="border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden">
+              {/* Decorative top gradient */}
+              <div className="h-2 w-full gradient-primary" />
+              <CardContent className="flex flex-col items-center gap-6 p-8 text-center">
+                {/* Illustration */}
+                <div className="relative">
+                  <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-primary/10">
+                    <BarChart3 className="h-12 w-12 text-primary" />
+                  </div>
+                  <motion.div
+                    animate={{ y: [0, -5, 0] }}
+                    transition={{ repeat: Infinity, duration: 2 }}
+                    className="absolute -right-2 -top-2 flex h-10 w-10 items-center justify-center rounded-full bg-warning/20"
+                  >
+                    <TrendingUp className="h-5 w-5 text-warning" />
+                  </motion.div>
+                </div>
+
+                <div className="space-y-2">
+                  <h2 className="text-2xl font-bold text-foreground">
+                    Seus dados estão esperando! 📊
+                  </h2>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Conecte sua conta de anúncios para ver seus resultados em tempo real, 
+                    com gráficos, métricas e dicas da nossa IA.
+                  </p>
+                </div>
+
+                {/* Benefits */}
+                <div className="w-full space-y-2">
+                  {[
+                    { icon: BarChart3, text: 'Métricas atualizadas automaticamente' },
+                    { icon: Sparkles, text: 'Insights inteligentes com IA' },
+                    { icon: ShieldCheck, text: 'Seus dados 100% seguros' },
+                  ].map((item, i) => (
+                    <div key={i} className="flex items-center gap-3 rounded-lg bg-muted/50 p-3 text-left">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                        <item.icon className="h-4 w-4 text-primary" />
+                      </div>
+                      <span className="text-sm text-foreground">{item.text}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex w-full flex-col gap-2 sm:flex-row">
+                  <Button
+                    onClick={() => navigate('/connect-accounts')}
+                    className="flex-1 gradient-primary text-primary-foreground h-12 text-base"
+                  >
+                    <Plug className="mr-2 h-5 w-5" />
+                    Conectar minha conta
+                  </Button>
+                  <Button
+                    onClick={() => navigate('/settings')}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    Configurações
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  ✦ Leva menos de 2 minutos para configurar ✦
+                </p>
+              </CardContent>
+            </Card>
+          </motion.div>
         </div>
       </MainLayout>
     );
@@ -104,7 +171,7 @@ export default function Dashboard() {
             <h1 className="text-2xl font-bold lg:text-3xl">Olá, {firstName}! 👋</h1>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Sparkles className="h-4 w-4 text-primary" />
-              <span>Dashboard de Performance — Meta Ads</span>
+              <span>Painel de Performance — seus anúncios em tempo real</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -122,10 +189,12 @@ export default function Dashboard() {
           </div>
         </motion.div>
 
-        {/* KPI Cards — 8 cards in responsive grid */}
+        {/* KPI Cards */}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8">
           {isLoading ? (
-            Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-lg" />)
+            Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-[100px] rounded-lg" />
+            ))
           ) : (
             kpis.map((kpi, index) => <DashboardKPICard key={kpi.id} kpi={kpi} index={index} />)
           )}
@@ -136,7 +205,7 @@ export default function Dashboard() {
           <PerformanceSummary {...performanceSummary} />
         )}
 
-        {/* Trend Chart — full width */}
+        {/* Trend Chart */}
         <TrendChart data={trendData} isLoading={isTrendLoading} />
 
         {/* 2-column grid: Donut + Efficiency Scatter */}
@@ -151,7 +220,7 @@ export default function Dashboard() {
           <AIInsightsCard insights={defaultInsights} />
         </div>
 
-        {/* Campaign Table — full width */}
+        {/* Campaign Table */}
         <FunnelTable data={campaignData} isLoading={isCampaignLoading} />
 
         {/* Daily Spend + Creative Alerts */}
