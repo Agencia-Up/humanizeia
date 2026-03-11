@@ -147,7 +147,7 @@ export default function MidasAgent() {
   const sendReportToWhatsApp = async () => {
     const lastReport = getLastAssistantMessage();
     if (!lastReport) {
-      toast({ title: 'Nenhum relatório para enviar', description: 'Peça ao MIDAS gerar um relatório primeiro.', variant: 'destructive' });
+      toast({ title: 'Nenhum relatório para enviar', description: 'Peça ao Apollo gerar um relatório primeiro.', variant: 'destructive' });
       return;
     }
 
