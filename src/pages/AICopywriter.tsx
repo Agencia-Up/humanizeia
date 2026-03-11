@@ -598,6 +598,8 @@ Retorne APENAS um JSON no formato: {"headline": "...", "description": "...", "ct
                     )}
                   </div>
 
+                  <div className="space-y-2">
+                    <Label>Fórmula de Copy</Label>
                     <Select
                       value={selectedFormula || 'none'}
                       onValueChange={(v) => setSelectedFormula(v === 'none' ? null : v)}
