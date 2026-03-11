@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Sparkles, ArrowLeft, ArrowRight, Plug, ShieldCheck, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,19 +9,44 @@ import { AccountSelector } from '@/components/onboarding/AccountSelector';
 import { SuccessAnimation } from '@/components/onboarding/SuccessAnimation';
 import { HelpTooltip } from '@/components/onboarding/HelpTooltip';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
+import { useGoogleAdsConnection } from '@/hooks/useGoogleAdsConnection';
 import { useToast } from '@/hooks/use-toast';
 
 const STEPS = ['Boas-vindas', 'Conectar', 'Conta de Anúncios', 'Pronto!'];
 
 export default function ConnectAccounts() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const meta = useMetaConnection();
+  const google = useGoogleAdsConnection();
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [activePlatform, setActivePlatform] = useState<'meta' | 'google' | null>(null);
+
+  // Handle OAuth callbacks
+  useEffect(() => {
+    const metaCode = searchParams.get('code');
+    const isMetaCallback = searchParams.get('meta_callback');
+    const isGoogleCallback = searchParams.get('google_callback');
+
+    if (metaCode && isMetaCallback) {
+      setActivePlatform('meta');
+      meta.handleCallback(metaCode);
+    } else if (metaCode && isGoogleCallback) {
+      setActivePlatform('google');
+      google.handleCallback(metaCode);
+    }
+  }, [searchParams]);
 
   const handleMetaConnect = async () => {
+    setActivePlatform('meta');
     await meta.startOAuth();
+  };
+
+  const handleGoogleConnect = async () => {
+    setActivePlatform('google');
+    await google.startOAuth();
   };
 
   const handleSelectAccount = (account: any) => {
@@ -29,10 +54,18 @@ export default function ConnectAccounts() {
   };
 
   const handleConfirmAccount = async () => {
-    const selected = meta.availableAccounts.find((a) => a.id === selectedAccountId);
-    if (selected) {
-      await meta.selectAccount(selected);
-      setCurrentStep(3);
+    if (activePlatform === 'meta') {
+      const selected = meta.availableAccounts.find((a) => a.id === selectedAccountId);
+      if (selected) {
+        await meta.selectAccount(selected);
+        setCurrentStep(3);
+      }
+    } else if (activePlatform === 'google') {
+      const selected = google.availableAccounts.find((a) => a.id === selectedAccountId);
+      if (selected) {
+        await google.selectAccount(selected);
+        setCurrentStep(3);
+      }
     }
   };
 
@@ -42,7 +75,22 @@ export default function ConnectAccounts() {
       ? 'connecting'
       : 'disconnected';
 
-  const canProceedFromConnect = metaStatus === 'connected' || meta.availableAccounts.length > 0;
+  const googleStatus = google.connectedAccount
+    ? 'connected'
+    : google.isConnecting
+      ? 'connecting'
+      : 'disconnected';
+
+  const anyConnected = metaStatus === 'connected' || googleStatus === 'connected';
+  const anyAccountsAvailable = meta.availableAccounts.length > 0 || google.availableAccounts.length > 0;
+  const canProceedFromConnect = anyConnected || anyAccountsAvailable;
+
+  // Get active accounts list for selection step
+  const activeAccounts = activePlatform === 'google'
+    ? google.availableAccounts.map(a => ({ ...a, timezone_name: a.timezone, account_status: 1 }))
+    : meta.availableAccounts;
+
+  const activeConnected = activePlatform === 'google' ? google.connectedAccount : meta.connectedAccount;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -115,14 +163,8 @@ export default function ConnectAccounts() {
                 />
                 <OAuthButton
                   platform="google"
-                  status="disconnected"
-                  onClick={() =>
-                    toast({
-                      title: 'Em breve! 🔜',
-                      description: 'Google Ads estará disponível em breve.',
-                    })
-                  }
-                  disabled
+                  status={googleStatus}
+                  onClick={handleGoogleConnect}
                 />
 
                 <div className="flex items-center gap-2 rounded-lg bg-muted/30 p-3 text-xs text-muted-foreground">
@@ -173,15 +215,15 @@ export default function ConnectAccounts() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {meta.connectedAccount ? (
+                {activeConnected ? (
                   <div className="flex flex-col items-center gap-3 rounded-xl border border-success/30 bg-success/10 p-6 text-center">
                     <span className="text-3xl">✅</span>
-                    <p className="font-medium text-foreground">{meta.connectedAccount.account_name}</p>
+                    <p className="font-medium text-foreground">{activeConnected.account_name}</p>
                     <p className="text-xs text-muted-foreground">Conta já conectada e pronta!</p>
                   </div>
                 ) : (
                   <AccountSelector
-                    accounts={meta.availableAccounts}
+                    accounts={activeAccounts}
                     selectedId={selectedAccountId}
                     onSelect={handleSelectAccount}
                     emptyMessage="Nenhuma conta encontrada. Volte e conecte sua plataforma primeiro."
@@ -194,8 +236,8 @@ export default function ConnectAccounts() {
                     Voltar
                   </Button>
                   <Button
-                    onClick={meta.connectedAccount ? () => setCurrentStep(3) : handleConfirmAccount}
-                    disabled={!meta.connectedAccount && !selectedAccountId}
+                    onClick={activeConnected ? () => setCurrentStep(3) : handleConfirmAccount}
+                    disabled={!activeConnected && !selectedAccountId}
                     className="flex-1 gradient-primary text-primary-foreground"
                   >
                     Continuar
