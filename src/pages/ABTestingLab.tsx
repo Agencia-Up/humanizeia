@@ -717,6 +717,18 @@ Formate em Markdown com headers e emojis.`;
                         >
                           <Brain className="mr-1 h-3 w-3" /> Analisar com IA
                         </Button>
+                        {test.status === 'running' && hasMetaAds && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => autoScaleMutation.mutate({ testId: test.id })}
+                            disabled={autoScaleMutation.isPending}
+                            className="text-xs gradient-primary text-primary-foreground"
+                          >
+                            {autoScaleMutation.isPending ? <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> : <TrendingUp className="mr-1 h-3 w-3" />}
+                            Auto Escalar/Pausar
+                          </Button>
+                        )}
                         {test.status === 'running' && variants.length > 0 && (
                           <Select onValueChange={(variantId) => declareWinnerMutation.mutate({ testId: test.id, variantId })}>
                             <SelectTrigger className="h-8 w-auto gap-1 text-xs">
