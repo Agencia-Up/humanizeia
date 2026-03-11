@@ -547,7 +547,7 @@ export default function AICreativeStudio() {
                       {Array.from({ length: variations }).map((_, i) => {
                         const skeletonAspect = format === 'feed-1x1' || format === 'display-300x250' ? 'aspect-square'
                           : format === 'feed-4x5' ? 'aspect-[4/5]'
-                          : format === 'stories-9x16' ? 'aspect-[9/16]'
+                          : format === 'stories-9x16' || format === 'reels-9x16' ? 'aspect-[9/16]'
                           : format === 'landscape-16x9' || format === 'display-728x90' ? 'aspect-video'
                           : 'aspect-square';
                         return <Skeleton key={i} className={`${skeletonAspect} rounded-lg`} />;
