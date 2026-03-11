@@ -114,6 +114,7 @@ export default function AICopywriter() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{ title: string; content: string; notes: string }>({ title: '', content: '', notes: '' });
   const [selectedFormula, setSelectedFormula] = useState<string | null>(null);
+  const [selectedTriggers, setSelectedTriggers] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('generate');
   const [showFormulaForm, setShowFormulaForm] = useState(false);
   const [newFormula, setNewFormula] = useState({ name: '', full_name: '', description: '', example: '' });
