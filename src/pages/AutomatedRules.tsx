@@ -423,9 +423,11 @@ export default function AutomatedRules() {
     const results: EvaluationResult[] = [];
 
     for (const rule of activeRules) {
-      const conditions: Condition[] = Array.isArray(rule.conditions) ? rule.conditions : [];
+      const rawConditions = Array.isArray(rule.conditions) ? rule.conditions : [];
+      const conditions: Condition[] = rawConditions.map((c: any) => ({ metric: c.metric, operator: c.operator, value: c.value, period: c.period }));
       const logic = rule.condition_logic || 'AND';
-      const isSimulation = rule.action_config?.simulationMode === true;
+      const actionConfig = rule.action_config as Record<string, any> | null;
+      const isSimulation = actionConfig?.simulationMode === true;
       const affectedCampaigns: string[] = [];
 
       // Evaluate against each campaign
