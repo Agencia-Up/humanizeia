@@ -1,4 +1,4 @@
-import { Bell, Search, Moon, Sun, Menu, Sparkles, LogOut } from 'lucide-react';
+import { Bell, Search, Moon, Sun, Menu, Sparkles, LogOut, CheckCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -10,29 +10,13 @@ import { Badge } from '@/components/ui/badge';
 import { useAppStore } from '@/store/appStore';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
-import { useQuery } from '@tanstack/react-query';
+import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
 
 export function Topbar() {
   const navigate = useNavigate();
   const { isDarkMode, toggleDarkMode, user } = useAppStore();
   const { signOut, user: authUser } = useAuth();
-
-  const { data: notifications } = useQuery({
-    queryKey: ['notifications', authUser?.id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(10);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!authUser,
-  });
-
-  const unreadCount = notifications?.filter((n: any) => !n.is_read).length || 0;
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useCampaignNotifications();
 
   const handleSignOut = async () => {
     await signOut();
