@@ -35,6 +35,10 @@ interface AppState {
     google: boolean;
   };
   setConnectedAccount: (platform: 'meta' | 'google', connected: boolean) => void;
+
+  // Polling interval (minutes)
+  pollingIntervalMinutes: number;
+  setPollingIntervalMinutes: (minutes: number) => void;
 }
 
 export const useAppStore = create<AppState>()(
