@@ -164,6 +164,7 @@ function NavGroup({
 export function AppSidebar() {
   const { isDarkMode, toggleDarkMode, openSidebarGroups, toggleSidebarGroup } = useAppStore();
   const { signOut } = useAuth();
+  const { unreadCount } = useCampaignNotifications();
   const navigate = useNavigate();
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === 'collapsed';
@@ -173,8 +174,14 @@ export function AppSidebar() {
     navigate('/auth');
   };
 
+  // Inject badges into nav items
+  const mainWithBadges = mainNavItems.map((item) => ({
+    ...item,
+    badge: item.url === '/' ? unreadCount : 0,
+  }));
+
   const groups = [
-    { label: 'Principal', items: mainNavItems, triggerIcon: Sparkles },
+    { label: 'Principal', items: mainWithBadges, triggerIcon: Sparkles },
     { label: 'Otimização', items: optimizationItems, triggerIcon: Zap },
     { label: 'Automação', items: automationItems, triggerIcon: Cog },
     { label: 'Biblioteca', items: libraryItems, triggerIcon: Library },
