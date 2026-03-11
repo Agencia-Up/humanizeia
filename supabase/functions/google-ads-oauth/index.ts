@@ -23,7 +23,19 @@ async function getAuthenticatedUser(req: Request) {
 }
 
 function handleAuthorize(redirect_uri: string, state?: string) {
-  const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
+  const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
+  const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET");
+
+  if (!clientId || !clientSecret) {
+    return new Response(
+      JSON.stringify({
+        error: "not_configured",
+        message: "A integração com o Google Ads ainda não foi configurada pelo administrador da plataforma. Entre em contato com o suporte.",
+      }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
   const scopes = [
     "https://www.googleapis.com/auth/adwords",
     "https://www.googleapis.com/auth/analytics.readonly",
