@@ -55,6 +55,7 @@ const App = () => (
           <Route path="/academy" element={<ProtectedRoute><AIAcademy /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
           <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
+          <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
           <Route path="/midas" element={<ProtectedRoute><MidasAgent /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
