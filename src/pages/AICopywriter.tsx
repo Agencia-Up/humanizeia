@@ -567,8 +567,37 @@ Retorne APENAS um JSON no formato: {"headline": "...", "description": "...", "ct
                     <Switch checked={includeCTA} onCheckedChange={setIncludeCTA} />
                   </div>
 
+                  {/* Mental Triggers */}
                   <div className="space-y-2">
-                    <Label>Fórmula de Copy</Label>
+                    <Label>Gatilhos Mentais</Label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {mentalTriggers.map((trigger) => {
+                        const isSelected = selectedTriggers.includes(trigger.value);
+                        return (
+                          <button
+                            key={trigger.value}
+                            onClick={() => setSelectedTriggers(prev =>
+                              isSelected ? prev.filter(t => t !== trigger.value) : [...prev, trigger.value]
+                            )}
+                            className={`rounded-full px-2.5 py-1 text-xs transition-colors border ${
+                              isSelected
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-muted/50 text-muted-foreground border-border/50 hover:border-primary/50 hover:text-foreground'
+                            }`}
+                            title={trigger.desc}
+                          >
+                            {trigger.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {selectedTriggers.length > 0 && (
+                      <p className="text-[10px] text-muted-foreground">
+                        {selectedTriggers.length} gatilho(s) selecionado(s) — serão integrados na copy
+                      </p>
+                    )}
+                  </div>
+
                     <Select
                       value={selectedFormula || 'none'}
                       onValueChange={(v) => setSelectedFormula(v === 'none' ? null : v)}
