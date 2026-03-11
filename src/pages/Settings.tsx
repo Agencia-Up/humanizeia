@@ -12,6 +12,7 @@ import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
 import { MetaAdsSettingsTab } from '@/components/settings/MetaAdsSettingsTab';
+import { GoogleSettingsTab } from '@/components/settings/GoogleSettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
 import { TikTokAdsSettingsTab } from '@/components/settings/TikTokAdsSettingsTab';
