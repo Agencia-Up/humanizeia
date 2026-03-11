@@ -1,0 +1,345 @@
+import { useState, useEffect, useCallback } from 'react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { CheckCircle, XCircle, Loader2, LogOut, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { useToast } from '@/hooks/use-toast';
+
+interface IntegrationConfig {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  fields: { key: string; label: string; placeholder: string; type?: string }[];
+  helpUrl?: string;
+  helpText?: string;
+}
+
+const INTEGRATIONS: IntegrationConfig[] = [
+  {
+    id: 'ga4',
+    name: 'Google Analytics 4',
+    icon: '📊',
+    description: 'Envie eventos de conversão para o GA4',
+    fields: [
+      { key: 'measurement_id', label: 'Measurement ID', placeholder: 'G-XXXXXXXXXX' },
+      { key: 'api_secret', label: 'API Secret', placeholder: 'Seu API Secret...', type: 'password' },
+    ],
+    helpUrl: 'https://support.google.com/analytics/answer/9539598',
+    helpText: 'Encontre em: GA4 → Admin → Data Streams → selecione o stream → Measurement Protocol API Secrets',
+  },
+  {
+    id: 'google_sheets',
+    name: 'Google Sheets',
+    icon: '📗',
+    description: 'Exporte relatórios automaticamente para planilhas',
+    fields: [
+      { key: 'api_key', label: 'API Key', placeholder: 'AIzaSy...', type: 'password' },
+      { key: 'sheet_id', label: 'Sheet ID', placeholder: 'ID da planilha (da URL)' },
+    ],
+    helpUrl: 'https://console.cloud.google.com/apis/credentials',
+    helpText: 'API Key: Google Cloud Console → Credentials. Sheet ID: é o código na URL da planilha entre /d/ e /edit',
+  },
+  {
+    id: 'hotmart',
+    name: 'Hotmart',
+    icon: '🔥',
+    description: 'Importe dados de vendas e comissões',
+    fields: [
+      { key: 'api_token', label: 'Token da API', placeholder: 'Seu token Hotmart...', type: 'password' },
+    ],
+    helpUrl: 'https://developers.hotmart.com/',
+    helpText: 'Encontre em: Hotmart → Ferramentas → Credenciais da API → Gerar Token',
+  },
+  {
+    id: 'zapier',
+    name: 'Zapier',
+    icon: '⚡',
+    description: 'Envie dados via webhooks para automações',
+    fields: [
+      { key: 'webhook_url', label: 'Webhook URL', placeholder: 'https://hooks.zapier.com/...' },
+    ],
+    helpUrl: 'https://zapier.com/apps/webhook/integrations',
+    helpText: 'Crie um Zap → Trigger: Webhooks by Zapier → Catch Hook → copie a URL',
+  },
+  {
+    id: 'webhook',
+    name: 'Webhook Personalizado',
+    icon: '🔗',
+    description: 'Envie notificações para qualquer endpoint',
+    fields: [
+      { key: 'webhook_url', label: 'URL do Webhook', placeholder: 'https://seu-servidor.com/webhook' },
+      { key: 'secret', label: 'Secret (opcional)', placeholder: 'Chave secreta...', type: 'password' },
+    ],
+  },
+];
+
+interface SavedIntegration {
+  id: string;
+  platform: string;
+  is_active: boolean;
+  last_sync_at: string | null;
+}
+
+export function IntegrationsTab() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [savedIntegrations, setSavedIntegrations] = useState<SavedIntegration[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<Record<string, Record<string, string>>>({});
+  const [testing, setTesting] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const fetchIntegrations = useCallback(async () => {
+    if (!user) return;
+    setIsLoading(true);
+    try {
+      const { data } = await supabase
+        .from('platform_integrations')
+        .select('id, platform, is_active, last_sync_at')
+        .eq('user_id', user.id);
+      setSavedIntegrations((data || []) as SavedIntegration[]);
+    } catch {
+      // ignore
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchIntegrations();
+  }, [fetchIntegrations]);
+
+  const getStatus = (platformId: string) => {
+    return savedIntegrations.find((i) => i.platform === platformId && i.is_active);
+  };
+
+  const handleFieldChange = (platformId: string, fieldKey: string, value: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      [platformId]: { ...(prev[platformId] || {}), [fieldKey]: value },
+    }));
+  };
+
+  const handleTest = async (integration: IntegrationConfig) => {
+    const credentials = formData[integration.id] || {};
+    const missingFields = integration.fields.filter((f) => !credentials[f.key]?.trim());
+    if (missingFields.length > 0) {
+      toast({
+        title: 'Campos obrigatórios',
+        description: `Preencha: ${missingFields.map((f) => f.label).join(', ')}`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setTesting(integration.id);
+    try {
+      const { data, error } = await supabase.functions.invoke('test-integration', {
+        body: { platform: integration.id, credentials },
+      });
+      if (error) throw error;
+      toast({
+        title: data?.success ? '✅ Teste bem-sucedido' : '❌ Teste falhou',
+        description: data?.message || 'Resultado inesperado.',
+        variant: data?.success ? 'default' : 'destructive',
+      });
+    } catch (err: any) {
+      toast({
+        title: 'Erro no teste',
+        description: err.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  const handleSave = async (integration: IntegrationConfig) => {
+    const credentials = formData[integration.id] || {};
+    const missingFields = integration.fields
+      .filter((f) => !f.key.includes('opcional') && !f.label.includes('opcional'))
+      .filter((f) => !credentials[f.key]?.trim());
+    
+    // Filter only truly required fields (exclude ones with 'opcional' in label)
+    const requiredMissing = integration.fields
+      .filter((f) => !f.label.toLowerCase().includes('opcional'))
+      .filter((f) => !credentials[f.key]?.trim());
+
+    if (requiredMissing.length > 0) {
+      toast({
+        title: 'Campos obrigatórios',
+        description: `Preencha: ${requiredMissing.map((f) => f.label).join(', ')}`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSaving(integration.id);
+    try {
+      const { data, error } = await supabase.functions.invoke('test-integration', {
+        body: { platform: integration.id, credentials, action: 'save' },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      toast({
+        title: 'Integração salva!',
+        description: `${integration.name} conectado com sucesso.`,
+      });
+      setExpandedId(null);
+      setFormData((prev) => ({ ...prev, [integration.id]: {} }));
+      await fetchIntegrations();
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao salvar',
+        description: err.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const handleDisconnect = async (integration: IntegrationConfig) => {
+    try {
+      const { error } = await supabase.functions.invoke('test-integration', {
+        body: { platform: integration.id, action: 'disconnect' },
+      });
+      if (error) throw error;
+      toast({
+        title: 'Desconectado',
+        description: `${integration.name} foi desconectado.`,
+      });
+      await fetchIntegrations();
+    } catch (err: any) {
+      toast({
+        title: 'Erro',
+        description: err.message,
+        variant: 'destructive',
+      });
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {INTEGRATIONS.map((integration) => {
+        const status = getStatus(integration.id);
+        const isExpanded = expandedId === integration.id;
+        const fields = formData[integration.id] || {};
+
+        return (
+          <Card key={integration.id} className="border-border/50 bg-card/50 backdrop-blur-sm overflow-hidden">
+            <CardContent className="p-0">
+              {/* Header */}
+              <div className="flex items-center justify-between p-4">
+                <div className="flex items-center gap-3">
+                  <div className="text-2xl">{integration.icon}</div>
+                  <div>
+                    <p className="font-medium">{integration.name}</p>
+                    <p className="text-xs text-muted-foreground">{integration.description}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {status ? (
+                    <>
+                      <Badge className="bg-success/20 text-success border-success/30">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Conectado
+                      </Badge>
+                      <Button variant="outline" size="sm" onClick={() => handleDisconnect(integration)}>
+                        <LogOut className="h-3 w-3 mr-1" />
+                        Desconectar
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Badge variant="secondary">
+                        <XCircle className="h-3 w-3 mr-1" />
+                        Não conectado
+                      </Badge>
+                      <Button
+                        size="sm"
+                        variant={isExpanded ? 'secondary' : 'default'}
+                        className={isExpanded ? '' : 'gradient-primary'}
+                        onClick={() => setExpandedId(isExpanded ? null : integration.id)}
+                      >
+                        {isExpanded ? <ChevronUp className="h-3 w-3 mr-1" /> : <ChevronDown className="h-3 w-3 mr-1" />}
+                        {isExpanded ? 'Fechar' : 'Conectar'}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Expanded Form */}
+              {isExpanded && !status && (
+                <div className="border-t border-border/50 p-4 space-y-4 bg-muted/20">
+                  {integration.fields.map((field) => (
+                    <div key={field.key} className="space-y-1.5">
+                      <Label htmlFor={`${integration.id}-${field.key}`} className="text-sm">
+                        {field.label}
+                      </Label>
+                      <Input
+                        id={`${integration.id}-${field.key}`}
+                        type={field.type || 'text'}
+                        placeholder={field.placeholder}
+                        value={fields[field.key] || ''}
+                        onChange={(e) => handleFieldChange(integration.id, field.key, e.target.value)}
+                      />
+                    </div>
+                  ))}
+
+                  {integration.helpText && (
+                    <p className="text-xs text-muted-foreground">{integration.helpText}</p>
+                  )}
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleTest(integration)}
+                      disabled={testing === integration.id}
+                    >
+                      {testing === integration.id && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                      Testar Conexão
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="gradient-primary"
+                      onClick={() => handleSave(integration)}
+                      disabled={saving === integration.id}
+                    >
+                      {saving === integration.id && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                      Conectar e Salvar
+                    </Button>
+                    {integration.helpUrl && (
+                      <Button variant="link" size="sm" className="p-0 h-auto" asChild>
+                        <a href={integration.helpUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs">
+                          Ver documentação <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}

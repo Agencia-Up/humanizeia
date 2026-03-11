@@ -1,0 +1,1 @@
+ALTER TABLE public.ab_test_variants ADD COLUMN meta_ad_id text;
