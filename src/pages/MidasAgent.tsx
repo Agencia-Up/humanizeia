@@ -240,7 +240,7 @@ export default function MidasAgent() {
                   <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-amber-500/20 to-yellow-600/20 mb-6">
                     <Sparkles className="h-10 w-10 text-amber-500" />
                   </div>
-                  <h2 className="text-xl font-semibold mb-2">Olá! Eu sou o MIDAS 🔥</h2>
+                  <h2 className="text-xl font-semibold mb-2">Olá! Eu sou o Apollo 🔥</h2>
                   <p className="text-muted-foreground text-center max-w-md mb-8">
                     Seu Analista Senior de Mídia Paga. Gerenciei mais de R$500 milhões em Meta Ads e Google Ads.
                     Como posso ajudar você hoje?
