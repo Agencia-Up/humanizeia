@@ -7,14 +7,14 @@
 @layer base {
   :root {
     /* Light mode */
-    --background: 160 20% 98%;
-    --foreground: 200 47% 11%;
+    --background: 160 10% 97%;
+    --foreground: 210 50% 5%;
 
     --card: 0 0% 100%;
-    --card-foreground: 200 47% 11%;
+    --card-foreground: 210 50% 5%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 200 47% 11%;
+    --popover-foreground: 210 50% 5%;
 
     --primary: 168 80% 40%;
     --primary-foreground: 0 0% 100%;
@@ -22,8 +22,8 @@
     --secondary: 174 62% 47%;
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 160 30% 96%;
-    --muted-foreground: 170 16% 47%;
+    --muted: 160 20% 94%;
+    --muted-foreground: 200 15% 40%;
 
     --accent: 174 62% 47%;
     --accent-foreground: 0 0% 100%;
@@ -37,8 +37,8 @@
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 0%;
 
-    --border: 170 25% 90%;
-    --input: 170 25% 90%;
+    --border: 170 15% 85%;
+    --input: 170 15% 85%;
     --ring: 168 80% 40%;
 
     --radius: 0.75rem;
@@ -49,12 +49,12 @@
 
     /* Sidebar */
     --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 200 47% 11%;
+    --sidebar-foreground: 210 50% 5%;
     --sidebar-primary: 168 80% 40%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 160 30% 96%;
-    --sidebar-accent-foreground: 200 47% 11%;
-    --sidebar-border: 170 25% 90%;
+    --sidebar-accent: 160 20% 94%;
+    --sidebar-accent-foreground: 210 50% 5%;
+    --sidebar-border: 170 15% 85%;
     --sidebar-ring: 168 80% 40%;
 
     /* Chart colors */
