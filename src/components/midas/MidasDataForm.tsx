@@ -176,7 +176,7 @@ export function MidasDataForm({ open, onOpenChange, onSubmit }: MidasDataFormPro
             Alimentar Brain Trust
           </SheetTitle>
           <SheetDescription>
-            Preencha os dados de performance para análise da Sala de Guerra MIDAS.
+            Preencha os dados de performance para análise da Sala de Guerra Apollo.
           </SheetDescription>
         </SheetHeader>
 
