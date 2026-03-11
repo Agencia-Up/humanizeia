@@ -174,12 +174,10 @@ export function AppSidebar() {
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl gradient-primary">
-                <Sparkles className="h-5 w-5 text-white" />
-              </div>
+              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-10 w-10 shrink-0 rounded-xl object-contain" />
               <div className="flex flex-col">
-                <span className="text-lg font-bold gradient-text">TrafficAI</span>
-                <span className="text-xs text-muted-foreground">Pro Platform</span>
+                <span className="text-lg font-bold gradient-text">HumanizeAI</span>
+                <span className="text-xs text-muted-foreground">Platform</span>
               </div>
             </div>
             <button onClick={toggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors">

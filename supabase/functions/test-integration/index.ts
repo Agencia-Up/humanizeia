@@ -81,7 +81,7 @@ async function testWebhook(credentials: { webhook_url: string; secret?: string }
       },
       body: JSON.stringify({
         event: "test",
-        message: "Teste de conexão do TrafficAI Pro",
+        message: "Teste de conexão do HumanizeAI",
         timestamp: new Date().toISOString(),
       }),
     });
