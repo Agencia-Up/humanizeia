@@ -6,14 +6,12 @@ import {
   Building2,
   Sparkles,
   RefreshCw,
-  Plug,
 } from 'lucide-react';
 import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
-import { ConnectionsTab } from '@/components/settings/ConnectionsTab';
 
 export default function SettingsPage() {
   return (
@@ -22,16 +20,12 @@ export default function SettingsPage() {
         <div>
           <h1 className="text-2xl font-bold lg:text-3xl">Settings</h1>
           <p className="text-muted-foreground">
-            Gerencie suas configurações e integrações
+            Gerencie suas configurações e preferências
           </p>
         </div>
 
-        <Tabs defaultValue="connections" className="space-y-6">
+        <Tabs defaultValue="profile" className="space-y-6">
           <TabsList className="flex-wrap bg-muted/50">
-            <TabsTrigger value="connections" className="gap-2">
-              <Plug className="h-4 w-4" />
-              Conexões
-            </TabsTrigger>
             <TabsTrigger value="company" className="gap-2">
               <Building2 className="h-4 w-4" />
               Empresa
@@ -53,10 +47,6 @@ export default function SettingsPage() {
               Sincronização
             </TabsTrigger>
           </TabsList>
-
-          <TabsContent value="connections">
-            <ConnectionsTab />
-          </TabsContent>
 
           <TabsContent value="company">
             <CompanySettingsTab />
