@@ -68,6 +68,7 @@ const automationItems = [
 const libraryItems = [
   { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
   { title: 'Relatórios', url: '/reports', icon: FileText },
+  { title: 'Pixel Unificado', url: '/pixel', icon: Layers },
 ];
 
 const learnItems = [
