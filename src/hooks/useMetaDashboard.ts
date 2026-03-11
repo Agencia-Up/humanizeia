@@ -68,14 +68,14 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
   const accountInsights = useMetaInsights({
     accountId,
     datePreset,
-    fields: 'spend,impressions,clicks,ctr,cpc,cpm,reach,frequency',
+    fields: 'spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,actions,cost_per_action_type,action_values',
     enabled: isConnected,
   });
 
   const previousInsights = useMetaInsights({
     accountId,
     timeRange: previousRange,
-    fields: 'spend,impressions,clicks,ctr,cpc,cpm,reach,frequency',
+    fields: 'spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,actions,cost_per_action_type,action_values',
     enabled: isConnected,
   });
 
