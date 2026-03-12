@@ -28,6 +28,9 @@ import NotFound from "./pages/NotFound";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
 import LandingPage from "./pages/LandingPage";
+import WhatsAppGroups from "./pages/WhatsAppGroups";
+import WhatsAppContacts from "./pages/WhatsAppContacts";
+import WhatsAppBroadcast from "./pages/WhatsAppBroadcast";
 
 
 const queryClient = new QueryClient();
