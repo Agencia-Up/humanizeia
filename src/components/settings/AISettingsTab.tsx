@@ -19,6 +19,8 @@ interface AISettings {
   geminiKey: string;
   anthropicKey: string;
   autoFallback: boolean;
+  autoSuggestions: boolean;
+  conservativeMode: boolean;
 }
 
 const defaultSettings: AISettings = {
