@@ -61,11 +61,15 @@ export function useWhatsAppConfig() {
       if (!session?.session?.user) throw new Error('Não autenticado');
 
       const userId = session.session.user.id;
-      const payload = {
-        ...values,
+      const { api_key, ...rest } = values;
+      const payload: Record<string, unknown> = {
+        ...rest,
         user_id: userId,
         is_active: true,
       };
+      if (api_key) {
+        payload.api_key = api_key;
+      }
 
       if (config) {
         const { error } = await supabase
