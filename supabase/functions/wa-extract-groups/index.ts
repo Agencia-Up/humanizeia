@@ -114,20 +114,25 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Create a contact list
-      const listName = `Grupos extraídos - ${new Date().toLocaleDateString('pt-BR')}`;
-      const { data: list, error: listErr } = await supabase
-        .from('wa_contact_lists')
-        .insert({
-          user_id,
-          name: listName,
-          source: 'group_extract',
-          contact_count: allContacts.length,
-        })
-        .select('id')
-        .single();
+      // Use provided list or create new one
+      let targetListId = list_id;
 
-      if (listErr) throw listErr;
+      if (!targetListId) {
+        const listName = `Grupos extraídos - ${new Date().toLocaleDateString('pt-BR')}`;
+        const { data: list, error: listErr } = await supabase
+          .from('wa_contact_lists')
+          .insert({
+            user_id,
+            name: listName,
+            source: 'group_extract',
+            contact_count: allContacts.length,
+          })
+          .select('id')
+          .single();
+
+        if (listErr) throw listErr;
+        targetListId = list.id;
+      }
 
       // Insert contacts (deduplicate by phone)
       const uniquePhones = new Map<string, typeof allContacts[0]>();
