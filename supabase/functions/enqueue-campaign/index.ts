@@ -112,9 +112,6 @@ Deno.serve(async (req) => {
 
     const contactArr = Array.from(uniqueContacts.values());
 
-    // Calculate staggered scheduled times based on delay settings
-    const minDelay = campaign.min_delay_seconds || 5;
-    const maxDelay = campaign.max_delay_seconds || 15;
     const now = Date.now();
 
     const queueRows = contactArr.map((c, i) => {
