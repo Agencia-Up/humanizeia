@@ -1,5 +1,8 @@
 project_id = "qrxsiixufdiemwwyhxvd"
 
+[functions.save-campaign]
+verify_jwt = false
+
 [functions.enqueue-campaign]
 verify_jwt = false
 
