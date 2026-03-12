@@ -187,18 +187,79 @@ export function AppSidebar() {
   };
 
   // Inject badges into nav items
-  const mainWithBadges = mainNavItems.map((item) => ({
+  const dashboardWithBadges = dashboardItems.map((item) => ({
     ...item,
     badge: item.url === '/' ? unreadCount : 0,
   }));
 
   const groups = [
-    { label: 'Principal', items: mainWithBadges, triggerIcon: Sparkles },
-    { label: 'Otimização', items: optimizationItems, triggerIcon: Zap },
-    { label: 'Automação', items: automationItems, triggerIcon: Cog },
-    { label: 'Biblioteca', items: libraryItems, triggerIcon: Library },
-    { label: 'Mais', items: learnItems, triggerIcon: Layers },
+    { label: '🏠 Dashboard', items: dashboardWithBadges, triggerIcon: Home },
+    { label: '🤖 Inteligência IA', items: aiItems, triggerIcon: Brain },
+    { label: '📈 Campanhas', items: campaignItems, triggerIcon: Rocket },
+    { label: '⚙️ Automação', items: automationItems, triggerIcon: Settings2 },
+    { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
+    { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
+    { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
+    { label: '⚙️ Sistema', items: systemItems, triggerIcon: Settings },
   ];
+
+  return (
+    <Sidebar collapsible="icon" className="border-r border-border/50">
+      <SidebarHeader className="border-b border-border/50 p-4">
+        {collapsed ? (
+          <div className="flex justify-center">
+            <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
+              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-8 w-8 object-contain" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-10 w-10 shrink-0 rounded-xl object-contain" />
+              <div className="flex flex-col">
+                <span className="text-lg font-bold gradient-text">HumanizeAI</span>
+                <span className="text-xs text-muted-foreground">Platform</span>
+              </div>
+            </div>
+            <button onClick={toggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors">
+              <X className="h-4 w-4 text-muted-foreground" />
+            </button>
+          </div>
+        )}
+      </SidebarHeader>
+
+      <SidebarContent className={collapsed ? "px-0 items-center pt-4" : "px-2"}>
+        {groups.map((group) => (
+          <NavGroup
+            key={group.label}
+            label={group.label}
+            items={group.items}
+            collapsed={collapsed}
+            isOpen={openSidebarGroups.includes(group.label)}
+            onToggle={() => toggleSidebarGroup(group.label)}
+            triggerIcon={group.triggerIcon}
+          />
+        ))}
+      </SidebarContent>
+
+      <SidebarFooter className={`border-t border-border/50 p-2 ${collapsed ? 'items-center' : ''}`}>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton tooltip={isDarkMode ? 'Modo Claro' : 'Modo Escuro'} onClick={toggleDarkMode}>
+              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              <span>{isDarkMode ? 'Modo Claro' : 'Modo Escuro'}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton tooltip="Sair" onClick={handleLogout} className="text-destructive hover:text-destructive hover:bg-destructive/10">
+              <LogOut className="h-4 w-4" />
+              <span>Sair</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+    </Sidebar>
+  );
 
   return (
     <Sidebar collapsible="icon" className="border-r border-border/50">
