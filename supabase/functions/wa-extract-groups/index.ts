@@ -160,17 +160,15 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Update list count
       await supabase
         .from('wa_contact_lists')
         .update({ contact_count: contactRows.length })
-        .eq('id', list.id);
+        .eq('id', targetListId);
 
       return new Response(JSON.stringify({
         success: true,
         total_contacts: contactRows.length,
-        list_id: list.id,
-        list_name: listName,
+        list_id: targetListId,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
