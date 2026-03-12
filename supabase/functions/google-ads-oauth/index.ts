@@ -52,6 +52,7 @@ function handleAuthorize(redirect_uri: string, state?: string) {
     `&response_type=code` +
     `&scope=${encodeURIComponent(scopes)}` +
     `&access_type=offline` +
+    `&include_granted_scopes=true` +
     `&prompt=consent` +
     `&state=${state || ""}`;
 
