@@ -244,9 +244,9 @@ export default function Auth() {
         <div className="text-center text-xs text-muted-foreground space-y-1">
           <p>
             Ao continuar, você concorda com os{' '}
-            <Link to="/terms" className="text-primary hover:underline">Termos de Serviço</Link>
+            <a href="/terms-of-service.html" className="text-primary hover:underline">Termos de Serviço</a>
             {' '}e a{' '}
-            <Link to="/privacy" className="text-primary hover:underline">Política de Privacidade</Link>.
+            <a href="/privacy-policy.html" className="text-primary hover:underline">Política de Privacidade</a>.
           </p>
         </div>
       </div>

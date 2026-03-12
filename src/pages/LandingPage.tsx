@@ -57,9 +57,9 @@ export default function LandingPage() {
       <footer className="border-t border-border/40 px-6 py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-3 flex-wrap">
         <span>© {new Date().getFullYear()} HumanizeAI. Todos os direitos reservados.</span>
         <span className="text-border">•</span>
-        <Link to="/privacy" className="hover:text-primary transition-colors">Política de Privacidade</Link>
+        <a href="/privacy-policy.html" className="hover:text-primary transition-colors">Política de Privacidade</a>
         <span className="text-border">•</span>
-        <Link to="/terms" className="hover:text-primary transition-colors">Termos de Serviço</Link>
+        <a href="/terms-of-service.html" className="hover:text-primary transition-colors">Termos de Serviço</a>
         <span className="text-border">•</span>
         <a href="mailto:carvalho@scalpergx.com.br" className="hover:text-primary transition-colors">Contato</a>
       </footer>
