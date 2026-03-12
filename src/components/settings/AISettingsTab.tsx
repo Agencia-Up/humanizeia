@@ -232,6 +232,56 @@ export function AISettingsTab() {
         </CardContent>
       </Card>
 
+      {/* Super Gestor Apollo */}
+      <Card className="border-primary/30 bg-card/50 backdrop-blur-sm">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Brain className="h-5 w-5 text-primary" />
+            Super Gestor Apollo
+            {settings.anthropicKey && (
+              <Badge variant="outline" className="bg-success/10 text-success border-success/30 text-[10px]">
+                Configurado
+              </Badge>
+            )}
+          </CardTitle>
+          <CardDescription>
+            IA avançada que cria estratégias de campanha, gera copies persuasivos e otimiza anúncios automaticamente.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Sugestões automáticas</Label>
+              <p className="text-xs text-muted-foreground">
+                O Apollo analisa campanhas e sugere otimizações proativamente
+              </p>
+            </div>
+            <Switch
+              checked={settings.autoSuggestions ?? true}
+              onCheckedChange={(v) => setSettings(prev => ({ ...prev, autoSuggestions: v }))}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Modo conservador</Label>
+              <p className="text-xs text-muted-foreground">
+                Apenas sugere ações, nunca executa automaticamente
+              </p>
+            </div>
+            <Switch
+              checked={settings.conservativeMode ?? true}
+              onCheckedChange={(v) => setSettings(prev => ({ ...prev, conservativeMode: v }))}
+            />
+          </div>
+          <div className="flex items-start gap-2 rounded-lg bg-primary/5 border border-primary/20 p-3">
+            <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+            <p className="text-xs text-muted-foreground">
+              <strong>Dica:</strong> O Super Gestor usa a chave Anthropic Claude configurada acima. Quanto mais dados históricos suas contas tiverem, melhores serão as recomendações.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* API Keys */}
       <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
         <CardHeader>
