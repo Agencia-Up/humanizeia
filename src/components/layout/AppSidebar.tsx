@@ -210,6 +210,7 @@ export function AppSidebar() {
     { label: '⚙️ Automação', items: automationItems, triggerIcon: Settings2 },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
+    { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
     { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
     { label: '⚙️ Sistema', items: systemItems, triggerIcon: Settings },
   ];
