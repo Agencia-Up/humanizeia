@@ -241,9 +241,14 @@ export default function Auth() {
           </CardContent>
         </Card>
 
-        <p className="text-center text-xs text-muted-foreground">
-          Ao continuar, você concorda com os Termos de Uso e Política de Privacidade.
-        </p>
+        <div className="text-center text-xs text-muted-foreground space-y-1">
+          <p>
+            Ao continuar, você concorda com os{' '}
+            <Link to="/terms" className="text-primary hover:underline">Termos de Serviço</Link>
+            {' '}e a{' '}
+            <Link to="/privacy" className="text-primary hover:underline">Política de Privacidade</Link>.
+          </p>
+        </div>
       </div>
     </div>
   );
