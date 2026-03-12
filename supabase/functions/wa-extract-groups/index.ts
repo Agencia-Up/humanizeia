@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     }
 
     // Get user's WhatsApp instance config
-    const { data: instance, error: instanceErr } = await supabase
+    const { data: instance } = await supabase
       .from('wa_instances')
       .select('*')
       .eq('user_id', user_id)
@@ -34,7 +34,6 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    // Fallback to whatsapp_config if no wa_instances
     let apiUrl: string;
     let apiKey: string;
     let instanceName: string;
@@ -44,7 +43,7 @@ Deno.serve(async (req) => {
       apiKey = instance.api_key_encrypted;
       instanceName = instance.instance_name;
     } else {
-      const { data: config, error: configErr } = await supabase
+      const { data: config } = await supabase
         .from('whatsapp_config')
         .select('*')
         .eq('user_id', user_id)
@@ -74,7 +73,6 @@ Deno.serve(async (req) => {
 
       for (const groupId of group_ids) {
         try {
-          // Fetch group participants
           const res = await fetch(`${baseUrl}/group/participants/${instanceName}?groupJid=${groupId}`, {
             headers: { 'apikey': apiKey },
           });
@@ -116,7 +114,6 @@ Deno.serve(async (req) => {
 
       // Use provided list or create new one
       let targetListId = list_id;
-
       if (!targetListId) {
         const listName = `Grupos extraídos - ${new Date().toLocaleDateString('pt-BR')}`;
         const { data: list, error: listErr } = await supabase
@@ -125,50 +122,51 @@ Deno.serve(async (req) => {
             user_id,
             name: listName,
             source: 'group_extract',
-            contact_count: allContacts.length,
+            contact_count: 0,
           })
           .select('id')
           .single();
-
         if (listErr) throw listErr;
         targetListId = list.id;
       }
 
-      // Insert contacts (deduplicate by phone)
-      const uniquePhones = new Map<string, typeof allContacts[0]>();
-      for (const c of allContacts) {
-        if (!uniquePhones.has(c.phone)) {
-          uniquePhones.set(c.phone, c);
-        }
+      // Call sanitize-contacts for dedup, formatting, and optional WhatsApp check
+      console.log(`[wa-extract-groups] Sanitizing ${allContacts.length} contacts...`);
+
+      const sanitizeRes = await fetch(`${supabaseUrl}/functions/v1/sanitize-contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseServiceKey}`,
+        },
+        body: JSON.stringify({
+          user_id,
+          list_id: targetListId,
+          contacts: allContacts.map(c => ({
+            phone: c.phone,
+            name: c.name,
+            group_name: c.group_name,
+            source: 'group_extract',
+          })),
+          check_whatsapp: true,
+        }),
+      });
+
+      const sanitizeData = await sanitizeRes.json();
+
+      if (!sanitizeData.success) {
+        throw new Error(sanitizeData.error || 'Erro na higienização');
       }
 
-      const contactRows = Array.from(uniquePhones.values()).map(c => ({
-        user_id,
-        list_id: targetListId,
-        phone: c.phone,
-        name: c.name,
-        group_name: c.group_name,
-        source: 'group_extract',
-      }));
-
-      // Insert in batches of 500
-      for (let i = 0; i < contactRows.length; i += 500) {
-        const batch = contactRows.slice(i, i + 500);
-        const { error: insertErr } = await supabase.from('wa_contacts').insert(batch);
-        if (insertErr) {
-          console.error('Insert batch error:', insertErr);
-        }
-      }
-
-      await supabase
-        .from('wa_contact_lists')
-        .update({ contact_count: contactRows.length })
-        .eq('id', targetListId);
+      const stats = sanitizeData.stats || {};
+      console.log(`[wa-extract-groups] Sanitization stats:`, stats);
 
       return new Response(JSON.stringify({
         success: true,
-        total_contacts: contactRows.length,
+        total_contacts: stats.total_valid || 0,
+        inserted: sanitizeData.inserted_count || 0,
         list_id: targetListId,
+        stats,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
