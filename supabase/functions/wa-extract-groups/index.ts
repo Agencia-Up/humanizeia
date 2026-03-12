@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { user_id, action, group_ids, groups } = body;
+    const { user_id, action, group_ids, groups, list_id } = body;
 
     if (!user_id) {
       return new Response(JSON.stringify({ success: false, error: 'user_id obrigatório' }), {
