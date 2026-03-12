@@ -54,7 +54,7 @@ export default function ConnectAccounts() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [activePlatform, setActivePlatform] = useState<'meta' | 'google' | null>(null);
 
-  // Handle OAuth callbacks
+  // Handle OAuth callbacks (single-use code)
   useEffect(() => {
     const metaCode = searchParams.get('code');
     const isMetaCallback = searchParams.get('meta_callback');
@@ -64,12 +64,14 @@ export default function ConnectAccounts() {
       setActivePlatform('meta');
       meta.handleCallback(metaCode);
       setCurrentStep(2);
+      navigate('/connect-accounts', { replace: true });
     } else if (metaCode && isGoogleCallback) {
       setActivePlatform('google');
       google.handleCallback(metaCode);
       setCurrentStep(2);
+      navigate('/connect-accounts', { replace: true });
     }
-  }, [searchParams]);
+  }, [navigate, searchParams]);
 
   const handleMetaConnect = async () => {
     setActivePlatform('meta');
