@@ -1784,6 +1784,8 @@ export type Database = {
           min_delay_seconds: number
           name: string
           organization_id: string | null
+          prompt_base: string | null
+          rotation_messages_per_instance: number
           scheduled_at: string | null
           sent_count: number
           started_at: string | null
@@ -1808,6 +1810,8 @@ export type Database = {
           min_delay_seconds?: number
           name: string
           organization_id?: string | null
+          prompt_base?: string | null
+          rotation_messages_per_instance?: number
           scheduled_at?: string | null
           sent_count?: number
           started_at?: string | null
@@ -1832,6 +1836,8 @@ export type Database = {
           min_delay_seconds?: number
           name?: string
           organization_id?: string | null
+          prompt_base?: string | null
+          rotation_messages_per_instance?: number
           scheduled_at?: string | null
           sent_count?: number
           started_at?: string | null

@@ -23,6 +23,7 @@ import {
   Users,
   Contact,
   Send,
+  Megaphone,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -88,6 +89,7 @@ const learningItems = [
 
 // 💬 WhatsApp
 const whatsappItems = [
+  { title: 'Campanhas', url: '/whatsapp/campaigns', icon: Megaphone },
   { title: 'Extrator de Grupos', url: '/whatsapp/groups', icon: Users },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
   { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
