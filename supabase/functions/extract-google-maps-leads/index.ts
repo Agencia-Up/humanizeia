@@ -7,16 +7,10 @@ const corsHeaders = {
 
 function extractPhone(text: string): string | null {
   if (!text) return null;
-  // Match phone patterns like (11) 99999-9999, +55 11 99999-9999, 5511999999999
   const matches = text.match(/(?:\+?\d{1,3}[\s.-]?)?\(?\d{2,3}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}/g);
   if (!matches || matches.length === 0) return null;
   const cleaned = matches[0].replace(/\D/g, '');
-  // Must be at least 10 digits (DDD + number)
   if (cleaned.length < 10) return null;
-  // Add country code if missing
-  if (cleaned.length === 10 || cleaned.length === 11) {
-    return '55' + cleaned;
-  }
   return cleaned;
 }
 
@@ -102,41 +96,30 @@ Deno.serve(async (req) => {
 
     // Parse leads from all results
     interface Lead {
-      name: string;
       phone: string;
+      name: string;
       address: string | null;
-      website: string | null;
     }
 
     const leadsMap = new Map<string, Lead>();
 
-    // Parse from search results
     for (const result of results) {
       const markdown = result.markdown || '';
       const title = result.title || '';
-      
+
       const phone = extractPhone(markdown);
-      if (phone) {
-        if (!leadsMap.has(phone)) {
-          // Try to extract address
-          const addressMatch = markdown.match(/(?:Endereço|Rua|Av\.|Avenida|R\.)[:\s]*([^\n]+)/i);
-          // Try to extract website
-          const urlMatch = markdown.match(/https?:\/\/(?!www\.google)[^\s"'<>]+/);
-          
-          leadsMap.set(phone, {
-            name: title.replace(/ - Google Maps.*$/i, '').replace(/\|.*$/, '').trim().substring(0, 200),
-            phone,
-            address: addressMatch ? addressMatch[1].trim().substring(0, 500) : null,
-            website: urlMatch ? urlMatch[0].substring(0, 500) : null,
-          });
-        }
+      if (phone && !leadsMap.has(phone)) {
+        const addressMatch = markdown.match(/(?:Endereço|Rua|Av\.|Avenida|R\.)[:\s]*([^\n]+)/i);
+        leadsMap.set(phone, {
+          name: title.replace(/ - Google Maps.*$/i, '').replace(/\|.*$/, '').trim().substring(0, 200),
+          phone,
+          address: addressMatch ? addressMatch[1].trim().substring(0, 500) : null,
+        });
       }
     }
 
-    // Parse from maps scrape
     if (mapsScrapeData?.data?.markdown) {
       const md = mapsScrapeData.data.markdown;
-      // Try to find business listings with phone numbers
       const blocks = md.split(/\n{2,}/);
       for (const block of blocks) {
         const phone = extractPhone(block);
@@ -146,16 +129,15 @@ Deno.serve(async (req) => {
             name: firstLine.substring(0, 200) || 'Lead Google Maps',
             phone,
             address: null,
-            website: null,
           });
         }
       }
     }
 
-    const leads = Array.from(leadsMap.values());
-    console.log(`[extract-google-maps] Extracted ${leads.length} unique leads with phone numbers`);
+    const rawLeads = Array.from(leadsMap.values());
+    console.log(`[extract-google-maps] Extracted ${rawLeads.length} raw leads`);
 
-    if (leads.length === 0) {
+    if (rawLeads.length === 0) {
       return new Response(JSON.stringify({
         success: true,
         total_leads: 0,
@@ -167,7 +149,7 @@ Deno.serve(async (req) => {
 
     // Create or use existing list
     let targetListId = list_id;
-    let targetListName = list_name || `Google Maps - ${search_query.substring(0, 50)}`;
+    const targetListName = list_name || `Google Maps - ${search_query.substring(0, 50)}`;
 
     if (!targetListId) {
       const { data: newList, error: listErr } = await supabase
@@ -180,49 +162,49 @@ Deno.serve(async (req) => {
         })
         .select('id')
         .single();
-
       if (listErr) throw listErr;
       targetListId = newList.id;
     }
 
-    // Insert contacts
-    const contactRows = leads.map(lead => ({
-      user_id,
-      list_id: targetListId,
-      phone: lead.phone,
-      name: lead.name,
-      source: 'google_maps',
-      group_name: lead.address,
-    }));
+    // Call sanitize-contacts for dedup, E.164 formatting, and WhatsApp check
+    console.log(`[extract-google-maps] Sanitizing ${rawLeads.length} leads...`);
 
-    let insertedCount = 0;
-    for (let i = 0; i < contactRows.length; i += 500) {
-      const batch = contactRows.slice(i, i + 500);
-      const { error: insertErr } = await supabase.from('wa_contacts').insert(batch);
-      if (insertErr) {
-        console.error('Insert batch error:', insertErr);
-      } else {
-        insertedCount += batch.length;
-      }
+    const sanitizeRes = await fetch(`${supabaseUrl}/functions/v1/sanitize-contacts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+      },
+      body: JSON.stringify({
+        user_id,
+        list_id: targetListId,
+        contacts: rawLeads.map(l => ({
+          phone: l.phone,
+          name: l.name,
+          group_name: l.address,
+          source: 'google_maps',
+        })),
+        check_whatsapp: false, // Google Maps leads may not have WhatsApp
+      }),
+    });
+
+    const sanitizeData = await sanitizeRes.json();
+
+    if (!sanitizeData.success) {
+      throw new Error(sanitizeData.error || 'Erro na higienização');
     }
 
-    // Update list count
-    const { count } = await supabase
-      .from('wa_contacts')
-      .select('id', { count: 'exact', head: true })
-      .eq('list_id', targetListId);
-
-    await supabase
-      .from('wa_contact_lists')
-      .update({ contact_count: count || 0 })
-      .eq('id', targetListId);
+    const stats = sanitizeData.stats || {};
+    console.log(`[extract-google-maps] Sanitization stats:`, stats);
 
     return new Response(JSON.stringify({
       success: true,
-      total_leads: insertedCount,
+      total_leads: stats.total_valid || 0,
+      inserted: sanitizeData.inserted_count || 0,
       list_id: targetListId,
       list_name: targetListName,
       search_results_count: results.length,
+      stats,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

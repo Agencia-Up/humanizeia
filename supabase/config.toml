@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.wa-extract-groups]
 verify_jwt = false
+
+[functions.sanitize-contacts]
+verify_jwt = false
