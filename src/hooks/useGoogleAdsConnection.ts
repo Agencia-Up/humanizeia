@@ -60,16 +60,7 @@ export function useGoogleAdsConnection() {
   }, [fetchConnectedAccount]);
 
   const getOAuthRedirectUri = () => {
-    const { hostname } = window.location;
-
-    // Preview URLs use id-preview--*.lovable.app, but Google OAuth usually only whitelists
-    // the stable project domain (*.lovableproject.com) and/or published domain.
-    // Keep /settings callback path to match existing Google OAuth redirect URI configuration.
-    if (hostname.startsWith('id-preview--') && hostname.endsWith('.lovable.app')) {
-      const projectSlug = hostname.replace('id-preview--', '').replace('.lovable.app', '');
-      return `https://${projectSlug}.lovableproject.com/settings?google_callback=true`;
-    }
-
+    // Keep OAuth callback on the same origin to preserve the authenticated session.
     return `${window.location.origin}/settings?google_callback=true`;
   };
 
