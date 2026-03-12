@@ -86,6 +86,13 @@ const learningItems = [
   { title: 'Academia IA', url: '/academy', icon: GraduationCap },
 ];
 
+// 💬 WhatsApp
+const whatsappItems = [
+  { title: 'Extrator de Grupos', url: '/whatsapp/groups', icon: Users },
+  { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
+  { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
+];
+
 // ⚙️ Sistema
 const systemItems = [
   { title: 'Configurações', url: '/settings', icon: Settings },
