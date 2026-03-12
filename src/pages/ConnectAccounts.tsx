@@ -417,7 +417,7 @@ export default function ConnectAccounts() {
                       </div>
 
                       <Button
-                        onClick={() => navigate('/')}
+                        onClick={() => navigate('/dashboard')}
                         className="w-full gradient-primary text-primary-foreground h-13 text-base font-semibold"
                       >
                         Ir para o Painel 🚀
