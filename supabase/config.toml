@@ -1,1 +1,7 @@
 project_id = "qrxsiixufdiemwwyhxvd"
+
+[functions.enqueue-campaign]
+verify_jwt = false
+
+[functions.process-whatsapp-queue]
+verify_jwt = false
