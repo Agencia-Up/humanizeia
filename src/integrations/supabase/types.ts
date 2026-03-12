@@ -1970,10 +1970,13 @@ export type Database = {
           api_url: string
           created_at: string
           friendly_name: string
+          health_score: number
           id: string
           instance_name: string
           is_active: boolean
           last_connected_at: string | null
+          last_message_at: string | null
+          messages_sent_today: number
           organization_id: string | null
           phone_number: string | null
           status: string
@@ -1985,10 +1988,13 @@ export type Database = {
           api_url: string
           created_at?: string
           friendly_name: string
+          health_score?: number
           id?: string
           instance_name: string
           is_active?: boolean
           last_connected_at?: string | null
+          last_message_at?: string | null
+          messages_sent_today?: number
           organization_id?: string | null
           phone_number?: string | null
           status?: string
@@ -2000,10 +2006,13 @@ export type Database = {
           api_url?: string
           created_at?: string
           friendly_name?: string
+          health_score?: number
           id?: string
           instance_name?: string
           is_active?: boolean
           last_connected_at?: string | null
+          last_message_at?: string | null
+          messages_sent_today?: number
           organization_id?: string | null
           phone_number?: string | null
           status?: string
@@ -2191,6 +2200,7 @@ export type Database = {
         }
       }
       get_user_email: { Args: { _user_id: string }; Returns: string }
+      increment_campaign_sent: { Args: { cid: string }; Returns: undefined }
       is_org_member: {
         Args: { _organization_id: string; _user_id: string }
         Returns: boolean

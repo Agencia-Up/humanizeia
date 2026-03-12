@@ -170,6 +170,27 @@ Não numere as variações. Não inclua explicações adicionais.`
     }
   };
 
+  const handleStartCampaign = async (id: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('enqueue-campaign', {
+        body: { campaign_id: id },
+      });
+      if (error) throw error;
+      toast({ title: 'Campanha iniciada!', description: `${data.enqueued} contatos enfileirados.` });
+      fetchCampaigns();
+    } catch (err: any) {
+      toast({ title: 'Erro ao iniciar campanha', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const handlePauseCampaign = async (id: string) => {
+    const { error } = await supabase.from('wa_campaigns').update({ status: 'paused' } as any).eq('id', id);
+    if (!error) {
+      toast({ title: 'Campanha pausada' });
+      fetchCampaigns();
+    }
+  };
+
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from('wa_campaigns').delete().eq('id', id);
     if (!error) {
@@ -427,14 +448,39 @@ Não numere as variações. Não inclua explicações adicionais.`
                             {format(new Date(c.created_at), 'dd/MM/yy HH:mm', { locale: ptBR })}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => handleDelete(c.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <div className="flex items-center justify-end gap-1">
+                              {(c.status === 'draft' || c.status === 'paused') && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-green-600 hover:text-green-700"
+                                  onClick={() => handleStartCampaign(c.id)}
+                                  title="Iniciar campanha"
+                                >
+                                  <Play className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {c.status === 'running' && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-yellow-600 hover:text-yellow-700"
+                                  onClick={() => handlePauseCampaign(c.id)}
+                                  title="Pausar campanha"
+                                >
+                                  <Pause className="h-4 w-4" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => handleDelete(c.id)}
+                                title="Excluir campanha"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
