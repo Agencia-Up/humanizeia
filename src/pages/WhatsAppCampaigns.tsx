@@ -26,15 +26,21 @@ interface Campaign {
   prompt_base: string | null;
   status: string;
   list_ids: string[];
+  listas_alvo: string[];
   min_delay_seconds: number;
   max_delay_seconds: number;
   rotation_messages_per_instance: number;
+  regras_delay: { min: number; max: number } | null;
+  regras_rodizio: { mensagens_por_instancia: number; pausa_entre_instancias: number } | null;
+  regras_aquecimento: { enabled: boolean; initial_messages: number } | null;
   total_contacts: number;
   sent_count: number;
   delivered_count: number;
   failed_count: number;
   created_at: string;
   scheduled_at: string | null;
+  start_time: string | null;
+  end_time: string | null;
   instance_id: string | null;
   media_url: string | null;
   media_type: string | null;
@@ -136,16 +142,24 @@ export default function WhatsAppCampaigns() {
       name: data.name.trim(),
       message_template: data.message_template.trim() || `[IA] ${data.prompt_base.trim().slice(0, 100)}`,
       prompt_base: data.prompt_base.trim() || null,
-      list_ids: data.list_ids,
-      min_delay_seconds: data.min_delay_seconds,
-      max_delay_seconds: data.max_delay_seconds,
-      rotation_messages_per_instance: data.rotation_messages_per_instance,
-      scheduled_at: data.scheduled_at,
+      // Keep old columns for backward compat
+      list_ids: data.listas_alvo,
+      min_delay_seconds: data.regras_delay.min,
+      max_delay_seconds: data.regras_delay.max,
+      rotation_messages_per_instance: data.regras_rodizio.mensagens_por_instancia,
+      // New JSONB columns
+      listas_alvo: data.listas_alvo,
+      regras_delay: data.regras_delay,
+      regras_rodizio: data.regras_rodizio,
+      regras_aquecimento: data.regras_aquecimento,
+      start_time: data.start_time,
+      end_time: data.end_time,
+      scheduled_at: data.start_time, // keep scheduled_at in sync
       instance_id: data.instance_id,
       media_url: data.media_url || null,
       media_type: data.media_type || null,
       tags: data.tags.length > 0 ? data.tags : null,
-      status: data.scheduled_at ? 'scheduled' : 'draft',
+      status: data.start_time ? 'scheduled' : 'draft',
     };
 
     let error;
@@ -192,11 +206,12 @@ Não numere as variações. Não inclua explicações adicionais.`
       name: c.name,
       prompt_base: c.prompt_base || '',
       message_template: c.message_template,
-      list_ids: c.list_ids || [],
-      min_delay_seconds: c.min_delay_seconds,
-      max_delay_seconds: c.max_delay_seconds,
-      rotation_messages_per_instance: c.rotation_messages_per_instance,
-      scheduled_at: c.scheduled_at,
+      listas_alvo: c.listas_alvo || c.list_ids || [],
+      regras_delay: c.regras_delay || { min: c.min_delay_seconds, max: c.max_delay_seconds },
+      regras_rodizio: c.regras_rodizio || { mensagens_por_instancia: c.rotation_messages_per_instance, pausa_entre_instancias: 300 },
+      regras_aquecimento: c.regras_aquecimento || { enabled: false, initial_messages: 20 },
+      start_time: c.start_time || c.scheduled_at,
+      end_time: c.end_time || null,
       instance_id: c.instance_id,
       media_url: c.media_url || '',
       media_type: c.media_type || '',
@@ -320,7 +335,7 @@ Não numere as variações. Não inclua explicações adicionais.`
                         <TableHead>Status</TableHead>
                         <TableHead>Progresso</TableHead>
                         <TableHead className="text-center">IA</TableHead>
-                        <TableHead>Agendamento</TableHead>
+                        <TableHead>Período</TableHead>
                         <TableHead>Criada em</TableHead>
                         <TableHead className="text-right">Ações</TableHead>
                       </TableRow>
@@ -329,6 +344,7 @@ Não numere as variações. Não inclua explicações adicionais.`
                       {campaigns.map(c => {
                         const st = statusMap[c.status] || statusMap.draft;
                         const progress = getProgressPercent(c);
+                        const periodStart = c.start_time || c.scheduled_at;
                         return (
                           <TableRow key={c.id}>
                             <TableCell className="font-medium max-w-[200px]">
@@ -369,10 +385,17 @@ Não numere as variações. Não inclua explicações adicionais.`
                               )}
                             </TableCell>
                             <TableCell>
-                              {c.scheduled_at ? (
-                                <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                                  <CalendarIcon className="h-3.5 w-3.5" />
-                                  {format(new Date(c.scheduled_at), 'dd/MM HH:mm', { locale: ptBR })}
+                              {periodStart ? (
+                                <div className="text-sm text-muted-foreground space-y-0.5">
+                                  <div className="flex items-center gap-1">
+                                    <CalendarIcon className="h-3.5 w-3.5" />
+                                    {format(new Date(periodStart), 'dd/MM HH:mm', { locale: ptBR })}
+                                  </div>
+                                  {c.end_time && (
+                                    <div className="text-xs">
+                                      até {format(new Date(c.end_time), 'dd/MM HH:mm', { locale: ptBR })}
+                                    </div>
+                                  )}
                                 </div>
                               ) : (
                                 <span className="text-muted-foreground text-xs">—</span>
