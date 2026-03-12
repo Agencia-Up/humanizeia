@@ -448,14 +448,39 @@ Não numere as variações. Não inclua explicações adicionais.`
                             {format(new Date(c.created_at), 'dd/MM/yy HH:mm', { locale: ptBR })}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => handleDelete(c.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <div className="flex items-center justify-end gap-1">
+                              {(c.status === 'draft' || c.status === 'paused') && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-green-600 hover:text-green-700"
+                                  onClick={() => handleStartCampaign(c.id)}
+                                  title="Iniciar campanha"
+                                >
+                                  <Play className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {c.status === 'running' && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-yellow-600 hover:text-yellow-700"
+                                  onClick={() => handlePauseCampaign(c.id)}
+                                  title="Pausar campanha"
+                                >
+                                  <Pause className="h-4 w-4" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => handleDelete(c.id)}
+                                title="Excluir campanha"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
