@@ -2200,6 +2200,7 @@ export type Database = {
         }
       }
       get_user_email: { Args: { _user_id: string }; Returns: string }
+      increment_campaign_sent: { Args: { cid: string }; Returns: undefined }
       is_org_member: {
         Args: { _organization_id: string; _user_id: string }
         Returns: boolean
