@@ -31,6 +31,8 @@ const defaultSettings: AISettings = {
   geminiKey: '',
   anthropicKey: '',
   autoFallback: true,
+  autoSuggestions: true,
+  conservativeMode: true,
 };
 
 const copyProviders = [
