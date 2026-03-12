@@ -1,29 +1,23 @@
 import {
-  Home, 
-  PenTool, 
+  Home,
+  Brain,
+  PenTool,
   Palette,
   Rocket,
-  DollarSign, 
-  BarChart3, 
-  Settings2, 
-  FlaskConical, 
-  FolderOpen, 
-  FileText, 
-  GraduationCap, 
+  DollarSign,
+  FlaskConical,
+  Settings2,
+  Layers,
+  FolderOpen,
+  FileText,
+  BarChart3,
+  Plug,
+  GraduationCap,
   Settings,
   Sparkles,
-  Bot,
   Moon,
   Sun,
-  Menu,
   X,
-  ChevronDown,
-  Layers,
-  Zap,
-  Cog,
-  Library,
-  Plug,
-  GripVertical,
   LogOut,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -45,36 +39,51 @@ import {
   SidebarFooter,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { Separator } from '@/components/ui/separator';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 
-const mainNavItems = [
+// 🏠 Dashboard
+const dashboardItems = [
   { title: 'Painel', url: '/', icon: Home },
-  { title: 'Agente Apollo', url: '/midas', icon: Bot },
+];
+
+// 🤖 Inteligência IA
+const aiItems = [
+  { title: 'Agente Apollo', url: '/midas', icon: Brain },
   { title: 'Copywriter IA', url: '/copywriter', icon: PenTool },
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
 ];
 
-const optimizationItems = [
+// 📈 Campanhas
+const campaignItems = [
   { title: 'Otimizador de Campanhas', url: '/optimizer', icon: Rocket },
   { title: 'Alocador de Verba', url: '/budget', icon: DollarSign },
-  { title: 'Análises', url: '/analytics', icon: BarChart3 },
-];
-
-const automationItems = [
-  { title: 'Regras Automáticas', url: '/rules', icon: Settings2 },
   { title: 'Laboratório A/B', url: '/ab-testing', icon: FlaskConical },
 ];
 
-const libraryItems = [
-  { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
-  { title: 'Relatórios', url: '/reports', icon: FileText },
+// ⚙️ Automação
+const automationItems = [
+  { title: 'Regras Automáticas', url: '/rules', icon: Settings2 },
   { title: 'Pixel Unificado', url: '/pixel', icon: Layers },
+];
+
+// 📊 Análises
+const analyticsItems = [
+  { title: 'Relatórios', url: '/reports', icon: FileText },
+  { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
+];
+
+// 🔗 Integrações
+const integrationItems = [
   { title: 'Integrações', url: '/integrations', icon: Plug },
 ];
 
-const learnItems = [
+// 🎓 Aprendizado
+const learningItems = [
   { title: 'Academia IA', url: '/academy', icon: GraduationCap },
+];
+
+// ⚙️ Sistema
+const systemItems = [
   { title: 'Configurações', url: '/settings', icon: Settings },
 ];
 
