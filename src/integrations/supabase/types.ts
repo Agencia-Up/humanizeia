@@ -1773,10 +1773,12 @@ export type Database = {
           completed_at: string | null
           created_at: string
           delivered_count: number
+          end_time: string | null
           failed_count: number
           id: string
           instance_id: string | null
           list_ids: string[] | null
+          listas_alvo: string[] | null
           max_delay_seconds: number
           media_type: string | null
           media_url: string | null
@@ -1785,9 +1787,13 @@ export type Database = {
           name: string
           organization_id: string | null
           prompt_base: string | null
+          regras_aquecimento: Json | null
+          regras_delay: Json | null
+          regras_rodizio: Json | null
           rotation_messages_per_instance: number
           scheduled_at: string | null
           sent_count: number
+          start_time: string | null
           started_at: string | null
           status: string
           tags: string[] | null
@@ -1799,10 +1805,12 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           delivered_count?: number
+          end_time?: string | null
           failed_count?: number
           id?: string
           instance_id?: string | null
           list_ids?: string[] | null
+          listas_alvo?: string[] | null
           max_delay_seconds?: number
           media_type?: string | null
           media_url?: string | null
@@ -1811,9 +1819,13 @@ export type Database = {
           name: string
           organization_id?: string | null
           prompt_base?: string | null
+          regras_aquecimento?: Json | null
+          regras_delay?: Json | null
+          regras_rodizio?: Json | null
           rotation_messages_per_instance?: number
           scheduled_at?: string | null
           sent_count?: number
+          start_time?: string | null
           started_at?: string | null
           status?: string
           tags?: string[] | null
@@ -1825,10 +1837,12 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           delivered_count?: number
+          end_time?: string | null
           failed_count?: number
           id?: string
           instance_id?: string | null
           list_ids?: string[] | null
+          listas_alvo?: string[] | null
           max_delay_seconds?: number
           media_type?: string | null
           media_url?: string | null
@@ -1837,9 +1851,13 @@ export type Database = {
           name?: string
           organization_id?: string | null
           prompt_base?: string | null
+          regras_aquecimento?: Json | null
+          regras_delay?: Json | null
+          regras_rodizio?: Json | null
           rotation_messages_per_instance?: number
           scheduled_at?: string | null
           sent_count?: number
+          start_time?: string | null
           started_at?: string | null
           status?: string
           tags?: string[] | null
