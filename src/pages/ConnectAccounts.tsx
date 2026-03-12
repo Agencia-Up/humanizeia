@@ -289,7 +289,7 @@ export default function ConnectAccounts() {
                       ) : (
                         <Button
                           variant="ghost"
-                          onClick={() => navigate('/')}
+                          onClick={() => navigate('/dashboard')}
                           className="flex-1 text-muted-foreground"
                         >
                           Pular por enquanto
@@ -417,7 +417,7 @@ export default function ConnectAccounts() {
                       </div>
 
                       <Button
-                        onClick={() => navigate('/')}
+                        onClick={() => navigate('/dashboard')}
                         className="w-full gradient-primary text-primary-foreground h-13 text-base font-semibold"
                       >
                         Ir para o Painel 🚀

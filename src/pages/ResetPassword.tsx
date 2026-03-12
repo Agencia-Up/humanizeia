@@ -45,7 +45,7 @@ export default function ResetPassword() {
       toast({ title: 'Erro', description: 'Não foi possível redefinir a senha. Tente novamente.', variant: 'destructive' });
     } else {
       toast({ title: '✅ Senha redefinida!', description: 'Você será redirecionado para o painel.' });
-      setTimeout(() => navigate('/'), 1500);
+      setTimeout(() => navigate('/dashboard'), 1500);
     }
   };
 
