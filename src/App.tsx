@@ -32,6 +32,7 @@ import WhatsAppGroups from "./pages/WhatsAppGroups";
 import WhatsAppContacts from "./pages/WhatsAppContacts";
 import WhatsAppBroadcast from "./pages/WhatsAppBroadcast";
 import WhatsAppCampaigns from "./pages/WhatsAppCampaigns";
+import WhatsAppInbox from "./pages/WhatsAppInbox";
 
 const queryClient = new QueryClient();
 
