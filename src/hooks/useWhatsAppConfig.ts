@@ -74,13 +74,13 @@ export function useWhatsAppConfig() {
       if (config) {
         const { error } = await supabase
           .from('whatsapp_config')
-          .update(payload)
+          .update(payload as any)
           .eq('id', config.id);
         if (error) throw error;
       } else {
         const { error } = await supabase
           .from('whatsapp_config')
-          .insert(payload);
+          .insert(payload as any);
         if (error) throw error;
       }
 
