@@ -1,42 +1,55 @@
 
+Objetivo imediato: te tirar do modo de Segurança e voltar ao fluxo normal para eu implementar o Passo 3.
 
-## Diagnóstico: Biblioteca de Criativos sem fotos
+1) Desbloquear a interface (faça nesta ordem)
 
-### Problema encontrado
+Desktop
+- Passo A: Na barra acima do preview, clique no ícone de escudo (Security) para sair dessa view.
+- Passo B: Na caixa de mensagem (rodapé do chat), clique no ícone de balão para alternar de Plan/Chat para Build.
+- Passo C: Verifique se o input está em Build mode (não Plan/Chat).
 
-Dois problemas combinados:
+Mobile
+- Passo A: Em Chat mode, toque em “…” (canto inferior direito) e troque de Security para outra view (ex.: Preview/Cloud).
+- Passo B: No campo de mensagem, toque no ícone de balão para alternar para Build.
+- Passo C: Confirme que está em Build mode antes de enviar o próximo prompt.
 
-1. **Contas Meta inativas**: Ambas as contas na tabela `ad_accounts` estão com `is_active: false`. Quando isso acontece, `useMetaConnection` retorna `connectedAccount: null`, e a página mostra a tela "Conecte seu Meta Ads" em vez dos dados em cache.
+2) Se continuar travado (fallback rápido)
 
-2. **Cache sem URLs de imagem de alta resolução**: O cache (`ads_creatives`) tem 50 anúncios armazenados, porém os dados do criativo só contêm `thumbnail_url` (formato p64x64, baixa resolução). Os campos `full_picture`, `image_url` e `effective_image_url` vieram como `null` da API do Meta. A função `getHighResThumbnail` tenta transformar p64x64 para p960x960, mas essa manipulação de URL nem sempre funciona no CDN da Meta.
+Desktop
+- Atalho: Alt+P para alternar Plan/Build.
+- Crie nova conversa: botão “+” (novo chat) e envie “Implementar Passo 3”.
+- Recarregue a página (Ctrl/Cmd+R) e reabra o projeto.
 
-### Plano de correção
+Mobile
+- Abra novo chat pelo “+”.
+- Feche e reabra o app/navegador.
+- Reentre no projeto e confirme o modo Build no input antes de mandar mensagem.
 
-**Arquivo: `src/pages/CreativeLibrary.tsx`**
+3) Assim que destravar, implementação do Passo 3 (eu executo)
 
-1. Exibir dados do cache mesmo quando a conta está desconectada, com um banner de aviso pedindo reconexão para dados atualizados. Atualmente a tela "Conecte seu Meta Ads" bloqueia completamente o acesso ao cache existente.
+- Criar rota/página: /whatsapp/campaigns.
+- Construir listagem de campanhas (wa_campaigns) com ação “Nova campanha”.
+- Criar formulário com:
+  - nome da campanha
+  - seleção de listas de contatos
+  - prompt base
+  - delay mínimo/máximo
+  - rodízio por instância (mensagens antes de trocar)
+- Integrar backend para salvar campanha e regras.
+- Integrar IA: usar claude-chat (ou função dedicada) para gerar variações no momento do disparo.
+- Validar fluxo completo de criação -> persistência -> prévia de variações.
 
-2. Alterar a lógica do `enabled` no `useMetaCachedQuery` para sempre ler o cache (mesmo sem conta ativa), mas só tentar buscar dados frescos quando conectado.
+Detalhes técnicos (quando estiver em Build)
+- Dados:
+  - wa_campaigns (nome, prompt_base, delay_min_s, delay_max_s, rotation_messages_per_instance, status, user_id, timestamps)
+  - tabela relacional campanha x listas (se múltiplas listas por campanha)
+- Segurança:
+  - políticas de acesso por usuário autenticado (cada usuário só vê/edita suas campanhas)
+- Frontend:
+  - página com tabela + modal/drawer de criação
+  - validação com zod/react-hook-form
+- IA:
+  - payload com prompt_base + contexto da campanha
+  - retorno com variações para uso no disparo
 
-**Arquivo: `src/hooks/useMetaCachedQuery.ts`**
-
-3. Separar a leitura do cache (sempre habilitada) da busca de dados frescos (só quando `enabled: true`). Isso garante que dados em cache sejam exibidos instantaneamente mesmo sem conexão ativa.
-
-**Arquivo: `src/pages/CreativeLibrary.tsx` (imagens)**
-
-4. Adicionar fallback robusto para URLs de imagem: tentar carregar via `thumbnail_url` transformada, e se falhar (evento `onError` no `<img>`), voltar à URL original p64x64. Também solicitar o campo `object_story_spec` da API, que contém URLs de imagem mais confiáveis.
-
-### Detalhes técnicos
-
-A chave do cache `ads_creatives` tem 50 itens salvos às 15:27 de hoje. Os dados estão lá, mas a UI não os mostra porque a verificação `isConnected` bloqueia tudo antes de chegar ao `useMetaCachedQuery`.
-
-Fluxo corrigido:
-```text
-Página carrega
-  ├─ Lê cache (sempre) → mostra dados salvos imediatamente
-  ├─ Conta ativa? 
-  │   ├─ Sim → busca dados frescos em background
-  │   └─ Não → mostra banner "Reconecte para atualizar"
-  └─ Imagem com fallback: effective_image_url → image_url → full_picture → thumbnail (p960) → thumbnail (original)
-```
-
+Quando você confirmar que está em Build mode, eu sigo imediatamente com a execução desse plano.
