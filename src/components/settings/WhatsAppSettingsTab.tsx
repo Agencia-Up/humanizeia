@@ -34,7 +34,6 @@ export function WhatsAppSettingsTab() {
     if (!config) return;
     saveConfig({
       api_url: config.api_url,
-      api_key: config.api_key,
       instance_name: config.instance_name,
       phone_number: config.phone_number,
       send_daily_report: sendDailyReport,

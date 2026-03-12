@@ -6,7 +6,6 @@ interface WhatsAppConfig {
   id: string;
   user_id: string;
   api_url: string;
-  api_key: string;
   instance_name: string;
   phone_number: string;
   is_active: boolean;
@@ -31,7 +30,7 @@ export function useWhatsAppConfig() {
 
       const { data, error } = await supabase
         .from('whatsapp_config')
-        .select('*')
+        .select('id, user_id, api_url, instance_name, phone_number, is_active, send_daily_report, report_time')
         .eq('user_id', session.session.user.id)
         .maybeSingle();
 
@@ -50,7 +49,7 @@ export function useWhatsAppConfig() {
 
   const saveConfig = async (values: {
     api_url: string;
-    api_key: string;
+    api_key?: string;
     instance_name: string;
     phone_number: string;
     send_daily_report: boolean;
@@ -62,22 +61,26 @@ export function useWhatsAppConfig() {
       if (!session?.session?.user) throw new Error('Não autenticado');
 
       const userId = session.session.user.id;
-      const payload = {
-        ...values,
+      const { api_key, ...rest } = values;
+      const payload: Record<string, unknown> = {
+        ...rest,
         user_id: userId,
         is_active: true,
       };
+      if (api_key) {
+        payload.api_key = api_key;
+      }
 
       if (config) {
         const { error } = await supabase
           .from('whatsapp_config')
-          .update(payload)
+          .update(payload as any)
           .eq('id', config.id);
         if (error) throw error;
       } else {
         const { error } = await supabase
           .from('whatsapp_config')
-          .insert(payload);
+          .insert(payload as any);
         if (error) throw error;
       }
 
