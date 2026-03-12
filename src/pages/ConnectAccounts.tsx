@@ -289,7 +289,7 @@ export default function ConnectAccounts() {
                       ) : (
                         <Button
                           variant="ghost"
-                          onClick={() => navigate('/')}
+                          onClick={() => navigate('/dashboard')}
                           className="flex-1 text-muted-foreground"
                         >
                           Pular por enquanto
