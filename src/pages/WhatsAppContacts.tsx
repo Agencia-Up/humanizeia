@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
   Contact, Search, Trash2, Loader2, Plus, FolderOpen, Users, Phone, Tag,
-  Edit, Eye, ArrowLeft, MoreHorizontal, MapPin, MessageCircle,
+  Edit, Eye, ArrowLeft, MoreHorizontal, MapPin, MessageCircle, Globe,
 } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -55,6 +55,7 @@ interface WAContact {
 const sourceLabels: Record<string, { label: string; icon: typeof Phone }> = {
   manual: { label: 'Manual', icon: Phone },
   whatsapp_group: { label: 'Grupo WhatsApp', icon: MessageCircle },
+  group_extract: { label: 'Grupo WhatsApp', icon: MessageCircle },
   google_maps: { label: 'Google Maps', icon: MapPin },
   import: { label: 'Importação', icon: FolderOpen },
 };
@@ -74,6 +75,7 @@ export default function WhatsAppContacts() {
   const [showEditList, setShowEditList] = useState(false);
   const [showAddContacts, setShowAddContacts] = useState(false);
   const [showDeleteList, setShowDeleteList] = useState(false);
+  const [showGoogleMaps, setShowGoogleMaps] = useState(false);
 
   // Form state
   const [formListName, setFormListName] = useState('');
@@ -82,6 +84,13 @@ export default function WhatsAppContacts() {
   const [targetListId, setTargetListId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [editingList, setEditingList] = useState<ContactList | null>(null);
+
+  // Google Maps state
+  const [mapsQuery, setMapsQuery] = useState('');
+  const [mapsTargetListId, setMapsTargetListId] = useState('');
+  const [mapsNewListName, setMapsNewListName] = useState('');
+  const [isExtractingMaps, setIsExtractingMaps] = useState(false);
+  const [mapsListMode, setMapsListMode] = useState<'existing' | 'new'>('new');
 
   const fetchLists = useCallback(async () => {
     if (!user) return;
@@ -177,7 +186,6 @@ export default function WhatsAppContacts() {
     if (!editingList) return;
     setIsSaving(true);
     try {
-      // Delete contacts first
       await supabase.from('wa_contacts').delete().eq('list_id', editingList.id);
       const { error } = await supabase.from('wa_contact_lists').delete().eq('id', editingList.id);
       if (error) throw error;
@@ -208,9 +216,7 @@ export default function WhatsAppContacts() {
         return;
       }
 
-      // Deduplicate
       const unique = [...new Set(phones)];
-
       const rows = unique.map(phone => ({
         user_id: user.id,
         list_id: targetListId,
@@ -221,7 +227,6 @@ export default function WhatsAppContacts() {
       const { error } = await supabase.from('wa_contacts').insert(rows);
       if (error) throw error;
 
-      // Recount
       const { count } = await supabase
         .from('wa_contacts')
         .select('id', { count: 'exact', head: true })
@@ -253,7 +258,6 @@ export default function WhatsAppContacts() {
       setSelectedContacts([]);
       if (selectedList) {
         fetchContacts(selectedList.id);
-        // Recount
         const { count } = await supabase
           .from('wa_contacts')
           .select('id', { count: 'exact', head: true })
@@ -266,6 +270,44 @@ export default function WhatsAppContacts() {
       }
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  // Google Maps extraction
+  const extractGoogleMaps = async () => {
+    if (!user || !mapsQuery.trim()) return;
+    setIsExtractingMaps(true);
+    try {
+      const payload: any = {
+        user_id: user.id,
+        search_query: mapsQuery.trim(),
+      };
+
+      if (mapsListMode === 'existing' && mapsTargetListId) {
+        payload.list_id = mapsTargetListId;
+      } else if (mapsListMode === 'new' && mapsNewListName.trim()) {
+        payload.list_name = mapsNewListName.trim();
+      }
+
+      const { data, error } = await supabase.functions.invoke('extract-google-maps-leads', {
+        body: payload,
+      });
+
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Erro na extração');
+
+      toast({
+        title: 'Extração concluída!',
+        description: `${data.total_leads || 0} leads extraídos do Google Maps`,
+      });
+      setShowGoogleMaps(false);
+      setMapsQuery('');
+      setMapsNewListName('');
+      fetchLists();
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsExtractingMaps(false);
     }
   };
 
@@ -309,7 +351,7 @@ export default function WhatsAppContacts() {
               }
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {selectedList ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => { setTargetListId(selectedList.id); setShowAddContacts(true); }}>
@@ -323,6 +365,9 @@ export default function WhatsAppContacts() {
               </>
             ) : (
               <>
+                <Button variant="outline" onClick={() => setShowGoogleMaps(true)}>
+                  <MapPin className="h-4 w-4 mr-1.5" /> Extrair do Google Maps
+                </Button>
                 <Button variant="outline" onClick={() => setShowAddContacts(true)}>
                   <Phone className="h-4 w-4 mr-1.5" /> Importar Contatos
                 </Button>
@@ -337,7 +382,6 @@ export default function WhatsAppContacts() {
         {/* View: Lists or Contacts */}
         {!selectedList ? (
           <>
-            {/* Lists Grid */}
             {isLoading ? (
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -348,9 +392,14 @@ export default function WhatsAppContacts() {
                   <FolderOpen className="h-12 w-12 text-muted-foreground opacity-40" />
                   <p className="text-muted-foreground">Nenhuma lista criada ainda</p>
                   <p className="text-sm text-muted-foreground">Crie uma lista para começar a organizar seus leads</p>
-                  <Button onClick={() => { setFormListName(''); setFormListDesc(''); setShowNewList(true); }}>
-                    <Plus className="h-4 w-4 mr-2" /> Criar Primeira Lista
-                  </Button>
+                  <div className="flex gap-2 mt-2">
+                    <Button variant="outline" onClick={() => setShowGoogleMaps(true)}>
+                      <MapPin className="h-4 w-4 mr-2" /> Extrair do Google Maps
+                    </Button>
+                    <Button onClick={() => { setFormListName(''); setFormListDesc(''); setShowNewList(true); }}>
+                      <Plus className="h-4 w-4 mr-2" /> Criar Primeira Lista
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ) : (
@@ -359,16 +408,10 @@ export default function WhatsAppContacts() {
                   const src = sourceLabels[list.source] || sourceLabels.manual;
                   const SrcIcon = src.icon;
                   return (
-                    <Card
-                      key={list.id}
-                      className="group hover:border-primary/50 transition-all cursor-pointer"
-                    >
+                    <Card key={list.id} className="group hover:border-primary/50 transition-all cursor-pointer">
                       <CardContent className="p-4">
                         <div className="flex items-start justify-between">
-                          <div
-                            className="flex items-center gap-3 flex-1 min-w-0"
-                            onClick={() => setSelectedList(list)}
-                          >
+                          <div className="flex items-center gap-3 flex-1 min-w-0" onClick={() => setSelectedList(list)}>
                             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 shrink-0">
                               <FolderOpen className="h-5 w-5 text-primary" />
                             </div>
@@ -379,7 +422,6 @@ export default function WhatsAppContacts() {
                               )}
                             </div>
                           </div>
-
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -399,20 +441,16 @@ export default function WhatsAppContacts() {
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
-
                         <div className="flex items-center justify-between mt-3" onClick={() => setSelectedList(list)}>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-xs gap-1">
-                              <SrcIcon className="h-3 w-3" />
-                              {src.label}
-                            </Badge>
-                          </div>
+                          <Badge variant="outline" className="text-xs gap-1">
+                            <SrcIcon className="h-3 w-3" />
+                            {src.label}
+                          </Badge>
                           <Badge variant="secondary" className="gap-1">
                             <Users className="h-3 w-3" />
                             {list.contact_count}
                           </Badge>
                         </div>
-
                         <p className="text-[11px] text-muted-foreground mt-2" onClick={() => setSelectedList(list)}>
                           Criada em {format(new Date(list.created_at), "dd/MM/yyyy", { locale: ptBR })}
                         </p>
@@ -424,19 +462,13 @@ export default function WhatsAppContacts() {
             )}
           </>
         ) : (
-          /* Contacts Table */
           <Card>
             <CardHeader>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <CardTitle className="text-lg">Contatos da Lista</CardTitle>
                 <div className="relative w-full sm:w-64">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar por telefone, nome..."
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    className="pl-9"
-                  />
+                  <Input placeholder="Buscar por telefone, nome..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
                 </div>
               </div>
             </CardHeader>
@@ -445,11 +477,7 @@ export default function WhatsAppContacts() {
                 <div className="text-center py-12 text-muted-foreground">
                   <Users className="h-10 w-10 mx-auto mb-3 opacity-40" />
                   <p>Nenhum contato nesta lista</p>
-                  <Button
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => { setTargetListId(selectedList.id); setShowAddContacts(true); }}
-                  >
+                  <Button size="sm" className="mt-3" onClick={() => { setTargetListId(selectedList.id); setShowAddContacts(true); }}>
                     <Plus className="h-4 w-4 mr-1" /> Adicionar Contatos
                   </Button>
                 </div>
@@ -462,17 +490,13 @@ export default function WhatsAppContacts() {
                           <Checkbox
                             checked={selectedContacts.length === filteredContacts.length && filteredContacts.length > 0}
                             onCheckedChange={() => {
-                              setSelectedContacts(
-                                selectedContacts.length === filteredContacts.length
-                                  ? []
-                                  : filteredContacts.map(c => c.id)
-                              );
+                              setSelectedContacts(selectedContacts.length === filteredContacts.length ? [] : filteredContacts.map(c => c.id));
                             }}
                           />
                         </TableHead>
                         <TableHead>Telefone</TableHead>
                         <TableHead>Nome</TableHead>
-                        <TableHead>Grupo</TableHead>
+                        <TableHead>Grupo/Endereço</TableHead>
                         <TableHead>Origem</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Adicionado</TableHead>
@@ -486,16 +510,14 @@ export default function WhatsAppContacts() {
                               checked={selectedContacts.includes(contact.id)}
                               onCheckedChange={() => {
                                 setSelectedContacts(prev =>
-                                  prev.includes(contact.id)
-                                    ? prev.filter(c => c !== contact.id)
-                                    : [...prev, contact.id]
+                                  prev.includes(contact.id) ? prev.filter(c => c !== contact.id) : [...prev, contact.id]
                                 );
                               }}
                             />
                           </TableCell>
                           <TableCell className="font-mono text-sm">{contact.phone}</TableCell>
                           <TableCell>{contact.name || '—'}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{contact.group_name || '—'}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">{contact.group_name || '—'}</TableCell>
                           <TableCell>
                             <Badge variant="outline" className="text-xs">{sourceLabels[contact.source]?.label || contact.source}</Badge>
                           </TableCell>
@@ -638,6 +660,102 @@ export default function WhatsAppContacts() {
             <Button onClick={addBulkContacts} disabled={isSaving || !targetListId || !bulkPhones.trim()}>
               {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Phone className="h-4 w-4 mr-2" />}
               Importar Contatos
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Google Maps Extractor Dialog */}
+      <Dialog open={showGoogleMaps} onOpenChange={setShowGoogleMaps}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-primary" />
+              Extrair Leads do Google Maps
+            </DialogTitle>
+            <DialogDescription>
+              Busque empresas e extraia telefones automaticamente
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Termo de busca *</Label>
+              <Input
+                value={mapsQuery}
+                onChange={e => setMapsQuery(e.target.value)}
+                placeholder="Ex: Clínicas Odontológicas em São Paulo"
+                maxLength={200}
+              />
+              <p className="text-xs text-muted-foreground">
+                Use termos específicos com localização para melhores resultados
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Salvar em</Label>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={mapsListMode === 'new' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setMapsListMode('new')}
+                >
+                  Nova Lista
+                </Button>
+                <Button
+                  type="button"
+                  variant={mapsListMode === 'existing' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setMapsListMode('existing')}
+                  disabled={lists.length === 0}
+                >
+                  Lista Existente
+                </Button>
+              </div>
+            </div>
+
+            {mapsListMode === 'new' ? (
+              <div className="space-y-2">
+                <Label>Nome da nova lista</Label>
+                <Input
+                  value={mapsNewListName}
+                  onChange={e => setMapsNewListName(e.target.value)}
+                  placeholder="Ex: Clínicas SP"
+                  maxLength={100}
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>Selecione a lista</Label>
+                <Select value={mapsTargetListId} onValueChange={setMapsTargetListId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma lista" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {lists.map(l => (
+                      <SelectItem key={l.id} value={l.id}>{l.name} ({l.contact_count})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowGoogleMaps(false)}>Cancelar</Button>
+            <Button
+              onClick={extractGoogleMaps}
+              disabled={
+                isExtractingMaps ||
+                !mapsQuery.trim() ||
+                (mapsListMode === 'existing' && !mapsTargetListId)
+              }
+            >
+              {isExtractingMaps ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Globe className="h-4 w-4 mr-2" />
+              )}
+              {isExtractingMaps ? 'Extraindo...' : 'Extrair Leads'}
             </Button>
           </DialogFooter>
         </DialogContent>

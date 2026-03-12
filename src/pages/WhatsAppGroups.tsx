@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,23 +9,18 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Users,
-  Search,
-  Download,
-  Loader2,
-  RefreshCw,
-  WifiOff,
-  CheckCircle,
-  UserPlus,
+  Users, Search, Download, Loader2, RefreshCw, WifiOff, CheckCircle, UserPlus, Plus,
 } from 'lucide-react';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 
 interface WhatsAppGroup {
   id: string;
@@ -33,7 +28,12 @@ interface WhatsAppGroup {
   size: number;
   owner: string;
   creation: number;
-  participants?: { id: string; admin?: string }[];
+}
+
+interface ContactList {
+  id: string;
+  name: string;
+  contact_count: number;
 }
 
 export default function WhatsAppGroups() {
@@ -45,6 +45,13 @@ export default function WhatsAppGroups() {
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
   const [hasInstance, setHasInstance] = useState<boolean | null>(null);
+
+  // List selection
+  const [showExtractDialog, setShowExtractDialog] = useState(false);
+  const [lists, setLists] = useState<ContactList[]>([]);
+  const [listMode, setListMode] = useState<'new' | 'existing'>('new');
+  const [newListName, setNewListName] = useState('');
+  const [targetListId, setTargetListId] = useState('');
 
   useEffect(() => {
     checkInstance();
@@ -60,6 +67,16 @@ export default function WhatsAppGroups() {
       .maybeSingle();
     setHasInstance(!!data);
   };
+
+  const fetchLists = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('wa_contact_lists')
+      .select('id, name, contact_count')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+    setLists((data as ContactList[]) || []);
+  }, [user]);
 
   const fetchGroups = async () => {
     if (!user) return;
@@ -79,10 +96,36 @@ export default function WhatsAppGroups() {
     }
   };
 
+  const openExtractDialog = () => {
+    fetchLists();
+    setNewListName(`Grupos extraídos - ${new Date().toLocaleDateString('pt-BR')}`);
+    setListMode('new');
+    setTargetListId('');
+    setShowExtractDialog(true);
+  };
+
   const extractContacts = async () => {
     if (!user || selectedGroups.length === 0) return;
     setIsExtracting(true);
     try {
+      // If using existing list, pass list_id; if new, create it first
+      let listId = listMode === 'existing' ? targetListId : undefined;
+
+      if (listMode === 'new' && newListName.trim()) {
+        const { data: newList, error: listErr } = await supabase
+          .from('wa_contact_lists')
+          .insert({
+            user_id: user.id,
+            name: newListName.trim(),
+            source: 'group_extract',
+            contact_count: 0,
+          })
+          .select('id')
+          .single();
+        if (listErr) throw listErr;
+        listId = newList.id;
+      }
+
       const selectedGroupData = groups.filter(g => selectedGroups.includes(g.id));
       const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
         body: {
@@ -90,6 +133,7 @@ export default function WhatsAppGroups() {
           action: 'extract_contacts',
           group_ids: selectedGroups,
           groups: selectedGroupData,
+          list_id: listId,
         },
       });
       if (error) throw error;
@@ -99,6 +143,7 @@ export default function WhatsAppGroups() {
         description: `${data.total_contacts || 0} contatos salvos de ${selectedGroups.length} grupo(s)`,
       });
       setSelectedGroups([]);
+      setShowExtractDialog(false);
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
@@ -168,7 +213,7 @@ export default function WhatsAppGroups() {
         {groups.length > 0 && (
           <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
                   <CardTitle className="text-lg">
                     {groups.length} grupo(s) encontrado(s)
@@ -188,12 +233,8 @@ export default function WhatsAppGroups() {
                     />
                   </div>
                   {selectedGroups.length > 0 && (
-                    <Button onClick={extractContacts} disabled={isExtracting}>
-                      {isExtracting ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <Download className="h-4 w-4 mr-2" />
-                      )}
+                    <Button onClick={openExtractDialog}>
+                      <Download className="h-4 w-4 mr-2" />
                       Extrair ({selectedGroups.length})
                     </Button>
                   )}
@@ -255,6 +296,89 @@ export default function WhatsAppGroups() {
           </Card>
         )}
       </div>
+
+      {/* Extract Dialog - Choose target list */}
+      <Dialog open={showExtractDialog} onOpenChange={setShowExtractDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Download className="h-5 w-5 text-primary" />
+              Extrair Contatos
+            </DialogTitle>
+            <DialogDescription>
+              Extrair contatos de {selectedGroups.length} grupo(s) selecionado(s). Escolha onde salvar os leads.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Salvar em</Label>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={listMode === 'new' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setListMode('new')}
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Nova Lista
+                </Button>
+                <Button
+                  type="button"
+                  variant={listMode === 'existing' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setListMode('existing')}
+                  disabled={lists.length === 0}
+                >
+                  Lista Existente
+                </Button>
+              </div>
+            </div>
+
+            {listMode === 'new' ? (
+              <div className="space-y-2">
+                <Label>Nome da nova lista</Label>
+                <Input
+                  value={newListName}
+                  onChange={e => setNewListName(e.target.value)}
+                  placeholder="Ex: Grupos extraídos"
+                  maxLength={100}
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>Selecione a lista</Label>
+                <Select value={targetListId} onValueChange={setTargetListId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma lista" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {lists.map(l => (
+                      <SelectItem key={l.id} value={l.id}>{l.name} ({l.contact_count})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExtractDialog(false)}>Cancelar</Button>
+            <Button
+              onClick={extractContacts}
+              disabled={
+                isExtracting ||
+                (listMode === 'new' && !newListName.trim()) ||
+                (listMode === 'existing' && !targetListId)
+              }
+            >
+              {isExtracting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              {isExtracting ? 'Extraindo...' : 'Extrair Contatos'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </MainLayout>
   );
 }
