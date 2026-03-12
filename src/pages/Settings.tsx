@@ -1,7 +1,9 @@
+import { useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  User, 
+import {
+  User,
   MessageCircle,
   Building2,
   Sparkles,
@@ -14,6 +16,18 @@ import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
 
 export default function SettingsPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    const code = searchParams.get('code');
+    const isGoogleCallback = searchParams.get('google_callback');
+
+    if (code && isGoogleCallback) {
+      navigate(`/connect-accounts?${searchParams.toString()}`, { replace: true });
+    }
+  }, [navigate, searchParams]);
+
   return (
     <MainLayout>
       <div className="space-y-6">
