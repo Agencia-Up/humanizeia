@@ -3,20 +3,18 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Slider } from '@/components/ui/slider';
+import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { useClaudeChat } from '@/hooks/useClaudeChat';
+import { CampaignFormDialog, CampaignFormData } from '@/components/whatsapp/CampaignFormDialog';
 import {
-  Plus, Loader2, Play, Pause, Trash2, Eye, Sparkles, Send,
-  Clock, MessageCircle, RotateCcw, Megaphone,
+  Plus, Loader2, Play, Pause, Trash2, Sparkles,
+  Clock, Megaphone, Pencil, CalendarIcon,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -36,12 +34,24 @@ interface Campaign {
   delivered_count: number;
   failed_count: number;
   created_at: string;
+  scheduled_at: string | null;
+  instance_id: string | null;
+  media_url: string | null;
+  media_type: string | null;
+  tags: string[] | null;
 }
 
 interface ContactList {
   id: string;
   name: string;
   contact_count: number;
+}
+
+interface WaInstance {
+  id: string;
+  friendly_name: string;
+  phone_number: string | null;
+  status: string;
 }
 
 const statusMap: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
@@ -58,19 +68,12 @@ export default function WhatsAppCampaigns() {
   const { toast } = useToast();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [contactLists, setContactLists] = useState<ContactList[]>([]);
+  const [instances, setInstances] = useState<WaInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [aiVariations, setAiVariations] = useState<string[]>([]);
-
-  // Form state
-  const [formName, setFormName] = useState('');
-  const [formPrompt, setFormPrompt] = useState('');
-  const [formTemplate, setFormTemplate] = useState('');
-  const [formSelectedLists, setFormSelectedLists] = useState<string[]>([]);
-  const [formDelayMin, setFormDelayMin] = useState(5);
-  const [formDelayMax, setFormDelayMax] = useState(15);
-  const [formRotation, setFormRotation] = useState(10);
+  const [editingCampaign, setEditingCampaign] = useState<(CampaignFormData & { id: string }) | null>(null);
   const [saving, setSaving] = useState(false);
 
   const { sendSingleMessage, isLoading: aiLoading } = useClaudeChat({
@@ -100,74 +103,106 @@ export default function WhatsAppCampaigns() {
     if (data) setContactLists(data);
   }, [user]);
 
+  const fetchInstances = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('wa_instances')
+      .select('id, friendly_name, phone_number, status')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .order('friendly_name');
+    if (data) setInstances(data);
+  }, [user]);
+
   useEffect(() => {
     fetchCampaigns();
     fetchLists();
-  }, [fetchCampaigns, fetchLists]);
+    fetchInstances();
+  }, [fetchCampaigns, fetchLists, fetchInstances]);
 
-  const resetForm = () => {
-    setFormName('');
-    setFormPrompt('');
-    setFormTemplate('');
-    setFormSelectedLists([]);
-    setFormDelayMin(5);
-    setFormDelayMax(15);
-    setFormRotation(10);
-  };
-
-  const handleCreate = async () => {
+  const handleFormSubmit = async (data: CampaignFormData) => {
     if (!user) return;
-    if (!formName.trim()) {
+    if (!data.name.trim()) {
       toast({ title: 'Nome obrigatório', variant: 'destructive' });
       return;
     }
-    if (!formTemplate.trim() && !formPrompt.trim()) {
+    if (!data.message_template.trim() && !data.prompt_base.trim()) {
       toast({ title: 'Informe a mensagem base ou o prompt para IA', variant: 'destructive' });
       return;
     }
 
     setSaving(true);
-    const { error } = await supabase.from('wa_campaigns').insert({
-      user_id: user.id,
-      name: formName.trim(),
-      message_template: formTemplate.trim() || `[IA] ${formPrompt.trim().slice(0, 100)}`,
-      prompt_base: formPrompt.trim() || null,
-      list_ids: formSelectedLists,
-      min_delay_seconds: formDelayMin,
-      max_delay_seconds: formDelayMax,
-      rotation_messages_per_instance: formRotation,
-      status: 'draft',
-    } as any);
+    const payload = {
+      name: data.name.trim(),
+      message_template: data.message_template.trim() || `[IA] ${data.prompt_base.trim().slice(0, 100)}`,
+      prompt_base: data.prompt_base.trim() || null,
+      list_ids: data.list_ids,
+      min_delay_seconds: data.min_delay_seconds,
+      max_delay_seconds: data.max_delay_seconds,
+      rotation_messages_per_instance: data.rotation_messages_per_instance,
+      scheduled_at: data.scheduled_at,
+      instance_id: data.instance_id,
+      media_url: data.media_url || null,
+      media_type: data.media_type || null,
+      tags: data.tags.length > 0 ? data.tags : null,
+      status: data.scheduled_at ? 'scheduled' : 'draft',
+    };
+
+    let error;
+    if (editingCampaign) {
+      ({ error } = await supabase.from('wa_campaigns').update(payload as any).eq('id', editingCampaign.id));
+    } else {
+      ({ error } = await supabase.from('wa_campaigns').insert({ ...payload, user_id: user.id } as any));
+    }
 
     setSaving(false);
     if (error) {
-      toast({ title: 'Erro ao criar campanha', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erro ao salvar campanha', description: error.message, variant: 'destructive' });
     } else {
-      toast({ title: 'Campanha criada com sucesso!' });
-      resetForm();
+      toast({ title: editingCampaign ? 'Campanha atualizada!' : 'Campanha criada com sucesso!' });
+      setEditingCampaign(null);
       setDialogOpen(false);
       fetchCampaigns();
     }
   };
 
-  const handleGeneratePreview = async () => {
-    if (!formPrompt.trim()) {
+  const handleGeneratePreview = async (prompt: string) => {
+    if (!prompt.trim()) {
       toast({ title: 'Escreva o prompt base antes de gerar prévia', variant: 'destructive' });
       return;
     }
     try {
       const response = await sendSingleMessage(
-        `Gere exatamente 3 variações de mensagem de WhatsApp com base nesta intenção: "${formPrompt}". 
+        `Gere exatamente 3 variações de mensagem de WhatsApp com base nesta intenção: "${prompt}". 
 Cada variação deve ser humanizada, pessoal e diferente das outras. 
 Use emojis com moderação. Separe cada variação com "---".
 Não numere as variações. Não inclua explicações adicionais.`
       );
-      const variations = response.split('---').map(v => v.trim()).filter(Boolean);
+      const variations = response.split('---').map((v: string) => v.trim()).filter(Boolean);
       setAiVariations(variations);
       setPreviewOpen(true);
     } catch {
       toast({ title: 'Erro ao gerar variações', variant: 'destructive' });
     }
+  };
+
+  const handleEdit = (c: Campaign) => {
+    setEditingCampaign({
+      id: c.id,
+      name: c.name,
+      prompt_base: c.prompt_base || '',
+      message_template: c.message_template,
+      list_ids: c.list_ids || [],
+      min_delay_seconds: c.min_delay_seconds,
+      max_delay_seconds: c.max_delay_seconds,
+      rotation_messages_per_instance: c.rotation_messages_per_instance,
+      scheduled_at: c.scheduled_at,
+      instance_id: c.instance_id,
+      media_url: c.media_url || '',
+      media_type: c.media_type || '',
+      tags: c.tags || [],
+    });
+    setDialogOpen(true);
   };
 
   const handleStartCampaign = async (id: string) => {
@@ -199,11 +234,7 @@ Não numere as variações. Não inclua explicações adicionais.`
     }
   };
 
-  const toggleList = (listId: string) => {
-    setFormSelectedLists(prev =>
-      prev.includes(listId) ? prev.filter(id => id !== listId) : [...prev, listId]
-    );
-  };
+  const getProgressPercent = (c: Campaign) => c.total_contacts > 0 ? Math.round((c.sent_count / c.total_contacts) * 100) : 0;
 
   return (
     <MainLayout>
@@ -219,156 +250,25 @@ Não numere as variações. Não inclua explicações adicionais.`
               Crie e gerencie suas campanhas de disparo com IA
             </p>
           </div>
-
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2" onClick={() => { resetForm(); setDialogOpen(true); }}>
-                <Plus className="h-4 w-4" /> Nova Campanha
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Criar Nova Campanha</DialogTitle>
-              </DialogHeader>
-
-              <div className="space-y-5 py-2">
-                {/* Nome */}
-                <div className="space-y-2">
-                  <Label htmlFor="campaign-name">Nome da Campanha *</Label>
-                  <Input
-                    id="campaign-name"
-                    placeholder="Ex: Black Friday 2026"
-                    value={formName}
-                    onChange={e => setFormName(e.target.value)}
-                    maxLength={100}
-                  />
-                </div>
-
-                {/* Listas de Contatos */}
-                <div className="space-y-2">
-                  <Label>Listas de Contatos</Label>
-                  {contactLists.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Nenhuma lista encontrada. Crie listas na página de Contatos.</p>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto border rounded-md p-3">
-                      {contactLists.map(list => (
-                        <label key={list.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 rounded p-1.5">
-                          <Checkbox
-                            checked={formSelectedLists.includes(list.id)}
-                            onCheckedChange={() => toggleList(list.id)}
-                          />
-                          <span className="truncate">{list.name}</span>
-                          <Badge variant="secondary" className="ml-auto text-xs">{list.contact_count}</Badge>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Prompt base IA */}
-                <div className="space-y-2">
-                  <Label htmlFor="prompt-base" className="flex items-center gap-1.5">
-                    <Sparkles className="h-4 w-4 text-primary" />
-                    Prompt Base para IA
-                  </Label>
-                  <Textarea
-                    id="prompt-base"
-                    placeholder="Descreva a intenção da mensagem. Ex: Oferecer 30% de desconto no plano anual para leads que demonstraram interesse..."
-                    value={formPrompt}
-                    onChange={e => setFormPrompt(e.target.value)}
-                    rows={3}
-                    maxLength={2000}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    A IA gerará variações únicas para cada envio com base neste prompt.
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    onClick={handleGeneratePreview}
-                    disabled={aiLoading || !formPrompt.trim()}
-                  >
-                    {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
-                    Pré-visualizar Variações
-                  </Button>
-                </div>
-
-                {/* Mensagem template (fallback) */}
-                <div className="space-y-2">
-                  <Label htmlFor="message-template">Mensagem Fixa (opcional se usar IA)</Label>
-                  <Textarea
-                    id="message-template"
-                    placeholder="Mensagem fixa caso não queira usar variações de IA..."
-                    value={formTemplate}
-                    onChange={e => setFormTemplate(e.target.value)}
-                    rows={3}
-                    maxLength={4000}
-                  />
-                </div>
-
-                {/* Delay */}
-                <div className="space-y-3">
-                  <Label className="flex items-center gap-1.5">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    Delay entre mensagens
-                  </Label>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <span className="text-xs text-muted-foreground">Mínimo: {formDelayMin}s</span>
-                      <Slider
-                        value={[formDelayMin]}
-                        onValueChange={([v]) => { setFormDelayMin(v); if (v > formDelayMax) setFormDelayMax(v); }}
-                        min={1}
-                        max={120}
-                        step={1}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <span className="text-xs text-muted-foreground">Máximo: {formDelayMax}s</span>
-                      <Slider
-                        value={[formDelayMax]}
-                        onValueChange={([v]) => { setFormDelayMax(v); if (v < formDelayMin) setFormDelayMin(v); }}
-                        min={1}
-                        max={120}
-                        step={1}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Rodízio */}
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-1.5">
-                    <RotateCcw className="h-4 w-4 text-muted-foreground" />
-                    Rodízio de Instâncias
-                  </Label>
-                  <div className="flex items-center gap-3">
-                    <Input
-                      type="number"
-                      min={1}
-                      max={500}
-                      value={formRotation}
-                      onChange={e => setFormRotation(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-24"
-                    />
-                    <span className="text-sm text-muted-foreground">mensagens por instância antes de trocar</span>
-                  </div>
-                </div>
-              </div>
-
-              <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-                <Button onClick={handleCreate} disabled={saving} className="gap-1.5">
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  Criar Campanha
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <Button className="gap-2" onClick={() => { setEditingCampaign(null); setDialogOpen(true); }}>
+            <Plus className="h-4 w-4" /> Nova Campanha
+          </Button>
         </div>
 
-        {/* AI Variations Preview Dialog */}
+        {/* Form Dialog */}
+        <CampaignFormDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          onSubmit={handleFormSubmit}
+          onGeneratePreview={handleGeneratePreview}
+          contactLists={contactLists}
+          instances={instances}
+          saving={saving}
+          aiLoading={aiLoading}
+          editingCampaign={editingCampaign}
+        />
+
+        {/* AI Variations Preview */}
         <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
           <DialogContent className="max-w-lg">
             <DialogHeader>
@@ -411,83 +311,105 @@ Não numere as variações. Não inclua explicações adicionais.`
                 <p className="text-sm">Clique em "Nova Campanha" para começar.</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nome</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-center">Contatos</TableHead>
-                      <TableHead className="text-center">Enviados</TableHead>
-                      <TableHead className="text-center">IA</TableHead>
-                      <TableHead>Criada em</TableHead>
-                      <TableHead className="text-right">Ações</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {campaigns.map(c => {
-                      const st = statusMap[c.status] || statusMap.draft;
-                      return (
-                        <TableRow key={c.id}>
-                          <TableCell className="font-medium max-w-[200px] truncate">{c.name}</TableCell>
-                          <TableCell>
-                            <Badge variant={st.variant}>{st.label}</Badge>
-                          </TableCell>
-                          <TableCell className="text-center">{c.total_contacts}</TableCell>
-                          <TableCell className="text-center">
-                            {c.sent_count}/{c.total_contacts}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            {c.prompt_base ? (
-                              <Sparkles className="h-4 w-4 text-primary mx-auto" />
-                            ) : (
-                              <span className="text-muted-foreground text-xs">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {format(new Date(c.created_at), 'dd/MM/yy HH:mm', { locale: ptBR })}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              {(c.status === 'draft' || c.status === 'paused') && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-green-600 hover:text-green-700"
-                                  onClick={() => handleStartCampaign(c.id)}
-                                  title="Iniciar campanha"
-                                >
-                                  <Play className="h-4 w-4" />
-                                </Button>
+              <TooltipProvider>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nome</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Progresso</TableHead>
+                        <TableHead className="text-center">IA</TableHead>
+                        <TableHead>Agendamento</TableHead>
+                        <TableHead>Criada em</TableHead>
+                        <TableHead className="text-right">Ações</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {campaigns.map(c => {
+                        const st = statusMap[c.status] || statusMap.draft;
+                        const progress = getProgressPercent(c);
+                        return (
+                          <TableRow key={c.id}>
+                            <TableCell className="font-medium max-w-[200px]">
+                              <div className="truncate">{c.name}</div>
+                              {c.tags && c.tags.length > 0 && (
+                                <div className="flex gap-1 mt-1 flex-wrap">
+                                  {c.tags.slice(0, 3).map(t => (
+                                    <Badge key={t} variant="outline" className="text-[10px] px-1 py-0">{t}</Badge>
+                                  ))}
+                                  {c.tags.length > 3 && <span className="text-[10px] text-muted-foreground">+{c.tags.length - 3}</span>}
+                                </div>
                               )}
-                              {c.status === 'running' && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-yellow-600 hover:text-yellow-700"
-                                  onClick={() => handlePauseCampaign(c.id)}
-                                  title="Pausar campanha"
-                                >
-                                  <Pause className="h-4 w-4" />
-                                </Button>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={st.variant}>{st.label}</Badge>
+                            </TableCell>
+                            <TableCell className="min-w-[150px]">
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className="space-y-1">
+                                    <Progress value={progress} className="h-2" />
+                                    <p className="text-xs text-muted-foreground">
+                                      {c.sent_count}/{c.total_contacts} ({progress}%)
+                                    </p>
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>✅ Entregues: {c.delivered_count}</p>
+                                  <p>❌ Falhas: {c.failed_count}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {c.prompt_base ? (
+                                <Sparkles className="h-4 w-4 text-primary mx-auto" />
+                              ) : (
+                                <span className="text-muted-foreground text-xs">—</span>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-destructive hover:text-destructive"
-                                onClick={() => handleDelete(c.id)}
-                                title="Excluir campanha"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+                            </TableCell>
+                            <TableCell>
+                              {c.scheduled_at ? (
+                                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                                  <CalendarIcon className="h-3.5 w-3.5" />
+                                  {format(new Date(c.scheduled_at), 'dd/MM HH:mm', { locale: ptBR })}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {format(new Date(c.created_at), 'dd/MM/yy HH:mm', { locale: ptBR })}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                {(c.status === 'draft' || c.status === 'paused' || c.status === 'scheduled') && (
+                                  <Button variant="ghost" size="icon" onClick={() => handleEdit(c)} title="Editar campanha">
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {(c.status === 'draft' || c.status === 'paused') && (
+                                  <Button variant="ghost" size="icon" className="text-green-600 hover:text-green-700" onClick={() => handleStartCampaign(c.id)} title="Iniciar campanha">
+                                    <Play className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {c.status === 'running' && (
+                                  <Button variant="ghost" size="icon" className="text-yellow-600 hover:text-yellow-700" onClick={() => handlePauseCampaign(c.id)} title="Pausar campanha">
+                                    <Pause className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => handleDelete(c.id)} title="Excluir campanha">
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </TooltipProvider>
             )}
           </CardContent>
         </Card>
