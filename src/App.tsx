@@ -27,6 +27,7 @@ import Integrations from "./pages/Integrations";
 import NotFound from "./pages/NotFound";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
+import LandingPage from "./pages/LandingPage";
 
 
 const queryClient = new QueryClient();
