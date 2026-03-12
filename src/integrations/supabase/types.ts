@@ -1970,10 +1970,13 @@ export type Database = {
           api_url: string
           created_at: string
           friendly_name: string
+          health_score: number
           id: string
           instance_name: string
           is_active: boolean
           last_connected_at: string | null
+          last_message_at: string | null
+          messages_sent_today: number
           organization_id: string | null
           phone_number: string | null
           status: string
@@ -1985,10 +1988,13 @@ export type Database = {
           api_url: string
           created_at?: string
           friendly_name: string
+          health_score?: number
           id?: string
           instance_name: string
           is_active?: boolean
           last_connected_at?: string | null
+          last_message_at?: string | null
+          messages_sent_today?: number
           organization_id?: string | null
           phone_number?: string | null
           status?: string
@@ -2000,10 +2006,13 @@ export type Database = {
           api_url?: string
           created_at?: string
           friendly_name?: string
+          health_score?: number
           id?: string
           instance_name?: string
           is_active?: boolean
           last_connected_at?: string | null
+          last_message_at?: string | null
+          messages_sent_today?: number
           organization_id?: string | null
           phone_number?: string | null
           status?: string
