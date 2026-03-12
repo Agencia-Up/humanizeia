@@ -5,3 +5,9 @@ verify_jwt = false
 
 [functions.process-whatsapp-queue]
 verify_jwt = false
+
+[functions.wa-inbox-webhook]
+verify_jwt = false
+
+[functions.wa-send-reply]
+verify_jwt = false

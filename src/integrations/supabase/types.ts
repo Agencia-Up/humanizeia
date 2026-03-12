@@ -1964,6 +1964,88 @@ export type Database = {
           },
         ]
       }
+      wa_inbox: {
+        Row: {
+          ai_category: string | null
+          ai_sentiment: string | null
+          campaign_id: string | null
+          contact_id: string | null
+          contact_name: string | null
+          content: string | null
+          created_at: string
+          direction: string
+          id: string
+          instance_id: string | null
+          is_archived: boolean
+          is_read: boolean
+          media_url: string | null
+          message_type: string
+          phone: string
+          remote_message_id: string | null
+          user_id: string
+        }
+        Insert: {
+          ai_category?: string | null
+          ai_sentiment?: string | null
+          campaign_id?: string | null
+          contact_id?: string | null
+          contact_name?: string | null
+          content?: string | null
+          created_at?: string
+          direction?: string
+          id?: string
+          instance_id?: string | null
+          is_archived?: boolean
+          is_read?: boolean
+          media_url?: string | null
+          message_type?: string
+          phone: string
+          remote_message_id?: string | null
+          user_id: string
+        }
+        Update: {
+          ai_category?: string | null
+          ai_sentiment?: string | null
+          campaign_id?: string | null
+          contact_id?: string | null
+          contact_name?: string | null
+          content?: string | null
+          created_at?: string
+          direction?: string
+          id?: string
+          instance_id?: string | null
+          is_archived?: boolean
+          is_read?: boolean
+          media_url?: string | null
+          message_type?: string
+          phone?: string
+          remote_message_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_inbox_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "wa_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wa_inbox_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "wa_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wa_inbox_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "wa_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       wa_instances: {
         Row: {
           api_key_encrypted: string
