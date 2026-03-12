@@ -19,6 +19,10 @@ import {
   Sun,
   X,
   LogOut,
+  MessageCircle,
+  Users,
+  Contact,
+  Send,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -80,6 +84,13 @@ const integrationItems = [
 // 🎓 Aprendizado
 const learningItems = [
   { title: 'Academia IA', url: '/academy', icon: GraduationCap },
+];
+
+// 💬 WhatsApp
+const whatsappItems = [
+  { title: 'Extrator de Grupos', url: '/whatsapp/groups', icon: Users },
+  { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
+  { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
 ];
 
 // ⚙️ Sistema
@@ -199,6 +210,7 @@ export function AppSidebar() {
     { label: '⚙️ Automação', items: automationItems, triggerIcon: Settings2 },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
+    { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
     { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
     { label: '⚙️ Sistema', items: systemItems, triggerIcon: Settings },
   ];
