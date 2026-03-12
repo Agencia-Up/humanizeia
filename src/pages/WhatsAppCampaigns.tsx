@@ -170,6 +170,27 @@ Não numere as variações. Não inclua explicações adicionais.`
     }
   };
 
+  const handleStartCampaign = async (id: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('enqueue-campaign', {
+        body: { campaign_id: id },
+      });
+      if (error) throw error;
+      toast({ title: 'Campanha iniciada!', description: `${data.enqueued} contatos enfileirados.` });
+      fetchCampaigns();
+    } catch (err: any) {
+      toast({ title: 'Erro ao iniciar campanha', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const handlePauseCampaign = async (id: string) => {
+    const { error } = await supabase.from('wa_campaigns').update({ status: 'paused' } as any).eq('id', id);
+    if (!error) {
+      toast({ title: 'Campanha pausada' });
+      fetchCampaigns();
+    }
+  };
+
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from('wa_campaigns').delete().eq('id', id);
     if (!error) {
