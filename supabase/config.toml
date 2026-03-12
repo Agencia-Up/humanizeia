@@ -11,3 +11,9 @@ verify_jwt = false
 
 [functions.wa-send-reply]
 verify_jwt = false
+
+[functions.extract-google-maps-leads]
+verify_jwt = false
+
+[functions.wa-extract-groups]
+verify_jwt = false
