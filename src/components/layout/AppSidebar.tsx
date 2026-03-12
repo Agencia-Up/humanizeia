@@ -24,6 +24,7 @@ import {
   Contact,
   Send,
   Megaphone,
+  Inbox,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
