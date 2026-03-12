@@ -66,13 +66,18 @@ Deno.serve(async (req) => {
       );
     }
 
-    const listIds: string[] = campaign.list_ids || [];
+    const listIds: string[] = campaign.listas_alvo || campaign.list_ids || [];
     if (listIds.length === 0) {
       return new Response(JSON.stringify({ error: "No contact lists selected" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Use regras_delay if available, fallback to legacy columns
+    const delayRules = campaign.regras_delay || {};
+    const minDelay = delayRules.min || campaign.min_delay_seconds || 5;
+    const maxDelay = delayRules.max || campaign.max_delay_seconds || 15;
 
     // Fetch all contacts from selected lists
     const { data: contacts, error: contactsErr } = await supabase
@@ -107,9 +112,6 @@ Deno.serve(async (req) => {
 
     const contactArr = Array.from(uniqueContacts.values());
 
-    // Calculate staggered scheduled times based on delay settings
-    const minDelay = campaign.min_delay_seconds || 5;
-    const maxDelay = campaign.max_delay_seconds || 15;
     const now = Date.now();
 
     const queueRows = contactArr.map((c, i) => {

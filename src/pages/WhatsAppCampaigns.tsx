@@ -138,45 +138,44 @@ export default function WhatsAppCampaigns() {
     }
 
     setSaving(true);
-    const payload = {
-      name: data.name.trim(),
-      message_template: data.message_template.trim() || `[IA] ${data.prompt_base.trim().slice(0, 100)}`,
-      prompt_base: data.prompt_base.trim() || null,
-      // Keep old columns for backward compat
-      list_ids: data.listas_alvo,
-      min_delay_seconds: data.regras_delay.min,
-      max_delay_seconds: data.regras_delay.max,
-      rotation_messages_per_instance: data.regras_rodizio.mensagens_por_instancia,
-      // New JSONB columns
-      listas_alvo: data.listas_alvo,
-      regras_delay: data.regras_delay,
-      regras_rodizio: data.regras_rodizio,
-      regras_aquecimento: data.regras_aquecimento,
-      start_time: data.start_time,
-      end_time: data.end_time,
-      scheduled_at: data.start_time, // keep scheduled_at in sync
-      instance_id: data.instance_id,
-      media_url: data.media_url || null,
-      media_type: data.media_type || null,
-      tags: data.tags.length > 0 ? data.tags : null,
-      status: data.start_time ? 'scheduled' : 'draft',
-    };
+    try {
+      const payload = {
+        campaign_id: editingCampaign?.id || null,
+        name: data.name.trim(),
+        message_template: data.message_template.trim(),
+        prompt_base: data.prompt_base.trim() || null,
+        listas_alvo: data.listas_alvo,
+        regras_delay: data.regras_delay,
+        regras_rodizio: data.regras_rodizio,
+        regras_aquecimento: data.regras_aquecimento,
+        start_time: data.start_time,
+        end_time: data.end_time,
+        instance_id: data.instance_id,
+        media_url: data.media_url || null,
+        media_type: data.media_type || null,
+        tags: data.tags.length > 0 ? data.tags : null,
+      };
 
-    let error;
-    if (editingCampaign) {
-      ({ error } = await supabase.from('wa_campaigns').update(payload as any).eq('id', editingCampaign.id));
-    } else {
-      ({ error } = await supabase.from('wa_campaigns').insert({ ...payload, user_id: user.id } as any));
-    }
+      const { data: result, error } = await supabase.functions.invoke('save-campaign', {
+        body: payload,
+      });
 
-    setSaving(false);
-    if (error) {
-      toast({ title: 'Erro ao salvar campanha', description: error.message, variant: 'destructive' });
-    } else {
+      if (error) throw error;
+      if (result?.error) {
+        const details = result.details ? `\n${(result.details as string[]).join('\n')}` : '';
+        toast({ title: result.error, description: details, variant: 'destructive' });
+        setSaving(false);
+        return;
+      }
+
       toast({ title: editingCampaign ? 'Campanha atualizada!' : 'Campanha criada com sucesso!' });
       setEditingCampaign(null);
       setDialogOpen(false);
       fetchCampaigns();
+    } catch (err: any) {
+      toast({ title: 'Erro ao salvar campanha', description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
     }
   };
 
