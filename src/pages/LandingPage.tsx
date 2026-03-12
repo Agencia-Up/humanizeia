@@ -16,8 +16,8 @@ export default function LandingPage() {
       {/* Header */}
       <header className="border-b border-border/40 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-10 w-10 rounded-xl object-contain" />
-          <span className="text-xl font-bold">HumanizeAI</span>
+          <img src="/humanizeai-logo.png" alt="HumanizeAI TF" className="h-10 w-10 rounded-xl object-contain" />
+          <span className="text-xl font-bold">HumanizeAI TF</span>
         </div>
         <Button asChild>
           <Link to="/auth">Entrar</Link>
