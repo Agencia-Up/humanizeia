@@ -1768,6 +1768,331 @@ export type Database = {
         }
         Relationships: []
       }
+      wa_campaigns: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          delivered_count: number
+          failed_count: number
+          id: string
+          instance_id: string | null
+          list_ids: string[] | null
+          max_delay_seconds: number
+          media_type: string | null
+          media_url: string | null
+          message_template: string
+          min_delay_seconds: number
+          name: string
+          organization_id: string | null
+          scheduled_at: string | null
+          sent_count: number
+          started_at: string | null
+          status: string
+          tags: string[] | null
+          total_contacts: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          delivered_count?: number
+          failed_count?: number
+          id?: string
+          instance_id?: string | null
+          list_ids?: string[] | null
+          max_delay_seconds?: number
+          media_type?: string | null
+          media_url?: string | null
+          message_template: string
+          min_delay_seconds?: number
+          name: string
+          organization_id?: string | null
+          scheduled_at?: string | null
+          sent_count?: number
+          started_at?: string | null
+          status?: string
+          tags?: string[] | null
+          total_contacts?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          delivered_count?: number
+          failed_count?: number
+          id?: string
+          instance_id?: string | null
+          list_ids?: string[] | null
+          max_delay_seconds?: number
+          media_type?: string | null
+          media_url?: string | null
+          message_template?: string
+          min_delay_seconds?: number
+          name?: string
+          organization_id?: string | null
+          scheduled_at?: string | null
+          sent_count?: number
+          started_at?: string | null
+          status?: string
+          tags?: string[] | null
+          total_contacts?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_campaigns_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "wa_instances"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wa_campaigns_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wa_contact_lists: {
+        Row: {
+          contact_count: number
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          organization_id: string | null
+          source: string
+          tags: string[] | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          contact_count?: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          organization_id?: string | null
+          source?: string
+          tags?: string[] | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          contact_count?: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          organization_id?: string | null
+          source?: string
+          tags?: string[] | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_contact_lists_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wa_contacts: {
+        Row: {
+          created_at: string
+          group_name: string | null
+          id: string
+          is_valid: boolean | null
+          last_message_at: string | null
+          list_id: string | null
+          metadata: Json | null
+          name: string | null
+          phone: string
+          source: string
+          tags: string[] | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          group_name?: string | null
+          id?: string
+          is_valid?: boolean | null
+          last_message_at?: string | null
+          list_id?: string | null
+          metadata?: Json | null
+          name?: string | null
+          phone: string
+          source?: string
+          tags?: string[] | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          group_name?: string | null
+          id?: string
+          is_valid?: boolean | null
+          last_message_at?: string | null
+          list_id?: string | null
+          metadata?: Json | null
+          name?: string | null
+          phone?: string
+          source?: string
+          tags?: string[] | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_contacts_list_id_fkey"
+            columns: ["list_id"]
+            isOneToOne: false
+            referencedRelation: "wa_contact_lists"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wa_instances: {
+        Row: {
+          api_key_encrypted: string
+          api_url: string
+          created_at: string
+          friendly_name: string
+          id: string
+          instance_name: string
+          is_active: boolean
+          last_connected_at: string | null
+          organization_id: string | null
+          phone_number: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          api_key_encrypted: string
+          api_url: string
+          created_at?: string
+          friendly_name: string
+          id?: string
+          instance_name: string
+          is_active?: boolean
+          last_connected_at?: string | null
+          organization_id?: string | null
+          phone_number?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          api_key_encrypted?: string
+          api_url?: string
+          created_at?: string
+          friendly_name?: string
+          id?: string
+          instance_name?: string
+          is_active?: boolean
+          last_connected_at?: string | null
+          organization_id?: string | null
+          phone_number?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_instances_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wa_queue: {
+        Row: {
+          campaign_id: string | null
+          contact_id: string | null
+          created_at: string
+          delivered_at: string | null
+          error_message: string | null
+          id: string
+          instance_id: string | null
+          media_type: string | null
+          media_url: string | null
+          message: string
+          phone: string
+          retry_count: number
+          scheduled_for: string | null
+          sent_at: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          campaign_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          delivered_at?: string | null
+          error_message?: string | null
+          id?: string
+          instance_id?: string | null
+          media_type?: string | null
+          media_url?: string | null
+          message: string
+          phone: string
+          retry_count?: number
+          scheduled_for?: string | null
+          sent_at?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          campaign_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          delivered_at?: string | null
+          error_message?: string | null
+          id?: string
+          instance_id?: string | null
+          media_type?: string | null
+          media_url?: string | null
+          message?: string
+          phone?: string
+          retry_count?: number
+          scheduled_for?: string | null
+          sent_at?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_queue_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "wa_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wa_queue_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "wa_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wa_queue_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "wa_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_config: {
         Row: {
           api_key: string
