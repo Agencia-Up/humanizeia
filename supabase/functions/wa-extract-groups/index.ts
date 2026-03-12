@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { user_id, action, group_ids, groups } = body;
+    const { user_id, action, group_ids, groups, list_id } = body;
 
     if (!user_id) {
       return new Response(JSON.stringify({ success: false, error: 'user_id obrigatório' }), {
@@ -114,20 +114,25 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Create a contact list
-      const listName = `Grupos extraídos - ${new Date().toLocaleDateString('pt-BR')}`;
-      const { data: list, error: listErr } = await supabase
-        .from('wa_contact_lists')
-        .insert({
-          user_id,
-          name: listName,
-          source: 'group_extract',
-          contact_count: allContacts.length,
-        })
-        .select('id')
-        .single();
+      // Use provided list or create new one
+      let targetListId = list_id;
 
-      if (listErr) throw listErr;
+      if (!targetListId) {
+        const listName = `Grupos extraídos - ${new Date().toLocaleDateString('pt-BR')}`;
+        const { data: list, error: listErr } = await supabase
+          .from('wa_contact_lists')
+          .insert({
+            user_id,
+            name: listName,
+            source: 'group_extract',
+            contact_count: allContacts.length,
+          })
+          .select('id')
+          .single();
+
+        if (listErr) throw listErr;
+        targetListId = list.id;
+      }
 
       // Insert contacts (deduplicate by phone)
       const uniquePhones = new Map<string, typeof allContacts[0]>();
@@ -139,7 +144,7 @@ Deno.serve(async (req) => {
 
       const contactRows = Array.from(uniquePhones.values()).map(c => ({
         user_id,
-        list_id: list.id,
+        list_id: targetListId,
         phone: c.phone,
         name: c.name,
         group_name: c.group_name,
@@ -155,17 +160,15 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Update list count
       await supabase
         .from('wa_contact_lists')
         .update({ contact_count: contactRows.length })
-        .eq('id', list.id);
+        .eq('id', targetListId);
 
       return new Response(JSON.stringify({
         success: true,
         total_contacts: contactRows.length,
-        list_id: list.id,
-        list_name: listName,
+        list_id: targetListId,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
