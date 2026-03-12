@@ -31,7 +31,7 @@ export function useWhatsAppConfig() {
 
       const { data, error } = await supabase
         .from('whatsapp_config')
-        .select('*')
+        .select('id, user_id, api_url, instance_name, phone_number, is_active, send_daily_report, report_time')
         .eq('user_id', session.session.user.id)
         .maybeSingle();
 
