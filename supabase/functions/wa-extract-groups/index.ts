@@ -144,7 +144,7 @@ Deno.serve(async (req) => {
 
       const contactRows = Array.from(uniquePhones.values()).map(c => ({
         user_id,
-        list_id: list.id,
+        list_id: targetListId,
         phone: c.phone,
         name: c.name,
         group_name: c.group_name,
