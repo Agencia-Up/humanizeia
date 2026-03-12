@@ -6,7 +6,6 @@ interface WhatsAppConfig {
   id: string;
   user_id: string;
   api_url: string;
-  api_key: string;
   instance_name: string;
   phone_number: string;
   is_active: boolean;
