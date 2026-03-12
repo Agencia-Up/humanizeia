@@ -36,12 +36,13 @@ function handleAuthorize(redirect_uri: string, state?: string) {
     );
   }
 
+  // Keep the OAuth request minimal for Google Ads connection to reduce consent-screen rejection risk.
+  // Additional Google products should request their own scopes in their own flows.
   const scopes = [
-    "https://www.googleapis.com/auth/adwords",
-    "https://www.googleapis.com/auth/analytics.readonly",
-    "https://www.googleapis.com/auth/tagmanager.readonly",
+    "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/adwords",
   ].join(" ");
 
   const authUrl =
@@ -51,6 +52,7 @@ function handleAuthorize(redirect_uri: string, state?: string) {
     `&response_type=code` +
     `&scope=${encodeURIComponent(scopes)}` +
     `&access_type=offline` +
+    `&include_granted_scopes=true` +
     `&prompt=consent` +
     `&state=${state || ""}`;
 
