@@ -59,10 +59,23 @@ export function useGoogleAdsConnection() {
     fetchConnectedAccount();
   }, [fetchConnectedAccount]);
 
+  const getOAuthRedirectUri = () => {
+    const { hostname } = window.location;
+
+    // Preview URLs use id-preview--*.lovable.app, but Google OAuth usually only whitelists
+    // the stable project domain (*.lovableproject.com) and/or published domain.
+    if (hostname.startsWith('id-preview--') && hostname.endsWith('.lovable.app')) {
+      const projectSlug = hostname.replace('id-preview--', '').replace('.lovable.app', '');
+      return `https://${projectSlug}.lovableproject.com/connect-accounts?google_callback=true`;
+    }
+
+    return `${window.location.origin}/connect-accounts?google_callback=true`;
+  };
+
   const startOAuth = async () => {
     setIsConnecting(true);
     try {
-      const redirectUri = `${window.location.origin}/settings?google_callback=true`;
+      const redirectUri = getOAuthRedirectUri();
       const { data, error } = await supabase.functions.invoke('google-ads-oauth', {
         body: {
           action: 'authorize',
@@ -100,7 +113,7 @@ export function useGoogleAdsConnection() {
   const handleCallback = async (code: string) => {
     setIsConnecting(true);
     try {
-      const redirectUri = `${window.location.origin}/settings?google_callback=true`;
+      const redirectUri = getOAuthRedirectUri();
       const { data, error } = await supabase.functions.invoke('google-ads-oauth', {
         body: {
           action: 'callback',
