@@ -1,42 +1,47 @@
 
 
-## Diagnóstico: Biblioteca de Criativos sem fotos
+## Plano: Melhorias na Página de Campanhas WhatsApp (Passo 3)
 
-### Problema encontrado
+A página de campanhas (`WhatsAppCampaigns.tsx`) já existe com funcionalidades básicas: criar, listar, iniciar, pausar e excluir. O `enqueue-campaign` Edge Function também já funciona. Vou identificar o que falta do Passo 3 e implementar.
 
-Dois problemas combinados:
+### O que já existe
+- Criação de campanha com nome, listas, prompt IA, mensagem fixa, delay e rodízio
+- Pré-visualização de variações IA via Claude
+- Tabela de campanhas com status, contagem e ações (play/pause/delete)
+- Edge Function `enqueue-campaign` que enfileira contatos na `wa_queue`
 
-1. **Contas Meta inativas**: Ambas as contas na tabela `ad_accounts` estão com `is_active: false`. Quando isso acontece, `useMetaConnection` retorna `connectedAccount: null`, e a página mostra a tela "Conecte seu Meta Ads" em vez dos dados em cache.
+### O que falta implementar
 
-2. **Cache sem URLs de imagem de alta resolução**: O cache (`ads_creatives`) tem 50 anúncios armazenados, porém os dados do criativo só contêm `thumbnail_url` (formato p64x64, baixa resolução). Os campos `full_picture`, `image_url` e `effective_image_url` vieram como `null` da API do Meta. A função `getHighResThumbnail` tenta transformar p64x64 para p960x960, mas essa manipulação de URL nem sempre funciona no CDN da Meta.
+**1. Edição de Campanhas**
+- Adicionar botão "Editar" nas ações da tabela (apenas para campanhas em `draft` ou `paused`)
+- Reutilizar o dialog de criação, pré-populando os campos com os dados da campanha
+- Salvar via `update` ao invés de `insert`
 
-### Plano de correção
+**2. Agendamento de Campanhas**
+- A tabela `wa_campaigns` já tem `scheduled_at` -- adicionar campo de data/hora no formulário para agendar início
+- Exibir horário agendado na tabela de listagem
 
-**Arquivo: `src/pages/CreativeLibrary.tsx`**
+**3. Seleção de Instância WhatsApp**
+- A tabela já tem `instance_id` -- adicionar seletor de instância no formulário
+- Buscar instâncias disponíveis da tabela `wa_instances`
+- Permitir "automático" (rodízio entre todas) ou selecionar uma específica
 
-1. Exibir dados do cache mesmo quando a conta está desconectada, com um banner de aviso pedindo reconexão para dados atualizados. Atualmente a tela "Conecte seu Meta Ads" bloqueia completamente o acesso ao cache existente.
+**4. Anexo de Mídia**
+- A tabela já tem `media_url` e `media_type` -- adicionar campo de URL de mídia no formulário
+- Seletor de tipo (imagem, vídeo, documento, áudio)
 
-2. Alterar a lógica do `enabled` no `useMetaCachedQuery` para sempre ler o cache (mesmo sem conta ativa), mas só tentar buscar dados frescos quando conectado.
+**5. Tags de Campanha**
+- A tabela já tem `tags` -- adicionar campo de tags no formulário
 
-**Arquivo: `src/hooks/useMetaCachedQuery.ts`**
+**6. Métricas e Progresso**
+- Adicionar barra de progresso visual (sent_count / total_contacts) na tabela
+- Mostrar `delivered_count` e `failed_count` em tooltip ou expandindo a linha
 
-3. Separar a leitura do cache (sempre habilitada) da busca de dados frescos (só quando `enabled: true`). Isso garante que dados em cache sejam exibidos instantaneamente mesmo sem conexão ativa.
+### Arquivos a modificar
 
-**Arquivo: `src/pages/CreativeLibrary.tsx` (imagens)**
+| Arquivo | Mudança |
+|---|---|
+| `src/pages/WhatsAppCampaigns.tsx` | Adicionar edição, agendamento, seleção de instância, mídia, tags, progresso |
 
-4. Adicionar fallback robusto para URLs de imagem: tentar carregar via `thumbnail_url` transformada, e se falhar (evento `onError` no `<img>`), voltar à URL original p64x64. Também solicitar o campo `object_story_spec` da API, que contém URLs de imagem mais confiáveis.
-
-### Detalhes técnicos
-
-A chave do cache `ads_creatives` tem 50 itens salvos às 15:27 de hoje. Os dados estão lá, mas a UI não os mostra porque a verificação `isConnected` bloqueia tudo antes de chegar ao `useMetaCachedQuery`.
-
-Fluxo corrigido:
-```text
-Página carrega
-  ├─ Lê cache (sempre) → mostra dados salvos imediatamente
-  ├─ Conta ativa? 
-  │   ├─ Sim → busca dados frescos em background
-  │   └─ Não → mostra banner "Reconecte para atualizar"
-  └─ Imagem com fallback: effective_image_url → image_url → full_picture → thumbnail (p960) → thumbnail (original)
-```
+Nenhuma migração de banco necessária -- todos os campos já existem na tabela `wa_campaigns`.
 
