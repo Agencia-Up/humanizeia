@@ -90,6 +90,7 @@ const learningItems = [
 
 // 💬 WhatsApp
 const whatsappItems = [
+  { title: 'Inbox', url: '/whatsapp/inbox', icon: Inbox },
   { title: 'Campanhas', url: '/whatsapp/campaigns', icon: Megaphone },
   { title: 'Extrator de Grupos', url: '/whatsapp/groups', icon: Users },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
