@@ -99,7 +99,7 @@ export default function WhatsAppInstances() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setInstances((data as WaInstance[]) || []);
+      setInstances((data as unknown as WaInstance[]) || []);
     } catch (err: any) {
       console.error('Error fetching instances:', err);
     } finally {
