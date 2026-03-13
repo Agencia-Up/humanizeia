@@ -112,6 +112,16 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
     setIsSaving(true);
 
     try {
+      // Upload media first if present
+      let uploadedMediaUrl: string | null = null;
+      if (mediaFile) {
+        uploadedMediaUrl = await uploadMedia();
+        if (!uploadedMediaUrl && mediaFile) {
+          setIsSaving(false);
+          return; // Upload failed, abort
+        }
+      }
+
       const { error } = await supabase.from('wa_campaigns').insert({
         user_id: userId,
         instance_id: selectedInstance || null,
@@ -127,6 +137,8 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
         rotation_messages_per_instance: rotationLimit,
         regras_delay: { min: minDelay, max: maxDelay },
         regras_rodizio: { mensagens_por_instancia: rotationLimit },
+        media_url: uploadedMediaUrl,
+        media_type: mediaType,
         status: 'draft',
       });
 
@@ -154,6 +166,7 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
     setVariationLevel('medium');
     setUseAI(true);
     setRotationLimit(10);
+    removeMedia();
   };
 
   return (
