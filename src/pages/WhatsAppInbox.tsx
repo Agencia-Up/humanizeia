@@ -11,8 +11,11 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
   Inbox, Search, Send, Loader2, Check, CheckCheck,
-  Sparkles, User, Archive, ArrowLeft, MessageCircle,
+  Sparkles, User, Archive, ArrowLeft, MessageCircle, Tag,
 } from 'lucide-react';
+import { TagBadge } from '@/components/whatsapp/TagBadge';
+import { TagSelector } from '@/components/whatsapp/TagSelector';
+import { TagFilter } from '@/components/whatsapp/TagFilter';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
