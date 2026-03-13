@@ -523,6 +523,15 @@ export default function WhatsAppInbox() {
                             <div className={`flex items-center justify-end gap-1 mt-1 ${
                               msg.direction === 'outgoing' ? 'text-primary-foreground/60' : 'text-muted-foreground'
                             }`}>
+                              {/* Show which instance sent the message */}
+                              {msg.direction === 'outgoing' && msg.instance_id && instances.length > 1 && (() => {
+                                const inst = instances.find(i => i.id === msg.instance_id);
+                                return inst ? (
+                                  <span className="text-[9px] mr-1 opacity-60">
+                                    via {inst.friendly_name || inst.instance_name}
+                                  </span>
+                                ) : null;
+                              })()}
                               <span className="text-[10px]">
                                 {format(new Date(msg.created_at), 'HH:mm')}
                               </span>
