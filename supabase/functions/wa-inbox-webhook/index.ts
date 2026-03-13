@@ -431,7 +431,8 @@ async function categorizeAndAutomate(
   content: string,
   phone: string,
   pushName: string | null,
-  contactId: string | null
+  contactId: string | null,
+  replyTarget?: string,
 ) {
   try {
     const aiCategory = await categorizeWithAI(content);
@@ -445,18 +446,27 @@ async function categorizeAndAutomate(
       if (aiCategory.category === "opt-out") {
         await supabase
           .from("wa_contacts")
-          .update({ is_valid: false, tags: ["blacklist"], status: "blacklist" } as any)
+          .update({ is_valid: false, tags: ["blacklist"] } as any)
           .eq("id", contactId);
       } else if (aiCategory.category === "interested" || aiCategory.category === "question") {
-        await supabase
+        const { data: currentContact } = await supabase
           .from("wa_contacts")
-          .update({ status: "qualified" } as any)
-          .eq("id", contactId);
+          .select("tags")
+          .eq("id", contactId)
+          .maybeSingle();
+
+        const currentTags = (currentContact?.tags as string[] | null) || [];
+        if (!currentTags.includes("qualified")) {
+          await supabase
+            .from("wa_contacts")
+            .update({ tags: [...currentTags, "qualified"] } as any)
+            .eq("id", contactId);
+        }
       }
     }
 
     // ===== AI Agent Auto-Reply =====
-    await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category);
+    await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
 
     const triggerEvent =
       aiCategory.category === "interested" ? "lead_interested" :
