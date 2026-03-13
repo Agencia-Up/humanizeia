@@ -161,35 +161,46 @@ function NavGroup({
   }
 
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel className="text-xs uppercase tracking-wider text-muted-foreground/70">
-        {label}
-      </SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {items.map((item) => (
-            <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton asChild tooltip={item.title}>
-                <NavLink 
-                  to={item.url} 
-                  end={item.url === '/'}
-                  className="text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
-                  activeClassName="bg-primary/10 text-primary font-medium"
-                >
-                  <item.icon className="h-4 w-4" />
-                  <span className="flex-1">{item.title}</span>
-                  {(item.badge || 0) > 0 && (
-                    <Badge className="ml-auto h-5 min-w-5 rounded-full px-1.5 text-[10px] gradient-primary border-0 flex items-center justify-center text-primary-foreground">
-                      {item.badge}
-                    </Badge>
-                  )}
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <Collapsible open={isOpen} onOpenChange={onToggle}>
+      <SidebarGroup>
+        <CollapsibleTrigger asChild>
+          <SidebarGroupLabel className="text-xs uppercase tracking-wider text-muted-foreground/70 cursor-pointer hover:text-muted-foreground transition-colors">
+            {label}
+            {groupBadge > 0 && (
+              <Badge className="ml-2 h-4 min-w-4 rounded-full px-1 text-[9px] gradient-primary border-0 flex items-center justify-center text-primary-foreground">
+                {groupBadge}
+              </Badge>
+            )}
+          </SidebarGroupLabel>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {items.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton asChild tooltip={item.title}>
+                    <NavLink 
+                      to={item.url} 
+                      end={item.url === '/'}
+                      className="text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
+                      activeClassName="bg-primary/10 text-primary font-medium"
+                    >
+                      <item.icon className="h-4 w-4" />
+                      <span className="flex-1">{item.title}</span>
+                      {(item.badge || 0) > 0 && (
+                        <Badge className="ml-auto h-5 min-w-5 rounded-full px-1.5 text-[10px] gradient-primary border-0 flex items-center justify-center text-primary-foreground">
+                          {item.badge}
+                        </Badge>
+                      )}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
   );
 }
 
@@ -223,64 +234,6 @@ export function AppSidebar() {
     { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
     { label: '⚙️ Sistema', items: systemItems, triggerIcon: Settings },
   ];
-
-  return (
-    <Sidebar collapsible="icon" className="border-r border-border/50">
-      <SidebarHeader className="border-b border-border/50 p-4">
-        {collapsed ? (
-          <div className="flex justify-center">
-            <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
-              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-8 w-8 object-contain" />
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-10 w-10 shrink-0 rounded-xl object-contain" />
-              <div className="flex flex-col">
-                <span className="text-lg font-bold gradient-text">HumanizeAI</span>
-                <span className="text-xs text-muted-foreground">Platform</span>
-              </div>
-            </div>
-            <button onClick={toggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors">
-              <X className="h-4 w-4 text-muted-foreground" />
-            </button>
-          </div>
-        )}
-      </SidebarHeader>
-
-      <SidebarContent className={collapsed ? "px-0 items-center pt-4" : "px-2"}>
-        {groups.map((group) => (
-          <NavGroup
-            key={group.label}
-            label={group.label}
-            items={group.items}
-            collapsed={collapsed}
-            isOpen={openSidebarGroups.includes(group.label)}
-            onToggle={() => toggleSidebarGroup(group.label)}
-            triggerIcon={group.triggerIcon}
-          />
-        ))}
-      </SidebarContent>
-
-      <SidebarFooter className={`border-t border-border/50 p-2 ${collapsed ? 'items-center' : ''}`}>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton tooltip={isDarkMode ? 'Modo Claro' : 'Modo Escuro'} onClick={toggleDarkMode}>
-              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              <span>{isDarkMode ? 'Modo Claro' : 'Modo Escuro'}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton tooltip="Sair" onClick={handleLogout} className="text-destructive hover:text-destructive hover:bg-destructive/10">
-              <LogOut className="h-4 w-4" />
-              <span>Sair</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
-    </Sidebar>
-  );
 
   return (
     <Sidebar collapsible="icon" className="border-r border-border/50">
