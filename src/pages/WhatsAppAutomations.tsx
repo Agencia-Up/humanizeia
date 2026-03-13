@@ -96,14 +96,14 @@ export default function WhatsAppAutomations() {
     if (formAction === 'notify_webhook') actionConfig.webhook_url = formWebhookUrl;
 
     setSaving(true);
-    const { error } = await supabase.from('wa_automations').insert({
+    const { error } = await (supabase as any).from('wa_automations').insert({
       user_id: user.id,
       name: formName.trim(),
       trigger_event: formTrigger,
       action_type: formAction,
       action_config: actionConfig,
       is_active: true,
-    } as any);
+    });
 
     if (error) {
       toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
