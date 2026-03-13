@@ -37,6 +37,7 @@ import WhatsAppAnalytics from "./pages/WhatsAppAnalytics";
 import WhatsAppAutomations from "./pages/WhatsAppAutomations";
 import WhatsAppInstances from "./pages/WhatsAppInstances";
 import CriarCampanha from "./pages/CriarCampanha";
+import WhatsAppAIAgent from "./pages/WhatsAppAIAgent";
 
 const queryClient = new QueryClient();
 
