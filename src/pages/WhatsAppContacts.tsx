@@ -12,7 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   Contact, Search, Trash2, Loader2, Plus, FolderOpen, Users, Phone, Tag,
   Edit, Eye, ArrowLeft, MoreHorizontal, MapPin, MessageCircle, Globe,
-  Download, RefreshCw, UserPlus, CheckCircle, WifiOff,
+  Download, RefreshCw, UserPlus, CheckCircle, WifiOff, Upload,
 } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { FileImportDialog } from '@/components/whatsapp/FileImportDialog';
 
 interface ContactList {
   id: string;
@@ -152,6 +153,7 @@ export default function WhatsAppContacts() {
   const [showEditList, setShowEditList] = useState(false);
   const [showAddContacts, setShowAddContacts] = useState(false);
   const [showDeleteList, setShowDeleteList] = useState(false);
+  const [showFileImport, setShowFileImport] = useState(false);
   const [showGoogleMaps, setShowGoogleMaps] = useState(false);
 
   // Form state
@@ -506,8 +508,8 @@ export default function WhatsAppContacts() {
                   </>
                 ) : (
                   <>
-                    <Button variant="outline" onClick={() => setShowAddContacts(true)}>
-                      <Phone className="h-4 w-4 mr-1.5" /> Importar
+                    <Button variant="outline" onClick={() => setShowFileImport(true)}>
+                      <Upload className="h-4 w-4 mr-1.5" /> Importar Arquivo
                     </Button>
                     <Button onClick={() => { setFormListName(''); setFormListDesc(''); setShowNewList(true); }}>
                       <Plus className="h-4 w-4 mr-1.5" /> Nova Lista
@@ -882,6 +884,15 @@ export default function WhatsAppContacts() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* File Import Dialog */}
+      <FileImportDialog
+        open={showFileImport}
+        onOpenChange={setShowFileImport}
+        userId={user?.id || ''}
+        lists={lists.map(l => ({ id: l.id, name: l.name }))}
+        onSuccess={fetchLists}
+      />
     </MainLayout>
   );
 }
