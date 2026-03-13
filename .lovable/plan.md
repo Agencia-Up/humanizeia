@@ -1,91 +1,42 @@
 
-# Plano de Implementação: Evolução do Módulo WhatsApp
 
-## Análise do Estado Atual
+## Diagnóstico: Biblioteca de Criativos sem fotos
 
-O sistema **já possui** uma base sólida:
-- **Multi-Integração**: Evolution API + Meta API já implementados (`EvolutionConnectDialog.tsx` com seleção de provider, `process-whatsapp-queue` com `sendToMetaAPI`/`sendToEvolutionAPI`)
-- **Smart Switcher**: Algoritmo `selectSmartInstance` já funciona com health_score, circuit breaker, warmup, rodízio
-- **Polimorfismo IA**: `generateAIMessage` já usa Lovable AI (Gemini 2.5 Flash) com 3 níveis de variação
-- **Broadcast**: Frontend completo com CSVUpload, NewCampaignDialog, CampaignCard
+### Problema encontrado
 
-## O que FALTA implementar
+Dois problemas combinados:
 
-### Fase 1: Failover Inteligente (Redundância Ativa)
-**Prioridade alta** - Protege operação contra banimentos
+1. **Contas Meta inativas**: Ambas as contas na tabela `ad_accounts` estão com `is_active: false`. Quando isso acontece, `useMetaConnection` retorna `connectedAccount: null`, e a página mostra a tela "Conecte seu Meta Ads" em vez dos dados em cache.
 
-1. **Migração DB**:
-   - Adicionar `failover_status` (text) em `wa_instances`
-   - Adicionar `current_instance_id` (uuid) em `wa_contacts`
-   - Criar tabela `wa_audit_logs` (id, user_id, event_type, instance_id, contact_id, details jsonb, created_at)
+2. **Cache sem URLs de imagem de alta resolução**: O cache (`ads_creatives`) tem 50 anúncios armazenados, porém os dados do criativo só contêm `thumbnail_url` (formato p64x64, baixa resolução). Os campos `full_picture`, `image_url` e `effective_image_url` vieram como `null` da API do Meta. A função `getHighResThumbnail` tenta transformar p64x64 para p960x960, mas essa manipulação de URL nem sempre funciona no CDN da Meta.
 
-2. **Edge Function `handle-instance-ban`**:
-   - Trigger: chamada quando `health_score < 20` e `is_active = false`
-   - Identifica contatos "aquecidos" (last_message_at nos últimos 7 dias)
-   - Seleciona nova instância saudável via Smart Switcher
-   - Gera mensagem de continuidade via IA (Gemini)
-   - Enfileira mensagens na `wa_queue` para a nova instância
-   - Atualiza `current_instance_id` nos contatos afetados
-   - Registra evento em `wa_audit_logs`
+### Plano de correção
 
-3. **Integração no `process-whatsapp-queue`**:
-   - Após circuit breaker desativar instância, chamar `handle-instance-ban`
+**Arquivo: `src/pages/CreativeLibrary.tsx`**
 
-### Fase 2: CRM com Etiquetas (Tags)
-**Prioridade média** - Organização visual de contatos
+1. Exibir dados do cache mesmo quando a conta está desconectada, com um banner de aviso pedindo reconexão para dados atualizados. Atualmente a tela "Conecte seu Meta Ads" bloqueia completamente o acesso ao cache existente.
 
-1. **Migração DB**:
-   - Criar tabela `wa_tags` (id, organization_id, user_id, name, color, created_at) com RLS
-   
-2. **Frontend - Componentes**:
-   - `TagManager.tsx`: CRUD de tags com cores (popover/dialog)
-   - `TagBadge.tsx`: Badge visual colorido reutilizável
-   - `TagSelector.tsx`: Seletor multi-tag com busca e criação inline
+2. Alterar a lógica do `enabled` no `useMetaCachedQuery` para sempre ler o cache (mesmo sem conta ativa), mas só tentar buscar dados frescos quando conectado.
 
-3. **Frontend - Integração**:
-   - `WhatsAppInbox.tsx`: Adicionar tags ao lado do nome do contato, filtro por tags na lista de conversas
-   - `WhatsAppContacts.tsx`: Coluna de tags na tabela, ação em lote "Adicionar tag", filtro por tag
-   - Aplicar/remover tags diretamente via update no `wa_contacts.tags[]`
+**Arquivo: `src/hooks/useMetaCachedQuery.ts`**
 
-### Fase 3: Melhorias no Polimorfismo
-**Prioridade média** - Já funciona, mas pode ser aprimorado
+3. Separar a leitura do cache (sempre habilitada) da busca de dados frescos (só quando `enabled: true`). Isso garante que dados em cache sejam exibidos instantaneamente mesmo sem conexão ativa.
 
-1. **Migração DB**:
-   - Adicionar `variation_level` em `wa_campaigns` (já existe!)
-   
-2. **Aprimorar prompt em `process-whatsapp-queue`**:
-   - Incluir `conversation_history_summary` para leads quentes (buscar últimas 5 msgs do `wa_inbox`)
-   - Incluir dados do negócio/ramo do contato dos metadados
-   - Melhorar prompt com contexto de histórico
+**Arquivo: `src/pages/CreativeLibrary.tsx` (imagens)**
 
-### Fase 4: Melhorias no Smart Switcher
-**Prioridade baixa** - Já funcional, refinamentos
+4. Adicionar fallback robusto para URLs de imagem: tentar carregar via `thumbnail_url` transformada, e se falhar (evento `onError` no `<img>`), voltar à URL original p64x64. Também solicitar o campo `object_story_spec` da API, que contém URLs de imagem mais confiáveis.
 
-1. **Migração DB**:
-   - Adicionar `last_used_at` em `wa_instances` (já existe no código!)
+### Detalhes técnicos
 
-2. **Aprimorar `selectSmartInstance`**:
-   - Balanceamento de carga ponderado por health_score (não apenas ordenação)
-   - Log de decisões de roteamento em `wa_audit_logs`
+A chave do cache `ads_creatives` tem 50 itens salvos às 15:27 de hoje. Os dados estão lá, mas a UI não os mostra porque a verificação `isConnected` bloqueia tudo antes de chegar ao `useMetaCachedQuery`.
 
----
+Fluxo corrigido:
+```text
+Página carrega
+  ├─ Lê cache (sempre) → mostra dados salvos imediatamente
+  ├─ Conta ativa? 
+  │   ├─ Sim → busca dados frescos em background
+  │   └─ Não → mostra banner "Reconecte para atualizar"
+  └─ Imagem com fallback: effective_image_url → image_url → full_picture → thumbnail (p960) → thumbnail (original)
+```
 
-## Ordem de Implementação
-
-Dado que Multi-Integração, Smart Switcher e Polimorfismo **já estão implementados**, o trabalho real é:
-
-1. **Failover Inteligente** - 1 migração + 1 edge function + integração
-2. **CRM Tags** - 1 migração + 3 componentes + integração em 2 páginas
-3. **Polimorfismo aprimorado** - Edição no edge function existente
-4. **Smart Switcher refinado** - Edição no edge function existente
-
-## Detalhes Técnicos
-
-- Todas as novas tabelas terão RLS com `user_id = auth.uid()`
-- Edge functions usam `verify_jwt = false` + validação manual via `getClaims()`
-- IA usa Lovable AI gateway (`ai.gateway.lovable.dev`) com `google/gemini-2.5-flash`
-- Audit logs são write-only para usuários (INSERT + SELECT, sem UPDATE/DELETE)
-
-## Extrator Google Maps
-
-Conforme combinado, **adiado para implementação futura**. A infraestrutura já existe parcialmente em `extract-google-maps-leads`.

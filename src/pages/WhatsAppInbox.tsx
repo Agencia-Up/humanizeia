@@ -11,8 +11,11 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
   Inbox, Search, Send, Loader2, Check, CheckCheck,
-  Sparkles, User, Archive, ArrowLeft, MessageCircle,
+  Sparkles, User, Archive, ArrowLeft, MessageCircle, Tag,
 } from 'lucide-react';
+import { TagBadge } from '@/components/whatsapp/TagBadge';
+import { TagSelector } from '@/components/whatsapp/TagSelector';
+import { TagFilter } from '@/components/whatsapp/TagFilter';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -90,6 +93,8 @@ export default function WhatsAppInbox() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isMobileShowChat, setIsMobileShowChat] = useState(false);
+  const [filterTags, setFilterTags] = useState<string[]>([]);
+  const [contactTags, setContactTags] = useState<Record<string, string[]>>({});
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -174,10 +179,44 @@ export default function WhatsAppInbox() {
     setLoadingMessages(false);
   }, [user]);
 
+  // Fetch contact tags for conversations
+  const fetchContactTags = useCallback(async () => {
+    if (!user || conversations.length === 0) return;
+    const phones = conversations.map(c => c.phone);
+    const { data } = await supabase
+      .from('wa_contacts')
+      .select('phone, tags')
+      .eq('user_id', user.id)
+      .in('phone', phones);
+    if (data) {
+      const tagMap: Record<string, string[]> = {};
+      for (const c of data) {
+        if (c.tags && (c.tags as string[]).length > 0) {
+          tagMap[c.phone] = c.tags as string[];
+        }
+      }
+      setContactTags(tagMap);
+    }
+  }, [user, conversations]);
+
+  const updateContactTags = async (phone: string, newTags: string[]) => {
+    if (!user) return;
+    await supabase
+      .from('wa_contacts')
+      .update({ tags: newTags } as any)
+      .eq('user_id', user.id)
+      .eq('phone', phone);
+    setContactTags(prev => ({ ...prev, [phone]: newTags }));
+  };
+
   useEffect(() => {
     fetchConversations();
     fetchInstances();
   }, [fetchConversations, fetchInstances]);
+
+  useEffect(() => {
+    fetchContactTags();
+  }, [fetchContactTags]);
 
   useEffect(() => {
     if (selectedPhone) {
@@ -276,6 +315,11 @@ export default function WhatsAppInbox() {
   };
 
   const filteredConversations = conversations.filter(c => {
+    // Tag filter
+    if (filterTags.length > 0) {
+      const cTags = contactTags[c.phone] || [];
+      if (!filterTags.some(ft => cTags.includes(ft))) return false;
+    }
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -302,8 +346,8 @@ export default function WhatsAppInbox() {
         <div className="flex flex-1 overflow-hidden">
           {/* Conversation List */}
           <div className={`w-full md:w-[360px] border-r flex flex-col ${isMobileShowChat ? 'hidden md:flex' : 'flex'}`}>
-            {/* Search */}
-            <div className="p-3 border-b">
+            {/* Search + Tag Filter */}
+            <div className="p-3 border-b space-y-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -313,6 +357,7 @@ export default function WhatsAppInbox() {
                   onChange={e => setSearchQuery(e.target.value)}
                 />
               </div>
+              <TagFilter activeTags={filterTags} onFilterChange={setFilterTags} />
             </div>
 
             <ScrollArea className="flex-1">
@@ -350,7 +395,7 @@ export default function WhatsAppInbox() {
                           </span>
                         </div>
                         <div className="flex items-center justify-between mt-0.5">
-                          <p className="text-xs text-muted-foreground truncate max-w-[200px]">
+                          <p className="text-xs text-muted-foreground truncate max-w-[180px]">
                             {conv.last_message || '📎 Mídia'}
                           </p>
                           <div className="flex items-center gap-1.5 shrink-0 ml-2">
@@ -366,6 +411,17 @@ export default function WhatsAppInbox() {
                             )}
                           </div>
                         </div>
+                        {/* Contact Tags */}
+                        {contactTags[conv.phone] && contactTags[conv.phone].length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {contactTags[conv.phone].slice(0, 3).map(tag => (
+                              <TagBadge key={tag} name={tag} color="#3b82f6" size="sm" />
+                            ))}
+                            {contactTags[conv.phone].length > 3 && (
+                              <span className="text-[10px] text-muted-foreground">+{contactTags[conv.phone].length - 3}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </button>
@@ -412,6 +468,10 @@ export default function WhatsAppInbox() {
                       {categoryLabels[selectedConv.ai_category] || selectedConv.ai_category}
                     </Badge>
                   )}
+                  <TagSelector
+                    selectedTags={contactTags[selectedPhone] || []}
+                    onTagsChange={(tags) => updateContactTags(selectedPhone, tags)}
+                  />
                 </div>
 
                 {/* Messages */}

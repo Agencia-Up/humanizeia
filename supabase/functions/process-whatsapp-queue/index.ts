@@ -169,7 +169,9 @@ Deno.serve(async (req) => {
               item.contact_name,
               item.contact_metadata,
               variationLevel,
-              campaign.message_template
+              campaign.message_template,
+              supabase,
+              item.user_id
             );
           } catch (aiErr) {
             console.error("AI generation failed, using template:", aiErr);
@@ -248,6 +250,25 @@ Deno.serve(async (req) => {
                 instance_id: failedInstance.id,
                 decrement_value: 30,
               }).catch((e: any) => console.error("Health decrement failed:", e));
+
+              // Trigger failover for banned instance
+              try {
+                const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+                await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                  },
+                  body: JSON.stringify({
+                    instance_id: failedInstance.id,
+                    user_id: item.user_id,
+                  }),
+                });
+                console.log(`Failover triggered for instance ${failedInstance.id}`);
+              } catch (failoverErr) {
+                console.error("Failover trigger failed:", failoverErr);
+              }
             }
           }
         }
@@ -333,9 +354,17 @@ async function selectSmartInstance(
   const isContactCold = !item.contact_metadata?.last_message_at;
 
   // Sort candidates: for cold leads, prioritize highest health_score; for warm leads, prefer least recently used
+  // Weighted random selection based on health_score for better load distribution
   const sortedInstances = [...userInstances].sort((a, b) => {
     if (isContactCold) {
-      return b.health_score - a.health_score; // Best reputation first for cold leads
+      // Weighted random: higher health_score = higher probability
+      const totalHealth = userInstances.reduce((sum, inst) => sum + inst.health_score, 0);
+      if (totalHealth > 0) {
+        const aWeight = a.health_score / totalHealth;
+        const bWeight = b.health_score / totalHealth;
+        return bWeight - aWeight;
+      }
+      return b.health_score - a.health_score;
     }
     // For warm leads, prefer instances that have been used recently (continuity)
     const aTime = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
@@ -509,7 +538,9 @@ async function generateAIMessage(
   contactName: string | null,
   contactMetadata: any,
   variationLevel: string,
-  messageTemplate: string | null
+  messageTemplate: string | null,
+  supabaseClient?: any,
+  userId?: string
 ): Promise<string> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
@@ -522,6 +553,30 @@ async function generateAIMessage(
       .map(([k, v]) => `${k}: ${v}`)
       .join(", ");
     if (extras) personalizationContext += `\nDados extras do lead: ${extras}`;
+  }
+
+  // Fetch conversation history for warm leads (Phase 3 enhancement)
+  let conversationHistory = "";
+  if (supabaseClient && userId && phone) {
+    try {
+      const { data: recentMsgs } = await supabaseClient
+        .from("wa_inbox")
+        .select("content, direction, created_at")
+        .eq("phone", phone.replace(/\D/g, ""))
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (recentMsgs && recentMsgs.length > 0) {
+        conversationHistory = "\nHistórico recente da conversa:\n" +
+          recentMsgs
+            .reverse()
+            .map((m: any) => `${m.direction === "incoming" ? "Lead" : "Nós"}: ${m.content || "[mídia]"}`)
+            .join("\n");
+      }
+    } catch (err) {
+      console.warn("Failed to fetch conversation history:", err);
+    }
   }
 
   // Map variation level to temperature and instructions
@@ -554,14 +609,15 @@ REGRAS OBRIGATÓRIAS:
 - Mantenha entre 1-4 parágrafos curtos
 - NÃO inclua o número de telefone
 - Se dados do lead forem fornecidos, USE-OS para personalizar naturalmente
+- Se houver histórico de conversa, CONSIDERE o contexto para continuidade natural
 - Cada mensagem deve ser ÚNICA — nunca repita estruturas
 - MÁXIMO de 500 caracteres
 - Tom profissional mas amigável
 - Responda APENAS com o texto da mensagem, sem explicações`;
 
   const userPrompt = messageTemplate
-    ? `Mensagem base: ${messageTemplate}\nIntenção da campanha: ${promptBase}${personalizationContext}\n\nGere uma variação única e personalizada.`
-    : `Intenção da mensagem: ${promptBase}${personalizationContext}\n\nGere uma mensagem única, personalizada e natural.`;
+    ? `Mensagem base: ${messageTemplate}\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma variação única e personalizada.`
+    : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem única, personalizada e natural.`;
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
