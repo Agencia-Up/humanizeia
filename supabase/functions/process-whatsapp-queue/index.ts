@@ -492,26 +492,23 @@ async function selectSmartInstance(
   const warmupRampDays = aquecimento.dias_rampa || 7;
 
   const rodizio = campaign?.regras_rodizio || {};
-  const rotationLimit = rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10;
+  const rotationLimit = Math.max(1, rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10);
   const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
-  const rotKey = item.campaign_id || item.user_id;
 
-  if (!rotationCounters.has(rotKey)) {
-    rotationCounters.set(rotKey, { index: 0, count: 0 });
-  }
-  const rot = rotationCounters.get(rotKey)!;
+  // If campaign is pinned to one instance, respect it
+  const scopedInstances = campaign?.instance_id
+    ? userInstances.filter((inst) => inst.id === campaign.instance_id)
+    : userInstances;
 
-  if (rot.count >= rotationLimit) {
-    rot.index = (rot.index + 1) % userInstances.length;
-    rot.count = 0;
-    if (pauseBetweenInstances > 0) await sleep(pauseBetweenInstances * 1000);
+  if (scopedInstances.length === 0) {
+    return null;
   }
 
   const isContactCold = !item.contact_metadata?.last_message_at;
 
-  const sortedInstances = [...userInstances].sort((a, b) => {
+  const sortedInstances = [...scopedInstances].sort((a, b) => {
     if (isContactCold) {
-      const totalHealth = userInstances.reduce((sum, inst) => sum + inst.health_score, 0);
+      const totalHealth = scopedInstances.reduce((sum, inst) => sum + inst.health_score, 0);
       if (totalHealth > 0) {
         return (b.health_score / totalHealth) - (a.health_score / totalHealth);
       }
@@ -522,10 +519,15 @@ async function selectSmartInstance(
     return bTime - aTime;
   });
 
+  // Persistent rotation based on already sent messages from database
+  const sentCount = Math.max(0, campaign?.sent_count || 0);
+  const rotationCycle = Math.floor(sentCount / rotationLimit);
+  const startIndex = rotationCycle % sortedInstances.length;
+
   let instance: Instance | null = null;
 
   for (let attempts = 0; attempts < sortedInstances.length; attempts++) {
-    const candidate = sortedInstances[(rot.index + attempts) % sortedInstances.length];
+    const candidate = sortedInstances[(startIndex + attempts) % sortedInstances.length];
     const candidateFailures = failures.get(candidate.id) || 0;
 
     if (candidateFailures >= CIRCUIT_BREAKER_THRESHOLD) continue;
@@ -549,11 +551,14 @@ async function selectSmartInstance(
     }
 
     instance = candidate;
-    rot.index = (rot.index + attempts) % sortedInstances.length;
     break;
   }
 
-  if (instance) rot.count++;
+  // Optional pause when crossing an instance boundary
+  if (instance && pauseBetweenInstances > 0 && sentCount > 0 && sentCount % rotationLimit === 0) {
+    await sleep(pauseBetweenInstances * 1000);
+  }
+
   return instance;
 }
 
