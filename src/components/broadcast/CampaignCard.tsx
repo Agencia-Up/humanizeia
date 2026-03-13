@@ -7,7 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   Play, Pause, CheckCircle, XCircle, Clock, Zap, Loader2,
-  RotateCcw, Wand2, Trash2, MoreVertical,
+  RotateCcw, Wand2, Trash2, MoreVertical, Pencil,
 } from 'lucide-react';
 import {
   DropdownMenu,
