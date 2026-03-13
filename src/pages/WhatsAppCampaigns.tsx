@@ -154,6 +154,7 @@ export default function WhatsAppCampaigns() {
         media_url: data.media_url || null,
         media_type: data.media_type || null,
         tags: data.tags.length > 0 ? data.tags : null,
+        variation_level: data.variation_level || 'medium',
       };
 
       const { data: result, error } = await supabase.functions.invoke('save-campaign', {
@@ -215,6 +216,7 @@ Não numere as variações. Não inclua explicações adicionais.`
       media_url: c.media_url || '',
       media_type: c.media_type || '',
       tags: c.tags || [],
+      variation_level: (c as any).variation_level || 'medium',
     });
     setDialogOpen(true);
   };

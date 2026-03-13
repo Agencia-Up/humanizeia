@@ -1842,6 +1842,7 @@ export type Database = {
           total_contacts: number
           updated_at: string
           user_id: string
+          variation_level: string
         }
         Insert: {
           completed_at?: string | null
@@ -1874,6 +1875,7 @@ export type Database = {
           total_contacts?: number
           updated_at?: string
           user_id: string
+          variation_level?: string
         }
         Update: {
           completed_at?: string | null
@@ -1906,6 +1908,7 @@ export type Database = {
           total_contacts?: number
           updated_at?: string
           user_id?: string
+          variation_level?: string
         }
         Relationships: [
           {
@@ -2118,9 +2121,12 @@ export type Database = {
           is_active: boolean
           last_connected_at: string | null
           last_message_at: string | null
+          last_used_at: string | null
           messages_sent_today: number
+          meta_config: Json | null
           organization_id: string | null
           phone_number: string | null
+          provider: string
           status: string
           updated_at: string
           user_id: string
@@ -2136,9 +2142,12 @@ export type Database = {
           is_active?: boolean
           last_connected_at?: string | null
           last_message_at?: string | null
+          last_used_at?: string | null
           messages_sent_today?: number
+          meta_config?: Json | null
           organization_id?: string | null
           phone_number?: string | null
+          provider?: string
           status?: string
           updated_at?: string
           user_id: string
@@ -2154,9 +2163,12 @@ export type Database = {
           is_active?: boolean
           last_connected_at?: string | null
           last_message_at?: string | null
+          last_used_at?: string | null
           messages_sent_today?: number
+          meta_config?: Json | null
           organization_id?: string | null
           phone_number?: string | null
+          provider?: string
           status?: string
           updated_at?: string
           user_id?: string

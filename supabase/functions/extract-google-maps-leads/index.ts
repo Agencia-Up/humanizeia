@@ -5,15 +5,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-function extractPhone(text: string): string | null {
-  if (!text) return null;
-  const matches = text.match(/(?:\+?\d{1,3}[\s.-]?)?\(?\d{2,3}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}/g);
-  if (!matches || matches.length === 0) return null;
-  const cleaned = matches[0].replace(/\D/g, '');
-  if (cleaned.length < 10) return null;
-  return cleaned;
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -21,7 +12,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { user_id, search_query, list_id, list_name } = body;
+    const { user_id, search_query, location, radius, list_id, list_name } = body;
 
     if (!user_id || !search_query) {
       return new Response(JSON.stringify({ success: false, error: 'user_id e search_query são obrigatórios' }), {
@@ -30,111 +21,32 @@ Deno.serve(async (req) => {
       });
     }
 
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Try Google Places API first, fallback to Firecrawl
+    const googleApiKey = Deno.env.get('GOOGLE_PLACES_API_KEY');
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
-    if (!firecrawlKey) {
-      return new Response(JSON.stringify({ success: false, error: 'Firecrawl não configurado' }), {
+
+    let rawLeads: Lead[] = [];
+
+    if (googleApiKey) {
+      console.log(`[extract-google-maps] Using Google Places API for: "${search_query}"`);
+      rawLeads = await extractViaGooglePlaces(googleApiKey, search_query, location, radius);
+    } else if (firecrawlKey) {
+      console.log(`[extract-google-maps] Falling back to Firecrawl for: "${search_query}"`);
+      rawLeads = await extractViaFirecrawl(firecrawlKey, search_query);
+    } else {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Nenhuma API de extração configurada. Configure GOOGLE_PLACES_API_KEY ou FIRECRAWL_API_KEY.',
+      }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    console.log(`[extract-google-maps] Searching: "${search_query}"`);
-
-    // Use Firecrawl search to find businesses
-    const searchResponse = await fetch('https://api.firecrawl.dev/v1/search', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${firecrawlKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query: `${search_query} telefone contato site:google.com/maps OR site:google.com.br/maps`,
-        limit: 20,
-        lang: 'pt',
-        country: 'BR',
-        scrapeOptions: { formats: ['markdown'] },
-      }),
-    });
-
-    if (!searchResponse.ok) {
-      const errData = await searchResponse.json();
-      console.error('Firecrawl search error:', errData);
-      throw new Error(errData.error || `Firecrawl retornou status ${searchResponse.status}`);
-    }
-
-    const searchData = await searchResponse.json();
-    const results = searchData?.data || [];
-
-    console.log(`[extract-google-maps] Got ${results.length} search results`);
-
-    // Also do a direct Google Maps scrape
-    const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(search_query)}`;
-    let mapsScrapeData: any = null;
-    try {
-      const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${firecrawlKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          url: mapsUrl,
-          formats: ['markdown'],
-          waitFor: 3000,
-        }),
-      });
-      if (scrapeResponse.ok) {
-        mapsScrapeData = await scrapeResponse.json();
-      }
-    } catch (e) {
-      console.error('Maps scrape fallback error:', e);
-    }
-
-    // Parse leads from all results
-    interface Lead {
-      phone: string;
-      name: string;
-      address: string | null;
-    }
-
-    const leadsMap = new Map<string, Lead>();
-
-    for (const result of results) {
-      const markdown = result.markdown || '';
-      const title = result.title || '';
-
-      const phone = extractPhone(markdown);
-      if (phone && !leadsMap.has(phone)) {
-        const addressMatch = markdown.match(/(?:Endereço|Rua|Av\.|Avenida|R\.)[:\s]*([^\n]+)/i);
-        leadsMap.set(phone, {
-          name: title.replace(/ - Google Maps.*$/i, '').replace(/\|.*$/, '').trim().substring(0, 200),
-          phone,
-          address: addressMatch ? addressMatch[1].trim().substring(0, 500) : null,
-        });
-      }
-    }
-
-    if (mapsScrapeData?.data?.markdown) {
-      const md = mapsScrapeData.data.markdown;
-      const blocks = md.split(/\n{2,}/);
-      for (const block of blocks) {
-        const phone = extractPhone(block);
-        if (phone && !leadsMap.has(phone)) {
-          const firstLine = block.split('\n')[0].replace(/^[#*\s]+/, '').trim();
-          leadsMap.set(phone, {
-            name: firstLine.substring(0, 200) || 'Lead Google Maps',
-            phone,
-            address: null,
-          });
-        }
-      }
-    }
-
-    const rawLeads = Array.from(leadsMap.values());
     console.log(`[extract-google-maps] Extracted ${rawLeads.length} raw leads`);
 
     if (rawLeads.length === 0) {
@@ -166,9 +78,7 @@ Deno.serve(async (req) => {
       targetListId = newList.id;
     }
 
-    // Call sanitize-contacts for dedup, E.164 formatting, and WhatsApp check
-    console.log(`[extract-google-maps] Sanitizing ${rawLeads.length} leads...`);
-
+    // Sanitize contacts
     const sanitizeRes = await fetch(`${supabaseUrl}/functions/v1/sanitize-contacts`, {
       method: 'POST',
       headers: {
@@ -183,8 +93,9 @@ Deno.serve(async (req) => {
           name: l.name,
           group_name: l.address,
           source: 'google_maps',
+          metadata: l.metadata || {},
         })),
-        check_whatsapp: false, // Google Maps leads may not have WhatsApp
+        check_whatsapp: false,
       }),
     });
 
@@ -195,7 +106,6 @@ Deno.serve(async (req) => {
     }
 
     const stats = sanitizeData.stats || {};
-    console.log(`[extract-google-maps] Sanitization stats:`, stats);
 
     return new Response(JSON.stringify({
       success: true,
@@ -203,8 +113,9 @@ Deno.serve(async (req) => {
       inserted: sanitizeData.inserted_count || 0,
       list_id: targetListId,
       list_name: targetListName,
-      search_results_count: results.length,
+      search_results_count: rawLeads.length,
       stats,
+      api_used: googleApiKey ? 'google_places' : 'firecrawl',
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -218,3 +129,193 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+// ====================== TYPES ======================
+
+interface Lead {
+  phone: string;
+  name: string;
+  address: string | null;
+  metadata?: Record<string, any>;
+}
+
+// ====================== GOOGLE PLACES API ======================
+
+async function extractViaGooglePlaces(
+  apiKey: string,
+  query: string,
+  location?: string,
+  radius?: number
+): Promise<Lead[]> {
+  const leads: Lead[] = [];
+  const seenPhones = new Set<string>();
+
+  // Step 1: Text Search to get place IDs
+  const searchParams = new URLSearchParams({
+    query,
+    key: apiKey,
+    language: 'pt-BR',
+  });
+
+  if (location) searchParams.set('location', location);
+  if (radius) searchParams.set('radius', String(radius));
+
+  let nextPageToken: string | null = null;
+  let pages = 0;
+  const MAX_PAGES = 3; // Google returns max 20 per page, 3 pages = 60 results
+
+  do {
+    if (nextPageToken) {
+      searchParams.set('pagetoken', nextPageToken);
+      // Google requires a short delay between page token requests
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    const searchRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/textsearch/json?${searchParams.toString()}`
+    );
+
+    if (!searchRes.ok) {
+      console.error(`Google Places search error: ${searchRes.status}`);
+      break;
+    }
+
+    const searchData = await searchRes.json();
+    const results = searchData.results || [];
+
+    // Step 2: For each result, get details (phone number)
+    for (const place of results) {
+      try {
+        const detailRes = await fetch(
+          `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place.place_id}&fields=name,formatted_phone_number,international_phone_number,formatted_address,rating,user_ratings_total,website,types,opening_hours,business_status&key=${apiKey}&language=pt-BR`
+        );
+
+        if (!detailRes.ok) continue;
+
+        const detailData = await detailRes.json();
+        const detail = detailData.result;
+
+        if (!detail) continue;
+
+        const phone = detail.international_phone_number || detail.formatted_phone_number;
+        if (!phone) continue;
+
+        const cleanPhone = phone.replace(/\D/g, '');
+        if (cleanPhone.length < 10 || seenPhones.has(cleanPhone)) continue;
+
+        seenPhones.add(cleanPhone);
+
+        leads.push({
+          phone: cleanPhone,
+          name: detail.name || place.name || 'Lead Google Maps',
+          address: detail.formatted_address || place.formatted_address || null,
+          metadata: {
+            rating: detail.rating || null,
+            reviews_count: detail.user_ratings_total || null,
+            website: detail.website || null,
+            category: detail.types?.[0] || null,
+            business_status: detail.business_status || null,
+            opening_hours: detail.opening_hours?.weekday_text || null,
+            source_api: 'google_places',
+          },
+        });
+      } catch (detailErr) {
+        console.warn(`Detail fetch failed for ${place.place_id}:`, detailErr);
+      }
+    }
+
+    nextPageToken = searchData.next_page_token || null;
+    pages++;
+  } while (nextPageToken && pages < MAX_PAGES);
+
+  return leads;
+}
+
+// ====================== FIRECRAWL FALLBACK ======================
+
+function extractPhone(text: string): string | null {
+  if (!text) return null;
+  const matches = text.match(/(?:\+?\d{1,3}[\s.-]?)?\(?\d{2,3}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}/g);
+  if (!matches || matches.length === 0) return null;
+  const cleaned = matches[0].replace(/\D/g, '');
+  if (cleaned.length < 10) return null;
+  return cleaned;
+}
+
+async function extractViaFirecrawl(firecrawlKey: string, searchQuery: string): Promise<Lead[]> {
+  const leadsMap = new Map<string, Lead>();
+
+  const searchResponse = await fetch('https://api.firecrawl.dev/v1/search', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${firecrawlKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query: `${searchQuery} telefone contato site:google.com/maps OR site:google.com.br/maps`,
+      limit: 20,
+      lang: 'pt',
+      country: 'BR',
+      scrapeOptions: { formats: ['markdown'] },
+    }),
+  });
+
+  if (!searchResponse.ok) {
+    const errData = await searchResponse.json();
+    throw new Error(errData.error || `Firecrawl retornou status ${searchResponse.status}`);
+  }
+
+  const searchData = await searchResponse.json();
+  const results = searchData?.data || [];
+
+  for (const result of results) {
+    const markdown = result.markdown || '';
+    const title = result.title || '';
+    const phone = extractPhone(markdown);
+    if (phone && !leadsMap.has(phone)) {
+      const addressMatch = markdown.match(/(?:Endereço|Rua|Av\.|Avenida|R\.)[:\s]*([^\n]+)/i);
+      leadsMap.set(phone, {
+        name: title.replace(/ - Google Maps.*$/i, '').replace(/\|.*$/, '').trim().substring(0, 200),
+        phone,
+        address: addressMatch ? addressMatch[1].trim().substring(0, 500) : null,
+        metadata: { source_api: 'firecrawl' },
+      });
+    }
+  }
+
+  // Also try direct Google Maps scrape
+  try {
+    const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(searchQuery)}`;
+    const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${firecrawlKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: mapsUrl, formats: ['markdown'], waitFor: 3000 }),
+    });
+
+    if (scrapeResponse.ok) {
+      const mapsScrapeData = await scrapeResponse.json();
+      if (mapsScrapeData?.data?.markdown) {
+        const blocks = mapsScrapeData.data.markdown.split(/\n{2,}/);
+        for (const block of blocks) {
+          const phone = extractPhone(block);
+          if (phone && !leadsMap.has(phone)) {
+            const firstLine = block.split('\n')[0].replace(/^[#*\s]+/, '').trim();
+            leadsMap.set(phone, {
+              name: firstLine.substring(0, 200) || 'Lead Google Maps',
+              phone,
+              address: null,
+              metadata: { source_api: 'firecrawl_scrape' },
+            });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Maps scrape fallback error:', e);
+  }
+
+  return Array.from(leadsMap.values());
+}

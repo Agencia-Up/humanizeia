@@ -62,6 +62,7 @@ Deno.serve(async (req) => {
       media_url,
       media_type,
       tags,
+      variation_level,
     } = body;
 
     // --- Validation ---
@@ -187,6 +188,11 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Validate variation_level
+    if (variation_level && !["low", "medium", "high"].includes(variation_level)) {
+      errors.push("variation_level deve ser 'low', 'medium' ou 'high'.");
+    }
+
     if (errors.length > 0) {
       return jsonResponse({ error: "Dados inválidos", details: errors }, 400);
     }
@@ -222,6 +228,7 @@ Deno.serve(async (req) => {
       media_type: media_type || null,
       tags: Array.isArray(tags) && tags.length > 0 ? tags : null,
       organization_id: orgId,
+      variation_level: variation_level || 'medium',
     };
 
     // Determine status

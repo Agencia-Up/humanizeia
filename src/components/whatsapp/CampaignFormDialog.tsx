@@ -37,6 +37,7 @@ export interface CampaignFormData {
   media_url: string;
   media_type: string;
   tags: string[];
+  variation_level: string;
 }
 
 interface ContactList {
@@ -101,6 +102,7 @@ export function CampaignFormDialog({
   const [mediaType, setMediaType] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
+  const [variationLevel, setVariationLevel] = useState<string>('medium');
 
   const isEditing = !!editingCampaign;
 
@@ -120,6 +122,7 @@ export function CampaignFormDialog({
       setMediaUrl(editingCampaign.media_url || '');
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
+      setVariationLevel(editingCampaign.variation_level || 'medium');
       if (editingCampaign.start_time) {
         const d = new Date(editingCampaign.start_time);
         setStartDate(d);
@@ -150,6 +153,7 @@ export function CampaignFormDialog({
     setEndDate(undefined); setEndTime('18:00');
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
     setTags([]); setTagInput('');
+    setVariationLevel('medium');
   };
 
   const buildTimestamp = (date: Date | undefined, time: string): string | null => {
@@ -175,6 +179,7 @@ export function CampaignFormDialog({
       media_url: mediaUrl,
       media_type: mediaType,
       tags,
+      variation_level: variationLevel,
     });
   };
 
@@ -289,6 +294,33 @@ export function CampaignFormDialog({
                 {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
                 Pré-visualizar Variações
               </Button>
+
+              {/* Nível de Variação (Polimorfismo) */}
+              <div className="space-y-2 mt-3">
+                <Label className="text-xs font-medium">Nível de Variação da IA</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { value: 'low', label: 'Conservador', desc: 'Pequenas variações de sinônimos' },
+                    { value: 'medium', label: 'Moderado', desc: 'Reescrita balanceada' },
+                    { value: 'high', label: 'Criativo', desc: 'Reescrita totalmente livre' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setVariationLevel(opt.value)}
+                      className={cn(
+                        "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-xs transition-all",
+                        variationLevel === opt.value
+                          ? "border-primary bg-primary/5 text-primary"
+                          : "border-border hover:border-primary/30 text-muted-foreground"
+                      )}
+                    >
+                      <span className="font-medium">{opt.label}</span>
+                      <span className="text-[10px] text-center leading-tight">{opt.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {/* Mensagem Fixa */}
