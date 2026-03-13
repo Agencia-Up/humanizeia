@@ -28,7 +28,7 @@ import NotFound from "./pages/NotFound";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
 import LandingPage from "./pages/LandingPage";
-import WhatsAppGroups from "./pages/WhatsAppGroups";
+// WhatsAppGroups merged into WhatsAppContacts
 import WhatsAppContacts from "./pages/WhatsAppContacts";
 import WhatsAppBroadcast from "./pages/WhatsAppBroadcast";
 import WhatsAppCampaigns from "./pages/WhatsAppCampaigns";

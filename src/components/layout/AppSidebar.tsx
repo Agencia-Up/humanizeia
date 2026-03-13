@@ -99,7 +99,6 @@ const whatsappItems = [
   { title: 'Analytics', url: '/whatsapp/analytics', icon: BarChart3 },
   { title: 'Automações', url: '/whatsapp/automations', icon: Zap },
   { title: 'Agente IA', url: '/whatsapp/ai-agent', icon: Bot },
-  { title: 'Extrator de Grupos', url: '/whatsapp/groups', icon: Users },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
   { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
 ];
