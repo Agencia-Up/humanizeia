@@ -50,7 +50,6 @@ async function handleMetaProvider(supabase: any, body: any) {
     });
   }
 
-  // Verify Meta API access token by calling the API
   console.log(`[create-evolution-instance] Verifying Meta API for phone_number_id: ${phone_number_id}`);
 
   try {
@@ -75,7 +74,6 @@ async function handleMetaProvider(supabase: any, body: any) {
     const phoneNumber = phoneData.display_phone_number || null;
     const verifiedName = phoneData.verified_name || friendly_name;
 
-    // Generate a unique instance name
     const instanceSlug = friendly_name
       .toLowerCase()
       .normalize('NFD')
@@ -83,7 +81,6 @@ async function handleMetaProvider(supabase: any, body: any) {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '') || 'meta-instance';
 
-    // Save to wa_instances
     const { data: newInstance, error: insertErr } = await supabase
       .from('wa_instances')
       .insert({
@@ -137,12 +134,26 @@ async function handleMetaProvider(supabase: any, body: any) {
 // ====================== EVOLUTION API PROVIDER ======================
 
 async function handleEvolutionProvider(supabase: any, body: any) {
-  const { api_url, api_key, instance_name, user_id, friendly_name } = body;
+  const { instance_name, user_id, friendly_name } = body;
 
-  if (!api_url || !api_key || !instance_name || !user_id) {
+  // Read credentials from environment secrets
+  const api_url = Deno.env.get('EVOLUTION_API_URL');
+  const api_key = Deno.env.get('EVOLUTION_API_KEY');
+
+  if (!api_url || !api_key) {
     return new Response(JSON.stringify({
       success: false,
-      error: 'Campos obrigatórios: api_url, api_key, instance_name, user_id',
+      error: 'Evolution API não configurada no servidor. Contate o administrador.',
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (!instance_name || !user_id) {
+    return new Response(JSON.stringify({
+      success: false,
+      error: 'Campos obrigatórios: instance_name, user_id',
     }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -216,11 +227,10 @@ async function handleEvolutionProvider(supabase: any, body: any) {
 
   if (insertErr) {
     console.error('[create-evolution-instance] DB insert error:', insertErr);
-    // Try upsert to whatsapp_config for backward compatibility
     await supabase.from('whatsapp_config').upsert({
       user_id,
       api_url: baseUrl,
-      api_key,
+      api_key: api_key,
       instance_name,
       is_active: false,
       phone_number: '',
