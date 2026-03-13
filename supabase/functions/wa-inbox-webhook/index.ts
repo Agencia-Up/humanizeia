@@ -233,6 +233,13 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   const message = messageData.message || messageData;
   const key = messageData.key || {};
 
+  // DEBUG: Log full messageData structure to understand LID format
+  console.log("[wa-inbox-webhook] Full messageData keys:", JSON.stringify(Object.keys(messageData)));
+  console.log("[wa-inbox-webhook] key:", JSON.stringify(key));
+  if (messageData.pushName) console.log("[wa-inbox-webhook] pushName:", messageData.pushName);
+  if (messageData.participant) console.log("[wa-inbox-webhook] participant:", messageData.participant);
+  if (messageData.messageTimestamp) console.log("[wa-inbox-webhook] timestamp:", messageData.messageTimestamp);
+
   if (key.fromMe) {
     return new Response(JSON.stringify({ ok: true, skipped: "outgoing" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -240,7 +247,60 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   }
 
   const remoteJid = key.remoteJid || "";
-  const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+  // Handle LID format (e.g. "123456@lid") - try to get real phone from participant or messageData
+  let phone = "";
+  if (remoteJid.endsWith("@lid")) {
+    // LID = Linked ID, not a real phone. Try to get phone from participant field or messageData
+    phone = key.participant?.replace("@s.whatsapp.net", "")?.replace("@lid", "") || "";
+    if (!phone || phone.includes("@")) {
+      // Try other fields in messageData
+      phone = messageData.participant?.replace("@s.whatsapp.net", "") || "";
+    }
+    if (!phone || phone.includes("@")) {
+      // Try to extract from messageData.from or verifiedBizName lookup
+      phone = messageData.from?.replace("@s.whatsapp.net", "") || "";
+    }
+    if (!phone || phone.includes("@") || phone.endsWith("lid")) {
+      // Last resort: fetch profile from Evolution API using the LID
+      const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+      const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+      if (evolutionApiUrl && evolutionApiKey) {
+        try {
+          const baseUrl = evolutionApiUrl.replace(/\/+$/, "");
+          const profileRes = await fetch(`${baseUrl}/chat/findContacts/${instanceName}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
+            body: JSON.stringify({ where: { id: remoteJid } }),
+          });
+          if (profileRes.ok) {
+            const contacts = await profileRes.json();
+            if (contacts?.[0]?.id) {
+              const contactId = contacts[0].id;
+              // If the contact ID is a phone@s.whatsapp.net format
+              if (contactId.includes("@s.whatsapp.net")) {
+                phone = contactId.replace("@s.whatsapp.net", "");
+              }
+            }
+            // Also try the pushName number field
+            if ((!phone || phone.endsWith("lid")) && contacts?.[0]?.pushName) {
+              // pushName might contain phone
+            }
+          } else {
+            await profileRes.text();
+          }
+        } catch (e) {
+          console.warn("[wa-inbox-webhook] LID resolution failed:", e);
+        }
+      }
+    }
+    // If still no phone, use the LID as fallback (but log warning)
+    if (!phone || phone.endsWith("lid") || phone.includes("@")) {
+      console.warn(`[wa-inbox-webhook] Could not resolve LID ${remoteJid}, using raw`);
+      phone = remoteJid.replace("@lid", "");
+    }
+  } else {
+    phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+  }
   const pushName = messageData.pushName || null;
   const remoteMessageId = key.id || null;
 
