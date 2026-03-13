@@ -122,7 +122,7 @@ export default function WhatsAppAutomations() {
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('wa_automations').delete().eq('id', id);
+    await (supabase as any).from('wa_automations').delete().eq('id', id);
     setAutomations(prev => prev.filter(a => a.id !== id));
     toast({ title: 'Automação excluída' });
   };
