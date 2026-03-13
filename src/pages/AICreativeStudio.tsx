@@ -386,13 +386,58 @@ export default function AICreativeStudio() {
                 </div>
               </div>
 
+              {/* Reference Image Upload */}
+              <div className="space-y-2">
+                <Label>Imagem de Referência (opcional)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Envie uma imagem para a IA usar como base e criar variações
+                </p>
+                {referenceImage ? (
+                  <div className="relative rounded-lg border border-border/50 overflow-hidden">
+                    <img src={referenceImage} alt="Referência" className="w-full max-h-40 object-contain bg-muted/30" />
+                    <div className="absolute top-1.5 right-1.5 flex gap-1">
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-7 w-7"
+                        onClick={() => { setReferenceImage(null); setReferenceFileName(null); }}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <div className="bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground truncate">
+                      {referenceFileName}
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => refImageInputRef.current?.click()}
+                    className="w-full flex flex-col items-center gap-1.5 rounded-lg border-2 border-dashed border-muted-foreground/25 px-4 py-5 transition-all hover:border-primary/50 hover:bg-muted/30"
+                  >
+                    <Upload className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Clique para enviar • PNG, JPG, WebP até 10MB</span>
+                  </button>
+                )}
+                <input
+                  ref={refImageInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleReferenceImageSelect(f); e.target.value = ''; }}
+                />
+              </div>
+
               {/* Prompt — most important */}
               <div className="space-y-2">
                 <Label>Descrição da Imagem</Label>
                 <Textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Descreva a imagem que deseja criar... Ex: Produto cosmético elegante sobre fundo rosa com flores"
+                  placeholder={referenceImage
+                    ? "Descreva como quer modificar esta imagem... Ex: Mude o fundo para azul, adicione texto promocional"
+                    : "Descreva a imagem que deseja criar... Ex: Produto cosmético elegante sobre fundo rosa com flores"
+                  }
                   rows={3}
                 />
               </div>
