@@ -340,7 +340,7 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   }
 
   if (content && content.trim().length > 0) {
-    await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id);
+    await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget);
   }
 
   return new Response(
