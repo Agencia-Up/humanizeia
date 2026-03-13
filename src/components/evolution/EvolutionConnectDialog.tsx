@@ -4,16 +4,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  Loader2, CheckCircle, Wifi, QrCode, ArrowRight, RefreshCw, Smartphone, Globe,
+  Loader2, CheckCircle, QrCode, RefreshCw, Smartphone, Globe,
 } from 'lucide-react';
 
-type Step = 'provider' | 'credentials' | 'instance' | 'qrcode' | 'connected';
+type Step = 'provider' | 'instance' | 'meta_credentials' | 'qrcode' | 'connected';
 type Provider = 'evolution' | 'meta';
 
 interface EvolutionConnectDialogProps {
@@ -30,9 +29,6 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
   const [provider, setProvider] = useState<Provider>('evolution');
 
   // Evolution fields
-  const [apiUrl, setApiUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [instanceName, setInstanceName] = useState('');
   const [friendlyName, setFriendlyName] = useState('');
   const [qrCode, setQrCode] = useState<string | null>(null);
 
@@ -42,9 +38,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
   const [metaAccessToken, setMetaAccessToken] = useState('');
   const [metaFriendlyName, setMetaFriendlyName] = useState('');
 
-  const [isTesting, setIsTesting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [testSuccess, setTestSuccess] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -52,11 +46,9 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
       stopPolling();
       setStep('provider');
       setProvider('evolution');
-      setTestSuccess(false);
       setQrCode(null);
       setIsCreating(false);
-      setIsTesting(false);
-      setApiUrl(''); setApiKey(''); setFriendlyName('');
+      setFriendlyName('');
       setMetaPhoneNumberId(''); setMetaWabaId(''); setMetaAccessToken(''); setMetaFriendlyName('');
     }
   }, [open]);
@@ -68,35 +60,15 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
   const generateSlug = (name: string) =>
     name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-  // ========== EVOLUTION FLOW ==========
-  const handleTestConnection = async () => {
-    if (!apiUrl || !apiKey) { toast.error('Preencha URL e API Key'); return; }
-    setIsTesting(true); setTestSuccess(false);
-    try {
-      const { data, error } = await supabase.functions.invoke('test-evolution-connection', {
-        body: { api_url: apiUrl.trim(), api_key: apiKey.trim() },
-      });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Falha na conexão');
-      setTestSuccess(true);
-      toast.success(data.message || 'Conexão válida!');
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao testar conexão');
-    } finally {
-      setIsTesting(false);
-    }
-  };
-
+  // ========== EVOLUTION FLOW (simplified — no credentials needed) ==========
   const handleCreateEvolutionInstance = async () => {
     const slug = generateSlug(friendlyName || 'midas-instance');
     if (!slug) { toast.error('Informe um nome para a conexão'); return; }
-    setInstanceName(slug); setIsCreating(true);
+    setIsCreating(true);
     try {
       const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
         body: {
           provider: 'evolution',
-          api_url: apiUrl.trim(),
-          api_key: apiKey.trim(),
           instance_name: slug,
           friendly_name: friendlyName,
           user_id: user!.id,
@@ -182,11 +154,6 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
     } catch { toast.error('Erro ao atualizar QR'); }
   };
 
-  const handleSelectProvider = (p: Provider) => {
-    setProvider(p);
-    setStep(p === 'meta' ? 'credentials' : 'credentials');
-  };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -198,39 +165,39 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
               <Smartphone className="h-5 w-5 text-green-500" />
             )}
             {step === 'provider' && 'Conectar WhatsApp'}
-            {step === 'credentials' && (provider === 'meta' ? 'Configurar Meta API' : 'Conectar Evolution API')}
-            {step === 'instance' && 'Criar Instância'}
+            {step === 'instance' && 'Nome da Conexão'}
+            {step === 'meta_credentials' && 'Configurar Meta API'}
             {step === 'qrcode' && 'Escanear QR Code'}
             {step === 'connected' && 'Conectado!'}
           </DialogTitle>
           <DialogDescription>
             {step === 'provider' && 'Escolha o provedor para conectar seu WhatsApp'}
-            {step === 'credentials' && (provider === 'meta' ? 'Informe os dados da API Oficial do Meta' : 'Informe a URL e API Key da Evolution API')}
-            {step === 'instance' && 'Escolha um nome para sua conexão WhatsApp'}
+            {step === 'instance' && 'Escolha um nome e escaneie o QR Code no celular'}
+            {step === 'meta_credentials' && 'Informe os dados da API Oficial do Meta'}
             {step === 'qrcode' && 'Abra o WhatsApp no celular e escaneie o QR Code'}
             {step === 'connected' && 'Sua instância WhatsApp está conectada com sucesso'}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Step 0: Provider Selection */}
+        {/* Step: Provider Selection */}
         {step === 'provider' && (
           <div className="space-y-3 py-2">
             <button
-              onClick={() => handleSelectProvider('evolution')}
+              onClick={() => { setProvider('evolution'); setStep('instance'); }}
               className="w-full flex items-center gap-4 p-4 rounded-lg border border-border hover:border-green-500/50 hover:bg-green-500/5 transition-all text-left"
             >
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-green-500/10 shrink-0">
                 <QrCode className="h-6 w-6 text-green-500" />
               </div>
               <div>
-                <p className="font-medium">Evolution API</p>
-                <p className="text-xs text-muted-foreground">WhatsApp via Baileys (QR Code). Sem custos de API, ideal para volumes menores.</p>
+                <p className="font-medium">WhatsApp (QR Code)</p>
+                <p className="text-xs text-muted-foreground">Conecte escaneando o QR Code direto aqui. Simples e rápido.</p>
               </div>
               <Badge variant="secondary" className="ml-auto shrink-0">Popular</Badge>
             </button>
 
             <button
-              onClick={() => handleSelectProvider('meta')}
+              onClick={() => { setProvider('meta'); setStep('meta_credentials'); }}
               className="w-full flex items-center gap-4 p-4 rounded-lg border border-border hover:border-blue-500/50 hover:bg-blue-500/5 transition-all text-left"
             >
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-500/10 shrink-0">
@@ -245,39 +212,32 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
           </div>
         )}
 
-        {/* Evolution: Credentials */}
-        {step === 'credentials' && provider === 'evolution' && (
+        {/* Evolution: Just name + create */}
+        {step === 'instance' && (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>URL da API</Label>
-              <Input value={apiUrl} onChange={e => setApiUrl(e.target.value)} placeholder="https://sua-evolution-api.com" />
-            </div>
-            <div className="space-y-2">
-              <Label>API Key (Global)</Label>
-              <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Cole sua API Key aqui" />
-            </div>
-            <div className="flex items-center gap-2">
-              {testSuccess && (
-                <Badge className="bg-green-500/20 text-green-500 border-green-500/30">
-                  <Wifi className="h-3 w-3 mr-1" /> Conectado
-                </Badge>
-              )}
+              <Label>Nome da conexão</Label>
+              <Input value={friendlyName} onChange={e => setFriendlyName(e.target.value)} placeholder="Ex: Minha Empresa" />
+              <p className="text-xs text-muted-foreground">
+                Esse nome é apenas para identificar a conexão dentro da plataforma.
+              </p>
             </div>
             <div className="flex gap-2 pt-2">
               <Button variant="outline" onClick={() => setStep('provider')} className="flex-1">Voltar</Button>
-              <Button variant="outline" onClick={handleTestConnection} disabled={isTesting || !apiUrl || !apiKey} className="flex-1">
-                {isTesting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
-                Testar
-              </Button>
-              <Button onClick={() => setStep('instance')} disabled={!testSuccess} className="flex-1 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white">
-                Próximo <ArrowRight className="h-4 w-4 ml-1" />
+              <Button
+                onClick={handleCreateEvolutionInstance}
+                disabled={isCreating || !friendlyName}
+                className="flex-1 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
+              >
+                {isCreating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <QrCode className="h-4 w-4 mr-2" />}
+                Gerar QR Code
               </Button>
             </div>
           </div>
         )}
 
         {/* Meta: Credentials */}
-        {step === 'credentials' && provider === 'meta' && (
+        {step === 'meta_credentials' && (
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Nome da Conexão *</Label>
@@ -306,30 +266,6 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
               >
                 {isCreating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Globe className="h-4 w-4 mr-2" />}
                 Conectar Meta API
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Evolution: Instance name */}
-        {step === 'instance' && (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Nome da conexão</Label>
-              <Input value={friendlyName} onChange={e => setFriendlyName(e.target.value)} placeholder="Ex: Minha Empresa" />
-              <p className="text-xs text-muted-foreground">
-                Slug: <span className="font-mono text-foreground">{generateSlug(friendlyName || 'midas-instance')}</span>
-              </p>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <Button variant="outline" onClick={() => setStep('credentials')} className="flex-1">Voltar</Button>
-              <Button
-                onClick={handleCreateEvolutionInstance}
-                disabled={isCreating || !friendlyName}
-                className="flex-1 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
-              >
-                {isCreating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <QrCode className="h-4 w-4 mr-2" />}
-                Gerar QR Code
               </Button>
             </div>
           </div>
@@ -372,7 +308,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
             <div className="text-center">
               <p className="font-medium text-lg">WhatsApp conectado!</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Sua instância {provider === 'meta' ? 'Meta API Oficial' : 'Evolution API'} está pronta.
+                Sua instância {provider === 'meta' ? 'Meta API Oficial' : 'WhatsApp'} está pronta.
               </p>
             </div>
             <Button

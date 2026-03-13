@@ -11,24 +11,17 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
-    const { api_url, api_key } = body;
+    // Use environment secrets — no user input needed
+    const api_url = Deno.env.get('EVOLUTION_API_URL');
+    const api_key = Deno.env.get('EVOLUTION_API_KEY');
 
     if (!api_url || !api_key) {
-      return new Response(JSON.stringify({ success: false, error: 'api_url e api_key são obrigatórios' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-
-    // Validate that api_url is actually a URL
-    if (!api_url.startsWith('http://') && !api_url.startsWith('https://')) {
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: 'URL inválida. A URL deve começar com http:// ou https:// (ex: https://sua-evolution-api.com)' 
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Evolution API não configurada no servidor. Contate o administrador.',
       }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -45,39 +38,37 @@ Deno.serve(async (req) => {
     const responseText = await response.text();
 
     console.log(`[test-evolution-connection] Status: ${response.status}`);
-    console.log(`[test-evolution-connection] Response: ${responseText.substring(0, 300)}`);
 
     if (response.status === 401 || response.status === 403) {
       return new Response(JSON.stringify({
         success: false,
-        error: 'API Key inválida ou sem permissão. Verifique suas credenciais.',
+        error: 'API Key inválida ou sem permissão.',
         status: response.status,
       }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     if (response.ok) {
       let instances = [];
-      try { instances = JSON.parse(responseText); } catch { /* ignore */ }
+      try { instances = JSON.parse(responseText); } catch {}
 
       return new Response(JSON.stringify({
         success: true,
         connected: true,
         instances_count: Array.isArray(instances) ? instances.length : 0,
-        message: 'Evolution API acessível e credenciais válidas!',
+        message: 'Evolution API acessível!',
       }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     return new Response(JSON.stringify({
       success: false,
-      error: `Servidor retornou status ${response.status}. Verifique a URL da Evolution API.`,
+      error: `Servidor retornou status ${response.status}.`,
       status: response.status,
-      details: responseText.substring(0, 300),
     }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error: unknown) {
@@ -88,7 +79,7 @@ Deno.serve(async (req) => {
       error: `Não foi possível alcançar o servidor: ${message}`,
     }), {
       status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });

@@ -14,8 +14,12 @@ Deno.serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+  // Read Evolution API credentials from environment
+  const evolutionApiUrl = Deno.env.get('EVOLUTION_API_URL');
+  const evolutionApiKey = Deno.env.get('EVOLUTION_API_KEY');
+
   try {
-    const { user_id } = await req.json();
+    const { user_id, instance_id } = await req.json();
 
     if (!user_id) {
       return new Response(JSON.stringify({ success: false, error: 'user_id obrigatório' }), {
@@ -24,26 +28,79 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch user's whatsapp_config
-    const { data: config, error: configErr } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('user_id', user_id)
-      .single();
+    // Try wa_instances first (new multi-instance approach)
+    let instanceName: string | null = null;
+    let apiUrl: string | null = null;
+    let apiKey: string | null = null;
 
-    if (configErr || !config) {
-      return new Response(JSON.stringify({ success: false, error: 'Configuração não encontrada' }), {
+    if (instance_id) {
+      const { data: inst } = await supabase
+        .from('wa_instances')
+        .select('instance_name, api_url, api_key_encrypted')
+        .eq('id', instance_id)
+        .eq('user_id', user_id)
+        .single();
+
+      if (inst) {
+        instanceName = inst.instance_name;
+        apiUrl = inst.api_url;
+        apiKey = inst.api_key_encrypted;
+      }
+    } else {
+      // Get latest waiting_qr instance
+      const { data: inst } = await supabase
+        .from('wa_instances')
+        .select('instance_name, api_url, api_key_encrypted')
+        .eq('user_id', user_id)
+        .eq('provider', 'evolution')
+        .in('status', ['waiting_qr', 'disconnected'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (inst) {
+        instanceName = inst.instance_name;
+        apiUrl = inst.api_url;
+        apiKey = inst.api_key_encrypted;
+      }
+    }
+
+    // Fallback to whatsapp_config
+    if (!instanceName) {
+      const { data: config } = await supabase
+        .from('whatsapp_config')
+        .select('*')
+        .eq('user_id', user_id)
+        .single();
+
+      if (config) {
+        instanceName = config.instance_name;
+        apiUrl = config.api_url;
+        apiKey = config.api_key;
+      }
+    }
+
+    if (!instanceName) {
+      return new Response(JSON.stringify({ success: false, error: 'Nenhuma instância encontrada' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const baseUrl = config.api_url.replace(/\/$/, '');
-    const instanceName = config.instance_name;
+    // Use env secrets as primary, fallback to DB values
+    const baseUrl = (evolutionApiUrl || apiUrl || '').replace(/\/$/, '');
+    const key = evolutionApiKey || apiKey || '';
+
+    if (!baseUrl || !key) {
+      return new Response(JSON.stringify({ success: false, error: 'Credenciais da Evolution API não encontradas' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Check connection state
     const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instanceName}`, {
-      headers: { 'apikey': config.api_key },
+      headers: { 'apikey': key },
     });
 
     let currentState = 'disconnected';
@@ -58,11 +115,10 @@ Deno.serve(async (req) => {
 
     // If connected, update DB and return
     if (currentState === 'open') {
-      // Try to get phone number from instance info
       let phoneNumber = '';
       try {
         const infoRes = await fetch(`${baseUrl}/instance/fetchInstances`, {
-          headers: { 'apikey': config.api_key },
+          headers: { 'apikey': key },
         });
         if (infoRes.ok) {
           const instances = await infoRes.json();
@@ -70,16 +126,28 @@ Deno.serve(async (req) => {
             ? instances.find((i: any) => i.instance?.instanceName === instanceName || i.instanceName === instanceName)
             : null;
           phoneNumber = inst?.instance?.owner || inst?.owner || '';
-          // Clean phone number - remove @s.whatsapp.net suffix
           phoneNumber = phoneNumber.replace(/@.*$/, '');
         }
       } catch {}
 
+      // Update wa_instances
+      await supabase
+        .from('wa_instances')
+        .update({
+          status: 'connected',
+          is_active: true,
+          phone_number: phoneNumber || '',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', user_id)
+        .eq('instance_name', instanceName);
+
+      // Also update whatsapp_config for backward compat
       await supabase
         .from('whatsapp_config')
         .update({
           is_active: true,
-          phone_number: phoneNumber || config.phone_number || '',
+          phone_number: phoneNumber || '',
           updated_at: new Date().toISOString(),
         })
         .eq('user_id', user_id);
@@ -96,7 +164,7 @@ Deno.serve(async (req) => {
 
     // Fetch QR Code
     const qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
-      headers: { 'apikey': config.api_key },
+      headers: { 'apikey': key },
     });
 
     const qrText = await qrRes.text();
@@ -112,6 +180,12 @@ Deno.serve(async (req) => {
     } catch {}
 
     if (connected) {
+      await supabase
+        .from('wa_instances')
+        .update({ status: 'connected', is_active: true, updated_at: new Date().toISOString() })
+        .eq('user_id', user_id)
+        .eq('instance_name', instanceName);
+
       await supabase
         .from('whatsapp_config')
         .update({ is_active: true, updated_at: new Date().toISOString() })
