@@ -181,15 +181,26 @@ Deno.serve(async (req) => {
 
         const messageHash = await generateHash(finalMessage);
 
-        // --- Simulate Human Behavior ---
-        const typingDelay = 1000 + Math.random() * 2000;
+        // --- Anti-Ban: Random Online Presence Before Message ---
+        await simulateOnlinePresence(instance, item.phone);
+
+        // --- Anti-Ban: Typing Simulation with Variable Duration ---
+        const messageLength = finalMessage.length;
+        // Simulate typing speed: ~30-60 chars per second + random variation
+        const baseTypingMs = (messageLength / (30 + Math.random() * 30)) * 1000;
+        const typingDelay = Math.max(1500, Math.min(baseTypingMs + Math.random() * 2000, 8000));
         await simulateTyping(instance, item.phone, typingDelay);
-        await sleep(500 + Math.random() * 1500);
+
+        // --- Anti-Ban: Small random pause after typing before sending ---
+        await sleep(300 + Math.random() * 700);
 
         // --- Send via Provider Abstraction ---
         await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
 
         instanceFailures.set(instance.id, 0);
+
+        // --- Anti-Ban: Simulate reading after sending (mark as read) ---
+        await simulateReadReceipt(instance, item.phone);
 
         // Mark success
         await supabase
@@ -221,16 +232,26 @@ Deno.serve(async (req) => {
         }
 
         if (item.campaign_id) {
-          await supabase.rpc("increment_campaign_sent", { cid: item.campaign_id });
+          const { error: rpcErr } = await supabase.rpc("increment_campaign_sent", { cid: item.campaign_id });
+          if (rpcErr) console.error("increment_campaign_sent failed:", rpcErr);
         }
 
         succeeded++;
 
-        // Delay between messages
+        // --- Anti-Ban: Variable Delay Between Messages ---
         const delayRules = campaign?.regras_delay || {};
         const minD = (delayRules.min || campaign?.min_delay_seconds || 5) * 1000;
         const maxD = (delayRules.max || campaign?.max_delay_seconds || 15) * 1000;
-        await sleep(minD + Math.random() * (maxD - minD));
+        // Add random "human" pause (sometimes longer pauses like checking phone)
+        const humanPause = Math.random() < 0.15 ? (5000 + Math.random() * 10000) : 0; // 15% chance of 5-15s extra pause
+        await sleep(minD + Math.random() * (maxD - minD) + humanPause);
+
+        // --- Anti-Ban: Occasionally go offline between messages ---
+        if (Math.random() < 0.1) { // 10% chance
+          await simulateOfflinePresence(instance);
+          await sleep(2000 + Math.random() * 5000);
+        }
+
       } catch (err) {
         console.error(`Error processing queue item ${item.id}:`, err);
         const errMsg = err instanceof Error ? err.message : "Unknown error";
@@ -246,10 +267,11 @@ Deno.serve(async (req) => {
             instanceFailures.set(failedInstance.id, currentFailures);
             if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
               console.warn(`Circuit breaker triggered for instance ${failedInstance.id}`);
-              await supabase.rpc("decrement_instance_health", {
+              const { error: healthErr } = await supabase.rpc("decrement_instance_health", {
                 instance_id: failedInstance.id,
                 decrement_value: 30,
-              }).catch((e: any) => console.error("Health decrement failed:", e));
+              });
+              if (healthErr) console.error("Health decrement failed:", healthErr);
 
               // Trigger failover for banned instance
               try {
@@ -350,14 +372,10 @@ async function selectSmartInstance(
     if (pauseBetweenInstances > 0) await sleep(pauseBetweenInstances * 1000);
   }
 
-  // Determine if contact is "cold" (no prior messages) for predictive routing
   const isContactCold = !item.contact_metadata?.last_message_at;
 
-  // Sort candidates: for cold leads, prioritize highest health_score; for warm leads, prefer least recently used
-  // Weighted random selection based on health_score for better load distribution
   const sortedInstances = [...userInstances].sort((a, b) => {
     if (isContactCold) {
-      // Weighted random: higher health_score = higher probability
       const totalHealth = userInstances.reduce((sum, inst) => sum + inst.health_score, 0);
       if (totalHealth > 0) {
         const aWeight = a.health_score / totalHealth;
@@ -366,7 +384,6 @@ async function selectSmartInstance(
       }
       return b.health_score - a.health_score;
     }
-    // For warm leads, prefer instances that have been used recently (continuity)
     const aTime = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
     const bTime = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
     return bTime - aTime;
@@ -380,7 +397,6 @@ async function selectSmartInstance(
 
     if (candidateFailures >= CIRCUIT_BREAKER_THRESHOLD) continue;
 
-    // Warmup check
     if (warmupDailyLimit && candidate.created_at) {
       const instanceAgeDays = Math.floor(
         (Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24)
@@ -394,9 +410,7 @@ async function selectSmartInstance(
 
     if (candidate.health_score < 20) continue;
 
-    // Provider-specific daily limits
     if (candidate.provider === "meta") {
-      // Meta API has a 250/day limit for new numbers, 1000/day after quality rating
       const metaLimit = candidate.health_score >= 80 ? 1000 : 250;
       if (candidate.messages_sent_today >= metaLimit) continue;
     }
@@ -484,7 +498,10 @@ async function sendToMetaAPI(
     const errText = await response.text();
     throw new Error(`Meta API error: ${response.status} - ${errText}`);
   }
+  await response.text(); // consume body
 }
+
+// ====================== EVOLUTION API (V2 COMPATIBLE) ======================
 
 async function sendToEvolutionAPI(
   instance: Instance,
@@ -497,24 +514,51 @@ async function sendToEvolutionAPI(
   const number = phone.replace(/\D/g, "");
 
   if (mediaUrl && mediaType) {
-    const endpoint =
-      mediaType === "image" ? "sendImage" :
-      mediaType === "video" ? "sendVideo" :
-      mediaType === "audio" ? "sendAudio" : "sendDocument";
+    // Evolution API v2 uses /message/sendMedia/{instance} for all media types
+    // Try v2 endpoint first, fallback to v1 if 404
+    const v2Endpoint = `${apiUrl}/message/sendMedia/${instance.instance_name}`;
+    const v1Endpoints: Record<string, string> = {
+      image: "sendImage",
+      video: "sendVideo",
+      audio: "sendAudio",
+      document: "sendDocument",
+    };
 
-    const response = await fetch(
-      `${apiUrl}/message/${endpoint}/${instance.instance_name}`,
-      {
+    const mediaPayload = {
+      number,
+      mediatype: mediaType,
+      media: mediaUrl,
+      caption: text || "",
+      fileName: mediaType === "document" ? "file" : undefined,
+    };
+
+    // Try v2 unified endpoint
+    let response = await fetch(v2Endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify(mediaPayload),
+    });
+
+    // If v2 returns 404, try v1 specific endpoint
+    if (response.status === 404) {
+      const errBody = await response.text(); // consume v2 body
+      console.log(`Evolution v2 sendMedia 404, trying v1 fallback. Response: ${errBody}`);
+      const v1Action = v1Endpoints[mediaType] || "sendDocument";
+      const v1Url = `${apiUrl}/message/${v1Action}/${instance.instance_name}`;
+      response = await fetch(v1Url, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-        body: JSON.stringify({ number, mediatype: mediaType, media: mediaUrl, caption: text }),
-      }
-    );
+        body: JSON.stringify(mediaPayload),
+      });
+    }
+
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Evolution API error (${endpoint}): ${response.status} - ${errText}`);
+      throw new Error(`Evolution API error (sendMedia): ${response.status} - ${errText}`);
     }
+    await response.text(); // consume body
   } else {
+    // Text-only: try v2 /message/sendText first
     const response = await fetch(
       `${apiUrl}/message/sendText/${instance.instance_name}`,
       {
@@ -527,6 +571,7 @@ async function sendToEvolutionAPI(
       const errText = await response.text();
       throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
     }
+    await response.text(); // consume body
   }
 }
 
@@ -555,7 +600,6 @@ async function generateAIMessage(
     if (extras) personalizationContext += `\nDados extras do lead: ${extras}`;
   }
 
-  // Fetch conversation history for warm leads (Phase 3 enhancement)
   let conversationHistory = "";
   if (supabaseClient && userId && phone) {
     try {
@@ -579,7 +623,6 @@ async function generateAIMessage(
     }
   }
 
-  // Map variation level to temperature and instructions
   const levelConfig: Record<string, { temp: number; instruction: string }> = {
     low: {
       temp: 0.5,
@@ -597,22 +640,43 @@ async function generateAIMessage(
 
   const config = levelConfig[variationLevel] || levelConfig.medium;
 
+  // Anti-ban: randomize message style patterns
+  const styleVariations = [
+    "Use um tom casual e direto.",
+    "Seja mais formal e educado.",
+    "Comece com uma pergunta envolvente.",
+    "Use uma abordagem empática e calorosa.",
+    "Vá direto ao ponto, sem enrolação.",
+    "Comece com um dado curioso ou estatística.",
+    "Use humor leve e profissional.",
+    "Aborde de forma consultiva, como um especialista.",
+  ];
+  const randomStyle = styleVariations[Math.floor(Math.random() * styleVariations.length)];
+
+  // Anti-ban: vary emoji usage randomly
+  const emojiInstruction = Math.random() < 0.3 
+    ? "NÃO use nenhum emoji nesta mensagem." 
+    : `Use entre ${Math.floor(Math.random() * 3)} e ${1 + Math.floor(Math.random() * 3)} emojis com naturalidade.`;
+
   const systemPrompt = `Você é um redator especialista em mensagens de WhatsApp para prospecção, com foco em evitar repetição e soar 100% natural e humano.
 
 REGRAS OBRIGATÓRIAS:
 - Gere UMA ÚNICA mensagem baseada na intenção fornecida
 - ${config.instruction}
+- ${randomStyle}
+- ${emojiInstruction}
 - A mensagem deve soar natural, como enviada por uma pessoa real
 - NÃO use saudações genéricas como "Olá!" em todas as mensagens — varie o início
-- Use emojis com moderação (0-3 por mensagem)
-- Varie a estrutura: pergunta, afirmação, emoji, curiosidade
+- Varie a estrutura: pergunta, afirmação, curiosidade, oferta direta
 - Mantenha entre 1-4 parágrafos curtos
 - NÃO inclua o número de telefone
 - Se dados do lead forem fornecidos, USE-OS para personalizar naturalmente
 - Se houver histórico de conversa, CONSIDERE o contexto para continuidade natural
 - Cada mensagem deve ser ÚNICA — nunca repita estruturas
 - MÁXIMO de 500 caracteres
+- Varie o comprimento: às vezes 1 linha, às vezes 3-4 linhas
 - Tom profissional mas amigável
+- NÃO use formatação de markdown (sem **, sem ##)
 - Responda APENAS com o texto da mensagem, sem explicações`;
 
   const userPrompt = messageTemplate
@@ -645,7 +709,8 @@ REGRAS OBRIGATÓRIAS:
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty AI response");
 
-  return content.trim();
+  // Anti-ban: strip any markdown formatting the AI might add
+  return content.trim().replace(/\*\*/g, "").replace(/^#+\s*/gm, "").replace(/^[-*]\s+/gm, "");
 }
 
 // ====================== HELPERS ======================
@@ -669,8 +734,9 @@ async function generateHash(text: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 16);
 }
 
+// ====================== ANTI-BAN: HUMAN BEHAVIOR SIMULATION ======================
+
 async function simulateTyping(instance: Instance, phone: string, durationMs: number) {
-  // Only simulate typing for Evolution API (Meta doesn't support this)
   if (instance.provider === "meta") return;
 
   try {
@@ -681,7 +747,7 @@ async function simulateTyping(instance: Instance, phone: string, durationMs: num
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "composing" }),
-    });
+    }).catch(() => {});
 
     await sleep(durationMs);
 
@@ -689,8 +755,55 @@ async function simulateTyping(instance: Instance, phone: string, durationMs: num
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "paused" }),
-    });
+    }).catch(() => {});
   } catch (err) {
-    console.warn("Typing simulation failed:", err);
+    // Non-critical, don't throw
+  }
+}
+
+async function simulateOnlinePresence(instance: Instance, phone: string) {
+  if (instance.provider === "meta") return;
+
+  try {
+    const apiUrl = instance.api_url.replace(/\/+$/, "");
+    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify({ presence: "available" }),
+    }).catch(() => {});
+  } catch (err) {
+    // Non-critical
+  }
+}
+
+async function simulateOfflinePresence(instance: Instance) {
+  if (instance.provider === "meta") return;
+
+  try {
+    const apiUrl = instance.api_url.replace(/\/+$/, "");
+    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify({ presence: "unavailable" }),
+    }).catch(() => {});
+  } catch (err) {
+    // Non-critical
+  }
+}
+
+async function simulateReadReceipt(instance: Instance, phone: string) {
+  if (instance.provider === "meta") return;
+
+  try {
+    const apiUrl = instance.api_url.replace(/\/+$/, "");
+    const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
+
+    await fetch(`${apiUrl}/chat/markChatUnread/${instance.instance_name}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify({ chat: jid, lastMessage: { key: { fromMe: true } } }),
+    }).catch(() => {});
+  } catch (err) {
+    // Non-critical
   }
 }
