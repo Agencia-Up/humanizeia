@@ -293,7 +293,24 @@ Deno.serve(async (req) => {
         // Step 4: Review before hitting send
         await sleep(800 + Math.random() * 2000);
 
-        // Step 5: SEND
+        // Step 5: SEND (re-check pause right before sending)
+        if (item.campaign_id) {
+          const { data: statusBeforeSend } = await supabase
+            .from("wa_campaigns")
+            .select("status")
+            .eq("id", item.campaign_id)
+            .single();
+
+          if (statusBeforeSend && (statusBeforeSend.status === "paused" || statusBeforeSend.status === "cancelled")) {
+            await supabase
+              .from("wa_queue")
+              .update({ status: "pending" })
+              .eq("id", item.id);
+            processed++;
+            continue;
+          }
+        }
+
         await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
         instanceFailures.set(instance.id, 0);
 
