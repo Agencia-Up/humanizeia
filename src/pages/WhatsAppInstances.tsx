@@ -96,7 +96,7 @@ export default function WhatsAppInstances() {
     try {
       const { data, error } = await supabase
         .from('wa_instances')
-        .select('id, instance_name, friendly_name, phone_number, status, is_active, health_score, provider, api_url, created_at, updated_at, failover_status, messages_sent, daily_limit')
+        .select('id, instance_name, friendly_name, phone_number, status, is_active, health_score, provider, api_url, created_at, updated_at, failover_status')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
