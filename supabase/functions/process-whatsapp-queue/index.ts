@@ -492,7 +492,6 @@ Deno.serve(async (req) => {
 // ====================== SMART SWITCHER ======================
 
 async function selectSmartInstance(
-  supabase: any,
   userInstances: Instance[],
   item: QueueItem,
   campaign: Campaign | null,
