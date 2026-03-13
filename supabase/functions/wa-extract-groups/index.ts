@@ -176,9 +176,10 @@ async function extractContacts(
           if (phone && phone.length >= 10) participantPhones.push(phone);
         }
 
-        // Fetch contact profiles in batch to get names
+        // Fetch contact profiles to get names - try multiple Evolution API endpoints
         let profileMap = new Map<string, string>();
         if (participantPhones.length > 0) {
+          // Method 1: Try fetchContacts POST
           try {
             const profileRes = await fetch(`${cBaseUrl}/chat/fetchContacts/${cfg.instanceName}`, {
               method: 'POST',
@@ -189,14 +190,63 @@ async function extractContacts(
               const profileData = await profileRes.json();
               const contacts = Array.isArray(profileData) ? profileData : (profileData?.contacts || profileData?.data || []);
               for (const c of contacts) {
-                const cPhone = (c.id || c.jid || c.number || '').replace(/@.*$/, '').replace(/\D/g, '');
-                const cName = c.pushName || c.name || c.notify || c.verifiedName || null;
+                const cPhone = (c.id || c.jid || c.number || c.remoteJid || '').replace(/@.*$/, '').replace(/\D/g, '');
+                const cName = c.pushName || c.name || c.notify || c.verifiedName || c.profileName || null;
                 if (cPhone && cName) profileMap.set(cPhone, cName);
               }
-              console.log(`[wa-extract-groups] Fetched ${profileMap.size} profile names`);
+              console.log(`[wa-extract-groups] fetchContacts: ${profileMap.size} names`);
+            } else {
+              console.warn(`[wa-extract-groups] fetchContacts returned ${profileRes.status}`);
+              await profileRes.text(); // consume body
             }
           } catch (profileErr) {
-            console.warn(`[wa-extract-groups] Could not fetch profiles:`, profileErr);
+            console.warn(`[wa-extract-groups] fetchContacts failed:`, profileErr);
+          }
+
+          // Method 2: If no names found, try individual fetchProfile for each (limited to first 50)
+          if (profileMap.size === 0) {
+            const phonesToCheck = participantPhones.slice(0, 50);
+            for (const phone of phonesToCheck) {
+              try {
+                const jid = `${phone}@s.whatsapp.net`;
+                const profRes = await fetch(`${cBaseUrl}/chat/fetchProfile/${cfg.instanceName}`, {
+                  method: 'POST',
+                  headers: { 'apikey': cfg.apiKey, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ number: phone }),
+                });
+                if (profRes.ok) {
+                  const profData = await profRes.json();
+                  const pName = profData?.name || profData?.pushName || profData?.notify || profData?.verifiedName || profData?.profileName || null;
+                  if (pName) profileMap.set(phone, pName);
+                } else {
+                  await profRes.text(); // consume body
+                }
+              } catch { /* skip */ }
+            }
+            console.log(`[wa-extract-groups] fetchProfile individual: ${profileMap.size} names`);
+          }
+
+          // Method 3: If still no names, try /contact/find endpoint
+          if (profileMap.size === 0) {
+            try {
+              const findRes = await fetch(`${cBaseUrl}/contact/find/${cfg.instanceName}`, {
+                method: 'POST',
+                headers: { 'apikey': cfg.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ numbers: participantPhones.slice(0, 100) }),
+              });
+              if (findRes.ok) {
+                const findData = await findRes.json();
+                const entries = Array.isArray(findData) ? findData : (findData?.contacts || findData?.data || []);
+                for (const c of entries) {
+                  const cPhone = (c.id || c.jid || c.number || c.wuid || '').replace(/@.*$/, '').replace(/\D/g, '');
+                  const cName = c.pushName || c.name || c.notify || c.verifiedName || c.displayName || null;
+                  if (cPhone && cName) profileMap.set(cPhone, cName);
+                }
+                console.log(`[wa-extract-groups] contact/find: ${profileMap.size} names`);
+              } else {
+                await findRes.text();
+              }
+            } catch { /* skip */ }
           }
         }
 
