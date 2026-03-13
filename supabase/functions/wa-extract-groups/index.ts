@@ -285,11 +285,15 @@ Deno.serve(async (req) => {
     const allGroups: any[] = [];
 
     for (const c of configs) {
-      if (c.provider !== 'evolution') continue;
+      if (c.provider !== 'evolution') {
+        console.log(`[wa-extract-groups] Skipping non-evolution instance: ${c.instanceName} (${c.provider})`);
+        continue;
+      }
       try {
         const cBaseUrl = c.apiUrl.replace(/\/$/, '');
+        console.log(`[wa-extract-groups] Fetching groups from ${c.instanceName} at ${cBaseUrl}`);
         const instanceGroups = await fetchOwnGroups(cBaseUrl, c.apiKey, c.instanceName);
-        // Tag groups with instance info
+        console.log(`[wa-extract-groups] ${c.instanceName}: ${instanceGroups.length} groups found`);
         for (const g of instanceGroups) {
           g.instance_name = c.instanceName;
           g.instance_id = c.id;

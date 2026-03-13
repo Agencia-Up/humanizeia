@@ -186,15 +186,20 @@ export default function WhatsAppGroups() {
     if (!user) return;
     setIsLoadingOwn(true);
     try {
+      console.log('[WhatsAppGroups] Fetching groups for user:', user.id);
       const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
         body: { user_id: user.id },
       });
+      console.log('[WhatsAppGroups] Response:', JSON.stringify(data), 'Error:', error);
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao buscar grupos');
-      setOwnGroups(data.groups || []);
-      toast({ title: `${data.groups?.length || 0} grupos encontrados` });
+      const groups = data.groups || [];
+      console.log('[WhatsAppGroups] Groups found:', groups.length);
+      setOwnGroups(groups);
+      toast({ title: `${groups.length} grupo(s) encontrado(s)` });
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      console.error('[WhatsAppGroups] Error:', err);
+      toast({ title: 'Erro ao buscar grupos', description: err.message, variant: 'destructive' });
     } finally {
       setIsLoadingOwn(false);
     }
