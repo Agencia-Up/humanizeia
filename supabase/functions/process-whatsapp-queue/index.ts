@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const BATCH_SIZE = 20;
+const BATCH_SIZE = 5; // Process fewer items per cycle for slower, more human-like sending
 const MAX_RETRIES = 5;
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 
