@@ -547,8 +547,40 @@ export default function WhatsAppInbox() {
                   )}
                 </ScrollArea>
 
-                {/* Reply Input */}
-                <div className="p-3 border-t">
+                {/* Reply Input with Instance Selector */}
+                <div className="p-3 border-t space-y-2">
+                  {/* Instance Selector */}
+                  {instances.length > 1 && (
+                    <div className="flex items-center gap-2">
+                      <Phone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      <span className="text-xs text-muted-foreground shrink-0">Enviar de:</span>
+                      <Select
+                        value={selectedInstanceId || instances[0]?.id}
+                        onValueChange={setSelectedInstanceId}
+                      >
+                        <SelectTrigger className="h-7 text-xs flex-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {instances.map(inst => (
+                            <SelectItem key={inst.id} value={inst.id} className="text-xs">
+                              {inst.friendly_name || inst.instance_name}
+                              {inst.phone_number ? ` (${inst.phone_number})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {instances.length === 1 && (
+                    <div className="flex items-center gap-2">
+                      <Phone className="h-3 w-3 text-muted-foreground" />
+                      <span className="text-[11px] text-muted-foreground">
+                        Enviando de: {instances[0].friendly_name || instances[0].instance_name}
+                        {instances[0].phone_number ? ` (${instances[0].phone_number})` : ''}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <Input
                       placeholder="Digite sua mensagem..."
@@ -567,7 +599,7 @@ export default function WhatsAppInbox() {
                     </Button>
                   </div>
                   {instances.length === 0 && (
-                    <p className="text-xs text-destructive mt-1">Nenhuma instância conectada para enviar mensagens.</p>
+                    <p className="text-xs text-destructive">Nenhuma instância conectada para enviar mensagens.</p>
                   )}
                 </div>
               </>
