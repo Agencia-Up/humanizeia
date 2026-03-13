@@ -4,22 +4,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  Loader2,
-  CheckCircle,
-  Wifi,
-  WifiOff,
-  QrCode,
-  ArrowRight,
-  RefreshCw,
-  Smartphone,
+  Loader2, CheckCircle, Wifi, QrCode, ArrowRight, RefreshCw, Smartphone, Globe,
 } from 'lucide-react';
 
-type Step = 'credentials' | 'instance' | 'qrcode' | 'connected';
+type Step = 'provider' | 'credentials' | 'instance' | 'qrcode' | 'connected';
+type Provider = 'evolution' | 'meta';
 
 interface EvolutionConnectDialogProps {
   open: boolean;
@@ -31,60 +26,58 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const [step, setStep] = useState<Step>('credentials');
+  const [step, setStep] = useState<Step>('provider');
+  const [provider, setProvider] = useState<Provider>('evolution');
+
+  // Evolution fields
   const [apiUrl, setApiUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [instanceName, setInstanceName] = useState('');
   const [friendlyName, setFriendlyName] = useState('');
   const [qrCode, setQrCode] = useState<string | null>(null);
+
+  // Meta fields
+  const [metaPhoneNumberId, setMetaPhoneNumberId] = useState('');
+  const [metaWabaId, setMetaWabaId] = useState('');
+  const [metaAccessToken, setMetaAccessToken] = useState('');
+  const [metaFriendlyName, setMetaFriendlyName] = useState('');
+
   const [isTesting, setIsTesting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [testSuccess, setTestSuccess] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Clean up polling on unmount or dialog close
   useEffect(() => {
     if (!open) {
       stopPolling();
-      // Reset state when dialog closes
-      setStep('credentials');
+      setStep('provider');
+      setProvider('evolution');
       setTestSuccess(false);
       setQrCode(null);
       setIsCreating(false);
       setIsTesting(false);
+      setApiUrl(''); setApiKey(''); setFriendlyName('');
+      setMetaPhoneNumberId(''); setMetaWabaId(''); setMetaAccessToken(''); setMetaFriendlyName('');
     }
   }, [open]);
 
   const stopPolling = () => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
   };
 
-  const generateSlug = (name: string) => {
-    return name
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
-  };
+  const generateSlug = (name: string) =>
+    name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
+  // ========== EVOLUTION FLOW ==========
   const handleTestConnection = async () => {
-    if (!apiUrl || !apiKey) {
-      toast.error('Preencha URL e API Key');
-      return;
-    }
-    setIsTesting(true);
-    setTestSuccess(false);
+    if (!apiUrl || !apiKey) { toast.error('Preencha URL e API Key'); return; }
+    setIsTesting(true); setTestSuccess(false);
     try {
       const { data, error } = await supabase.functions.invoke('test-evolution-connection', {
         body: { api_url: apiUrl.trim(), api_key: apiKey.trim() },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Falha na conexão');
-
       setTestSuccess(true);
       toast.success(data.message || 'Conexão válida!');
     } catch (err: any) {
@@ -94,31 +87,59 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
     }
   };
 
-  const handleCreateInstance = async () => {
+  const handleCreateEvolutionInstance = async () => {
     const slug = generateSlug(friendlyName || 'midas-instance');
-    if (!slug) {
-      toast.error('Informe um nome para a conexão');
-      return;
-    }
-    setInstanceName(slug);
-    setIsCreating(true);
+    if (!slug) { toast.error('Informe um nome para a conexão'); return; }
+    setInstanceName(slug); setIsCreating(true);
     try {
       const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
         body: {
+          provider: 'evolution',
           api_url: apiUrl.trim(),
           api_key: apiKey.trim(),
           instance_name: slug,
+          friendly_name: friendlyName,
           user_id: user!.id,
         },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
-
       setQrCode(data.qr_code || null);
       setStep('qrcode');
       startPolling();
     } catch (err: any) {
       toast.error(err.message || 'Erro ao criar instância');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  // ========== META FLOW ==========
+  const handleCreateMetaInstance = async () => {
+    if (!metaPhoneNumberId || !metaAccessToken || !metaFriendlyName) {
+      toast.error('Preencha todos os campos obrigatórios'); return;
+    }
+    setIsCreating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
+        body: {
+          provider: 'meta',
+          user_id: user!.id,
+          friendly_name: metaFriendlyName.trim(),
+          phone_number_id: metaPhoneNumberId.trim(),
+          waba_id: metaWabaId.trim() || null,
+          access_token: metaAccessToken.trim(),
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Erro ao conectar Meta API');
+      setStep('connected');
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
+      queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
+      onConnected?.();
+      toast.success(`Meta API conectada! Número: ${data.phone_number || 'verificado'}`);
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao conectar Meta API');
     } finally {
       setIsCreating(false);
     }
@@ -136,6 +157,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
           stopPolling();
           setStep('connected');
           queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
+          queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
           onConnected?.();
         } else if (data?.qr_code) {
           setQrCode(data.qr_code);
@@ -150,17 +172,19 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
         body: { user_id: user!.id },
       });
       if (data?.connected) {
-        stopPolling();
-        setStep('connected');
+        stopPolling(); setStep('connected');
         queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
         onConnected?.();
       } else if (data?.qr_code) {
         setQrCode(data.qr_code);
         toast.success('QR Code atualizado');
       }
-    } catch {
-      toast.error('Erro ao atualizar QR');
-    }
+    } catch { toast.error('Erro ao atualizar QR'); }
+  };
+
+  const handleSelectProvider = (p: Provider) => {
+    setProvider(p);
+    setStep(p === 'meta' ? 'credentials' : 'credentials');
   };
 
   return (
@@ -173,56 +197,64 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
             ) : (
               <Smartphone className="h-5 w-5 text-green-500" />
             )}
-            {step === 'credentials' && 'Conectar Evolution API'}
+            {step === 'provider' && 'Conectar WhatsApp'}
+            {step === 'credentials' && (provider === 'meta' ? 'Configurar Meta API' : 'Conectar Evolution API')}
             {step === 'instance' && 'Criar Instância'}
             {step === 'qrcode' && 'Escanear QR Code'}
             {step === 'connected' && 'Conectado!'}
           </DialogTitle>
           <DialogDescription>
-            {step === 'credentials' && 'Informe a URL e API Key da sua Evolution API'}
+            {step === 'provider' && 'Escolha o provedor para conectar seu WhatsApp'}
+            {step === 'credentials' && (provider === 'meta' ? 'Informe os dados da API Oficial do Meta' : 'Informe a URL e API Key da Evolution API')}
             {step === 'instance' && 'Escolha um nome para sua conexão WhatsApp'}
             {step === 'qrcode' && 'Abra o WhatsApp no celular e escaneie o QR Code'}
-            {step === 'connected' && 'Sua Evolution API está conectada com sucesso'}
+            {step === 'connected' && 'Sua instância WhatsApp está conectada com sucesso'}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Steps indicator */}
-        <div className="flex items-center justify-center gap-2 py-2">
-          {(['credentials', 'instance', 'qrcode', 'connected'] as Step[]).map((s, i) => (
-            <div key={s} className="flex items-center gap-2">
-              <div
-                className={`h-2.5 w-2.5 rounded-full transition-colors ${
-                  s === step
-                    ? 'bg-green-500'
-                    : ['credentials', 'instance', 'qrcode', 'connected'].indexOf(s) < ['credentials', 'instance', 'qrcode', 'connected'].indexOf(step)
-                      ? 'bg-green-500/50'
-                      : 'bg-muted'
-                }`}
-              />
-              {i < 3 && <div className="h-px w-6 bg-muted" />}
-            </div>
-          ))}
-        </div>
+        {/* Step 0: Provider Selection */}
+        {step === 'provider' && (
+          <div className="space-y-3 py-2">
+            <button
+              onClick={() => handleSelectProvider('evolution')}
+              className="w-full flex items-center gap-4 p-4 rounded-lg border border-border hover:border-green-500/50 hover:bg-green-500/5 transition-all text-left"
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-green-500/10 shrink-0">
+                <QrCode className="h-6 w-6 text-green-500" />
+              </div>
+              <div>
+                <p className="font-medium">Evolution API</p>
+                <p className="text-xs text-muted-foreground">WhatsApp via Baileys (QR Code). Sem custos de API, ideal para volumes menores.</p>
+              </div>
+              <Badge variant="secondary" className="ml-auto shrink-0">Popular</Badge>
+            </button>
 
-        {/* Step 1: Credentials */}
-        {step === 'credentials' && (
+            <button
+              onClick={() => handleSelectProvider('meta')}
+              className="w-full flex items-center gap-4 p-4 rounded-lg border border-border hover:border-blue-500/50 hover:bg-blue-500/5 transition-all text-left"
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-500/10 shrink-0">
+                <Globe className="h-6 w-6 text-blue-500" />
+              </div>
+              <div>
+                <p className="font-medium">Meta API Oficial</p>
+                <p className="text-xs text-muted-foreground">API oficial do WhatsApp Business. Maior estabilidade, ideal para alto volume.</p>
+              </div>
+              <Badge variant="outline" className="ml-auto shrink-0 text-blue-500 border-blue-500/30">Oficial</Badge>
+            </button>
+          </div>
+        )}
+
+        {/* Evolution: Credentials */}
+        {step === 'credentials' && provider === 'evolution' && (
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>URL da API</Label>
-              <Input
-                value={apiUrl}
-                onChange={e => setApiUrl(e.target.value)}
-                placeholder="https://sua-evolution-api.com"
-              />
+              <Input value={apiUrl} onChange={e => setApiUrl(e.target.value)} placeholder="https://sua-evolution-api.com" />
             </div>
             <div className="space-y-2">
               <Label>API Key (Global)</Label>
-              <Input
-                type="password"
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-                placeholder="Cole sua API Key aqui"
-              />
+              <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Cole sua API Key aqui" />
             </div>
             <div className="flex items-center gap-2">
               {testSuccess && (
@@ -232,67 +264,78 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
               )}
             </div>
             <div className="flex gap-2 pt-2">
-              <Button
-                variant="outline"
-                onClick={handleTestConnection}
-                disabled={isTesting || !apiUrl || !apiKey}
-                className="flex-1"
-              >
-                {isTesting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : testSuccess ? (
-                  <CheckCircle className="h-4 w-4 mr-2 text-green-500" />
-                ) : (
-                  <Wifi className="h-4 w-4 mr-2" />
-                )}
-                Testar Conexão
+              <Button variant="outline" onClick={() => setStep('provider')} className="flex-1">Voltar</Button>
+              <Button variant="outline" onClick={handleTestConnection} disabled={isTesting || !apiUrl || !apiKey} className="flex-1">
+                {isTesting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
+                Testar
               </Button>
-              <Button
-                onClick={() => setStep('instance')}
-                disabled={!testSuccess}
-                className="flex-1 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
-              >
-                Próximo <ArrowRight className="h-4 w-4 ml-2" />
+              <Button onClick={() => setStep('instance')} disabled={!testSuccess} className="flex-1 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white">
+                Próximo <ArrowRight className="h-4 w-4 ml-1" />
               </Button>
             </div>
           </div>
         )}
 
-        {/* Step 2: Instance name */}
+        {/* Meta: Credentials */}
+        {step === 'credentials' && provider === 'meta' && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Nome da Conexão *</Label>
+              <Input value={metaFriendlyName} onChange={e => setMetaFriendlyName(e.target.value)} placeholder="Ex: Minha Empresa" />
+            </div>
+            <div className="space-y-2">
+              <Label>Phone Number ID *</Label>
+              <Input value={metaPhoneNumberId} onChange={e => setMetaPhoneNumberId(e.target.value)} placeholder="Ex: 123456789012345" />
+              <p className="text-xs text-muted-foreground">Encontrado no Meta Business Suite → WhatsApp → Configurações da API</p>
+            </div>
+            <div className="space-y-2">
+              <Label>WABA ID (opcional)</Label>
+              <Input value={metaWabaId} onChange={e => setMetaWabaId(e.target.value)} placeholder="WhatsApp Business Account ID" />
+            </div>
+            <div className="space-y-2">
+              <Label>Access Token *</Label>
+              <Input type="password" value={metaAccessToken} onChange={e => setMetaAccessToken(e.target.value)} placeholder="Token de acesso permanente" />
+              <p className="text-xs text-muted-foreground">Use um System User Token de longa duração do Meta Business</p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" onClick={() => setStep('provider')} className="flex-1">Voltar</Button>
+              <Button
+                onClick={handleCreateMetaInstance}
+                disabled={isCreating || !metaPhoneNumberId || !metaAccessToken || !metaFriendlyName}
+                className="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
+              >
+                {isCreating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Globe className="h-4 w-4 mr-2" />}
+                Conectar Meta API
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Evolution: Instance name */}
         {step === 'instance' && (
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Nome da conexão</Label>
-              <Input
-                value={friendlyName}
-                onChange={e => setFriendlyName(e.target.value)}
-                placeholder="Ex: Minha Empresa"
-              />
+              <Input value={friendlyName} onChange={e => setFriendlyName(e.target.value)} placeholder="Ex: Minha Empresa" />
               <p className="text-xs text-muted-foreground">
-                Slug gerado: <span className="font-mono text-foreground">{generateSlug(friendlyName || 'midas-instance')}</span>
+                Slug: <span className="font-mono text-foreground">{generateSlug(friendlyName || 'midas-instance')}</span>
               </p>
             </div>
             <div className="flex gap-2 pt-2">
-              <Button variant="outline" onClick={() => setStep('credentials')} className="flex-1">
-                Voltar
-              </Button>
+              <Button variant="outline" onClick={() => setStep('credentials')} className="flex-1">Voltar</Button>
               <Button
-                onClick={handleCreateInstance}
+                onClick={handleCreateEvolutionInstance}
                 disabled={isCreating || !friendlyName}
                 className="flex-1 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
               >
-                {isCreating ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <QrCode className="h-4 w-4 mr-2" />
-                )}
+                {isCreating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <QrCode className="h-4 w-4 mr-2" />}
                 Gerar QR Code
               </Button>
             </div>
           </div>
         )}
 
-        {/* Step 3: QR Code */}
+        {/* QR Code */}
         {step === 'qrcode' && (
           <div className="space-y-4">
             <div className="flex flex-col items-center gap-4">
@@ -320,7 +363,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
           </div>
         )}
 
-        {/* Step 4: Connected */}
+        {/* Connected */}
         {step === 'connected' && (
           <div className="flex flex-col items-center gap-4 py-6">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500/20">
@@ -329,7 +372,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
             <div className="text-center">
               <p className="font-medium text-lg">WhatsApp conectado!</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Sua Evolution API está pronta para enviar reports.
+                Sua instância {provider === 'meta' ? 'Meta API Oficial' : 'Evolution API'} está pronta.
               </p>
             </div>
             <Button

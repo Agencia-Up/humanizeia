@@ -10,7 +10,6 @@ const BATCH_SIZE = 20;
 const MAX_RETRIES = 5;
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 
-// In-memory circuit breaker tracker (per invocation)
 const instanceFailures = new Map<string, number>();
 
 interface QueueItem {
@@ -41,6 +40,10 @@ interface Instance {
   health_score: number;
   messages_sent_today: number;
   created_at: string;
+  provider: string;
+  meta_config: any;
+  last_used_at: string | null;
+  last_message_at: string | null;
 }
 
 interface Campaign {
@@ -54,6 +57,7 @@ interface Campaign {
   regras_delay: any;
   regras_aquecimento: any;
   started_at: string | null;
+  variation_level: string;
 }
 
 Deno.serve(async (req) => {
@@ -67,7 +71,6 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Fetch pending queue items that are due
     const { data: queueItems, error: queueErr } = await supabase
       .from("wa_queue")
       .select("*")
@@ -92,14 +95,14 @@ Deno.serve(async (req) => {
 
     const items = queueItems as unknown as QueueItem[];
 
-    // Group by campaign to fetch campaign configs
+    // Fetch campaign configs
     const campaignIds = [...new Set(items.map((i) => i.campaign_id).filter(Boolean))];
     const campaignMap = new Map<string, Campaign>();
 
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at")
+        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -108,7 +111,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Group by user to fetch instances
+    // Fetch instances per user
     const userIds = [...new Set(items.map((i) => i.user_id))];
     const instanceMap = new Map<string, Instance[]>();
 
@@ -125,16 +128,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Rotation tracker: campaign_id -> messages sent on current instance
     const rotationCounters = new Map<string, { index: number; count: number }>();
-
-    let processed = 0;
-    let succeeded = 0;
-    let failed = 0;
+    let processed = 0, succeeded = 0, failed = 0;
 
     for (const item of items) {
       try {
-        // Mark as processing to avoid double-pick
         await supabase
           .from("wa_queue")
           .update({ status: "processing" })
@@ -146,86 +144,22 @@ Deno.serve(async (req) => {
 
         if (!userInstances || userInstances.length === 0) {
           await markFailed(supabase, item.id, "No active WhatsApp instances available");
-          failed++;
-          processed++;
-          continue;
+          failed++; processed++; continue;
         }
 
-        // --- Warmup Rules (regras_aquecimento) ---
-        const aquecimento = campaign?.regras_aquecimento || {};
-        const warmupDailyLimit = aquecimento.limite_diario_inicial || null;
-        const warmupRampDays = aquecimento.dias_rampa || 7;
-
-        // --- Instance Rotation Logic using regras_rodizio ---
-        const rodizio = campaign?.regras_rodizio || {};
-        const rotationLimit = rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10;
-        const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
-        const rotKey = item.campaign_id || item.user_id;
-
-        if (!rotationCounters.has(rotKey)) {
-          rotationCounters.set(rotKey, { index: 0, count: 0 });
-        }
-        const rot = rotationCounters.get(rotKey)!;
-
-        if (rot.count >= rotationLimit) {
-          rot.index = (rot.index + 1) % userInstances.length;
-          rot.count = 0;
-          // Apply pause between instance rotation
-          if (pauseBetweenInstances > 0) {
-            await sleep(pauseBetweenInstances * 1000);
-          }
-        }
-
-        // Pick instance, skipping circuit-broken ones
-        let instance: Instance | null = null;
-        let attempts = 0;
-        while (attempts < userInstances.length) {
-          const candidate = userInstances[(rot.index + attempts) % userInstances.length];
-          const failures = instanceFailures.get(candidate.id) || 0;
-
-          // Circuit breaker: skip instances with too many consecutive failures
-          if (failures >= CIRCUIT_BREAKER_THRESHOLD) {
-            attempts++;
-            continue;
-          }
-
-          // Warmup check: limit messages for new instances
-          if (warmupDailyLimit && candidate.created_at) {
-            const instanceAgeDays = Math.floor(
-              (Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24)
-            );
-            if (instanceAgeDays < warmupRampDays) {
-              const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / warmupRampDays);
-              const dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
-              if (candidate.messages_sent_today >= dailyLimit) {
-                attempts++;
-                continue;
-              }
-            }
-          }
-
-          // Skip if health score too low
-          if (candidate.health_score < 20) {
-            attempts++;
-            continue;
-          }
-
-          instance = candidate;
-          rot.index = (rot.index + attempts) % userInstances.length;
-          break;
-        }
+        // --- Smart Switcher: Instance Selection ---
+        const instance = await selectSmartInstance(
+          supabase, userInstances, item, campaign, rotationCounters, instanceFailures
+        );
 
         if (!instance) {
           await markFailed(supabase, item.id, "All instances circuit-broken or at warmup limit");
-          failed++;
-          processed++;
-          continue;
+          failed++; processed++; continue;
         }
 
-        rot.count++;
-
-        // --- AI Message Generation with contact personalization ---
+        // --- Message Polymorphism: AI Generation ---
         let finalMessage = item.message;
+        const variationLevel = campaign?.variation_level || "medium";
 
         if (campaign?.prompt_base) {
           try {
@@ -233,7 +167,9 @@ Deno.serve(async (req) => {
               campaign.prompt_base,
               item.phone,
               item.contact_name,
-              item.contact_metadata
+              item.contact_metadata,
+              variationLevel,
+              campaign.message_template
             );
           } catch (aiErr) {
             console.error("AI generation failed, using template:", aiErr);
@@ -241,21 +177,16 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Generate message hash for zero-repetition tracking
         const messageHash = await generateHash(finalMessage);
 
-        // --- Simulate Human Behavior: Typing Indicator ---
+        // --- Simulate Human Behavior ---
         const typingDelay = 1000 + Math.random() * 2000;
         await simulateTyping(instance, item.phone, typingDelay);
+        await sleep(500 + Math.random() * 1500);
 
-        // --- Small random delay for human-like behavior ---
-        const humanDelay = 500 + Math.random() * 1500;
-        await sleep(humanDelay);
+        // --- Send via Provider Abstraction ---
+        await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
 
-        // --- Send via Evolution API ---
-        await sendMessage(instance, item.phone, finalMessage, item.media_url, item.media_type);
-
-        // Reset circuit breaker on success
         instanceFailures.set(instance.id, 0);
 
         // Mark success
@@ -276,10 +207,10 @@ Deno.serve(async (req) => {
           .update({
             messages_sent_today: instance.messages_sent_today + 1,
             last_message_at: new Date().toISOString(),
+            last_used_at: new Date().toISOString(),
           })
           .eq("id", instance.id);
 
-        // Update contact last_message_at
         if (item.contact_id) {
           await supabase
             .from("wa_contacts")
@@ -287,24 +218,22 @@ Deno.serve(async (req) => {
             .eq("id", item.contact_id);
         }
 
-        // Update campaign sent count
         if (item.campaign_id) {
           await supabase.rpc("increment_campaign_sent", { cid: item.campaign_id });
         }
 
         succeeded++;
 
-        // --- Delay between messages using regras_delay ---
+        // Delay between messages
         const delayRules = campaign?.regras_delay || {};
         const minD = (delayRules.min || campaign?.min_delay_seconds || 5) * 1000;
         const maxD = (delayRules.max || campaign?.max_delay_seconds || 15) * 1000;
-        const delay = minD + Math.random() * (maxD - minD);
-        await sleep(delay);
+        await sleep(minD + Math.random() * (maxD - minD));
       } catch (err) {
         console.error(`Error processing queue item ${item.id}:`, err);
         const errMsg = err instanceof Error ? err.message : "Unknown error";
 
-        // Circuit breaker: increment failure count for this instance
+        // Circuit breaker
         const rotKey = item.campaign_id || item.user_id;
         const rot = rotationCounters.get(rotKey);
         const userInstances = instanceMap.get(item.user_id);
@@ -313,8 +242,6 @@ Deno.serve(async (req) => {
           if (failedInstance) {
             const currentFailures = (instanceFailures.get(failedInstance.id) || 0) + 1;
             instanceFailures.set(failedInstance.id, currentFailures);
-
-            // If circuit breaker triggered, degrade health score in DB
             if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
               console.warn(`Circuit breaker triggered for instance ${failedInstance.id}`);
               await supabase.rpc("decrement_instance_health", {
@@ -326,7 +253,6 @@ Deno.serve(async (req) => {
         }
 
         if (item.retry_count < MAX_RETRIES) {
-          // Exponential backoff: 1min → 3min → 9min → 27min → cap 1h
           const retryDelay = Math.min(60000 * Math.pow(3, item.retry_count), 3600000);
           await supabase
             .from("wa_queue")
@@ -342,18 +268,16 @@ Deno.serve(async (req) => {
         }
         failed++;
       }
-
       processed++;
     }
 
-    // Check if any campaign is now completed
+    // Check campaign completion
     for (const cid of campaignIds) {
       const { count } = await supabase
         .from("wa_queue")
         .select("id", { count: "exact", head: true })
         .eq("campaign_id", cid)
         .in("status", ["pending", "processing"]);
-
       if (count === 0) {
         await supabase
           .from("wa_campaigns")
@@ -375,7 +299,300 @@ Deno.serve(async (req) => {
   }
 });
 
-// --- Helper Functions ---
+// ====================== SMART SWITCHER ======================
+
+async function selectSmartInstance(
+  supabase: any,
+  userInstances: Instance[],
+  item: QueueItem,
+  campaign: Campaign | null,
+  rotationCounters: Map<string, { index: number; count: number }>,
+  failures: Map<string, number>
+): Promise<Instance | null> {
+  const aquecimento = campaign?.regras_aquecimento || {};
+  const warmupDailyLimit = aquecimento.limite_diario_inicial || null;
+  const warmupRampDays = aquecimento.dias_rampa || 7;
+
+  const rodizio = campaign?.regras_rodizio || {};
+  const rotationLimit = rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10;
+  const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
+  const rotKey = item.campaign_id || item.user_id;
+
+  if (!rotationCounters.has(rotKey)) {
+    rotationCounters.set(rotKey, { index: 0, count: 0 });
+  }
+  const rot = rotationCounters.get(rotKey)!;
+
+  if (rot.count >= rotationLimit) {
+    rot.index = (rot.index + 1) % userInstances.length;
+    rot.count = 0;
+    if (pauseBetweenInstances > 0) await sleep(pauseBetweenInstances * 1000);
+  }
+
+  // Determine if contact is "cold" (no prior messages) for predictive routing
+  const isContactCold = !item.contact_metadata?.last_message_at;
+
+  // Sort candidates: for cold leads, prioritize highest health_score; for warm leads, prefer least recently used
+  const sortedInstances = [...userInstances].sort((a, b) => {
+    if (isContactCold) {
+      return b.health_score - a.health_score; // Best reputation first for cold leads
+    }
+    // For warm leads, prefer instances that have been used recently (continuity)
+    const aTime = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+    const bTime = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+    return bTime - aTime;
+  });
+
+  let instance: Instance | null = null;
+
+  for (let attempts = 0; attempts < sortedInstances.length; attempts++) {
+    const candidate = sortedInstances[(rot.index + attempts) % sortedInstances.length];
+    const candidateFailures = failures.get(candidate.id) || 0;
+
+    if (candidateFailures >= CIRCUIT_BREAKER_THRESHOLD) continue;
+
+    // Warmup check
+    if (warmupDailyLimit && candidate.created_at) {
+      const instanceAgeDays = Math.floor(
+        (Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24)
+      );
+      if (instanceAgeDays < warmupRampDays) {
+        const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / warmupRampDays);
+        const dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
+        if (candidate.messages_sent_today >= dailyLimit) continue;
+      }
+    }
+
+    if (candidate.health_score < 20) continue;
+
+    // Provider-specific daily limits
+    if (candidate.provider === "meta") {
+      // Meta API has a 250/day limit for new numbers, 1000/day after quality rating
+      const metaLimit = candidate.health_score >= 80 ? 1000 : 250;
+      if (candidate.messages_sent_today >= metaLimit) continue;
+    }
+
+    instance = candidate;
+    rot.index = (rot.index + attempts) % sortedInstances.length;
+    break;
+  }
+
+  if (instance) rot.count++;
+  return instance;
+}
+
+// ====================== PROVIDER ABSTRACTION ======================
+
+async function sendMessageByProvider(
+  instance: Instance,
+  phone: string,
+  text: string,
+  mediaUrl: string | null,
+  mediaType: string | null
+) {
+  if (instance.provider === "meta") {
+    await sendToMetaAPI(instance, phone, text, mediaUrl, mediaType);
+  } else {
+    await sendToEvolutionAPI(instance, phone, text, mediaUrl, mediaType);
+  }
+}
+
+async function sendToMetaAPI(
+  instance: Instance,
+  phone: string,
+  text: string,
+  mediaUrl: string | null,
+  mediaType: string | null
+) {
+  const config = instance.meta_config || {};
+  const phoneNumberId = config.phone_number_id;
+  const accessToken = config.access_token_encrypted;
+
+  if (!phoneNumberId || !accessToken) {
+    throw new Error("Meta API config incomplete: missing phone_number_id or access_token");
+  }
+
+  const number = phone.replace(/\D/g, "");
+  const url = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+
+  let messageBody: any;
+
+  if (mediaUrl && mediaType) {
+    const metaMediaType = mediaType === "image" ? "image" :
+      mediaType === "video" ? "video" :
+      mediaType === "audio" ? "audio" : "document";
+
+    messageBody = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: number,
+      type: metaMediaType,
+      [metaMediaType]: {
+        link: mediaUrl,
+        ...(text && metaMediaType !== "audio" ? { caption: text } : {}),
+      },
+    };
+  } else {
+    messageBody = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: number,
+      type: "text",
+      text: { preview_url: false, body: text },
+    };
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(messageBody),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Meta API error: ${response.status} - ${errText}`);
+  }
+}
+
+async function sendToEvolutionAPI(
+  instance: Instance,
+  phone: string,
+  text: string,
+  mediaUrl: string | null,
+  mediaType: string | null
+) {
+  const apiUrl = instance.api_url.replace(/\/+$/, "");
+  const number = phone.replace(/\D/g, "");
+
+  if (mediaUrl && mediaType) {
+    const endpoint =
+      mediaType === "image" ? "sendImage" :
+      mediaType === "video" ? "sendVideo" :
+      mediaType === "audio" ? "sendAudio" : "sendDocument";
+
+    const response = await fetch(
+      `${apiUrl}/message/${endpoint}/${instance.instance_name}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+        body: JSON.stringify({ number, mediatype: mediaType, media: mediaUrl, caption: text }),
+      }
+    );
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Evolution API error (${endpoint}): ${response.status} - ${errText}`);
+    }
+  } else {
+    const response = await fetch(
+      `${apiUrl}/message/sendText/${instance.instance_name}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+        body: JSON.stringify({ number, text }),
+      }
+    );
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
+    }
+  }
+}
+
+// ====================== MESSAGE POLYMORPHISM ======================
+
+async function generateAIMessage(
+  promptBase: string,
+  phone: string,
+  contactName: string | null,
+  contactMetadata: any,
+  variationLevel: string,
+  messageTemplate: string | null
+): Promise<string> {
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+
+  let personalizationContext = "";
+  if (contactName) personalizationContext += `\nNome do lead: ${contactName}`;
+  if (contactMetadata && typeof contactMetadata === "object") {
+    const extras = Object.entries(contactMetadata)
+      .filter(([_, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ");
+    if (extras) personalizationContext += `\nDados extras do lead: ${extras}`;
+  }
+
+  // Map variation level to temperature and instructions
+  const levelConfig: Record<string, { temp: number; instruction: string }> = {
+    low: {
+      temp: 0.5,
+      instruction: "Faça PEQUENAS variações: troque sinônimos, mude a ordem de frases, mas mantenha a estrutura muito próxima do original.",
+    },
+    medium: {
+      temp: 0.8,
+      instruction: "Faça variações MODERADAS: reescreva mantendo a essência, mas variando estrutura, abordagem e vocabulário significativamente.",
+    },
+    high: {
+      temp: 1.0,
+      instruction: "Faça uma REESCRITA CRIATIVA: mude completamente a abordagem, use perspectivas diferentes, metáforas, perguntas ou afirmações inesperadas, mantendo apenas a intenção central.",
+    },
+  };
+
+  const config = levelConfig[variationLevel] || levelConfig.medium;
+
+  const systemPrompt = `Você é um redator especialista em mensagens de WhatsApp para prospecção, com foco em evitar repetição e soar 100% natural e humano.
+
+REGRAS OBRIGATÓRIAS:
+- Gere UMA ÚNICA mensagem baseada na intenção fornecida
+- ${config.instruction}
+- A mensagem deve soar natural, como enviada por uma pessoa real
+- NÃO use saudações genéricas como "Olá!" em todas as mensagens — varie o início
+- Use emojis com moderação (0-3 por mensagem)
+- Varie a estrutura: pergunta, afirmação, emoji, curiosidade
+- Mantenha entre 1-4 parágrafos curtos
+- NÃO inclua o número de telefone
+- Se dados do lead forem fornecidos, USE-OS para personalizar naturalmente
+- Cada mensagem deve ser ÚNICA — nunca repita estruturas
+- MÁXIMO de 500 caracteres
+- Tom profissional mas amigável
+- Responda APENAS com o texto da mensagem, sem explicações`;
+
+  const userPrompt = messageTemplate
+    ? `Mensagem base: ${messageTemplate}\nIntenção da campanha: ${promptBase}${personalizationContext}\n\nGere uma variação única e personalizada.`
+    : `Intenção da mensagem: ${promptBase}${personalizationContext}\n\nGere uma mensagem única, personalizada e natural.`;
+
+  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: config.temp,
+      max_tokens: 500,
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`AI gateway error: ${response.status} - ${errText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Empty AI response");
+
+  return content.trim();
+}
+
+// ====================== HELPERS ======================
 
 async function markFailed(supabase: any, itemId: string, errorMessage: string) {
   await supabase
@@ -396,89 +613,17 @@ async function generateHash(text: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 16);
 }
 
-async function generateAIMessage(
-  promptBase: string,
-  phone: string,
-  contactName: string | null,
-  contactMetadata: any
-): Promise<string> {
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) {
-    throw new Error("LOVABLE_API_KEY not configured");
-  }
-
-  // Build personalization context from contact data
-  let personalizationContext = "";
-  if (contactName) {
-    personalizationContext += `\nNome do lead: ${contactName}`;
-  }
-  if (contactMetadata && typeof contactMetadata === "object") {
-    const extras = Object.entries(contactMetadata)
-      .filter(([_, v]) => v !== null && v !== undefined && v !== "")
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(", ");
-    if (extras) {
-      personalizationContext += `\nDados extras do lead: ${extras}`;
-    }
-  }
-
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [
-        {
-          role: "system",
-          content: `Você é um assistente de WhatsApp marketing. Gere UMA ÚNICA variação de mensagem de WhatsApp baseada na intenção fornecida.
-
-REGRAS:
-- A mensagem deve soar natural e humana, como se fosse enviada por uma pessoa real
-- NÃO use saudações genéricas como "Olá!" no início de TODAS as mensagens — varie
-- Use emojis com moderação (0-3 por mensagem)
-- Varie a estrutura: às vezes comece com pergunta, às vezes com afirmação, às vezes com emoji
-- Mantenha entre 1-4 parágrafos curtos
-- NÃO inclua o número de telefone na mensagem
-- Se dados do lead forem fornecidos, USE-OS para personalizar a mensagem de forma natural
-- Cada mensagem deve ser ÚNICA — nunca repita estruturas ou frases anteriores
-- Responda APENAS com o texto da mensagem, sem explicações ou marcadores`,
-        },
-        {
-          role: "user",
-          content: `Intenção da mensagem: ${promptBase}${personalizationContext}\n\nGere uma variação única, personalizada e natural desta mensagem.`,
-        },
-      ],
-      temperature: 0.9,
-      max_tokens: 500,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`AI gateway error: ${response.status} - ${errText}`);
-  }
-
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Empty AI response");
-
-  return content.trim();
-}
-
 async function simulateTyping(instance: Instance, phone: string, durationMs: number) {
+  // Only simulate typing for Evolution API (Meta doesn't support this)
+  if (instance.provider === "meta") return;
+
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
 
     await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: instance.api_key_encrypted,
-      },
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "composing" }),
     });
 
@@ -486,66 +631,10 @@ async function simulateTyping(instance: Instance, phone: string, durationMs: num
 
     await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: instance.api_key_encrypted,
-      },
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "paused" }),
     });
   } catch (err) {
     console.warn("Typing simulation failed:", err);
-  }
-}
-
-async function sendMessage(
-  instance: Instance,
-  phone: string,
-  text: string,
-  mediaUrl: string | null,
-  mediaType: string | null
-) {
-  const apiUrl = instance.api_url.replace(/\/+$/, "");
-  const number = phone.replace(/\D/g, "");
-
-  if (mediaUrl && mediaType) {
-    const endpoint =
-      mediaType === "image" ? "sendImage"
-      : mediaType === "video" ? "sendVideo"
-      : mediaType === "audio" ? "sendAudio"
-      : "sendDocument";
-
-    const response = await fetch(
-      `${apiUrl}/message/${endpoint}/${instance.instance_name}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: instance.api_key_encrypted,
-        },
-        body: JSON.stringify({ number, mediatype: mediaType, media: mediaUrl, caption: text }),
-      }
-    );
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Evolution API error (${endpoint}): ${response.status} - ${errText}`);
-    }
-  } else {
-    const response = await fetch(
-      `${apiUrl}/message/sendText/${instance.instance_name}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: instance.api_key_encrypted,
-        },
-        body: JSON.stringify({ number, text }),
-      }
-    );
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
-    }
   }
 }
