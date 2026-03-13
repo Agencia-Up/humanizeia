@@ -354,9 +354,17 @@ async function selectSmartInstance(
   const isContactCold = !item.contact_metadata?.last_message_at;
 
   // Sort candidates: for cold leads, prioritize highest health_score; for warm leads, prefer least recently used
+  // Weighted random selection based on health_score for better load distribution
   const sortedInstances = [...userInstances].sort((a, b) => {
     if (isContactCold) {
-      return b.health_score - a.health_score; // Best reputation first for cold leads
+      // Weighted random: higher health_score = higher probability
+      const totalHealth = userInstances.reduce((sum, inst) => sum + inst.health_score, 0);
+      if (totalHealth > 0) {
+        const aWeight = a.health_score / totalHealth;
+        const bWeight = b.health_score / totalHealth;
+        return bWeight - aWeight;
+      }
+      return b.health_score - a.health_score;
     }
     // For warm leads, prefer instances that have been used recently (continuity)
     const aTime = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;

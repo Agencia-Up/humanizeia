@@ -83,3 +83,6 @@ verify_jwt = false
 
 [functions.wa-send-reply]
 verify_jwt = false
+
+[functions.handle-instance-ban]
+verify_jwt = false
