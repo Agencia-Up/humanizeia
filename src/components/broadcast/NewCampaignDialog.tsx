@@ -209,6 +209,60 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
             </p>
           </div>
 
+          {/* Media Upload */}
+          <div className="space-y-2">
+            <Label className="font-semibold flex items-center gap-2">
+              <ImagePlus className="h-4 w-4" />
+              Mídia (opcional)
+            </Label>
+            {mediaPreview ? (
+              <div className="relative rounded-lg border border-border overflow-hidden bg-muted/30">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute top-2 right-2 z-10 h-7 w-7 rounded-full bg-background/80 hover:bg-destructive hover:text-destructive-foreground"
+                  onClick={removeMedia}
+                  type="button"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+                {mediaType === 'image' ? (
+                  <img src={mediaPreview} alt="Preview" className="max-h-40 w-full object-contain" />
+                ) : (
+                  <video src={mediaPreview} className="max-h-40 w-full object-contain" controls />
+                )}
+                <div className="px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground border-t border-border">
+                  {mediaType === 'image' ? <ImagePlus className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}
+                  <span className="truncate">{mediaFile?.name}</span>
+                  <Badge variant="secondary" className="text-[10px] ml-auto">
+                    {((mediaFile?.size || 0) / 1024 / 1024).toFixed(1)}MB
+                  </Badge>
+                </div>
+              </div>
+            ) : (
+              <div
+                className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 px-4 py-6 transition-colors hover:border-primary/50 hover:bg-muted/30"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-8 w-8 text-muted-foreground mb-2" />
+                <p className="text-sm font-medium">Arraste ou clique para enviar</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Imagem (PNG, JPG, WebP até 5MB) ou Vídeo (MP4, MOV até 16MB)
+                </p>
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleMediaSelect(file);
+              }}
+            />
+          </div>
+
           {/* AI Section */}
           <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
