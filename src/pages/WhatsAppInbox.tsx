@@ -224,6 +224,22 @@ export default function WhatsAppInbox() {
   useEffect(() => {
     if (selectedPhone) {
       fetchMessages(selectedPhone);
+      // Auto-select instance that last messaged this contact
+      supabase
+        .from('wa_inbox')
+        .select('instance_id')
+        .eq('user_id', user?.id || '')
+        .eq('phone', selectedPhone)
+        .eq('direction', 'outgoing')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .then(({ data }) => {
+          if (data && data.length > 0 && data[0].instance_id) {
+            setSelectedInstanceId(data[0].instance_id);
+          } else if (instances.length > 0) {
+            setSelectedInstanceId(instances[0].id);
+          }
+        });
     }
   }, [selectedPhone, fetchMessages]);
 
