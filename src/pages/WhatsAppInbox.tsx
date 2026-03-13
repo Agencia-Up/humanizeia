@@ -97,6 +97,7 @@ export default function WhatsAppInbox() {
   const [isMobileShowChat, setIsMobileShowChat] = useState(false);
   const [filterTags, setFilterTags] = useState<string[]>([]);
   const [contactTags, setContactTags] = useState<Record<string, string[]>>({});
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
