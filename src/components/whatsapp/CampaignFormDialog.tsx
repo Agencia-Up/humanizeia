@@ -122,6 +122,7 @@ export function CampaignFormDialog({
       setMediaUrl(editingCampaign.media_url || '');
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
+      setVariationLevel(editingCampaign.variation_level || 'medium');
       if (editingCampaign.start_time) {
         const d = new Date(editingCampaign.start_time);
         setStartDate(d);
