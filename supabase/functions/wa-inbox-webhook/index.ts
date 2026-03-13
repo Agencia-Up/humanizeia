@@ -631,18 +631,22 @@ async function handleAIAgentReply(
       const apiUrl = (evolutionApiUrl || instanceData.api_url).replace(/\/+$/, "");
       const apiKey = evolutionApiKey || instanceData.api_key_encrypted;
 
+      const destination = replyTarget || phone;
+      console.log(`[ai-agent] Sending reply to destination: ${destination}`);
+
       const sendRes = await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           apikey: apiKey,
         },
-        body: JSON.stringify({ number: phone, text: replyText }),
+        body: JSON.stringify({ number: destination, text: replyText }),
       });
 
       sendSuccess = sendRes.ok;
       if (!sendSuccess) {
-        console.error(`[ai-agent] Evolution send error: ${sendRes.status}`);
+        const errText = await sendRes.text();
+        console.error(`[ai-agent] Evolution send error: ${sendRes.status} - ${errText}`);
       }
     } else if (instanceData.provider === "meta") {
       // Meta API send
