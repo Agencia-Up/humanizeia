@@ -147,11 +147,11 @@ export default function WhatsAppInbox() {
     if (!user) return;
     const { data } = await supabase
       .from('wa_instances')
-      .select('id, instance_name, friendly_name, status, is_active')
+      .select('id, instance_name, friendly_name, phone_number, status, is_active')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .eq('status', 'connected');
-    if (data) setInstances(data);
+    if (data) setInstances(data as unknown as WaInstance[]);
   }, [user]);
 
   // Fetch messages for selected conversation
