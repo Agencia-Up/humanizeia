@@ -382,38 +382,32 @@ Deno.serve(async (req) => {
         const errMsg = err instanceof Error ? err.message : "Unknown error";
 
         // Circuit breaker
-        const rotKey = item.campaign_id || item.user_id;
-        const rot = rotationCounters.get(rotKey);
-        const userInstances = instanceMap.get(item.user_id);
-        if (rot && userInstances) {
-          const failedInstance = userInstances[rot.index % userInstances.length];
-          if (failedInstance) {
-            const currentFailures = (instanceFailures.get(failedInstance.id) || 0) + 1;
-            instanceFailures.set(failedInstance.id, currentFailures);
-            if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
-              console.warn(`Circuit breaker triggered for instance ${failedInstance.id}`);
-              const { error: healthErr } = await supabase.rpc("decrement_instance_health", {
-                instance_id: failedInstance.id,
-                decrement_value: 30,
-              });
-              if (healthErr) console.error("Health decrement failed:", healthErr);
+        if (selectedInstance) {
+          const currentFailures = (instanceFailures.get(selectedInstance.id) || 0) + 1;
+          instanceFailures.set(selectedInstance.id, currentFailures);
+          if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+            console.warn(`Circuit breaker triggered for instance ${selectedInstance.id}`);
+            const { error: healthErr } = await supabase.rpc("decrement_instance_health", {
+              instance_id: selectedInstance.id,
+              decrement_value: 30,
+            });
+            if (healthErr) console.error("Health decrement failed:", healthErr);
 
-              try {
-                const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-                await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-                  },
-                  body: JSON.stringify({
-                    instance_id: failedInstance.id,
-                    user_id: item.user_id,
-                  }),
-                });
-              } catch (failoverErr) {
-                console.error("Failover trigger failed:", failoverErr);
-              }
+            try {
+              const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+              await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                },
+                body: JSON.stringify({
+                  instance_id: selectedInstance.id,
+                  user_id: item.user_id,
+                }),
+              });
+            } catch (failoverErr) {
+              console.error("Failover trigger failed:", failoverErr);
             }
           }
         }
