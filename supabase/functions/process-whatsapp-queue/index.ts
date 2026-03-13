@@ -193,11 +193,22 @@ Deno.serve(async (req) => {
           }
         }
 
-        await supabase
+        const { data: lockRow, error: lockErr } = await supabase
           .from("wa_queue")
           .update({ status: "processing" })
           .eq("id", item.id)
-          .eq("status", "pending");
+          .eq("status", "pending")
+          .select("id")
+          .maybeSingle();
+
+        if (lockErr) {
+          throw new Error(`Failed to lock queue item: ${lockErr.message}`);
+        }
+
+        // Another worker already took this item
+        if (!lockRow) {
+          continue;
+        }
 
         const campaign = item.campaign_id ? campaignMap.get(item.campaign_id) : null;
         const userInstances = instanceMap.get(item.user_id);
