@@ -369,6 +369,7 @@ Deno.serve(async (req) => {
         if (item.campaign_id) {
           const { error: rpcErr } = await supabase.rpc("increment_campaign_sent", { cid: item.campaign_id });
           if (rpcErr) console.error("increment_campaign_sent failed:", rpcErr);
+          if (campaign) campaign.sent_count = (campaign.sent_count || 0) + 1;
         }
 
         succeeded++;
