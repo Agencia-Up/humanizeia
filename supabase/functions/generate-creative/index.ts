@@ -78,17 +78,43 @@ Deno.serve(async (req) => {
 
     const selectedAspectRatio = aspectRatioMap[format] || "1:1";
 
-    const imagePrompt = `Create an advertising creative image with these specifications:
+    // Helper: spell out text so the model renders each character correctly
+    const spellOut = (text: string) => text.split('').map(c => c === ' ' ? '(space)' : `"${c}"`).join(' ');
+
+    const headlineBlock = headline
+      ? `- TEXT OVERLAY (HEADLINE): The image MUST contain the following text rendered exactly:
+  EXACT STRING: "${headline}"
+  SPELLED OUT: ${spellOut(headline)}
+  RULES: Copy every single character verbatim. Do NOT fix spelling, do NOT add/remove accents, do NOT translate, do NOT rearrange words. If the text is in Portuguese, keep it in Portuguese exactly as provided. Every letter, space, and punctuation mark must match perfectly.`
+      : "- No text overlay needed.";
+
+    const ctaBlock = includeCTA && ctaText
+      ? `- CTA BUTTON TEXT: The call-to-action button MUST display exactly:
+  EXACT STRING: "${ctaText}"
+  SPELLED OUT: ${spellOut(ctaText)}
+  Same rules: copy verbatim, no modifications whatsoever.`
+      : "";
+
+    const imagePrompt = `You are generating a professional advertising creative image. TEXT ACCURACY IS THE #1 PRIORITY.
+
+DESIGN SPECS:
 - Description: ${prompt}
 - Format: ${formatMap[format] || format}
 - Visual style: ${styleMap[style] || style} (intensity: ${styleIntensity}/10)
 - Color palette: ${primaryColor}${secondaryColor ? `, ${secondaryColor}` : ''}
-${headline ? `- Text overlay headline: "${headline}" — CRITICAL: reproduce this text EXACTLY as written, character by character. Do NOT add, remove, or change any accents, diacritics, or special characters. Copy it verbatim.` : "- No text overlay"}
-${includeCTA && ctaText ? `- Call-to-action button with text: "${ctaText}" — CRITICAL: reproduce this text EXACTLY as written, do NOT modify accents or spelling.` : ""}
+${headlineBlock}
+${ctaBlock}
 ${includeLogo ? "- Include space for a logo in the corner" : ""}
-- This is a professional advertising creative, polished and ready for social media ads.
-- Ultra high resolution, sharp details.
-- IMPORTANT: Any text rendered in the image must be copied EXACTLY from the inputs above. Do not correct, translate, or add accents to any word.`;
+
+QUALITY: Professional advertising creative, polished, ultra high resolution, sharp details.
+
+⚠️ ABSOLUTE TEXT RULES — FOLLOW WITHOUT EXCEPTION:
+1. Any text in the image MUST be copied CHARACTER BY CHARACTER from the strings above.
+2. Do NOT auto-correct, translate, add accents, remove accents, or "fix" anything.
+3. Do NOT invent extra words or omit any word.
+4. If unsure about a character, refer to the SPELLED OUT version above.
+5. Double-check every letter before finalizing.
+6. Use a clean, highly legible font (bold sans-serif recommended) so every character is clearly readable.`;
 
     console.log("Generating", variations, "images with aspect ratio:", selectedAspectRatio);
 
