@@ -27,6 +27,7 @@ import {
   Inbox,
   Zap,
   Smartphone,
+  Bot,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -97,6 +98,7 @@ const whatsappItems = [
   { title: 'Campanhas', url: '/whatsapp/campaigns', icon: Megaphone },
   { title: 'Analytics', url: '/whatsapp/analytics', icon: BarChart3 },
   { title: 'Automações', url: '/whatsapp/automations', icon: Zap },
+  { title: 'Agente IA', url: '/whatsapp/ai-agent', icon: Bot },
   { title: 'Extrator de Grupos', url: '/whatsapp/groups', icon: Users },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
   { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },

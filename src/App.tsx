@@ -37,6 +37,7 @@ import WhatsAppAnalytics from "./pages/WhatsAppAnalytics";
 import WhatsAppAutomations from "./pages/WhatsAppAutomations";
 import WhatsAppInstances from "./pages/WhatsAppInstances";
 import CriarCampanha from "./pages/CriarCampanha";
+import WhatsAppAIAgent from "./pages/WhatsAppAIAgent";
 
 const queryClient = new QueryClient();
 
@@ -80,6 +81,7 @@ const App = () => (
           <Route path="/whatsapp/analytics" element={<ProtectedRoute><WhatsAppAnalytics /></ProtectedRoute>} />
           <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
           <Route path="/whatsapp/instances" element={<ProtectedRoute><WhatsAppInstances /></ProtectedRoute>} />
+          <Route path="/whatsapp/ai-agent" element={<ProtectedRoute><WhatsAppAIAgent /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

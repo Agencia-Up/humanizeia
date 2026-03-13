@@ -6,22 +6,41 @@ const corsHeaders = {
 };
 
 async function getInstanceConfig(supabase: any, userId: string) {
-  const { data: instance } = await supabase
+  // First try wa_instances
+  const { data: instances } = await supabase
     .from('wa_instances')
     .select('*')
     .eq('user_id', userId)
-    .eq('is_active', true)
-    .limit(1)
-    .maybeSingle();
+    .eq('is_active', true);
 
-  if (instance) {
-    return {
-      apiUrl: instance.api_url,
-      apiKey: instance.api_key_encrypted,
-      instanceName: instance.instance_name,
-    };
+  if (instances && instances.length > 0) {
+    // For Evolution instances, use env vars for credentials
+    const evolutionApiUrl = Deno.env.get('EVOLUTION_API_URL');
+    const evolutionApiKey = Deno.env.get('EVOLUTION_API_KEY');
+
+    // Return all active instances
+    return instances.map((inst: any) => {
+      if (inst.provider === 'evolution') {
+        return {
+          id: inst.id,
+          apiUrl: evolutionApiUrl || inst.api_url,
+          apiKey: evolutionApiKey || inst.api_key_encrypted,
+          instanceName: inst.instance_name,
+          provider: 'evolution',
+        };
+      }
+      // Meta instances use stored credentials
+      return {
+        id: inst.id,
+        apiUrl: inst.api_url,
+        apiKey: inst.api_key_encrypted,
+        instanceName: inst.instance_name,
+        provider: inst.provider || 'meta',
+      };
+    });
   }
 
+  // Fallback: whatsapp_config table
   const { data: config } = await supabase
     .from('whatsapp_config')
     .select('*')
@@ -31,11 +50,16 @@ async function getInstanceConfig(supabase: any, userId: string) {
 
   if (!config) return null;
 
-  return {
-    apiUrl: config.api_url,
-    apiKey: config.api_key,
+  const evolutionApiUrl = Deno.env.get('EVOLUTION_API_URL');
+  const evolutionApiKey = Deno.env.get('EVOLUTION_API_KEY');
+
+  return [{
+    id: null,
+    apiUrl: evolutionApiUrl || config.api_url,
+    apiKey: evolutionApiKey || config.api_key,
     instanceName: config.instance_name,
-  };
+    provider: 'evolution',
+  }];
 }
 
 async function fetchOwnGroups(baseUrl: string, apiKey: string, instanceName: string) {
@@ -45,8 +69,8 @@ async function fetchOwnGroups(baseUrl: string, apiKey: string, instanceName: str
 
   if (!res.ok) {
     const errText = await res.text();
-    console.error(`[wa-extract-groups] Error (${res.status}):`, errText.substring(0, 300));
-    throw new Error(`Evolution API retornou status ${res.status}`);
+    console.error(`[wa-extract-groups] Error (${res.status}) for ${instanceName}:`, errText.substring(0, 300));
+    throw new Error(`Evolution API retornou status ${res.status} para instância ${instanceName}`);
   }
 
   const data = await res.json();
@@ -62,7 +86,6 @@ async function fetchOwnGroups(baseUrl: string, apiKey: string, instanceName: str
 }
 
 async function searchPublicGroups(baseUrl: string, apiKey: string, instanceName: string, query: string) {
-  // Try the Evolution API group search endpoint
   const res = await fetch(`${baseUrl}/group/findGroupInfos/${instanceName}`, {
     method: 'POST',
     headers: {
@@ -74,7 +97,6 @@ async function searchPublicGroups(baseUrl: string, apiKey: string, instanceName:
 
   if (!res.ok) {
     console.error(`[wa-extract-groups] Search error (${res.status})`);
-    // Fallback: fetch all groups and filter by query
     const allGroups = await fetchOwnGroups(baseUrl, apiKey, instanceName);
     return allGroups.filter((g: any) =>
       g.subject.toLowerCase().includes(query.toLowerCase())
@@ -201,7 +223,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { user_id, action, group_ids, groups, list_id, query } = body;
+    const { user_id, action, group_ids, groups, list_id, query, instance_id } = body;
 
     if (!user_id) {
       return new Response(JSON.stringify({ success: false, error: 'user_id obrigatório' }), {
@@ -210,22 +232,32 @@ Deno.serve(async (req) => {
       });
     }
 
-    const config = await getInstanceConfig(supabase, user_id);
-    if (!config) {
+    const configs = await getInstanceConfig(supabase, user_id);
+    if (!configs || configs.length === 0) {
       return new Response(JSON.stringify({
         success: false,
-        error: 'Nenhuma instância WhatsApp ativa encontrada',
+        error: 'Nenhuma instância WhatsApp ativa encontrada. Verifique se seu servidor Evolution API está online.',
       }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    // Pick specific instance or default to first evolution one
+    let config = configs[0];
+    if (instance_id) {
+      const found = configs.find((c: any) => c.id === instance_id);
+      if (found) config = found;
+    }
+    // Prefer evolution instances for group operations
+    const evolutionConfig = configs.find((c: any) => c.provider === 'evolution');
+    if (evolutionConfig) config = evolutionConfig;
+
     const baseUrl = config.apiUrl.replace(/\/$/, '');
 
     // ===== ACTION: Search public groups by niche =====
     if (action === 'search_groups' && query) {
-      console.log(`[wa-extract-groups] Searching groups for: ${query}`);
+      console.log(`[wa-extract-groups] Searching groups for: ${query} via ${config.instanceName}`);
       const results = await searchPublicGroups(baseUrl, config.apiKey, config.instanceName, query);
       return new Response(JSON.stringify({
         success: true,
@@ -248,14 +280,30 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ===== DEFAULT: Fetch own groups =====
-    console.log(`[wa-extract-groups] Fetching groups for instance: ${config.instanceName}`);
-    const groups_result = await fetchOwnGroups(baseUrl, config.apiKey, config.instanceName);
+    // ===== DEFAULT: Fetch own groups from ALL evolution instances =====
+    console.log(`[wa-extract-groups] Fetching groups for ${configs.length} instance(s)`);
+    const allGroups: any[] = [];
+
+    for (const c of configs) {
+      if (c.provider !== 'evolution') continue;
+      try {
+        const cBaseUrl = c.apiUrl.replace(/\/$/, '');
+        const instanceGroups = await fetchOwnGroups(cBaseUrl, c.apiKey, c.instanceName);
+        // Tag groups with instance info
+        for (const g of instanceGroups) {
+          g.instance_name = c.instanceName;
+          g.instance_id = c.id;
+        }
+        allGroups.push(...instanceGroups);
+      } catch (err) {
+        console.error(`[wa-extract-groups] Failed for instance ${c.instanceName}:`, err);
+      }
+    }
 
     return new Response(JSON.stringify({
       success: true,
-      groups: groups_result,
-      total: groups_result.length,
+      groups: allGroups,
+      total: allGroups.length,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
