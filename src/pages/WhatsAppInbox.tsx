@@ -276,22 +276,23 @@ export default function WhatsAppInbox() {
       return;
     }
 
+    const instanceId = selectedInstanceId || instances[0].id;
+
     setSending(true);
     try {
       const { data, error } = await supabase.functions.invoke('wa-send-reply', {
         body: {
-          instance_id: instances[0].id,
+          instance_id: instanceId,
           phone: selectedPhone,
           content: replyText.trim(),
         },
       });
       if (error) throw error;
       setReplyText('');
-      // Message will appear via realtime subscription or we add optimistically
       const optimisticMsg: InboxMessage = {
         id: crypto.randomUUID(),
         user_id: user.id,
-        instance_id: instances[0].id,
+        instance_id: instanceId,
         phone: selectedPhone,
         contact_name: null,
         direction: 'outgoing',
