@@ -116,9 +116,7 @@ async function searchPublicGroups(baseUrl: string, apiKey: string, instanceName:
 }
 
 async function extractContacts(
-  baseUrl: string,
-  apiKey: string,
-  instanceName: string,
+  configs: any[],
   groupIds: string[],
   groups: any[],
   supabase: any,
@@ -131,21 +129,52 @@ async function extractContacts(
 
   for (const groupId of groupIds) {
     try {
-      const res = await fetch(`${baseUrl}/group/participants/${instanceName}?groupJid=${groupId}`, {
-        headers: { 'apikey': apiKey },
-      });
-
-      if (!res.ok) {
-        console.error(`Failed to fetch participants for ${groupId}: ${res.status}`);
-        continue;
-      }
-
-      const data = await res.json();
-      const participants = data?.participants || data || [];
       const groupData = groups?.find((g: any) => g.id === groupId);
       const groupName = groupData?.subject || groupId;
 
-      for (const p of (Array.isArray(participants) ? participants : [])) {
+      const orderedConfigs: any[] = [];
+      if (groupData?.instance_id) {
+        const byId = configs.find((c: any) => c.id === groupData.instance_id);
+        if (byId) orderedConfigs.push(byId);
+      }
+      if (groupData?.instance_name) {
+        const byName = configs.find((c: any) => c.instanceName === groupData.instance_name);
+        if (byName) orderedConfigs.push(byName);
+      }
+      orderedConfigs.push(...configs);
+
+      let participants: any[] = [];
+      const tried = new Set<string>();
+
+      for (const cfg of orderedConfigs) {
+        if (!cfg || cfg.provider !== 'evolution') continue;
+        const key = `${cfg.id || ''}:${cfg.instanceName || ''}`;
+        if (tried.has(key)) continue;
+        tried.add(key);
+
+        const cBaseUrl = (cfg.apiUrl || '').replace(/\/$/, '');
+        const url = `${cBaseUrl}/group/participants/${cfg.instanceName}?groupJid=${encodeURIComponent(groupId)}`;
+
+        const res = await fetch(url, {
+          headers: { 'apikey': cfg.apiKey },
+        });
+
+        if (!res.ok) {
+          console.warn(`[wa-extract-groups] Participants ${groupId} failed on ${cfg.instanceName}: ${res.status}`);
+          continue;
+        }
+
+        const data = await res.json();
+        participants = data?.participants || data || [];
+        console.log(`[wa-extract-groups] Participants for ${groupId} fetched via ${cfg.instanceName}`);
+        break;
+      }
+
+      if (!Array.isArray(participants) || participants.length === 0) {
+        continue;
+      }
+
+      for (const p of participants) {
         const phone = (p.id || p).replace(/@.*$/, '');
         if (phone && phone.length >= 10) {
           allContacts.push({
@@ -271,9 +300,14 @@ Deno.serve(async (req) => {
     // ===== ACTION: Extract contacts from selected groups =====
     if (action === 'extract_contacts' && group_ids?.length) {
       const result = await extractContacts(
-        baseUrl, config.apiKey, config.instanceName,
-        group_ids, groups, supabase,
-        supabaseUrl, supabaseServiceKey, user_id, list_id
+        configs,
+        group_ids,
+        groups,
+        supabase,
+        supabaseUrl,
+        supabaseServiceKey,
+        user_id,
+        list_id,
       );
       return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
