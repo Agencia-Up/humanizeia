@@ -1768,6 +1768,74 @@ export type Database = {
         }
         Relationships: []
       }
+      wa_ai_agents: {
+        Row: {
+          blocked_categories: string[] | null
+          business_hours_end: string | null
+          business_hours_only: boolean
+          business_hours_start: string | null
+          created_at: string
+          id: string
+          instance_id: string | null
+          is_active: boolean
+          max_tokens: number
+          model: string
+          name: string
+          reply_delay_ms: number
+          system_prompt: string
+          temperature: number
+          total_replies: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          blocked_categories?: string[] | null
+          business_hours_end?: string | null
+          business_hours_only?: boolean
+          business_hours_start?: string | null
+          created_at?: string
+          id?: string
+          instance_id?: string | null
+          is_active?: boolean
+          max_tokens?: number
+          model?: string
+          name?: string
+          reply_delay_ms?: number
+          system_prompt: string
+          temperature?: number
+          total_replies?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          blocked_categories?: string[] | null
+          business_hours_end?: string | null
+          business_hours_only?: boolean
+          business_hours_start?: string | null
+          created_at?: string
+          id?: string
+          instance_id?: string | null
+          is_active?: boolean
+          max_tokens?: number
+          model?: string
+          name?: string
+          reply_delay_ms?: number
+          system_prompt?: string
+          temperature?: number
+          total_replies?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_ai_agents_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "wa_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       wa_audit_logs: {
         Row: {
           contact_id: string | null
