@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    const { prompt, format, style, headline, ctaText, includeLogo, includeCTA, primaryColor, secondaryColor, styleIntensity, variations } = await req.json();
+    const { prompt, format, style, headline, ctaText, includeLogo, includeCTA, primaryColor, secondaryColor, styleIntensity, variations, referenceImage } = await req.json();
 
     if (!prompt) {
       return new Response(JSON.stringify({ error: "Prompt is required" }), {
@@ -99,6 +99,21 @@ ${includeLogo ? "- Include space for a logo in the corner" : ""}
       try {
         const variationPrompt = `${imagePrompt}\n\nVariation ${i + 1} of ${variations}. Make this variation unique with slightly different composition or emphasis.`;
 
+        // Build message content - text only or multimodal with reference image
+        const messageContent: any[] = [];
+        if (referenceImage) {
+          messageContent.push({
+            type: "text",
+            text: `I'm providing a reference image. Use it as the base/inspiration and apply the following modifications:\n\n${variationPrompt}`,
+          });
+          messageContent.push({
+            type: "image_url",
+            image_url: { url: referenceImage },
+          });
+        } else {
+          messageContent.push({ type: "text", text: variationPrompt });
+        }
+
         const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -107,7 +122,7 @@ ${includeLogo ? "- Include space for a logo in the corner" : ""}
           },
           body: JSON.stringify({
             model: "google/gemini-2.5-flash-image",
-            messages: [{ role: "user", content: variationPrompt }],
+            messages: [{ role: "user", content: referenceImage ? messageContent : variationPrompt }],
             modalities: ["image", "text"],
             image_config: { aspect_ratio: selectedAspectRatio },
           }),
