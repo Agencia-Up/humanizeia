@@ -33,6 +33,8 @@ import WhatsAppContacts from "./pages/WhatsAppContacts";
 import WhatsAppBroadcast from "./pages/WhatsAppBroadcast";
 import WhatsAppCampaigns from "./pages/WhatsAppCampaigns";
 import WhatsAppInbox from "./pages/WhatsAppInbox";
+import WhatsAppAnalytics from "./pages/WhatsAppAnalytics";
+import WhatsAppAutomations from "./pages/WhatsAppAutomations";
 import CriarCampanha from "./pages/CriarCampanha";
 
 const queryClient = new QueryClient();
@@ -74,6 +76,8 @@ const App = () => (
           <Route path="/whatsapp/groups" element={<ProtectedRoute><WhatsAppGroups /></ProtectedRoute>} />
           <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />
           <Route path="/whatsapp/broadcast" element={<ProtectedRoute><WhatsAppBroadcast /></ProtectedRoute>} />
+          <Route path="/whatsapp/analytics" element={<ProtectedRoute><WhatsAppAnalytics /></ProtectedRoute>} />
+          <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

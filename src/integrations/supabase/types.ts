@@ -1768,6 +1768,48 @@ export type Database = {
         }
         Relationships: []
       }
+      wa_automations: {
+        Row: {
+          action_config: Json | null
+          action_type: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          last_triggered_at: string | null
+          name: string
+          trigger_count: number | null
+          trigger_event: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          action_config?: Json | null
+          action_type: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_triggered_at?: string | null
+          name: string
+          trigger_count?: number | null
+          trigger_event: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          action_config?: Json | null
+          action_type?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_triggered_at?: string | null
+          name?: string
+          trigger_count?: number | null
+          trigger_event?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       wa_campaigns: {
         Row: {
           completed_at: string | null

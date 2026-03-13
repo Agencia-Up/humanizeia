@@ -142,12 +142,52 @@ Deno.serve(async (req) => {
           })
           .eq("id", inboxMsg.id);
 
-        // Auto-blacklist on opt-out
-        if (aiCategory.category === "opt-out" && contact?.id) {
-          await supabase
-            .from("wa_contacts")
-            .update({ is_valid: false, tags: ["blacklist"] } as any)
-            .eq("id", contact.id);
+        // Update contact status based on AI category
+        if (contact?.id) {
+          if (aiCategory.category === "opt-out") {
+            // Blacklist contact
+            await supabase
+              .from("wa_contacts")
+              .update({ is_valid: false, tags: ["blacklist"], status: "blacklist" } as any)
+              .eq("id", contact.id);
+          } else if (aiCategory.category === "interested" || aiCategory.category === "question") {
+            // Mark as qualified
+            await supabase
+              .from("wa_contacts")
+              .update({ status: "qualified" } as any)
+              .eq("id", contact.id);
+          }
+        }
+
+        // --- Trigger automations ---
+        const triggerEvent = 
+          aiCategory.category === "interested" ? "lead_interested" :
+          aiCategory.category === "question" ? "lead_question" :
+          aiCategory.category === "opt-out" ? "lead_opt_out" :
+          "lead_responded";
+
+        try {
+          const { data: automations } = await supabase
+            .from("wa_automations")
+            .select("*")
+            .eq("user_id", instance.user_id)
+            .eq("is_active", true)
+            .in("trigger_event", [triggerEvent, "lead_responded"]);
+
+          if (automations && automations.length > 0) {
+            for (const auto of automations) {
+              await executeAutomation(supabase, auto, {
+                phone,
+                contact_name: pushName,
+                contact_id: contact?.id,
+                category: aiCategory.category,
+                message: content,
+                user_id: instance.user_id,
+              });
+            }
+          }
+        } catch (autoErr) {
+          console.error("Automation execution failed:", autoErr);
         }
       } catch (aiErr) {
         console.error("AI categorization failed:", aiErr);
@@ -321,4 +361,75 @@ Responda APENAS o JSON, sem markdown.`,
   } catch {
     return { category: "neutral", sentiment: "neutral" };
   }
+}
+
+async function executeAutomation(
+  supabase: any,
+  automation: any,
+  context: {
+    phone: string;
+    contact_name: string | null;
+    contact_id: string | null;
+    category: string;
+    message: string;
+    user_id: string;
+  }
+) {
+  const config = automation.action_config || {};
+
+  switch (automation.action_type) {
+    case "add_tag":
+      if (config.tag && context.contact_id) {
+        // Add tag to contact
+        const { data: contact } = await supabase
+          .from("wa_contacts")
+          .select("tags")
+          .eq("id", context.contact_id)
+          .single();
+        const currentTags = (contact?.tags as string[]) || [];
+        if (!currentTags.includes(config.tag)) {
+          await supabase
+            .from("wa_contacts")
+            .update({ tags: [...currentTags, config.tag] })
+            .eq("id", context.contact_id);
+        }
+      }
+      break;
+
+    case "notify_webhook":
+      if (config.webhook_url) {
+        await fetch(config.webhook_url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event: automation.trigger_event,
+            phone: context.phone,
+            contact_name: context.contact_name,
+            category: context.category,
+            message: context.message,
+            automation_name: automation.name,
+            timestamp: new Date().toISOString(),
+          }),
+        }).catch((err: any) => console.error("Webhook call failed:", err));
+      }
+      break;
+
+    case "send_email":
+      // Log for n8n/Resend integration
+      console.log("EMAIL_AUTOMATION_TRIGGER:", JSON.stringify({
+        to: config.email,
+        subject: `Lead ${context.category}: ${context.contact_name || context.phone}`,
+        body: `Lead ${context.phone} (${context.contact_name || "sem nome"}) classificado como "${context.category}".\n\nMensagem: ${context.message}`,
+      }));
+      break;
+  }
+
+  // Increment trigger count
+  await supabase
+    .from("wa_automations")
+    .update({
+      trigger_count: (automation.trigger_count || 0) + 1,
+      last_triggered_at: new Date().toISOString(),
+    })
+    .eq("id", automation.id);
 }
