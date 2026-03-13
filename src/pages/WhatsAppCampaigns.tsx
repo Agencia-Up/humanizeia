@@ -236,7 +236,14 @@ Não numere as variações. Não inclua explicações adicionais.`
 
   const handlePauseCampaign = async (id: string) => {
     const { error } = await supabase.from('wa_campaigns').update({ status: 'paused' } as any).eq('id', id);
+
     if (!error) {
+      await supabase
+        .from('wa_queue')
+        .update({ status: 'pending' } as any)
+        .eq('campaign_id', id)
+        .in('status', ['processing', 'pending']);
+
       toast({ title: 'Campanha pausada' });
       fetchCampaigns();
     }
