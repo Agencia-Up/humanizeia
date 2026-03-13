@@ -102,6 +102,7 @@ export function CampaignFormDialog({
   const [mediaType, setMediaType] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
+  const [variationLevel, setVariationLevel] = useState<string>('medium');
 
   const isEditing = !!editingCampaign;
 
