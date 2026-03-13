@@ -422,12 +422,12 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
 
           <Button
             onClick={handleCreate}
-            disabled={isSaving || !name.trim() || !messageTemplate.trim() || selectedLists.length === 0}
+            disabled={isSaving || isUploadingMedia || !name.trim() || !messageTemplate.trim() || selectedLists.length === 0}
             className="w-full"
             size="lg"
           >
-            {isSaving ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Criando...</>
+            {isSaving || isUploadingMedia ? (
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {isUploadingMedia ? 'Enviando mídia...' : 'Criando...'}</>
             ) : (
               <><Send className="h-4 w-4 mr-2" /> Criar Campanha ({totalContacts} contatos)</>
             )}
