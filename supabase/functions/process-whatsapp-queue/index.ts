@@ -248,6 +248,25 @@ Deno.serve(async (req) => {
                 instance_id: failedInstance.id,
                 decrement_value: 30,
               }).catch((e: any) => console.error("Health decrement failed:", e));
+
+              // Trigger failover for banned instance
+              try {
+                const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+                await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                  },
+                  body: JSON.stringify({
+                    instance_id: failedInstance.id,
+                    user_id: item.user_id,
+                  }),
+                });
+                console.log(`Failover triggered for instance ${failedInstance.id}`);
+              } catch (failoverErr) {
+                console.error("Failover trigger failed:", failoverErr);
+              }
             }
           }
         }
