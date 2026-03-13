@@ -5,11 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Users, Search, Download, Loader2, RefreshCw, WifiOff, CheckCircle, UserPlus, Plus,
+  Users, Search, Download, Loader2, RefreshCw, WifiOff, CheckCircle, UserPlus, Plus, Globe, FolderOpen,
 } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -36,17 +37,122 @@ interface ContactList {
   contact_count: number;
 }
 
+function GroupTable({
+  groups,
+  selectedGroups,
+  toggleGroup,
+  toggleAll,
+  search,
+  setSearch,
+  onExtract,
+}: {
+  groups: WhatsAppGroup[];
+  selectedGroups: string[];
+  toggleGroup: (id: string) => void;
+  toggleAll: () => void;
+  search: string;
+  setSearch: (v: string) => void;
+  onExtract: () => void;
+}) {
+  const filtered = groups.filter(g =>
+    g.subject.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <CardTitle className="text-lg">{groups.length} grupo(s) encontrado(s)</CardTitle>
+            <CardDescription>Selecione os grupos para extrair os contatos</CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Filtrar grupo..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="pl-9 w-64"
+              />
+            </div>
+            {selectedGroups.length > 0 && (
+              <Button onClick={onExtract}>
+                <Download className="h-4 w-4 mr-2" />
+                Extrair ({selectedGroups.length})
+              </Button>
+            )}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-12">
+                <Checkbox
+                  checked={selectedGroups.length === filtered.length && filtered.length > 0}
+                  onCheckedChange={toggleAll}
+                />
+              </TableHead>
+              <TableHead>Nome do Grupo</TableHead>
+              <TableHead className="text-center">Membros</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.map(group => (
+              <TableRow key={group.id}>
+                <TableCell>
+                  <Checkbox
+                    checked={selectedGroups.includes(group.id)}
+                    onCheckedChange={() => toggleGroup(group.id)}
+                  />
+                </TableCell>
+                <TableCell className="font-medium">{group.subject}</TableCell>
+                <TableCell className="text-center">
+                  <Badge variant="secondary">
+                    <UserPlus className="h-3 w-3 mr-1" />
+                    {group.size}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <Badge className="bg-green-500/20 text-green-500 border-green-500/30">
+                    <CheckCircle className="h-3 w-3 mr-1" /> Ativo
+                  </Badge>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function WhatsAppGroups() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [groups, setGroups] = useState<WhatsAppGroup[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [search, setSearch] = useState('');
-  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'own' | 'search'>('own');
+
+  // Own groups state
+  const [ownGroups, setOwnGroups] = useState<WhatsAppGroup[]>([]);
+  const [isLoadingOwn, setIsLoadingOwn] = useState(false);
+  const [searchOwn, setSearchOwn] = useState('');
+  const [selectedOwn, setSelectedOwn] = useState<string[]>([]);
+
+  // Search groups state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<WhatsAppGroup[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchFilter, setSearchFilter] = useState('');
+  const [selectedSearch, setSelectedSearch] = useState<string[]>([]);
+
+  // Common state
   const [isExtracting, setIsExtracting] = useState(false);
   const [hasInstance, setHasInstance] = useState<boolean | null>(null);
 
-  // List selection
+  // List selection dialog
   const [showExtractDialog, setShowExtractDialog] = useState(false);
   const [lists, setLists] = useState<ContactList[]>([]);
   const [listMode, setListMode] = useState<'new' | 'existing'>('new');
@@ -54,19 +160,17 @@ export default function WhatsAppGroups() {
   const [targetListId, setTargetListId] = useState('');
 
   useEffect(() => {
-    checkInstance();
-  }, [user]);
-
-  const checkInstance = async () => {
     if (!user) return;
-    const { data } = await supabase
-      .from('wa_instances')
-      .select('id, is_active')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .maybeSingle();
-    setHasInstance(!!data);
-  };
+    (async () => {
+      const { data } = await supabase
+        .from('wa_instances')
+        .select('id, is_active')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .maybeSingle();
+      setHasInstance(!!data);
+    })();
+  }, [user]);
 
   const fetchLists = useCallback(async () => {
     if (!user) return;
@@ -78,37 +182,61 @@ export default function WhatsAppGroups() {
     setLists((data as ContactList[]) || []);
   }, [user]);
 
-  const fetchGroups = async () => {
+  // ===== Own Groups =====
+  const fetchOwnGroups = async () => {
     if (!user) return;
-    setIsLoading(true);
+    setIsLoadingOwn(true);
     try {
       const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
         body: { user_id: user.id },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao buscar grupos');
-      setGroups(data.groups || []);
+      setOwnGroups(data.groups || []);
       toast({ title: `${data.groups?.length || 0} grupos encontrados` });
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
-      setIsLoading(false);
+      setIsLoadingOwn(false);
     }
   };
 
+  // ===== Search Groups by Niche =====
+  const searchGroupsByNiche = async () => {
+    if (!user || !searchQuery.trim()) return;
+    setIsSearching(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
+        body: { user_id: user.id, action: 'search_groups', query: searchQuery.trim() },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Erro ao pesquisar grupos');
+      setSearchResults(data.groups || []);
+      toast({ title: `${data.groups?.length || 0} grupos encontrados para "${searchQuery}"` });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // ===== Extract =====
   const openExtractDialog = () => {
     fetchLists();
-    setNewListName(`Grupos extraídos - ${new Date().toLocaleDateString('pt-BR')}`);
+    const source = activeTab === 'own' ? 'Meus Grupos' : `Pesquisa: ${searchQuery}`;
+    setNewListName(`${source} - ${new Date().toLocaleDateString('pt-BR')}`);
     setListMode('new');
     setTargetListId('');
     setShowExtractDialog(true);
   };
 
+  const currentSelected = activeTab === 'own' ? selectedOwn : selectedSearch;
+  const currentGroups = activeTab === 'own' ? ownGroups : searchResults;
+
   const extractContacts = async () => {
-    if (!user || selectedGroups.length === 0) return;
+    if (!user || currentSelected.length === 0) return;
     setIsExtracting(true);
     try {
-      // If using existing list, pass list_id; if new, create it first
       let listId = listMode === 'existing' ? targetListId : undefined;
 
       if (listMode === 'new' && newListName.trim()) {
@@ -126,12 +254,12 @@ export default function WhatsAppGroups() {
         listId = newList.id;
       }
 
-      const selectedGroupData = groups.filter(g => selectedGroups.includes(g.id));
+      const selectedGroupData = currentGroups.filter(g => currentSelected.includes(g.id));
       const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
         body: {
           user_id: user.id,
           action: 'extract_contacts',
-          group_ids: selectedGroups,
+          group_ids: currentSelected,
           groups: selectedGroupData,
           list_id: listId,
         },
@@ -140,9 +268,10 @@ export default function WhatsAppGroups() {
       if (!data?.success) throw new Error(data?.error || 'Erro ao extrair contatos');
       toast({
         title: 'Contatos extraídos!',
-        description: `${data.total_contacts || 0} contatos salvos de ${selectedGroups.length} grupo(s)`,
+        description: `${data.total_contacts || 0} contatos salvos de ${currentSelected.length} grupo(s)`,
       });
-      setSelectedGroups([]);
+      if (activeTab === 'own') setSelectedOwn([]);
+      else setSelectedSearch([]);
       setShowExtractDialog(false);
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
@@ -151,23 +280,21 @@ export default function WhatsAppGroups() {
     }
   };
 
-  const toggleGroup = (id: string) => {
-    setSelectedGroups(prev =>
-      prev.includes(id) ? prev.filter(g => g !== id) : [...prev, id]
-    );
+  const toggleGroup = (id: string, type: 'own' | 'search') => {
+    const setter = type === 'own' ? setSelectedOwn : setSelectedSearch;
+    setter(prev => prev.includes(id) ? prev.filter(g => g !== id) : [...prev, id]);
   };
 
-  const toggleAll = () => {
-    if (selectedGroups.length === filteredGroups.length) {
-      setSelectedGroups([]);
-    } else {
-      setSelectedGroups(filteredGroups.map(g => g.id));
-    }
-  };
+  const toggleAll = (type: 'own' | 'search') => {
+    const setter = type === 'own' ? setSelectedOwn : setSelectedSearch;
+    const groups = type === 'own'
+      ? ownGroups.filter(g => g.subject.toLowerCase().includes(searchOwn.toLowerCase()))
+      : searchResults.filter(g => g.subject.toLowerCase().includes(searchFilter.toLowerCase()));
+    const selected = type === 'own' ? selectedOwn : selectedSearch;
 
-  const filteredGroups = groups.filter(g =>
-    g.subject.toLowerCase().includes(search.toLowerCase())
-  );
+    if (selected.length === groups.length) setter([]);
+    else setter(groups.map(g => g.id));
+  };
 
   if (hasInstance === false) {
     return (
@@ -190,114 +317,128 @@ export default function WhatsAppGroups() {
   return (
     <MainLayout>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold lg:text-3xl flex items-center gap-2">
-              <Users className="h-7 w-7 text-green-500" />
-              Extrator de Grupos
-            </h1>
-            <p className="text-muted-foreground">
-              Extraia contatos dos seus grupos de WhatsApp
-            </p>
-          </div>
-          <Button onClick={fetchGroups} disabled={isLoading}>
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Buscar Grupos
-          </Button>
+        <div>
+          <h1 className="text-2xl font-bold lg:text-3xl flex items-center gap-2">
+            <Users className="h-7 w-7 text-green-500" />
+            Extrator de Grupos
+          </h1>
+          <p className="text-muted-foreground">
+            Extraia contatos de grupos públicos por nicho ou dos seus próprios grupos
+          </p>
         </div>
 
-        {groups.length > 0 && (
-          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-            <CardHeader>
-              <div className="flex items-center justify-between flex-wrap gap-3">
-                <div>
-                  <CardTitle className="text-lg">
-                    {groups.length} grupo(s) encontrado(s)
-                  </CardTitle>
-                  <CardDescription>
-                    Selecione os grupos para extrair os contatos
-                  </CardDescription>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="relative">
+        <Tabs value={activeTab} onValueChange={v => setActiveTab(v as 'own' | 'search')}>
+          <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsTrigger value="search" className="flex items-center gap-2">
+              <Globe className="h-4 w-4" />
+              Pesquisar por Nicho
+            </TabsTrigger>
+            <TabsTrigger value="own" className="flex items-center gap-2">
+              <FolderOpen className="h-4 w-4" />
+              Meus Grupos
+            </TabsTrigger>
+          </TabsList>
+
+          {/* ===== TAB: Search by Niche ===== */}
+          <TabsContent value="search" className="space-y-4 mt-4">
+            <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Globe className="h-5 w-5 text-primary" />
+                  Pesquisar Grupos por Nicho
+                </CardTitle>
+                <CardDescription>
+                  Digite o nicho ou tema para encontrar grupos relacionados e extrair os contatos
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
-                      placeholder="Buscar grupo..."
-                      value={search}
-                      onChange={e => setSearch(e.target.value)}
-                      className="pl-9 w-64"
+                      placeholder="Ex: marketing digital, emagrecimento, criptomoedas..."
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && searchGroupsByNiche()}
+                      className="pl-9"
                     />
                   </div>
-                  {selectedGroups.length > 0 && (
-                    <Button onClick={openExtractDialog}>
-                      <Download className="h-4 w-4 mr-2" />
-                      Extrair ({selectedGroups.length})
-                    </Button>
-                  )}
+                  <Button onClick={searchGroupsByNiche} disabled={isSearching || !searchQuery.trim()}>
+                    {isSearching ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Search className="h-4 w-4 mr-2" />
+                    )}
+                    Pesquisar
+                  </Button>
                 </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={selectedGroups.length === filteredGroups.length && filteredGroups.length > 0}
-                        onCheckedChange={toggleAll}
-                      />
-                    </TableHead>
-                    <TableHead>Nome do Grupo</TableHead>
-                    <TableHead className="text-center">Membros</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredGroups.map(group => (
-                    <TableRow key={group.id}>
-                      <TableCell>
-                        <Checkbox
-                          checked={selectedGroups.includes(group.id)}
-                          onCheckedChange={() => toggleGroup(group.id)}
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">{group.subject}</TableCell>
-                      <TableCell className="text-center">
-                        <Badge variant="secondary">
-                          <UserPlus className="h-3 w-3 mr-1" />
-                          {group.size}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge className="bg-green-500/20 text-green-500 border-green-500/30">
-                          <CheckCircle className="h-3 w-3 mr-1" /> Ativo
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
+              </CardContent>
+            </Card>
 
-        {groups.length === 0 && !isLoading && (
-          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-            <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
-              <Users className="h-12 w-12 text-muted-foreground" />
-              <p className="text-muted-foreground text-center">
-                Clique em <strong>"Buscar Grupos"</strong> para listar os grupos do WhatsApp conectado.
-              </p>
-            </CardContent>
-          </Card>
-        )}
+            {searchResults.length > 0 && (
+              <GroupTable
+                groups={searchResults}
+                selectedGroups={selectedSearch}
+                toggleGroup={id => toggleGroup(id, 'search')}
+                toggleAll={() => toggleAll('search')}
+                search={searchFilter}
+                setSearch={setSearchFilter}
+                onExtract={openExtractDialog}
+              />
+            )}
+
+            {searchResults.length === 0 && !isSearching && searchQuery && (
+              <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                  <Search className="h-10 w-10 text-muted-foreground" />
+                  <p className="text-muted-foreground text-center">
+                    Nenhum grupo encontrado. Tente outro termo de pesquisa.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* ===== TAB: Own Groups ===== */}
+          <TabsContent value="own" className="space-y-4 mt-4">
+            <div className="flex justify-end">
+              <Button onClick={fetchOwnGroups} disabled={isLoadingOwn}>
+                {isLoadingOwn ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                )}
+                Buscar Meus Grupos
+              </Button>
+            </div>
+
+            {ownGroups.length > 0 && (
+              <GroupTable
+                groups={ownGroups}
+                selectedGroups={selectedOwn}
+                toggleGroup={id => toggleGroup(id, 'own')}
+                toggleAll={() => toggleAll('own')}
+                search={searchOwn}
+                setSearch={setSearchOwn}
+                onExtract={openExtractDialog}
+              />
+            )}
+
+            {ownGroups.length === 0 && !isLoadingOwn && (
+              <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
+                  <Users className="h-12 w-12 text-muted-foreground" />
+                  <p className="text-muted-foreground text-center">
+                    Clique em <strong>"Buscar Meus Grupos"</strong> para listar os grupos da sua comunidade.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
 
-      {/* Extract Dialog - Choose target list */}
+      {/* Extract Dialog */}
       <Dialog open={showExtractDialog} onOpenChange={setShowExtractDialog}>
         <DialogContent>
           <DialogHeader>
@@ -306,7 +447,7 @@ export default function WhatsAppGroups() {
               Extrair Contatos
             </DialogTitle>
             <DialogDescription>
-              Extrair contatos de {selectedGroups.length} grupo(s) selecionado(s). Escolha onde salvar os leads.
+              Extrair contatos de {currentSelected.length} grupo(s) selecionado(s). Escolha onde salvar os leads.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
