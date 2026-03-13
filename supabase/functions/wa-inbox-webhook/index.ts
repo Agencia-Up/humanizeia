@@ -233,6 +233,13 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   const message = messageData.message || messageData;
   const key = messageData.key || {};
 
+  // DEBUG: Log full messageData structure to understand LID format
+  console.log("[wa-inbox-webhook] Full messageData keys:", JSON.stringify(Object.keys(messageData)));
+  console.log("[wa-inbox-webhook] key:", JSON.stringify(key));
+  if (messageData.pushName) console.log("[wa-inbox-webhook] pushName:", messageData.pushName);
+  if (messageData.participant) console.log("[wa-inbox-webhook] participant:", messageData.participant);
+  if (messageData.messageTimestamp) console.log("[wa-inbox-webhook] timestamp:", messageData.messageTimestamp);
+
   if (key.fromMe) {
     return new Response(JSON.stringify({ ok: true, skipped: "outgoing" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
