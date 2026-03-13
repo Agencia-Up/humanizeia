@@ -250,7 +250,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        enqueued: insertedCount,
+        enqueued: enqueuedCount,
         total_contacts: contactArr.length,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
