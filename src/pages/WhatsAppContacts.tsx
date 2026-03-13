@@ -153,6 +153,7 @@ export default function WhatsAppContacts() {
   const [showEditList, setShowEditList] = useState(false);
   const [showAddContacts, setShowAddContacts] = useState(false);
   const [showDeleteList, setShowDeleteList] = useState(false);
+  const [showFileImport, setShowFileImport] = useState(false);
   const [showGoogleMaps, setShowGoogleMaps] = useState(false);
 
   // Form state
