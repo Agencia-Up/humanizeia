@@ -7,7 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   Play, Pause, CheckCircle, XCircle, Clock, Zap, Loader2,
-  RotateCcw, Wand2, Trash2, MoreVertical,
+  RotateCcw, Wand2, Trash2, MoreVertical, Pencil,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -48,9 +48,10 @@ export interface WACampaign {
 interface CampaignCardProps {
   campaign: WACampaign;
   onRefresh: () => void;
+  onEdit?: (campaign: WACampaign) => void;
 }
 
-export function CampaignCard({ campaign, onRefresh }: CampaignCardProps) {
+export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps) {
   const { toast } = useToast();
   const [isStarting, setIsStarting] = useState(false);
   const [isPausing, setIsPausing] = useState(false);
@@ -175,9 +176,14 @@ export function CampaignCard({ campaign, onRefresh }: CampaignCardProps) {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {(campaign.status === 'draft' || campaign.status === 'paused') && (
-                    <DropdownMenuItem onClick={startCampaign} disabled={isStarting}>
-                      <Play className="h-4 w-4 mr-2" /> Iniciar
-                    </DropdownMenuItem>
+                    <>
+                      <DropdownMenuItem onClick={() => onEdit?.(campaign)}>
+                        <Pencil className="h-4 w-4 mr-2" /> Editar
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={startCampaign} disabled={isStarting}>
+                        <Play className="h-4 w-4 mr-2" /> Iniciar
+                      </DropdownMenuItem>
+                    </>
                   )}
                   {campaign.status === 'running' && (
                     <DropdownMenuItem onClick={pauseCampaign} disabled={isPausing}>
