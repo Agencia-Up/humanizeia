@@ -51,7 +51,7 @@ interface CampaignCardProps {
   onEdit?: (campaign: WACampaign) => void;
 }
 
-export function CampaignCard({ campaign, onRefresh }: CampaignCardProps) {
+export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps) {
   const { toast } = useToast();
   const [isStarting, setIsStarting] = useState(false);
   const [isPausing, setIsPausing] = useState(false);

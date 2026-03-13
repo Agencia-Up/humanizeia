@@ -42,7 +42,7 @@ interface WAInstance {
   is_active: boolean;
   health_score: number;
   provider: string;
-  status?: string;
+  status: string;
 }
 
 export default function WhatsAppBroadcast() {
