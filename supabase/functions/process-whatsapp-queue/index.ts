@@ -217,6 +217,8 @@ Deno.serve(async (req) => {
           failed++; processed++; continue;
         }
 
+        selectedInstance = instance;
+
         // --- Generate UNIQUE AI message for EACH contact ---
         let finalMessage = item.message;
         const variationLevel = campaign?.variation_level || "medium";
