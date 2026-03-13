@@ -31,7 +31,7 @@ import LandingPage from "./pages/LandingPage";
 // WhatsAppGroups merged into WhatsAppContacts
 import WhatsAppContacts from "./pages/WhatsAppContacts";
 import WhatsAppBroadcast from "./pages/WhatsAppBroadcast";
-import WhatsAppCampaigns from "./pages/WhatsAppCampaigns";
+// WhatsAppCampaigns removed - merged into WhatsAppBroadcast
 import WhatsAppInbox from "./pages/WhatsAppInbox";
 import WhatsAppAnalytics from "./pages/WhatsAppAnalytics";
 import WhatsAppAutomations from "./pages/WhatsAppAutomations";
