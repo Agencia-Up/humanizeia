@@ -172,7 +172,21 @@ export default function AICreativeStudio() {
   const [selectedImage, setSelectedImage] = useState<GeneratedImage | null>(null);
   const [savingIndex, setSavingIndex] = useState<number | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [referenceImage, setReferenceImage] = useState<string | null>(null);
+  const [referenceFileName, setReferenceFileName] = useState<string | null>(null);
+  const refImageInputRef = useRef<HTMLInputElement>(null);
 
+  const handleReferenceImageSelect = (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast({ title: 'Arquivo muito grande', description: 'Máximo de 10MB.', variant: 'destructive' });
+      return;
+    }
+    setReferenceFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (e) => setReferenceImage(e.target?.result as string);
+    reader.readAsDataURL(file);
+  };
 
   const handleGenerate = async () => {
     if (!prompt) {
