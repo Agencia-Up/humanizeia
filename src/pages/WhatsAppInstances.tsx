@@ -273,8 +273,8 @@ export default function WhatsAppInstances() {
                         </div>
                       )}
                       <div>
-                        <p className="text-muted-foreground text-xs">Mensagens enviadas</p>
-                        <p className="font-medium">{instance.messages_sent ?? 0}</p>
+                        <p className="text-muted-foreground text-xs">Provedor</p>
+                        <p className="font-medium text-xs">{instance.provider === 'meta' ? 'Meta API' : 'Evolution'}</p>
                       </div>
                     </div>
 
