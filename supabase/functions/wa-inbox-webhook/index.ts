@@ -142,12 +142,52 @@ Deno.serve(async (req) => {
           })
           .eq("id", inboxMsg.id);
 
-        // Auto-blacklist on opt-out
-        if (aiCategory.category === "opt-out" && contact?.id) {
-          await supabase
-            .from("wa_contacts")
-            .update({ is_valid: false, tags: ["blacklist"] } as any)
-            .eq("id", contact.id);
+        // Update contact status based on AI category
+        if (contact?.id) {
+          if (aiCategory.category === "opt-out") {
+            // Blacklist contact
+            await supabase
+              .from("wa_contacts")
+              .update({ is_valid: false, tags: ["blacklist"], status: "blacklist" } as any)
+              .eq("id", contact.id);
+          } else if (aiCategory.category === "interested" || aiCategory.category === "question") {
+            // Mark as qualified
+            await supabase
+              .from("wa_contacts")
+              .update({ status: "qualified" } as any)
+              .eq("id", contact.id);
+          }
+        }
+
+        // --- Trigger automations ---
+        const triggerEvent = 
+          aiCategory.category === "interested" ? "lead_interested" :
+          aiCategory.category === "question" ? "lead_question" :
+          aiCategory.category === "opt-out" ? "lead_opt_out" :
+          "lead_responded";
+
+        try {
+          const { data: automations } = await supabase
+            .from("wa_automations")
+            .select("*")
+            .eq("user_id", instance.user_id)
+            .eq("is_active", true)
+            .in("trigger_event", [triggerEvent, "lead_responded"]);
+
+          if (automations && automations.length > 0) {
+            for (const auto of automations) {
+              await executeAutomation(supabase, auto, {
+                phone,
+                contact_name: pushName,
+                contact_id: contact?.id,
+                category: aiCategory.category,
+                message: content,
+                user_id: instance.user_id,
+              });
+            }
+          }
+        } catch (autoErr) {
+          console.error("Automation execution failed:", autoErr);
         }
       } catch (aiErr) {
         console.error("AI categorization failed:", aiErr);
