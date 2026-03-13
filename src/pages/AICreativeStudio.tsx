@@ -226,6 +226,7 @@ export default function AICreativeStudio() {
           secondaryColor: colors[1] || colors[0] || '#8B5CF6',
           styleIntensity: styleIntensity[0],
           variations,
+          referenceImage: referenceImage || undefined,
         }),
       });
 
