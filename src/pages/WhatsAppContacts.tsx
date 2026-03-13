@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { FileImportDialog } from '@/components/whatsapp/FileImportDialog';
 
 interface ContactList {
   id: string;
