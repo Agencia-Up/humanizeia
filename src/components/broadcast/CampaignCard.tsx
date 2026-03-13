@@ -48,6 +48,7 @@ export interface WACampaign {
 interface CampaignCardProps {
   campaign: WACampaign;
   onRefresh: () => void;
+  onEdit?: (campaign: WACampaign) => void;
 }
 
 export function CampaignCard({ campaign, onRefresh }: CampaignCardProps) {
