@@ -100,12 +100,12 @@ export function CampaignCard({ campaign, onRefresh }: CampaignCardProps) {
         .update({ status: 'paused' })
         .eq('id', campaign.id);
 
-      // Cancel pending queue items
+      // Return in-flight items to pending so campaign can resume from where it stopped
       await supabase
         .from('wa_queue')
-        .update({ status: 'cancelled' })
+        .update({ status: 'pending' })
         .eq('campaign_id', campaign.id)
-        .eq('status', 'pending');
+        .in('status', ['processing', 'pending']);
 
       toast({ title: '⏸️ Campanha pausada' });
       onRefresh();
