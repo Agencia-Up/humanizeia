@@ -298,16 +298,35 @@ Deno.serve(async (req) => {
         await simulateReadReceipt(instance, item.phone);
 
         // Mark success
+        const sentAt = new Date().toISOString();
         await supabase
           .from("wa_queue")
           .update({
             status: "sent",
-            sent_at: new Date().toISOString(),
+            sent_at: sentAt,
             message: finalMessage,
             instance_id: instance.id,
             message_hash: messageHash,
           })
           .eq("id", item.id);
+
+        // ===== SAVE TO CRM INBOX =====
+        // Store every outgoing message so conversations appear in the unified inbox
+        const { error: inboxErr } = await supabase.from("wa_inbox").insert({
+          user_id: item.user_id,
+          instance_id: instance.id,
+          phone: item.phone.replace(/\D/g, ""),
+          contact_name: item.contact_name || null,
+          direction: "outgoing",
+          message_type: item.media_type || "text",
+          content: finalMessage,
+          media_url: item.media_url || null,
+          is_read: true,
+          created_at: sentAt,
+        });
+        if (inboxErr) {
+          console.warn("Failed to save outgoing message to inbox:", inboxErr);
+        }
 
         // Update instance counters
         await supabase
