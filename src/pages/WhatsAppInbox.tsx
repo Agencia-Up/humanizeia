@@ -346,8 +346,8 @@ export default function WhatsAppInbox() {
         <div className="flex flex-1 overflow-hidden">
           {/* Conversation List */}
           <div className={`w-full md:w-[360px] border-r flex flex-col ${isMobileShowChat ? 'hidden md:flex' : 'flex'}`}>
-            {/* Search */}
-            <div className="p-3 border-b">
+            {/* Search + Tag Filter */}
+            <div className="p-3 border-b space-y-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -357,6 +357,7 @@ export default function WhatsAppInbox() {
                   onChange={e => setSearchQuery(e.target.value)}
                 />
               </div>
+              <TagFilter activeTags={filterTags} onFilterChange={setFilterTags} />
             </div>
 
             <ScrollArea className="flex-1">
