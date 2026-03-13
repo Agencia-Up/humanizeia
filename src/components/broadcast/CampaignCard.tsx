@@ -176,9 +176,14 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {(campaign.status === 'draft' || campaign.status === 'paused') && (
-                    <DropdownMenuItem onClick={startCampaign} disabled={isStarting}>
-                      <Play className="h-4 w-4 mr-2" /> Iniciar
-                    </DropdownMenuItem>
+                    <>
+                      <DropdownMenuItem onClick={() => onEdit?.(campaign)}>
+                        <Pencil className="h-4 w-4 mr-2" /> Editar
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={startCampaign} disabled={isStarting}>
+                        <Play className="h-4 w-4 mr-2" /> Iniciar
+                      </DropdownMenuItem>
+                    </>
                   )}
                   {campaign.status === 'running' && (
                     <DropdownMenuItem onClick={pauseCampaign} disabled={isPausing}>
