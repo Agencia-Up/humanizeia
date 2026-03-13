@@ -200,7 +200,7 @@ export default function WhatsAppContacts() {
         .from('wa_instances')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .eq('is_active', true);
+        .eq('provider', 'evolution');
       setHasInstance((count ?? 0) > 0);
     })();
   }, [user]);
