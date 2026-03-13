@@ -166,7 +166,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    const rotationCounters = new Map<string, { index: number; count: number }>();
     let processed = 0, succeeded = 0, failed = 0;
 
     // Track recent message hashes to prevent duplicate messages
