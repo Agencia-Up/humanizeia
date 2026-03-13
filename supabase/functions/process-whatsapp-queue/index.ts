@@ -485,7 +485,6 @@ async function selectSmartInstance(
   userInstances: Instance[],
   item: QueueItem,
   campaign: Campaign | null,
-  rotationCounters: Map<string, { index: number; count: number }>,
   failures: Map<string, number>
 ): Promise<Instance | null> {
   const aquecimento = campaign?.regras_aquecimento || {};
