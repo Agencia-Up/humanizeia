@@ -92,6 +92,8 @@ const learningItems = [
 const whatsappItems = [
   { title: 'Inbox', url: '/whatsapp/inbox', icon: Inbox },
   { title: 'Campanhas', url: '/whatsapp/campaigns', icon: Megaphone },
+  { title: 'Analytics', url: '/whatsapp/analytics', icon: BarChart3 },
+  { title: 'Automações', url: '/whatsapp/automations', icon: Zap },
   { title: 'Extrator de Grupos', url: '/whatsapp/groups', icon: Users },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
   { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
