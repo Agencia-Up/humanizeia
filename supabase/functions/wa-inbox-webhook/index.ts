@@ -19,13 +19,6 @@ Deno.serve(async (req) => {
     const challenge = url.searchParams.get("hub.challenge");
 
     if (mode === "subscribe" && token) {
-      // Verify token against stored webhook_verify_token
-      const supabase = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-      );
-
-      // Accept any verify token for now (can be hardened later)
       console.log("[wa-inbox-webhook] Meta webhook verification request received");
       return new Response(challenge || "", {
         status: 200,
@@ -43,7 +36,6 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Detect if this is a Meta webhook or Evolution webhook
     if (body.object === "whatsapp_business_account") {
       return await handleMetaWebhook(supabase, body);
     } else {
@@ -75,7 +67,6 @@ async function handleMetaWebhook(supabase: any, body: any) {
 
       if (!phoneNumberId) continue;
 
-      // Find instance by phone_number_id in meta_config
       const { data: instances } = await supabase
         .from("wa_instances")
         .select("id, user_id")
@@ -88,7 +79,6 @@ async function handleMetaWebhook(supabase: any, body: any) {
         continue;
       }
 
-      // Handle incoming messages
       const messages = value.messages || [];
       for (const msg of messages) {
         const phone = msg.from;
@@ -104,7 +94,6 @@ async function handleMetaWebhook(supabase: any, body: any) {
         } else if (msg.type === "image") {
           messageType = "image";
           content = msg.image?.caption || "";
-          // Media URL needs to be fetched via Meta API (msg.image.id)
         } else if (msg.type === "video") {
           messageType = "video";
           content = msg.video?.caption || "";
@@ -117,7 +106,6 @@ async function handleMetaWebhook(supabase: any, body: any) {
           messageType = "sticker";
         }
 
-        // Find existing contact
         const { data: contact } = await supabase
           .from("wa_contacts")
           .select("id")
@@ -126,7 +114,6 @@ async function handleMetaWebhook(supabase: any, body: any) {
           .limit(1)
           .maybeSingle();
 
-        // Insert into wa_inbox
         const { data: inboxMsg, error: insertErr } = await supabase
           .from("wa_inbox")
           .insert({
@@ -150,13 +137,11 @@ async function handleMetaWebhook(supabase: any, body: any) {
           continue;
         }
 
-        // AI categorization
         if (content && content.trim().length > 0) {
           await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id);
         }
       }
 
-      // Handle delivery status updates
       const statuses = value.statuses || [];
       for (const status of statuses) {
         await handleMetaDeliveryStatus(supabase, instance, status);
@@ -190,7 +175,7 @@ async function handleMetaDeliveryStatus(supabase: any, instance: any, status: an
       queueStatus = "failed";
       break;
     case "sent":
-      return; // Already tracked
+      return;
   }
 
   if (!queueStatus) return;
@@ -403,7 +388,7 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
   }
 }
 
-// ====================== SHARED: AI CATEGORIZATION + AUTOMATIONS ======================
+// ====================== SHARED: AI CATEGORIZATION + AUTOMATIONS + AI AGENT ======================
 
 async function categorizeAndAutomate(
   supabase: any,
@@ -436,6 +421,9 @@ async function categorizeAndAutomate(
       }
     }
 
+    // ===== AI Agent Auto-Reply =====
+    await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category);
+
     const triggerEvent =
       aiCategory.category === "interested" ? "lead_interested" :
       aiCategory.category === "question" ? "lead_question" :
@@ -463,6 +451,204 @@ async function categorizeAndAutomate(
     }
   } catch (aiErr) {
     console.error("AI categorization failed:", aiErr);
+  }
+}
+
+// ====================== AI AGENT AUTO-REPLY ======================
+
+async function handleAIAgentReply(
+  supabase: any,
+  instance: any,
+  content: string,
+  phone: string,
+  pushName: string | null,
+  category: string,
+) {
+  try {
+    // Find active AI agent for this instance or user
+    const { data: agents } = await supabase
+      .from("wa_ai_agents")
+      .select("*")
+      .eq("user_id", instance.user_id)
+      .eq("is_active", true)
+      .or(`instance_id.eq.${instance.id},instance_id.is.null`);
+
+    if (!agents || agents.length === 0) return;
+
+    // Prefer instance-specific agent, fallback to global
+    const agent = agents.find((a: any) => a.instance_id === instance.id) || agents[0];
+
+    // Check blocked categories
+    const blockedCategories = agent.blocked_categories || ["opt-out", "spam"];
+    if (blockedCategories.includes(category)) {
+      console.log(`[ai-agent] Skipping reply for blocked category: ${category}`);
+      return;
+    }
+
+    // Check business hours
+    if (agent.business_hours_only) {
+      const now = new Date();
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+      const currentTime = hours * 60 + minutes;
+      
+      const [startH, startM] = (agent.business_hours_start || "08:00").split(":").map(Number);
+      const [endH, endM] = (agent.business_hours_end || "18:00").split(":").map(Number);
+      const startTime = startH * 60 + startM;
+      const endTime = endH * 60 + endM;
+
+      if (currentTime < startTime || currentTime > endTime) {
+        console.log("[ai-agent] Outside business hours, skipping");
+        return;
+      }
+    }
+
+    // Fetch conversation history for context
+    const { data: history } = await supabase
+      .from("wa_inbox")
+      .select("direction, content, created_at")
+      .eq("user_id", instance.user_id)
+      .eq("phone", phone)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    const conversationContext = (history || [])
+      .reverse()
+      .map((m: any) => `${m.direction === "incoming" ? "Cliente" : "Atendente"}: ${m.content}`)
+      .join("\n");
+
+    // Generate AI reply
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      console.error("[ai-agent] LOVABLE_API_KEY not configured");
+      return;
+    }
+
+    const systemPrompt = agent.system_prompt + `\n\nContexto da conversa:\n${conversationContext}\n\nNome do cliente: ${pushName || "Desconhecido"}`;
+
+    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: agent.model || "google/gemini-3-flash-preview",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content },
+        ],
+        temperature: parseFloat(agent.temperature) || 0.7,
+        max_tokens: agent.max_tokens || 500,
+      }),
+    });
+
+    if (!aiResponse.ok) {
+      const errStatus = aiResponse.status;
+      if (errStatus === 429) {
+        console.error("[ai-agent] Rate limited, skipping reply");
+      } else if (errStatus === 402) {
+        console.error("[ai-agent] Payment required for AI gateway");
+      } else {
+        console.error(`[ai-agent] AI error: ${errStatus}`);
+      }
+      return;
+    }
+
+    const aiData = await aiResponse.json();
+    const replyText = aiData.choices?.[0]?.message?.content?.trim();
+
+    if (!replyText) {
+      console.log("[ai-agent] Empty AI response, skipping");
+      return;
+    }
+
+    // Simulate typing delay
+    const delay = agent.reply_delay_ms || 3000;
+    await new Promise(resolve => setTimeout(resolve, Math.min(delay, 10000)));
+
+    // Send the reply via Evolution API
+    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+
+    // Get instance details for sending
+    const { data: instanceData } = await supabase
+      .from("wa_instances")
+      .select("instance_name, provider, api_url, api_key_encrypted")
+      .eq("id", instance.id)
+      .single();
+
+    if (!instanceData) return;
+
+    let sendSuccess = false;
+
+    if (instanceData.provider === "evolution") {
+      const apiUrl = (evolutionApiUrl || instanceData.api_url).replace(/\/+$/, "");
+      const apiKey = evolutionApiKey || instanceData.api_key_encrypted;
+
+      const sendRes = await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: apiKey,
+        },
+        body: JSON.stringify({ number: phone, text: replyText }),
+      });
+
+      sendSuccess = sendRes.ok;
+      if (!sendSuccess) {
+        console.error(`[ai-agent] Evolution send error: ${sendRes.status}`);
+      }
+    } else if (instanceData.provider === "meta") {
+      // Meta API send
+      const metaConfig = instanceData.meta_config || {};
+      const phoneNumberId = metaConfig.phone_number_id;
+      const accessToken = metaConfig.access_token_encrypted || instanceData.api_key_encrypted;
+
+      if (phoneNumberId && accessToken) {
+        const sendRes = await fetch(
+          `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              to: phone,
+              type: "text",
+              text: { body: replyText },
+            }),
+          }
+        );
+        sendSuccess = sendRes.ok;
+      }
+    }
+
+    if (sendSuccess) {
+      // Save outgoing message to inbox
+      await supabase.from("wa_inbox").insert({
+        user_id: instance.user_id,
+        instance_id: instance.id,
+        phone,
+        direction: "outgoing",
+        message_type: "text",
+        content: replyText,
+        is_read: true,
+        contact_name: pushName,
+      });
+
+      // Increment agent reply count
+      await supabase
+        .from("wa_ai_agents")
+        .update({ total_replies: (agent.total_replies || 0) + 1, updated_at: new Date().toISOString() })
+        .eq("id", agent.id);
+
+      console.log(`[ai-agent] Reply sent to ${phone}: ${replyText.substring(0, 50)}...`);
+    }
+  } catch (err) {
+    console.error("[ai-agent] Auto-reply error:", err);
   }
 }
 
