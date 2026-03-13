@@ -49,6 +49,7 @@ interface WaInstance {
   id: string;
   instance_name: string;
   friendly_name: string | null;
+  phone_number: string | null;
   status: string;
   is_active: boolean;
 }
