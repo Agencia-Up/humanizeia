@@ -166,23 +166,111 @@ async function extractContacts(
 
         const data = await res.json();
         participants = data?.participants || data || [];
-        console.log(`[wa-extract-groups] Participants for ${groupId} fetched via ${cfg.instanceName}`);
+        console.log(`[wa-extract-groups] Participants for ${groupId} fetched via ${cfg.instanceName}, count=${Array.isArray(participants) ? participants.length : 0}`);
+
+        // Try to fetch profile names for participants
+        const participantPhones: string[] = [];
+        for (const p of (Array.isArray(participants) ? participants : [])) {
+          const rawPhone = p.phoneNumber || p.id || '';
+          const phone = rawPhone.replace(/@.*$/, '').replace(/\D/g, '');
+          if (phone && phone.length >= 10) participantPhones.push(phone);
+        }
+
+        // Fetch contact profiles to get names
+        let profileMap = new Map<string, string>();
+        if (participantPhones.length > 0) {
+          // Method 1: Try chat/fetchContacts (batch)
+          try {
+            const profileRes = await fetch(`${cBaseUrl}/chat/fetchContacts/${cfg.instanceName}`, {
+              method: 'POST',
+              headers: { 'apikey': cfg.apiKey, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ numbers: participantPhones }),
+            });
+            if (profileRes.ok) {
+              const profileData = await profileRes.json();
+              const contacts = Array.isArray(profileData) ? profileData : (profileData?.contacts || profileData?.data || []);
+              for (const c of contacts) {
+                const cPhone = (c.id || c.jid || c.number || c.remoteJid || '').replace(/@.*$/, '').replace(/\D/g, '');
+                const cName = c.pushName || c.name || c.notify || c.verifiedName || c.profileName || null;
+                if (cPhone && cName) profileMap.set(cPhone, cName);
+              }
+              console.log(`[wa-extract-groups] fetchContacts: ${profileMap.size} names`);
+            } else {
+              console.warn(`[wa-extract-groups] fetchContacts returned ${profileRes.status}`);
+              await profileRes.text();
+            }
+          } catch (profileErr) {
+            console.warn(`[wa-extract-groups] fetchContacts failed:`, profileErr);
+          }
+
+          // Method 2: Try contact/find (batch)
+          if (profileMap.size === 0) {
+            try {
+              const findRes = await fetch(`${cBaseUrl}/contact/find/${cfg.instanceName}`, {
+                method: 'POST',
+                headers: { 'apikey': cfg.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ numbers: participantPhones.slice(0, 100) }),
+              });
+              if (findRes.ok) {
+                const findData = await findRes.json();
+                const entries = Array.isArray(findData) ? findData : (findData?.contacts || findData?.data || []);
+                for (const c of entries) {
+                  const cPhone = (c.id || c.jid || c.number || c.wuid || '').replace(/@.*$/, '').replace(/\D/g, '');
+                  const cName = c.pushName || c.name || c.notify || c.verifiedName || c.displayName || null;
+                  if (cPhone && cName) profileMap.set(cPhone, cName);
+                }
+                console.log(`[wa-extract-groups] contact/find: ${profileMap.size} names`);
+              } else {
+                await findRes.text();
+              }
+            } catch { /* skip */ }
+          }
+
+          // Method 3: Try individual fetchProfile in parallel batches of 10 (max 50 contacts)
+          if (profileMap.size === 0) {
+            const phonesToCheck = participantPhones.slice(0, 50);
+            const batchSize = 10;
+            for (let bi = 0; bi < phonesToCheck.length; bi += batchSize) {
+              const batch = phonesToCheck.slice(bi, bi + batchSize);
+              const promises = batch.map(async (phone) => {
+                try {
+                  const profRes = await fetch(`${cBaseUrl}/chat/fetchProfile/${cfg.instanceName}`, {
+                    method: 'POST',
+                    headers: { 'apikey': cfg.apiKey, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ number: phone }),
+                  });
+                  if (profRes.ok) {
+                    const profData = await profRes.json();
+                    const pName = profData?.name || profData?.pushName || profData?.notify || profData?.verifiedName || profData?.profileName || null;
+                    if (pName) profileMap.set(phone, pName);
+                  } else {
+                    await profRes.text();
+                  }
+                } catch { /* skip */ }
+              });
+              await Promise.all(promises);
+            }
+            console.log(`[wa-extract-groups] fetchProfile parallel: ${profileMap.size} names`);
+          }
+        }
+
+        // Build contacts list
+        for (const p of (Array.isArray(participants) ? participants : [])) {
+          // phoneNumber field has the real number (e.g. "5511981110065@s.whatsapp.net")
+          const rawPhone = p.phoneNumber || p.id || '';
+          const phone = rawPhone.replace(/@.*$/, '').replace(/\D/g, '');
+          if (phone && phone.length >= 10) {
+            const name = p.pushName || p.name || p.notify || p.verifiedName || profileMap.get(phone) || null;
+            allContacts.push({ phone, name, group_name: groupName });
+          }
+        }
+
         break;
       }
 
       if (!Array.isArray(participants) || participants.length === 0) {
-        continue;
-      }
-
-      for (const p of participants) {
-        const phone = (p.id || p).replace(/@.*$/, '');
-        if (phone && phone.length >= 10) {
-          allContacts.push({
-            phone,
-            name: p.name || p.pushName || null,
-            group_name: groupName,
-          });
-        }
+        // Only skip if we got no participants at all from any config
+        if (allContacts.filter(c => c.group_name === (groupData?.subject || groupId)).length === 0) continue;
       }
     } catch (err) {
       console.error(`Error processing group ${groupId}:`, err);
