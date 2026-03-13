@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Send, AlertTriangle, Wand2, Clock, RotateCcw } from 'lucide-react';
+import { Loader2, Send, AlertTriangle, Wand2, Clock, RotateCcw, ImagePlus, Video, X, Upload } from 'lucide-react';
 
 interface ContactList {
   id: string;
