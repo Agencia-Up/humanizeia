@@ -507,6 +507,7 @@ async function handleAIAgentReply(
   phone: string,
   pushName: string | null,
   category: string,
+  replyTarget?: string,
 ) {
   try {
     // Find active AI agent for this instance or user
