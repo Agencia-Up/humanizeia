@@ -215,6 +215,7 @@ Não numere as variações. Não inclua explicações adicionais.`
       media_url: c.media_url || '',
       media_type: c.media_type || '',
       tags: c.tags || [],
+      variation_level: (c as any).variation_level || 'medium',
     });
     setDialogOpen(true);
   };
