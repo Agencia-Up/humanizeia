@@ -166,7 +166,9 @@ async function extractContacts(
 
         const data = await res.json();
         participants = data?.participants || data || [];
-        console.log(`[wa-extract-groups] Participants for ${groupId} fetched via ${cfg.instanceName}`);
+        // Log raw structure of first 3 participants for debugging
+        const sample = (Array.isArray(participants) ? participants : []).slice(0, 3);
+        console.log(`[wa-extract-groups] Participants for ${groupId} fetched via ${cfg.instanceName}, count=${Array.isArray(participants) ? participants.length : 0}, sample:`, JSON.stringify(sample));
         break;
       }
 
