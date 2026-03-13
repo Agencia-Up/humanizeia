@@ -1,25 +1,85 @@
 project_id = "qrxsiixufdiemwwyhxvd"
 
-[functions.save-campaign]
+[functions.academy-ai]
+verify_jwt = false
+
+[functions.apply-theme]
+verify_jwt = false
+
+[functions.campaign-executor]
+verify_jwt = false
+
+[functions.claude-chat]
+verify_jwt = false
+
+[functions.claude-strategy]
+verify_jwt = false
+
+[functions.create-evolution-instance]
+verify_jwt = false
+
+[functions.edit-image]
 verify_jwt = false
 
 [functions.enqueue-campaign]
 verify_jwt = false
 
+[functions.enviar-report-midas]
+verify_jwt = false
+
+[functions.extract-google-maps-leads]
+verify_jwt = false
+
+[functions.generate-creative]
+verify_jwt = false
+
+[functions.get-evolution-qrcode]
+verify_jwt = false
+
+[functions.google-ads-api]
+verify_jwt = false
+
+[functions.google-ads-oauth]
+verify_jwt = false
+
+[functions.meta-api]
+verify_jwt = false
+
+[functions.meta-oauth]
+verify_jwt = false
+
 [functions.process-whatsapp-queue]
+verify_jwt = false
+
+[functions.remove-bg]
+verify_jwt = false
+
+[functions.sanitize-contacts]
+verify_jwt = false
+
+[functions.save-campaign]
+verify_jwt = false
+
+[functions.send-whatsapp-report]
+verify_jwt = false
+
+[functions.shopify-integration]
+verify_jwt = false
+
+[functions.test-evolution-connection]
+verify_jwt = false
+
+[functions.test-integration]
+verify_jwt = false
+
+[functions.tiktok-oauth]
+verify_jwt = false
+
+[functions.wa-extract-groups]
 verify_jwt = false
 
 [functions.wa-inbox-webhook]
 verify_jwt = false
 
 [functions.wa-send-reply]
-verify_jwt = false
-
-[functions.extract-google-maps-leads]
-verify_jwt = false
-
-[functions.wa-extract-groups]
-verify_jwt = false
-
-[functions.sanitize-contacts]
 verify_jwt = false
