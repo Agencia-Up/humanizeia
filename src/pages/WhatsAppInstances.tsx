@@ -47,8 +47,6 @@ interface WaInstance {
   created_at: string | null;
   updated_at: string | null;
   failover_status: string | null;
-  messages_sent: number | null;
-  daily_limit: number | null;
 }
 
 function getStatusConfig(instance: WaInstance) {
