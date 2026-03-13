@@ -59,6 +59,8 @@ interface Campaign {
   regras_aquecimento: any;
   started_at: string | null;
   variation_level: string;
+  sent_count: number;
+  instance_id: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -103,7 +105,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level")
+        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -164,13 +166,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    const rotationCounters = new Map<string, { index: number; count: number }>();
     let processed = 0, succeeded = 0, failed = 0;
 
     // Track recent message hashes to prevent duplicate messages
     const recentMessageHashes = new Set<string>();
 
     for (const item of activeItems) {
+      let selectedInstance: Instance | null = null;
       try {
         // ===== RE-CHECK campaign status before EVERY single message =====
         if (item.campaign_id) {
@@ -191,11 +193,22 @@ Deno.serve(async (req) => {
           }
         }
 
-        await supabase
+        const { data: lockRow, error: lockErr } = await supabase
           .from("wa_queue")
           .update({ status: "processing" })
           .eq("id", item.id)
-          .eq("status", "pending");
+          .eq("status", "pending")
+          .select("id")
+          .maybeSingle();
+
+        if (lockErr) {
+          throw new Error(`Failed to lock queue item: ${lockErr.message}`);
+        }
+
+        // Another worker already took this item
+        if (!lockRow) {
+          continue;
+        }
 
         const campaign = item.campaign_id ? campaignMap.get(item.campaign_id) : null;
         const userInstances = instanceMap.get(item.user_id);
@@ -207,13 +220,15 @@ Deno.serve(async (req) => {
 
         // --- Smart Switcher: Instance Selection ---
         const instance = await selectSmartInstance(
-          supabase, userInstances, item, campaign, rotationCounters, instanceFailures
+          userInstances, item, campaign, instanceFailures
         );
 
         if (!instance) {
           await markFailed(supabase, item.id, "All instances circuit-broken or at warmup limit");
           failed++; processed++; continue;
         }
+
+        selectedInstance = instance;
 
         // --- Generate UNIQUE AI message for EACH contact ---
         let finalMessage = item.message;
@@ -289,7 +304,24 @@ Deno.serve(async (req) => {
         // Step 4: Review before hitting send
         await sleep(800 + Math.random() * 2000);
 
-        // Step 5: SEND
+        // Step 5: SEND (re-check pause right before sending)
+        if (item.campaign_id) {
+          const { data: statusBeforeSend } = await supabase
+            .from("wa_campaigns")
+            .select("status")
+            .eq("id", item.campaign_id)
+            .single();
+
+          if (statusBeforeSend && (statusBeforeSend.status === "paused" || statusBeforeSend.status === "cancelled")) {
+            await supabase
+              .from("wa_queue")
+              .update({ status: "pending" })
+              .eq("id", item.id);
+            processed++;
+            continue;
+          }
+        }
+
         await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
         instanceFailures.set(instance.id, 0);
 
@@ -348,6 +380,7 @@ Deno.serve(async (req) => {
         if (item.campaign_id) {
           const { error: rpcErr } = await supabase.rpc("increment_campaign_sent", { cid: item.campaign_id });
           if (rpcErr) console.error("increment_campaign_sent failed:", rpcErr);
+          if (campaign) campaign.sent_count = (campaign.sent_count || 0) + 1;
         }
 
         succeeded++;
@@ -378,38 +411,32 @@ Deno.serve(async (req) => {
         const errMsg = err instanceof Error ? err.message : "Unknown error";
 
         // Circuit breaker
-        const rotKey = item.campaign_id || item.user_id;
-        const rot = rotationCounters.get(rotKey);
-        const userInstances = instanceMap.get(item.user_id);
-        if (rot && userInstances) {
-          const failedInstance = userInstances[rot.index % userInstances.length];
-          if (failedInstance) {
-            const currentFailures = (instanceFailures.get(failedInstance.id) || 0) + 1;
-            instanceFailures.set(failedInstance.id, currentFailures);
-            if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
-              console.warn(`Circuit breaker triggered for instance ${failedInstance.id}`);
-              const { error: healthErr } = await supabase.rpc("decrement_instance_health", {
-                instance_id: failedInstance.id,
-                decrement_value: 30,
-              });
-              if (healthErr) console.error("Health decrement failed:", healthErr);
+        if (selectedInstance) {
+          const currentFailures = (instanceFailures.get(selectedInstance.id) || 0) + 1;
+          instanceFailures.set(selectedInstance.id, currentFailures);
+          if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+            console.warn(`Circuit breaker triggered for instance ${selectedInstance.id}`);
+            const { error: healthErr } = await supabase.rpc("decrement_instance_health", {
+              instance_id: selectedInstance.id,
+              decrement_value: 30,
+            });
+            if (healthErr) console.error("Health decrement failed:", healthErr);
 
-              try {
-                const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-                await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-                  },
-                  body: JSON.stringify({
-                    instance_id: failedInstance.id,
-                    user_id: item.user_id,
-                  }),
-                });
-              } catch (failoverErr) {
-                console.error("Failover trigger failed:", failoverErr);
-              }
+            try {
+              const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+              await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                },
+                body: JSON.stringify({
+                  instance_id: selectedInstance.id,
+                  user_id: item.user_id,
+                }),
+              });
+            } catch (failoverErr) {
+              console.error("Failover trigger failed:", failoverErr);
             }
           }
         }
@@ -465,11 +492,9 @@ Deno.serve(async (req) => {
 // ====================== SMART SWITCHER ======================
 
 async function selectSmartInstance(
-  supabase: any,
   userInstances: Instance[],
   item: QueueItem,
   campaign: Campaign | null,
-  rotationCounters: Map<string, { index: number; count: number }>,
   failures: Map<string, number>
 ): Promise<Instance | null> {
   const aquecimento = campaign?.regras_aquecimento || {};
@@ -477,26 +502,23 @@ async function selectSmartInstance(
   const warmupRampDays = aquecimento.dias_rampa || 7;
 
   const rodizio = campaign?.regras_rodizio || {};
-  const rotationLimit = rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10;
+  const rotationLimit = Math.max(1, rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10);
   const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
-  const rotKey = item.campaign_id || item.user_id;
 
-  if (!rotationCounters.has(rotKey)) {
-    rotationCounters.set(rotKey, { index: 0, count: 0 });
-  }
-  const rot = rotationCounters.get(rotKey)!;
+  // If campaign is pinned to one instance, respect it
+  const scopedInstances = campaign?.instance_id
+    ? userInstances.filter((inst) => inst.id === campaign.instance_id)
+    : userInstances;
 
-  if (rot.count >= rotationLimit) {
-    rot.index = (rot.index + 1) % userInstances.length;
-    rot.count = 0;
-    if (pauseBetweenInstances > 0) await sleep(pauseBetweenInstances * 1000);
+  if (scopedInstances.length === 0) {
+    return null;
   }
 
   const isContactCold = !item.contact_metadata?.last_message_at;
 
-  const sortedInstances = [...userInstances].sort((a, b) => {
+  const sortedInstances = [...scopedInstances].sort((a, b) => {
     if (isContactCold) {
-      const totalHealth = userInstances.reduce((sum, inst) => sum + inst.health_score, 0);
+      const totalHealth = scopedInstances.reduce((sum, inst) => sum + inst.health_score, 0);
       if (totalHealth > 0) {
         return (b.health_score / totalHealth) - (a.health_score / totalHealth);
       }
@@ -507,10 +529,15 @@ async function selectSmartInstance(
     return bTime - aTime;
   });
 
+  // Persistent rotation based on already sent messages from database
+  const sentCount = Math.max(0, campaign?.sent_count || 0);
+  const rotationCycle = Math.floor(sentCount / rotationLimit);
+  const startIndex = rotationCycle % sortedInstances.length;
+
   let instance: Instance | null = null;
 
   for (let attempts = 0; attempts < sortedInstances.length; attempts++) {
-    const candidate = sortedInstances[(rot.index + attempts) % sortedInstances.length];
+    const candidate = sortedInstances[(startIndex + attempts) % sortedInstances.length];
     const candidateFailures = failures.get(candidate.id) || 0;
 
     if (candidateFailures >= CIRCUIT_BREAKER_THRESHOLD) continue;
@@ -534,11 +561,14 @@ async function selectSmartInstance(
     }
 
     instance = candidate;
-    rot.index = (rot.index + attempts) % sortedInstances.length;
     break;
   }
 
-  if (instance) rot.count++;
+  // Optional pause when crossing an instance boundary
+  if (instance && pauseBetweenInstances > 0 && sentCount > 0 && sentCount % rotationLimit === 0) {
+    await sleep(pauseBetweenInstances * 1000);
+  }
+
   return instance;
 }
 
