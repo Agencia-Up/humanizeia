@@ -395,7 +395,7 @@ export default function WhatsAppInbox() {
                           </span>
                         </div>
                         <div className="flex items-center justify-between mt-0.5">
-                          <p className="text-xs text-muted-foreground truncate max-w-[200px]">
+                          <p className="text-xs text-muted-foreground truncate max-w-[180px]">
                             {conv.last_message || '📎 Mídia'}
                           </p>
                           <div className="flex items-center gap-1.5 shrink-0 ml-2">
@@ -411,6 +411,17 @@ export default function WhatsAppInbox() {
                             )}
                           </div>
                         </div>
+                        {/* Contact Tags */}
+                        {contactTags[conv.phone] && contactTags[conv.phone].length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {contactTags[conv.phone].slice(0, 3).map(tag => (
+                              <TagBadge key={tag} name={tag} color="#3b82f6" size="sm" />
+                            ))}
+                            {contactTags[conv.phone].length > 3 && (
+                              <span className="text-[10px] text-muted-foreground">+{contactTags[conv.phone].length - 3}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </button>
