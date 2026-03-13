@@ -64,6 +64,49 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
     .filter(l => selectedLists.includes(l.id))
     .reduce((sum, l) => sum + l.contact_count, 0);
 
+  const handleMediaSelect = (file: File) => {
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    if (!isImage && !isVideo) {
+      toast({ title: 'Formato inválido', description: 'Envie uma imagem (PNG, JPG, WebP) ou vídeo (MP4, MOV)', variant: 'destructive' });
+      return;
+    }
+    const maxSize = isVideo ? 16 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast({ title: 'Arquivo muito grande', description: `Máximo ${isVideo ? '16' : '5'}MB`, variant: 'destructive' });
+      return;
+    }
+    setMediaFile(file);
+    setMediaType(isImage ? 'image' : 'video');
+    setMediaPreview(URL.createObjectURL(file));
+  };
+
+  const removeMedia = () => {
+    if (mediaPreview) URL.revokeObjectURL(mediaPreview);
+    setMediaFile(null);
+    setMediaPreview(null);
+    setMediaType(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const uploadMedia = async (): Promise<string | null> => {
+    if (!mediaFile) return null;
+    setIsUploadingMedia(true);
+    try {
+      const ext = mediaFile.name.split('.').pop() || 'bin';
+      const path = `campaign-media/${userId}/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from('creatives').upload(path, mediaFile, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from('creatives').getPublicUrl(path);
+      return publicUrl;
+    } catch (err: any) {
+      toast({ title: 'Erro no upload', description: err.message, variant: 'destructive' });
+      return null;
+    } finally {
+      setIsUploadingMedia(false);
+    }
+  };
+
   const handleCreate = async () => {
     if (!name.trim() || !messageTemplate.trim() || selectedLists.length === 0) return;
     setIsSaving(true);
