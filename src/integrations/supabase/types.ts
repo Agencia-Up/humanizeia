@@ -2133,6 +2133,8 @@ export type Database = {
         Row: {
           campaign_id: string | null
           contact_id: string | null
+          contact_metadata: Json | null
+          contact_name: string | null
           created_at: string
           delivered_at: string | null
           error_message: string | null
@@ -2141,7 +2143,9 @@ export type Database = {
           media_type: string | null
           media_url: string | null
           message: string
+          message_hash: string | null
           phone: string
+          read_at: string | null
           retry_count: number
           scheduled_for: string | null
           sent_at: string | null
@@ -2151,6 +2155,8 @@ export type Database = {
         Insert: {
           campaign_id?: string | null
           contact_id?: string | null
+          contact_metadata?: Json | null
+          contact_name?: string | null
           created_at?: string
           delivered_at?: string | null
           error_message?: string | null
@@ -2159,7 +2165,9 @@ export type Database = {
           media_type?: string | null
           media_url?: string | null
           message: string
+          message_hash?: string | null
           phone: string
+          read_at?: string | null
           retry_count?: number
           scheduled_for?: string | null
           sent_at?: string | null
@@ -2169,6 +2177,8 @@ export type Database = {
         Update: {
           campaign_id?: string | null
           contact_id?: string | null
+          contact_metadata?: Json | null
+          contact_name?: string | null
           created_at?: string
           delivered_at?: string | null
           error_message?: string | null
@@ -2177,7 +2187,9 @@ export type Database = {
           media_type?: string | null
           media_url?: string | null
           message?: string
+          message_hash?: string | null
           phone?: string
+          read_at?: string | null
           retry_count?: number
           scheduled_for?: string | null
           sent_at?: string | null
@@ -2299,7 +2311,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      decrement_instance_health: {
+        Args: { decrement_value?: number; instance_id: string }
+        Returns: undefined
+      }
       get_user_email: { Args: { _user_id: string }; Returns: string }
+      increment_campaign_delivered: {
+        Args: { cid: string }
+        Returns: undefined
+      }
       increment_campaign_sent: { Args: { cid: string }; Returns: undefined }
       is_org_member: {
         Args: { _organization_id: string; _user_id: string }

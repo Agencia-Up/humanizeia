@@ -14,10 +14,19 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
 
-    // Evolution API webhook payload structure
     const event = body.event;
     const instanceName = body.instance;
     const messageData = body.data;
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    // --- Handle delivery status updates (message.update) ---
+    if (event === "messages.update" && messageData) {
+      return await handleDeliveryStatus(supabase, instanceName, messageData);
+    }
 
     // Only process incoming messages
     if (event !== "messages.upsert" || !messageData) {
@@ -25,11 +34,6 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     // Find the instance to get user_id
     const { data: instance, error: instErr } = await supabase
@@ -125,7 +129,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // --- AI Categorization (async, non-blocking for webhook response) ---
+    // --- AI Categorization ---
     if (content && content.trim().length > 0) {
       try {
         const aiCategory = await categorizeWithAI(content);
@@ -147,7 +151,6 @@ Deno.serve(async (req) => {
         }
       } catch (aiErr) {
         console.error("AI categorization failed:", aiErr);
-        // Non-critical: message is saved, AI categorization just didn't work
       }
     }
 
@@ -163,6 +166,113 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+// --- Handle delivery status updates ---
+async function handleDeliveryStatus(supabase: any, instanceName: string, messageData: any) {
+  try {
+    // Evolution API sends updates as array or single object
+    const updates = Array.isArray(messageData) ? messageData : [messageData];
+
+    for (const update of updates) {
+      const key = update.key || {};
+      const status = update.status;
+      const remoteMessageId = key.id;
+
+      if (!remoteMessageId || !status) continue;
+
+      // Map Evolution API status to our status
+      let queueStatus: string | null = null;
+      let deliveredAt: string | null = null;
+      let readAt: string | null = null;
+
+      switch (status) {
+        case "DELIVERY_ACK":
+        case "delivered":
+        case 3:
+          queueStatus = "delivered";
+          deliveredAt = new Date().toISOString();
+          break;
+        case "READ":
+        case "read":
+        case 4:
+          queueStatus = "read";
+          readAt = new Date().toISOString();
+          break;
+        case "PLAYED":
+        case 5:
+          queueStatus = "read";
+          readAt = new Date().toISOString();
+          break;
+        case "ERROR":
+        case "failed":
+        case 0:
+          queueStatus = "failed";
+          break;
+        case "SERVER_ACK":
+        case "sent":
+        case 1:
+        case 2:
+          // Already tracked as "sent", no update needed
+          continue;
+        default:
+          console.log("Unknown delivery status:", status);
+          continue;
+      }
+
+      if (!queueStatus) continue;
+
+      // Find queue item by phone (from remoteJid)
+      const phone = (key.remoteJid || "").replace("@s.whatsapp.net", "").replace("@g.us", "");
+
+      if (!phone) continue;
+
+      // Find the instance
+      const { data: instance } = await supabase
+        .from("wa_instances")
+        .select("id, user_id")
+        .eq("instance_name", instanceName)
+        .single();
+
+      if (!instance) continue;
+
+      // Update the most recent queue item for this phone
+      const updateData: any = { status: queueStatus };
+      if (deliveredAt) updateData.delivered_at = deliveredAt;
+      if (readAt) updateData.read_at = readAt;
+
+      const { data: updatedItems } = await supabase
+        .from("wa_queue")
+        .update(updateData)
+        .eq("phone", phone)
+        .eq("instance_id", instance.id)
+        .in("status", ["sent", "delivered"])
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .select("campaign_id");
+
+      // Increment campaign delivered_count if delivery confirmed
+      if (deliveredAt && updatedItems && updatedItems.length > 0) {
+        const campaignId = updatedItems[0].campaign_id;
+        if (campaignId) {
+          await supabase.rpc("increment_campaign_delivered", { cid: campaignId }).catch(() => {
+            // Function may not exist yet, non-critical
+          });
+        }
+      }
+    }
+
+    return new Response(
+      JSON.stringify({ ok: true, event: "delivery_status_processed" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  } catch (err) {
+    console.error("Delivery status processing error:", err);
+    return new Response(
+      JSON.stringify({ ok: true, warning: "delivery status processing failed" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+}
 
 async function categorizeWithAI(content: string): Promise<{ category: string; sentiment: string }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");

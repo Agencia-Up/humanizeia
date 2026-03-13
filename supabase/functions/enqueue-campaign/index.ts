@@ -26,15 +26,15 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
+    // Fix: use getUser instead of getClaims (which doesn't exist in SDK)
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData?.user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const userId = claimsData.claims.sub as string;
+    const userId = userData.user.id;
 
     const { campaign_id } = await req.json();
     if (!campaign_id) {
@@ -79,10 +79,10 @@ Deno.serve(async (req) => {
     const minDelay = delayRules.min || campaign.min_delay_seconds || 5;
     const maxDelay = delayRules.max || campaign.max_delay_seconds || 15;
 
-    // Fetch all contacts from selected lists
+    // Fetch all contacts from selected lists WITH metadata for AI personalization
     const { data: contacts, error: contactsErr } = await supabase
       .from("wa_contacts")
-      .select("id, phone, name")
+      .select("id, phone, name, metadata")
       .in("list_id", listIds)
       .eq("is_valid", true)
       .eq("user_id", userId);
@@ -102,17 +102,24 @@ Deno.serve(async (req) => {
     }
 
     // Deduplicate by phone
-    const uniqueContacts = new Map<string, { id: string; phone: string; name: string | null }>();
+    const uniqueContacts = new Map<string, { id: string; phone: string; name: string | null; metadata: any }>();
     for (const c of contacts) {
       const normalized = c.phone.replace(/\D/g, "");
       if (!uniqueContacts.has(normalized)) {
-        uniqueContacts.set(normalized, { id: c.id, phone: normalized, name: c.name });
+        uniqueContacts.set(normalized, { id: c.id, phone: normalized, name: c.name, metadata: c.metadata });
       }
     }
 
     const contactArr = Array.from(uniqueContacts.values());
 
+    // Use scheduled_at from campaign as base time, fallback to now
+    const baseTime = campaign.scheduled_at
+      ? new Date(campaign.scheduled_at).getTime()
+      : Date.now();
+
+    // Ensure base time is in the future
     const now = Date.now();
+    const effectiveBaseTime = Math.max(baseTime, now);
 
     const queueRows = contactArr.map((c, i) => {
       const randomDelay = minDelay + Math.random() * (maxDelay - minDelay);
@@ -126,21 +133,27 @@ Deno.serve(async (req) => {
         media_url: campaign.media_url || null,
         media_type: campaign.media_type || null,
         status: "pending",
-        scheduled_for: new Date(now + offset).toISOString(),
+        scheduled_for: new Date(effectiveBaseTime + offset).toISOString(),
+        contact_metadata: c.metadata || null,
+        contact_name: c.name || null,
       };
     });
 
-    // Insert in batches of 500
+    // Insert in batches of 500 with ON CONFLICT DO NOTHING for dedup
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
     const batchSize = 500;
     let insertedCount = 0;
     for (let i = 0; i < queueRows.length; i += batchSize) {
       const batch = queueRows.slice(i, i + batchSize);
-      // Use service role for bulk insert to bypass per-row RLS overhead
-      const serviceClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-      );
-      const { error: insertErr } = await serviceClient.from("wa_queue").insert(batch);
+      const { data: inserted, error: insertErr } = await serviceClient
+        .from("wa_queue")
+        .upsert(batch, { onConflict: "campaign_id,contact_id", ignoreDuplicates: true })
+        .select("id");
+
       if (insertErr) {
         console.error("Queue insert error:", insertErr);
         return new Response(
@@ -148,14 +161,10 @@ Deno.serve(async (req) => {
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      insertedCount += batch.length;
+      insertedCount += inserted?.length || batch.length;
     }
 
     // Update campaign status and total_contacts
-    const serviceClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
     await serviceClient
       .from("wa_campaigns")
       .update({

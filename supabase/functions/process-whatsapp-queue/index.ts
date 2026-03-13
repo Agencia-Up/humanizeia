@@ -7,6 +7,11 @@ const corsHeaders = {
 };
 
 const BATCH_SIZE = 20;
+const MAX_RETRIES = 5;
+const CIRCUIT_BREAKER_THRESHOLD = 5;
+
+// In-memory circuit breaker tracker (per invocation)
+const instanceFailures = new Map<string, number>();
 
 interface QueueItem {
   id: string;
@@ -20,6 +25,8 @@ interface QueueItem {
   status: string;
   retry_count: number;
   scheduled_for: string | null;
+  contact_metadata: any;
+  contact_name: string | null;
 }
 
 interface Instance {
@@ -33,6 +40,7 @@ interface Instance {
   is_active: boolean;
   health_score: number;
   messages_sent_today: number;
+  created_at: string;
 }
 
 interface Campaign {
@@ -42,6 +50,10 @@ interface Campaign {
   min_delay_seconds: number;
   max_delay_seconds: number;
   rotation_messages_per_instance: number;
+  regras_rodizio: any;
+  regras_delay: any;
+  regras_aquecimento: any;
+  started_at: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -87,7 +99,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance")
+        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -139,8 +151,15 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // --- Instance Rotation Logic ---
-        const rotationLimit = campaign?.rotation_messages_per_instance || 10;
+        // --- Warmup Rules (regras_aquecimento) ---
+        const aquecimento = campaign?.regras_aquecimento || {};
+        const warmupDailyLimit = aquecimento.limite_diario_inicial || null;
+        const warmupRampDays = aquecimento.dias_rampa || 7;
+
+        // --- Instance Rotation Logic using regras_rodizio ---
+        const rodizio = campaign?.regras_rodizio || {};
+        const rotationLimit = rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10;
+        const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
         const rotKey = item.campaign_id || item.user_id;
 
         if (!rotationCounters.has(rotKey)) {
@@ -151,31 +170,82 @@ Deno.serve(async (req) => {
         if (rot.count >= rotationLimit) {
           rot.index = (rot.index + 1) % userInstances.length;
           rot.count = 0;
+          // Apply pause between instance rotation
+          if (pauseBetweenInstances > 0) {
+            await sleep(pauseBetweenInstances * 1000);
+          }
         }
 
-        // Pick instance with health score weighting
-        let instance = userInstances[rot.index % userInstances.length];
-        // If instance health is too low, try next
-        if (instance.health_score < 30 && userInstances.length > 1) {
-          rot.index = (rot.index + 1) % userInstances.length;
-          instance = userInstances[rot.index % userInstances.length];
+        // Pick instance, skipping circuit-broken ones
+        let instance: Instance | null = null;
+        let attempts = 0;
+        while (attempts < userInstances.length) {
+          const candidate = userInstances[(rot.index + attempts) % userInstances.length];
+          const failures = instanceFailures.get(candidate.id) || 0;
+
+          // Circuit breaker: skip instances with too many consecutive failures
+          if (failures >= CIRCUIT_BREAKER_THRESHOLD) {
+            attempts++;
+            continue;
+          }
+
+          // Warmup check: limit messages for new instances
+          if (warmupDailyLimit && candidate.created_at) {
+            const instanceAgeDays = Math.floor(
+              (Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24)
+            );
+            if (instanceAgeDays < warmupRampDays) {
+              const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / warmupRampDays);
+              const dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
+              if (candidate.messages_sent_today >= dailyLimit) {
+                attempts++;
+                continue;
+              }
+            }
+          }
+
+          // Skip if health score too low
+          if (candidate.health_score < 20) {
+            attempts++;
+            continue;
+          }
+
+          instance = candidate;
+          rot.index = (rot.index + attempts) % userInstances.length;
+          break;
         }
+
+        if (!instance) {
+          await markFailed(supabase, item.id, "All instances circuit-broken or at warmup limit");
+          failed++;
+          processed++;
+          continue;
+        }
+
         rot.count++;
 
-        // --- AI Message Generation (Spintax Generativo) ---
+        // --- AI Message Generation with contact personalization ---
         let finalMessage = item.message;
 
         if (campaign?.prompt_base) {
           try {
-            finalMessage = await generateAIMessage(campaign.prompt_base, item.phone);
+            finalMessage = await generateAIMessage(
+              campaign.prompt_base,
+              item.phone,
+              item.contact_name,
+              item.contact_metadata
+            );
           } catch (aiErr) {
             console.error("AI generation failed, using template:", aiErr);
             finalMessage = campaign.message_template || item.message;
           }
         }
 
+        // Generate message hash for zero-repetition tracking
+        const messageHash = await generateHash(finalMessage);
+
         // --- Simulate Human Behavior: Typing Indicator ---
-        const typingDelay = 1000 + Math.random() * 2000; // 1-3 seconds
+        const typingDelay = 1000 + Math.random() * 2000;
         await simulateTyping(instance, item.phone, typingDelay);
 
         // --- Small random delay for human-like behavior ---
@@ -185,10 +255,19 @@ Deno.serve(async (req) => {
         // --- Send via Evolution API ---
         await sendMessage(instance, item.phone, finalMessage, item.media_url, item.media_type);
 
+        // Reset circuit breaker on success
+        instanceFailures.set(instance.id, 0);
+
         // Mark success
         await supabase
           .from("wa_queue")
-          .update({ status: "sent", sent_at: new Date().toISOString(), message: finalMessage, instance_id: instance.id })
+          .update({
+            status: "sent",
+            sent_at: new Date().toISOString(),
+            message: finalMessage,
+            instance_id: instance.id,
+            message_hash: messageHash,
+          })
           .eq("id", item.id);
 
         // Update instance counters
@@ -200,6 +279,14 @@ Deno.serve(async (req) => {
           })
           .eq("id", instance.id);
 
+        // Update contact last_message_at
+        if (item.contact_id) {
+          await supabase
+            .from("wa_contacts")
+            .update({ last_message_at: new Date().toISOString() })
+            .eq("id", item.contact_id);
+        }
+
         // Update campaign sent count
         if (item.campaign_id) {
           await supabase.rpc("increment_campaign_sent", { cid: item.campaign_id });
@@ -207,26 +294,47 @@ Deno.serve(async (req) => {
 
         succeeded++;
 
-        // --- Delay between messages for human-like pacing ---
-        if (campaign) {
-          const minD = (campaign.min_delay_seconds || 5) * 1000;
-          const maxD = (campaign.max_delay_seconds || 15) * 1000;
-          const delay = minD + Math.random() * (maxD - minD);
-          await sleep(delay);
-        }
+        // --- Delay between messages using regras_delay ---
+        const delayRules = campaign?.regras_delay || {};
+        const minD = (delayRules.min || campaign?.min_delay_seconds || 5) * 1000;
+        const maxD = (delayRules.max || campaign?.max_delay_seconds || 15) * 1000;
+        const delay = minD + Math.random() * (maxD - minD);
+        await sleep(delay);
       } catch (err) {
         console.error(`Error processing queue item ${item.id}:`, err);
         const errMsg = err instanceof Error ? err.message : "Unknown error";
 
-        if (item.retry_count < 3) {
-          // Reschedule for retry
+        // Circuit breaker: increment failure count for this instance
+        const rotKey = item.campaign_id || item.user_id;
+        const rot = rotationCounters.get(rotKey);
+        const userInstances = instanceMap.get(item.user_id);
+        if (rot && userInstances) {
+          const failedInstance = userInstances[rot.index % userInstances.length];
+          if (failedInstance) {
+            const currentFailures = (instanceFailures.get(failedInstance.id) || 0) + 1;
+            instanceFailures.set(failedInstance.id, currentFailures);
+
+            // If circuit breaker triggered, degrade health score in DB
+            if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+              console.warn(`Circuit breaker triggered for instance ${failedInstance.id}`);
+              await supabase.rpc("decrement_instance_health", {
+                instance_id: failedInstance.id,
+                decrement_value: 30,
+              }).catch((e: any) => console.error("Health decrement failed:", e));
+            }
+          }
+        }
+
+        if (item.retry_count < MAX_RETRIES) {
+          // Exponential backoff: 1min → 3min → 9min → 27min → cap 1h
+          const retryDelay = Math.min(60000 * Math.pow(3, item.retry_count), 3600000);
           await supabase
             .from("wa_queue")
             .update({
               status: "pending",
               retry_count: item.retry_count + 1,
               error_message: errMsg,
-              scheduled_for: new Date(Date.now() + 60000).toISOString(), // retry in 1 min
+              scheduled_for: new Date(Date.now() + retryDelay).toISOString(),
             })
             .eq("id", item.id);
         } else {
@@ -240,25 +348,17 @@ Deno.serve(async (req) => {
 
     // Check if any campaign is now completed
     for (const cid of campaignIds) {
-      const { data: remaining } = await supabase
+      const { count } = await supabase
         .from("wa_queue")
         .select("id", { count: "exact", head: true })
         .eq("campaign_id", cid)
         .in("status", ["pending", "processing"]);
 
-      if (remaining !== null) {
-        const { count } = await supabase
-          .from("wa_queue")
-          .select("id", { count: "exact", head: true })
-          .eq("campaign_id", cid)
-          .in("status", ["pending", "processing"]);
-
-        if (count === 0) {
-          await supabase
-            .from("wa_campaigns")
-            .update({ status: "completed", completed_at: new Date().toISOString() })
-            .eq("id", cid);
-        }
+      if (count === 0) {
+        await supabase
+          .from("wa_campaigns")
+          .update({ status: "completed", completed_at: new Date().toISOString() })
+          .eq("id", cid);
       }
     }
 
@@ -288,10 +388,38 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function generateAIMessage(promptBase: string, phone: string): Promise<string> {
+async function generateHash(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 16);
+}
+
+async function generateAIMessage(
+  promptBase: string,
+  phone: string,
+  contactName: string | null,
+  contactMetadata: any
+): Promise<string> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
     throw new Error("LOVABLE_API_KEY not configured");
+  }
+
+  // Build personalization context from contact data
+  let personalizationContext = "";
+  if (contactName) {
+    personalizationContext += `\nNome do lead: ${contactName}`;
+  }
+  if (contactMetadata && typeof contactMetadata === "object") {
+    const extras = Object.entries(contactMetadata)
+      .filter(([_, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ");
+    if (extras) {
+      personalizationContext += `\nDados extras do lead: ${extras}`;
+    }
   }
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -314,11 +442,13 @@ REGRAS:
 - Varie a estrutura: às vezes comece com pergunta, às vezes com afirmação, às vezes com emoji
 - Mantenha entre 1-4 parágrafos curtos
 - NÃO inclua o número de telefone na mensagem
+- Se dados do lead forem fornecidos, USE-OS para personalizar a mensagem de forma natural
+- Cada mensagem deve ser ÚNICA — nunca repita estruturas ou frases anteriores
 - Responda APENAS com o texto da mensagem, sem explicações ou marcadores`,
         },
         {
           role: "user",
-          content: `Intenção da mensagem: ${promptBase}\n\nGere uma variação única e natural desta mensagem.`,
+          content: `Intenção da mensagem: ${promptBase}${personalizationContext}\n\nGere uma variação única, personalizada e natural desta mensagem.`,
         },
       ],
       temperature: 0.9,
@@ -343,35 +473,26 @@ async function simulateTyping(instance: Instance, phone: string, durationMs: num
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
 
-    // Send "composing" presence
     await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         apikey: instance.api_key_encrypted,
       },
-      body: JSON.stringify({
-        id: jid,
-        presence: "composing",
-      }),
+      body: JSON.stringify({ id: jid, presence: "composing" }),
     });
 
     await sleep(durationMs);
 
-    // Send "paused" presence
     await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         apikey: instance.api_key_encrypted,
       },
-      body: JSON.stringify({
-        id: jid,
-        presence: "paused",
-      }),
+      body: JSON.stringify({ id: jid, presence: "paused" }),
     });
   } catch (err) {
-    // Non-critical: typing simulation failure shouldn't stop the message
     console.warn("Typing simulation failed:", err);
   }
 }
@@ -387,15 +508,11 @@ async function sendMessage(
   const number = phone.replace(/\D/g, "");
 
   if (mediaUrl && mediaType) {
-    // Send media message
     const endpoint =
-      mediaType === "image"
-        ? "sendImage"
-        : mediaType === "video"
-        ? "sendVideo"
-        : mediaType === "audio"
-        ? "sendAudio"
-        : "sendDocument";
+      mediaType === "image" ? "sendImage"
+      : mediaType === "video" ? "sendVideo"
+      : mediaType === "audio" ? "sendAudio"
+      : "sendDocument";
 
     const response = await fetch(
       `${apiUrl}/message/${endpoint}/${instance.instance_name}`,
@@ -405,12 +522,7 @@ async function sendMessage(
           "Content-Type": "application/json",
           apikey: instance.api_key_encrypted,
         },
-        body: JSON.stringify({
-          number,
-          mediatype: mediaType,
-          media: mediaUrl,
-          caption: text,
-        }),
+        body: JSON.stringify({ number, mediatype: mediaType, media: mediaUrl, caption: text }),
       }
     );
 
@@ -419,7 +531,6 @@ async function sendMessage(
       throw new Error(`Evolution API error (${endpoint}): ${response.status} - ${errText}`);
     }
   } else {
-    // Send text message
     const response = await fetch(
       `${apiUrl}/message/sendText/${instance.instance_name}`,
       {
@@ -428,10 +539,7 @@ async function sendMessage(
           "Content-Type": "application/json",
           apikey: instance.api_key_encrypted,
         },
-        body: JSON.stringify({
-          number,
-          text,
-        }),
+        body: JSON.stringify({ number, text }),
       }
     );
 
