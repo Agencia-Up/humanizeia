@@ -40,6 +40,7 @@ interface NewCampaignDialogProps {
 export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances, onCreated }: NewCampaignDialogProps) {
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state
   const [name, setName] = useState('');
@@ -52,6 +53,12 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
   const [variationLevel, setVariationLevel] = useState('medium');
   const [useAI, setUseAI] = useState(true);
   const [rotationLimit, setRotationLimit] = useState(10);
+
+  // Media state
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [mediaPreview, setMediaPreview] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
 
   const totalContacts = lists
     .filter(l => selectedLists.includes(l.id))
