@@ -26,6 +26,7 @@ import {
   Megaphone,
   Inbox,
   Zap,
+  Smartphone,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -91,6 +92,7 @@ const learningItems = [
 
 // 💬 WhatsApp
 const whatsappItems = [
+  { title: 'Instâncias', url: '/whatsapp/instances', icon: Smartphone },
   { title: 'Inbox', url: '/whatsapp/inbox', icon: Inbox },
   { title: 'Campanhas', url: '/whatsapp/campaigns', icon: Megaphone },
   { title: 'Analytics', url: '/whatsapp/analytics', icon: BarChart3 },
