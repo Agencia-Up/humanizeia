@@ -508,8 +508,8 @@ export default function WhatsAppContacts() {
                   </>
                 ) : (
                   <>
-                    <Button variant="outline" onClick={() => setShowAddContacts(true)}>
-                      <Phone className="h-4 w-4 mr-1.5" /> Importar
+                    <Button variant="outline" onClick={() => setShowFileImport(true)}>
+                      <Upload className="h-4 w-4 mr-1.5" /> Importar Arquivo
                     </Button>
                     <Button onClick={() => { setFormListName(''); setFormListDesc(''); setShowNewList(true); }}>
                       <Plus className="h-4 w-4 mr-1.5" /> Nova Lista
