@@ -62,7 +62,7 @@ export default function WhatsAppAutomations() {
   const fetchAutomations = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from('wa_automations')
       .select('*')
       .eq('user_id', user.id)
