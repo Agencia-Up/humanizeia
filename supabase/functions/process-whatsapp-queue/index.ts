@@ -172,6 +172,7 @@ Deno.serve(async (req) => {
     const recentMessageHashes = new Set<string>();
 
     for (const item of activeItems) {
+      let selectedInstance: Instance | null = null;
       try {
         // ===== RE-CHECK campaign status before EVERY single message =====
         if (item.campaign_id) {
