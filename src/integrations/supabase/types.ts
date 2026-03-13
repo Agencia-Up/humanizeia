@@ -1768,6 +1768,36 @@ export type Database = {
         }
         Relationships: []
       }
+      wa_audit_logs: {
+        Row: {
+          contact_id: string | null
+          created_at: string
+          details: Json | null
+          event_type: string
+          id: string
+          instance_id: string | null
+          user_id: string
+        }
+        Insert: {
+          contact_id?: string | null
+          created_at?: string
+          details?: Json | null
+          event_type: string
+          id?: string
+          instance_id?: string | null
+          user_id: string
+        }
+        Update: {
+          contact_id?: string | null
+          created_at?: string
+          details?: Json | null
+          event_type?: string
+          id?: string
+          instance_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       wa_automations: {
         Row: {
           action_config: Json | null
@@ -1977,6 +2007,7 @@ export type Database = {
       wa_contacts: {
         Row: {
           created_at: string
+          current_instance_id: string | null
           group_name: string | null
           id: string
           is_valid: boolean | null
@@ -1991,6 +2022,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          current_instance_id?: string | null
           group_name?: string | null
           id?: string
           is_valid?: boolean | null
@@ -2005,6 +2037,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          current_instance_id?: string | null
           group_name?: string | null
           id?: string
           is_valid?: boolean | null
@@ -2114,6 +2147,7 @@ export type Database = {
           api_key_encrypted: string
           api_url: string
           created_at: string
+          failover_status: string | null
           friendly_name: string
           health_score: number
           id: string
@@ -2135,6 +2169,7 @@ export type Database = {
           api_key_encrypted: string
           api_url: string
           created_at?: string
+          failover_status?: string | null
           friendly_name: string
           health_score?: number
           id?: string
@@ -2156,6 +2191,7 @@ export type Database = {
           api_key_encrypted?: string
           api_url?: string
           created_at?: string
+          failover_status?: string | null
           friendly_name?: string
           health_score?: number
           id?: string
@@ -2273,6 +2309,30 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      wa_tags: {
+        Row: {
+          color: string
+          created_at: string
+          id: string
+          name: string
+          user_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          id?: string
+          name: string
+          user_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          id?: string
+          name?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       whatsapp_config: {
         Row: {
