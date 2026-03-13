@@ -62,6 +62,7 @@ Deno.serve(async (req) => {
       media_url,
       media_type,
       tags,
+      variation_level,
     } = body;
 
     // --- Validation ---
