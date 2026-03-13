@@ -528,7 +528,9 @@ async function generateAIMessage(
   contactName: string | null,
   contactMetadata: any,
   variationLevel: string,
-  messageTemplate: string | null
+  messageTemplate: string | null,
+  supabaseClient?: any,
+  userId?: string
 ): Promise<string> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
@@ -541,6 +543,30 @@ async function generateAIMessage(
       .map(([k, v]) => `${k}: ${v}`)
       .join(", ");
     if (extras) personalizationContext += `\nDados extras do lead: ${extras}`;
+  }
+
+  // Fetch conversation history for warm leads (Phase 3 enhancement)
+  let conversationHistory = "";
+  if (supabaseClient && userId && phone) {
+    try {
+      const { data: recentMsgs } = await supabaseClient
+        .from("wa_inbox")
+        .select("content, direction, created_at")
+        .eq("phone", phone.replace(/\D/g, ""))
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (recentMsgs && recentMsgs.length > 0) {
+        conversationHistory = "\nHistórico recente da conversa:\n" +
+          recentMsgs
+            .reverse()
+            .map((m: any) => `${m.direction === "incoming" ? "Lead" : "Nós"}: ${m.content || "[mídia]"}`)
+            .join("\n");
+      }
+    } catch (err) {
+      console.warn("Failed to fetch conversation history:", err);
+    }
   }
 
   // Map variation level to temperature and instructions
@@ -573,14 +599,15 @@ REGRAS OBRIGATÓRIAS:
 - Mantenha entre 1-4 parágrafos curtos
 - NÃO inclua o número de telefone
 - Se dados do lead forem fornecidos, USE-OS para personalizar naturalmente
+- Se houver histórico de conversa, CONSIDERE o contexto para continuidade natural
 - Cada mensagem deve ser ÚNICA — nunca repita estruturas
 - MÁXIMO de 500 caracteres
 - Tom profissional mas amigável
 - Responda APENAS com o texto da mensagem, sem explicações`;
 
   const userPrompt = messageTemplate
-    ? `Mensagem base: ${messageTemplate}\nIntenção da campanha: ${promptBase}${personalizationContext}\n\nGere uma variação única e personalizada.`
-    : `Intenção da mensagem: ${promptBase}${personalizationContext}\n\nGere uma mensagem única, personalizada e natural.`;
+    ? `Mensagem base: ${messageTemplate}\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma variação única e personalizada.`
+    : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem única, personalizada e natural.`;
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
