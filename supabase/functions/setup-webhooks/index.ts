@@ -49,12 +49,11 @@ Deno.serve(async (req) => {
           await checkRes.text(); // consume body
         }
 
-        // Set webhook
-        const setRes = await fetch(`${baseUrl}/webhook/set/${inst.instance_name}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
-          body: JSON.stringify({
+        // Try setting webhook - try v2 format first, then v1
+        const webhookPayload = {
+          webhook: {
             url: webhookUrl,
+            enabled: true,
             webhook_by_events: false,
             webhook_base64: false,
             events: [
@@ -62,8 +61,34 @@ Deno.serve(async (req) => {
               "MESSAGES_UPDATE",
               "CONNECTION_UPDATE",
             ],
-          }),
+          },
+        };
+
+        let setRes = await fetch(`${baseUrl}/webhook/set/${inst.instance_name}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
+          body: JSON.stringify(webhookPayload),
         });
+
+        // If v2 format fails, try v1 flat format
+        if (!setRes.ok) {
+          await setRes.text(); // consume body
+          setRes = await fetch(`${baseUrl}/webhook/set/${inst.instance_name}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
+            body: JSON.stringify({
+              url: webhookUrl,
+              enabled: true,
+              webhook_by_events: false,
+              webhook_base64: false,
+              events: [
+                "MESSAGES_UPSERT",
+                "MESSAGES_UPDATE",
+                "CONNECTION_UPDATE",
+              ],
+            }),
+          });
+        }
 
         const setResText = await setRes.text();
         let setData = null;
