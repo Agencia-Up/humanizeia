@@ -63,7 +63,7 @@ async function getInstanceConfig(supabase: any, userId: string) {
 }
 
 async function fetchOwnGroups(baseUrl: string, apiKey: string, instanceName: string) {
-  const res = await fetch(`${baseUrl}/group/fetchAllGroups/${instanceName}`, {
+  const res = await fetch(`${baseUrl}/group/fetchAllGroups/${instanceName}?getParticipants=false`, {
     headers: { 'apikey': apiKey },
   });
 

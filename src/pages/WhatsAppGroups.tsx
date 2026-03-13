@@ -162,13 +162,12 @@ export default function WhatsAppGroups() {
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const { data } = await supabase
+      const { data, count } = await supabase
         .from('wa_instances')
-        .select('id, is_active')
+        .select('id', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .eq('is_active', true)
-        .maybeSingle();
-      setHasInstance(!!data);
+        .eq('is_active', true);
+      setHasInstance((count ?? 0) > 0);
     })();
   }, [user]);
 
