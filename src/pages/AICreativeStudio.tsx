@@ -30,6 +30,7 @@ import {
   Plus,
   Trash2,
   Pencil,
+  Upload,
 } from 'lucide-react';
 import { SwipeFileTab } from '@/components/copywriter/SwipeFileTab';
 import { SavedImagesTab } from '@/components/creative-studio/SavedImagesTab';
