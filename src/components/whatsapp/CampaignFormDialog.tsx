@@ -179,6 +179,7 @@ export function CampaignFormDialog({
       media_url: mediaUrl,
       media_type: mediaType,
       tags,
+      variation_level: variationLevel,
     });
   };
 
