@@ -158,7 +158,7 @@ export function CampaignCard({ campaign, onRefresh }: CampaignCardProps) {
               <div className="flex items-center gap-2 mb-1">
                 <h3 className="font-semibold text-lg truncate">{campaign.name}</h3>
                 {campaign.prompt_base && (
-                  <Wand2 className="h-4 w-4 text-primary shrink-0" title="IA ativa" />
+                  <span title="IA ativa"><Wand2 className="h-4 w-4 text-primary shrink-0" /></span>
                 )}
               </div>
               <p className="text-sm text-muted-foreground line-clamp-2">
