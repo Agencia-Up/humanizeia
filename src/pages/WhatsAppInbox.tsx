@@ -468,6 +468,10 @@ export default function WhatsAppInbox() {
                       {categoryLabels[selectedConv.ai_category] || selectedConv.ai_category}
                     </Badge>
                   )}
+                  <TagSelector
+                    selectedTags={contactTags[selectedPhone] || []}
+                    onTagsChange={(tags) => updateContactTags(selectedPhone, tags)}
+                  />
                 </div>
 
                 {/* Messages */}
