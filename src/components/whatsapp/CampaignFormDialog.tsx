@@ -37,6 +37,7 @@ export interface CampaignFormData {
   media_url: string;
   media_type: string;
   tags: string[];
+  variation_level: string;
 }
 
 interface ContactList {
