@@ -315,6 +315,11 @@ export default function WhatsAppInbox() {
   };
 
   const filteredConversations = conversations.filter(c => {
+    // Tag filter
+    if (filterTags.length > 0) {
+      const cTags = contactTags[c.phone] || [];
+      if (!filterTags.some(ft => cTags.includes(ft))) return false;
+    }
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
