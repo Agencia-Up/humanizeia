@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    const { prompt, format, style, headline, ctaText, includeLogo, includeCTA, primaryColor, secondaryColor, styleIntensity, variations } = await req.json();
+    const { prompt, format, style, headline, ctaText, includeLogo, includeCTA, primaryColor, secondaryColor, styleIntensity, variations, referenceImage } = await req.json();
 
     if (!prompt) {
       return new Response(JSON.stringify({ error: "Prompt is required" }), {
