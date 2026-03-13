@@ -161,35 +161,46 @@ function NavGroup({
   }
 
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel className="text-xs uppercase tracking-wider text-muted-foreground/70">
-        {label}
-      </SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {items.map((item) => (
-            <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton asChild tooltip={item.title}>
-                <NavLink 
-                  to={item.url} 
-                  end={item.url === '/'}
-                  className="text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
-                  activeClassName="bg-primary/10 text-primary font-medium"
-                >
-                  <item.icon className="h-4 w-4" />
-                  <span className="flex-1">{item.title}</span>
-                  {(item.badge || 0) > 0 && (
-                    <Badge className="ml-auto h-5 min-w-5 rounded-full px-1.5 text-[10px] gradient-primary border-0 flex items-center justify-center text-primary-foreground">
-                      {item.badge}
-                    </Badge>
-                  )}
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <Collapsible open={isOpen} onOpenChange={onToggle}>
+      <SidebarGroup>
+        <CollapsibleTrigger asChild>
+          <SidebarGroupLabel className="text-xs uppercase tracking-wider text-muted-foreground/70 cursor-pointer hover:text-muted-foreground transition-colors">
+            {label}
+            {groupBadge > 0 && (
+              <Badge className="ml-2 h-4 min-w-4 rounded-full px-1 text-[9px] gradient-primary border-0 flex items-center justify-center text-primary-foreground">
+                {groupBadge}
+              </Badge>
+            )}
+          </SidebarGroupLabel>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {items.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton asChild tooltip={item.title}>
+                    <NavLink 
+                      to={item.url} 
+                      end={item.url === '/'}
+                      className="text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
+                      activeClassName="bg-primary/10 text-primary font-medium"
+                    >
+                      <item.icon className="h-4 w-4" />
+                      <span className="flex-1">{item.title}</span>
+                      {(item.badge || 0) > 0 && (
+                        <Badge className="ml-auto h-5 min-w-5 rounded-full px-1.5 text-[10px] gradient-primary border-0 flex items-center justify-center text-primary-foreground">
+                          {item.badge}
+                        </Badge>
+                      )}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
   );
 }
 
