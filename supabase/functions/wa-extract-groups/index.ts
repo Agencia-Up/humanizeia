@@ -300,9 +300,14 @@ Deno.serve(async (req) => {
     // ===== ACTION: Extract contacts from selected groups =====
     if (action === 'extract_contacts' && group_ids?.length) {
       const result = await extractContacts(
-        baseUrl, config.apiKey, config.instanceName,
-        group_ids, groups, supabase,
-        supabaseUrl, supabaseServiceKey, user_id, list_id
+        configs,
+        group_ids,
+        groups,
+        supabase,
+        supabaseUrl,
+        supabaseServiceKey,
+        user_id,
+        list_id,
       );
       return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
