@@ -175,6 +175,10 @@ Deno.serve(async (req) => {
         // Resume paused/cancelled/processing from where campaign stopped
         rowsToReactivate.push({
           id: existing.id,
+          user_id: userId,
+          campaign_id,
+          contact_id: c.id,
+          phone: c.phone,
           status: "pending",
           scheduled_for: scheduledFor,
           retry_count: 0,
