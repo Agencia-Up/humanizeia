@@ -228,6 +228,7 @@ Deno.serve(async (req) => {
       media_type: media_type || null,
       tags: Array.isArray(tags) && tags.length > 0 ? tags : null,
       organization_id: orgId,
+      variation_level: variation_level || 'medium',
     };
 
     // Determine status
