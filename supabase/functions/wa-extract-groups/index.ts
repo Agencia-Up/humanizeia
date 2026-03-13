@@ -176,7 +176,7 @@ async function extractContacts(
           if (phone && phone.length >= 10) participantPhones.push(phone);
         }
 
-        // Fetch contact profiles to get names - batch endpoints only (avoid timeout)
+        // Fetch contact profiles to get names
         let profileMap = new Map<string, string>();
         if (participantPhones.length > 0) {
           // Method 1: Try chat/fetchContacts (batch)
@@ -226,28 +226,31 @@ async function extractContacts(
             } catch { /* skip */ }
           }
 
-          // Method 3: Try group metadata with participants to get names
+          // Method 3: Try individual fetchProfile in parallel batches of 10 (max 50 contacts)
           if (profileMap.size === 0) {
-            try {
-              const metaRes = await fetch(`${cBaseUrl}/group/fetchAllGroups/${cfg.instanceName}?getParticipants=true`, {
-                headers: { 'apikey': cfg.apiKey },
-              });
-              if (metaRes.ok) {
-                const metaData = await metaRes.json();
-                const allGroupsMeta = Array.isArray(metaData) ? metaData : (metaData?.groups || []);
-                const thisGroup = allGroupsMeta.find((g: any) => (g.id || g.jid) === groupId);
-                if (thisGroup?.participants) {
-                  for (const mp of thisGroup.participants) {
-                    const mpPhone = (mp.id || mp.jid || '').replace(/@.*$/, '').replace(/\D/g, '');
-                    const mpName = mp.name || mp.pushName || mp.notify || null;
-                    if (mpPhone && mpName) profileMap.set(mpPhone, mpName);
+            const phonesToCheck = participantPhones.slice(0, 50);
+            const batchSize = 10;
+            for (let bi = 0; bi < phonesToCheck.length; bi += batchSize) {
+              const batch = phonesToCheck.slice(bi, bi + batchSize);
+              const promises = batch.map(async (phone) => {
+                try {
+                  const profRes = await fetch(`${cBaseUrl}/chat/fetchProfile/${cfg.instanceName}`, {
+                    method: 'POST',
+                    headers: { 'apikey': cfg.apiKey, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ number: phone }),
+                  });
+                  if (profRes.ok) {
+                    const profData = await profRes.json();
+                    const pName = profData?.name || profData?.pushName || profData?.notify || profData?.verifiedName || profData?.profileName || null;
+                    if (pName) profileMap.set(phone, pName);
+                  } else {
+                    await profRes.text();
                   }
-                  console.log(`[wa-extract-groups] group metadata: ${profileMap.size} names`);
-                }
-              } else {
-                await metaRes.text();
-              }
-            } catch { /* skip */ }
+                } catch { /* skip */ }
+              });
+              await Promise.all(promises);
+            }
+            console.log(`[wa-extract-groups] fetchProfile parallel: ${profileMap.size} names`);
           }
         }
 
