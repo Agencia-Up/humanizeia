@@ -6,7 +6,8 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const BATCH_SIZE = 5; // Process fewer items per cycle for slower, more human-like sending
+// Process fewer items per invocation for slower, more human-like sending
+const BATCH_SIZE = 5;
 const MAX_RETRIES = 5;
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 
@@ -111,8 +112,43 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ===== CHECK: Skip campaigns that are paused/cancelled BEFORE fetching instances =====
+    const activeCampaignIds = new Set<string>();
+    for (const cid of campaignIds) {
+      const campaign = campaignMap.get(cid);
+      if (campaign) {
+        // Re-check status from DB (in case it was just paused)
+        const { data: freshStatus } = await supabase
+          .from("wa_campaigns")
+          .select("status")
+          .eq("id", cid)
+          .single();
+        if (freshStatus && (freshStatus.status === "paused" || freshStatus.status === "cancelled")) {
+          console.log(`Campaign ${cid} is ${freshStatus.status}, returning all its items to pending`);
+          await supabase
+            .from("wa_queue")
+            .update({ status: "pending" })
+            .eq("campaign_id", cid)
+            .eq("status", "processing");
+        } else {
+          activeCampaignIds.add(cid);
+        }
+      }
+    }
+
+    // Filter items to only process active campaigns
+    const activeItems = items.filter(
+      (i) => !i.campaign_id || activeCampaignIds.has(i.campaign_id)
+    );
+
+    if (activeItems.length === 0) {
+      return new Response(JSON.stringify({ processed: 0, message: "All campaigns paused" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Fetch instances per user
-    const userIds = [...new Set(items.map((i) => i.user_id))];
+    const userIds = [...new Set(activeItems.map((i) => i.user_id))];
     const instanceMap = new Map<string, Instance[]>();
 
     for (const uid of userIds) {
@@ -131,8 +167,30 @@ Deno.serve(async (req) => {
     const rotationCounters = new Map<string, { index: number; count: number }>();
     let processed = 0, succeeded = 0, failed = 0;
 
-    for (const item of items) {
+    // Track recent message hashes to prevent duplicate messages
+    const recentMessageHashes = new Set<string>();
+
+    for (const item of activeItems) {
       try {
+        // ===== RE-CHECK campaign status before EVERY single message =====
+        if (item.campaign_id) {
+          const { data: liveStatus } = await supabase
+            .from("wa_campaigns")
+            .select("status")
+            .eq("id", item.campaign_id)
+            .single();
+
+          if (liveStatus && (liveStatus.status === "paused" || liveStatus.status === "cancelled")) {
+            console.log(`Campaign ${item.campaign_id} paused/cancelled mid-batch, stopping`);
+            await supabase
+              .from("wa_queue")
+              .update({ status: "pending" })
+              .eq("id", item.id);
+            processed++;
+            continue;
+          }
+        }
+
         await supabase
           .from("wa_queue")
           .update({ status: "processing" })
@@ -157,49 +215,86 @@ Deno.serve(async (req) => {
           failed++; processed++; continue;
         }
 
-        // --- Message Polymorphism: AI Generation ---
+        // --- Generate UNIQUE AI message for EACH contact ---
         let finalMessage = item.message;
         const variationLevel = campaign?.variation_level || "medium";
 
         if (campaign?.prompt_base) {
-          try {
-            finalMessage = await generateAIMessage(
-              campaign.prompt_base,
-              item.phone,
-              item.contact_name,
-              item.contact_metadata,
-              variationLevel,
-              campaign.message_template,
-              supabase,
-              item.user_id
-            );
-          } catch (aiErr) {
-            console.error("AI generation failed, using template:", aiErr);
-            finalMessage = campaign.message_template || item.message;
+          let genAttempts = 0;
+          const maxGenAttempts = 3;
+          let messageIsUnique = false;
+
+          while (genAttempts < maxGenAttempts && !messageIsUnique) {
+            try {
+              finalMessage = await generateAIMessage(
+                campaign.prompt_base,
+                item.phone,
+                item.contact_name,
+                item.contact_metadata,
+                variationLevel,
+                campaign.message_template,
+                supabase,
+                item.user_id
+              );
+
+              const hash = await generateHash(finalMessage);
+              if (!recentMessageHashes.has(hash)) {
+                recentMessageHashes.add(hash);
+                messageIsUnique = true;
+              } else {
+                console.log(`Duplicate message detected, regenerating (attempt ${genAttempts + 1})`);
+                genAttempts++;
+              }
+            } catch (aiErr) {
+              console.error("AI generation failed, using template with variation:", aiErr);
+              // Fallback: add random suffix to template
+              const suffixes = ["", " 😊", " 👋", "!", " 🙂", " ✨", ".", " 💡", " 🚀", " 📲"];
+              const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
+              finalMessage = (campaign.message_template || item.message) + suffix;
+              messageIsUnique = true;
+            }
           }
         }
 
         const messageHash = await generateHash(finalMessage);
+        recentMessageHashes.add(messageHash);
 
-        // --- Anti-Ban: Random Online Presence Before Message ---
+        // Cleanup old hashes (keep last 30)
+        if (recentMessageHashes.size > 30) {
+          const arr = Array.from(recentMessageHashes);
+          for (let i = 0; i < arr.length - 30; i++) {
+            recentMessageHashes.delete(arr[i]);
+          }
+        }
+
+        // ===== HUMANIZED SENDING SEQUENCE =====
+
+        // Step 1: Go online (simulate opening WhatsApp)
         await simulateOnlinePresence(instance, item.phone);
+        await sleep(1500 + Math.random() * 2500); // 1.5-4s after going online
 
-        // --- Anti-Ban: Typing Simulation with Variable Duration ---
+        // Step 2: "Read" the chat (looking at contact before typing)
+        await sleep(2000 + Math.random() * 3000); // 2-5s reading time
+
+        // Step 3: Type with realistic speed
         const messageLength = finalMessage.length;
-        // Simulate typing speed: ~30-60 chars per second + random variation
-        const baseTypingMs = (messageLength / (30 + Math.random() * 30)) * 1000;
-        const typingDelay = Math.max(1500, Math.min(baseTypingMs + Math.random() * 2000, 8000));
-        await simulateTyping(instance, item.phone, typingDelay);
+        // Mobile typing: ~12-20 chars/sec (slower than desktop)
+        const typingSpeedCps = 12 + Math.random() * 8;
+        const baseTypingMs = (messageLength / typingSpeedCps) * 1000;
+        // Add "thinking" pauses mid-typing
+        const thinkingPauses = Math.floor(Math.random() * 3) * (800 + Math.random() * 2000);
+        const totalTypingMs = Math.max(4000, Math.min(baseTypingMs + thinkingPauses, 20000));
+        await simulateTyping(instance, item.phone, totalTypingMs);
 
-        // --- Anti-Ban: Small random pause after typing before sending ---
-        await sleep(300 + Math.random() * 700);
+        // Step 4: Review before hitting send
+        await sleep(800 + Math.random() * 2000);
 
-        // --- Send via Provider Abstraction ---
+        // Step 5: SEND
         await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
-
         instanceFailures.set(instance.id, 0);
 
-        // --- Anti-Ban: Simulate reading after sending (mark as read) ---
+        // Step 6: Read receipt
+        await sleep(500 + Math.random() * 1000);
         await simulateReadReceipt(instance, item.phone);
 
         // Mark success
@@ -238,19 +333,26 @@ Deno.serve(async (req) => {
 
         succeeded++;
 
-        // --- Anti-Ban: Variable Delay Between Messages ---
+        // ===== HUMANIZED DELAY BETWEEN MESSAGES =====
         const delayRules = campaign?.regras_delay || {};
-        const minD = (delayRules.min || campaign?.min_delay_seconds || 5) * 1000;
-        const maxD = (delayRules.max || campaign?.max_delay_seconds || 15) * 1000;
-        // Add random "human" pause (sometimes longer pauses like checking phone)
-        const humanPause = Math.random() < 0.15 ? (5000 + Math.random() * 10000) : 0; // 15% chance of 5-15s extra pause
-        await sleep(minD + Math.random() * (maxD - minD) + humanPause);
+        const minD = (delayRules.min || campaign?.min_delay_seconds || 20) * 1000;  // Min 20s default
+        const maxD = (delayRules.max || campaign?.max_delay_seconds || 60) * 1000;  // Max 60s default
+        const baseDelay = minD + Math.random() * (maxD - minD);
 
-        // --- Anti-Ban: Occasionally go offline between messages ---
-        if (Math.random() < 0.1) { // 10% chance
+        // 25% chance of "long pause" (45-120s) — simulates doing something else
+        const longPause = Math.random() < 0.25 ? (45000 + Math.random() * 75000) : 0;
+
+        // 15% chance of going offline briefly between messages
+        if (Math.random() < 0.15) {
           await simulateOfflinePresence(instance);
-          await sleep(2000 + Math.random() * 5000);
+          await sleep(8000 + Math.random() * 20000); // Offline for 8-28s
+          await simulateOnlinePresence(instance, item.phone);
+          await sleep(2000 + Math.random() * 3000);
         }
+
+        const totalDelay = baseDelay + longPause;
+        console.log(`Humanized wait: ${Math.round(totalDelay / 1000)}s before next message`);
+        await sleep(totalDelay);
 
       } catch (err) {
         console.error(`Error processing queue item ${item.id}:`, err);
@@ -273,7 +375,6 @@ Deno.serve(async (req) => {
               });
               if (healthErr) console.error("Health decrement failed:", healthErr);
 
-              // Trigger failover for banned instance
               try {
                 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
                 await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
@@ -287,7 +388,6 @@ Deno.serve(async (req) => {
                     user_id: item.user_id,
                   }),
                 });
-                console.log(`Failover triggered for instance ${failedInstance.id}`);
               } catch (failoverErr) {
                 console.error("Failover trigger failed:", failoverErr);
               }
@@ -316,6 +416,7 @@ Deno.serve(async (req) => {
 
     // Check campaign completion
     for (const cid of campaignIds) {
+      if (!activeCampaignIds.has(cid)) continue; // Don't mark paused as completed
       const { count } = await supabase
         .from("wa_queue")
         .select("id", { count: "exact", head: true })
@@ -378,9 +479,7 @@ async function selectSmartInstance(
     if (isContactCold) {
       const totalHealth = userInstances.reduce((sum, inst) => sum + inst.health_score, 0);
       if (totalHealth > 0) {
-        const aWeight = a.health_score / totalHealth;
-        const bWeight = b.health_score / totalHealth;
-        return bWeight - aWeight;
+        return (b.health_score / totalHealth) - (a.health_score / totalHealth);
       }
       return b.health_score - a.health_score;
     }
@@ -498,7 +597,7 @@ async function sendToMetaAPI(
     const errText = await response.text();
     throw new Error(`Meta API error: ${response.status} - ${errText}`);
   }
-  await response.text(); // consume body
+  await response.text();
 }
 
 // ====================== EVOLUTION API (V2 COMPATIBLE) ======================
@@ -514,8 +613,7 @@ async function sendToEvolutionAPI(
   const number = phone.replace(/\D/g, "");
 
   if (mediaUrl && mediaType) {
-    // Evolution API v2 uses /message/sendMedia/{instance} for all media types
-    // Try v2 endpoint first, fallback to v1 if 404
+    // Evolution API v2: /message/sendMedia/{instance}
     const v2Endpoint = `${apiUrl}/message/sendMedia/${instance.instance_name}`;
     const v1Endpoints: Record<string, string> = {
       image: "sendImage",
@@ -532,20 +630,16 @@ async function sendToEvolutionAPI(
       fileName: mediaType === "document" ? "file" : undefined,
     };
 
-    // Try v2 unified endpoint
     let response = await fetch(v2Endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify(mediaPayload),
     });
 
-    // If v2 returns 404, try v1 specific endpoint
     if (response.status === 404) {
-      const errBody = await response.text(); // consume v2 body
-      console.log(`Evolution v2 sendMedia 404, trying v1 fallback. Response: ${errBody}`);
+      await response.text(); // consume v2 body
       const v1Action = v1Endpoints[mediaType] || "sendDocument";
-      const v1Url = `${apiUrl}/message/${v1Action}/${instance.instance_name}`;
-      response = await fetch(v1Url, {
+      response = await fetch(`${apiUrl}/message/${v1Action}/${instance.instance_name}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
         body: JSON.stringify(mediaPayload),
@@ -556,9 +650,8 @@ async function sendToEvolutionAPI(
       const errText = await response.text();
       throw new Error(`Evolution API error (sendMedia): ${response.status} - ${errText}`);
     }
-    await response.text(); // consume body
+    await response.text();
   } else {
-    // Text-only: try v2 /message/sendText first
     const response = await fetch(
       `${apiUrl}/message/sendText/${instance.instance_name}`,
       {
@@ -571,7 +664,7 @@ async function sendToEvolutionAPI(
       const errText = await response.text();
       throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
     }
-    await response.text(); // consume body
+    await response.text();
   }
 }
 
@@ -625,63 +718,74 @@ async function generateAIMessage(
 
   const levelConfig: Record<string, { temp: number; instruction: string }> = {
     low: {
-      temp: 0.5,
-      instruction: "Faça PEQUENAS variações: troque sinônimos, mude a ordem de frases, mas mantenha a estrutura muito próxima do original.",
+      temp: 0.6,
+      instruction: "Faça PEQUENAS variações: troque sinônimos, mude a ordem de frases, mas mantenha a estrutura próxima do original.",
     },
     medium: {
-      temp: 0.8,
-      instruction: "Faça variações MODERADAS: reescreva mantendo a essência, mas variando estrutura, abordagem e vocabulário significativamente.",
+      temp: 0.85,
+      instruction: "Faça variações MODERADAS: reescreva mantendo a essência, mas variando estrutura, abordagem e vocabulário significativamente. Cada mensagem DEVE ser completamente diferente da anterior.",
     },
     high: {
       temp: 1.0,
-      instruction: "Faça uma REESCRITA CRIATIVA: mude completamente a abordagem, use perspectivas diferentes, metáforas, perguntas ou afirmações inesperadas, mantendo apenas a intenção central.",
+      instruction: "Faça uma REESCRITA TOTALMENTE CRIATIVA: mude completamente a abordagem, use perspectivas diferentes, perguntas inesperadas, mantendo apenas a intenção central. NUNCA repita padrões.",
     },
   };
 
   const config = levelConfig[variationLevel] || levelConfig.medium;
 
-  // Anti-ban: randomize message style patterns
+  // Randomize style for each message
   const styleVariations = [
-    "Use um tom casual e direto.",
-    "Seja mais formal e educado.",
-    "Comece com uma pergunta envolvente.",
+    "Use um tom casual e direto, como um amigo indicando algo.",
+    "Seja mais formal e profissional.",
+    "Comece com uma pergunta envolvente que gere curiosidade.",
     "Use uma abordagem empática e calorosa.",
-    "Vá direto ao ponto, sem enrolação.",
-    "Comece com um dado curioso ou estatística.",
-    "Use humor leve e profissional.",
-    "Aborde de forma consultiva, como um especialista.",
+    "Vá direto ao ponto sem enrolação.",
+    "Comece com um dado curioso ou fato interessante.",
+    "Use humor leve e sutil.",
+    "Aborde como um consultor especialista dando uma dica valiosa.",
+    "Comece mencionando uma dor ou problema comum do mercado.",
+    "Use uma história curta ou analogia para prender a atenção.",
   ];
   const randomStyle = styleVariations[Math.floor(Math.random() * styleVariations.length)];
 
-  // Anti-ban: vary emoji usage randomly
-  const emojiInstruction = Math.random() < 0.3 
-    ? "NÃO use nenhum emoji nesta mensagem." 
-    : `Use entre ${Math.floor(Math.random() * 3)} e ${1 + Math.floor(Math.random() * 3)} emojis com naturalidade.`;
+  // Vary emoji usage
+  const emojiCount = Math.floor(Math.random() * 4); // 0-3
+  const emojiInstruction = emojiCount === 0
+    ? "NÃO use nenhum emoji nesta mensagem."
+    : `Use exatamente ${emojiCount} emoji(s) de forma natural.`;
 
-  const systemPrompt = `Você é um redator especialista em mensagens de WhatsApp para prospecção, com foco em evitar repetição e soar 100% natural e humano.
+  // Vary message length
+  const lengthVariation = Math.random();
+  const lengthInstruction = lengthVariation < 0.3
+    ? "Mantenha a mensagem CURTA: 1-2 frases apenas."
+    : lengthVariation < 0.7
+    ? "Mensagem de tamanho MÉDIO: 2-3 parágrafos curtos."
+    : "Mensagem um pouco mais LONGA: 3-4 parágrafos curtos com mais contexto.";
+
+  // Random seed to ensure uniqueness
+  const randomSeed = Math.random().toString(36).substring(2, 10);
+
+  const systemPrompt = `Você é um redator especialista em mensagens de WhatsApp para prospecção. Cada mensagem que você gera deve ser ABSOLUTAMENTE ÚNICA.
 
 REGRAS OBRIGATÓRIAS:
 - Gere UMA ÚNICA mensagem baseada na intenção fornecida
 - ${config.instruction}
 - ${randomStyle}
 - ${emojiInstruction}
-- A mensagem deve soar natural, como enviada por uma pessoa real
-- NÃO use saudações genéricas como "Olá!" em todas as mensagens — varie o início
-- Varie a estrutura: pergunta, afirmação, curiosidade, oferta direta
-- Mantenha entre 1-4 parágrafos curtos
+- ${lengthInstruction}
+- A mensagem deve soar 100% natural, como enviada por uma pessoa real digitando no celular
+- NÃO use saudações genéricas repetitivas
 - NÃO inclua o número de telefone
-- Se dados do lead forem fornecidos, USE-OS para personalizar naturalmente
-- Se houver histórico de conversa, CONSIDERE o contexto para continuidade natural
-- Cada mensagem deve ser ÚNICA — nunca repita estruturas
+- Se dados do lead forem fornecidos, USE-OS naturalmente
+- Se houver histórico de conversa, CONSIDERE o contexto
 - MÁXIMO de 500 caracteres
-- Varie o comprimento: às vezes 1 linha, às vezes 3-4 linhas
-- Tom profissional mas amigável
-- NÃO use formatação de markdown (sem **, sem ##)
-- Responda APENAS com o texto da mensagem, sem explicações`;
+- NÃO use formatação de markdown (sem **, sem ##, sem *)
+- Responda APENAS com o texto da mensagem
+- SEED DE UNICIDADE: ${randomSeed} (use para garantir que esta mensagem seja diferente de todas as outras)`;
 
   const userPrompt = messageTemplate
-    ? `Mensagem base: ${messageTemplate}\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma variação única e personalizada.`
-    : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem única, personalizada e natural.`;
+    ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
+    : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -709,8 +813,8 @@ REGRAS OBRIGATÓRIAS:
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty AI response");
 
-  // Anti-ban: strip any markdown formatting the AI might add
-  return content.trim().replace(/\*\*/g, "").replace(/^#+\s*/gm, "").replace(/^[-*]\s+/gm, "");
+  // Strip any markdown formatting
+  return content.trim().replace(/\*\*/g, "").replace(/\*/g, "").replace(/^#+\s*/gm, "").replace(/^[-]\s+/gm, "");
 }
 
 // ====================== HELPERS ======================
@@ -756,14 +860,13 @@ async function simulateTyping(instance: Instance, phone: string, durationMs: num
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "paused" }),
     }).catch(() => {});
-  } catch (err) {
-    // Non-critical, don't throw
+  } catch (_) {
+    // Non-critical
   }
 }
 
-async function simulateOnlinePresence(instance: Instance, phone: string) {
+async function simulateOnlinePresence(instance: Instance, _phone: string) {
   if (instance.provider === "meta") return;
-
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
@@ -771,14 +874,11 @@ async function simulateOnlinePresence(instance: Instance, phone: string) {
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ presence: "available" }),
     }).catch(() => {});
-  } catch (err) {
-    // Non-critical
-  }
+  } catch (_) {}
 }
 
 async function simulateOfflinePresence(instance: Instance) {
   if (instance.provider === "meta") return;
-
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
@@ -786,24 +886,18 @@ async function simulateOfflinePresence(instance: Instance) {
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ presence: "unavailable" }),
     }).catch(() => {});
-  } catch (err) {
-    // Non-critical
-  }
+  } catch (_) {}
 }
 
 async function simulateReadReceipt(instance: Instance, phone: string) {
   if (instance.provider === "meta") return;
-
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
-
     await fetch(`${apiUrl}/chat/markChatUnread/${instance.instance_name}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ chat: jid, lastMessage: { key: { fromMe: true } } }),
     }).catch(() => {});
-  } catch (err) {
-    // Non-critical
-  }
+  } catch (_) {}
 }
