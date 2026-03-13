@@ -93,6 +93,8 @@ export default function WhatsAppInbox() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isMobileShowChat, setIsMobileShowChat] = useState(false);
+  const [filterTags, setFilterTags] = useState<string[]>([]);
+  const [contactTags, setContactTags] = useState<Record<string, string[]>>({});
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
