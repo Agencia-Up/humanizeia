@@ -1,42 +1,41 @@
 
 
-## Diagnóstico: Biblioteca de Criativos sem fotos
+# Plano: Importador Universal de Listas de Contatos
 
-### Problema encontrado
+## Objetivo
+Adicionar um botão "Importar Arquivo" na aba **Listas** da página Extrator de Contatos que aceite **CSV, TXT e Excel (XLSX)**, normalize automaticamente os números para o padrão brasileiro e salve na lista escolhida.
 
-Dois problemas combinados:
+## O que será feito
 
-1. **Contas Meta inativas**: Ambas as contas na tabela `ad_accounts` estão com `is_active: false`. Quando isso acontece, `useMetaConnection` retorna `connectedAccount: null`, e a página mostra a tela "Conecte seu Meta Ads" em vez dos dados em cache.
+### 1. Criar componente `FileImportDialog`
+Um novo dialog em `src/components/whatsapp/FileImportDialog.tsx` que:
+- Aceita arquivos **.csv**, **.txt** e **.xlsx**
+- Detecta automaticamente separador (`,`, `;`, `\t`)
+- Identifica colunas de telefone e nome por headers em PT/EN (telefone, phone, numero, nome, name, etc.)
+- Se não encontrar header, trata coluna 1 como telefone, coluna 2 como nome
+- Normaliza todos os números para formato `55 + DDD + número`
+- Remove duplicatas dentro do arquivo
+- Mostra preview com contagem de válidos/inválidos
+- Permite criar **nova lista** ou adicionar a uma **lista existente**
+- Usa a lib **xlsx** (já popular, leve) para parsear Excel
 
-2. **Cache sem URLs de imagem de alta resolução**: O cache (`ads_creatives`) tem 50 anúncios armazenados, porém os dados do criativo só contêm `thumbnail_url` (formato p64x64, baixa resolução). Os campos `full_picture`, `image_url` e `effective_image_url` vieram como `null` da API do Meta. A função `getHighResThumbnail` tenta transformar p64x64 para p960x960, mas essa manipulação de URL nem sempre funciona no CDN da Meta.
+### 2. Adicionar dependência `xlsx`
+Instalar o pacote `xlsx` para suporte a arquivos Excel.
 
-### Plano de correção
+### 3. Integrar na página WhatsAppContacts
+- Trocar o botão "Importar" existente (que abre `showAddContacts`) por um que abre o novo `FileImportDialog`
+- Manter o botão "Adicionar" manual para quando o usuário está dentro de uma lista
 
-**Arquivo: `src/pages/CreativeLibrary.tsx`**
-
-1. Exibir dados do cache mesmo quando a conta está desconectada, com um banner de aviso pedindo reconexão para dados atualizados. Atualmente a tela "Conecte seu Meta Ads" bloqueia completamente o acesso ao cache existente.
-
-2. Alterar a lógica do `enabled` no `useMetaCachedQuery` para sempre ler o cache (mesmo sem conta ativa), mas só tentar buscar dados frescos quando conectado.
-
-**Arquivo: `src/hooks/useMetaCachedQuery.ts`**
-
-3. Separar a leitura do cache (sempre habilitada) da busca de dados frescos (só quando `enabled: true`). Isso garante que dados em cache sejam exibidos instantaneamente mesmo sem conexão ativa.
-
-**Arquivo: `src/pages/CreativeLibrary.tsx` (imagens)**
-
-4. Adicionar fallback robusto para URLs de imagem: tentar carregar via `thumbnail_url` transformada, e se falhar (evento `onError` no `<img>`), voltar à URL original p64x64. Também solicitar o campo `object_story_spec` da API, que contém URLs de imagem mais confiáveis.
+### Fluxo do usuário
+1. Clica em "Importar" na aba Listas
+2. Seleciona ou arrasta um arquivo (CSV, TXT ou XLSX)
+3. Sistema parseia, normaliza e mostra preview
+4. Usuário escolhe lista destino (nova ou existente)
+5. Clica "Importar" → contatos salvos no banco via `sanitize-contacts` edge function
 
 ### Detalhes técnicos
-
-A chave do cache `ads_creatives` tem 50 itens salvos às 15:27 de hoje. Os dados estão lá, mas a UI não os mostra porque a verificação `isConnected` bloqueia tudo antes de chegar ao `useMetaCachedQuery`.
-
-Fluxo corrigido:
-```text
-Página carrega
-  ├─ Lê cache (sempre) → mostra dados salvos imediatamente
-  ├─ Conta ativa? 
-  │   ├─ Sim → busca dados frescos em background
-  │   └─ Não → mostra banner "Reconecte para atualizar"
-  └─ Imagem com fallback: effective_image_url → image_url → full_picture → thumbnail (p960) → thumbnail (original)
-```
+- O parsing de CSV/TXT é feito client-side (mesmo padrão do `CSVUploadDialog` existente em broadcast)
+- Para XLSX, usa a lib `xlsx` para converter para array de objetos
+- A inserção no banco usa a edge function `sanitize-contacts` já existente, que faz dedup contra o DB e normalização E.164
+- O componente reutiliza padrões visuais do `CSVUploadDialog` existente (drag-drop, progress bar, preview table)
 
