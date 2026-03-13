@@ -6,12 +6,13 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
   Inbox, Search, Send, Loader2, Check, CheckCheck,
-  Sparkles, User, Archive, ArrowLeft, MessageCircle, Tag,
+  Sparkles, User, Archive, ArrowLeft, MessageCircle, Tag, Phone,
 } from 'lucide-react';
 import { TagBadge } from '@/components/whatsapp/TagBadge';
 import { TagSelector } from '@/components/whatsapp/TagSelector';
