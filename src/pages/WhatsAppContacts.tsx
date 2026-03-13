@@ -12,7 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   Contact, Search, Trash2, Loader2, Plus, FolderOpen, Users, Phone, Tag,
   Edit, Eye, ArrowLeft, MoreHorizontal, MapPin, MessageCircle, Globe,
-  Download, RefreshCw, UserPlus, CheckCircle, WifiOff,
+  Download, RefreshCw, UserPlus, CheckCircle, WifiOff, Upload,
 } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
