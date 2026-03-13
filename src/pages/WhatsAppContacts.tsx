@@ -884,6 +884,15 @@ export default function WhatsAppContacts() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* File Import Dialog */}
+      <FileImportDialog
+        open={showFileImport}
+        onOpenChange={setShowFileImport}
+        userId={user?.id || ''}
+        lists={lists.map(l => ({ id: l.id, name: l.name }))}
+        onSuccess={fetchLists}
+      />
     </MainLayout>
   );
 }
