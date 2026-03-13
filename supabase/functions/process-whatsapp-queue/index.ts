@@ -169,7 +169,9 @@ Deno.serve(async (req) => {
               item.contact_name,
               item.contact_metadata,
               variationLevel,
-              campaign.message_template
+              campaign.message_template,
+              supabase,
+              item.user_id
             );
           } catch (aiErr) {
             console.error("AI generation failed, using template:", aiErr);
