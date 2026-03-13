@@ -153,6 +153,7 @@ export function CampaignFormDialog({
     setEndDate(undefined); setEndTime('18:00');
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
     setTags([]); setTagInput('');
+    setVariationLevel('medium');
   };
 
   const buildTimestamp = (date: Date | undefined, time: string): string | null => {
