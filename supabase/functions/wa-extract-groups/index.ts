@@ -11,7 +11,7 @@ async function getInstanceConfig(supabase: any, userId: string) {
     .from('wa_instances')
     .select('*')
     .eq('user_id', userId)
-    .eq('is_active', true);
+    .eq('provider', 'evolution');
 
   if (instances && instances.length > 0) {
     // For Evolution instances, use env vars for credentials
