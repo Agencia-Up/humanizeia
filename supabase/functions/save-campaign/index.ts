@@ -188,6 +188,11 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Validate variation_level
+    if (variation_level && !["low", "medium", "high"].includes(variation_level)) {
+      errors.push("variation_level deve ser 'low', 'medium' ou 'high'.");
+    }
+
     if (errors.length > 0) {
       return jsonResponse({ error: "Dados inválidos", details: errors }, 400);
     }
