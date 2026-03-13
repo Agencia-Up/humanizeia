@@ -179,10 +179,44 @@ export default function WhatsAppInbox() {
     setLoadingMessages(false);
   }, [user]);
 
+  // Fetch contact tags for conversations
+  const fetchContactTags = useCallback(async () => {
+    if (!user || conversations.length === 0) return;
+    const phones = conversations.map(c => c.phone);
+    const { data } = await supabase
+      .from('wa_contacts')
+      .select('phone, tags')
+      .eq('user_id', user.id)
+      .in('phone', phones);
+    if (data) {
+      const tagMap: Record<string, string[]> = {};
+      for (const c of data) {
+        if (c.tags && (c.tags as string[]).length > 0) {
+          tagMap[c.phone] = c.tags as string[];
+        }
+      }
+      setContactTags(tagMap);
+    }
+  }, [user, conversations]);
+
+  const updateContactTags = async (phone: string, newTags: string[]) => {
+    if (!user) return;
+    await supabase
+      .from('wa_contacts')
+      .update({ tags: newTags } as any)
+      .eq('user_id', user.id)
+      .eq('phone', phone);
+    setContactTags(prev => ({ ...prev, [phone]: newTags }));
+  };
+
   useEffect(() => {
     fetchConversations();
     fetchInstances();
   }, [fetchConversations, fetchInstances]);
+
+  useEffect(() => {
+    fetchContactTags();
+  }, [fetchContactTags]);
 
   useEffect(() => {
     if (selectedPhone) {
