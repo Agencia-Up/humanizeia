@@ -117,7 +117,7 @@ export default function WhatsAppAutomations() {
   };
 
   const toggleActive = async (id: string, isActive: boolean) => {
-    await supabase.from('wa_automations').update({ is_active: !isActive } as any).eq('id', id);
+    await (supabase as any).from('wa_automations').update({ is_active: !isActive }).eq('id', id);
     fetchAutomations();
   };
 
