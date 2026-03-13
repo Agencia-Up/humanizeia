@@ -147,7 +147,7 @@ QUALITY: Professional advertising creative, polished, ultra high resolution, sha
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemini-2.5-flash-image",
+            model: "google/gemini-3.1-flash-image-preview",
             messages: [{ role: "user", content: referenceImage ? messageContent : variationPrompt }],
             modalities: ["image", "text"],
             image_config: { aspect_ratio: selectedAspectRatio },
