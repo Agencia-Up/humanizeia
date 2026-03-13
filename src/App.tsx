@@ -75,7 +75,7 @@ const App = () => (
           <Route path="/apollo/criar-campanha" element={<ProtectedRoute><CriarCampanha /></ProtectedRoute>} />
           <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
           <Route path="/whatsapp/campaigns" element={<ProtectedRoute><WhatsAppCampaigns /></ProtectedRoute>} />
-          <Route path="/whatsapp/groups" element={<ProtectedRoute><WhatsAppGroups /></ProtectedRoute>} />
+          {/* /whatsapp/groups route removed - merged into /whatsapp/contacts */}
           <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />
           <Route path="/whatsapp/broadcast" element={<ProtectedRoute><WhatsAppBroadcast /></ProtectedRoute>} />
           <Route path="/whatsapp/analytics" element={<ProtectedRoute><WhatsAppAnalytics /></ProtectedRoute>} />
