@@ -59,6 +59,8 @@ interface Campaign {
   regras_aquecimento: any;
   started_at: string | null;
   variation_level: string;
+  sent_count: number;
+  instance_id: string | null;
 }
 
 Deno.serve(async (req) => {
