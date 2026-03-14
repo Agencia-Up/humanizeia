@@ -6,9 +6,11 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Process fewer items per invocation for slower, more human-like sending
-const BATCH_SIZE = 5;
+// Process ONE item per invocation to avoid edge function timeout with humanized delays
+const BATCH_SIZE = 1;
 const MAX_RETRIES = 5;
+// Items stuck in "processing" for more than this time (ms) are considered stale
+const STALE_LOCK_MS = 90_000; // 90 seconds
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 
 const instanceFailures = new Map<string, number>();
