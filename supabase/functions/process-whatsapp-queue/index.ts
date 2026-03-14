@@ -298,27 +298,20 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ===== HUMANIZED SENDING SEQUENCE =====
+        // ===== HUMANIZED SENDING SEQUENCE (kept short to fit edge function timeout) =====
 
         // Step 1: Go online (simulate opening WhatsApp)
         await simulateOnlinePresence(instance, item.phone);
-        await sleep(1500 + Math.random() * 2500); // 1.5-4s after going online
+        await sleep(1000 + Math.random() * 1500); // 1-2.5s after going online
 
-        // Step 2: "Read" the chat (looking at contact before typing)
-        await sleep(2000 + Math.random() * 3000); // 2-5s reading time
-
-        // Step 3: Type with realistic speed
+        // Step 2: Type with realistic speed
         const messageLength = finalMessage.length;
-        // Mobile typing: ~12-20 chars/sec (slower than desktop)
-        const typingSpeedCps = 12 + Math.random() * 8;
-        const baseTypingMs = (messageLength / typingSpeedCps) * 1000;
-        // Add "thinking" pauses mid-typing
-        const thinkingPauses = Math.floor(Math.random() * 3) * (800 + Math.random() * 2000);
-        const totalTypingMs = Math.max(4000, Math.min(baseTypingMs + thinkingPauses, 20000));
+        const typingSpeedCps = 15 + Math.random() * 10;
+        const totalTypingMs = Math.max(2000, Math.min((messageLength / typingSpeedCps) * 1000, 8000));
         await simulateTyping(instance, item.phone, totalTypingMs);
 
-        // Step 4: Review before hitting send
-        await sleep(800 + Math.random() * 2000);
+        // Step 3: Brief review before hitting send
+        await sleep(500 + Math.random() * 1000);
 
         // Step 5: SEND (re-check pause right before sending)
         if (item.campaign_id) {
