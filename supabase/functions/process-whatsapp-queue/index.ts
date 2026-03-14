@@ -449,19 +449,19 @@ Deno.serve(async (req) => {
             });
             if (healthErr) console.error("Health decrement failed:", healthErr);
 
-            try {
-              const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-              await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-                },
-                body: JSON.stringify({
-                  instance_id: selectedInstance.id,
-                  user_id: item.user_id,
-                }),
-              });
+              try {
+                const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+                await fetchWithTimeout(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                  },
+                  body: JSON.stringify({
+                    instance_id: selectedInstance.id,
+                    user_id: item.user_id,
+                  }),
+                }, OUTBOUND_FETCH_TIMEOUT_MS);
             } catch (failoverErr) {
               console.error("Failover trigger failed:", failoverErr);
             }
