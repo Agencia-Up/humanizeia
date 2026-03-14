@@ -12,6 +12,9 @@ const MAX_RETRIES = 5;
 // Items stuck in "processing" for more than this time (ms) are considered stale
 const STALE_LOCK_MS = 90_000; // 90 seconds
 const CIRCUIT_BREAKER_THRESHOLD = 5;
+const OUTBOUND_FETCH_TIMEOUT_MS = 25_000;
+const PRESENCE_FETCH_TIMEOUT_MS = 8_000;
+const AI_FETCH_TIMEOUT_MS = 20_000;
 
 const instanceFailures = new Map<string, number>();
 
