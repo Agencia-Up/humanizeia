@@ -728,13 +728,14 @@ async function sendToEvolutionAPI(
     }
     await response.text();
   } else {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${apiUrl}/message/sendText/${instance.instance_name}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
         body: JSON.stringify({ number, text }),
-      }
+      },
+      OUTBOUND_FETCH_TIMEOUT_MS
     );
     if (!response.ok) {
       const errText = await response.text();
