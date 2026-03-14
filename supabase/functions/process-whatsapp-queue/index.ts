@@ -660,14 +660,14 @@ async function sendToMetaAPI(
     };
   }
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(messageBody),
-  });
+  }, OUTBOUND_FETCH_TIMEOUT_MS);
 
   if (!response.ok) {
     const errText = await response.text();
