@@ -715,11 +715,11 @@ async function sendToEvolutionAPI(
     if (response.status === 404) {
       await response.text(); // consume v2 body
       const v1Action = v1Endpoints[mediaType] || "sendDocument";
-      response = await fetch(`${apiUrl}/message/${v1Action}/${instance.instance_name}`, {
+      response = await fetchWithTimeout(`${apiUrl}/message/${v1Action}/${instance.instance_name}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
         body: JSON.stringify(mediaPayload),
-      });
+      }, OUTBOUND_FETCH_TIMEOUT_MS);
     }
 
     if (!response.ok) {
