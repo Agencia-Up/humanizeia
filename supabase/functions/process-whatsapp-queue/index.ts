@@ -394,26 +394,37 @@ Deno.serve(async (req) => {
 
         succeeded++;
 
-        // ===== HUMANIZED DELAY BETWEEN MESSAGES =====
+        // ===== SCHEDULE NEXT ITEM WITH HUMANIZED DELAY =====
+        // Instead of sleeping (which can timeout the edge function),
+        // we push the scheduled_for of the next pending item forward.
         const delayRules = campaign?.regras_delay || {};
-        const minD = (delayRules.min || campaign?.min_delay_seconds || 20) * 1000;  // Min 20s default
-        const maxD = (delayRules.max || campaign?.max_delay_seconds || 60) * 1000;  // Max 60s default
-        const baseDelay = minD + Math.random() * (maxD - minD);
+        const minD = delayRules.min || campaign?.min_delay_seconds || 20;
+        const maxD = delayRules.max || campaign?.max_delay_seconds || 60;
+        const delaySec = minD + Math.random() * (maxD - minD);
+        // 20% chance of longer pause (60-120s extra) for human-like behavior
+        const longPauseSec = Math.random() < 0.20 ? (60 + Math.random() * 60) : 0;
+        const totalDelaySec = delaySec + longPauseSec;
 
-        // 25% chance of "long pause" (45-120s) — simulates doing something else
-        const longPause = Math.random() < 0.25 ? (45000 + Math.random() * 75000) : 0;
+        const nextScheduledFor = new Date(Date.now() + totalDelaySec * 1000).toISOString();
+        console.log(`Next message scheduled in ${Math.round(totalDelaySec)}s`);
 
-        // 15% chance of going offline briefly between messages
-        if (Math.random() < 0.15) {
-          await simulateOfflinePresence(instance);
-          await sleep(8000 + Math.random() * 20000); // Offline for 8-28s
-          await simulateOnlinePresence(instance, item.phone);
-          await sleep(2000 + Math.random() * 3000);
+        // Update the next pending item for this campaign to respect the delay
+        if (item.campaign_id) {
+          const { data: nextItems } = await supabase
+            .from("wa_queue")
+            .select("id")
+            .eq("campaign_id", item.campaign_id)
+            .eq("status", "pending")
+            .order("scheduled_for", { ascending: true })
+            .limit(1);
+
+          if (nextItems && nextItems.length > 0) {
+            await supabase
+              .from("wa_queue")
+              .update({ scheduled_for: nextScheduledFor })
+              .eq("id", nextItems[0].id);
+          }
         }
-
-        const totalDelay = baseDelay + longPause;
-        console.log(`Humanized wait: ${Math.round(totalDelay / 1000)}s before next message`);
-        await sleep(totalDelay);
 
       } catch (err) {
         console.error(`Error processing queue item ${item.id}:`, err);
