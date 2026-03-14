@@ -932,11 +932,11 @@ async function simulateTyping(instance: Instance, phone: string, durationMs: num
 
     await sleep(durationMs);
 
-    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "paused" }),
-    }).catch(() => {});
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
   } catch (_) {
     // Non-critical
   }
