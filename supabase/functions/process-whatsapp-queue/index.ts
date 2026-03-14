@@ -971,10 +971,10 @@ async function simulateReadReceipt(instance: Instance, phone: string) {
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
-    await fetch(`${apiUrl}/chat/markChatUnread/${instance.instance_name}`, {
+    await fetchWithTimeout(`${apiUrl}/chat/markChatUnread/${instance.instance_name}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ chat: jid, lastMessage: { key: { fromMe: true } } }),
-    }).catch(() => {});
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
   } catch (_) {}
 }
