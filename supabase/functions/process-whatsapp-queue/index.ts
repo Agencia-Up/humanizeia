@@ -6,9 +6,11 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Process fewer items per invocation for slower, more human-like sending
-const BATCH_SIZE = 5;
+// Process ONE item per invocation to avoid edge function timeout with humanized delays
+const BATCH_SIZE = 1;
 const MAX_RETRIES = 5;
+// Items stuck in "processing" for more than this time (ms) are considered stale
+const STALE_LOCK_MS = 90_000; // 90 seconds
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 
 const instanceFailures = new Map<string, number>();
@@ -73,6 +75,20 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    // ===== RECOVER STALE LOCKS =====
+    // Reset items stuck in "processing" for too long (edge function timed out previously)
+    const staleThreshold = new Date(Date.now() - STALE_LOCK_MS).toISOString();
+    const { data: staleItems, error: staleErr } = await supabase
+      .from("wa_queue")
+      .update({ status: "pending" })
+      .eq("status", "processing")
+      .lt("scheduled_for", staleThreshold)
+      .select("id");
+
+    if (!staleErr && staleItems && staleItems.length > 0) {
+      console.log(`Recovered ${staleItems.length} stale processing items back to pending`);
+    }
 
     const { data: queueItems, error: queueErr } = await supabase
       .from("wa_queue")
@@ -282,27 +298,20 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ===== HUMANIZED SENDING SEQUENCE =====
+        // ===== HUMANIZED SENDING SEQUENCE (kept short to fit edge function timeout) =====
 
         // Step 1: Go online (simulate opening WhatsApp)
         await simulateOnlinePresence(instance, item.phone);
-        await sleep(1500 + Math.random() * 2500); // 1.5-4s after going online
+        await sleep(1000 + Math.random() * 1500); // 1-2.5s after going online
 
-        // Step 2: "Read" the chat (looking at contact before typing)
-        await sleep(2000 + Math.random() * 3000); // 2-5s reading time
-
-        // Step 3: Type with realistic speed
+        // Step 2: Type with realistic speed
         const messageLength = finalMessage.length;
-        // Mobile typing: ~12-20 chars/sec (slower than desktop)
-        const typingSpeedCps = 12 + Math.random() * 8;
-        const baseTypingMs = (messageLength / typingSpeedCps) * 1000;
-        // Add "thinking" pauses mid-typing
-        const thinkingPauses = Math.floor(Math.random() * 3) * (800 + Math.random() * 2000);
-        const totalTypingMs = Math.max(4000, Math.min(baseTypingMs + thinkingPauses, 20000));
+        const typingSpeedCps = 15 + Math.random() * 10;
+        const totalTypingMs = Math.max(2000, Math.min((messageLength / typingSpeedCps) * 1000, 8000));
         await simulateTyping(instance, item.phone, totalTypingMs);
 
-        // Step 4: Review before hitting send
-        await sleep(800 + Math.random() * 2000);
+        // Step 3: Brief review before hitting send
+        await sleep(500 + Math.random() * 1000);
 
         // Step 5: SEND (re-check pause right before sending)
         if (item.campaign_id) {
@@ -385,26 +394,37 @@ Deno.serve(async (req) => {
 
         succeeded++;
 
-        // ===== HUMANIZED DELAY BETWEEN MESSAGES =====
+        // ===== SCHEDULE NEXT ITEM WITH HUMANIZED DELAY =====
+        // Instead of sleeping (which can timeout the edge function),
+        // we push the scheduled_for of the next pending item forward.
         const delayRules = campaign?.regras_delay || {};
-        const minD = (delayRules.min || campaign?.min_delay_seconds || 20) * 1000;  // Min 20s default
-        const maxD = (delayRules.max || campaign?.max_delay_seconds || 60) * 1000;  // Max 60s default
-        const baseDelay = minD + Math.random() * (maxD - minD);
+        const minD = delayRules.min || campaign?.min_delay_seconds || 20;
+        const maxD = delayRules.max || campaign?.max_delay_seconds || 60;
+        const delaySec = minD + Math.random() * (maxD - minD);
+        // 20% chance of longer pause (60-120s extra) for human-like behavior
+        const longPauseSec = Math.random() < 0.20 ? (60 + Math.random() * 60) : 0;
+        const totalDelaySec = delaySec + longPauseSec;
 
-        // 25% chance of "long pause" (45-120s) — simulates doing something else
-        const longPause = Math.random() < 0.25 ? (45000 + Math.random() * 75000) : 0;
+        const nextScheduledFor = new Date(Date.now() + totalDelaySec * 1000).toISOString();
+        console.log(`Next message scheduled in ${Math.round(totalDelaySec)}s`);
 
-        // 15% chance of going offline briefly between messages
-        if (Math.random() < 0.15) {
-          await simulateOfflinePresence(instance);
-          await sleep(8000 + Math.random() * 20000); // Offline for 8-28s
-          await simulateOnlinePresence(instance, item.phone);
-          await sleep(2000 + Math.random() * 3000);
+        // Update the next pending item for this campaign to respect the delay
+        if (item.campaign_id) {
+          const { data: nextItems } = await supabase
+            .from("wa_queue")
+            .select("id")
+            .eq("campaign_id", item.campaign_id)
+            .eq("status", "pending")
+            .order("scheduled_for", { ascending: true })
+            .limit(1);
+
+          if (nextItems && nextItems.length > 0) {
+            await supabase
+              .from("wa_queue")
+              .update({ scheduled_for: nextScheduledFor })
+              .eq("id", nextItems[0].id);
+          }
         }
-
-        const totalDelay = baseDelay + longPause;
-        console.log(`Humanized wait: ${Math.round(totalDelay / 1000)}s before next message`);
-        await sleep(totalDelay);
 
       } catch (err) {
         console.error(`Error processing queue item ${item.id}:`, err);
