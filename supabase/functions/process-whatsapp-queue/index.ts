@@ -958,11 +958,11 @@ async function simulateOfflinePresence(instance: Instance) {
   if (instance.provider === "meta") return;
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
-    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ presence: "unavailable" }),
-    }).catch(() => {});
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
   } catch (_) {}
 }
 
