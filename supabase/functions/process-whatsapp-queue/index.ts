@@ -591,10 +591,9 @@ async function selectSmartInstance(
     break;
   }
 
-  // Optional pause when crossing an instance boundary
-  if (instance && pauseBetweenInstances > 0 && sentCount > 0 && sentCount % rotationLimit === 0) {
-    await sleep(pauseBetweenInstances * 1000);
-  }
+  // Never sleep here: long pauses must be applied by scheduling the NEXT item,
+  // otherwise the edge function can hit timeout and leave the queue locked.
+  void pauseBetweenInstances;
 
   return instance;
 }
