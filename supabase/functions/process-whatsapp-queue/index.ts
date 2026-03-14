@@ -924,11 +924,11 @@ async function simulateTyping(instance: Instance, phone: string, durationMs: num
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
 
-    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "composing" }),
-    }).catch(() => {});
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
 
     await sleep(durationMs);
 
