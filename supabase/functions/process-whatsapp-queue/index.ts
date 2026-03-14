@@ -405,12 +405,26 @@ Deno.serve(async (req) => {
         // Instead of sleeping (which can timeout the edge function),
         // we push the scheduled_for of the next pending item forward.
         const delayRules = campaign?.regras_delay || {};
+        const rotationRules = campaign?.regras_rodizio || {};
         const minD = delayRules.min || campaign?.min_delay_seconds || 20;
         const maxD = delayRules.max || campaign?.max_delay_seconds || 60;
         const delaySec = minD + Math.random() * (maxD - minD);
         // 20% chance of longer pause (60-120s extra) for human-like behavior
         const longPauseSec = Math.random() < 0.20 ? (60 + Math.random() * 60) : 0;
-        const totalDelaySec = delaySec + longPauseSec;
+
+        const rotationLimit = Math.max(
+          1,
+          rotationRules.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10,
+        );
+        const rotationPauseSec =
+          campaign &&
+          rotationRules.pausa_entre_instancias > 0 &&
+          campaign.sent_count > 0 &&
+          campaign.sent_count % rotationLimit === 0
+            ? rotationRules.pausa_entre_instancias
+            : 0;
+
+        const totalDelaySec = delaySec + longPauseSec + rotationPauseSec;
 
         const nextScheduledFor = new Date(Date.now() + totalDelaySec * 1000).toISOString();
         console.log(`Next message scheduled in ${Math.round(totalDelaySec)}s`);
