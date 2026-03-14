@@ -309,16 +309,16 @@ Deno.serve(async (req) => {
 
         // Step 1: Go online (simulate opening WhatsApp)
         await simulateOnlinePresence(instance, item.phone);
-        await sleep(1000 + Math.random() * 1500); // 1-2.5s after going online
+        await sleep(300 + Math.random() * 600); // keep fast to stay inside edge timeout
 
-        // Step 2: Type with realistic speed
+        // Step 2: Type with realistic speed (bounded)
         const messageLength = finalMessage.length;
-        const typingSpeedCps = 15 + Math.random() * 10;
-        const totalTypingMs = Math.max(2000, Math.min((messageLength / typingSpeedCps) * 1000, 8000));
+        const typingSpeedCps = 18 + Math.random() * 10;
+        const totalTypingMs = Math.max(800, Math.min((messageLength / typingSpeedCps) * 1000, 4000));
         await simulateTyping(instance, item.phone, totalTypingMs);
 
         // Step 3: Brief review before hitting send
-        await sleep(500 + Math.random() * 1000);
+        await sleep(200 + Math.random() * 500);
 
         // Step 5: SEND (re-check pause right before sending)
         if (item.campaign_id) {
