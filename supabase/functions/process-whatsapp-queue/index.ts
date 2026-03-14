@@ -706,11 +706,11 @@ async function sendToEvolutionAPI(
       fileName: mediaType === "document" ? "file" : undefined,
     };
 
-    let response = await fetch(v2Endpoint, {
+    let response = await fetchWithTimeout(v2Endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify(mediaPayload),
-    });
+    }, OUTBOUND_FETCH_TIMEOUT_MS);
 
     if (response.status === 404) {
       await response.text(); // consume v2 body
