@@ -864,7 +864,7 @@ REGRAS OBRIGATÓRIAS:
     ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
     : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
 
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -879,7 +879,7 @@ REGRAS OBRIGATÓRIAS:
       temperature: config.temp,
       max_tokens: 500,
     }),
-  });
+  }, AI_FETCH_TIMEOUT_MS);
 
   if (!response.ok) {
     const errText = await response.text();
