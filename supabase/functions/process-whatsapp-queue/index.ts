@@ -214,7 +214,11 @@ Deno.serve(async (req) => {
 
         const { data: lockRow, error: lockErr } = await supabase
           .from("wa_queue")
-          .update({ status: "processing" })
+          .update({
+            status: "processing",
+            // Reuse scheduled_for as lock timestamp for reliable stale-lock recovery
+            scheduled_for: new Date().toISOString(),
+          })
           .eq("id", item.id)
           .eq("status", "pending")
           .select("id")
