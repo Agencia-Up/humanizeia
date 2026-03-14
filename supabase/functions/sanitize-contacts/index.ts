@@ -169,19 +169,50 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
+    // Auth: support both user JWT and service-role calls (internal function-to-function)
+    let user_id: string;
+    const authHeader = req.headers.get('Authorization');
+    const serviceRoleToken = supabaseServiceKey;
+    const bearerToken = authHeader?.replace('Bearer ', '') || '';
+
+    if (bearerToken === serviceRoleToken) {
+      // Internal service-to-service call (from other edge functions)
+      const body_peek = await req.clone().json();
+      if (!body_peek.user_id) {
+        return new Response(JSON.stringify({ success: false, error: 'user_id obrigatório para chamadas internas' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      user_id = body_peek.user_id;
+    } else if (authHeader?.startsWith('Bearer ')) {
+      const authClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: userData, error: userError } = await authClient.auth.getUser();
+      if (userError || !userData?.user) {
+        return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      user_id = userData.user.id;
+    } else {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const body = await req.json();
     const {
-      user_id,
       list_id,
       contacts,
       check_whatsapp = false,
       source = 'manual',
     } = body;
 
-    if (!user_id || !Array.isArray(contacts) || contacts.length === 0) {
+    if (!Array.isArray(contacts) || contacts.length === 0) {
       return new Response(JSON.stringify({
         success: false,
-        error: 'user_id e contacts[] são obrigatórios',
+        error: 'contacts[] é obrigatório',
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
