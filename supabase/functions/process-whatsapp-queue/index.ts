@@ -76,6 +76,20 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // ===== RECOVER STALE LOCKS =====
+    // Reset items stuck in "processing" for too long (edge function timed out previously)
+    const staleThreshold = new Date(Date.now() - STALE_LOCK_MS).toISOString();
+    const { data: staleItems, error: staleErr } = await supabase
+      .from("wa_queue")
+      .update({ status: "pending" })
+      .eq("status", "processing")
+      .lt("scheduled_for", staleThreshold)
+      .select("id");
+
+    if (!staleErr && staleItems && staleItems.length > 0) {
+      console.log(`Recovered ${staleItems.length} stale processing items back to pending`);
+    }
+
     const { data: queueItems, error: queueErr } = await supabase
       .from("wa_queue")
       .select("*")
