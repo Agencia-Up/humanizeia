@@ -342,7 +342,7 @@ Deno.serve(async (req) => {
         instanceFailures.set(instance.id, 0);
 
         // Step 6: Read receipt
-        await sleep(500 + Math.random() * 1000);
+        await sleep(200 + Math.random() * 500);
         await simulateReadReceipt(instance, item.phone);
 
         // Mark success
