@@ -12,6 +12,9 @@ const MAX_RETRIES = 5;
 // Items stuck in "processing" for more than this time (ms) are considered stale
 const STALE_LOCK_MS = 90_000; // 90 seconds
 const CIRCUIT_BREAKER_THRESHOLD = 5;
+const OUTBOUND_FETCH_TIMEOUT_MS = 10_000;
+const PRESENCE_FETCH_TIMEOUT_MS = 2_500;
+const AI_FETCH_TIMEOUT_MS = 12_000;
 
 const instanceFailures = new Map<string, number>();
 
@@ -211,7 +214,11 @@ Deno.serve(async (req) => {
 
         const { data: lockRow, error: lockErr } = await supabase
           .from("wa_queue")
-          .update({ status: "processing" })
+          .update({
+            status: "processing",
+            // Reuse scheduled_for as lock timestamp for reliable stale-lock recovery
+            scheduled_for: new Date().toISOString(),
+          })
           .eq("id", item.id)
           .eq("status", "pending")
           .select("id")
@@ -302,16 +309,16 @@ Deno.serve(async (req) => {
 
         // Step 1: Go online (simulate opening WhatsApp)
         await simulateOnlinePresence(instance, item.phone);
-        await sleep(1000 + Math.random() * 1500); // 1-2.5s after going online
+        await sleep(300 + Math.random() * 600); // keep fast to stay inside edge timeout
 
-        // Step 2: Type with realistic speed
+        // Step 2: Type with realistic speed (bounded)
         const messageLength = finalMessage.length;
-        const typingSpeedCps = 15 + Math.random() * 10;
-        const totalTypingMs = Math.max(2000, Math.min((messageLength / typingSpeedCps) * 1000, 8000));
+        const typingSpeedCps = 18 + Math.random() * 10;
+        const totalTypingMs = Math.max(800, Math.min((messageLength / typingSpeedCps) * 1000, 4000));
         await simulateTyping(instance, item.phone, totalTypingMs);
 
         // Step 3: Brief review before hitting send
-        await sleep(500 + Math.random() * 1000);
+        await sleep(200 + Math.random() * 500);
 
         // Step 5: SEND (re-check pause right before sending)
         if (item.campaign_id) {
@@ -335,7 +342,7 @@ Deno.serve(async (req) => {
         instanceFailures.set(instance.id, 0);
 
         // Step 6: Read receipt
-        await sleep(500 + Math.random() * 1000);
+        await sleep(200 + Math.random() * 500);
         await simulateReadReceipt(instance, item.phone);
 
         // Mark success
@@ -398,12 +405,26 @@ Deno.serve(async (req) => {
         // Instead of sleeping (which can timeout the edge function),
         // we push the scheduled_for of the next pending item forward.
         const delayRules = campaign?.regras_delay || {};
+        const rotationRules = campaign?.regras_rodizio || {};
         const minD = delayRules.min || campaign?.min_delay_seconds || 20;
         const maxD = delayRules.max || campaign?.max_delay_seconds || 60;
         const delaySec = minD + Math.random() * (maxD - minD);
         // 20% chance of longer pause (60-120s extra) for human-like behavior
         const longPauseSec = Math.random() < 0.20 ? (60 + Math.random() * 60) : 0;
-        const totalDelaySec = delaySec + longPauseSec;
+
+        const rotationLimit = Math.max(
+          1,
+          rotationRules.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10,
+        );
+        const rotationPauseSec =
+          campaign &&
+          rotationRules.pausa_entre_instancias > 0 &&
+          campaign.sent_count > 0 &&
+          campaign.sent_count % rotationLimit === 0
+            ? rotationRules.pausa_entre_instancias
+            : 0;
+
+        const totalDelaySec = delaySec + longPauseSec + rotationPauseSec;
 
         const nextScheduledFor = new Date(Date.now() + totalDelaySec * 1000).toISOString();
         console.log(`Next message scheduled in ${Math.round(totalDelaySec)}s`);
@@ -442,19 +463,19 @@ Deno.serve(async (req) => {
             });
             if (healthErr) console.error("Health decrement failed:", healthErr);
 
-            try {
-              const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-              await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-                },
-                body: JSON.stringify({
-                  instance_id: selectedInstance.id,
-                  user_id: item.user_id,
-                }),
-              });
+              try {
+                const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+                await fetchWithTimeout(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                  },
+                  body: JSON.stringify({
+                    instance_id: selectedInstance.id,
+                    user_id: item.user_id,
+                  }),
+                }, OUTBOUND_FETCH_TIMEOUT_MS);
             } catch (failoverErr) {
               console.error("Failover trigger failed:", failoverErr);
             }
@@ -584,10 +605,9 @@ async function selectSmartInstance(
     break;
   }
 
-  // Optional pause when crossing an instance boundary
-  if (instance && pauseBetweenInstances > 0 && sentCount > 0 && sentCount % rotationLimit === 0) {
-    await sleep(pauseBetweenInstances * 1000);
-  }
+  // Never sleep here: long pauses must be applied by scheduling the NEXT item,
+  // otherwise the edge function can hit timeout and leave the queue locked.
+  void pauseBetweenInstances;
 
   return instance;
 }
@@ -653,14 +673,14 @@ async function sendToMetaAPI(
     };
   }
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(messageBody),
-  });
+  }, OUTBOUND_FETCH_TIMEOUT_MS);
 
   if (!response.ok) {
     const errText = await response.text();
@@ -699,20 +719,20 @@ async function sendToEvolutionAPI(
       fileName: mediaType === "document" ? "file" : undefined,
     };
 
-    let response = await fetch(v2Endpoint, {
+    let response = await fetchWithTimeout(v2Endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify(mediaPayload),
-    });
+    }, OUTBOUND_FETCH_TIMEOUT_MS);
 
     if (response.status === 404) {
       await response.text(); // consume v2 body
       const v1Action = v1Endpoints[mediaType] || "sendDocument";
-      response = await fetch(`${apiUrl}/message/${v1Action}/${instance.instance_name}`, {
+      response = await fetchWithTimeout(`${apiUrl}/message/${v1Action}/${instance.instance_name}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
         body: JSON.stringify(mediaPayload),
-      });
+      }, OUTBOUND_FETCH_TIMEOUT_MS);
     }
 
     if (!response.ok) {
@@ -721,13 +741,14 @@ async function sendToEvolutionAPI(
     }
     await response.text();
   } else {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${apiUrl}/message/sendText/${instance.instance_name}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
         body: JSON.stringify({ number, text }),
-      }
+      },
+      OUTBOUND_FETCH_TIMEOUT_MS
     );
     if (!response.ok) {
       const errText = await response.text();
@@ -856,7 +877,7 @@ REGRAS OBRIGATÓRIAS:
     ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
     : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
 
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -871,7 +892,7 @@ REGRAS OBRIGATÓRIAS:
       temperature: config.temp,
       max_tokens: 500,
     }),
-  });
+  }, AI_FETCH_TIMEOUT_MS);
 
   if (!response.ok) {
     const errText = await response.text();
@@ -887,6 +908,26 @@ REGRAS OBRIGATÓRIAS:
 }
 
 // ====================== HELPERS ======================
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = OUTBOUND_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Request timeout after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function markFailed(supabase: any, itemId: string, errorMessage: string) {
   await supabase
@@ -916,19 +957,19 @@ async function simulateTyping(instance: Instance, phone: string, durationMs: num
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
 
-    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "composing" }),
-    }).catch(() => {});
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
 
     await sleep(durationMs);
 
-    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "paused" }),
-    }).catch(() => {});
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
   } catch (_) {
     // Non-critical
   }
@@ -938,11 +979,11 @@ async function simulateOnlinePresence(instance: Instance, _phone: string) {
   if (instance.provider === "meta") return;
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
-    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ presence: "available" }),
-    }).catch(() => {});
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
   } catch (_) {}
 }
 
@@ -950,11 +991,11 @@ async function simulateOfflinePresence(instance: Instance) {
   if (instance.provider === "meta") return;
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
-    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ presence: "unavailable" }),
-    }).catch(() => {});
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
   } catch (_) {}
 }
 
@@ -963,10 +1004,10 @@ async function simulateReadReceipt(instance: Instance, phone: string) {
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
-    await fetch(`${apiUrl}/chat/markChatUnread/${instance.instance_name}`, {
+    await fetchWithTimeout(`${apiUrl}/chat/markChatUnread/${instance.instance_name}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ chat: jid, lastMessage: { key: { fromMe: true } } }),
-    }).catch(() => {});
+    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
   } catch (_) {}
 }
