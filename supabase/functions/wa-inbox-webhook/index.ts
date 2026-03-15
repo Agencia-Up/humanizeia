@@ -1146,31 +1146,62 @@ async function transcribeAudioFromEvolution(
       return null;
     }
 
-    // Get base64 audio from Evolution API
     const key = messageData.key || {};
+    const message = messageData.message || messageData;
+    console.log(`[audio-transcribe] Requesting base64 from Evolution: ${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`);
+    console.log(`[audio-transcribe] Key: ${JSON.stringify(key)}`);
+
+    // Try V2 endpoint first, then V1
+    let base64Audio: string | null = null;
+    let mimetype = "audio/ogg";
+
+    // Attempt 1: Standard endpoint with full message body
     const mediaRes = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         apikey: apiKey,
       },
-      body: JSON.stringify({ message: { key }, convertToMp4: false }),
+      body: JSON.stringify({ message: { key, message: message } }),
     });
 
-    if (!mediaRes.ok) {
-      console.error(`[audio-transcribe] Failed to get media: ${mediaRes.status}`);
-      return null;
-    }
+    console.log(`[audio-transcribe] Evolution response status: ${mediaRes.status}`);
 
-    const mediaData = await mediaRes.json();
-    const base64Audio = mediaData.base64 || mediaData.data?.base64;
-    const mimetype = mediaData.mimetype || mediaData.data?.mimetype || "audio/ogg";
+    if (mediaRes.ok) {
+      const mediaData = await mediaRes.json();
+      console.log(`[audio-transcribe] Evolution response keys: ${JSON.stringify(Object.keys(mediaData))}`);
+      base64Audio = mediaData.base64 || mediaData.data?.base64 || mediaData.mediaBase64 || null;
+      mimetype = mediaData.mimetype || mediaData.data?.mimetype || message.audioMessage?.mimetype || "audio/ogg";
+    } else {
+      const errText = await mediaRes.text();
+      console.error(`[audio-transcribe] Evolution getBase64 failed: ${mediaRes.status} - ${errText}`);
+      
+      // Attempt 2: Try with just key (some Evolution versions)
+      const mediaRes2 = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: apiKey,
+        },
+        body: JSON.stringify({ message: { key }, convertToMp4: false }),
+      });
+
+      console.log(`[audio-transcribe] Evolution retry status: ${mediaRes2.status}`);
+      if (mediaRes2.ok) {
+        const mediaData2 = await mediaRes2.json();
+        base64Audio = mediaData2.base64 || mediaData2.data?.base64 || mediaData2.mediaBase64 || null;
+        mimetype = mediaData2.mimetype || mediaData2.data?.mimetype || message.audioMessage?.mimetype || "audio/ogg";
+      } else {
+        await mediaRes2.text(); // consume body
+      }
+    }
 
     if (!base64Audio) {
-      console.error("[audio-transcribe] No base64 audio returned");
+      console.error("[audio-transcribe] No base64 audio returned from Evolution after all attempts");
       return null;
     }
 
+    console.log(`[audio-transcribe] Got base64 audio, length: ${base64Audio.length}, mimetype: ${mimetype}`);
     return await transcribeWithGemini(base64Audio, mimetype);
   } catch (err) {
     console.error("[audio-transcribe] Evolution transcription error:", err);
