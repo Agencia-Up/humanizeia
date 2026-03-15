@@ -63,6 +63,7 @@ Deno.serve(async (req) => {
       media_type,
       tags,
       variation_level,
+      include_optout_buttons,
     } = body;
 
     // --- Validation ---
