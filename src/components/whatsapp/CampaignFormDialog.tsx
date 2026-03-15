@@ -184,6 +184,7 @@ export function CampaignFormDialog({
       media_type: mediaType,
       tags,
       variation_level: variationLevel,
+      include_optout_buttons: includeOptoutButtons,
     });
   };
 
