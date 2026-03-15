@@ -125,6 +125,7 @@ export function CampaignFormDialog({
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
       setVariationLevel(editingCampaign.variation_level || 'medium');
+      setIncludeOptoutButtons(editingCampaign.include_optout_buttons ?? false);
       if (editingCampaign.start_time) {
         const d = new Date(editingCampaign.start_time);
         setStartDate(d);
