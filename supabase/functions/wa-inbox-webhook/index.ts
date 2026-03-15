@@ -833,6 +833,78 @@ REGRAS DE HUMANIZAÇÃO (OBRIGATÓRIAS):
   }
 }
 
+// ====================== OPT-IN/OPT-OUT CONFIRMATION MESSAGES ======================
+
+async function sendOptoutConfirmation(supabase: any, instance: any, phone: string, replyTarget?: string) {
+  try {
+    const confirmMsg = "✅ Sua solicitação foi processada. Você não receberá mais mensagens nossas. Caso mude de ideia, basta nos enviar uma mensagem. Obrigado! 🙏";
+    await sendAutoReply(supabase, instance, phone, confirmMsg, replyTarget);
+  } catch (err) {
+    console.error("[opt-out] Failed to send confirmation:", err);
+  }
+}
+
+async function sendOptinConfirmation(supabase: any, instance: any, phone: string, replyTarget?: string) {
+  try {
+    const confirmMsg = "🎉 Que bom que você quer continuar! Vamos enviar apenas conteúdos relevantes para você. Obrigado pela confiança! 💚";
+    await sendAutoReply(supabase, instance, phone, confirmMsg, replyTarget);
+  } catch (err) {
+    console.error("[opt-in] Failed to send confirmation:", err);
+  }
+}
+
+async function sendAutoReply(supabase: any, instance: any, phone: string, text: string, replyTarget?: string) {
+  const { data: instanceData } = await supabase
+    .from("wa_instances")
+    .select("instance_name, provider, api_url, api_key_encrypted, meta_config")
+    .eq("id", instance.id)
+    .single();
+
+  if (!instanceData) return;
+
+  const destination = replyTarget || phone;
+
+  if (instanceData.provider === "evolution") {
+    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+    const apiUrl = (evolutionApiUrl || instanceData.api_url).replace(/\/+$/, "");
+    const apiKey = evolutionApiKey || instanceData.api_key_encrypted;
+
+    const res = await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: apiKey },
+      body: JSON.stringify({ number: destination, text }),
+    });
+
+    if (!res.ok) {
+      console.error("[auto-reply] Evolution send error:", await res.text());
+    }
+  } else if (instanceData.provider === "meta") {
+    const config = instanceData.meta_config || {};
+    const phoneNumberId = config.phone_number_id;
+    const accessToken = config.access_token_encrypted || instanceData.api_key_encrypted;
+
+    if (phoneNumberId && accessToken) {
+      await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ messaging_product: "whatsapp", to: phone, type: "text", text: { body: text } }),
+      });
+    }
+  }
+
+  // Save to inbox
+  await supabase.from("wa_inbox").insert({
+    user_id: instance.user_id,
+    instance_id: instance.id,
+    phone,
+    direction: "outgoing",
+    message_type: "text",
+    content: text,
+    is_read: true,
+  });
+}
+
 async function categorizeWithAI(content: string): Promise<{ category: string; sentiment: string }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
