@@ -38,6 +38,7 @@ export interface CampaignFormData {
   media_type: string;
   tags: string[];
   variation_level: string;
+  include_optout_buttons: boolean;
 }
 
 interface ContactList {
