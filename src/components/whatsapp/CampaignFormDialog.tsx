@@ -157,6 +157,7 @@ export function CampaignFormDialog({
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
     setTags([]); setTagInput('');
     setVariationLevel('medium');
+    setIncludeOptoutButtons(false);
   };
 
   const buildTimestamp = (date: Date | undefined, time: string): string | null => {
