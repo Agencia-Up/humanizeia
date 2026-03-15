@@ -339,7 +339,19 @@ Deno.serve(async (req) => {
           }
         }
 
-        await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
+        // Decide if opt-in/opt-out buttons should be sent
+        const shouldSendOptoutButtons = campaign?.include_optout_buttons &&
+          !item.contact_metadata?.last_message_at; // only for first-time contacts
+
+        if (shouldSendOptoutButtons && instance.provider === "evolution") {
+          // Send message with interactive buttons via Evolution API
+          await sendEvolutionButtonMessage(instance, item.phone, finalMessage, [
+            { buttonId: "optout_continue", buttonText: { displayText: "✅ Quero Continuar Recebendo" } },
+            { buttonId: "optout_stop", buttonText: { displayText: "❌ Não Quero Mais Receber" } },
+          ]);
+        } else {
+          await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
+        }
         instanceFailures.set(instance.id, 0);
 
         // Step 6: Read receipt
