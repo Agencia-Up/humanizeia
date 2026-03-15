@@ -1,0 +1,1 @@
+ALTER TABLE public.wa_campaigns ADD COLUMN IF NOT EXISTS include_optout_buttons boolean NOT NULL DEFAULT false;

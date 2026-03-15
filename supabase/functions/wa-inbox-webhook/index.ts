@@ -286,6 +286,18 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     content = message.conversation;
   } else if (message.extendedTextMessage?.text) {
     content = message.extendedTextMessage.text;
+  } else if (message.buttonsResponseMessage) {
+    // Interactive button response
+    messageType = "text";
+    content = message.buttonsResponseMessage.selectedDisplayText || 
+              message.buttonsResponseMessage.selectedButtonId || "";
+  } else if (message.listResponseMessage) {
+    messageType = "text";
+    content = message.listResponseMessage.title || message.listResponseMessage.singleSelectReply?.selectedRowId || "";
+  } else if (message.templateButtonReplyMessage) {
+    messageType = "text";
+    content = message.templateButtonReplyMessage.selectedDisplayText || 
+              message.templateButtonReplyMessage.selectedId || "";
   } else if (message.imageMessage) {
     messageType = "image";
     content = message.imageMessage.caption || "";
@@ -435,6 +447,64 @@ async function categorizeAndAutomate(
   replyTarget?: string,
 ) {
   try {
+    // ===== Check for opt-in/opt-out button responses first =====
+    const lowerContent = content.toLowerCase().trim();
+    const isOptoutButton = lowerContent.includes("não quero mais receber") ||
+      lowerContent.includes("optout_stop") ||
+      lowerContent === "❌ não quero mais receber";
+    const isOptinButton = lowerContent.includes("quero continuar recebendo") ||
+      lowerContent.includes("optout_continue") ||
+      lowerContent === "✅ quero continuar recebendo";
+
+    if (isOptoutButton && contactId) {
+      // Move to blacklist
+      await supabase
+        .from("wa_contacts")
+        .update({ is_valid: false, tags: ["blacklist", "opt-out"] } as any)
+        .eq("id", contactId);
+
+      // Send confirmation message
+      await sendOptoutConfirmation(supabase, instance, phone, replyTarget);
+
+      await supabase
+        .from("wa_inbox")
+        .update({ ai_category: "opt-out", ai_sentiment: "negative" })
+        .eq("id", inboxMsgId);
+
+      console.log(`[opt-out] Contact ${phone} moved to blacklist`);
+      return;
+    }
+
+    if (isOptinButton && contactId) {
+      // Mark as engaged
+      const { data: currentContact } = await supabase
+        .from("wa_contacts")
+        .select("tags")
+        .eq("id", contactId)
+        .maybeSingle();
+
+      const currentTags = (currentContact?.tags as string[] | null) || [];
+      const newTags = [...currentTags.filter(t => t !== "blacklist" && t !== "opt-out")];
+      if (!newTags.includes("opt-in")) newTags.push("opt-in");
+      if (!newTags.includes("engaged")) newTags.push("engaged");
+
+      await supabase
+        .from("wa_contacts")
+        .update({ is_valid: true, tags: newTags } as any)
+        .eq("id", contactId);
+
+      // Send confirmation
+      await sendOptinConfirmation(supabase, instance, phone, replyTarget);
+
+      await supabase
+        .from("wa_inbox")
+        .update({ ai_category: "interested", ai_sentiment: "positive" })
+        .eq("id", inboxMsgId);
+
+      console.log(`[opt-in] Contact ${phone} confirmed engagement`);
+      return;
+    }
+
     const aiCategory = await categorizeWithAI(content);
 
     await supabase
@@ -761,6 +831,78 @@ REGRAS DE HUMANIZAÇÃO (OBRIGATÓRIAS):
   } catch (err) {
     console.error("[ai-agent] Auto-reply error:", err);
   }
+}
+
+// ====================== OPT-IN/OPT-OUT CONFIRMATION MESSAGES ======================
+
+async function sendOptoutConfirmation(supabase: any, instance: any, phone: string, replyTarget?: string) {
+  try {
+    const confirmMsg = "✅ Sua solicitação foi processada. Você não receberá mais mensagens nossas. Caso mude de ideia, basta nos enviar uma mensagem. Obrigado! 🙏";
+    await sendAutoReply(supabase, instance, phone, confirmMsg, replyTarget);
+  } catch (err) {
+    console.error("[opt-out] Failed to send confirmation:", err);
+  }
+}
+
+async function sendOptinConfirmation(supabase: any, instance: any, phone: string, replyTarget?: string) {
+  try {
+    const confirmMsg = "🎉 Que bom que você quer continuar! Vamos enviar apenas conteúdos relevantes para você. Obrigado pela confiança! 💚";
+    await sendAutoReply(supabase, instance, phone, confirmMsg, replyTarget);
+  } catch (err) {
+    console.error("[opt-in] Failed to send confirmation:", err);
+  }
+}
+
+async function sendAutoReply(supabase: any, instance: any, phone: string, text: string, replyTarget?: string) {
+  const { data: instanceData } = await supabase
+    .from("wa_instances")
+    .select("instance_name, provider, api_url, api_key_encrypted, meta_config")
+    .eq("id", instance.id)
+    .single();
+
+  if (!instanceData) return;
+
+  const destination = replyTarget || phone;
+
+  if (instanceData.provider === "evolution") {
+    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+    const apiUrl = (evolutionApiUrl || instanceData.api_url).replace(/\/+$/, "");
+    const apiKey = evolutionApiKey || instanceData.api_key_encrypted;
+
+    const res = await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: apiKey },
+      body: JSON.stringify({ number: destination, text }),
+    });
+
+    if (!res.ok) {
+      console.error("[auto-reply] Evolution send error:", await res.text());
+    }
+  } else if (instanceData.provider === "meta") {
+    const config = instanceData.meta_config || {};
+    const phoneNumberId = config.phone_number_id;
+    const accessToken = config.access_token_encrypted || instanceData.api_key_encrypted;
+
+    if (phoneNumberId && accessToken) {
+      await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ messaging_product: "whatsapp", to: phone, type: "text", text: { body: text } }),
+      });
+    }
+  }
+
+  // Save to inbox
+  await supabase.from("wa_inbox").insert({
+    user_id: instance.user_id,
+    instance_id: instance.id,
+    phone,
+    direction: "outgoing",
+    message_type: "text",
+    content: text,
+    is_read: true,
+  });
 }
 
 async function categorizeWithAI(content: string): Promise<{ category: string; sentiment: string }> {

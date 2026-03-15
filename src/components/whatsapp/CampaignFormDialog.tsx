@@ -38,6 +38,7 @@ export interface CampaignFormData {
   media_type: string;
   tags: string[];
   variation_level: string;
+  include_optout_buttons: boolean;
 }
 
 interface ContactList {
@@ -103,6 +104,7 @@ export function CampaignFormDialog({
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [variationLevel, setVariationLevel] = useState<string>('medium');
+  const [includeOptoutButtons, setIncludeOptoutButtons] = useState(false);
 
   const isEditing = !!editingCampaign;
 
@@ -123,6 +125,7 @@ export function CampaignFormDialog({
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
       setVariationLevel(editingCampaign.variation_level || 'medium');
+      setIncludeOptoutButtons(editingCampaign.include_optout_buttons ?? false);
       if (editingCampaign.start_time) {
         const d = new Date(editingCampaign.start_time);
         setStartDate(d);
@@ -154,6 +157,7 @@ export function CampaignFormDialog({
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
     setTags([]); setTagInput('');
     setVariationLevel('medium');
+    setIncludeOptoutButtons(false);
   };
 
   const buildTimestamp = (date: Date | undefined, time: string): string | null => {
@@ -180,6 +184,7 @@ export function CampaignFormDialog({
       media_type: mediaType,
       tags,
       variation_level: variationLevel,
+      include_optout_buttons: includeOptoutButtons,
     });
   };
 
@@ -507,6 +512,36 @@ export function CampaignFormDialog({
               <p className="text-xs text-muted-foreground italic">
                 Salvo como: {`{ "enabled": ${warmupEnabled}, "initial_messages": ${warmupInitial} }`}
               </p>
+            </div>
+
+            <Separator />
+
+            {/* Opt-in / Opt-out Buttons */}
+            <div className="space-y-3">
+              <Label className="flex items-center gap-1.5">
+                ✋ Botões de Opt-in / Opt-out
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Adiciona botões interativos na primeira mensagem para novos leads, permitindo que eles optem por continuar ou parar de receber mensagens. Leads que clicarem em "Não quero mais" serão automaticamente movidos para a blacklist.
+              </p>
+              <div className="flex items-center gap-3">
+                <Switch checked={includeOptoutButtons} onCheckedChange={setIncludeOptoutButtons} id="optout-buttons" />
+                <Label htmlFor="optout-buttons" className="text-sm cursor-pointer">
+                  {includeOptoutButtons ? 'Botões ativados' : 'Botões desativados'}
+                </Label>
+              </div>
+              {includeOptoutButtons && (
+                <div className="bg-muted/50 rounded-md p-3 space-y-1.5 text-xs">
+                  <p className="font-medium">Prévia dos botões:</p>
+                  <div className="flex gap-2 mt-1">
+                    <Badge variant="secondary" className="bg-green-500/10 text-green-600 border-green-500/20">✅ Quero Continuar Recebendo</Badge>
+                    <Badge variant="secondary" className="bg-red-500/10 text-red-600 border-red-500/20">❌ Não Quero Mais Receber</Badge>
+                  </div>
+                  <p className="text-muted-foreground mt-1">
+                    Contatos que clicarem em "Não quero mais" serão adicionados à blacklist e excluídos de futuros disparos.
+                  </p>
+                </div>
+              )}
             </div>
 
             <Separator />

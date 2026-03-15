@@ -66,6 +66,7 @@ interface Campaign {
   variation_level: string;
   sent_count: number;
   instance_id: string | null;
+  include_optout_buttons: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -124,7 +125,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id")
+        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -338,7 +339,19 @@ Deno.serve(async (req) => {
           }
         }
 
-        await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
+        // Decide if opt-in/opt-out buttons should be sent
+        const shouldSendOptoutButtons = campaign?.include_optout_buttons &&
+          !item.contact_metadata?.last_message_at; // only for first-time contacts
+
+        if (shouldSendOptoutButtons && instance.provider === "evolution") {
+          // Send message with interactive buttons via Evolution API
+          await sendEvolutionButtonMessage(instance, item.phone, finalMessage, [
+            { buttonId: "optout_continue", buttonText: { displayText: "✅ Quero Continuar Recebendo" } },
+            { buttonId: "optout_stop", buttonText: { displayText: "❌ Não Quero Mais Receber" } },
+          ]);
+        } else {
+          await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
+        }
         instanceFailures.set(instance.id, 0);
 
         // Step 6: Read receipt
@@ -756,6 +769,65 @@ async function sendToEvolutionAPI(
     }
     await response.text();
   }
+}
+
+// ====================== EVOLUTION INTERACTIVE BUTTONS ======================
+
+async function sendEvolutionButtonMessage(
+  instance: Instance,
+  phone: string,
+  text: string,
+  buttons: Array<{ buttonId: string; buttonText: { displayText: string } }>,
+) {
+  const apiUrl = instance.api_url.replace(/\/+$/, "");
+  const number = phone.replace(/\D/g, "");
+
+  // Try Evolution API v2 buttons endpoint first
+  const payload = {
+    number,
+    title: "",
+    description: text,
+    buttons: buttons.map(b => ({
+      type: "reply",
+      title: b.buttonText.displayText.slice(0, 20), // WhatsApp button limit
+    })),
+    footer: "",
+  };
+
+  let response = await fetchWithTimeout(
+    `${apiUrl}/message/sendButtons/${instance.instance_name}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify(payload),
+    },
+    OUTBOUND_FETCH_TIMEOUT_MS,
+  );
+
+  // Fallback: if buttons endpoint fails, send as plain text with button text appended
+  if (!response.ok) {
+    const errText = await response.text();
+    console.warn(`[optout-buttons] Button send failed (${response.status}): ${errText}. Falling back to text.`);
+    
+    const buttonLabels = buttons.map(b => `▪️ ${b.buttonText.displayText}`).join("\n");
+    const fallbackText = `${text}\n\n📋 _Responda com uma das opções:_\n${buttonLabels}`;
+    
+    response = await fetchWithTimeout(
+      `${apiUrl}/message/sendText/${instance.instance_name}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+        body: JSON.stringify({ number, text: fallbackText }),
+      },
+      OUTBOUND_FETCH_TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      const errText2 = await response.text();
+      throw new Error(`Evolution API error (sendText fallback): ${response.status} - ${errText2}`);
+    }
+  }
+  await response.text();
 }
 
 // ====================== MESSAGE POLYMORPHISM ======================

@@ -1919,6 +1919,7 @@ export type Database = {
           end_time: string | null
           failed_count: number
           id: string
+          include_optout_buttons: boolean
           instance_id: string | null
           list_ids: string[] | null
           listas_alvo: string[] | null
@@ -1952,6 +1953,7 @@ export type Database = {
           end_time?: string | null
           failed_count?: number
           id?: string
+          include_optout_buttons?: boolean
           instance_id?: string | null
           list_ids?: string[] | null
           listas_alvo?: string[] | null
@@ -1985,6 +1987,7 @@ export type Database = {
           end_time?: string | null
           failed_count?: number
           id?: string
+          include_optout_buttons?: boolean
           instance_id?: string | null
           list_ids?: string[] | null
           listas_alvo?: string[] | null
