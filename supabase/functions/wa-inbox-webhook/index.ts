@@ -571,10 +571,14 @@ async function handleAIAgentReply(
 
     const systemPrompt = agent.system_prompt + `\n\nContexto da conversa:\n${conversationContext}\n\nNome do cliente: ${pushName || "Desconhecido"}`;
 
-    // Map model - ensure valid model name
+    // Map model - stabilize provider compatibility and avoid unsupported params
     const modelMap: Record<string, string> = {
       "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
       "gemini-3-flash-preview": "google/gemini-2.5-flash",
+      "openai/gpt-5": "google/gemini-2.5-pro",
+      "openai/gpt-5-mini": "google/gemini-2.5-flash",
+      "openai/gpt-5-nano": "google/gemini-2.5-flash-lite",
+      "openai/gpt-5.2": "google/gemini-2.5-pro",
     };
     const rawModel = agent.model || "google/gemini-2.5-flash";
     const selectedModel = modelMap[rawModel] || rawModel;
