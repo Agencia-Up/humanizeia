@@ -447,6 +447,64 @@ async function categorizeAndAutomate(
   replyTarget?: string,
 ) {
   try {
+    // ===== Check for opt-in/opt-out button responses first =====
+    const lowerContent = content.toLowerCase().trim();
+    const isOptoutButton = lowerContent.includes("não quero mais receber") ||
+      lowerContent.includes("optout_stop") ||
+      lowerContent === "❌ não quero mais receber";
+    const isOptinButton = lowerContent.includes("quero continuar recebendo") ||
+      lowerContent.includes("optout_continue") ||
+      lowerContent === "✅ quero continuar recebendo";
+
+    if (isOptoutButton && contactId) {
+      // Move to blacklist
+      await supabase
+        .from("wa_contacts")
+        .update({ is_valid: false, tags: ["blacklist", "opt-out"] } as any)
+        .eq("id", contactId);
+
+      // Send confirmation message
+      await sendOptoutConfirmation(supabase, instance, phone, replyTarget);
+
+      await supabase
+        .from("wa_inbox")
+        .update({ ai_category: "opt-out", ai_sentiment: "negative" })
+        .eq("id", inboxMsgId);
+
+      console.log(`[opt-out] Contact ${phone} moved to blacklist`);
+      return;
+    }
+
+    if (isOptinButton && contactId) {
+      // Mark as engaged
+      const { data: currentContact } = await supabase
+        .from("wa_contacts")
+        .select("tags")
+        .eq("id", contactId)
+        .maybeSingle();
+
+      const currentTags = (currentContact?.tags as string[] | null) || [];
+      const newTags = [...currentTags.filter(t => t !== "blacklist" && t !== "opt-out")];
+      if (!newTags.includes("opt-in")) newTags.push("opt-in");
+      if (!newTags.includes("engaged")) newTags.push("engaged");
+
+      await supabase
+        .from("wa_contacts")
+        .update({ is_valid: true, tags: newTags } as any)
+        .eq("id", contactId);
+
+      // Send confirmation
+      await sendOptinConfirmation(supabase, instance, phone, replyTarget);
+
+      await supabase
+        .from("wa_inbox")
+        .update({ ai_category: "interested", ai_sentiment: "positive" })
+        .eq("id", inboxMsgId);
+
+      console.log(`[opt-in] Contact ${phone} confirmed engagement`);
+      return;
+    }
+
     const aiCategory = await categorizeWithAI(content);
 
     await supabase
