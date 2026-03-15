@@ -286,6 +286,18 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     content = message.conversation;
   } else if (message.extendedTextMessage?.text) {
     content = message.extendedTextMessage.text;
+  } else if (message.buttonsResponseMessage) {
+    // Interactive button response
+    messageType = "text";
+    content = message.buttonsResponseMessage.selectedDisplayText || 
+              message.buttonsResponseMessage.selectedButtonId || "";
+  } else if (message.listResponseMessage) {
+    messageType = "text";
+    content = message.listResponseMessage.title || message.listResponseMessage.singleSelectReply?.selectedRowId || "";
+  } else if (message.templateButtonReplyMessage) {
+    messageType = "text";
+    content = message.templateButtonReplyMessage.selectedDisplayText || 
+              message.templateButtonReplyMessage.selectedId || "";
   } else if (message.imageMessage) {
     messageType = "image";
     content = message.imageMessage.caption || "";
