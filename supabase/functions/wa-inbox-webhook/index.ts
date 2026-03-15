@@ -1032,3 +1032,177 @@ async function executeAutomation(
     })
     .eq("id", automation.id);
 }
+
+// ====================== AUDIO TRANSCRIPTION ======================
+
+async function transcribeAudioFromEvolution(
+  supabase: any,
+  instance: any,
+  messageData: any,
+  instanceName: string,
+): Promise<string | null> {
+  try {
+    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+
+    const { data: instanceData } = await supabase
+      .from("wa_instances")
+      .select("api_url, api_key_encrypted")
+      .eq("id", instance.id)
+      .single();
+
+    const apiUrl = (evolutionApiUrl || instanceData?.api_url || "").replace(/\/+$/, "");
+    const apiKey = evolutionApiKey || instanceData?.api_key_encrypted;
+
+    if (!apiUrl || !apiKey) {
+      console.error("[audio-transcribe] Missing Evolution API credentials");
+      return null;
+    }
+
+    // Get base64 audio from Evolution API
+    const key = messageData.key || {};
+    const mediaRes = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: apiKey,
+      },
+      body: JSON.stringify({ message: { key }, convertToMp4: false }),
+    });
+
+    if (!mediaRes.ok) {
+      console.error(`[audio-transcribe] Failed to get media: ${mediaRes.status}`);
+      return null;
+    }
+
+    const mediaData = await mediaRes.json();
+    const base64Audio = mediaData.base64 || mediaData.data?.base64;
+    const mimetype = mediaData.mimetype || mediaData.data?.mimetype || "audio/ogg";
+
+    if (!base64Audio) {
+      console.error("[audio-transcribe] No base64 audio returned");
+      return null;
+    }
+
+    return await transcribeWithGemini(base64Audio, mimetype);
+  } catch (err) {
+    console.error("[audio-transcribe] Evolution transcription error:", err);
+    return null;
+  }
+}
+
+async function transcribeAudioFromMeta(
+  supabase: any,
+  instance: any,
+  mediaId: string,
+): Promise<string | null> {
+  try {
+    const { data: instanceData } = await supabase
+      .from("wa_instances")
+      .select("api_key_encrypted, meta_config")
+      .eq("id", instance.id)
+      .single();
+
+    const metaConfig = instanceData?.meta_config || {};
+    const accessToken = metaConfig.access_token_encrypted || instanceData?.api_key_encrypted;
+
+    if (!accessToken) {
+      console.error("[audio-transcribe] Missing Meta access token");
+      return null;
+    }
+
+    // Step 1: Get media URL from Meta
+    const mediaInfoRes = await fetch(`https://graph.facebook.com/v21.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!mediaInfoRes.ok) {
+      console.error(`[audio-transcribe] Meta media info error: ${mediaInfoRes.status}`);
+      return null;
+    }
+
+    const mediaInfo = await mediaInfoRes.json();
+    const mediaUrl = mediaInfo.url;
+    const mimetype = mediaInfo.mime_type || "audio/ogg";
+
+    if (!mediaUrl) return null;
+
+    // Step 2: Download the audio
+    const audioRes = await fetch(mediaUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!audioRes.ok) {
+      console.error(`[audio-transcribe] Meta audio download error: ${audioRes.status}`);
+      return null;
+    }
+
+    const audioBuffer = await audioRes.arrayBuffer();
+    const { encode: base64Encode } = await import("https://deno.land/std@0.168.0/encoding/base64.ts");
+    const base64Audio = base64Encode(audioBuffer);
+
+    return await transcribeWithGemini(base64Audio, mimetype);
+  } catch (err) {
+    console.error("[audio-transcribe] Meta transcription error:", err);
+    return null;
+  }
+}
+
+async function transcribeWithGemini(base64Audio: string, mimetype: string): Promise<string | null> {
+  const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+  if (!GEMINI_API_KEY) {
+    console.error("[audio-transcribe] GEMINI_API_KEY not configured");
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: mimetype,
+                    data: base64Audio,
+                  },
+                },
+                {
+                  text: "Transcreva este áudio de forma precisa. Retorne APENAS o texto falado, sem comentários adicionais, formatação ou prefixos como 'Transcrição:'. Se o áudio estiver vazio ou inaudível, retorne exatamente: [áudio inaudível]",
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 1000,
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`[audio-transcribe] Gemini error: ${response.status} - ${errText}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const transcription = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+    if (!transcription || transcription === "[áudio inaudível]") {
+      console.log("[audio-transcribe] No transcription available");
+      return null;
+    }
+
+    console.log(`[audio-transcribe] Transcribed: ${transcription.substring(0, 80)}...`);
+    return transcription;
+  } catch (err) {
+    console.error("[audio-transcribe] Gemini transcription error:", err);
+    return null;
+  }
+}
