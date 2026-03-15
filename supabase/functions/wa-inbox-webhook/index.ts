@@ -598,13 +598,20 @@ async function handleAIAgentReply(
     const uniqueModels = [...new Set(modelsToTry)];
 
     for (const model of uniqueModels) {
+      // Adjust token param based on model provider
+      const isModelOpenAI = model.startsWith("openai/");
+      const { max_tokens, max_completion_tokens, ...basePayload } = aiPayload as any;
+      const tokenParam = isModelOpenAI
+        ? { max_completion_tokens: max_completion_tokens || max_tokens || 500 }
+        : { max_tokens: max_tokens || max_completion_tokens || 500 };
+
       const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${LOVABLE_API_KEY}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ...aiPayload, model }),
+        body: JSON.stringify({ ...basePayload, ...tokenParam, model }),
       });
 
       if (res.ok) {
