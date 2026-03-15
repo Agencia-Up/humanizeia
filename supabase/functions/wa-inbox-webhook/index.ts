@@ -754,7 +754,7 @@ Responda APENAS o JSON, sem markdown.`,
         { role: "user", content },
       ],
       temperature: 0.1,
-      max_tokens: 100,
+      max_completion_tokens: 100,
     }),
   });
 
