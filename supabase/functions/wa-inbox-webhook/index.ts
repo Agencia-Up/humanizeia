@@ -579,6 +579,8 @@ async function handleAIAgentReply(
     const rawModel = agent.model || "google/gemini-2.5-flash";
     const selectedModel = modelMap[rawModel] || rawModel;
 
+    const maxTokensValue = agent.max_tokens || 500;
+    const isOpenAI = selectedModel.startsWith("openai/");
     const aiPayload = {
       model: selectedModel,
       messages: [
@@ -586,7 +588,7 @@ async function handleAIAgentReply(
         { role: "user", content },
       ],
       temperature: parseFloat(agent.temperature) || 0.7,
-      max_tokens: agent.max_tokens || 500,
+      ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
     };
 
     console.log(`[ai-agent] Calling AI with model: ${selectedModel}`);
@@ -596,13 +598,20 @@ async function handleAIAgentReply(
     const uniqueModels = [...new Set(modelsToTry)];
 
     for (const model of uniqueModels) {
+      // Adjust token param based on model provider
+      const isModelOpenAI = model.startsWith("openai/");
+      const { max_tokens, max_completion_tokens, ...basePayload } = aiPayload as any;
+      const tokenParam = isModelOpenAI
+        ? { max_completion_tokens: max_completion_tokens || max_tokens || 500 }
+        : { max_tokens: max_tokens || max_completion_tokens || 500 };
+
       const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${LOVABLE_API_KEY}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ...aiPayload, model }),
+        body: JSON.stringify({ ...basePayload, ...tokenParam, model }),
       });
 
       if (res.ok) {
@@ -752,7 +761,7 @@ Responda APENAS o JSON, sem markdown.`,
         { role: "user", content },
       ],
       temperature: 0.1,
-      max_tokens: 100,
+      max_completion_tokens: 100,
     }),
   });
 
