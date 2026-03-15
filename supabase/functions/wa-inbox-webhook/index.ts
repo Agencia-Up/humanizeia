@@ -646,19 +646,29 @@ async function handleAIAgentReply(
       }
     }
 
-    // Fetch conversation history for context
+    // Fetch conversation history for context (more messages = better context)
     const { data: history } = await supabase
       .from("wa_inbox")
-      .select("direction, content, created_at")
+      .select("direction, content, created_at, message_type")
       .eq("user_id", instance.user_id)
       .eq("phone", phone)
       .order("created_at", { ascending: false })
-      .limit(10);
+      .limit(20);
 
-    const conversationContext = (history || [])
+    // Build conversation as proper alternating messages for better AI context
+    const historyMessages = (history || [])
       .reverse()
-      .map((m: any) => `${m.direction === "incoming" ? "Cliente" : "Atendente"}: ${m.content}`)
-      .join("\n");
+      .filter((m: any) => m.content && m.content.trim())
+      .map((m: any) => ({
+        role: m.direction === "incoming" ? "user" as const : "assistant" as const,
+        content: m.content,
+      }));
+
+    // Fetch recent AI replies to avoid repetition (deduplication)
+    const recentReplies = (history || [])
+      .filter((m: any) => m.direction === "outgoing")
+      .slice(0, 8)
+      .map((m: any) => m.content?.trim().toLowerCase() || "");
 
     // Generate AI reply
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
@@ -669,23 +679,63 @@ async function handleAIAgentReply(
 
     const humanizationRules = `
 
-REGRAS DE HUMANIZAÇÃO (OBRIGATÓRIAS):
-- Responda como um ser humano real conversando no WhatsApp, NUNCA como um robô
-- VARIE suas saudações e expressões a cada mensagem — nunca repita a mesma abertura
-- Use frases curtas e naturais, como uma pessoa digitaria no celular
-- Adapte o tom: se o cliente é formal, seja formal; se é casual, seja casual
-- Use emojis com moderação e naturalidade (máximo 2 por mensagem)
-- Faça pausas naturais com "..." quando apropriado
-- Se não souber algo, diga honestamente que vai verificar
-- Trate o cliente pelo nome quando disponível
-- Considere o contexto completo da conversa antes de responder
-- NUNCA comece com "Olá! Como posso ajudar?" em todas as mensagens
-- Varie entre expressões como: "Oi", "E aí", "Fala", "Opa", "Hey" conforme o contexto
+REGRAS AVANÇADAS DE HUMANIZAÇÃO (PRIORIDADE MÁXIMA):
+
+🎭 PERSONA:
+- Você é uma PESSOA REAL, não um chatbot. Nunca diga "sou uma IA" ou "como assistente virtual"
+- Tenha personalidade: seja caloroso, genuíno, autêntico
+- Responda como alguém que realmente se importa com o cliente
+
+💬 ESTILO DE ESCRITA (WhatsApp real):
+- Escreva EXATAMENTE como uma pessoa digita no WhatsApp: frases curtas, informais, diretas
+- Use letras minúsculas quando natural (ex: "oi", "beleza", "show")
+- Abreviações naturais quando o tom permitir: "vc", "tb", "pq", "blz", "msg"
+- Máximo 3 linhas por mensagem — quebre em blocos se precisar explicar algo longo
+- NUNCA use formatação markdown (**negrito**, *itálico*, listas com •)
+- NUNCA use cabeçalhos, bullets ou formatação de documento
+
+🎲 VARIAÇÃO OBRIGATÓRIA:
+- NUNCA comece duas mensagens consecutivas da mesma forma
+- Alterne entre estilos: às vezes comece respondendo direto, às vezes com uma interjeição
+- Interjeições naturais: "Ahh", "Hmm", "Poxa", "Eita", "Show", "Massa", "Boa", "Olha só"
+- Evite SEMPRE: "Olá! Como posso ajudar?", "Estou aqui para ajudar", "Claro!", "Com certeza!"
+- Se já usou "oi" na última resposta, use outra coisa agora
+- Varie cumprimentos: "E aí", "Fala", "Opa", "Eii", "Oi oi"
+
+🧠 CONSCIÊNCIA CONTEXTUAL:
+- Leia TODO o histórico antes de responder
+- Referencie coisas que o cliente disse antes naturalmente
+- Se o cliente já perguntou algo, não peça de novo
+- Adapte seu tom ao tom do cliente: formal → formal, descontraído → descontraído
+- Se o cliente mandou áudio (transcrito), responda naturalmente como se tivesse ouvido
+
+😊 EMPATIA REAL:
+- Valide sentimentos: "Entendo sua preocupação", "faz total sentido"
+- Se o cliente está frustrado, reconheça antes de resolver
+- Comemore conquistas do cliente: "Que legal!", "Show demais!"
+- Use humor leve quando apropriado
+
+⚠️ ANTI-ROBÔ (evite a todo custo):
+- Nunca liste benefícios com bullets ou numeração
+- Nunca use "Espero ter ajudado!" ou "Fico à disposição!"
+- Nunca responda com parágrafos longos e estruturados
+- Nunca use linguagem corporativa engessada
+- Nunca repita o nome do cliente em toda mensagem
+- Se precisar listar algo, faça de forma conversacional: "tem o plano X que custa Y, e tem também o Z que..."
+
+RESPOSTAS ANTERIORES DO AGENTE (para NÃO repetir frases/aberturas):
+${recentReplies.slice(0, 5).map((r, i) => `[${i+1}]: ${r.substring(0, 80)}`).join("\n")}
+Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e vocabulário.
 `;
 
-    const systemPrompt = agent.system_prompt + "\n" + humanizationRules + `\nContexto da conversa:\n${conversationContext}\n\nNome do cliente: ${pushName || "Desconhecido"}`;
+    const clientName = pushName || null;
+    const nameInstruction = clientName 
+      ? `\nNome do cliente: ${clientName} (use o nome com moderação, não em toda mensagem)`
+      : `\nNome do cliente: desconhecido (não pergunte o nome a menos que seja necessário para o atendimento)`;
 
-    // Map model - stabilize provider compatibility and avoid unsupported params
+    const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction;
+
+    // Map model - stabilize provider compatibility
     const modelMap: Record<string, string> = {
       "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
       "gemini-3-flash-preview": "google/gemini-2.5-flash",
@@ -699,24 +749,31 @@ REGRAS DE HUMANIZAÇÃO (OBRIGATÓRIAS):
 
     const maxTokensValue = agent.max_tokens || 500;
     const isOpenAI = selectedModel.startsWith("openai/");
+
+    // Build messages: system + history + current message
+    const aiMessages = [
+      { role: "system", content: systemPrompt },
+      ...historyMessages.slice(-14), // Last 14 messages for context (7 exchanges)
+      { role: "user", content },
+    ];
+
+    // Use slightly higher temperature for more natural variation
+    const effectiveTemp = Math.max(parseFloat(agent.temperature) || 0.7, 0.75);
+
     const aiPayload = {
       model: selectedModel,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content },
-      ],
-      temperature: parseFloat(agent.temperature) || 0.7,
+      messages: aiMessages,
+      temperature: effectiveTemp,
       ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
     };
 
-    console.log(`[ai-agent] Calling AI with model: ${selectedModel}`);
+    console.log(`[ai-agent] Calling AI with model: ${selectedModel}, history: ${historyMessages.length} msgs`);
 
     let aiData: any = null;
     const modelsToTry = [selectedModel, "google/gemini-2.5-flash"];
     const uniqueModels = [...new Set(modelsToTry)];
 
     for (const model of uniqueModels) {
-      // Adjust token param based on model provider
       const isModelOpenAI = model.startsWith("openai/");
       const { max_tokens, max_completion_tokens, ...basePayload } = aiPayload as any;
       const tokenParam = isModelOpenAI
@@ -746,12 +803,21 @@ REGRAS DE HUMANIZAÇÃO (OBRIGATÓRIAS):
       return;
     }
 
-    const replyText = aiData.choices?.[0]?.message?.content?.trim();
+    let replyText = aiData.choices?.[0]?.message?.content?.trim();
 
     if (!replyText) {
       console.log("[ai-agent] Empty AI response, skipping");
       return;
     }
+
+    // Post-process: clean up any markdown formatting the AI might add
+    replyText = replyText
+      .replace(/\*\*(.*?)\*\*/g, "$1")  // Remove **bold**
+      .replace(/\*(.*?)\*/g, "$1")      // Remove *italic*
+      .replace(/^[-•]\s/gm, "")         // Remove bullet points
+      .replace(/^\d+\.\s/gm, "")        // Remove numbered lists
+      .replace(/^#+\s/gm, "")           // Remove headers
+      .trim();
 
     // Simulate typing delay
     const delay = agent.reply_delay_ms || 3000;
