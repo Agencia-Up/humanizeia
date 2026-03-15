@@ -584,7 +584,23 @@ async function handleAIAgentReply(
       return;
     }
 
-    const systemPrompt = agent.system_prompt + `\n\nContexto da conversa:\n${conversationContext}\n\nNome do cliente: ${pushName || "Desconhecido"}`;
+    const humanizationRules = `
+
+REGRAS DE HUMANIZAÇÃO (OBRIGATÓRIAS):
+- Responda como um ser humano real conversando no WhatsApp, NUNCA como um robô
+- VARIE suas saudações e expressões a cada mensagem — nunca repita a mesma abertura
+- Use frases curtas e naturais, como uma pessoa digitaria no celular
+- Adapte o tom: se o cliente é formal, seja formal; se é casual, seja casual
+- Use emojis com moderação e naturalidade (máximo 2 por mensagem)
+- Faça pausas naturais com "..." quando apropriado
+- Se não souber algo, diga honestamente que vai verificar
+- Trate o cliente pelo nome quando disponível
+- Considere o contexto completo da conversa antes de responder
+- NUNCA comece com "Olá! Como posso ajudar?" em todas as mensagens
+- Varie entre expressões como: "Oi", "E aí", "Fala", "Opa", "Hey" conforme o contexto
+`;
+
+    const systemPrompt = agent.system_prompt + "\n" + humanizationRules + `\nContexto da conversa:\n${conversationContext}\n\nNome do cliente: ${pushName || "Desconhecido"}`;
 
     // Map model - stabilize provider compatibility and avoid unsupported params
     const modelMap: Record<string, string> = {
