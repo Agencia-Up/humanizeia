@@ -579,6 +579,8 @@ async function handleAIAgentReply(
     const rawModel = agent.model || "google/gemini-2.5-flash";
     const selectedModel = modelMap[rawModel] || rawModel;
 
+    const maxTokensValue = agent.max_tokens || 500;
+    const isOpenAI = selectedModel.startsWith("openai/");
     const aiPayload = {
       model: selectedModel,
       messages: [
@@ -586,7 +588,7 @@ async function handleAIAgentReply(
         { role: "user", content },
       ],
       temperature: parseFloat(agent.temperature) || 0.7,
-      max_tokens: agent.max_tokens || 500,
+      ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
     };
 
     console.log(`[ai-agent] Calling AI with model: ${selectedModel}`);
