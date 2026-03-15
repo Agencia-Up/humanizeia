@@ -771,6 +771,65 @@ async function sendToEvolutionAPI(
   }
 }
 
+// ====================== EVOLUTION INTERACTIVE BUTTONS ======================
+
+async function sendEvolutionButtonMessage(
+  instance: Instance,
+  phone: string,
+  text: string,
+  buttons: Array<{ buttonId: string; buttonText: { displayText: string } }>,
+) {
+  const apiUrl = instance.api_url.replace(/\/+$/, "");
+  const number = phone.replace(/\D/g, "");
+
+  // Try Evolution API v2 buttons endpoint first
+  const payload = {
+    number,
+    title: "",
+    description: text,
+    buttons: buttons.map(b => ({
+      type: "reply",
+      title: b.buttonText.displayText.slice(0, 20), // WhatsApp button limit
+    })),
+    footer: "",
+  };
+
+  let response = await fetchWithTimeout(
+    `${apiUrl}/message/sendButtons/${instance.instance_name}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify(payload),
+    },
+    OUTBOUND_FETCH_TIMEOUT_MS,
+  );
+
+  // Fallback: if buttons endpoint fails, send as plain text with button text appended
+  if (!response.ok) {
+    const errText = await response.text();
+    console.warn(`[optout-buttons] Button send failed (${response.status}): ${errText}. Falling back to text.`);
+    
+    const buttonLabels = buttons.map(b => `▪️ ${b.buttonText.displayText}`).join("\n");
+    const fallbackText = `${text}\n\n📋 _Responda com uma das opções:_\n${buttonLabels}`;
+    
+    response = await fetchWithTimeout(
+      `${apiUrl}/message/sendText/${instance.instance_name}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+        body: JSON.stringify({ number, text: fallbackText }),
+      },
+      OUTBOUND_FETCH_TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      const errText2 = await response.text();
+      throw new Error(`Evolution API error (sendText fallback): ${response.status} - ${errText2}`);
+    }
+  }
+  await response.text();
+}
+
 // ====================== MESSAGE POLYMORPHISM ======================
 
 async function generateAIMessage(
