@@ -619,7 +619,6 @@ async function handleAIAgentReply(
       return;
     }
 
-    const aiData = await aiResponse.json();
     const replyText = aiData.choices?.[0]?.message?.content?.trim();
 
     if (!replyText) {
