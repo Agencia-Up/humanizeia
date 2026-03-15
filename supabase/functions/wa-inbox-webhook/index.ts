@@ -309,6 +309,11 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   } else if (message.audioMessage) {
     messageType = "audio";
     mediaUrl = message.audioMessage.url || null;
+    // Transcribe audio to text
+    const transcription = await transcribeAudioFromEvolution(supabase, instance, messageData, instanceName);
+    if (transcription) {
+      content = transcription;
+    }
   } else if (message.documentMessage) {
     messageType = "document";
     content = message.documentMessage.fileName || "";
