@@ -591,46 +591,32 @@ async function handleAIAgentReply(
 
     console.log(`[ai-agent] Calling AI with model: ${selectedModel}`);
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(aiPayload),
-    });
+    let aiData: any = null;
+    const modelsToTry = [selectedModel, "google/gemini-2.5-flash"];
+    const uniqueModels = [...new Set(modelsToTry)];
 
-    if (!aiResponse.ok) {
-      const errStatus = aiResponse.status;
-      const errBody = await aiResponse.text().catch(() => "");
-      console.error(`[ai-agent] AI error: ${errStatus} - ${errBody}`);
-      
-      // If 400, retry with a known-good fallback model
-      if (errStatus === 400 && selectedModel !== "google/gemini-2.5-flash") {
-        console.log("[ai-agent] Retrying with fallback model google/gemini-2.5-flash");
-        const retryRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ ...aiPayload, model: "google/gemini-2.5-flash" }),
-        });
-        if (!retryRes.ok) {
-          const retryErr = await retryRes.text().catch(() => "");
-          console.error(`[ai-agent] Retry also failed: ${retryRes.status} - ${retryErr}`);
-          return;
-        }
-        // Use retry response
-        const retryData = await retryRes.json();
-        const retryText = retryData.choices?.[0]?.message?.content?.trim();
-        if (!retryText) return;
-        // Continue with retryText - need to handle below
-        // For simplicity, we'll proceed with the main flow using a variable
-        (aiResponse as any).__retryData = retryData;
-      } else {
-        return;
+    for (const model of uniqueModels) {
+      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...aiPayload, model }),
+      });
+
+      if (res.ok) {
+        aiData = await res.json();
+        break;
       }
+
+      const errBody = await res.text().catch(() => "");
+      console.error(`[ai-agent] AI error with model ${model}: ${res.status} - ${errBody}`);
+    }
+
+    if (!aiData) {
+      console.error("[ai-agent] All AI models failed");
+      return;
     }
 
     const aiData = await aiResponse.json();
