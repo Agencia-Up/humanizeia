@@ -1777,6 +1777,7 @@ export type Database = {
           created_at: string
           id: string
           instance_id: string | null
+          instance_ids: string[] | null
           is_active: boolean
           max_tokens: number
           model: string
@@ -1796,6 +1797,7 @@ export type Database = {
           created_at?: string
           id?: string
           instance_id?: string | null
+          instance_ids?: string[] | null
           is_active?: boolean
           max_tokens?: number
           model?: string
@@ -1815,6 +1817,7 @@ export type Database = {
           created_at?: string
           id?: string
           instance_id?: string | null
+          instance_ids?: string[] | null
           is_active?: boolean
           max_tokens?: number
           model?: string

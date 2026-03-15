@@ -511,17 +511,32 @@ async function handleAIAgentReply(
 ) {
   try {
     // Find active AI agent for this instance or user
+    // Supports multi-instance assignment via instance_ids array
     const { data: agents } = await supabase
       .from("wa_ai_agents")
       .select("*")
       .eq("user_id", instance.user_id)
-      .eq("is_active", true)
-      .or(`instance_id.eq.${instance.id},instance_id.is.null`);
+      .eq("is_active", true);
 
     if (!agents || agents.length === 0) return;
 
-    // Prefer instance-specific agent, fallback to global
-    const agent = agents.find((a: any) => a.instance_id === instance.id) || agents[0];
+    // Find the best matching agent:
+    // 1. Agent with this instance in instance_ids array
+    // 2. Agent with instance_id matching this instance
+    // 3. Agent with no instances assigned (global)
+    const agent = agents.find((a: any) => {
+      const ids = a.instance_ids || [];
+      return Array.isArray(ids) && ids.length > 0 && ids.includes(instance.id);
+    }) || agents.find((a: any) => a.instance_id === instance.id)
+       || agents.find((a: any) => {
+      const ids = a.instance_ids || [];
+      return (!ids || ids.length === 0) && !a.instance_id;
+    });
+
+    if (!agent) {
+      console.log("[ai-agent] No matching agent for instance:", instance.id);
+      return;
+    }
 
     // Check blocked categories
     const blockedCategories = agent.blocked_categories || ["opt-out", "spam"];
@@ -569,7 +584,23 @@ async function handleAIAgentReply(
       return;
     }
 
-    const systemPrompt = agent.system_prompt + `\n\nContexto da conversa:\n${conversationContext}\n\nNome do cliente: ${pushName || "Desconhecido"}`;
+    const humanizationRules = `
+
+REGRAS DE HUMANIZAÇÃO (OBRIGATÓRIAS):
+- Responda como um ser humano real conversando no WhatsApp, NUNCA como um robô
+- VARIE suas saudações e expressões a cada mensagem — nunca repita a mesma abertura
+- Use frases curtas e naturais, como uma pessoa digitaria no celular
+- Adapte o tom: se o cliente é formal, seja formal; se é casual, seja casual
+- Use emojis com moderação e naturalidade (máximo 2 por mensagem)
+- Faça pausas naturais com "..." quando apropriado
+- Se não souber algo, diga honestamente que vai verificar
+- Trate o cliente pelo nome quando disponível
+- Considere o contexto completo da conversa antes de responder
+- NUNCA comece com "Olá! Como posso ajudar?" em todas as mensagens
+- Varie entre expressões como: "Oi", "E aí", "Fala", "Opa", "Hey" conforme o contexto
+`;
+
+    const systemPrompt = agent.system_prompt + "\n" + humanizationRules + `\nContexto da conversa:\n${conversationContext}\n\nNome do cliente: ${pushName || "Desconhecido"}`;
 
     // Map model - stabilize provider compatibility and avoid unsupported params
     const modelMap: Record<string, string> = {
