@@ -99,6 +99,14 @@ async function handleMetaWebhook(supabase: any, body: any) {
           content = msg.video?.caption || "";
         } else if (msg.type === "audio") {
           messageType = "audio";
+          // Transcribe audio from Meta
+          const audioId = msg.audio?.id;
+          if (audioId) {
+            const transcription = await transcribeAudioFromMeta(supabase, instance, audioId);
+            if (transcription) {
+              content = transcription;
+            }
+          }
         } else if (msg.type === "document") {
           messageType = "document";
           content = msg.document?.filename || "";
