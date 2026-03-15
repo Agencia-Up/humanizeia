@@ -571,36 +571,54 @@ async function handleAIAgentReply(
 
     const systemPrompt = agent.system_prompt + `\n\nContexto da conversa:\n${conversationContext}\n\nNome do cliente: ${pushName || "Desconhecido"}`;
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: agent.model || "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content },
-        ],
-        temperature: parseFloat(agent.temperature) || 0.7,
-        max_tokens: agent.max_tokens || 500,
-      }),
-    });
+    // Map model - ensure valid model name
+    const modelMap: Record<string, string> = {
+      "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
+      "gemini-3-flash-preview": "google/gemini-2.5-flash",
+    };
+    const rawModel = agent.model || "google/gemini-2.5-flash";
+    const selectedModel = modelMap[rawModel] || rawModel;
 
-    if (!aiResponse.ok) {
-      const errStatus = aiResponse.status;
-      if (errStatus === 429) {
-        console.error("[ai-agent] Rate limited, skipping reply");
-      } else if (errStatus === 402) {
-        console.error("[ai-agent] Payment required for AI gateway");
-      } else {
-        console.error(`[ai-agent] AI error: ${errStatus}`);
+    const aiPayload = {
+      model: selectedModel,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content },
+      ],
+      temperature: parseFloat(agent.temperature) || 0.7,
+      max_tokens: agent.max_tokens || 500,
+    };
+
+    console.log(`[ai-agent] Calling AI with model: ${selectedModel}`);
+
+    let aiData: any = null;
+    const modelsToTry = [selectedModel, "google/gemini-2.5-flash"];
+    const uniqueModels = [...new Set(modelsToTry)];
+
+    for (const model of uniqueModels) {
+      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...aiPayload, model }),
+      });
+
+      if (res.ok) {
+        aiData = await res.json();
+        break;
       }
+
+      const errBody = await res.text().catch(() => "");
+      console.error(`[ai-agent] AI error with model ${model}: ${res.status} - ${errBody}`);
+    }
+
+    if (!aiData) {
+      console.error("[ai-agent] All AI models failed");
       return;
     }
 
-    const aiData = await aiResponse.json();
     const replyText = aiData.choices?.[0]?.message?.content?.trim();
 
     if (!replyText) {
