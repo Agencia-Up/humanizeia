@@ -99,13 +99,24 @@ async function handleMetaWebhook(supabase: any, body: any) {
           content = msg.video?.caption || "";
         } else if (msg.type === "audio") {
           messageType = "audio";
-          // Transcribe audio from Meta
+          console.log(`[wa-inbox-webhook] Audio message detected from Meta. audioId: ${msg.audio?.id}`);
           const audioId = msg.audio?.id;
           if (audioId) {
-            const transcription = await transcribeAudioFromMeta(supabase, instance, audioId);
-            if (transcription) {
-              content = transcription;
+            try {
+              const transcription = await transcribeAudioFromMeta(supabase, instance, audioId);
+              if (transcription) {
+                content = transcription;
+                console.log(`[wa-inbox-webhook] Meta audio transcribed: ${content.substring(0, 80)}`);
+              } else {
+                content = "[Mensagem de áudio recebida]";
+                console.warn("[wa-inbox-webhook] Meta audio transcription returned null");
+              }
+            } catch (transcErr) {
+              content = "[Mensagem de áudio recebida]";
+              console.error("[wa-inbox-webhook] Meta audio transcription error:", transcErr);
             }
+          } else {
+            content = "[Mensagem de áudio recebida]";
           }
         } else if (msg.type === "document") {
           messageType = "document";
