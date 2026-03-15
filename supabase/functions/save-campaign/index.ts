@@ -230,6 +230,7 @@ Deno.serve(async (req) => {
       tags: Array.isArray(tags) && tags.length > 0 ? tags : null,
       organization_id: orgId,
       variation_level: variation_level || 'medium',
+      include_optout_buttons: include_optout_buttons === true,
     };
 
     // Determine status

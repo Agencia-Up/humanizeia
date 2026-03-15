@@ -139,6 +139,7 @@ export default function WhatsAppBroadcast() {
         media_type: data.media_type || null,
         tags: data.tags.length > 0 ? data.tags : null,
         variation_level: data.variation_level || 'medium',
+        include_optout_buttons: data.include_optout_buttons ?? false,
       };
 
       const { data: result, error } = await supabase.functions.invoke('save-campaign', {
