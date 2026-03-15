@@ -516,6 +516,36 @@ export function CampaignFormDialog({
 
             <Separator />
 
+            {/* Opt-in / Opt-out Buttons */}
+            <div className="space-y-3">
+              <Label className="flex items-center gap-1.5">
+                ✋ Botões de Opt-in / Opt-out
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Adiciona botões interativos na primeira mensagem para novos leads, permitindo que eles optem por continuar ou parar de receber mensagens. Leads que clicarem em "Não quero mais" serão automaticamente movidos para a blacklist.
+              </p>
+              <div className="flex items-center gap-3">
+                <Switch checked={includeOptoutButtons} onCheckedChange={setIncludeOptoutButtons} id="optout-buttons" />
+                <Label htmlFor="optout-buttons" className="text-sm cursor-pointer">
+                  {includeOptoutButtons ? 'Botões ativados' : 'Botões desativados'}
+                </Label>
+              </div>
+              {includeOptoutButtons && (
+                <div className="bg-muted/50 rounded-md p-3 space-y-1.5 text-xs">
+                  <p className="font-medium">Prévia dos botões:</p>
+                  <div className="flex gap-2 mt-1">
+                    <Badge variant="secondary" className="bg-green-500/10 text-green-600 border-green-500/20">✅ Quero Continuar Recebendo</Badge>
+                    <Badge variant="secondary" className="bg-red-500/10 text-red-600 border-red-500/20">❌ Não Quero Mais Receber</Badge>
+                  </div>
+                  <p className="text-muted-foreground mt-1">
+                    Contatos que clicarem em "Não quero mais" serão adicionados à blacklist e excluídos de futuros disparos.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
             {/* Tags */}
             <div className="space-y-2">
               <Label className="flex items-center gap-1.5">
