@@ -511,17 +511,32 @@ async function handleAIAgentReply(
 ) {
   try {
     // Find active AI agent for this instance or user
+    // Supports multi-instance assignment via instance_ids array
     const { data: agents } = await supabase
       .from("wa_ai_agents")
       .select("*")
       .eq("user_id", instance.user_id)
-      .eq("is_active", true)
-      .or(`instance_id.eq.${instance.id},instance_id.is.null`);
+      .eq("is_active", true);
 
     if (!agents || agents.length === 0) return;
 
-    // Prefer instance-specific agent, fallback to global
-    const agent = agents.find((a: any) => a.instance_id === instance.id) || agents[0];
+    // Find the best matching agent:
+    // 1. Agent with this instance in instance_ids array
+    // 2. Agent with instance_id matching this instance
+    // 3. Agent with no instances assigned (global)
+    const agent = agents.find((a: any) => {
+      const ids = a.instance_ids || [];
+      return Array.isArray(ids) && ids.length > 0 && ids.includes(instance.id);
+    }) || agents.find((a: any) => a.instance_id === instance.id)
+       || agents.find((a: any) => {
+      const ids = a.instance_ids || [];
+      return (!ids || ids.length === 0) && !a.instance_id;
+    });
+
+    if (!agent) {
+      console.log("[ai-agent] No matching agent for instance:", instance.id);
+      return;
+    }
 
     // Check blocked categories
     const blockedCategories = agent.blocked_categories || ["opt-out", "spam"];
