@@ -66,6 +66,7 @@ interface Campaign {
   variation_level: string;
   sent_count: number;
   instance_id: string | null;
+  include_optout_buttons: boolean;
 }
 
 Deno.serve(async (req) => {
