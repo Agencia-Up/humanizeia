@@ -317,10 +317,20 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   } else if (message.audioMessage) {
     messageType = "audio";
     mediaUrl = message.audioMessage.url || null;
+    console.log(`[wa-inbox-webhook] Audio message detected from Evolution. mediaUrl: ${mediaUrl}, mimetype: ${message.audioMessage.mimetype}`);
     // Transcribe audio to text
-    const transcription = await transcribeAudioFromEvolution(supabase, instance, messageData, instanceName);
-    if (transcription) {
-      content = transcription;
+    try {
+      const transcription = await transcribeAudioFromEvolution(supabase, instance, messageData, instanceName);
+      if (transcription) {
+        content = transcription;
+        console.log(`[wa-inbox-webhook] Audio transcribed successfully: ${content.substring(0, 80)}`);
+      } else {
+        content = "[Mensagem de áudio recebida]";
+        console.warn("[wa-inbox-webhook] Audio transcription returned null, using fallback content");
+      }
+    } catch (transcErr) {
+      content = "[Mensagem de áudio recebida]";
+      console.error("[wa-inbox-webhook] Audio transcription threw error:", transcErr);
     }
   } else if (message.documentMessage) {
     messageType = "document";
