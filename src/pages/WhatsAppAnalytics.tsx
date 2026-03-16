@@ -135,9 +135,9 @@ export default function WhatsAppAnalytics() {
       }))
     );
 
-    // Volume over time (line chart)
+    // Volume over time (line chart) — only count successfully sent messages
     const dayMap = new Map<string, { enviadas: number; recebidas: number }>();
-    for (const q of queueItems) {
+    for (const q of successItems) {
       if (!q.sent_at) continue;
       const day = q.sent_at.substring(0, 10);
       if (!dayMap.has(day)) dayMap.set(day, { enviadas: 0, recebidas: 0 });
