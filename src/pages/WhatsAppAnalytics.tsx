@@ -53,6 +53,8 @@ interface InstanceHealth {
   messages_sent_period?: number;
   status: string;
   is_active: boolean;
+  shadow_ban_suspect?: boolean;
+  consecutive_undelivered?: number;
 }
 
 export default function WhatsAppAnalytics() {
