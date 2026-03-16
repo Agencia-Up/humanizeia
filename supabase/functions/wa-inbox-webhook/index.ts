@@ -199,23 +199,15 @@ async function handleMetaDeliveryStatus(supabase: any, instance: any, status: an
 
   if (!queueStatus) return;
 
-  const updateData: any = { status: queueStatus };
-  if (deliveredAt) updateData.delivered_at = deliveredAt;
-  if (readAt) updateData.read_at = readAt;
-
-  const { data: updatedItems } = await supabase
-    .from("wa_queue")
-    .update(updateData)
-    .eq("phone", phone)
-    .eq("instance_id", instance.id)
-    .in("status", ["sent", "delivered"])
-    .order("sent_at", { ascending: false })
-    .limit(1)
-    .select("campaign_id");
-
-  if (deliveredAt && updatedItems?.length > 0 && updatedItems[0].campaign_id) {
-    await supabase.rpc("increment_campaign_delivered", { cid: updatedItems[0].campaign_id }).catch(() => {});
-  }
+  await updateQueueStatusFromDeliverySignal(supabase, {
+    instanceId: instance.id,
+    userId: instance.user_id,
+    phone,
+    remoteMessageId: status.id || null,
+    queueStatus,
+    deliveredAt,
+    readAt,
+  });
 }
 
 // ====================== EVOLUTION WEBHOOK HANDLER ======================
