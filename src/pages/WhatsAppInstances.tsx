@@ -155,7 +155,10 @@ export default function WhatsAppInstances() {
   };
 
   useEffect(() => {
-    fetchInstances();
+    const init = async () => {
+      await fetchInstances();
+    };
+    init();
   }, [user]);
 
   const handleDelete = async () => {
