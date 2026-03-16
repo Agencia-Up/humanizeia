@@ -87,8 +87,55 @@ export default function WhatsAppInstances() {
   const [connectOpen, setConnectOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [isVerifyingAll, setIsVerifyingAll] = useState(false);
 
-  const fetchInstances = async () => {
+  const verifyInstanceStatus = async (instanceId: string, silent = false) => {
+    setVerifyingId(instanceId);
+    try {
+      const { data, error } = await supabase.functions.invoke('verify-instance-status', {
+        body: { instance_id: instanceId },
+      });
+      if (error) throw error;
+      
+      if (data?.status_changed) {
+        // Update local state
+        setInstances(prev => prev.map(i => 
+          i.id === instanceId 
+            ? { ...i, status: data.current_status, is_active: data.is_connected, health_score: data.is_connected ? i.health_score : 0 }
+            : i
+        ));
+        if (!silent) {
+          toast({ 
+            title: data.is_connected ? 'Instância conectada' : '⚠️ Instância desconectada',
+            description: data.message,
+            variant: data.is_connected ? 'default' : 'destructive',
+          });
+        }
+      } else if (!silent) {
+        toast({ title: 'Status verificado', description: data.message });
+      }
+    } catch (err: any) {
+      if (!silent) {
+        toast({ title: 'Erro ao verificar', description: err.message, variant: 'destructive' });
+      }
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  const verifyAllInstances = async (instanceList: WaInstance[]) => {
+    setIsVerifyingAll(true);
+    const evolutionInstances = instanceList.filter(i => i.provider !== 'meta');
+    for (const inst of evolutionInstances) {
+      await verifyInstanceStatus(inst.id, true);
+    }
+    setIsVerifyingAll(false);
+    // Re-fetch to get updated data
+    await fetchInstances(true);
+  };
+
+  const fetchInstances = async (skipVerify = false) => {
     if (!user) return;
     setIsLoading(true);
     try {
