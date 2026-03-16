@@ -39,6 +39,8 @@ export interface CampaignFormData {
   tags: string[];
   variation_level: string;
   include_optout_buttons: boolean;
+  reply_auto_tag: string;
+  reply_auto_message: string;
 }
 
 interface ContactList {
