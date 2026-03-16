@@ -118,17 +118,15 @@ export default function WhatsAppAnalytics() {
     // "sent" means message left our system successfully — count as delivered
     // "delivered"/"read" are confirmed delivery receipts from WhatsApp
     const successItems = queueItems.filter(q => ['sent', 'delivered', 'read'].includes(q.status));
-    const failedItems = queueItems.filter(q => q.status === 'failed');
     const sent = successItems.length;
-    // Delivered = all successfully sent (sent + delivered + read) — if it was sent, it was delivered
     const delivered = successItems.length;
-    const confirmedDelivered = queueItems.filter(q => ['delivered', 'read'].includes(q.status)).length;
+    const confirmedDelivered = (confirmedRes.data || []).length;
     const incoming = inboxItems.filter(m => m.direction === 'incoming');
     const responses = incoming.length;
     const qualified = incoming.filter(m => m.ai_category === 'interested' || m.ai_category === 'question').length;
     const optOut = incoming.filter(m => m.ai_category === 'opt-out').length;
 
-    setKpis({ sent, delivered, responses, qualified, optOut });
+    setKpis({ sent, delivered, confirmedDelivered, responses, qualified, optOut });
 
     // Category pie chart
     const catCounts: Record<string, number> = {};
