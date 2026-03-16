@@ -110,6 +110,8 @@ export function CampaignFormDialog({
   const [includeOptoutButtons, setIncludeOptoutButtons] = useState(false);
   const [replyAutoTag, setReplyAutoTag] = useState('');
   const [replyAutoMessage, setReplyAutoMessage] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isEditing = !!editingCampaign;
 
