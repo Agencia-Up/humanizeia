@@ -12,8 +12,9 @@ import { useClaudeChat } from '@/hooks/useClaudeChat';
 import { CampaignFormDialog, CampaignFormData } from '@/components/whatsapp/CampaignFormDialog';
 import {
   Send, Plus, CheckCircle, XCircle, MessageCircle, Users,
-  Upload, Loader2, Trash2, List, Zap, Sparkles,
+  Upload, Loader2, Trash2, List, Zap, Sparkles, Pencil, Check, X,
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { CSVUploadDialog } from '@/components/broadcast/CSVUploadDialog';
 import { CampaignCard, type WACampaign } from '@/components/broadcast/CampaignCard';
 import {
