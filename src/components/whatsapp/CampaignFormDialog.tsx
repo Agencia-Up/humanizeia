@@ -544,14 +544,62 @@ export function CampaignFormDialog({
                 <div className="bg-muted/50 rounded-md p-3 space-y-1.5 text-xs">
                   <p className="font-medium">Prévia dos botões:</p>
                   <div className="flex gap-2 mt-1">
-                    <Badge variant="secondary" className="bg-green-500/10 text-green-600 border-green-500/20">✅ Quero Continuar Recebendo</Badge>
-                    <Badge variant="secondary" className="bg-red-500/10 text-red-600 border-red-500/20">❌ Não Quero Mais Receber</Badge>
+                    <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20">✅ Quero Continuar Recebendo</Badge>
+                    <Badge variant="secondary" className="bg-destructive/10 text-destructive border-destructive/20">❌ Não Quero Mais Receber</Badge>
                   </div>
                   <p className="text-muted-foreground mt-1">
                     Contatos que clicarem em "Não quero mais" serão adicionados à blacklist e excluídos de futuros disparos.
                   </p>
                 </div>
               )}
+            </div>
+
+            <Separator />
+
+            {/* Auto-Tag & Auto-Reply on Response */}
+            <div className="space-y-4">
+              <Label className="flex items-center gap-1.5">
+                <Zap className="h-4 w-4 text-primary" />
+                Automações ao Receber Resposta
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Configure ações automáticas quando um contato responder ao disparo desta campanha.
+              </p>
+
+              {/* Auto-Tag */}
+              <div className="space-y-2 bg-muted/30 rounded-lg p-3">
+                <Label className="text-xs font-medium flex items-center gap-1.5">
+                  <Tag className="h-3.5 w-3.5 text-muted-foreground" />
+                  Tag automática ao responder
+                </Label>
+                <Input
+                  placeholder="Ex: tem interesse, respondeu campanha..."
+                  value={replyAutoTag}
+                  onChange={e => setReplyAutoTag(e.target.value)}
+                  maxLength={50}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Quando o contato responder, esta tag será adicionada automaticamente ao contato.
+                </p>
+              </div>
+
+              {/* Auto-Reply Message */}
+              <div className="space-y-2 bg-muted/30 rounded-lg p-3">
+                <Label className="text-xs font-medium flex items-center gap-1.5">
+                  <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                  Mensagem automática de follow-up
+                </Label>
+                <Textarea
+                  placeholder="Ex: Que bom que você se interessou! Vou te passar mais detalhes..."
+                  value={replyAutoMessage}
+                  onChange={e => setReplyAutoMessage(e.target.value)}
+                  rows={3}
+                  maxLength={2000}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Uma mensagem de continuidade será enviada automaticamente quando o contato responder ao disparo.
+                </p>
+              </div>
             </div>
 
             <Separator />

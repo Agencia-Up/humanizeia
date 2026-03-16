@@ -218,6 +218,8 @@ Não numere as variações. Não inclua explicações adicionais.`
       tags: c.tags || [],
       variation_level: (c as any).variation_level || 'medium',
       include_optout_buttons: (c as any).include_optout_buttons ?? false,
+      reply_auto_tag: (c as any).reply_auto_tag || '',
+      reply_auto_message: (c as any).reply_auto_message || '',
     });
     setDialogOpen(true);
   };

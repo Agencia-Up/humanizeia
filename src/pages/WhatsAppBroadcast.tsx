@@ -206,6 +206,8 @@ Não numere as variações. Não inclua explicações adicionais.`
       tags: campaign.tags || [],
       variation_level: campaign.variation_level || 'medium',
       include_optout_buttons: campaign.include_optout_buttons ?? false,
+      reply_auto_tag: campaign.reply_auto_tag || '',
+      reply_auto_message: campaign.reply_auto_message || '',
     });
     setDialogOpen(true);
   };
