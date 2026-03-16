@@ -175,6 +175,8 @@ export default function WhatsAppAnalytics() {
 
   useEffect(() => {
     fetchData();
+    const interval = setInterval(fetchData, 20000);
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   const deliveryRate = kpis.sent > 0 ? Math.round((kpis.delivered / kpis.sent) * 100) : 0;
