@@ -696,8 +696,10 @@ async function selectSmartInstance(
       }
     }
 
-    if (candidate.messages_sent_today >= dailyLimit) {
-      console.log(`Instance ${candidate.instance_name} hit daily limit (${candidate.messages_sent_today}/${dailyLimit}), skipping`);
+    const candidateSentToday = todaySentByInstance.get(candidate.id) ?? candidate.messages_sent_today ?? 0;
+
+    if (candidateSentToday >= dailyLimit) {
+      console.log(`Instance ${candidate.instance_name} hit daily limit (${candidateSentToday}/${dailyLimit}), skipping`);
       continue;
     }
 
@@ -705,7 +707,7 @@ async function selectSmartInstance(
 
     if (candidate.provider === "meta") {
       const metaLimit = candidate.health_score >= 80 ? 1000 : 250;
-      if (candidate.messages_sent_today >= metaLimit) continue;
+      if (candidateSentToday >= metaLimit) continue;
     }
 
     instance = candidate;
