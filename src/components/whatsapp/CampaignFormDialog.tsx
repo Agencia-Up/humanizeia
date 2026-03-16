@@ -164,6 +164,8 @@ export function CampaignFormDialog({
     setTags([]); setTagInput('');
     setVariationLevel('medium');
     setIncludeOptoutButtons(false);
+    setReplyAutoTag('');
+    setReplyAutoMessage('');
   };
 
   const buildTimestamp = (date: Date | undefined, time: string): string | null => {
