@@ -729,8 +729,8 @@ async function selectSmartInstance(
     break;
   }
 
-  // Never sleep here: long pauses must be applied by scheduling the NEXT item,
-  // otherwise the edge function can hit timeout and leave the queue locked.
+  // Never sleep here: long pauses must be applied by scheduling the NEXT item
+  const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
   void pauseBetweenInstances;
 
   return instance;
