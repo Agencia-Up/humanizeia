@@ -423,6 +423,13 @@ Deno.serve(async (req) => {
           })
           .eq("id", item.id);
 
+        // ===== SHADOW BAN DETECTION: Increment consecutive_undelivered =====
+        // When a delivery receipt arrives, it will reset this counter.
+        // If it reaches 10+, the instance is flagged as shadow-banned.
+        await supabase.rpc("increment_consecutive_undelivered", { iid: instance.id }).catch((err: any) => {
+          console.warn("increment_consecutive_undelivered failed:", err);
+        });
+
         // ===== SAVE TO CRM INBOX =====
         // Store every outgoing message so conversations appear in the unified inbox
         const { error: inboxErr } = await supabase.from("wa_inbox").insert({
