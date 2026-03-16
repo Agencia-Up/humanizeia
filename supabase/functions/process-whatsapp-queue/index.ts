@@ -77,6 +77,10 @@ interface Campaign {
   include_optout_buttons: boolean;
 }
 
+interface SendResult {
+  remoteMessageId: string | null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
