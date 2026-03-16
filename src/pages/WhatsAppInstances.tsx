@@ -360,6 +360,18 @@ export default function WhatsAppInstances() {
                       <Button
                         variant="outline"
                         size="sm"
+                        onClick={() => verifyInstanceStatus(instance.id)}
+                        disabled={verifyingId === instance.id}
+                      >
+                        {verifyingId === instance.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
                         className="flex-1"
                         onClick={() => handleToggleActive(instance)}
                       >
