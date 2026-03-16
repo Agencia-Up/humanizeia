@@ -1934,6 +1934,8 @@ export type Database = {
           regras_aquecimento: Json | null
           regras_delay: Json | null
           regras_rodizio: Json | null
+          reply_auto_message: string | null
+          reply_auto_tag: string | null
           rotation_messages_per_instance: number
           scheduled_at: string | null
           sent_count: number
@@ -1968,6 +1970,8 @@ export type Database = {
           regras_aquecimento?: Json | null
           regras_delay?: Json | null
           regras_rodizio?: Json | null
+          reply_auto_message?: string | null
+          reply_auto_tag?: string | null
           rotation_messages_per_instance?: number
           scheduled_at?: string | null
           sent_count?: number
@@ -2002,6 +2006,8 @@ export type Database = {
           regras_aquecimento?: Json | null
           regras_delay?: Json | null
           regras_rodizio?: Json | null
+          reply_auto_message?: string | null
+          reply_auto_tag?: string | null
           rotation_messages_per_instance?: number
           scheduled_at?: string | null
           sent_count?: number
