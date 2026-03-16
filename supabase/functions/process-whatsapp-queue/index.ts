@@ -714,6 +714,9 @@ async function sendToEvolutionAPI(
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
 
+  // ===== PRE-FLIGHT: Verify instance is actually connected =====
+  await verifyEvolutionConnection(instance);
+
   if (mediaUrl && mediaType) {
     // Evolution API v2: /message/sendMedia/{instance}
     const v2Endpoint = `${apiUrl}/message/sendMedia/${instance.instance_name}`;
@@ -752,7 +755,8 @@ async function sendToEvolutionAPI(
       const errText = await response.text();
       throw new Error(`Evolution API error (sendMedia): ${response.status} - ${errText}`);
     }
-    await response.text();
+    const responseBody = await response.text();
+    validateEvolutionResponse(responseBody, "sendMedia");
   } else {
     const response = await fetchWithTimeout(
       `${apiUrl}/message/sendText/${instance.instance_name}`,
@@ -767,7 +771,76 @@ async function sendToEvolutionAPI(
       const errText = await response.text();
       throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
     }
-    await response.text();
+    const responseBody = await response.text();
+    validateEvolutionResponse(responseBody, "sendText");
+  }
+}
+
+// ===== Verify instance connection status before sending =====
+async function verifyEvolutionConnection(instance: Instance) {
+  const apiUrl = instance.api_url.replace(/\/+$/, "");
+  try {
+    const response = await fetchWithTimeout(
+      `${apiUrl}/instance/connectionState/${instance.instance_name}`,
+      {
+        method: "GET",
+        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      },
+      5000
+    );
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Instance ${instance.instance_name} connection check failed: ${response.status} - ${errText}`);
+    }
+
+    const data = await response.json();
+    // Evolution API returns { instance: { state: "open" } } when connected
+    const state = data?.instance?.state || data?.state || data?.connectionState;
+    
+    if (state && state !== "open" && state !== "connected") {
+      throw new Error(`Instance ${instance.instance_name} is not connected (state: ${state}). Reconnect the WhatsApp number.`);
+    }
+  } catch (err) {
+    if (err instanceof Error && (err.message.includes("not connected") || err.message.includes("connection check failed"))) {
+      throw err; // Re-throw connection errors
+    }
+    // If the connection check endpoint itself fails (404, timeout), log warning but proceed
+    console.warn(`Connection check for ${instance.instance_name} failed (non-critical):`, err);
+  }
+}
+
+// ===== Validate Evolution API response body for actual delivery =====
+function validateEvolutionResponse(responseBody: string, action: string) {
+  try {
+    const data = JSON.parse(responseBody);
+    
+    // Check for error indicators in response body even with 200 status
+    if (data.error) {
+      throw new Error(`Evolution API ${action} returned error in body: ${JSON.stringify(data.error)}`);
+    }
+    
+    // Check for "not connected" or similar states in response
+    if (data.status === "ERROR" || data.status === "error") {
+      throw new Error(`Evolution API ${action} returned error status: ${data.message || JSON.stringify(data)}`);
+    }
+
+    // Evolution API v2 returns { key: { id: "..." } } on success
+    // Evolution API v1 returns { key: { id: "..." }, message: {...} }
+    // If we get a response without a key/id, it might not have been sent
+    if (data.key?.id || data.messageId || data.id) {
+      console.log(`Message sent successfully via ${action}: ${data.key?.id || data.messageId || data.id}`);
+    } else if (data.message?.key?.id) {
+      console.log(`Message sent successfully via ${action}: ${data.message.key.id}`);
+    } else {
+      console.warn(`Evolution API ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
+    }
+  } catch (err) {
+    if (err instanceof Error && (err.message.includes("returned error") || err.message.includes("returned error status"))) {
+      throw err;
+    }
+    // JSON parse error — log but don't block (some versions return plain text on success)
+    console.warn(`Could not parse Evolution API ${action} response: ${responseBody.substring(0, 200)}`);
   }
 }
 
@@ -781,6 +854,9 @@ async function sendEvolutionButtonMessage(
 ) {
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
+
+  // Verify connection before sending
+  await verifyEvolutionConnection(instance);
 
   // Try Evolution API v2 buttons endpoint first
   const payload = {
@@ -827,7 +903,8 @@ async function sendEvolutionButtonMessage(
       throw new Error(`Evolution API error (sendText fallback): ${response.status} - ${errText2}`);
     }
   }
-  await response.text();
+  const responseBody = await response.text();
+  validateEvolutionResponse(responseBody, "sendButtons");
 }
 
 // ====================== MESSAGE POLYMORPHISM ======================
