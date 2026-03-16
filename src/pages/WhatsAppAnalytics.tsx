@@ -231,7 +231,7 @@ export default function WhatsAppAnalytics() {
         ) : (
           <>
             {/* KPI Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -248,7 +248,17 @@ export default function WhatsAppAnalytics() {
                     <span className="text-xs">Taxa Entrega</span>
                   </div>
                   <p className="text-2xl font-bold text-foreground">{deliveryRate}%</p>
-                  <p className="text-xs text-muted-foreground">{kpis.delivered.toLocaleString()} entregues</p>
+                  <p className="text-xs text-muted-foreground">{kpis.delivered.toLocaleString()} enviadas</p>
+                </CardContent>
+              </Card>
+              <Card className={confirmedRate < 30 && kpis.sent > 10 ? 'border-destructive/50' : ''}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <CheckCheck className="h-4 w-4 text-primary" />
+                    <span className="text-xs">Entrega Confirmada</span>
+                  </div>
+                  <p className={`text-2xl font-bold ${confirmedRate < 30 && kpis.sent > 10 ? 'text-destructive' : 'text-primary'}`}>{confirmedRate}%</p>
+                  <p className="text-xs text-muted-foreground">{kpis.confirmedDelivered} confirmadas</p>
                 </CardContent>
               </Card>
               <Card>
