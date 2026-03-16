@@ -912,36 +912,41 @@ async function verifyEvolutionConnection(instance: Instance) {
 }
 
 // ===== Validate Evolution API response body for actual delivery =====
-function validateEvolutionResponse(responseBody: string, action: string) {
+function validateEvolutionResponse(responseBody: string, action: string): string | null {
   try {
     const data = JSON.parse(responseBody);
-    
+
     // Check for error indicators in response body even with 200 status
     if (data.error) {
       throw new Error(`Evolution API ${action} returned error in body: ${JSON.stringify(data.error)}`);
     }
-    
+
     // Check for "not connected" or similar states in response
     if (data.status === "ERROR" || data.status === "error") {
       throw new Error(`Evolution API ${action} returned error status: ${data.message || JSON.stringify(data)}`);
     }
 
-    // Evolution API v2 returns { key: { id: "..." } } on success
-    // Evolution API v1 returns { key: { id: "..." }, message: {...} }
-    // If we get a response without a key/id, it might not have been sent
-    if (data.key?.id || data.messageId || data.id) {
-      console.log(`Message sent successfully via ${action}: ${data.key?.id || data.messageId || data.id}`);
-    } else if (data.message?.key?.id) {
-      console.log(`Message sent successfully via ${action}: ${data.message.key.id}`);
-    } else {
-      console.warn(`Evolution API ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
+    const remoteMessageId =
+      data.key?.id ||
+      data.messageId ||
+      data.id ||
+      data.message?.key?.id ||
+      null;
+
+    if (remoteMessageId) {
+      console.log(`Message sent successfully via ${action}: ${remoteMessageId}`);
+      return remoteMessageId;
     }
+
+    console.warn(`Evolution API ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
+    return null;
   } catch (err) {
     if (err instanceof Error && (err.message.includes("returned error") || err.message.includes("returned error status"))) {
       throw err;
     }
     // JSON parse error — log but don't block (some versions return plain text on success)
     console.warn(`Could not parse Evolution API ${action} response: ${responseBody.substring(0, 200)}`);
+    return null;
   }
 }
 
