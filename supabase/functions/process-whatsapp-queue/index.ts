@@ -184,6 +184,10 @@ Deno.serve(async (req) => {
     // Fetch instances per user
     const userIds = [...new Set(activeItems.map((i) => i.user_id))];
     const instanceMap = new Map<string, Instance[]>();
+    const todaySentByInstance = new Map<string, number>();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayIso = startOfToday.toISOString();
 
     for (const uid of userIds) {
       const { data: instances } = await supabase
@@ -193,8 +197,25 @@ Deno.serve(async (req) => {
         .eq("is_active", true)
         .eq("status", "connected")
         .order("health_score", { ascending: false });
+
       if (instances && instances.length > 0) {
-        instanceMap.set(uid, instances as unknown as Instance[]);
+        const typedInstances = instances as unknown as Instance[];
+        instanceMap.set(uid, typedInstances);
+
+        const instanceIds = typedInstances.map((inst) => inst.id);
+        const { data: todaySentRows } = await supabase
+          .from("wa_queue")
+          .select("instance_id")
+          .in("instance_id", instanceIds)
+          .in("status", ["sent", "delivered", "read"])
+          .gte("sent_at", startOfTodayIso);
+
+        if (todaySentRows) {
+          for (const row of todaySentRows as Array<{ instance_id: string | null }>) {
+            if (!row.instance_id) continue;
+            todaySentByInstance.set(row.instance_id, (todaySentByInstance.get(row.instance_id) || 0) + 1);
+          }
+        }
       }
     }
 
