@@ -365,7 +365,28 @@ Não numere as variações. Não inclua explicações adicionais.`
                           <Users className="h-5 w-5 text-primary" />
                         </div>
                         <div>
-                          <p className="font-medium">{list.name}</p>
+                          {renamingListId === list.id ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                className="h-7 text-sm w-48"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleRenameList(list.id);
+                                  if (e.key === 'Escape') setRenamingListId(null);
+                                }}
+                              />
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-green-500" onClick={() => handleRenameList(list.id)}>
+                                <Check className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRenamingListId(null)}>
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <p className="font-medium">{list.name}</p>
+                          )}
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Badge variant="secondary" className="text-[10px]">{list.contact_count} contatos</Badge>
                             <span>•</span>
@@ -375,14 +396,24 @@ Não numere as variações. Não inclua explicações adicionais.`
                           </div>
                         </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                        onClick={() => setDeleteListId(list.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-primary"
+                          onClick={() => { setRenamingListId(list.id); setRenameValue(list.name); }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => setDeleteListId(list.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 ))}
