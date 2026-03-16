@@ -16,6 +16,14 @@ const OUTBOUND_FETCH_TIMEOUT_MS = 10_000;
 const PRESENCE_FETCH_TIMEOUT_MS = 2_500;
 const AI_FETCH_TIMEOUT_MS = 12_000;
 
+// ===== ANTI-BAN: Default safety limits =====
+const DEFAULT_DAILY_LIMIT_NEW_INSTANCE = 30; // New numbers: max 30 msgs/day
+const DEFAULT_DAILY_LIMIT_MATURE_INSTANCE = 200; // Mature numbers (>14 days): max 200 msgs/day
+const WARMUP_RAMP_DAYS = 14; // Days to reach full capacity
+const COLD_CONTACT_MIN_DELAY_SECONDS = 45; // Minimum delay for cold contacts (no prior interaction)
+const COLD_CONTACT_MAX_DELAY_SECONDS = 120; // Maximum delay for cold contacts
+const NUMBER_VALIDATION_TIMEOUT_MS = 5_000;
+
 const instanceFailures = new Map<string, number>();
 
 interface QueueItem {
@@ -306,6 +314,19 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ===== ANTI-BAN: Validate number exists on WhatsApp before sending =====
+        if (instance.provider === "evolution") {
+          const numberValid = await validateWhatsAppNumber(instance, item.phone);
+          if (!numberValid) {
+            console.log(`Number ${item.phone} not on WhatsApp, skipping`);
+            await supabase
+              .from("wa_queue")
+              .update({ status: "failed", error_message: "Número não possui WhatsApp" })
+              .eq("id", item.id);
+            failed++; processed++; continue;
+          }
+        }
+
         // ===== HUMANIZED SENDING SEQUENCE (kept short to fit edge function timeout) =====
 
         // Step 1: Go online (simulate opening WhatsApp)
@@ -419,11 +440,23 @@ Deno.serve(async (req) => {
         // we push the scheduled_for of the next pending item forward.
         const delayRules = campaign?.regras_delay || {};
         const rotationRules = campaign?.regras_rodizio || {};
-        const minD = delayRules.min || campaign?.min_delay_seconds || 20;
-        const maxD = delayRules.max || campaign?.max_delay_seconds || 60;
+        
+        // ===== ANTI-BAN: Use MUCH longer delays for cold contacts =====
+        const isCurrentContactCold = !item.contact_metadata?.last_message_at;
+        const configuredMinD = delayRules.min || campaign?.min_delay_seconds || 20;
+        const configuredMaxD = delayRules.max || campaign?.max_delay_seconds || 60;
+        
+        const minD = isCurrentContactCold
+          ? Math.max(configuredMinD, COLD_CONTACT_MIN_DELAY_SECONDS)
+          : configuredMinD;
+        const maxD = isCurrentContactCold
+          ? Math.max(configuredMaxD, COLD_CONTACT_MAX_DELAY_SECONDS)
+          : configuredMaxD;
+        
         const delaySec = minD + Math.random() * (maxD - minD);
-        // 20% chance of longer pause (60-120s extra) for human-like behavior
-        const longPauseSec = Math.random() < 0.20 ? (60 + Math.random() * 60) : 0;
+        // 30% chance of longer pause for cold contacts (was 20%)
+        const longPauseChance = isCurrentContactCold ? 0.35 : 0.20;
+        const longPauseSec = Math.random() < longPauseChance ? (60 + Math.random() * 120) : 0;
 
         const rotationLimit = Math.max(
           1,
@@ -440,7 +473,7 @@ Deno.serve(async (req) => {
         const totalDelaySec = delaySec + longPauseSec + rotationPauseSec;
 
         const nextScheduledFor = new Date(Date.now() + totalDelaySec * 1000).toISOString();
-        console.log(`Next message scheduled in ${Math.round(totalDelaySec)}s`);
+        console.log(`Next message scheduled in ${Math.round(totalDelaySec)}s (cold=${isCurrentContactCold})`);
 
         // Update the next pending item for this campaign to respect the delay
         if (item.campaign_id) {
@@ -553,7 +586,7 @@ async function selectSmartInstance(
 ): Promise<Instance | null> {
   const aquecimento = campaign?.regras_aquecimento || {};
   const warmupDailyLimit = aquecimento.limite_diario_inicial || null;
-  const warmupRampDays = aquecimento.dias_rampa || 7;
+  const warmupRampDays = aquecimento.dias_rampa || WARMUP_RAMP_DAYS;
 
   const rodizio = campaign?.regras_rodizio || {};
   const rotationLimit = Math.max(1, rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10);
@@ -596,15 +629,34 @@ async function selectSmartInstance(
 
     if (candidateFailures >= CIRCUIT_BREAKER_THRESHOLD) continue;
 
-    if (warmupDailyLimit && candidate.created_at) {
-      const instanceAgeDays = Math.floor(
-        (Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24)
-      );
+    // ===== ANTI-BAN: Enforce daily limits (warmup OR default) =====
+    const instanceAgeDays = candidate.created_at
+      ? Math.floor((Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24))
+      : 999;
+
+    let dailyLimit: number;
+
+    if (warmupDailyLimit) {
+      // User-configured warmup
       if (instanceAgeDays < warmupRampDays) {
         const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / warmupRampDays);
-        const dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
-        if (candidate.messages_sent_today >= dailyLimit) continue;
+        dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
+      } else {
+        dailyLimit = warmupDailyLimit;
       }
+    } else {
+      // DEFAULT safety warmup (always applied when no custom config)
+      if (instanceAgeDays < WARMUP_RAMP_DAYS) {
+        const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / WARMUP_RAMP_DAYS);
+        dailyLimit = Math.max(5, Math.floor(DEFAULT_DAILY_LIMIT_NEW_INSTANCE + (DEFAULT_DAILY_LIMIT_MATURE_INSTANCE - DEFAULT_DAILY_LIMIT_NEW_INSTANCE) * rampMultiplier));
+      } else {
+        dailyLimit = DEFAULT_DAILY_LIMIT_MATURE_INSTANCE;
+      }
+    }
+
+    if (candidate.messages_sent_today >= dailyLimit) {
+      console.log(`Instance ${candidate.instance_name} hit daily limit (${candidate.messages_sent_today}/${dailyLimit}), skipping`);
+      continue;
     }
 
     if (candidate.health_score < 20) continue;
@@ -1054,6 +1106,48 @@ REGRAS OBRIGATÓRIAS:
 
   // Strip any markdown formatting
   return content.trim().replace(/\*\*/g, "").replace(/\*/g, "").replace(/^#+\s*/gm, "").replace(/^[-]\s+/gm, "");
+}
+
+// ====================== ANTI-BAN: NUMBER VALIDATION ======================
+
+async function validateWhatsAppNumber(instance: Instance, phone: string): Promise<boolean> {
+  try {
+    const apiUrl = instance.api_url.replace(/\/+$/, "");
+    const number = phone.replace(/\D/g, "");
+
+    const response = await fetchWithTimeout(
+      `${apiUrl}/chat/whatsappNumbers/${instance.instance_name}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+        body: JSON.stringify({ numbers: [number] }),
+      },
+      NUMBER_VALIDATION_TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      // If endpoint not available, don't block sending
+      console.warn(`Number validation endpoint returned ${response.status}, proceeding anyway`);
+      return true;
+    }
+
+    const data = await response.json();
+    // Evolution API returns array: [{ exists: true/false, jid: "...", number: "..." }]
+    const results = Array.isArray(data) ? data : data?.data || data?.result || [];
+    
+    if (results.length > 0) {
+      const result = results[0];
+      if (result.exists === false) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch (err) {
+    // On any error, don't block the send (validation is best-effort)
+    console.warn(`Number validation failed for ${phone}, proceeding:`, err);
+    return true;
+  }
 }
 
 // ====================== HELPERS ======================
