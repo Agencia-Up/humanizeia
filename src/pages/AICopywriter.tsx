@@ -128,7 +128,7 @@ export default function AICopywriter() {
   const [showFormulaForm, setShowFormulaForm] = useState(false);
   const [newFormula, setNewFormula] = useState({ name: '', full_name: '', description: '', example: '' });
 
-  const adTypes = platform === 'meta' ? metaAdTypes : googleAdTypes;
+  const adTypes = platform === 'meta' ? metaAdTypes : platform === 'whatsapp' ? whatsappAdTypes : googleAdTypes;
 
   const { sendSingleMessage } = useClaudeChat({
     context: 'copywriter',
