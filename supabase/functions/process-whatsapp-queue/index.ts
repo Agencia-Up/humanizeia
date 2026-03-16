@@ -617,7 +617,8 @@ async function selectSmartInstance(
   userInstances: Instance[],
   item: QueueItem,
   campaign: Campaign | null,
-  failures: Map<string, number>
+  failures: Map<string, number>,
+  todaySentByInstance: Map<string, number>,
 ): Promise<Instance | null> {
   const aquecimento = campaign?.regras_aquecimento || {};
   const warmupDailyLimit = aquecimento.limite_diario_inicial || null;
