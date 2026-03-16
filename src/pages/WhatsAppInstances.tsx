@@ -207,13 +207,26 @@ export default function WhatsAppInstances() {
               Gerencie seus números de WhatsApp conectados para disparo em massa
             </p>
           </div>
-          <Button
-            onClick={() => setConnectOpen(true)}
-            className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white gap-2"
-          >
-            <Plus className="h-4 w-4" />
-            Conectar Número
-          </Button>
+          <div className="flex gap-2">
+            {instances.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={() => verifyAllInstances(instances)}
+                disabled={isVerifyingAll}
+                className="gap-2"
+              >
+                {isVerifyingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Verificar Todos
+              </Button>
+            )}
+            <Button
+              onClick={() => setConnectOpen(true)}
+              className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              Conectar Número
+            </Button>
+          </div>
         </div>
 
         {/* Stats */}
