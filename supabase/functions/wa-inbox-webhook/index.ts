@@ -392,60 +392,60 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
   try {
     const updates = Array.isArray(messageData) ? messageData : [messageData];
 
+    const { data: instance } = await supabase
+      .from("wa_instances")
+      .select("id, user_id")
+      .eq("instance_name", instanceName)
+      .single();
+
+    if (!instance) {
+      return new Response(
+        JSON.stringify({ ok: true, warning: "instance_not_found" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     for (const update of updates) {
       const key = update.key || {};
-      const status = update.status;
-      const remoteMessageId = key.id;
-
-      if (!remoteMessageId || !status) continue;
+      const statusRaw = update.status;
+      const statusNormalized = String(statusRaw ?? "").toLowerCase();
+      const remoteMessageId = key.id || update.id || update.messageId || null;
 
       let queueStatus: string | null = null;
       let deliveredAt: string | null = null;
       let readAt: string | null = null;
 
-      switch (status) {
-        case "DELIVERY_ACK": case "delivered": case 3:
-          queueStatus = "delivered"; deliveredAt = new Date().toISOString(); break;
-        case "READ": case "read": case 4:
-        case "PLAYED": case 5:
-          queueStatus = "read"; readAt = new Date().toISOString(); break;
-        case "ERROR": case "failed": case 0:
-          queueStatus = "failed"; break;
-        case "SERVER_ACK": case "sent": case 1: case 2:
-          continue;
-        default: continue;
+      if (statusRaw === 3 || statusNormalized === "delivered" || statusNormalized === "delivery_ack") {
+        queueStatus = "delivered";
+        deliveredAt = new Date().toISOString();
+      } else if (
+        statusRaw === 4 ||
+        statusRaw === 5 ||
+        statusNormalized === "read" ||
+        statusNormalized === "played"
+      ) {
+        queueStatus = "read";
+        readAt = new Date().toISOString();
+      } else if (statusRaw === 0 || statusNormalized === "error" || statusNormalized === "failed") {
+        queueStatus = "failed";
+      } else {
+        // Ignore server ACK / sent
+        continue;
       }
 
       if (!queueStatus) continue;
 
-      const phone = (key.remoteJid || "").replace("@s.whatsapp.net", "").replace("@g.us", "");
-      if (!phone) continue;
+      const phone = normalizePhone(key.remoteJid || key.remoteJidAlt || update.recipient || "");
 
-      const { data: instance } = await supabase
-        .from("wa_instances")
-        .select("id, user_id")
-        .eq("instance_name", instanceName)
-        .single();
-
-      if (!instance) continue;
-
-      const updateData: any = { status: queueStatus };
-      if (deliveredAt) updateData.delivered_at = deliveredAt;
-      if (readAt) updateData.read_at = readAt;
-
-      const { data: updatedItems } = await supabase
-        .from("wa_queue")
-        .update(updateData)
-        .eq("phone", phone)
-        .eq("instance_id", instance.id)
-        .in("status", ["sent", "delivered"])
-        .order("sent_at", { ascending: false })
-        .limit(1)
-        .select("campaign_id");
-
-      if (deliveredAt && updatedItems?.length > 0 && updatedItems[0].campaign_id) {
-        await supabase.rpc("increment_campaign_delivered", { cid: updatedItems[0].campaign_id }).catch(() => {});
-      }
+      await updateQueueStatusFromDeliverySignal(supabase, {
+        instanceId: instance.id,
+        userId: instance.user_id,
+        phone,
+        remoteMessageId,
+        queueStatus,
+        deliveredAt,
+        readAt,
+      });
     }
 
     return new Response(
