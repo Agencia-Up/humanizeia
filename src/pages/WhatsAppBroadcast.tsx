@@ -61,6 +61,8 @@ export default function WhatsAppBroadcast() {
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [aiVariations, setAiVariations] = useState<string[]>([]);
+  const [renamingListId, setRenamingListId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   const { sendSingleMessage, isLoading: aiLoading } = useClaudeChat({
     context: 'copywriter',
