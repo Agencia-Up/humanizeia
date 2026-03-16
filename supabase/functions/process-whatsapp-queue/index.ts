@@ -426,6 +426,7 @@ Deno.serve(async (req) => {
         // Store every outgoing message so conversations appear in the unified inbox
         const { error: inboxErr } = await supabase.from("wa_inbox").insert({
           user_id: item.user_id,
+          campaign_id: item.campaign_id || null,
           instance_id: instance.id,
           phone: item.phone.replace(/\D/g, ""),
           contact_name: item.contact_name || null,
@@ -433,6 +434,7 @@ Deno.serve(async (req) => {
           message_type: item.media_type || "text",
           content: finalMessage,
           media_url: item.media_url || null,
+          remote_message_id: sendResult.remoteMessageId,
           is_read: true,
           created_at: sentAt,
         });
