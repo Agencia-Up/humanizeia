@@ -107,6 +107,8 @@ export function CampaignFormDialog({
   const [tagInput, setTagInput] = useState('');
   const [variationLevel, setVariationLevel] = useState<string>('medium');
   const [includeOptoutButtons, setIncludeOptoutButtons] = useState(false);
+  const [replyAutoTag, setReplyAutoTag] = useState('');
+  const [replyAutoMessage, setReplyAutoMessage] = useState('');
 
   const isEditing = !!editingCampaign;
 
