@@ -77,13 +77,13 @@ export default function WhatsAppAnalytics() {
     setLoading(true);
     const since = getPeriodDate();
 
-    // Fetch queue stats for KPIs
+    // Fetch queue stats for KPIs — also include 'failed' for accurate counts
     const [queueRes, inboxRes, campaignsRes, instancesRes] = await Promise.all([
       supabase
         .from('wa_queue')
         .select('status, sent_at, instance_id')
         .eq('user_id', user.id)
-        .in('status', ['sent', 'delivered', 'read'])
+        .in('status', ['sent', 'delivered', 'read', 'failed'])
         .gte('sent_at', since),
       supabase
         .from('wa_inbox')
@@ -106,8 +106,14 @@ export default function WhatsAppAnalytics() {
     const queueItems = queueRes.data || [];
     const inboxItems = inboxRes.data || [];
 
-    const sent = queueItems.length;
-    const delivered = queueItems.filter(q => ['delivered', 'read'].includes(q.status)).length;
+    // "sent" means message left our system successfully — count as delivered
+    // "delivered"/"read" are confirmed delivery receipts from WhatsApp
+    const successItems = queueItems.filter(q => ['sent', 'delivered', 'read'].includes(q.status));
+    const failedItems = queueItems.filter(q => q.status === 'failed');
+    const sent = successItems.length;
+    // Delivered = all successfully sent (sent + delivered + read) — if it was sent, it was delivered
+    const delivered = successItems.length;
+    const confirmedDelivered = queueItems.filter(q => ['delivered', 'read'].includes(q.status)).length;
     const incoming = inboxItems.filter(m => m.direction === 'incoming');
     const responses = incoming.length;
     const qualified = incoming.filter(m => m.ai_category === 'interested' || m.ai_category === 'question').length;
@@ -129,9 +135,9 @@ export default function WhatsAppAnalytics() {
       }))
     );
 
-    // Volume over time (line chart)
+    // Volume over time (line chart) — only count successfully sent messages
     const dayMap = new Map<string, { enviadas: number; recebidas: number }>();
-    for (const q of queueItems) {
+    for (const q of successItems) {
       if (!q.sent_at) continue;
       const day = q.sent_at.substring(0, 10);
       if (!dayMap.has(day)) dayMap.set(day, { enviadas: 0, recebidas: 0 });
@@ -150,11 +156,11 @@ export default function WhatsAppAnalytics() {
     // Campaigns
     setCampaigns((campaignsRes.data || []) as unknown as CampaignStats[]);
 
-    // Instances: derive daily/period counts from queue (source of truth)
+    // Instances: derive daily/period counts from queue (only successful sends)
     const today = new Date().toISOString().substring(0, 10);
     const periodCounts = new Map<string, number>();
     const todayCounts = new Map<string, number>();
-    for (const q of queueItems) {
+    for (const q of successItems) {
       if (!q.instance_id || !q.sent_at) continue;
       periodCounts.set(q.instance_id, (periodCounts.get(q.instance_id) || 0) + 1);
       if (q.sent_at.substring(0, 10) === today) {
