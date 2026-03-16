@@ -442,11 +442,14 @@ Deno.serve(async (req) => {
           console.warn("Failed to save outgoing message to inbox:", inboxErr);
         }
 
-        // Update instance counters
+        // Update instance counters based on real sent count of the current day
+        const nextTodaySent = (todaySentByInstance.get(instance.id) ?? instance.messages_sent_today ?? 0) + 1;
+        todaySentByInstance.set(instance.id, nextTodaySent);
+
         await supabase
           .from("wa_instances")
           .update({
-            messages_sent_today: instance.messages_sent_today + 1,
+            messages_sent_today: nextTodaySent,
             last_message_at: new Date().toISOString(),
             last_used_at: new Date().toISOString(),
           })
