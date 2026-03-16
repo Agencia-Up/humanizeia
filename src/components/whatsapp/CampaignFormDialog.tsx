@@ -19,7 +19,7 @@ import { ptBR } from 'date-fns/locale';
 import {
   Loader2, Plus, Eye, Sparkles, Clock, RotateCcw, CalendarIcon,
   Image, Video, FileText, Music, X, Tag, Pencil, Smartphone,
-  Flame, Info,
+  Flame, Info, Zap, MessageSquare,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
