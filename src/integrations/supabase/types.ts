@@ -2524,6 +2524,10 @@ export type Database = {
         Returns: undefined
       }
       increment_campaign_sent: { Args: { cid: string }; Returns: undefined }
+      increment_consecutive_undelivered: {
+        Args: { iid: string }
+        Returns: undefined
+      }
       is_org_member: {
         Args: { _organization_id: string; _user_id: string }
         Returns: boolean
