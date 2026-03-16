@@ -957,7 +957,7 @@ async function sendEvolutionButtonMessage(
   phone: string,
   text: string,
   buttons: Array<{ buttonId: string; buttonText: { displayText: string } }>,
-) {
+): Promise<SendResult> {
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
 
@@ -990,10 +990,10 @@ async function sendEvolutionButtonMessage(
   if (!response.ok) {
     const errText = await response.text();
     console.warn(`[optout-buttons] Button send failed (${response.status}): ${errText}. Falling back to text.`);
-    
+
     const buttonLabels = buttons.map(b => `▪️ ${b.buttonText.displayText}`).join("\n");
     const fallbackText = `${text}\n\n📋 _Responda com uma das opções:_\n${buttonLabels}`;
-    
+
     response = await fetchWithTimeout(
       `${apiUrl}/message/sendText/${instance.instance_name}`,
       {
@@ -1010,7 +1010,8 @@ async function sendEvolutionButtonMessage(
     }
   }
   const responseBody = await response.text();
-  validateEvolutionResponse(responseBody, "sendButtons");
+  const remoteMessageId = validateEvolutionResponse(responseBody, "sendButtons");
+  return { remoteMessageId };
 }
 
 // ====================== MESSAGE POLYMORPHISM ======================
