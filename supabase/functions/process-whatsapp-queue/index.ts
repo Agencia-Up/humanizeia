@@ -277,7 +277,11 @@ Deno.serve(async (req) => {
 
         // --- Smart Switcher: Instance Selection ---
         const instance = await selectSmartInstance(
-          userInstances, item, campaign, instanceFailures
+          userInstances,
+          item,
+          campaign,
+          instanceFailures,
+          todaySentByInstance,
         );
 
         if (!instance) {
