@@ -1108,6 +1108,48 @@ REGRAS OBRIGATÓRIAS:
   return content.trim().replace(/\*\*/g, "").replace(/\*/g, "").replace(/^#+\s*/gm, "").replace(/^[-]\s+/gm, "");
 }
 
+// ====================== ANTI-BAN: NUMBER VALIDATION ======================
+
+async function validateWhatsAppNumber(instance: Instance, phone: string): Promise<boolean> {
+  try {
+    const apiUrl = instance.api_url.replace(/\/+$/, "");
+    const number = phone.replace(/\D/g, "");
+
+    const response = await fetchWithTimeout(
+      `${apiUrl}/chat/whatsappNumbers/${instance.instance_name}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+        body: JSON.stringify({ numbers: [number] }),
+      },
+      NUMBER_VALIDATION_TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      // If endpoint not available, don't block sending
+      console.warn(`Number validation endpoint returned ${response.status}, proceeding anyway`);
+      return true;
+    }
+
+    const data = await response.json();
+    // Evolution API returns array: [{ exists: true/false, jid: "...", number: "..." }]
+    const results = Array.isArray(data) ? data : data?.data || data?.result || [];
+    
+    if (results.length > 0) {
+      const result = results[0];
+      if (result.exists === false) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch (err) {
+    // On any error, don't block the send (validation is best-effort)
+    console.warn(`Number validation failed for ${phone}, proceeding:`, err);
+    return true;
+  }
+}
+
 // ====================== HELPERS ======================
 
 async function fetchWithTimeout(
