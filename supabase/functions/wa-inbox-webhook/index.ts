@@ -945,8 +945,17 @@ async function handleAIAgentReply(
 
     // Generate AI reply
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+
+    const rawModel = agent.model || "google/gemini-2.5-flash";
+    const isAnthropicModel = rawModel.startsWith("anthropic/");
+
+    if (!isAnthropicModel && !LOVABLE_API_KEY) {
       console.error("[ai-agent] LOVABLE_API_KEY not configured");
+      return;
+    }
+    if (isAnthropicModel && !ANTHROPIC_API_KEY) {
+      console.error("[ai-agent] ANTHROPIC_API_KEY not configured for Anthropic model");
       return;
     }
 
@@ -1008,67 +1017,109 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
 
     const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction;
 
-    // Map model - stabilize provider compatibility
-    const modelMap: Record<string, string> = {
-      "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
-      "gemini-3-flash-preview": "google/gemini-2.5-flash",
-      "openai/gpt-5": "google/gemini-2.5-pro",
-      "openai/gpt-5-mini": "google/gemini-2.5-flash",
-      "openai/gpt-5-nano": "google/gemini-2.5-flash-lite",
-      "openai/gpt-5.2": "google/gemini-2.5-pro",
-    };
-    const rawModel = agent.model || "google/gemini-2.5-flash";
-    const selectedModel = modelMap[rawModel] || rawModel;
-
     const maxTokensValue = agent.max_tokens || 500;
-    const isOpenAI = selectedModel.startsWith("openai/");
-
-    // Build messages: system + history + current message
-    const aiMessages = [
-      { role: "system", content: systemPrompt },
-      ...historyMessages.slice(-14), // Last 14 messages for context (7 exchanges)
-      { role: "user", content },
-    ];
-
-    // Use slightly higher temperature for more natural variation
     const effectiveTemp = Math.max(parseFloat(agent.temperature) || 0.7, 0.75);
 
-    const aiPayload = {
-      model: selectedModel,
-      messages: aiMessages,
-      temperature: effectiveTemp,
-      ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
-    };
-
-    console.log(`[ai-agent] Calling AI with model: ${selectedModel}, history: ${historyMessages.length} msgs`);
-
     let aiData: any = null;
-    const modelsToTry = [selectedModel, "google/gemini-2.5-flash"];
-    const uniqueModels = [...new Set(modelsToTry)];
 
-    for (const model of uniqueModels) {
-      const isModelOpenAI = model.startsWith("openai/");
-      const { max_tokens, max_completion_tokens, ...basePayload } = aiPayload as any;
-      const tokenParam = isModelOpenAI
-        ? { max_completion_tokens: max_completion_tokens || max_tokens || 500 }
-        : { max_tokens: max_tokens || max_completion_tokens || 500 };
+    if (isAnthropicModel) {
+      // ── Direct Anthropic API call ──
+      const anthropicModel = rawModel.replace("anthropic/", "");
+      const anthropicMessages = [
+        ...historyMessages.slice(-14).map((m: any) => ({
+          role: m.role === "system" ? "user" : m.role,
+          content: m.content,
+        })),
+        { role: "user", content },
+      ];
 
-      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      console.log(`[ai-agent] Calling Anthropic directly with model: ${anthropicModel}`);
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "x-api-key": ANTHROPIC_API_KEY!,
+          "anthropic-version": "2023-06-01",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ...basePayload, ...tokenParam, model }),
+        body: JSON.stringify({
+          model: anthropicModel,
+          system: systemPrompt,
+          messages: anthropicMessages,
+          max_tokens: maxTokensValue,
+          temperature: effectiveTemp,
+        }),
       });
 
       if (res.ok) {
-        aiData = await res.json();
-        break;
+        const anthropicData = await res.json();
+        // Normalize to OpenAI-like format
+        aiData = {
+          choices: [{
+            message: {
+              content: anthropicData.content?.[0]?.text || "",
+            },
+          }],
+        };
+      } else {
+        const errBody = await res.text().catch(() => "");
+        console.error(`[ai-agent] Anthropic error: ${res.status} - ${errBody}`);
       }
+    } else {
+      // ── Lovable AI Gateway call ──
+      const modelMap: Record<string, string> = {
+        "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
+        "gemini-3-flash-preview": "google/gemini-2.5-flash",
+        "openai/gpt-5": "google/gemini-2.5-pro",
+        "openai/gpt-5-mini": "google/gemini-2.5-flash",
+        "openai/gpt-5-nano": "google/gemini-2.5-flash-lite",
+        "openai/gpt-5.2": "google/gemini-2.5-pro",
+      };
+      const selectedModel = modelMap[rawModel] || rawModel;
+      const isOpenAI = selectedModel.startsWith("openai/");
 
-      const errBody = await res.text().catch(() => "");
-      console.error(`[ai-agent] AI error with model ${model}: ${res.status} - ${errBody}`);
+      const aiMessages = [
+        { role: "system", content: systemPrompt },
+        ...historyMessages.slice(-14),
+        { role: "user", content },
+      ];
+
+      const aiPayload = {
+        model: selectedModel,
+        messages: aiMessages,
+        temperature: effectiveTemp,
+        ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
+      };
+
+      console.log(`[ai-agent] Calling AI Gateway with model: ${selectedModel}, history: ${historyMessages.length} msgs`);
+
+      const modelsToTry = [selectedModel, "google/gemini-2.5-flash"];
+      const uniqueModels = [...new Set(modelsToTry)];
+
+      for (const model of uniqueModels) {
+        const isModelOpenAI = model.startsWith("openai/");
+        const { max_tokens, max_completion_tokens, ...basePayload } = aiPayload as any;
+        const tokenParam = isModelOpenAI
+          ? { max_completion_tokens: max_completion_tokens || max_tokens || 500 }
+          : { max_tokens: max_tokens || max_completion_tokens || 500 };
+
+        const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ...basePayload, ...tokenParam, model }),
+        });
+
+        if (res.ok) {
+          aiData = await res.json();
+          break;
+        }
+
+        const errBody = await res.text().catch(() => "");
+        console.error(`[ai-agent] AI error with model ${model}: ${res.status} - ${errBody}`);
+      }
     }
 
     if (!aiData) {
