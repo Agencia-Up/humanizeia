@@ -84,6 +84,7 @@ Informações do produto/serviço:
 [EDITE AQUI COM AS INFORMAÇÕES DO SEU NEGÓCIO]`;
 
 const MODEL_OPTIONS = [
+  { value: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (Premium)' },
   { value: 'google/gemini-3-flash-preview', label: 'Gemini 3 Flash (Rápido)' },
   { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Balanceado)' },
   { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro (Avançado)' },
