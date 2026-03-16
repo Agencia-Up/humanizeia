@@ -615,6 +615,7 @@ Deno.serve(async (req) => {
 // ====================== SMART SWITCHER ======================
 
 async function selectSmartInstance(
+  supabase: any,
   userInstances: Instance[],
   item: QueueItem,
   campaign: Campaign | null,
@@ -627,13 +628,10 @@ async function selectSmartInstance(
 
   const rodizio = campaign?.regras_rodizio || {};
   const rotationLimit = Math.max(1, rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10);
-  const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
 
-  // ===== ROTATION FIX: Use ALL active instances for rotation =====
-  // instance_id is only a "preferred start" hint, NOT an exclusive filter
-  // This ensures rotation works across multiple instances
+  // Use ALL active instances for rotation
   const scopedInstances = userInstances.length > 1
-    ? userInstances // Always use all instances when multiple are available
+    ? userInstances
     : campaign?.instance_id
       ? userInstances.filter((inst) => inst.id === campaign.instance_id)
       : userInstances;
@@ -642,55 +640,48 @@ async function selectSmartInstance(
     return null;
   }
 
-  const isContactCold = !item.contact_metadata?.last_message_at;
-
-  // Sort by health_score descending (best health first), then by least recently used
-  const sortedInstances = [...scopedInstances].sort((a, b) => {
-    // Primary: health score (higher is better)
-    if (a.health_score !== b.health_score) {
-      return b.health_score - a.health_score;
-    }
-    // Secondary: least recently used first (for fair distribution)
-    const aTime = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
-    const bTime = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
-    return aTime - bTime; // ascending = least recently used first
-  });
-
-  // ===== ROTATION FIX: Use ACTUAL per-instance sent counts from wa_queue =====
-  // This avoids race conditions with campaign.sent_count being stale
-  // Query how many messages each instance has already sent for THIS campaign
+  // ===== ROTATION FIX: Query REAL per-instance sent counts for THIS campaign =====
+  // This is the source of truth — no race conditions with campaign.sent_count
   const campaignInstanceCounts = new Map<string, number>();
-  
-  if (campaign) {
-    // We already have todaySentByInstance for daily limits, but for rotation
-    // we need per-campaign counts, not just daily totals
-    // Use the queue item's campaign_id to get accurate rotation state
-    for (const inst of sortedInstances) {
-      // Count from todaySentByInstance is total across all campaigns
-      // For rotation, we need campaign-specific counts
-      campaignInstanceCounts.set(inst.id, 0);
+  for (const inst of scopedInstances) {
+    campaignInstanceCounts.set(inst.id, 0);
+  }
+
+  if (item.campaign_id && scopedInstances.length > 1) {
+    const instanceIds = scopedInstances.map(i => i.id);
+    const { data: perInstCounts } = await supabase
+      .from("wa_queue")
+      .select("instance_id")
+      .eq("campaign_id", item.campaign_id)
+      .in("instance_id", instanceIds)
+      .in("status", ["sent", "delivered", "read"]);
+
+    if (perInstCounts) {
+      for (const row of perInstCounts as Array<{ instance_id: string }>) {
+        if (!row.instance_id) continue;
+        campaignInstanceCounts.set(row.instance_id, (campaignInstanceCounts.get(row.instance_id) || 0) + 1);
+      }
     }
   }
 
-  // Find the instance with the FEWEST sends for this campaign (true round-robin)
-  // This naturally distributes: if rotationLimit=10, after 10 msgs on inst A,
-  // inst B will have fewer and get selected next
-  console.log(`[ROTATION] rotationLimit=${rotationLimit}, instances=${sortedInstances.map(i => i.instance_name).join(',')}, campaignSentCount=${campaign?.sent_count || 0}`);
+  // Determine which instance should be active based on real counts
+  // Strategy: Fill each instance up to rotationLimit before moving to next
+  // Order instances deterministically (by id to be stable across invocations)
+  const orderedInstances = [...scopedInstances].sort((a, b) => a.id.localeCompare(b.id));
+
+  // Find the "current" instance: the first one that hasn't reached rotationLimit yet in its current slot
+  // Total sent across all instances for this campaign
+  const totalCampaignSent = Array.from(campaignInstanceCounts.values()).reduce((a, b) => a + b, 0);
+  const rotationCycle = Math.floor(totalCampaignSent / rotationLimit);
+  const currentInstanceIndex = rotationCycle % orderedInstances.length;
+
+  console.log(`[ROTATION] totalSent=${totalCampaignSent}, rotationLimit=${rotationLimit}, cycle=${rotationCycle}, currentIdx=${currentInstanceIndex}, perInstance=${JSON.stringify(Object.fromEntries(campaignInstanceCounts))}`);
 
   let instance: Instance | null = null;
 
-  // Strategy: pick the instance that should be "current" based on rotation
-  // Use modular arithmetic on campaign sent_count but verify with daily limits
-  const sentCount = Math.max(0, campaign?.sent_count || 0);
-  // Which "slot" in the rotation cycle are we in?
-  const positionInSlot = sentCount % rotationLimit;
-  const rotationCycle = Math.floor(sentCount / rotationLimit);
-  const startIndex = rotationCycle % sortedInstances.length;
-  
-  console.log(`[ROTATION] sentCount=${sentCount}, posInSlot=${positionInSlot}, cycle=${rotationCycle}, startIdx=${startIndex}`);
-
-  for (let attempts = 0; attempts < sortedInstances.length; attempts++) {
-    const candidate = sortedInstances[(startIndex + attempts) % sortedInstances.length];
+  // Try the current rotation instance first, then fall back to others
+  for (let attempts = 0; attempts < orderedInstances.length; attempts++) {
+    const candidate = orderedInstances[(currentInstanceIndex + attempts) % orderedInstances.length];
     const candidateFailures = failures.get(candidate.id) || 0;
 
     if (candidateFailures >= CIRCUIT_BREAKER_THRESHOLD) continue;
