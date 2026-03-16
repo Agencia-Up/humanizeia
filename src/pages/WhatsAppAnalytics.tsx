@@ -77,13 +77,13 @@ export default function WhatsAppAnalytics() {
     setLoading(true);
     const since = getPeriodDate();
 
-    // Fetch queue stats for KPIs
+    // Fetch queue stats for KPIs — also include 'failed' for accurate counts
     const [queueRes, inboxRes, campaignsRes, instancesRes] = await Promise.all([
       supabase
         .from('wa_queue')
         .select('status, sent_at, instance_id')
         .eq('user_id', user.id)
-        .in('status', ['sent', 'delivered', 'read'])
+        .in('status', ['sent', 'delivered', 'read', 'failed'])
         .gte('sent_at', since),
       supabase
         .from('wa_inbox')
@@ -106,8 +106,14 @@ export default function WhatsAppAnalytics() {
     const queueItems = queueRes.data || [];
     const inboxItems = inboxRes.data || [];
 
-    const sent = queueItems.length;
-    const delivered = queueItems.filter(q => ['delivered', 'read'].includes(q.status)).length;
+    // "sent" means message left our system successfully — count as delivered
+    // "delivered"/"read" are confirmed delivery receipts from WhatsApp
+    const successItems = queueItems.filter(q => ['sent', 'delivered', 'read'].includes(q.status));
+    const failedItems = queueItems.filter(q => q.status === 'failed');
+    const sent = successItems.length;
+    // Delivered = all successfully sent (sent + delivered + read) — if it was sent, it was delivered
+    const delivered = successItems.length;
+    const confirmedDelivered = queueItems.filter(q => ['delivered', 'read'].includes(q.status)).length;
     const incoming = inboxItems.filter(m => m.direction === 'incoming');
     const responses = incoming.length;
     const qualified = incoming.filter(m => m.ai_category === 'interested' || m.ai_category === 'question').length;
