@@ -28,6 +28,12 @@ interface AIAgent {
   instance_id: string | null;
   instance_ids: string[];
   created_at: string;
+  agent_type?: string;
+  company_name?: string;
+  services?: string;
+  address?: string;
+  human_whatsapp?: string;
+  n8n_webhook_url?: string;
 }
 
 interface Instance {
