@@ -213,8 +213,13 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
 
             <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
               <span className="flex items-center gap-1">
-                <CheckCircle className="h-3 w-3 text-green-500" /> {campaign.delivered_count} entregues
+                <CheckCircle className="h-3 w-3 text-green-500" /> {campaign.delivered_count} entrega confirmada
               </span>
+              {campaign.sent_count > 0 && campaign.delivered_count === 0 && campaign.status !== 'draft' && (
+                <span className="flex items-center gap-1 text-yellow-600">
+                  ⚠️ Sem confirmação de entrega
+                </span>
+              )}
               <span className="flex items-center gap-1">
                 <XCircle className="h-3 w-3 text-destructive" /> {campaign.failed_count} falhas
               </span>

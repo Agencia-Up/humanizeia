@@ -17,7 +17,7 @@ const PRESENCE_FETCH_TIMEOUT_MS = 2_500;
 const AI_FETCH_TIMEOUT_MS = 12_000;
 
 // ===== ANTI-BAN: Default safety limits =====
-const DEFAULT_DAILY_LIMIT_NEW_INSTANCE = 30; // New numbers: max 30 msgs/day
+const DEFAULT_DAILY_LIMIT_NEW_INSTANCE = 10; // New numbers (<3 days): max 10 msgs/day
 const DEFAULT_DAILY_LIMIT_MATURE_INSTANCE = 200; // Mature numbers (>14 days): max 200 msgs/day
 const WARMUP_RAMP_DAYS = 14; // Days to reach full capacity
 const COLD_CONTACT_MIN_DELAY_SECONDS = 45; // Minimum delay for cold contacts (no prior interaction)
@@ -422,6 +422,13 @@ Deno.serve(async (req) => {
             message_hash: messageHash,
           })
           .eq("id", item.id);
+
+        // ===== SHADOW BAN DETECTION: Increment consecutive_undelivered =====
+        // When a delivery receipt arrives, it will reset this counter.
+        // If it reaches 10+, the instance is flagged as shadow-banned.
+        await supabase.rpc("increment_consecutive_undelivered", { iid: instance.id }).catch((err: any) => {
+          console.warn("increment_consecutive_undelivered failed:", err);
+        });
 
         // ===== SAVE TO CRM INBOX =====
         // Store every outgoing message so conversations appear in the unified inbox

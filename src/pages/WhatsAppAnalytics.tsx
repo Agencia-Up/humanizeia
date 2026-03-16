@@ -53,13 +53,15 @@ interface InstanceHealth {
   messages_sent_period?: number;
   status: string;
   is_active: boolean;
+  shadow_ban_suspect?: boolean;
+  consecutive_undelivered?: number;
 }
 
 export default function WhatsAppAnalytics() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('7d');
-  const [kpis, setKpis] = useState({ sent: 0, delivered: 0, responses: 0, qualified: 0, optOut: 0 });
+  const [kpis, setKpis] = useState({ sent: 0, delivered: 0, confirmedDelivered: 0, responses: 0, qualified: 0, optOut: 0 });
   const [categoryData, setCategoryData] = useState<{ name: string; value: number; color: string }[]>([]);
   const [volumeData, setVolumeData] = useState<{ date: string; enviadas: number; recebidas: number }[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignStats[]>([]);
@@ -78,12 +80,19 @@ export default function WhatsAppAnalytics() {
     const since = getPeriodDate();
 
     // Fetch queue stats for KPIs — also include 'failed' for accurate counts
-    const [queueRes, inboxRes, campaignsRes, instancesRes] = await Promise.all([
+    const [queueRes, confirmedRes, inboxRes, campaignsRes, instancesRes] = await Promise.all([
       supabase
         .from('wa_queue')
         .select('status, sent_at, instance_id')
         .eq('user_id', user.id)
         .in('status', ['sent', 'delivered', 'read', 'failed'])
+        .gte('sent_at', since),
+      supabase
+        .from('wa_queue')
+        .select('id')
+        .eq('user_id', user.id)
+        .in('status', ['delivered', 'read'])
+        .not('delivery_confirmed_at', 'is', null)
         .gte('sent_at', since),
       supabase
         .from('wa_inbox')
@@ -98,7 +107,7 @@ export default function WhatsAppAnalytics() {
         .limit(20),
       supabase
         .from('wa_instances')
-        .select('id, friendly_name, instance_name, health_score, messages_sent_today, status, is_active')
+        .select('id, friendly_name, instance_name, health_score, messages_sent_today, status, is_active, shadow_ban_suspect, consecutive_undelivered')
         .eq('user_id', user.id),
     ]);
 
@@ -109,17 +118,15 @@ export default function WhatsAppAnalytics() {
     // "sent" means message left our system successfully — count as delivered
     // "delivered"/"read" are confirmed delivery receipts from WhatsApp
     const successItems = queueItems.filter(q => ['sent', 'delivered', 'read'].includes(q.status));
-    const failedItems = queueItems.filter(q => q.status === 'failed');
     const sent = successItems.length;
-    // Delivered = all successfully sent (sent + delivered + read) — if it was sent, it was delivered
     const delivered = successItems.length;
-    const confirmedDelivered = queueItems.filter(q => ['delivered', 'read'].includes(q.status)).length;
+    const confirmedDelivered = (confirmedRes.data || []).length;
     const incoming = inboxItems.filter(m => m.direction === 'incoming');
     const responses = incoming.length;
     const qualified = incoming.filter(m => m.ai_category === 'interested' || m.ai_category === 'question').length;
     const optOut = incoming.filter(m => m.ai_category === 'opt-out').length;
 
-    setKpis({ sent, delivered, responses, qualified, optOut });
+    setKpis({ sent, delivered, confirmedDelivered, responses, qualified, optOut });
 
     // Category pie chart
     const catCounts: Record<string, number> = {};
@@ -186,6 +193,7 @@ export default function WhatsAppAnalytics() {
   }, [fetchData]);
 
   const deliveryRate = kpis.sent > 0 ? Math.round((kpis.delivered / kpis.sent) * 100) : 0;
+  const confirmedRate = kpis.sent > 0 ? Math.round((kpis.confirmedDelivered / kpis.sent) * 100) : 0;
   const responseRate = kpis.sent > 0 ? Math.round((kpis.responses / kpis.sent) * 100) : 0;
   const qualificationRate = kpis.responses > 0 ? Math.round((kpis.qualified / kpis.responses) * 100) : 0;
 
@@ -223,7 +231,7 @@ export default function WhatsAppAnalytics() {
         ) : (
           <>
             {/* KPI Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -240,7 +248,17 @@ export default function WhatsAppAnalytics() {
                     <span className="text-xs">Taxa Entrega</span>
                   </div>
                   <p className="text-2xl font-bold text-foreground">{deliveryRate}%</p>
-                  <p className="text-xs text-muted-foreground">{kpis.delivered.toLocaleString()} entregues</p>
+                  <p className="text-xs text-muted-foreground">{kpis.delivered.toLocaleString()} enviadas</p>
+                </CardContent>
+              </Card>
+              <Card className={confirmedRate < 30 && kpis.sent > 10 ? 'border-destructive/50' : ''}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <CheckCheck className="h-4 w-4 text-primary" />
+                    <span className="text-xs">Entrega Confirmada</span>
+                  </div>
+                  <p className={`text-2xl font-bold ${confirmedRate < 30 && kpis.sent > 10 ? 'text-destructive' : 'text-primary'}`}>{confirmedRate}%</p>
+                  <p className="text-xs text-muted-foreground">{kpis.confirmedDelivered} confirmadas</p>
                 </CardContent>
               </Card>
               <Card>
@@ -423,7 +441,12 @@ export default function WhatsAppAnalytics() {
                             <span>Mensagens hoje</span>
                             <span className="font-medium text-foreground">{inst.messages_sent_today}</span>
                           </div>
-                          {!inst.is_active && (
+                          {inst.shadow_ban_suspect && (
+                            <p className="text-xs text-destructive font-medium bg-destructive/10 rounded p-1.5">
+                              🚫 Possível Shadow Ban — {inst.consecutive_undelivered || 0} msgs sem confirmação de entrega
+                            </p>
+                          )}
+                          {!inst.is_active && !inst.shadow_ban_suspect && (
                             <p className="text-xs text-destructive font-medium">⚠️ Instância desativada</p>
                           )}
                         </div>

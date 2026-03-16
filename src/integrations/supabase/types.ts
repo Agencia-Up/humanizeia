@@ -2226,6 +2226,7 @@ export type Database = {
         Row: {
           api_key_encrypted: string
           api_url: string
+          consecutive_undelivered: number | null
           created_at: string
           failover_status: string | null
           friendly_name: string
@@ -2241,6 +2242,7 @@ export type Database = {
           organization_id: string | null
           phone_number: string | null
           provider: string
+          shadow_ban_suspect: boolean | null
           status: string
           updated_at: string
           user_id: string
@@ -2248,6 +2250,7 @@ export type Database = {
         Insert: {
           api_key_encrypted: string
           api_url: string
+          consecutive_undelivered?: number | null
           created_at?: string
           failover_status?: string | null
           friendly_name: string
@@ -2263,6 +2266,7 @@ export type Database = {
           organization_id?: string | null
           phone_number?: string | null
           provider?: string
+          shadow_ban_suspect?: boolean | null
           status?: string
           updated_at?: string
           user_id: string
@@ -2270,6 +2274,7 @@ export type Database = {
         Update: {
           api_key_encrypted?: string
           api_url?: string
+          consecutive_undelivered?: number | null
           created_at?: string
           failover_status?: string | null
           friendly_name?: string
@@ -2285,6 +2290,7 @@ export type Database = {
           organization_id?: string | null
           phone_number?: string | null
           provider?: string
+          shadow_ban_suspect?: boolean | null
           status?: string
           updated_at?: string
           user_id?: string
@@ -2307,6 +2313,7 @@ export type Database = {
           contact_name: string | null
           created_at: string
           delivered_at: string | null
+          delivery_confirmed_at: string | null
           error_message: string | null
           id: string
           instance_id: string | null
@@ -2329,6 +2336,7 @@ export type Database = {
           contact_name?: string | null
           created_at?: string
           delivered_at?: string | null
+          delivery_confirmed_at?: string | null
           error_message?: string | null
           id?: string
           instance_id?: string | null
@@ -2351,6 +2359,7 @@ export type Database = {
           contact_name?: string | null
           created_at?: string
           delivered_at?: string | null
+          delivery_confirmed_at?: string | null
           error_message?: string | null
           id?: string
           instance_id?: string | null
@@ -2515,6 +2524,10 @@ export type Database = {
         Returns: undefined
       }
       increment_campaign_sent: { Args: { cid: string }; Returns: undefined }
+      increment_consecutive_undelivered: {
+        Args: { iid: string }
+        Returns: undefined
+      }
       is_org_member: {
         Args: { _organization_id: string; _user_id: string }
         Returns: boolean
