@@ -855,6 +855,9 @@ async function sendEvolutionButtonMessage(
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
 
+  // Verify connection before sending
+  await verifyEvolutionConnection(instance);
+
   // Try Evolution API v2 buttons endpoint first
   const payload = {
     number,
@@ -900,7 +903,8 @@ async function sendEvolutionButtonMessage(
       throw new Error(`Evolution API error (sendText fallback): ${response.status} - ${errText2}`);
     }
   }
-  await response.text();
+  const responseBody = await response.text();
+  validateEvolutionResponse(responseBody, "sendButtons");
 }
 
 // ====================== MESSAGE POLYMORPHISM ======================
