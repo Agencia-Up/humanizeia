@@ -50,6 +50,7 @@ interface InstanceHealth {
   instance_name: string;
   health_score: number;
   messages_sent_today: number;
+  messages_sent_period?: number;
   status: string;
   is_active: boolean;
 }
