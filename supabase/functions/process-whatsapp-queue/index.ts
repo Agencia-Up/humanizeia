@@ -729,12 +729,11 @@ async function sendMessageByProvider(
   text: string,
   mediaUrl: string | null,
   mediaType: string | null
-) {
+): Promise<SendResult> {
   if (instance.provider === "meta") {
-    await sendToMetaAPI(instance, phone, text, mediaUrl, mediaType);
-  } else {
-    await sendToEvolutionAPI(instance, phone, text, mediaUrl, mediaType);
+    return await sendToMetaAPI(instance, phone, text, mediaUrl, mediaType);
   }
+  return await sendToEvolutionAPI(instance, phone, text, mediaUrl, mediaType);
 }
 
 async function sendToMetaAPI(
@@ -743,7 +742,7 @@ async function sendToMetaAPI(
   text: string,
   mediaUrl: string | null,
   mediaType: string | null
-) {
+): Promise<SendResult> {
   const config = instance.meta_config || {};
   const phoneNumberId = config.phone_number_id;
   const accessToken = config.access_token_encrypted;
@@ -795,7 +794,11 @@ async function sendToMetaAPI(
     const errText = await response.text();
     throw new Error(`Meta API error: ${response.status} - ${errText}`);
   }
-  await response.text();
+
+  const data = await response.json().catch(() => ({}));
+  const remoteMessageId = data?.messages?.[0]?.id || data?.message_id || null;
+
+  return { remoteMessageId };
 }
 
 // ====================== EVOLUTION API (V2 COMPATIBLE) ======================
@@ -806,7 +809,7 @@ async function sendToEvolutionAPI(
   text: string,
   mediaUrl: string | null,
   mediaType: string | null
-) {
+): Promise<SendResult> {
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
 
@@ -852,24 +855,26 @@ async function sendToEvolutionAPI(
       throw new Error(`Evolution API error (sendMedia): ${response.status} - ${errText}`);
     }
     const responseBody = await response.text();
-    validateEvolutionResponse(responseBody, "sendMedia");
-  } else {
-    const response = await fetchWithTimeout(
-      `${apiUrl}/message/sendText/${instance.instance_name}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-        body: JSON.stringify({ number, text }),
-      },
-      OUTBOUND_FETCH_TIMEOUT_MS
-    );
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
-    }
-    const responseBody = await response.text();
-    validateEvolutionResponse(responseBody, "sendText");
+    const remoteMessageId = validateEvolutionResponse(responseBody, "sendMedia");
+    return { remoteMessageId };
   }
+
+  const response = await fetchWithTimeout(
+    `${apiUrl}/message/sendText/${instance.instance_name}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify({ number, text }),
+    },
+    OUTBOUND_FETCH_TIMEOUT_MS
+  );
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
+  }
+  const responseBody = await response.text();
+  const remoteMessageId = validateEvolutionResponse(responseBody, "sendText");
+  return { remoteMessageId };
 }
 
 // ===== Verify instance connection status before sending =====
