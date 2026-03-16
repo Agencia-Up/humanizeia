@@ -130,6 +130,8 @@ export function CampaignFormDialog({
       setTags(editingCampaign.tags || []);
       setVariationLevel(editingCampaign.variation_level || 'medium');
       setIncludeOptoutButtons(editingCampaign.include_optout_buttons ?? false);
+      setReplyAutoTag(editingCampaign.reply_auto_tag || '');
+      setReplyAutoMessage(editingCampaign.reply_auto_message || '');
       if (editingCampaign.start_time) {
         const d = new Date(editingCampaign.start_time);
         setStartDate(d);
