@@ -61,7 +61,7 @@ export default function WhatsAppAnalytics() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('7d');
-  const [kpis, setKpis] = useState({ sent: 0, delivered: 0, responses: 0, qualified: 0, optOut: 0 });
+  const [kpis, setKpis] = useState({ sent: 0, delivered: 0, confirmedDelivered: 0, responses: 0, qualified: 0, optOut: 0 });
   const [categoryData, setCategoryData] = useState<{ name: string; value: number; color: string }[]>([]);
   const [volumeData, setVolumeData] = useState<{ date: string; enviadas: number; recebidas: number }[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignStats[]>([]);
