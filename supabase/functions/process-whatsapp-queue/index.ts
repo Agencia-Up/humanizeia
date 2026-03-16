@@ -440,11 +440,23 @@ Deno.serve(async (req) => {
         // we push the scheduled_for of the next pending item forward.
         const delayRules = campaign?.regras_delay || {};
         const rotationRules = campaign?.regras_rodizio || {};
-        const minD = delayRules.min || campaign?.min_delay_seconds || 20;
-        const maxD = delayRules.max || campaign?.max_delay_seconds || 60;
+        
+        // ===== ANTI-BAN: Use MUCH longer delays for cold contacts =====
+        const isCurrentContactCold = !item.contact_metadata?.last_message_at;
+        const configuredMinD = delayRules.min || campaign?.min_delay_seconds || 20;
+        const configuredMaxD = delayRules.max || campaign?.max_delay_seconds || 60;
+        
+        const minD = isCurrentContactCold
+          ? Math.max(configuredMinD, COLD_CONTACT_MIN_DELAY_SECONDS)
+          : configuredMinD;
+        const maxD = isCurrentContactCold
+          ? Math.max(configuredMaxD, COLD_CONTACT_MAX_DELAY_SECONDS)
+          : configuredMaxD;
+        
         const delaySec = minD + Math.random() * (maxD - minD);
-        // 20% chance of longer pause (60-120s extra) for human-like behavior
-        const longPauseSec = Math.random() < 0.20 ? (60 + Math.random() * 60) : 0;
+        // 30% chance of longer pause for cold contacts (was 20%)
+        const longPauseChance = isCurrentContactCold ? 0.35 : 0.20;
+        const longPauseSec = Math.random() < longPauseChance ? (60 + Math.random() * 120) : 0;
 
         const rotationLimit = Math.max(
           1,
@@ -461,7 +473,7 @@ Deno.serve(async (req) => {
         const totalDelaySec = delaySec + longPauseSec + rotationPauseSec;
 
         const nextScheduledFor = new Date(Date.now() + totalDelaySec * 1000).toISOString();
-        console.log(`Next message scheduled in ${Math.round(totalDelaySec)}s`);
+        console.log(`Next message scheduled in ${Math.round(totalDelaySec)}s (cold=${isCurrentContactCold})`);
 
         // Update the next pending item for this campaign to respect the delay
         if (item.campaign_id) {
