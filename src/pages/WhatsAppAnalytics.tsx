@@ -193,6 +193,7 @@ export default function WhatsAppAnalytics() {
   }, [fetchData]);
 
   const deliveryRate = kpis.sent > 0 ? Math.round((kpis.delivered / kpis.sent) * 100) : 0;
+  const confirmedRate = kpis.sent > 0 ? Math.round((kpis.confirmedDelivered / kpis.sent) * 100) : 0;
   const responseRate = kpis.sent > 0 ? Math.round((kpis.responses / kpis.sent) * 100) : 0;
   const qualificationRate = kpis.responses > 0 ? Math.round((kpis.qualified / kpis.responses) * 100) : 0;
 
