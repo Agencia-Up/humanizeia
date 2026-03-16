@@ -42,6 +42,7 @@ import { useCopyFormulas } from '@/hooks/useCopyFormulas';
 const platforms = [
   { value: 'meta', label: 'Meta Ads' },
   { value: 'google', label: 'Google Ads' },
+  { value: 'whatsapp', label: 'WhatsApp' },
 ];
 
 const metaAdTypes = [
@@ -57,6 +58,14 @@ const googleAdTypes = [
   { value: 'youtube', label: 'YouTube' },
   { value: 'pmax', label: 'Performance Max' },
   { value: 'demandgen', label: 'Demand Gen' },
+];
+
+const whatsappAdTypes = [
+  { value: 'cold_outreach', label: 'Prospecção Fria' },
+  { value: 'follow_up', label: 'Follow-up' },
+  { value: 'reactivation', label: 'Reativação de Lead' },
+  { value: 'offer', label: 'Oferta / Promoção' },
+  { value: 'nurturing', label: 'Nutrição de Lead' },
 ];
 
 const tones = [
