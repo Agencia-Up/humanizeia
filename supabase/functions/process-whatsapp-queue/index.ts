@@ -592,10 +592,14 @@ async function selectSmartInstance(
   const rotationLimit = Math.max(1, rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10);
   const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
 
-  // If campaign is pinned to one instance, respect it
-  const scopedInstances = campaign?.instance_id
-    ? userInstances.filter((inst) => inst.id === campaign.instance_id)
-    : userInstances;
+  // ===== ROTATION FIX: Use ALL active instances for rotation =====
+  // instance_id is only a "preferred start" hint, NOT an exclusive filter
+  // This ensures rotation works across multiple instances
+  const scopedInstances = userInstances.length > 1
+    ? userInstances // Always use all instances when multiple are available
+    : campaign?.instance_id
+      ? userInstances.filter((inst) => inst.id === campaign.instance_id)
+      : userInstances;
 
   if (scopedInstances.length === 0) {
     return null;
@@ -603,23 +607,25 @@ async function selectSmartInstance(
 
   const isContactCold = !item.contact_metadata?.last_message_at;
 
+  // Sort by health_score descending (best health first), then by least recently used
   const sortedInstances = [...scopedInstances].sort((a, b) => {
-    if (isContactCold) {
-      const totalHealth = scopedInstances.reduce((sum, inst) => sum + inst.health_score, 0);
-      if (totalHealth > 0) {
-        return (b.health_score / totalHealth) - (a.health_score / totalHealth);
-      }
+    // Primary: health score (higher is better)
+    if (a.health_score !== b.health_score) {
       return b.health_score - a.health_score;
     }
+    // Secondary: least recently used first (for fair distribution)
     const aTime = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
     const bTime = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
-    return bTime - aTime;
+    return aTime - bTime; // ascending = least recently used first
   });
 
   // Persistent rotation based on already sent messages from database
   const sentCount = Math.max(0, campaign?.sent_count || 0);
   const rotationCycle = Math.floor(sentCount / rotationLimit);
   const startIndex = rotationCycle % sortedInstances.length;
+  
+  console.log(`[ROTATION] sentCount=${sentCount}, rotationLimit=${rotationLimit}, cycle=${rotationCycle}, startIndex=${startIndex}, instances=${sortedInstances.map(i => i.instance_name).join(',')}`);
+
 
   let instance: Instance | null = null;
 
