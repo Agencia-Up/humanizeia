@@ -80,12 +80,19 @@ export default function WhatsAppAnalytics() {
     const since = getPeriodDate();
 
     // Fetch queue stats for KPIs — also include 'failed' for accurate counts
-    const [queueRes, inboxRes, campaignsRes, instancesRes] = await Promise.all([
+    const [queueRes, confirmedRes, inboxRes, campaignsRes, instancesRes] = await Promise.all([
       supabase
         .from('wa_queue')
         .select('status, sent_at, instance_id')
         .eq('user_id', user.id)
         .in('status', ['sent', 'delivered', 'read', 'failed'])
+        .gte('sent_at', since),
+      supabase
+        .from('wa_queue')
+        .select('id')
+        .eq('user_id', user.id)
+        .in('status', ['delivered', 'read'])
+        .not('delivery_confirmed_at', 'is', null)
         .gte('sent_at', since),
       supabase
         .from('wa_inbox')
@@ -100,7 +107,7 @@ export default function WhatsAppAnalytics() {
         .limit(20),
       supabase
         .from('wa_instances')
-        .select('id, friendly_name, instance_name, health_score, messages_sent_today, status, is_active')
+        .select('id, friendly_name, instance_name, health_score, messages_sent_today, status, is_active, shadow_ban_suspect, consecutive_undelivered')
         .eq('user_id', user.id),
     ]);
 
