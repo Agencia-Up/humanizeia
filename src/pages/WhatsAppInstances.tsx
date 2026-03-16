@@ -146,7 +146,12 @@ export default function WhatsAppInstances() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setInstances((data as unknown as WaInstance[]) || []);
+      const list = (data as unknown as WaInstance[]) || [];
+      setInstances(list);
+      // Auto-verify all Evolution instances on first load
+      if (!skipVerify && list.length > 0) {
+        setTimeout(() => verifyAllInstances(list), 500);
+      }
     } catch (err: any) {
       console.error('Error fetching instances:', err);
     } finally {
@@ -155,10 +160,7 @@ export default function WhatsAppInstances() {
   };
 
   useEffect(() => {
-    const init = async () => {
-      await fetchInstances();
-    };
-    init();
+    fetchInstances();
   }, [user]);
 
   const handleDelete = async () => {
