@@ -353,22 +353,108 @@ export function CampaignFormDialog({
                 <Image className="h-4 w-4 text-muted-foreground" />
                 Anexo de Mídia (opcional)
               </Label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Select value={mediaType || 'none'} onValueChange={v => setMediaType(v === 'none' ? '' : v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Tipo de mídia" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sem mídia</SelectItem>
-                    {mediaTypeOptions.map(opt => (
-                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {mediaType && (
-                  <Input placeholder="URL da mídia" value={mediaUrl} onChange={e => setMediaUrl(e.target.value)} />
-                )}
-              </div>
+              <Select value={mediaType || 'none'} onValueChange={v => { setMediaType(v === 'none' ? '' : v); if (v === 'none') { setMediaUrl(''); } }}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Tipo de mídia" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sem mídia</SelectItem>
+                  {mediaTypeOptions.map(opt => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {mediaType && !mediaUrl && (
+                <div
+                  className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-all"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    accept={
+                      mediaType === 'image' ? 'image/png,image/jpeg,image/webp' :
+                      mediaType === 'video' ? 'video/mp4,video/quicktime' :
+                      mediaType === 'audio' ? 'audio/mpeg,audio/ogg,audio/wav' :
+                      mediaType === 'document' ? '.pdf,.doc,.docx,.xls,.xlsx' : '*/*'
+                    }
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+
+                      const maxSize = mediaType === 'video' ? 16 * 1024 * 1024 : 5 * 1024 * 1024;
+                      if (file.size > maxSize) {
+                        alert(`Arquivo muito grande. Máximo: ${mediaType === 'video' ? '16MB' : '5MB'}`);
+                        return;
+                      }
+
+                      setIsUploading(true);
+                      try {
+                        const ext = file.name.split('.').pop() || 'bin';
+                        const filePath = `campaign-media/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+                        const { error: uploadError } = await supabase.storage
+                          .from('creatives')
+                          .upload(filePath, file, { contentType: file.type });
+
+                        if (uploadError) throw uploadError;
+
+                        const { data: urlData } = supabase.storage
+                          .from('creatives')
+                          .getPublicUrl(filePath);
+
+                        setMediaUrl(urlData.publicUrl);
+                      } catch (err: any) {
+                        alert('Erro no upload: ' + (err.message || 'Tente novamente'));
+                      } finally {
+                        setIsUploading(false);
+                        if (fileInputRef.current) fileInputRef.current.value = '';
+                      }
+                    }}
+                  />
+                  {isUploading ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                      <p className="text-sm text-muted-foreground">Enviando arquivo...</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <Upload className="h-8 w-8 text-muted-foreground" />
+                      <p className="text-sm font-medium text-foreground">Clique para fazer upload</p>
+                      <p className="text-xs text-muted-foreground">
+                        {mediaType === 'image' && 'PNG, JPG, WebP • Máx 5MB'}
+                        {mediaType === 'video' && 'MP4, MOV • Máx 16MB'}
+                        {mediaType === 'audio' && 'MP3, OGG, WAV • Máx 5MB'}
+                        {mediaType === 'document' && 'PDF, DOC, XLS • Máx 5MB'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {mediaType && mediaUrl && (
+                <div className="border border-border rounded-lg p-3 flex items-center gap-3">
+                  {mediaType === 'image' ? (
+                    <img src={mediaUrl} alt="Preview" className="h-16 w-16 object-cover rounded" />
+                  ) : (
+                    <div className="h-16 w-16 bg-muted rounded flex items-center justify-center">
+                      {mediaType === 'video' && <Video className="h-6 w-6 text-muted-foreground" />}
+                      {mediaType === 'audio' && <Music className="h-6 w-6 text-muted-foreground" />}
+                      {mediaType === 'document' && <FileText className="h-6 w-6 text-muted-foreground" />}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {mediaType === 'image' ? 'Imagem' : mediaType === 'video' ? 'Vídeo' : mediaType === 'audio' ? 'Áudio' : 'Documento'} anexado
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">{mediaUrl.split('/').pop()}</p>
+                  </div>
+                  <Button variant="ghost" size="icon" className="shrink-0" onClick={() => { setMediaUrl(''); setMediaType(''); }}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              )}
             </div>
 
             <Separator />
