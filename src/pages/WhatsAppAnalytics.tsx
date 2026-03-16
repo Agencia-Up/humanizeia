@@ -156,11 +156,11 @@ export default function WhatsAppAnalytics() {
     // Campaigns
     setCampaigns((campaignsRes.data || []) as unknown as CampaignStats[]);
 
-    // Instances: derive daily/period counts from queue (source of truth)
+    // Instances: derive daily/period counts from queue (only successful sends)
     const today = new Date().toISOString().substring(0, 10);
     const periodCounts = new Map<string, number>();
     const todayCounts = new Map<string, number>();
-    for (const q of queueItems) {
+    for (const q of successItems) {
       if (!q.instance_id || !q.sent_at) continue;
       periodCounts.set(q.instance_id, (periodCounts.get(q.instance_id) || 0) + 1);
       if (q.sent_at.substring(0, 10) === today) {
