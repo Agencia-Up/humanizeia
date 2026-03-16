@@ -199,38 +199,31 @@ async function handleMetaDeliveryStatus(supabase: any, instance: any, status: an
 
   if (!queueStatus) return;
 
-  const updateData: any = { status: queueStatus };
-  if (deliveredAt) updateData.delivered_at = deliveredAt;
-  if (readAt) updateData.read_at = readAt;
-
-  const { data: updatedItems } = await supabase
-    .from("wa_queue")
-    .update(updateData)
-    .eq("phone", phone)
-    .eq("instance_id", instance.id)
-    .in("status", ["sent", "delivered"])
-    .order("sent_at", { ascending: false })
-    .limit(1)
-    .select("campaign_id");
-
-  if (deliveredAt && updatedItems?.length > 0 && updatedItems[0].campaign_id) {
-    await supabase.rpc("increment_campaign_delivered", { cid: updatedItems[0].campaign_id }).catch(() => {});
-  }
+  await updateQueueStatusFromDeliverySignal(supabase, {
+    instanceId: instance.id,
+    userId: instance.user_id,
+    phone,
+    remoteMessageId: status.id || null,
+    queueStatus,
+    deliveredAt,
+    readAt,
+  });
 }
 
 // ====================== EVOLUTION WEBHOOK HANDLER ======================
 
 async function handleEvolutionWebhook(supabase: any, body: any) {
   const event = body.event;
+  const normalizedEvent = String(event || "").toLowerCase().replace(/_/g, ".");
   const instanceName = body.instance;
   const messageData = body.data;
 
-  if (event === "messages.update" && messageData) {
+  if (normalizedEvent === "messages.update" && messageData) {
     return await handleEvolutionDeliveryStatus(supabase, instanceName, messageData);
   }
 
-  if (event !== "messages.upsert" || !messageData) {
-    return new Response(JSON.stringify({ ok: true, skipped: true }), {
+  if (normalizedEvent !== "messages.upsert" || !messageData) {
+    return new Response(JSON.stringify({ ok: true, skipped: true, event }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
@@ -399,60 +392,60 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
   try {
     const updates = Array.isArray(messageData) ? messageData : [messageData];
 
+    const { data: instance } = await supabase
+      .from("wa_instances")
+      .select("id, user_id")
+      .eq("instance_name", instanceName)
+      .single();
+
+    if (!instance) {
+      return new Response(
+        JSON.stringify({ ok: true, warning: "instance_not_found" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     for (const update of updates) {
       const key = update.key || {};
-      const status = update.status;
-      const remoteMessageId = key.id;
-
-      if (!remoteMessageId || !status) continue;
+      const statusRaw = update.status;
+      const statusNormalized = String(statusRaw ?? "").toLowerCase();
+      const remoteMessageId = key.id || update.id || update.messageId || null;
 
       let queueStatus: string | null = null;
       let deliveredAt: string | null = null;
       let readAt: string | null = null;
 
-      switch (status) {
-        case "DELIVERY_ACK": case "delivered": case 3:
-          queueStatus = "delivered"; deliveredAt = new Date().toISOString(); break;
-        case "READ": case "read": case 4:
-        case "PLAYED": case 5:
-          queueStatus = "read"; readAt = new Date().toISOString(); break;
-        case "ERROR": case "failed": case 0:
-          queueStatus = "failed"; break;
-        case "SERVER_ACK": case "sent": case 1: case 2:
-          continue;
-        default: continue;
+      if (statusRaw === 3 || statusNormalized === "delivered" || statusNormalized === "delivery_ack") {
+        queueStatus = "delivered";
+        deliveredAt = new Date().toISOString();
+      } else if (
+        statusRaw === 4 ||
+        statusRaw === 5 ||
+        statusNormalized === "read" ||
+        statusNormalized === "played"
+      ) {
+        queueStatus = "read";
+        readAt = new Date().toISOString();
+      } else if (statusRaw === 0 || statusNormalized === "error" || statusNormalized === "failed") {
+        queueStatus = "failed";
+      } else {
+        // Ignore server ACK / sent
+        continue;
       }
 
       if (!queueStatus) continue;
 
-      const phone = (key.remoteJid || "").replace("@s.whatsapp.net", "").replace("@g.us", "");
-      if (!phone) continue;
+      const phone = normalizePhone(key.remoteJid || key.remoteJidAlt || update.recipient || "");
 
-      const { data: instance } = await supabase
-        .from("wa_instances")
-        .select("id, user_id")
-        .eq("instance_name", instanceName)
-        .single();
-
-      if (!instance) continue;
-
-      const updateData: any = { status: queueStatus };
-      if (deliveredAt) updateData.delivered_at = deliveredAt;
-      if (readAt) updateData.read_at = readAt;
-
-      const { data: updatedItems } = await supabase
-        .from("wa_queue")
-        .update(updateData)
-        .eq("phone", phone)
-        .eq("instance_id", instance.id)
-        .in("status", ["sent", "delivered"])
-        .order("sent_at", { ascending: false })
-        .limit(1)
-        .select("campaign_id");
-
-      if (deliveredAt && updatedItems?.length > 0 && updatedItems[0].campaign_id) {
-        await supabase.rpc("increment_campaign_delivered", { cid: updatedItems[0].campaign_id }).catch(() => {});
-      }
+      await updateQueueStatusFromDeliverySignal(supabase, {
+        instanceId: instance.id,
+        userId: instance.user_id,
+        phone,
+        remoteMessageId,
+        queueStatus,
+        deliveredAt,
+        readAt,
+      });
     }
 
     return new Response(
@@ -465,6 +458,83 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
       JSON.stringify({ ok: true, warning: "delivery status processing failed" }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  }
+}
+
+function normalizePhone(value: string | null | undefined): string {
+  return (value || "").replace(/\D/g, "");
+}
+
+async function updateQueueStatusFromDeliverySignal(
+  supabase: any,
+  params: {
+    instanceId: string;
+    userId: string;
+    phone: string | null | undefined;
+    remoteMessageId: string | null;
+    queueStatus: string;
+    deliveredAt: string | null;
+    readAt: string | null;
+  }
+) {
+  const { instanceId, userId, phone, remoteMessageId, queueStatus, deliveredAt, readAt } = params;
+
+  const updateData: any = { status: queueStatus };
+  if (deliveredAt) updateData.delivered_at = deliveredAt;
+  if (readAt) updateData.read_at = readAt;
+
+  let matchedPhone = normalizePhone(phone);
+  let matchedCampaignId: string | null = null;
+  let matchedCreatedAt: string | null = null;
+
+  if (remoteMessageId) {
+    const { data: outMsg } = await supabase
+      .from("wa_inbox")
+      .select("phone, campaign_id, created_at")
+      .eq("user_id", userId)
+      .eq("instance_id", instanceId)
+      .eq("direction", "outgoing")
+      .eq("remote_message_id", remoteMessageId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (outMsg) {
+      matchedPhone = normalizePhone(outMsg.phone);
+      matchedCampaignId = outMsg.campaign_id || null;
+      matchedCreatedAt = outMsg.created_at || null;
+    }
+  }
+
+  let query = supabase
+    .from("wa_queue")
+    .update(updateData)
+    .eq("instance_id", instanceId)
+    .in("status", ["sent", "delivered"]);
+
+  if (matchedPhone) {
+    query = query.eq("phone", matchedPhone);
+  }
+
+  if (matchedCampaignId) {
+    query = query.eq("campaign_id", matchedCampaignId);
+  }
+
+  if (matchedCreatedAt) {
+    const matchedAtMs = new Date(matchedCreatedAt).getTime();
+    const lowerBound = new Date(matchedAtMs - 6 * 60 * 60 * 1000).toISOString();
+    const upperBound = new Date(matchedAtMs + 15 * 60 * 1000).toISOString();
+    query = query.gte("sent_at", lowerBound).lte("sent_at", upperBound);
+  }
+
+  const { data: updatedItems } = await query
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .select("campaign_id");
+
+  const campaignId = updatedItems?.[0]?.campaign_id || matchedCampaignId;
+  if (deliveredAt && campaignId) {
+    await supabase.rpc("increment_campaign_delivered", { cid: campaignId }).catch(() => {});
   }
 }
 

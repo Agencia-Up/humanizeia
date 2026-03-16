@@ -50,6 +50,7 @@ interface InstanceHealth {
   instance_name: string;
   health_score: number;
   messages_sent_today: number;
+  messages_sent_period?: number;
   status: string;
   is_active: boolean;
 }
@@ -66,7 +67,7 @@ export default function WhatsAppAnalytics() {
 
   const getPeriodDate = useCallback(() => {
     const now = new Date();
-    const days = period === '7d' ? 7 : period === '30d' ? 30 : 90;
+    const days = period === '1d' ? 1 : period === '7d' ? 7 : period === '30d' ? 30 : 90;
     now.setDate(now.getDate() - days);
     return now.toISOString();
   }, [period]);
@@ -77,12 +78,13 @@ export default function WhatsAppAnalytics() {
     const since = getPeriodDate();
 
     // Fetch queue stats for KPIs
-    const [sentRes, inboxRes, campaignsRes, instancesRes] = await Promise.all([
+    const [queueRes, inboxRes, campaignsRes, instancesRes] = await Promise.all([
       supabase
         .from('wa_queue')
-        .select('status, id')
+        .select('status, sent_at, instance_id')
         .eq('user_id', user.id)
-        .gte('created_at', since),
+        .in('status', ['sent', 'delivered', 'read'])
+        .gte('sent_at', since),
       supabase
         .from('wa_inbox')
         .select('direction, ai_category, created_at, phone')
@@ -101,10 +103,10 @@ export default function WhatsAppAnalytics() {
     ]);
 
     // KPIs
-    const queueItems = sentRes.data || [];
+    const queueItems = queueRes.data || [];
     const inboxItems = inboxRes.data || [];
 
-    const sent = queueItems.filter(q => ['sent', 'delivered', 'read'].includes(q.status)).length;
+    const sent = queueItems.length;
     const delivered = queueItems.filter(q => ['delivered', 'read'].includes(q.status)).length;
     const incoming = inboxItems.filter(m => m.direction === 'incoming');
     const responses = incoming.length;
@@ -129,18 +131,16 @@ export default function WhatsAppAnalytics() {
 
     // Volume over time (line chart)
     const dayMap = new Map<string, { enviadas: number; recebidas: number }>();
-    for (const m of inboxItems) {
+    for (const q of queueItems) {
+      if (!q.sent_at) continue;
+      const day = q.sent_at.substring(0, 10);
+      if (!dayMap.has(day)) dayMap.set(day, { enviadas: 0, recebidas: 0 });
+      dayMap.get(day)!.enviadas++;
+    }
+    for (const m of incoming) {
       const day = m.created_at.substring(0, 10);
       if (!dayMap.has(day)) dayMap.set(day, { enviadas: 0, recebidas: 0 });
-      const d = dayMap.get(day)!;
-      if (m.direction === 'outgoing') d.enviadas++;
-      else d.recebidas++;
-    }
-    // Also count queue sent items
-    for (const q of queueItems) {
-      if (q.status === 'sent' || q.status === 'delivered' || q.status === 'read') {
-        // Queue items don't have created_at in select, skip for now
-      }
+      dayMap.get(day)!.recebidas++;
     }
     const sortedDays = Array.from(dayMap.entries())
       .sort(([a], [b]) => a.localeCompare(b))
@@ -150,14 +150,33 @@ export default function WhatsAppAnalytics() {
     // Campaigns
     setCampaigns((campaignsRes.data || []) as unknown as CampaignStats[]);
 
-    // Instances
-    setInstances((instancesRes.data || []) as unknown as InstanceHealth[]);
+    // Instances: derive daily/period counts from queue (source of truth)
+    const today = new Date().toISOString().substring(0, 10);
+    const periodCounts = new Map<string, number>();
+    const todayCounts = new Map<string, number>();
+    for (const q of queueItems) {
+      if (!q.instance_id || !q.sent_at) continue;
+      periodCounts.set(q.instance_id, (periodCounts.get(q.instance_id) || 0) + 1);
+      if (q.sent_at.substring(0, 10) === today) {
+        todayCounts.set(q.instance_id, (todayCounts.get(q.instance_id) || 0) + 1);
+      }
+    }
+
+    const normalizedInstances = ((instancesRes.data || []) as unknown as InstanceHealth[]).map(inst => ({
+      ...inst,
+      messages_sent_today: todayCounts.get(inst.id) || 0,
+      messages_sent_period: periodCounts.get(inst.id) || 0,
+    }));
+
+    setInstances(normalizedInstances);
 
     setLoading(false);
   }, [user, getPeriodDate]);
 
   useEffect(() => {
     fetchData();
+    const interval = setInterval(fetchData, 20000);
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   const deliveryRate = kpis.sent > 0 ? Math.round((kpis.delivered / kpis.sent) * 100) : 0;
@@ -183,6 +202,7 @@ export default function WhatsAppAnalytics() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="1d">Hoje</SelectItem>
               <SelectItem value="7d">Últimos 7 dias</SelectItem>
               <SelectItem value="30d">Últimos 30 dias</SelectItem>
               <SelectItem value="90d">Últimos 90 dias</SelectItem>

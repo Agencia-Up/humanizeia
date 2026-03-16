@@ -77,6 +77,10 @@ interface Campaign {
   include_optout_buttons: boolean;
 }
 
+interface SendResult {
+  remoteMessageId: string | null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -180,6 +184,10 @@ Deno.serve(async (req) => {
     // Fetch instances per user
     const userIds = [...new Set(activeItems.map((i) => i.user_id))];
     const instanceMap = new Map<string, Instance[]>();
+    const todaySentByInstance = new Map<string, number>();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayIso = startOfToday.toISOString();
 
     for (const uid of userIds) {
       const { data: instances } = await supabase
@@ -189,8 +197,25 @@ Deno.serve(async (req) => {
         .eq("is_active", true)
         .eq("status", "connected")
         .order("health_score", { ascending: false });
+
       if (instances && instances.length > 0) {
-        instanceMap.set(uid, instances as unknown as Instance[]);
+        const typedInstances = instances as unknown as Instance[];
+        instanceMap.set(uid, typedInstances);
+
+        const instanceIds = typedInstances.map((inst) => inst.id);
+        const { data: todaySentRows } = await supabase
+          .from("wa_queue")
+          .select("instance_id")
+          .in("instance_id", instanceIds)
+          .in("status", ["sent", "delivered", "read"])
+          .gte("sent_at", startOfTodayIso);
+
+        if (todaySentRows) {
+          for (const row of todaySentRows as Array<{ instance_id: string | null }>) {
+            if (!row.instance_id) continue;
+            todaySentByInstance.set(row.instance_id, (todaySentByInstance.get(row.instance_id) || 0) + 1);
+          }
+        }
       }
     }
 
@@ -252,7 +277,11 @@ Deno.serve(async (req) => {
 
         // --- Smart Switcher: Instance Selection ---
         const instance = await selectSmartInstance(
-          userInstances, item, campaign, instanceFailures
+          userInstances,
+          item,
+          campaign,
+          instanceFailures,
+          todaySentByInstance,
         );
 
         if (!instance) {
@@ -364,14 +393,15 @@ Deno.serve(async (req) => {
         const shouldSendOptoutButtons = campaign?.include_optout_buttons &&
           !item.contact_metadata?.last_message_at; // only for first-time contacts
 
+        let sendResult: SendResult;
         if (shouldSendOptoutButtons && instance.provider === "evolution") {
           // Send message with interactive buttons via Evolution API
-          await sendEvolutionButtonMessage(instance, item.phone, finalMessage, [
+          sendResult = await sendEvolutionButtonMessage(instance, item.phone, finalMessage, [
             { buttonId: "optout_continue", buttonText: { displayText: "✅ Quero Continuar Recebendo" } },
             { buttonId: "optout_stop", buttonText: { displayText: "❌ Não Quero Mais Receber" } },
           ]);
         } else {
-          await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
+          sendResult = await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
         }
         instanceFailures.set(instance.id, 0);
 
@@ -396,6 +426,7 @@ Deno.serve(async (req) => {
         // Store every outgoing message so conversations appear in the unified inbox
         const { error: inboxErr } = await supabase.from("wa_inbox").insert({
           user_id: item.user_id,
+          campaign_id: item.campaign_id || null,
           instance_id: instance.id,
           phone: item.phone.replace(/\D/g, ""),
           contact_name: item.contact_name || null,
@@ -403,6 +434,7 @@ Deno.serve(async (req) => {
           message_type: item.media_type || "text",
           content: finalMessage,
           media_url: item.media_url || null,
+          remote_message_id: sendResult.remoteMessageId,
           is_read: true,
           created_at: sentAt,
         });
@@ -410,11 +442,14 @@ Deno.serve(async (req) => {
           console.warn("Failed to save outgoing message to inbox:", inboxErr);
         }
 
-        // Update instance counters
+        // Update instance counters based on real sent count of the current day
+        const nextTodaySent = (todaySentByInstance.get(instance.id) ?? instance.messages_sent_today ?? 0) + 1;
+        todaySentByInstance.set(instance.id, nextTodaySent);
+
         await supabase
           .from("wa_instances")
           .update({
-            messages_sent_today: instance.messages_sent_today + 1,
+            messages_sent_today: nextTodaySent,
             last_message_at: new Date().toISOString(),
             last_used_at: new Date().toISOString(),
           })
@@ -582,7 +617,8 @@ async function selectSmartInstance(
   userInstances: Instance[],
   item: QueueItem,
   campaign: Campaign | null,
-  failures: Map<string, number>
+  failures: Map<string, number>,
+  todaySentByInstance: Map<string, number>,
 ): Promise<Instance | null> {
   const aquecimento = campaign?.regras_aquecimento || {};
   const warmupDailyLimit = aquecimento.limite_diario_inicial || null;
@@ -660,8 +696,10 @@ async function selectSmartInstance(
       }
     }
 
-    if (candidate.messages_sent_today >= dailyLimit) {
-      console.log(`Instance ${candidate.instance_name} hit daily limit (${candidate.messages_sent_today}/${dailyLimit}), skipping`);
+    const candidateSentToday = todaySentByInstance.get(candidate.id) ?? candidate.messages_sent_today ?? 0;
+
+    if (candidateSentToday >= dailyLimit) {
+      console.log(`Instance ${candidate.instance_name} hit daily limit (${candidateSentToday}/${dailyLimit}), skipping`);
       continue;
     }
 
@@ -669,7 +707,7 @@ async function selectSmartInstance(
 
     if (candidate.provider === "meta") {
       const metaLimit = candidate.health_score >= 80 ? 1000 : 250;
-      if (candidate.messages_sent_today >= metaLimit) continue;
+      if (candidateSentToday >= metaLimit) continue;
     }
 
     instance = candidate;
@@ -691,12 +729,11 @@ async function sendMessageByProvider(
   text: string,
   mediaUrl: string | null,
   mediaType: string | null
-) {
+): Promise<SendResult> {
   if (instance.provider === "meta") {
-    await sendToMetaAPI(instance, phone, text, mediaUrl, mediaType);
-  } else {
-    await sendToEvolutionAPI(instance, phone, text, mediaUrl, mediaType);
+    return await sendToMetaAPI(instance, phone, text, mediaUrl, mediaType);
   }
+  return await sendToEvolutionAPI(instance, phone, text, mediaUrl, mediaType);
 }
 
 async function sendToMetaAPI(
@@ -705,7 +742,7 @@ async function sendToMetaAPI(
   text: string,
   mediaUrl: string | null,
   mediaType: string | null
-) {
+): Promise<SendResult> {
   const config = instance.meta_config || {};
   const phoneNumberId = config.phone_number_id;
   const accessToken = config.access_token_encrypted;
@@ -757,7 +794,11 @@ async function sendToMetaAPI(
     const errText = await response.text();
     throw new Error(`Meta API error: ${response.status} - ${errText}`);
   }
-  await response.text();
+
+  const data = await response.json().catch(() => ({}));
+  const remoteMessageId = data?.messages?.[0]?.id || data?.message_id || null;
+
+  return { remoteMessageId };
 }
 
 // ====================== EVOLUTION API (V2 COMPATIBLE) ======================
@@ -768,7 +809,7 @@ async function sendToEvolutionAPI(
   text: string,
   mediaUrl: string | null,
   mediaType: string | null
-) {
+): Promise<SendResult> {
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
 
@@ -814,24 +855,26 @@ async function sendToEvolutionAPI(
       throw new Error(`Evolution API error (sendMedia): ${response.status} - ${errText}`);
     }
     const responseBody = await response.text();
-    validateEvolutionResponse(responseBody, "sendMedia");
-  } else {
-    const response = await fetchWithTimeout(
-      `${apiUrl}/message/sendText/${instance.instance_name}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-        body: JSON.stringify({ number, text }),
-      },
-      OUTBOUND_FETCH_TIMEOUT_MS
-    );
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
-    }
-    const responseBody = await response.text();
-    validateEvolutionResponse(responseBody, "sendText");
+    const remoteMessageId = validateEvolutionResponse(responseBody, "sendMedia");
+    return { remoteMessageId };
   }
+
+  const response = await fetchWithTimeout(
+    `${apiUrl}/message/sendText/${instance.instance_name}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
+      body: JSON.stringify({ number, text }),
+    },
+    OUTBOUND_FETCH_TIMEOUT_MS
+  );
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
+  }
+  const responseBody = await response.text();
+  const remoteMessageId = validateEvolutionResponse(responseBody, "sendText");
+  return { remoteMessageId };
 }
 
 // ===== Verify instance connection status before sending =====
@@ -869,36 +912,41 @@ async function verifyEvolutionConnection(instance: Instance) {
 }
 
 // ===== Validate Evolution API response body for actual delivery =====
-function validateEvolutionResponse(responseBody: string, action: string) {
+function validateEvolutionResponse(responseBody: string, action: string): string | null {
   try {
     const data = JSON.parse(responseBody);
-    
+
     // Check for error indicators in response body even with 200 status
     if (data.error) {
       throw new Error(`Evolution API ${action} returned error in body: ${JSON.stringify(data.error)}`);
     }
-    
+
     // Check for "not connected" or similar states in response
     if (data.status === "ERROR" || data.status === "error") {
       throw new Error(`Evolution API ${action} returned error status: ${data.message || JSON.stringify(data)}`);
     }
 
-    // Evolution API v2 returns { key: { id: "..." } } on success
-    // Evolution API v1 returns { key: { id: "..." }, message: {...} }
-    // If we get a response without a key/id, it might not have been sent
-    if (data.key?.id || data.messageId || data.id) {
-      console.log(`Message sent successfully via ${action}: ${data.key?.id || data.messageId || data.id}`);
-    } else if (data.message?.key?.id) {
-      console.log(`Message sent successfully via ${action}: ${data.message.key.id}`);
-    } else {
-      console.warn(`Evolution API ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
+    const remoteMessageId =
+      data.key?.id ||
+      data.messageId ||
+      data.id ||
+      data.message?.key?.id ||
+      null;
+
+    if (remoteMessageId) {
+      console.log(`Message sent successfully via ${action}: ${remoteMessageId}`);
+      return remoteMessageId;
     }
+
+    console.warn(`Evolution API ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
+    return null;
   } catch (err) {
     if (err instanceof Error && (err.message.includes("returned error") || err.message.includes("returned error status"))) {
       throw err;
     }
     // JSON parse error — log but don't block (some versions return plain text on success)
     console.warn(`Could not parse Evolution API ${action} response: ${responseBody.substring(0, 200)}`);
+    return null;
   }
 }
 
@@ -909,7 +957,7 @@ async function sendEvolutionButtonMessage(
   phone: string,
   text: string,
   buttons: Array<{ buttonId: string; buttonText: { displayText: string } }>,
-) {
+): Promise<SendResult> {
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
 
@@ -942,10 +990,10 @@ async function sendEvolutionButtonMessage(
   if (!response.ok) {
     const errText = await response.text();
     console.warn(`[optout-buttons] Button send failed (${response.status}): ${errText}. Falling back to text.`);
-    
+
     const buttonLabels = buttons.map(b => `▪️ ${b.buttonText.displayText}`).join("\n");
     const fallbackText = `${text}\n\n📋 _Responda com uma das opções:_\n${buttonLabels}`;
-    
+
     response = await fetchWithTimeout(
       `${apiUrl}/message/sendText/${instance.instance_name}`,
       {
@@ -962,7 +1010,8 @@ async function sendEvolutionButtonMessage(
     }
   }
   const responseBody = await response.text();
-  validateEvolutionResponse(responseBody, "sendButtons");
+  const remoteMessageId = validateEvolutionResponse(responseBody, "sendButtons");
+  return { remoteMessageId };
 }
 
 // ====================== MESSAGE POLYMORPHISM ======================
