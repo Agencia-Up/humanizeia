@@ -64,6 +64,8 @@ Deno.serve(async (req) => {
       tags,
       variation_level,
       include_optout_buttons,
+      reply_auto_tag,
+      reply_auto_message,
     } = body;
 
     // --- Validation ---
