@@ -561,7 +561,7 @@ async function selectSmartInstance(
 ): Promise<Instance | null> {
   const aquecimento = campaign?.regras_aquecimento || {};
   const warmupDailyLimit = aquecimento.limite_diario_inicial || null;
-  const warmupRampDays = aquecimento.dias_rampa || 7;
+  const warmupRampDays = aquecimento.dias_rampa || WARMUP_RAMP_DAYS;
 
   const rodizio = campaign?.regras_rodizio || {};
   const rotationLimit = Math.max(1, rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10);
@@ -604,15 +604,34 @@ async function selectSmartInstance(
 
     if (candidateFailures >= CIRCUIT_BREAKER_THRESHOLD) continue;
 
-    if (warmupDailyLimit && candidate.created_at) {
-      const instanceAgeDays = Math.floor(
-        (Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24)
-      );
+    // ===== ANTI-BAN: Enforce daily limits (warmup OR default) =====
+    const instanceAgeDays = candidate.created_at
+      ? Math.floor((Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24))
+      : 999;
+
+    let dailyLimit: number;
+
+    if (warmupDailyLimit) {
+      // User-configured warmup
       if (instanceAgeDays < warmupRampDays) {
         const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / warmupRampDays);
-        const dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
-        if (candidate.messages_sent_today >= dailyLimit) continue;
+        dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
+      } else {
+        dailyLimit = warmupDailyLimit;
       }
+    } else {
+      // DEFAULT safety warmup (always applied when no custom config)
+      if (instanceAgeDays < WARMUP_RAMP_DAYS) {
+        const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / WARMUP_RAMP_DAYS);
+        dailyLimit = Math.max(5, Math.floor(DEFAULT_DAILY_LIMIT_NEW_INSTANCE + (DEFAULT_DAILY_LIMIT_MATURE_INSTANCE - DEFAULT_DAILY_LIMIT_NEW_INSTANCE) * rampMultiplier));
+      } else {
+        dailyLimit = DEFAULT_DAILY_LIMIT_MATURE_INSTANCE;
+      }
+    }
+
+    if (candidate.messages_sent_today >= dailyLimit) {
+      console.log(`Instance ${candidate.instance_name} hit daily limit (${candidate.messages_sent_today}/${dailyLimit}), skipping`);
+      continue;
     }
 
     if (candidate.health_score < 20) continue;
