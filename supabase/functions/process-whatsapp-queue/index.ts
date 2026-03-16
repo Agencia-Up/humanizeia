@@ -314,6 +314,19 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ===== ANTI-BAN: Validate number exists on WhatsApp before sending =====
+        if (instance.provider === "evolution") {
+          const numberValid = await validateWhatsAppNumber(instance, item.phone);
+          if (!numberValid) {
+            console.log(`Number ${item.phone} not on WhatsApp, skipping`);
+            await supabase
+              .from("wa_queue")
+              .update({ status: "failed", error_message: "Número não possui WhatsApp" })
+              .eq("id", item.id);
+            failed++; processed++; continue;
+          }
+        }
+
         // ===== HUMANIZED SENDING SEQUENCE (kept short to fit edge function timeout) =====
 
         // Step 1: Go online (simulate opening WhatsApp)
