@@ -222,15 +222,16 @@ async function handleMetaDeliveryStatus(supabase: any, instance: any, status: an
 
 async function handleEvolutionWebhook(supabase: any, body: any) {
   const event = body.event;
+  const normalizedEvent = String(event || "").toLowerCase().replace(/_/g, ".");
   const instanceName = body.instance;
   const messageData = body.data;
 
-  if (event === "messages.update" && messageData) {
+  if (normalizedEvent === "messages.update" && messageData) {
     return await handleEvolutionDeliveryStatus(supabase, instanceName, messageData);
   }
 
-  if (event !== "messages.upsert" || !messageData) {
-    return new Response(JSON.stringify({ ok: true, skipped: true }), {
+  if (normalizedEvent !== "messages.upsert" || !messageData) {
+    return new Response(JSON.stringify({ ok: true, skipped: true, event }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
