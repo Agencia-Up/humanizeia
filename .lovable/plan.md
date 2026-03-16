@@ -1,23 +1,42 @@
 
 
-## Por que o Claude não aparece na lista de modelos
+## Diagnóstico: Biblioteca de Criativos sem fotos
 
-O array `MODEL_OPTIONS` na linha 86-92 de `AgentFormDialog.tsx` lista apenas modelos do Lovable AI Gateway (Gemini e GPT-5). O Claude (Anthropic) não está incluído porque o Gateway não oferece modelos Anthropic diretamente.
+### Problema encontrado
 
-No entanto, o projeto já possui a `ANTHROPIC_API_KEY` configurada e o edge function `claude-chat` já faz chamadas diretas à API da Anthropic. O agente de WhatsApp usa um edge function separado (`wa-inbox-webhook` ou similar) que pode ou não usar essa lógica.
+Dois problemas combinados:
 
-## Plano
+1. **Contas Meta inativas**: Ambas as contas na tabela `ad_accounts` estão com `is_active: false`. Quando isso acontece, `useMetaConnection` retorna `connectedAccount: null`, e a página mostra a tela "Conecte seu Meta Ads" em vez dos dados em cache.
 
-### 1. Adicionar Claude como opção no formulário do agente
-Adicionar ao array `MODEL_OPTIONS` em `AgentFormDialog.tsx`:
+2. **Cache sem URLs de imagem de alta resolução**: O cache (`ads_creatives`) tem 50 anúncios armazenados, porém os dados do criativo só contêm `thumbnail_url` (formato p64x64, baixa resolução). Os campos `full_picture`, `image_url` e `effective_image_url` vieram como `null` da API do Meta. A função `getHighResThumbnail` tenta transformar p64x64 para p960x960, mas essa manipulação de URL nem sempre funciona no CDN da Meta.
+
+### Plano de correção
+
+**Arquivo: `src/pages/CreativeLibrary.tsx`**
+
+1. Exibir dados do cache mesmo quando a conta está desconectada, com um banner de aviso pedindo reconexão para dados atualizados. Atualmente a tela "Conecte seu Meta Ads" bloqueia completamente o acesso ao cache existente.
+
+2. Alterar a lógica do `enabled` no `useMetaCachedQuery` para sempre ler o cache (mesmo sem conta ativa), mas só tentar buscar dados frescos quando conectado.
+
+**Arquivo: `src/hooks/useMetaCachedQuery.ts`**
+
+3. Separar a leitura do cache (sempre habilitada) da busca de dados frescos (só quando `enabled: true`). Isso garante que dados em cache sejam exibidos instantaneamente mesmo sem conexão ativa.
+
+**Arquivo: `src/pages/CreativeLibrary.tsx` (imagens)**
+
+4. Adicionar fallback robusto para URLs de imagem: tentar carregar via `thumbnail_url` transformada, e se falhar (evento `onError` no `<img>`), voltar à URL original p64x64. Também solicitar o campo `object_story_spec` da API, que contém URLs de imagem mais confiáveis.
+
+### Detalhes técnicos
+
+A chave do cache `ads_creatives` tem 50 itens salvos às 15:27 de hoje. Os dados estão lá, mas a UI não os mostra porque a verificação `isConnected` bloqueia tudo antes de chegar ao `useMetaCachedQuery`.
+
+Fluxo corrigido:
+```text
+Página carrega
+  ├─ Lê cache (sempre) → mostra dados salvos imediatamente
+  ├─ Conta ativa? 
+  │   ├─ Sim → busca dados frescos em background
+  │   └─ Não → mostra banner "Reconecte para atualizar"
+  └─ Imagem com fallback: effective_image_url → image_url → full_picture → thumbnail (p960) → thumbnail (original)
 ```
-{ value: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (Premium)' }
-```
-
-### 2. Garantir que o backend do agente WhatsApp suporte o modelo Claude
-Verificar o edge function que processa respostas do agente (`wa-inbox-webhook` ou equivalente) e garantir que, quando `model` começar com `anthropic/`, a chamada seja feita diretamente à API da Anthropic usando a `ANTHROPIC_API_KEY` já configurada — ao invés de enviar para o Lovable AI Gateway que não suporta modelos Anthropic.
-
-### Arquivos afetados
-- `src/components/whatsapp/AgentFormDialog.tsx` — adicionar opção Claude ao select
-- Edge function do agente WhatsApp — adicionar roteamento para Anthropic quando o modelo selecionado for Claude
 
