@@ -7,7 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Bot, Plus, Loader2, MessageSquare, Sparkles, Trash2, Edit2, Copy,
+  Bot, Plus, Loader2, MessageSquare, Sparkles, Trash2, Edit2, Copy, Webhook,
 } from 'lucide-react';
 import { AgentFormDialog } from '@/components/whatsapp/AgentFormDialog';
 
@@ -28,6 +28,12 @@ interface AIAgent {
   instance_id: string | null;
   instance_ids: string[];
   created_at: string;
+  agent_type?: string;
+  company_name?: string;
+  services?: string;
+  address?: string;
+  human_whatsapp?: string;
+  n8n_webhook_url?: string;
 }
 
 interface Instance {
@@ -210,6 +216,16 @@ export default function WhatsAppAIAgent() {
                     <Badge variant="outline" className="text-xs">
                       {agent.model.split('/').pop()}
                     </Badge>
+                    {agent.agent_type && agent.agent_type !== 'generic' && (
+                      <Badge variant="outline" className="text-xs">
+                        {agent.agent_type === 'sdr' ? '📞 SDR' : agent.agent_type === 'support' ? '🛠️ Suporte' : '💰 Vendas'}
+                      </Badge>
+                    )}
+                    {agent.n8n_webhook_url && (
+                      <Badge variant="outline" className="text-xs gap-1">
+                        <Webhook className="h-3 w-3" /> n8n
+                      </Badge>
+                    )}
                     {agent.business_hours_only && (
                       <Badge variant="outline" className="text-xs">
                         🕐 {agent.business_hours_start?.slice(0,5)}-{agent.business_hours_end?.slice(0,5)}
