@@ -480,8 +480,16 @@ async function updateQueueStatusFromDeliverySignal(
   const { instanceId, userId, phone, remoteMessageId, queueStatus, deliveredAt, readAt } = params;
 
   const updateData: any = { status: queueStatus };
-  if (deliveredAt) updateData.delivered_at = deliveredAt;
-  if (readAt) updateData.read_at = readAt;
+  if (deliveredAt) {
+    updateData.delivered_at = deliveredAt;
+    updateData.delivery_confirmed_at = deliveredAt;
+  }
+  if (readAt) {
+    updateData.read_at = readAt;
+    if (!updateData.delivery_confirmed_at) {
+      updateData.delivery_confirmed_at = readAt;
+    }
+  }
 
   let matchedPhone = normalizePhone(phone);
   let matchedCampaignId: string | null = null;
@@ -535,6 +543,14 @@ async function updateQueueStatusFromDeliverySignal(
   const campaignId = updatedItems?.[0]?.campaign_id || matchedCampaignId;
   if (deliveredAt && campaignId) {
     await supabase.rpc("increment_campaign_delivered", { cid: campaignId }).catch(() => {});
+  }
+
+  // ===== SHADOW BAN DETECTION: Reset consecutive_undelivered on confirmed delivery =====
+  if (queueStatus === "delivered" || queueStatus === "read") {
+    await supabase
+      .from("wa_instances")
+      .update({ consecutive_undelivered: 0, shadow_ban_suspect: false })
+      .eq("id", instanceId);
   }
 }
 
