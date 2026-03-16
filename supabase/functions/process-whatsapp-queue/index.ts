@@ -16,6 +16,14 @@ const OUTBOUND_FETCH_TIMEOUT_MS = 10_000;
 const PRESENCE_FETCH_TIMEOUT_MS = 2_500;
 const AI_FETCH_TIMEOUT_MS = 12_000;
 
+// ===== ANTI-BAN: Default safety limits =====
+const DEFAULT_DAILY_LIMIT_NEW_INSTANCE = 30; // New numbers: max 30 msgs/day
+const DEFAULT_DAILY_LIMIT_MATURE_INSTANCE = 200; // Mature numbers (>14 days): max 200 msgs/day
+const WARMUP_RAMP_DAYS = 14; // Days to reach full capacity
+const COLD_CONTACT_MIN_DELAY_SECONDS = 45; // Minimum delay for cold contacts (no prior interaction)
+const COLD_CONTACT_MAX_DELAY_SECONDS = 120; // Maximum delay for cold contacts
+const NUMBER_VALIDATION_TIMEOUT_MS = 5_000;
+
 const instanceFailures = new Map<string, number>();
 
 interface QueueItem {
