@@ -7,7 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Bot, Plus, Loader2, MessageSquare, Sparkles, Trash2, Edit2, Copy,
+  Bot, Plus, Loader2, MessageSquare, Sparkles, Trash2, Edit2, Copy, Webhook,
 } from 'lucide-react';
 import { AgentFormDialog } from '@/components/whatsapp/AgentFormDialog';
 
