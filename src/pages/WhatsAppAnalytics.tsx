@@ -441,7 +441,12 @@ export default function WhatsAppAnalytics() {
                             <span>Mensagens hoje</span>
                             <span className="font-medium text-foreground">{inst.messages_sent_today}</span>
                           </div>
-                          {!inst.is_active && (
+                          {inst.shadow_ban_suspect && (
+                            <p className="text-xs text-destructive font-medium bg-destructive/10 rounded p-1.5">
+                              🚫 Possível Shadow Ban — {inst.consecutive_undelivered || 0} msgs sem confirmação de entrega
+                            </p>
+                          )}
+                          {!inst.is_active && !inst.shadow_ban_suspect && (
                             <p className="text-xs text-destructive font-medium">⚠️ Instância desativada</p>
                           )}
                         </div>
