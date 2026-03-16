@@ -1770,19 +1770,25 @@ export type Database = {
       }
       wa_ai_agents: {
         Row: {
+          address: string | null
+          agent_type: string
           blocked_categories: string[] | null
           business_hours_end: string | null
           business_hours_only: boolean
           business_hours_start: string | null
+          company_name: string | null
           created_at: string
+          human_whatsapp: string | null
           id: string
           instance_id: string | null
           instance_ids: string[] | null
           is_active: boolean
           max_tokens: number
           model: string
+          n8n_webhook_url: string | null
           name: string
           reply_delay_ms: number
+          services: string | null
           system_prompt: string
           temperature: number
           total_replies: number
@@ -1790,19 +1796,25 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          address?: string | null
+          agent_type?: string
           blocked_categories?: string[] | null
           business_hours_end?: string | null
           business_hours_only?: boolean
           business_hours_start?: string | null
+          company_name?: string | null
           created_at?: string
+          human_whatsapp?: string | null
           id?: string
           instance_id?: string | null
           instance_ids?: string[] | null
           is_active?: boolean
           max_tokens?: number
           model?: string
+          n8n_webhook_url?: string | null
           name?: string
           reply_delay_ms?: number
+          services?: string | null
           system_prompt: string
           temperature?: number
           total_replies?: number
@@ -1810,19 +1822,25 @@ export type Database = {
           user_id: string
         }
         Update: {
+          address?: string | null
+          agent_type?: string
           blocked_categories?: string[] | null
           business_hours_end?: string | null
           business_hours_only?: boolean
           business_hours_start?: string | null
+          company_name?: string | null
           created_at?: string
+          human_whatsapp?: string | null
           id?: string
           instance_id?: string | null
           instance_ids?: string[] | null
           is_active?: boolean
           max_tokens?: number
           model?: string
+          n8n_webhook_url?: string | null
           name?: string
           reply_delay_ms?: number
+          services?: string | null
           system_prompt?: string
           temperature?: number
           total_replies?: number
