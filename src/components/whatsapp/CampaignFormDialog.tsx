@@ -193,6 +193,8 @@ export function CampaignFormDialog({
       tags,
       variation_level: variationLevel,
       include_optout_buttons: includeOptoutButtons,
+      reply_auto_tag: replyAutoTag,
+      reply_auto_message: replyAutoMessage,
     });
   };
 
