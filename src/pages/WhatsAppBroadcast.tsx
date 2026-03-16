@@ -230,6 +230,26 @@ Não numere as variações. Não inclua explicações adicionais.`
   const totalSent = campaigns.reduce((sum, c) => sum + c.sent_count, 0);
   const totalFailed = campaigns.reduce((sum, c) => sum + c.failed_count, 0);
 
+  const handleRenameList = async (listId: string) => {
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      toast({ title: 'Nome não pode ficar vazio', variant: 'destructive' });
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('wa_contact_lists')
+        .update({ name: trimmed })
+        .eq('id', listId);
+      if (error) throw error;
+      toast({ title: '✅ Lista renomeada!' });
+      setRenamingListId(null);
+      fetchData();
+    } catch (err: any) {
+      toast({ title: 'Erro ao renomear', description: err.message, variant: 'destructive' });
+    }
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
