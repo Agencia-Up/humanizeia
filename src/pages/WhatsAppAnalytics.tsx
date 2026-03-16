@@ -67,7 +67,7 @@ export default function WhatsAppAnalytics() {
 
   const getPeriodDate = useCallback(() => {
     const now = new Date();
-    const days = period === '7d' ? 7 : period === '30d' ? 30 : 90;
+    const days = period === '1d' ? 1 : period === '7d' ? 7 : period === '30d' ? 30 : 90;
     now.setDate(now.getDate() - days);
     return now.toISOString();
   }, [period]);
