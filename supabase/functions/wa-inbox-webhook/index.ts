@@ -569,6 +569,9 @@ async function categorizeAndAutomate(
       }
     }
 
+    // ===== Campaign Auto-Tag & Auto-Reply =====
+    await handleCampaignAutoReply(supabase, instance, phone, contactId, replyTarget);
+
     // ===== AI Agent Auto-Reply =====
     await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
 
