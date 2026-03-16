@@ -569,6 +569,9 @@ async function categorizeAndAutomate(
       }
     }
 
+    // ===== Campaign Auto-Tag & Auto-Reply =====
+    await handleCampaignAutoReply(supabase, instance, phone, contactId, replyTarget);
+
     // ===== AI Agent Auto-Reply =====
     await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
 
@@ -599,6 +602,169 @@ async function categorizeAndAutomate(
     }
   } catch (aiErr) {
     console.error("AI categorization failed:", aiErr);
+  }
+}
+
+// ====================== CAMPAIGN AUTO-TAG & AUTO-REPLY ======================
+
+async function handleCampaignAutoReply(
+  supabase: any,
+  instance: any,
+  phone: string,
+  contactId: string | null,
+  replyTarget?: string,
+) {
+  try {
+    // Find recent campaigns that sent to this phone number (last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: queueItems } = await supabase
+      .from("wa_queue")
+      .select("campaign_id")
+      .eq("phone", phone)
+      .eq("user_id", instance.user_id)
+      .in("status", ["sent", "delivered", "read"])
+      .gte("sent_at", thirtyDaysAgo)
+      .order("sent_at", { ascending: false })
+      .limit(5);
+
+    if (!queueItems || queueItems.length === 0) return;
+
+    // Get unique campaign IDs
+    const campaignIds = [...new Set(queueItems.map((q: any) => q.campaign_id).filter(Boolean))];
+    if (campaignIds.length === 0) return;
+
+    // Fetch campaigns with auto-tag or auto-reply configured
+    const { data: campaigns } = await supabase
+      .from("wa_campaigns")
+      .select("id, reply_auto_tag, reply_auto_message")
+      .in("id", campaignIds)
+      .or("reply_auto_tag.neq.,reply_auto_message.neq.");
+
+    if (!campaigns || campaigns.length === 0) return;
+
+    // Track if we already sent an auto-reply to avoid duplicates
+    let autoReplySent = false;
+
+    for (const campaign of campaigns) {
+      // ===== Auto-Tag =====
+      if (campaign.reply_auto_tag && contactId) {
+        const { data: currentContact } = await supabase
+          .from("wa_contacts")
+          .select("tags")
+          .eq("id", contactId)
+          .maybeSingle();
+
+        const currentTags: string[] = (currentContact?.tags as string[] | null) || [];
+        const newTag = campaign.reply_auto_tag.trim();
+        if (!currentTags.includes(newTag)) {
+          await supabase
+            .from("wa_contacts")
+            .update({ tags: [...currentTags, newTag] } as any)
+            .eq("id", contactId);
+          console.log(`[campaign-auto-tag] Added tag "${newTag}" to contact ${phone} (campaign ${campaign.id})`);
+        }
+      }
+
+      // ===== Auto-Reply (send only once, from the most recent campaign) =====
+      if (campaign.reply_auto_message && !autoReplySent) {
+        // Check if we already sent an auto-reply for this campaign to this phone
+        const { data: existingReply } = await supabase
+          .from("wa_inbox")
+          .select("id")
+          .eq("user_id", instance.user_id)
+          .eq("phone", phone)
+          .eq("direction", "outgoing")
+          .eq("campaign_id", campaign.id)
+          .ilike("content", campaign.reply_auto_message.substring(0, 50) + "%")
+          .limit(1);
+
+        if (existingReply && existingReply.length > 0) {
+          console.log(`[campaign-auto-reply] Already sent auto-reply to ${phone} for campaign ${campaign.id}`);
+          continue;
+        }
+
+        // Send the auto-reply message
+        const destination = replyTarget || phone;
+        await sendAutoReplyMessage(supabase, instance, destination, campaign.reply_auto_message, campaign.id, phone);
+        autoReplySent = true;
+        console.log(`[campaign-auto-reply] Sent follow-up to ${phone} for campaign ${campaign.id}`);
+      }
+    }
+  } catch (err) {
+    console.error("[campaign-auto-reply] Error:", err);
+  }
+}
+
+async function sendAutoReplyMessage(
+  supabase: any,
+  instance: any,
+  destination: string,
+  message: string,
+  campaignId: string,
+  phone: string,
+) {
+  try {
+    // Get instance details for sending
+    const { data: inst } = await supabase
+      .from("wa_instances")
+      .select("instance_name, provider, meta_config")
+      .eq("id", instance.id)
+      .single();
+
+    if (!inst) return;
+
+    if (inst.provider === "meta") {
+      // Send via Meta API
+      const metaConfig = inst.meta_config || {};
+      const accessToken = metaConfig.access_token;
+      const phoneNumberId = metaConfig.phone_number_id;
+      if (!accessToken || !phoneNumberId) return;
+
+      await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: phone,
+          type: "text",
+          text: { body: message },
+        }),
+      });
+    } else {
+      // Send via Evolution API
+      const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL");
+      const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY");
+      if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) return;
+
+      const isJid = destination.includes("@");
+      const sendPayload: any = { text: message };
+      if (isJid) {
+        sendPayload.number = destination;
+      } else {
+        sendPayload.number = destination;
+      }
+
+      await fetch(`${EVOLUTION_API_URL}/message/sendText/${inst.instance_name}`, {
+        method: "POST",
+        headers: { "apikey": EVOLUTION_API_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify(sendPayload),
+      });
+    }
+
+    // Save to inbox
+    await supabase.from("wa_inbox").insert({
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      phone,
+      direction: "outgoing",
+      message_type: "text",
+      content: message,
+      campaign_id: campaignId,
+      is_read: true,
+    });
+  } catch (err) {
+    console.error("[sendAutoReplyMessage] Error:", err);
   }
 }
 
