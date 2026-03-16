@@ -461,6 +461,83 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
   }
 }
 
+function normalizePhone(value: string | null | undefined): string {
+  return (value || "").replace(/\D/g, "");
+}
+
+async function updateQueueStatusFromDeliverySignal(
+  supabase: any,
+  params: {
+    instanceId: string;
+    userId: string;
+    phone: string | null | undefined;
+    remoteMessageId: string | null;
+    queueStatus: string;
+    deliveredAt: string | null;
+    readAt: string | null;
+  }
+) {
+  const { instanceId, userId, phone, remoteMessageId, queueStatus, deliveredAt, readAt } = params;
+
+  const updateData: any = { status: queueStatus };
+  if (deliveredAt) updateData.delivered_at = deliveredAt;
+  if (readAt) updateData.read_at = readAt;
+
+  let matchedPhone = normalizePhone(phone);
+  let matchedCampaignId: string | null = null;
+  let matchedCreatedAt: string | null = null;
+
+  if (remoteMessageId) {
+    const { data: outMsg } = await supabase
+      .from("wa_inbox")
+      .select("phone, campaign_id, created_at")
+      .eq("user_id", userId)
+      .eq("instance_id", instanceId)
+      .eq("direction", "outgoing")
+      .eq("remote_message_id", remoteMessageId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (outMsg) {
+      matchedPhone = normalizePhone(outMsg.phone);
+      matchedCampaignId = outMsg.campaign_id || null;
+      matchedCreatedAt = outMsg.created_at || null;
+    }
+  }
+
+  let query = supabase
+    .from("wa_queue")
+    .update(updateData)
+    .eq("instance_id", instanceId)
+    .in("status", ["sent", "delivered"]);
+
+  if (matchedPhone) {
+    query = query.eq("phone", matchedPhone);
+  }
+
+  if (matchedCampaignId) {
+    query = query.eq("campaign_id", matchedCampaignId);
+  }
+
+  if (matchedCreatedAt) {
+    const matchedAtMs = new Date(matchedCreatedAt).getTime();
+    const lowerBound = new Date(matchedAtMs - 6 * 60 * 60 * 1000).toISOString();
+    const upperBound = new Date(matchedAtMs + 15 * 60 * 1000).toISOString();
+    query = query.gte("sent_at", lowerBound).lte("sent_at", upperBound);
+  }
+
+  const { data: updatedItems } = await query
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .select("campaign_id");
+
+  const campaignId = updatedItems?.[0]?.campaign_id || matchedCampaignId;
+  if (deliveredAt && campaignId) {
+    await supabase.rpc("increment_campaign_delivered", { cid: campaignId }).catch(() => {});
+  }
+}
+
 // ====================== SHARED: AI CATEGORIZATION + AUTOMATIONS + AI AGENT ======================
 
 async function categorizeAndAutomate(
