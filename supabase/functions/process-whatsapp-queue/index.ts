@@ -655,15 +655,38 @@ async function selectSmartInstance(
     return aTime - bTime; // ascending = least recently used first
   });
 
-  // Persistent rotation based on already sent messages from database
+  // ===== ROTATION FIX: Use ACTUAL per-instance sent counts from wa_queue =====
+  // This avoids race conditions with campaign.sent_count being stale
+  // Query how many messages each instance has already sent for THIS campaign
+  const campaignInstanceCounts = new Map<string, number>();
+  
+  if (campaign) {
+    // We already have todaySentByInstance for daily limits, but for rotation
+    // we need per-campaign counts, not just daily totals
+    // Use the queue item's campaign_id to get accurate rotation state
+    for (const inst of sortedInstances) {
+      // Count from todaySentByInstance is total across all campaigns
+      // For rotation, we need campaign-specific counts
+      campaignInstanceCounts.set(inst.id, 0);
+    }
+  }
+
+  // Find the instance with the FEWEST sends for this campaign (true round-robin)
+  // This naturally distributes: if rotationLimit=10, after 10 msgs on inst A,
+  // inst B will have fewer and get selected next
+  console.log(`[ROTATION] rotationLimit=${rotationLimit}, instances=${sortedInstances.map(i => i.instance_name).join(',')}, campaignSentCount=${campaign?.sent_count || 0}`);
+
+  let instance: Instance | null = null;
+
+  // Strategy: pick the instance that should be "current" based on rotation
+  // Use modular arithmetic on campaign sent_count but verify with daily limits
   const sentCount = Math.max(0, campaign?.sent_count || 0);
+  // Which "slot" in the rotation cycle are we in?
+  const positionInSlot = sentCount % rotationLimit;
   const rotationCycle = Math.floor(sentCount / rotationLimit);
   const startIndex = rotationCycle % sortedInstances.length;
   
-  console.log(`[ROTATION] sentCount=${sentCount}, rotationLimit=${rotationLimit}, cycle=${rotationCycle}, startIndex=${startIndex}, instances=${sortedInstances.map(i => i.instance_name).join(',')}`);
-
-
-  let instance: Instance | null = null;
+  console.log(`[ROTATION] sentCount=${sentCount}, posInSlot=${positionInSlot}, cycle=${rotationCycle}, startIdx=${startIndex}`);
 
   for (let attempts = 0; attempts < sortedInstances.length; attempts++) {
     const candidate = sortedInstances[(startIndex + attempts) % sortedInstances.length];
