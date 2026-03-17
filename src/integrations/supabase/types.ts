@@ -411,6 +411,395 @@ export type Database = {
         }
         Relationships: []
       }
+      apollo_action_log: {
+        Row: {
+          action_details: Json | null
+          action_type: string
+          after_state: Json | null
+          before_state: Json | null
+          campaign_id: string | null
+          error_message: string | null
+          executed_at: string
+          executed_by: string | null
+          id: string
+          recommendation_id: string | null
+          success: boolean | null
+          user_id: string
+        }
+        Insert: {
+          action_details?: Json | null
+          action_type: string
+          after_state?: Json | null
+          before_state?: Json | null
+          campaign_id?: string | null
+          error_message?: string | null
+          executed_at?: string
+          executed_by?: string | null
+          id?: string
+          recommendation_id?: string | null
+          success?: boolean | null
+          user_id: string
+        }
+        Update: {
+          action_details?: Json | null
+          action_type?: string
+          after_state?: Json | null
+          before_state?: Json | null
+          campaign_id?: string | null
+          error_message?: string | null
+          executed_at?: string
+          executed_by?: string | null
+          id?: string
+          recommendation_id?: string | null
+          success?: boolean | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "apollo_action_log_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "apollo_action_log_recommendation_id_fkey"
+            columns: ["recommendation_id"]
+            isOneToOne: false
+            referencedRelation: "apollo_recommendations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      apollo_alerts: {
+        Row: {
+          actions: string[] | null
+          benchmark_value: string | null
+          campaign_id: string | null
+          created_at: string
+          current_value: string | null
+          description: string
+          deviation: string | null
+          diagnostic_id: string | null
+          id: string
+          is_dismissed: boolean | null
+          is_read: boolean | null
+          level: string
+          metric: string | null
+          title: string
+          user_id: string
+        }
+        Insert: {
+          actions?: string[] | null
+          benchmark_value?: string | null
+          campaign_id?: string | null
+          created_at?: string
+          current_value?: string | null
+          description: string
+          deviation?: string | null
+          diagnostic_id?: string | null
+          id?: string
+          is_dismissed?: boolean | null
+          is_read?: boolean | null
+          level?: string
+          metric?: string | null
+          title: string
+          user_id: string
+        }
+        Update: {
+          actions?: string[] | null
+          benchmark_value?: string | null
+          campaign_id?: string | null
+          created_at?: string
+          current_value?: string | null
+          description?: string
+          deviation?: string | null
+          diagnostic_id?: string | null
+          id?: string
+          is_dismissed?: boolean | null
+          is_read?: boolean | null
+          level?: string
+          metric?: string | null
+          title?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "apollo_alerts_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "apollo_alerts_diagnostic_id_fkey"
+            columns: ["diagnostic_id"]
+            isOneToOne: false
+            referencedRelation: "apollo_diagnostics"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      apollo_benchmarks: {
+        Row: {
+          benchmark_value: number
+          created_at: string
+          id: string
+          industry: string | null
+          metric_name: string
+          platform: string | null
+          source: string | null
+          stage: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          benchmark_value: number
+          created_at?: string
+          id?: string
+          industry?: string | null
+          metric_name: string
+          platform?: string | null
+          source?: string | null
+          stage: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          benchmark_value?: number
+          created_at?: string
+          id?: string
+          industry?: string | null
+          metric_name?: string
+          platform?: string | null
+          source?: string | null
+          stage?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      apollo_diagnostics: {
+        Row: {
+          campaign_id: string | null
+          category: string | null
+          cause: string
+          created_at: string
+          diagnosis: string
+          evidence: Json | null
+          health_score_id: string | null
+          id: string
+          is_resolved: boolean | null
+          problem: string
+          resolved_at: string | null
+          severity: string
+          stage: string
+          user_id: string
+        }
+        Insert: {
+          campaign_id?: string | null
+          category?: string | null
+          cause: string
+          created_at?: string
+          diagnosis: string
+          evidence?: Json | null
+          health_score_id?: string | null
+          id?: string
+          is_resolved?: boolean | null
+          problem: string
+          resolved_at?: string | null
+          severity?: string
+          stage: string
+          user_id: string
+        }
+        Update: {
+          campaign_id?: string | null
+          category?: string | null
+          cause?: string
+          created_at?: string
+          diagnosis?: string
+          evidence?: Json | null
+          health_score_id?: string | null
+          id?: string
+          is_resolved?: boolean | null
+          problem?: string
+          resolved_at?: string | null
+          severity?: string
+          stage?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "apollo_diagnostics_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "apollo_diagnostics_health_score_id_fkey"
+            columns: ["health_score_id"]
+            isOneToOne: false
+            referencedRelation: "apollo_health_scores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      apollo_health_scores: {
+        Row: {
+          calculated_at: string
+          campaign_id: string | null
+          created_at: string
+          id: string
+          metrics: Json | null
+          previous_score: number | null
+          score: number
+          stage: string
+          trend: string | null
+          user_id: string
+        }
+        Insert: {
+          calculated_at?: string
+          campaign_id?: string | null
+          created_at?: string
+          id?: string
+          metrics?: Json | null
+          previous_score?: number | null
+          score?: number
+          stage: string
+          trend?: string | null
+          user_id: string
+        }
+        Update: {
+          calculated_at?: string
+          campaign_id?: string | null
+          created_at?: string
+          id?: string
+          metrics?: Json | null
+          previous_score?: number | null
+          score?: number
+          stage?: string
+          trend?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "apollo_health_scores_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      apollo_learning: {
+        Row: {
+          category: string
+          confidence: number | null
+          created_at: string
+          evidence: Json | null
+          id: string
+          insight: string
+          is_active: boolean | null
+          source_campaigns: string[] | null
+          times_validated: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category: string
+          confidence?: number | null
+          created_at?: string
+          evidence?: Json | null
+          id?: string
+          insight: string
+          is_active?: boolean | null
+          source_campaigns?: string[] | null
+          times_validated?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category?: string
+          confidence?: number | null
+          created_at?: string
+          evidence?: Json | null
+          id?: string
+          insight?: string
+          is_active?: boolean | null
+          source_campaigns?: string[] | null
+          times_validated?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      apollo_recommendations: {
+        Row: {
+          action_config: Json | null
+          action_type: string
+          campaign_id: string | null
+          created_at: string
+          description: string
+          diagnostic_id: string | null
+          executed_at: string | null
+          id: string
+          impact_estimate: string | null
+          priority: number | null
+          result: string | null
+          status: string | null
+          title: string
+          user_id: string
+        }
+        Insert: {
+          action_config?: Json | null
+          action_type: string
+          campaign_id?: string | null
+          created_at?: string
+          description: string
+          diagnostic_id?: string | null
+          executed_at?: string | null
+          id?: string
+          impact_estimate?: string | null
+          priority?: number | null
+          result?: string | null
+          status?: string | null
+          title: string
+          user_id: string
+        }
+        Update: {
+          action_config?: Json | null
+          action_type?: string
+          campaign_id?: string | null
+          created_at?: string
+          description?: string
+          diagnostic_id?: string | null
+          executed_at?: string | null
+          id?: string
+          impact_estimate?: string | null
+          priority?: number | null
+          result?: string | null
+          status?: string | null
+          title?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "apollo_recommendations_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "apollo_recommendations_diagnostic_id_fkey"
+            columns: ["diagnostic_id"]
+            isOneToOne: false
+            referencedRelation: "apollo_diagnostics"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audiences: {
         Row: {
           ai_insights: string[] | null
