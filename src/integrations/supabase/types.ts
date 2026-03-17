@@ -2248,6 +2248,81 @@ export type Database = {
           },
         ]
       }
+      wa_capi_funnel: {
+        Row: {
+          contact_id: string | null
+          created_at: string
+          currency: string | null
+          custom_data: Json | null
+          event_name: string
+          event_sent: boolean | null
+          fbclid: string | null
+          funnel_stage: string
+          id: string
+          meta_response: Json | null
+          phone: string
+          pixel_id: string | null
+          sent_at: string | null
+          user_id: string
+          utm_campaign: string | null
+          utm_source: string | null
+          value: number | null
+        }
+        Insert: {
+          contact_id?: string | null
+          created_at?: string
+          currency?: string | null
+          custom_data?: Json | null
+          event_name: string
+          event_sent?: boolean | null
+          fbclid?: string | null
+          funnel_stage?: string
+          id?: string
+          meta_response?: Json | null
+          phone: string
+          pixel_id?: string | null
+          sent_at?: string | null
+          user_id: string
+          utm_campaign?: string | null
+          utm_source?: string | null
+          value?: number | null
+        }
+        Update: {
+          contact_id?: string | null
+          created_at?: string
+          currency?: string | null
+          custom_data?: Json | null
+          event_name?: string
+          event_sent?: boolean | null
+          fbclid?: string | null
+          funnel_stage?: string
+          id?: string
+          meta_response?: Json | null
+          phone?: string
+          pixel_id?: string | null
+          sent_at?: string | null
+          user_id?: string
+          utm_campaign?: string | null
+          utm_source?: string | null
+          value?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_capi_funnel_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "wa_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wa_capi_funnel_pixel_id_fkey"
+            columns: ["pixel_id"]
+            isOneToOne: false
+            referencedRelation: "meta_pixels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       wa_contact_lists: {
         Row: {
           contact_count: number
@@ -2297,8 +2372,12 @@ export type Database = {
       }
       wa_contacts: {
         Row: {
+          capi_events_sent: Json | null
           created_at: string
           current_instance_id: string | null
+          fbclid: string | null
+          funnel_stage: string | null
+          funnel_updated_at: string | null
           group_name: string | null
           id: string
           is_valid: boolean | null
@@ -2310,10 +2389,19 @@ export type Database = {
           source: string
           tags: string[] | null
           user_id: string
+          utm_campaign: string | null
+          utm_content: string | null
+          utm_medium: string | null
+          utm_source: string | null
+          utm_term: string | null
         }
         Insert: {
+          capi_events_sent?: Json | null
           created_at?: string
           current_instance_id?: string | null
+          fbclid?: string | null
+          funnel_stage?: string | null
+          funnel_updated_at?: string | null
           group_name?: string | null
           id?: string
           is_valid?: boolean | null
@@ -2325,10 +2413,19 @@ export type Database = {
           source?: string
           tags?: string[] | null
           user_id: string
+          utm_campaign?: string | null
+          utm_content?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
         }
         Update: {
+          capi_events_sent?: Json | null
           created_at?: string
           current_instance_id?: string | null
+          fbclid?: string | null
+          funnel_stage?: string | null
+          funnel_updated_at?: string | null
           group_name?: string | null
           id?: string
           is_valid?: boolean | null
@@ -2340,6 +2437,11 @@ export type Database = {
           source?: string
           tags?: string[] | null
           user_id?: string
+          utm_campaign?: string | null
+          utm_content?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
         }
         Relationships: [
           {
