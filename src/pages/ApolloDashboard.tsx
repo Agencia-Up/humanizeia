@@ -58,9 +58,13 @@ export default function ApolloDashboard() {
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
 
   const handleAnalyze = async () => {
-    const result = await analyze.mutateAsync();
-    if (result?.ai_analysis) {
-      setAiAnalysis(result.ai_analysis);
+    try {
+      const result = await analyze.mutateAsync(undefined);
+      if (result?.ai_analysis) {
+        setAiAnalysis(result.ai_analysis);
+      }
+    } catch {
+      // error handled by mutation
     }
   };
 
