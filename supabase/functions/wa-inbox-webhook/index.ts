@@ -661,6 +661,11 @@ async function categorizeAndAutomate(
     // ===== AI Agent Auto-Reply =====
     await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
 
+    // ===== CAPI Lead Tracking: Send Lead event back to Meta =====
+    if (aiCategory.category === "interested" || aiCategory.category === "question") {
+      await sendCAPILeadEvent(supabase, instance.user_id, phone, aiCategory.category);
+    }
+
     const triggerEvent =
       aiCategory.category === "interested" ? "lead_interested" :
       aiCategory.category === "question" ? "lead_question" :
@@ -1658,5 +1663,123 @@ async function transcribeWithGemini(base64Audio: string, mimetype: string): Prom
   } catch (err) {
     console.error("[audio-transcribe] Gemini transcription error:", err);
     return null;
+  }
+}
+
+// ====================== CAPI LEAD EVENT ======================
+
+async function sendCAPILeadEvent(
+  supabase: any,
+  userId: string,
+  phone: string,
+  category: string,
+) {
+  try {
+    // Find user's active pixel
+    const { data: pixel } = await supabase
+      .from("meta_pixels")
+      .select("id, pixel_id, access_token_encrypted")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
+
+    if (!pixel) {
+      console.log("[capi-lead] No active pixel found for user, skipping CAPI event");
+      return;
+    }
+
+    // Get access token from pixel or ad_accounts
+    const { data: adAccount } = await supabase
+      .from("ad_accounts")
+      .select("access_token_encrypted")
+      .eq("user_id", userId)
+      .eq("platform", "meta")
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
+
+    const accessToken = pixel.access_token_encrypted || adAccount?.access_token_encrypted;
+    if (!accessToken) {
+      console.log("[capi-lead] No access token available, queuing event");
+      await supabase.from("meta_capi_events").insert({
+        user_id: userId,
+        pixel_id: pixel.id,
+        event_name: "Lead",
+        action_source: "system_generated",
+        user_data: { ph: [phone] },
+        custom_data: { lead_category: category },
+        status: "pending",
+      });
+      return;
+    }
+
+    // Hash phone for CAPI (SHA256)
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(phone));
+    const hashedPhone = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    const eventTime = Math.floor(Date.now() / 1000);
+    const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
+
+    const metaRes = await fetch(`${META_GRAPH_URL}/${pixel.pixel_id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        data: [
+          {
+            event_name: "Lead",
+            event_time: eventTime,
+            action_source: "system_generated",
+            user_data: {
+              ph: [hashedPhone],
+            },
+            custom_data: {
+              lead_category: category,
+              source: "whatsapp",
+            },
+          },
+        ],
+        access_token: accessToken,
+      }),
+    });
+
+    const metaData = await metaRes.json();
+
+    // Log event
+    await supabase.from("meta_capi_events").insert({
+      user_id: userId,
+      pixel_id: pixel.id,
+      event_name: "Lead",
+      event_time: new Date().toISOString(),
+      action_source: "system_generated",
+      user_data: { ph: [hashedPhone] },
+      custom_data: { lead_category: category, source: "whatsapp" },
+      status: metaData.error ? "failed" : "sent",
+      response_code: metaRes.status,
+      response_body: metaData,
+      error_message: metaData.error?.message || null,
+      sent_at: new Date().toISOString(),
+    });
+
+    // Update pixel stats
+    await supabase
+      .from("meta_pixels")
+      .update({
+        last_event_at: new Date().toISOString(),
+        events_today: (pixel.events_today || 0) + 1,
+        events_total: (pixel.events_total || 0) + 1,
+      })
+      .eq("id", pixel.id);
+
+    if (metaData.error) {
+      console.error("[capi-lead] Meta CAPI error:", metaData.error.message);
+    } else {
+      console.log(`[capi-lead] Lead event sent for phone ${phone.substring(0, 6)}*** (${category})`);
+    }
+  } catch (err) {
+    console.error("[capi-lead] Error sending CAPI event:", err);
   }
 }

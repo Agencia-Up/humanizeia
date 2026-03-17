@@ -112,3 +112,67 @@ export interface CAPIEvent {
   user_data?: Record<string, any>;
   custom_data?: Record<string, any>;
 }
+
+// Convenience hooks for common CAPI events
+export function useCAPITracking() {
+  const { sendEvents } = useCAPISend();
+  const { pixels } = useMetaPixels();
+
+  const getActivePixelId = () => pixels.find((p: any) => p.is_active)?.id;
+
+  const trackLead = useCallback(
+    async (data?: { phone?: string; email?: string; value?: number; source?: string }) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) {
+        console.warn('[CAPI] No active pixel found');
+        return;
+      }
+      return sendEvents(pixelId, [{
+        event_name: 'Lead',
+        action_source: 'system_generated',
+        user_data: {
+          ...(data?.phone && { ph: [data.phone] }),
+          ...(data?.email && { em: [data.email] }),
+        },
+        custom_data: {
+          ...(data?.value && { value: data.value, currency: 'BRL' }),
+          source: data?.source || 'whatsapp',
+        },
+      }]);
+    },
+    [pixels]
+  );
+
+  const trackPurchase = useCallback(
+    async (data: { value: number; currency?: string; phone?: string; email?: string }) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) return;
+      return sendEvents(pixelId, [{
+        event_name: 'Purchase',
+        action_source: 'system_generated',
+        user_data: {
+          ...(data.phone && { ph: [data.phone] }),
+          ...(data.email && { em: [data.email] }),
+        },
+        custom_data: { value: data.value, currency: data.currency || 'BRL' },
+      }]);
+    },
+    [pixels]
+  );
+
+  const trackCustom = useCallback(
+    async (eventName: string, customData?: Record<string, any>, userData?: Record<string, any>) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) return;
+      return sendEvents(pixelId, [{
+        event_name: eventName,
+        action_source: 'system_generated',
+        user_data: userData || {},
+        custom_data: customData || {},
+      }]);
+    },
+    [pixels]
+  );
+
+  return { trackLead, trackPurchase, trackCustom };
+}
