@@ -1230,6 +1230,39 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
         .eq("id", agent.id);
 
       console.log(`[ai-agent] Reply sent to ${phone}: ${replyText.substring(0, 50)}...`);
+
+      // ===== Forward to n8n webhook if configured =====
+      if (agent.n8n_webhook_url) {
+        try {
+          const webhookPayload = {
+            event: "ai_agent_reply",
+            agent_id: agent.id,
+            agent_name: agent.name,
+            agent_type: agent.agent_type || "generic",
+            company_name: agent.company_name || "",
+            services: agent.services || "",
+            phone,
+            contact_name: pushName,
+            contact_id: contactId,
+            incoming_message: content,
+            ai_reply: replyText,
+            category,
+            instance_id: instance.id,
+            user_id: instance.user_id,
+            timestamp: new Date().toISOString(),
+          };
+
+          const n8nRes = await fetch(agent.n8n_webhook_url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(webhookPayload),
+          });
+
+          console.log(`[ai-agent] n8n webhook response: ${n8nRes.status}`);
+        } catch (n8nErr) {
+          console.error("[ai-agent] n8n webhook error:", n8nErr);
+        }
+      }
     }
   } catch (err) {
     console.error("[ai-agent] Auto-reply error:", err);
