@@ -41,6 +41,7 @@ import WhatsAppAIAgent from "./pages/WhatsAppAIAgent";
 import MetaPixels from "./pages/MetaPixels";
 import MetaAudiences from "./pages/MetaAudiences";
 import WhatsAppCAPI from "./pages/WhatsAppCAPI";
+import ApolloDashboard from "./pages/ApolloDashboard";
 
 const queryClient = new QueryClient();
 
