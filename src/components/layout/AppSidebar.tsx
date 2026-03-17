@@ -29,6 +29,7 @@ import {
   Smartphone,
   Bot,
   Activity,
+  Radar,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -78,6 +79,7 @@ const automationItems = [
 
 // 📊 Análises
 const analyticsItems = [
+  { title: 'Apollo Diagnóstico', url: '/apollo', icon: Radar },
   { title: 'Relatórios', url: '/reports', icon: FileText },
   { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
 ];

@@ -41,6 +41,7 @@ import WhatsAppAIAgent from "./pages/WhatsAppAIAgent";
 import MetaPixels from "./pages/MetaPixels";
 import MetaAudiences from "./pages/MetaAudiences";
 import WhatsAppCAPI from "./pages/WhatsAppCAPI";
+import ApolloDashboard from "./pages/ApolloDashboard";
 
 const queryClient = new QueryClient();
 
@@ -88,6 +89,7 @@ const App = () => (
           <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
           <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
           <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
+          <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

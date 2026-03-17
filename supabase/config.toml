@@ -98,3 +98,6 @@ verify_jwt = false
 
 [functions.wa-capi-track-lead]
 verify_jwt = false
+
+[functions.apollo-analyze]
+verify_jwt = false
