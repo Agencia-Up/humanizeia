@@ -661,6 +661,11 @@ async function categorizeAndAutomate(
     // ===== AI Agent Auto-Reply =====
     await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
 
+    // ===== CAPI Lead Tracking: Send Lead event back to Meta =====
+    if (aiCategory.category === "interested" || aiCategory.category === "question") {
+      await sendCAPILeadEvent(supabase, instance.user_id, phone, aiCategory.category);
+    }
+
     const triggerEvent =
       aiCategory.category === "interested" ? "lead_interested" :
       aiCategory.category === "question" ? "lead_question" :
