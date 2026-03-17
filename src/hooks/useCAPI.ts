@@ -113,53 +113,74 @@ export interface CAPIEvent {
   custom_data?: Record<string, any>;
 }
 
-// Convenience hooks for common CAPI events
+// Full-funnel CAPI tracking hooks
 export function useCAPITracking() {
   const { sendEvents } = useCAPISend();
   const { pixels } = useMetaPixels();
 
   const getActivePixelId = () => pixels.find((p: any) => p.is_active)?.id;
 
+  const buildEvent = (eventName: string, opts: {
+    phone?: string; email?: string; value?: number;
+    currency?: string; source?: string; customData?: Record<string, any>;
+  } = {}): CAPIEvent => ({
+    event_name: eventName,
+    action_source: 'system_generated',
+    user_data: {
+      ...(opts.phone && { ph: [opts.phone] }),
+      ...(opts.email && { em: [opts.email] }),
+    },
+    custom_data: {
+      ...(opts.value !== undefined && { value: opts.value, currency: opts.currency || 'BRL' }),
+      source: opts.source || 'whatsapp',
+      ...opts.customData,
+    },
+  });
+
+  // Stage 1: Lead (first contact via WhatsApp)
   const trackLead = useCallback(
     async (data?: { phone?: string; email?: string; value?: number; source?: string }) => {
       const pixelId = getActivePixelId();
-      if (!pixelId) {
-        console.warn('[CAPI] No active pixel found');
-        return;
-      }
-      return sendEvents(pixelId, [{
-        event_name: 'Lead',
-        action_source: 'system_generated',
-        user_data: {
-          ...(data?.phone && { ph: [data.phone] }),
-          ...(data?.email && { em: [data.email] }),
-        },
-        custom_data: {
-          ...(data?.value && { value: data.value, currency: 'BRL' }),
-          source: data?.source || 'whatsapp',
-        },
-      }]);
+      if (!pixelId) { console.warn('[CAPI] No active pixel'); return; }
+      return sendEvents(pixelId, [buildEvent('Lead', data)]);
     },
     [pixels]
   );
 
+  // Stage 2: Qualified Lead (AI qualifies the contact)
+  const trackQualifiedLead = useCallback(
+    async (data?: { phone?: string; email?: string; source?: string }) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) return;
+      return sendEvents(pixelId, [buildEvent('CompleteRegistration', {
+        ...data,
+        customData: { status: 'qualified', lead_category: 'qualified' },
+      })]);
+    },
+    [pixels]
+  );
+
+  // Stage 3: Proposal/Checkout (user sends proposal)
+  const trackInitiateCheckout = useCallback(
+    async (data: { phone?: string; email?: string; value?: number; currency?: string }) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) return;
+      return sendEvents(pixelId, [buildEvent('InitiateCheckout', data)]);
+    },
+    [pixels]
+  );
+
+  // Stage 4: Purchase (sale confirmed)
   const trackPurchase = useCallback(
     async (data: { value: number; currency?: string; phone?: string; email?: string }) => {
       const pixelId = getActivePixelId();
       if (!pixelId) return;
-      return sendEvents(pixelId, [{
-        event_name: 'Purchase',
-        action_source: 'system_generated',
-        user_data: {
-          ...(data.phone && { ph: [data.phone] }),
-          ...(data.email && { em: [data.email] }),
-        },
-        custom_data: { value: data.value, currency: data.currency || 'BRL' },
-      }]);
+      return sendEvents(pixelId, [buildEvent('Purchase', data)]);
     },
     [pixels]
   );
 
+  // Custom event
   const trackCustom = useCallback(
     async (eventName: string, customData?: Record<string, any>, userData?: Record<string, any>) => {
       const pixelId = getActivePixelId();
@@ -174,5 +195,5 @@ export function useCAPITracking() {
     [pixels]
   );
 
-  return { trackLead, trackPurchase, trackCustom };
+  return { trackLead, trackQualifiedLead, trackInitiateCheckout, trackPurchase, trackCustom };
 }

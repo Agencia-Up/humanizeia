@@ -661,9 +661,22 @@ async function categorizeAndAutomate(
     // ===== AI Agent Auto-Reply =====
     await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
 
-    // ===== CAPI Lead Tracking: Send Lead event back to Meta =====
+    // ===== CAPI Full-Funnel Tracking =====
     if (aiCategory.category === "interested" || aiCategory.category === "question") {
-      await sendCAPILeadEvent(supabase, instance.user_id, phone, aiCategory.category);
+      // Stage 1: Lead event (first meaningful contact)
+      await sendCAPIEvent(supabase, instance.user_id, phone, "Lead", {
+        lead_category: aiCategory.category,
+        source: "whatsapp",
+      });
+    }
+
+    if (aiCategory.category === "interested") {
+      // Stage 2: Qualified Lead (contact shows buying intent)
+      await sendCAPIEvent(supabase, instance.user_id, phone, "CompleteRegistration", {
+        lead_category: "qualified",
+        source: "whatsapp",
+        status: "qualified",
+      });
     }
 
     const triggerEvent =
@@ -1666,26 +1679,28 @@ async function transcribeWithGemini(base64Audio: string, mimetype: string): Prom
   }
 }
 
-// ====================== CAPI LEAD EVENT ======================
+// ====================== CAPI FULL-FUNNEL EVENT SENDER ======================
 
-async function sendCAPILeadEvent(
+async function sendCAPIEvent(
   supabase: any,
   userId: string,
   phone: string,
-  category: string,
+  eventName: string,
+  customData: Record<string, any> = {},
+  extraUserData: Record<string, any> = {},
 ) {
   try {
     // Find user's active pixel
     const { data: pixel } = await supabase
       .from("meta_pixels")
-      .select("id, pixel_id, access_token_encrypted")
+      .select("id, pixel_id, access_token_encrypted, events_today, events_total")
       .eq("user_id", userId)
       .eq("is_active", true)
       .limit(1)
       .maybeSingle();
 
     if (!pixel) {
-      console.log("[capi-lead] No active pixel found for user, skipping CAPI event");
+      console.log(`[capi] No active pixel found, skipping ${eventName}`);
       return;
     }
 
@@ -1701,14 +1716,14 @@ async function sendCAPILeadEvent(
 
     const accessToken = pixel.access_token_encrypted || adAccount?.access_token_encrypted;
     if (!accessToken) {
-      console.log("[capi-lead] No access token available, queuing event");
+      console.log(`[capi] No access token, queuing ${eventName}`);
       await supabase.from("meta_capi_events").insert({
         user_id: userId,
         pixel_id: pixel.id,
-        event_name: "Lead",
+        event_name: eventName,
         action_source: "system_generated",
-        user_data: { ph: [phone] },
-        custom_data: { lead_category: category },
+        user_data: { ph: [phone], ...extraUserData },
+        custom_data: customData,
         status: "pending",
       });
       return;
@@ -1722,23 +1737,23 @@ async function sendCAPILeadEvent(
       .join("");
 
     const eventTime = Math.floor(Date.now() / 1000);
-    const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
 
-    const metaRes = await fetch(`${META_GRAPH_URL}/${pixel.pixel_id}/events`, {
+    const metaRes = await fetch(`https://graph.facebook.com/v21.0/${pixel.pixel_id}/events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         data: [
           {
-            event_name: "Lead",
+            event_name: eventName,
             event_time: eventTime,
             action_source: "system_generated",
             user_data: {
               ph: [hashedPhone],
+              ...extraUserData,
             },
             custom_data: {
-              lead_category: category,
-              source: "whatsapp",
+              ...customData,
+              source: customData.source || "whatsapp",
             },
           },
         ],
@@ -1752,11 +1767,11 @@ async function sendCAPILeadEvent(
     await supabase.from("meta_capi_events").insert({
       user_id: userId,
       pixel_id: pixel.id,
-      event_name: "Lead",
+      event_name: eventName,
       event_time: new Date().toISOString(),
       action_source: "system_generated",
-      user_data: { ph: [hashedPhone] },
-      custom_data: { lead_category: category, source: "whatsapp" },
+      user_data: { ph: [hashedPhone], ...extraUserData },
+      custom_data: { ...customData, source: customData.source || "whatsapp" },
       status: metaData.error ? "failed" : "sent",
       response_code: metaRes.status,
       response_body: metaData,
@@ -1775,11 +1790,11 @@ async function sendCAPILeadEvent(
       .eq("id", pixel.id);
 
     if (metaData.error) {
-      console.error("[capi-lead] Meta CAPI error:", metaData.error.message);
+      console.error(`[capi] ${eventName} error:`, metaData.error.message);
     } else {
-      console.log(`[capi-lead] Lead event sent for phone ${phone.substring(0, 6)}*** (${category})`);
+      console.log(`[capi] ${eventName} sent for ${phone.substring(0, 6)}***`);
     }
   } catch (err) {
-    console.error("[capi-lead] Error sending CAPI event:", err);
+    console.error(`[capi] Error sending ${eventName}:`, err);
   }
 }
