@@ -1043,6 +1043,92 @@ export type Database = {
           },
         ]
       }
+      creative_uploads: {
+        Row: {
+          ai_analysis: Json | null
+          ai_recommendations: string[] | null
+          ai_score: number | null
+          category: string | null
+          created_at: string
+          description: string | null
+          dimensions: string | null
+          duration_seconds: number | null
+          file_size_bytes: number | null
+          file_type: string
+          file_url: string
+          id: string
+          is_favorite: boolean | null
+          last_used_at: string | null
+          mime_type: string | null
+          name: string
+          organization_id: string | null
+          style: string | null
+          tags: string[] | null
+          thumbnail_url: string | null
+          updated_at: string
+          used_in_campaigns: number | null
+          user_id: string
+        }
+        Insert: {
+          ai_analysis?: Json | null
+          ai_recommendations?: string[] | null
+          ai_score?: number | null
+          category?: string | null
+          created_at?: string
+          description?: string | null
+          dimensions?: string | null
+          duration_seconds?: number | null
+          file_size_bytes?: number | null
+          file_type?: string
+          file_url: string
+          id?: string
+          is_favorite?: boolean | null
+          last_used_at?: string | null
+          mime_type?: string | null
+          name: string
+          organization_id?: string | null
+          style?: string | null
+          tags?: string[] | null
+          thumbnail_url?: string | null
+          updated_at?: string
+          used_in_campaigns?: number | null
+          user_id: string
+        }
+        Update: {
+          ai_analysis?: Json | null
+          ai_recommendations?: string[] | null
+          ai_score?: number | null
+          category?: string | null
+          created_at?: string
+          description?: string | null
+          dimensions?: string | null
+          duration_seconds?: number | null
+          file_size_bytes?: number | null
+          file_type?: string
+          file_url?: string
+          id?: string
+          is_favorite?: boolean | null
+          last_used_at?: string | null
+          mime_type?: string | null
+          name?: string
+          organization_id?: string | null
+          style?: string | null
+          tags?: string[] | null
+          thumbnail_url?: string | null
+          updated_at?: string
+          used_in_campaigns?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creative_uploads_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       creatives: {
         Row: {
           ai_analysis: Json | null
