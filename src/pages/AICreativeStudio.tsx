@@ -362,6 +362,51 @@ export default function AICreativeStudio() {
     setActiveTab('remove-bg');
   };
 
+  const handleSendToLibrary = async (image: GeneratedImage, index: number) => {
+    if (!user) {
+      toast({ title: 'Faça login para enviar à biblioteca', variant: 'destructive' });
+      return;
+    }
+    setSendingToLibrary(index);
+    try {
+      const base64Data = image.imageUrl.split(',')[1];
+      if (!base64Data) throw new Error('Imagem inválida');
+      const byteString = atob(base64Data);
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+      const blob = new Blob([ab], { type: 'image/png' });
+
+      const path = `${user.id}/library/${Date.now()}_${Math.random().toString(36).slice(2)}.png`;
+      const { error: uploadError } = await supabase.storage.from('creatives').upload(path, blob, { contentType: 'image/png' });
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage.from('creatives').getPublicUrl(path);
+      const dims: Record<string, string> = { 'feed-1x1': '1080x1080', 'feed-4x5': '1080x1350', 'stories-9x16': '1080x1920', 'reels-9x16': '1080x1920', 'landscape-16x9': '1920x1080', 'display-300x250': '300x250', 'display-728x90': '728x90' };
+
+      const { error: dbError } = await supabase.from('creative_uploads').insert({
+        user_id: user.id,
+        name: `Criativo ${format} - ${new Date().toLocaleDateString('pt-BR')}`,
+        file_url: publicUrl,
+        thumbnail_url: publicUrl,
+        file_type: 'image',
+        mime_type: 'image/png',
+        file_size_bytes: blob.size,
+        dimensions: dims[format] || format,
+        category: 'gerado-ia',
+        tags: [style, format, 'ai-generated'],
+        description: image.description || prompt,
+      });
+      if (dbError) throw dbError;
+      toast({ title: '📚 Enviado para Biblioteca!', description: 'Criativo disponível na Biblioteca de Criativos.' });
+    } catch (err) {
+      console.error('Send to library error:', err);
+      toast({ title: 'Erro ao enviar para biblioteca', description: err instanceof Error ? err.message : 'Erro desconhecido', variant: 'destructive' });
+    } finally {
+      setSendingToLibrary(null);
+    }
+  };
+
   const renderTabContent = () => (
     <>
       <TabsContent value="generate" className="mt-0 space-y-6">
