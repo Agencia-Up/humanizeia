@@ -1278,6 +1278,113 @@ export type Database = {
         }
         Relationships: []
       }
+      meta_capi_events: {
+        Row: {
+          action_source: string
+          created_at: string
+          custom_data: Json | null
+          error_message: string | null
+          event_name: string
+          event_source_url: string | null
+          event_time: string
+          id: string
+          pixel_id: string
+          response_body: Json | null
+          response_code: number | null
+          sent_at: string | null
+          status: string
+          user_data: Json | null
+          user_id: string
+        }
+        Insert: {
+          action_source?: string
+          created_at?: string
+          custom_data?: Json | null
+          error_message?: string | null
+          event_name: string
+          event_source_url?: string | null
+          event_time?: string
+          id?: string
+          pixel_id: string
+          response_body?: Json | null
+          response_code?: number | null
+          sent_at?: string | null
+          status?: string
+          user_data?: Json | null
+          user_id: string
+        }
+        Update: {
+          action_source?: string
+          created_at?: string
+          custom_data?: Json | null
+          error_message?: string | null
+          event_name?: string
+          event_source_url?: string | null
+          event_time?: string
+          id?: string
+          pixel_id?: string
+          response_body?: Json | null
+          response_code?: number | null
+          sent_at?: string | null
+          status?: string
+          user_data?: Json | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_capi_events_pixel_id_fkey"
+            columns: ["pixel_id"]
+            isOneToOne: false
+            referencedRelation: "meta_pixels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_pixels: {
+        Row: {
+          access_token_encrypted: string | null
+          created_at: string
+          domain: string | null
+          events_today: number | null
+          events_total: number | null
+          id: string
+          is_active: boolean
+          last_event_at: string | null
+          pixel_id: string
+          pixel_name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_token_encrypted?: string | null
+          created_at?: string
+          domain?: string | null
+          events_today?: number | null
+          events_total?: number | null
+          id?: string
+          is_active?: boolean
+          last_event_at?: string | null
+          pixel_id: string
+          pixel_name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_token_encrypted?: string | null
+          created_at?: string
+          domain?: string | null
+          events_today?: number | null
+          events_total?: number | null
+          id?: string
+          is_active?: boolean
+          last_event_at?: string | null
+          pixel_id?: string
+          pixel_name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       notifications: {
         Row: {
           action_label: string | null
