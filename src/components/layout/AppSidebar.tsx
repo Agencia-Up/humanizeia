@@ -78,6 +78,7 @@ const automationItems = [
 
 // 📊 Análises
 const analyticsItems = [
+  { title: 'Apollo Diagnóstico', url: '/apollo', icon: Radar },
   { title: 'Relatórios', url: '/reports', icon: FileText },
   { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
 ];
