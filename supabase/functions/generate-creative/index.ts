@@ -118,14 +118,18 @@ QUALITY: Professional advertising creative, polished, ultra high resolution, sha
 
     console.log("Generating", variations, "images with aspect ratio:", selectedAspectRatio);
 
-    // Generate images in parallel
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
 
-    const imagePromises = Array.from({ length: variations }, async (_, i) => {
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+    // Generate images sequentially with delay to avoid rate limits
+    const results: any[] = [];
+    for (let i = 0; i < variations; i++) {
+      if (i > 0) await sleep(3000); // 3s delay between requests
+
       try {
         const variationPrompt = `${imagePrompt}\n\nVariation ${i + 1} of ${variations}. Make this variation unique with slightly different composition or emphasis.`;
 
-        // Build message content - text only or multimodal with reference image
         const messageContent: any[] = [];
         if (referenceImage) {
           messageContent.push({
@@ -140,7 +144,7 @@ QUALITY: Professional advertising creative, polished, ultra high resolution, sha
           messageContent.push({ type: "text", text: variationPrompt });
         }
 
-        const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        let response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -154,7 +158,27 @@ QUALITY: Professional advertising creative, polished, ultra high resolution, sha
           }),
         });
 
-        // Fallback to direct Gemini Imagen API on 429/402
+        // Retry once after waiting on 429
+        if (response.status === 429) {
+          console.log(`Image ${i}: rate limited, waiting 10s and retrying...`);
+          await response.text();
+          await sleep(10000);
+          response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${LOVABLE_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "google/gemini-3.1-flash-image-preview",
+              messages: [{ role: "user", content: referenceImage ? messageContent : variationPrompt }],
+              modalities: ["image", "text"],
+              image_config: { aspect_ratio: selectedAspectRatio },
+            }),
+          });
+        }
+
+        // Fallback to direct Gemini API on 429/402 (only if key exists and is valid)
         if ((response.status === 429 || response.status === 402) && GEMINI_API_KEY) {
           console.log(`Image ${i}: Lovable AI returned ${response.status}, falling back to Gemini direct...`);
           await response.text();
@@ -177,26 +201,31 @@ QUALITY: Professional advertising creative, polished, ultra high resolution, sha
             if (imgPart) {
               const b64 = imgPart.inlineData.data;
               const mime = imgPart.inlineData.mimeType;
-              return { index: i, imageUrl: `data:${mime};base64,${b64}`, description: txtPart?.text || "" };
+              results.push({ index: i, imageUrl: `data:${mime};base64,${b64}`, description: txtPart?.text || "" });
+              continue;
             }
           } else {
             const errText = await geminiResponse.text();
             console.error(`Image ${i} Gemini fallback failed:`, geminiResponse.status, errText);
           }
-          return { index: i, error: response.status === 429 ? "rate_limit" : "payment_required", message: `Lovable AI: ${response.status}, Gemini fallback also failed` };
+          results.push({ index: i, error: response.status === 429 ? "rate_limit" : "payment_required", message: `Limite atingido. Aguarde alguns minutos e tente novamente.` });
+          continue;
         }
 
         if (response.status === 429) {
-          return { index: i, error: "rate_limit", message: "Rate limit exceeded" };
+          results.push({ index: i, error: "rate_limit", message: "Limite de requisições atingido. Aguarde 1-2 minutos." });
+          continue;
         }
         if (response.status === 402) {
-          return { index: i, error: "payment_required", message: "Credits exhausted" };
+          results.push({ index: i, error: "payment_required", message: "Créditos de IA esgotados. Adicione créditos em Settings → Workspace → Usage." });
+          continue;
         }
 
         if (!response.ok) {
           const text = await response.text();
           console.error(`Image ${i} generation failed:`, response.status, text);
-          return { index: i, error: "generation_failed", message: `Failed: ${response.status}` };
+          results.push({ index: i, error: "generation_failed", message: `Failed: ${response.status}` });
+          continue;
         }
 
         const data = await response.json();
@@ -205,17 +234,16 @@ QUALITY: Professional advertising creative, polished, ultra high resolution, sha
 
         if (!imageUrl) {
           console.error(`Image ${i}: no image in response`, JSON.stringify(data).slice(0, 500));
-          return { index: i, error: "no_image", message: "No image generated" };
+          results.push({ index: i, error: "no_image", message: "No image generated" });
+          continue;
         }
 
-        return { index: i, imageUrl, description };
+        results.push({ index: i, imageUrl, description });
       } catch (err) {
         console.error(`Image ${i} error:`, err);
-        return { index: i, error: "exception", message: err instanceof Error ? err.message : "Unknown error" };
+        results.push({ index: i, error: "exception", message: err instanceof Error ? err.message : "Unknown error" });
       }
-    });
-
-    const results = await Promise.all(imagePromises);
+    }
 
     const images = results
       .filter((r) => "imageUrl" in r && r.imageUrl)
