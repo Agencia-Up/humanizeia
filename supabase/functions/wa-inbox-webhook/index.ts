@@ -661,9 +661,22 @@ async function categorizeAndAutomate(
     // ===== AI Agent Auto-Reply =====
     await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
 
-    // ===== CAPI Lead Tracking: Send Lead event back to Meta =====
+    // ===== CAPI Full-Funnel Tracking =====
     if (aiCategory.category === "interested" || aiCategory.category === "question") {
-      await sendCAPILeadEvent(supabase, instance.user_id, phone, aiCategory.category);
+      // Stage 1: Lead event (first meaningful contact)
+      await sendCAPIEvent(supabase, instance.user_id, phone, "Lead", {
+        lead_category: aiCategory.category,
+        source: "whatsapp",
+      });
+    }
+
+    if (aiCategory.category === "interested") {
+      // Stage 2: Qualified Lead (contact shows buying intent)
+      await sendCAPIEvent(supabase, instance.user_id, phone, "CompleteRegistration", {
+        lead_category: "qualified",
+        source: "whatsapp",
+        status: "qualified",
+      });
     }
 
     const triggerEvent =
