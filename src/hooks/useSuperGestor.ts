@@ -100,7 +100,7 @@ export function useSuperGestor() {
     return result;
   }, [claude, addMessage]);
 
-  // Chat livre
+  // Chat livre (detects strategy responses automatically)
   const chat = useCallback(async (message: string, context?: CampaignContext) => {
     if (!message.trim()) return null;
     addMessage('user', message);
@@ -108,7 +108,21 @@ export function useSuperGestor() {
     const response = await claude.chat(message, context);
 
     if (response) {
-      addMessage('assistant', response);
+      // Check if the response is a StrategyResponse (has agentInstructions)
+      if (typeof response === 'object' && response !== null && 'agentInstructions' in response && 'strategy' in response) {
+        const strategyResponse = response as StrategyResponse;
+        setStrategy(strategyResponse);
+        addMessage(
+          'assistant',
+          `✨ **Estratégia gerada com sucesso!**\n\n${strategyResponse.strategy.summary}\n\n` +
+          `📋 **${strategyResponse.agentInstructions.length} ações** prontas para execução.\n` +
+          `Clique em **Publicar** para criar a campanha real ou **Simular** para testar.`,
+          'strategy',
+          strategyResponse
+        );
+      } else {
+        addMessage('assistant', response as string);
+      }
     } else {
       addMessage('assistant', `❌ **Erro:** ${claude.error || 'Erro ao enviar mensagem'}`);
     }
