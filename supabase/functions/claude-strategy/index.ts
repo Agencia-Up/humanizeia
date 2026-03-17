@@ -403,12 +403,50 @@ serve(async (req) => {
       );
     }
 
+    // Fetch user's creative library for strategy/chat actions
+    let creativesContext = '';
+    if (action === 'generateStrategy' || action === 'chat') {
+      try {
+        const { data: userCreatives } = await supabaseAuth
+          .from('creative_uploads')
+          .select('id, name, file_url, file_type, category, style, description, tags, ai_score, dimensions, created_at')
+          .eq('user_id', claimsData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (userCreatives && userCreatives.length > 0) {
+          const summary = userCreatives.map((c: any) => 
+            `- [${c.file_type.toUpperCase()}] "${c.name}" (Categoria: ${c.category}${c.style ? `, Estilo: ${c.style}` : ''}${c.dimensions ? `, ${c.dimensions}` : ''}${c.tags?.length ? `, Tags: ${c.tags.join(', ')}` : ''}${c.description ? `, Desc: ${c.description}` : ''}${c.ai_score ? `, Score: ${c.ai_score}/100` : ''}) URL: ${c.file_url}`
+          ).join('\n');
+
+          creativesContext = `\n\n## BIBLIOTECA DE CRIATIVOS DO USUÁRIO (${userCreatives.length} materiais disponíveis)
+${summary}
+
+INSTRUÇÕES SOBRE CRIATIVOS:
+- Analise os criativos disponíveis e SELECIONE os mais adequados para a campanha
+- Considere: tipo (imagem/vídeo), estilo visual, categoria e tags
+- Se os criativos não forem adequados, INFORME o usuário com feedback estratégico
+- Sugira quais tipos de criativos estão faltando para melhorar a performance
+- Ao criar instruções de anúncios (create_ad), inclua o campo "image_url" com a URL do criativo selecionado
+- Adicione um campo "selectedCreatives" no JSON da resposta com os IDs e motivos da seleção`;
+        } else {
+          creativesContext = `\n\n## BIBLIOTECA DE CRIATIVOS
+O usuário NÃO possui criativos na biblioteca. Informe que para criar campanhas com anúncios visuais, ele precisa:
+1. Acessar a Biblioteca de Criativos e enviar imagens/vídeos
+2. Categorizar os materiais por tipo (produto, lifestyle, prova social, etc.)
+3. Incluir variedade: vídeos curtos (até 30s), criativos com prova social, imagens com CTA claro`;
+        }
+      } catch (err) {
+        console.error('Error fetching creatives:', err);
+      }
+    }
+
     let prompt: string;
     let maxTokens: number;
 
     switch (action) {
       case 'generateStrategy':
-        prompt = buildStrategyPrompt(context);
+        prompt = buildStrategyPrompt(context) + creativesContext;
         maxTokens = 6000;
         break;
       case 'validateCampaign':
@@ -420,8 +458,8 @@ serve(async (req) => {
         maxTokens = 3000;
         break;
       case 'chat':
-        prompt = buildChatPrompt(message, context);
-        maxTokens = 2000;
+        prompt = buildChatPrompt(message, context) + creativesContext;
+        maxTokens = 3000;
         break;
       default:
         return new Response(
