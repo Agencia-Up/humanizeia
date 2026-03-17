@@ -28,6 +28,7 @@ import {
   Zap,
   Smartphone,
   Bot,
+  Activity,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -100,6 +101,7 @@ const whatsappItems = [
   { title: 'Automações', url: '/whatsapp/automations', icon: Zap },
   { title: 'Agente IA', url: '/whatsapp/ai-agent', icon: Bot },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
+  { title: 'CAPI Tracking', url: '/whatsapp/capi', icon: Activity },
 ];
 
 // ⚙️ Sistema

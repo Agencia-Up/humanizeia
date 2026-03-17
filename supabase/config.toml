@@ -95,3 +95,6 @@ verify_jwt = false
 
 [functions.meta-capi-track]
 verify_jwt = false
+
+[functions.wa-capi-track-lead]
+verify_jwt = false
