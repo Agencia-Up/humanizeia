@@ -175,6 +175,7 @@ export default function AICreativeStudio() {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [referenceFileName, setReferenceFileName] = useState<string | null>(null);
+  const [sendingToLibrary, setSendingToLibrary] = useState<number | null>(null);
   const refImageInputRef = useRef<HTMLInputElement>(null);
 
   const handleReferenceImageSelect = (file: File) => {
