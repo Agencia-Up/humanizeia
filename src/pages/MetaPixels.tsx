@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import MainLayout from '@/components/layout/MainLayout';
+import { MainLayout } from '@/components/layout/MainLayout';
 import { useMetaPixels, useCAPIEvents, useCAPISend } from '@/hooks/useCAPI';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
