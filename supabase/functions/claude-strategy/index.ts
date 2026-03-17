@@ -287,9 +287,68 @@ Analise os dados e retorne APENAS um JSON válido:
 }
 
 function buildChatPrompt(message: string, context?: CampaignContext): string {
-  let fullMessage = message;
-  if (context) {
+  let fullMessage = '';
+
+  // Detect campaign creation intent
+  const creationKeywords = [
+    'cri', 'criar', 'crie', 'monte', 'montar', 'gere', 'gerar',
+    'lance', 'lançar', 'faça', 'fazer', 'campanha', 'estratégia completa',
+    'publicar', 'configure', 'configurar'
+  ];
+  const msgLower = message.toLowerCase();
+  const isCreationIntent = creationKeywords.some(k => msgLower.includes(k)) &&
+    (msgLower.includes('campanha') || msgLower.includes('estratégia') || msgLower.includes('anúncio'));
+
+  if (isCreationIntent) {
+    fullMessage = `${message}
+
+IMPORTANTE: O usuário quer que você CRIE uma campanha real, não apenas explique como fazer.
+Se você tiver informações suficientes (produto, objetivo, orçamento, plataforma), retorne OBRIGATORIAMENTE um JSON executável no formato abaixo dentro de um bloco \`\`\`json.
+Se faltar alguma informação essencial, PERGUNTE ao usuário de forma objetiva o que falta.
+
+Informações essenciais mínimas:
+- Produto/serviço
+- Objetivo (vendas, leads, tráfego, awareness)
+- Orçamento (diário ou total)
+- Plataforma (meta, google, tiktok)
+
+Se tiver o mínimo, use valores padrão inteligentes para o resto e retorne o JSON:
+
+\`\`\`json
+{
+  "strategy": {
+    "summary": "Resumo da estratégia",
+    "approach": "Abordagem detalhada",
+    "expectedResults": { "impressions": "X", "clicks": "X", "conversions": "X", "estimatedCPA": "R$ X", "estimatedROAS": "Xx" }
+  },
+  "copies": {
+    "headlines": ["H1", "H2", "H3"],
+    "descriptions": ["D1", "D2"],
+    "primaryTexts": ["Texto 1"],
+    "ctas": ["Saiba Mais"]
+  },
+  "targeting": {
+    "primaryAudience": { "name": "Audiência", "description": "Desc", "demographics": {}, "interests": [] },
+    "secondaryAudiences": []
+  },
+  "optimization": {
+    "bidStrategy": "Menor custo",
+    "budgetAllocation": { "meta": 100 },
+    "testingPlan": []
+  },
+  "agentInstructions": [
+    { "id": "instr_001", "platform": "meta", "action": "create_campaign", "params": { "name": "...", "objective": "OUTCOME_SALES", "status": "PAUSED", "special_ad_categories": [] }, "priority": 1, "reason": "Criar campanha" },
+    { "id": "instr_002", "platform": "meta", "action": "create_adset", "params": { "campaign_id": "{{instr_001}}", "name": "...", "daily_budget": 5000, "status": "PAUSED", "targeting": { "geo_locations": { "countries": ["BR"] }, "age_min": 25, "age_max": 55 }, "optimization_goal": "OFFSITE_CONVERSIONS", "billing_event": "IMPRESSIONS", "bid_strategy": "LOWEST_COST_WITHOUT_CAP" }, "priority": 2, "dependsOn": ["instr_001"], "reason": "Criar conjunto" }
+  ]
+}
+\`\`\``;
+    if (context) {
+      fullMessage = `Contexto: ${context.product}, objetivo ${context.objective}, orçamento R$ ${context.budget}, plataformas: ${context.platforms.join(', ')}\n\n${fullMessage}`;
+    }
+  } else if (context) {
     fullMessage = `Contexto atual: ${context.product}, objetivo ${context.objective}, orçamento R$ ${context.budget}, plataformas: ${context.platforms.join(', ')}\n\nPergunta: ${message}`;
+  } else {
+    fullMessage = message;
   }
   return fullMessage;
 }
