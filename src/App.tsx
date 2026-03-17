@@ -40,6 +40,7 @@ import CriarCampanha from "./pages/CriarCampanha";
 import WhatsAppAIAgent from "./pages/WhatsAppAIAgent";
 import MetaPixels from "./pages/MetaPixels";
 import MetaAudiences from "./pages/MetaAudiences";
+import WhatsAppCAPI from "./pages/WhatsAppCAPI";
 
 const queryClient = new QueryClient();
 
