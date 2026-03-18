@@ -38,6 +38,8 @@ import WhatsAppAutomations from "./pages/WhatsAppAutomations";
 import WhatsAppInstances from "./pages/WhatsAppInstances";
 import CriarCampanha from "./pages/CriarCampanha";
 import WhatsAppAIAgent from "./pages/WhatsAppAIAgent";
+import MetaPixels from "./pages/MetaPixels";
+import MetaAudiences from "./pages/MetaAudiences";
 
 const queryClient = new QueryClient();
 
@@ -82,6 +84,8 @@ const App = () => (
           <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
           <Route path="/whatsapp/instances" element={<ProtectedRoute><WhatsAppInstances /></ProtectedRoute>} />
           <Route path="/whatsapp/ai-agent" element={<ProtectedRoute><WhatsAppAIAgent /></ProtectedRoute>} />
+          <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
+          <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
