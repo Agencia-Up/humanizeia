@@ -28,6 +28,7 @@ import {
   Zap,
   Smartphone,
   Bot,
+  TrendingUp,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
