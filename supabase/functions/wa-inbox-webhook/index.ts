@@ -1823,3 +1823,48 @@ async function sendCAPIEvent(
     console.error(`[capi] Error sending ${eventName}:`, err);
   }
 }
+
+// ====================== UTM/FBCLID EXTRACTION ======================
+
+function extractUTMParams(
+  messageText: string,
+  referral: any | null,
+): Record<string, string> {
+  const params: Record<string, string> = {};
+
+  // 1. Extract from Meta referral object (Click-to-WhatsApp ads)
+  if (referral) {
+    if (referral.source_url) {
+      try {
+        const url = new URL(referral.source_url);
+        const fbclid = url.searchParams.get("fbclid");
+        const utmSource = url.searchParams.get("utm_source");
+        const utmCampaign = url.searchParams.get("utm_campaign");
+        if (fbclid) params.fbclid = fbclid;
+        if (utmSource) params.utm_source = utmSource;
+        if (utmCampaign) params.utm_campaign = utmCampaign;
+      } catch { /* invalid URL */ }
+    }
+    // Meta ad referral fields
+    if (referral.headline) params.utm_campaign = params.utm_campaign || referral.headline;
+    if (referral.source_type === "ad" && !params.utm_source) params.utm_source = "meta_ads";
+  }
+
+  // 2. Extract from URLs found in message text
+  const urlRegex = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi;
+  const urls = messageText.match(urlRegex) || [];
+
+  for (const rawUrl of urls) {
+    try {
+      const url = new URL(rawUrl);
+      const fbclid = url.searchParams.get("fbclid");
+      const utmSource = url.searchParams.get("utm_source");
+      const utmCampaign = url.searchParams.get("utm_campaign");
+      if (fbclid && !params.fbclid) params.fbclid = fbclid;
+      if (utmSource && !params.utm_source) params.utm_source = utmSource;
+      if (utmCampaign && !params.utm_campaign) params.utm_campaign = utmCampaign;
+    } catch { /* invalid URL */ }
+  }
+
+  return params;
+}
