@@ -338,7 +338,7 @@ export default function CaptureForms() {
                   </div>
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>{form.submission_count} submissões</span>
-                    <Badge variant={form.is_active ? 'default' : 'secondary'} className={form.is_active ? 'bg-green-500/20 text-green-400 border-green-500/30' : ''}>
+                    <Badge variant={form.is_active ? 'default' : 'secondary'} className={form.is_active ? 'bg-primary/20 text-primary border-primary/30' : ''}>
                       {form.is_active ? 'Ativo' : 'Inativo'}
                     </Badge>
                   </div>
