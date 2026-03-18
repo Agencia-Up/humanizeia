@@ -357,43 +357,55 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     messageType = "sticker";
   }
 
-  const { data: contact } = await supabase
-    .from("wa_contacts")
-    .select("id")
-    .eq("user_id", instance.user_id)
-    .eq("phone", phone)
-    .limit(1)
-    .maybeSingle();
+    // ===== Extract UTMs/fbclid from Evolution message text =====
+    const utmParams = extractUTMParams(content, null);
 
-  const { data: inboxMsg, error: insertErr } = await supabase
-    .from("wa_inbox")
-    .insert({
-      user_id: instance.user_id,
-      instance_id: instance.id,
-      contact_id: contact?.id || null,
-      phone,
-      contact_name: pushName,
-      direction: "incoming",
-      message_type: messageType,
-      content,
-      media_url: mediaUrl,
-      remote_message_id: remoteMessageId,
-      is_read: false,
-    })
-    .select("id")
-    .single();
+    const { data: contact } = await supabase
+      .from("wa_contacts")
+      .select("id")
+      .eq("user_id", instance.user_id)
+      .eq("phone", phone)
+      .limit(1)
+      .maybeSingle();
 
-  if (insertErr) {
-    console.error("Insert inbox error:", insertErr);
-    return new Response(JSON.stringify({ error: "Failed to save message" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+    // Update contact with UTM data if available
+    if (contact?.id && Object.keys(utmParams).length > 0) {
+      await supabase
+        .from("wa_contacts")
+        .update(utmParams)
+        .eq("id", contact.id);
+      console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
+    }
 
-  if (content && content.trim().length > 0) {
-    await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget);
-  }
+    const { data: inboxMsg, error: insertErr } = await supabase
+      .from("wa_inbox")
+      .insert({
+        user_id: instance.user_id,
+        instance_id: instance.id,
+        contact_id: contact?.id || null,
+        phone,
+        contact_name: pushName,
+        direction: "incoming",
+        message_type: messageType,
+        content,
+        media_url: mediaUrl,
+        remote_message_id: remoteMessageId,
+        is_read: false,
+      })
+      .select("id")
+      .single();
+
+    if (insertErr) {
+      console.error("Insert inbox error:", insertErr);
+      return new Response(JSON.stringify({ error: "Failed to save message" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (content && content.trim().length > 0) {
+      await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget);
+    }
 
   return new Response(
     JSON.stringify({ ok: true, inbox_id: inboxMsg.id }),
