@@ -22,7 +22,12 @@ import {
   Activity,
   Shield,
   Zap,
+  MessageSquarePlus,
+  History,
+  ChevronLeft,
 } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 const ApolloAgent = () => {
   const [input, setInput] = useState('');
