@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -14,13 +14,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
-import { supabase } from '@/integrations/supabase/client';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   Loader2, Plus, Eye, Sparkles, Clock, RotateCcw, CalendarIcon,
   Image, Video, FileText, Music, X, Tag, Pencil, Smartphone,
-  Flame, Info, Zap, MessageSquare, Upload, Trash2,
+  Flame, Info,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -39,9 +38,6 @@ export interface CampaignFormData {
   media_type: string;
   tags: string[];
   variation_level: string;
-  include_optout_buttons: boolean;
-  reply_auto_tag: string;
-  reply_auto_message: string;
 }
 
 interface ContactList {
@@ -107,11 +103,6 @@ export function CampaignFormDialog({
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [variationLevel, setVariationLevel] = useState<string>('medium');
-  const [includeOptoutButtons, setIncludeOptoutButtons] = useState(false);
-  const [replyAutoTag, setReplyAutoTag] = useState('');
-  const [replyAutoMessage, setReplyAutoMessage] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isEditing = !!editingCampaign;
 
@@ -132,9 +123,6 @@ export function CampaignFormDialog({
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
       setVariationLevel(editingCampaign.variation_level || 'medium');
-      setIncludeOptoutButtons(editingCampaign.include_optout_buttons ?? false);
-      setReplyAutoTag(editingCampaign.reply_auto_tag || '');
-      setReplyAutoMessage(editingCampaign.reply_auto_message || '');
       if (editingCampaign.start_time) {
         const d = new Date(editingCampaign.start_time);
         setStartDate(d);
@@ -166,9 +154,6 @@ export function CampaignFormDialog({
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
     setTags([]); setTagInput('');
     setVariationLevel('medium');
-    setIncludeOptoutButtons(false);
-    setReplyAutoTag('');
-    setReplyAutoMessage('');
   };
 
   const buildTimestamp = (date: Date | undefined, time: string): string | null => {
@@ -195,9 +180,6 @@ export function CampaignFormDialog({
       media_type: mediaType,
       tags,
       variation_level: variationLevel,
-      include_optout_buttons: includeOptoutButtons,
-      reply_auto_tag: replyAutoTag,
-      reply_auto_message: replyAutoMessage,
     });
   };
 
@@ -353,108 +335,22 @@ export function CampaignFormDialog({
                 <Image className="h-4 w-4 text-muted-foreground" />
                 Anexo de Mídia (opcional)
               </Label>
-              <Select value={mediaType || 'none'} onValueChange={v => { setMediaType(v === 'none' ? '' : v); if (v === 'none') { setMediaUrl(''); } }}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Tipo de mídia" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Sem mídia</SelectItem>
-                  {mediaTypeOptions.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {mediaType && !mediaUrl && (
-                <div
-                  className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-all"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    className="hidden"
-                    accept={
-                      mediaType === 'image' ? 'image/png,image/jpeg,image/webp' :
-                      mediaType === 'video' ? 'video/mp4,video/quicktime' :
-                      mediaType === 'audio' ? 'audio/mpeg,audio/ogg,audio/wav' :
-                      mediaType === 'document' ? '.pdf,.doc,.docx,.xls,.xlsx' : '*/*'
-                    }
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-
-                      const maxSize = mediaType === 'video' ? 16 * 1024 * 1024 : 5 * 1024 * 1024;
-                      if (file.size > maxSize) {
-                        alert(`Arquivo muito grande. Máximo: ${mediaType === 'video' ? '16MB' : '5MB'}`);
-                        return;
-                      }
-
-                      setIsUploading(true);
-                      try {
-                        const ext = file.name.split('.').pop() || 'bin';
-                        const filePath = `campaign-media/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-                        const { error: uploadError } = await supabase.storage
-                          .from('creatives')
-                          .upload(filePath, file, { contentType: file.type });
-
-                        if (uploadError) throw uploadError;
-
-                        const { data: urlData } = supabase.storage
-                          .from('creatives')
-                          .getPublicUrl(filePath);
-
-                        setMediaUrl(urlData.publicUrl);
-                      } catch (err: any) {
-                        alert('Erro no upload: ' + (err.message || 'Tente novamente'));
-                      } finally {
-                        setIsUploading(false);
-                        if (fileInputRef.current) fileInputRef.current.value = '';
-                      }
-                    }}
-                  />
-                  {isUploading ? (
-                    <div className="flex flex-col items-center gap-2">
-                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <p className="text-sm text-muted-foreground">Enviando arquivo...</p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2">
-                      <Upload className="h-8 w-8 text-muted-foreground" />
-                      <p className="text-sm font-medium text-foreground">Clique para fazer upload</p>
-                      <p className="text-xs text-muted-foreground">
-                        {mediaType === 'image' && 'PNG, JPG, WebP • Máx 5MB'}
-                        {mediaType === 'video' && 'MP4, MOV • Máx 16MB'}
-                        {mediaType === 'audio' && 'MP3, OGG, WAV • Máx 5MB'}
-                        {mediaType === 'document' && 'PDF, DOC, XLS • Máx 5MB'}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {mediaType && mediaUrl && (
-                <div className="border border-border rounded-lg p-3 flex items-center gap-3">
-                  {mediaType === 'image' ? (
-                    <img src={mediaUrl} alt="Preview" className="h-16 w-16 object-cover rounded" />
-                  ) : (
-                    <div className="h-16 w-16 bg-muted rounded flex items-center justify-center">
-                      {mediaType === 'video' && <Video className="h-6 w-6 text-muted-foreground" />}
-                      {mediaType === 'audio' && <Music className="h-6 w-6 text-muted-foreground" />}
-                      {mediaType === 'document' && <FileText className="h-6 w-6 text-muted-foreground" />}
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">
-                      {mediaType === 'image' ? 'Imagem' : mediaType === 'video' ? 'Vídeo' : mediaType === 'audio' ? 'Áudio' : 'Documento'} anexado
-                    </p>
-                    <p className="text-xs text-muted-foreground truncate">{mediaUrl.split('/').pop()}</p>
-                  </div>
-                  <Button variant="ghost" size="icon" className="shrink-0" onClick={() => { setMediaUrl(''); setMediaType(''); }}>
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Select value={mediaType || 'none'} onValueChange={v => setMediaType(v === 'none' ? '' : v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Tipo de mídia" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sem mídia</SelectItem>
+                    {mediaTypeOptions.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {mediaType && (
+                  <Input placeholder="URL da mídia" value={mediaUrl} onChange={e => setMediaUrl(e.target.value)} />
+                )}
+              </div>
             </div>
 
             <Separator />
@@ -611,84 +507,6 @@ export function CampaignFormDialog({
               <p className="text-xs text-muted-foreground italic">
                 Salvo como: {`{ "enabled": ${warmupEnabled}, "initial_messages": ${warmupInitial} }`}
               </p>
-            </div>
-
-            <Separator />
-
-            {/* Opt-in / Opt-out Buttons */}
-            <div className="space-y-3">
-              <Label className="flex items-center gap-1.5">
-                ✋ Botões de Opt-in / Opt-out
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                Adiciona botões interativos na primeira mensagem para novos leads, permitindo que eles optem por continuar ou parar de receber mensagens. Leads que clicarem em "Não quero mais" serão automaticamente movidos para a blacklist.
-              </p>
-              <div className="flex items-center gap-3">
-                <Switch checked={includeOptoutButtons} onCheckedChange={setIncludeOptoutButtons} id="optout-buttons" />
-                <Label htmlFor="optout-buttons" className="text-sm cursor-pointer">
-                  {includeOptoutButtons ? 'Botões ativados' : 'Botões desativados'}
-                </Label>
-              </div>
-              {includeOptoutButtons && (
-                <div className="bg-muted/50 rounded-md p-3 space-y-1.5 text-xs">
-                  <p className="font-medium">Prévia dos botões:</p>
-                  <div className="flex gap-2 mt-1">
-                    <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20">✅ Quero Continuar Recebendo</Badge>
-                    <Badge variant="secondary" className="bg-destructive/10 text-destructive border-destructive/20">❌ Não Quero Mais Receber</Badge>
-                  </div>
-                  <p className="text-muted-foreground mt-1">
-                    Contatos que clicarem em "Não quero mais" serão adicionados à blacklist e excluídos de futuros disparos.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <Separator />
-
-            {/* Auto-Tag & Auto-Reply on Response */}
-            <div className="space-y-4">
-              <Label className="flex items-center gap-1.5">
-                <Zap className="h-4 w-4 text-primary" />
-                Automações ao Receber Resposta
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                Configure ações automáticas quando um contato responder ao disparo desta campanha.
-              </p>
-
-              {/* Auto-Tag */}
-              <div className="space-y-2 bg-muted/30 rounded-lg p-3">
-                <Label className="text-xs font-medium flex items-center gap-1.5">
-                  <Tag className="h-3.5 w-3.5 text-muted-foreground" />
-                  Tag automática ao responder
-                </Label>
-                <Input
-                  placeholder="Ex: tem interesse, respondeu campanha..."
-                  value={replyAutoTag}
-                  onChange={e => setReplyAutoTag(e.target.value)}
-                  maxLength={50}
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Quando o contato responder, esta tag será adicionada automaticamente ao contato.
-                </p>
-              </div>
-
-              {/* Auto-Reply Message */}
-              <div className="space-y-2 bg-muted/30 rounded-lg p-3">
-                <Label className="text-xs font-medium flex items-center gap-1.5">
-                  <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-                  Mensagem automática de follow-up
-                </Label>
-                <Textarea
-                  placeholder="Ex: Que bom que você se interessou! Vou te passar mais detalhes..."
-                  value={replyAutoMessage}
-                  onChange={e => setReplyAutoMessage(e.target.value)}
-                  rows={3}
-                  maxLength={2000}
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Uma mensagem de continuidade será enviada automaticamente quando o contato responder ao disparo.
-                </p>
-              </div>
             </div>
 
             <Separator />

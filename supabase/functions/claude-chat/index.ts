@@ -320,13 +320,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-
-    if (!ANTHROPIC_API_KEY && !LOVABLE_API_KEY) {
-      console.error('No AI API key configured');
+    if (!LOVABLE_API_KEY) {
+      console.error('LOVABLE_API_KEY not configured');
       return new Response(
-        JSON.stringify({ error: 'Nenhuma chave de IA configurada.' }),
+        JSON.stringify({ error: 'API key not configured. Please enable Lovable AI.' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -334,13 +332,14 @@ Deno.serve(async (req) => {
     const body: RequestBody = await req.json();
     const { messages, context, config, stream = true } = body;
 
-    console.log('AI chat request:', { context, messagesCount: messages.length, config, provider: ANTHROPIC_API_KEY ? 'anthropic' : 'lovable' });
+    console.log('AI chat request:', { context, messagesCount: messages.length, config });
 
-    // Build system prompt
+    // Build system prompt with context-specific additions
     let systemPrompt = systemPrompts[context] || systemPrompts.assistant;
-
+    
+    // Add config context to system prompt if provided
     if (config) {
-      const configContext: string[] = [];
+      const configContext = [];
       if (config.platform) configContext.push(`Plataforma: ${config.platform}`);
       if (config.adType) configContext.push(`Tipo de anúncio: ${config.adType}`);
       if (config.tone) configContext.push(`Tom de voz: ${config.tone}`);
@@ -353,243 +352,126 @@ Deno.serve(async (req) => {
       if (config.description) configContext.push(`Descrição: ${config.description}`);
       if (config.campaignData) configContext.push(`Dados da campanha: ${JSON.stringify(config.campaignData)}`);
       if (config.metricsData) configContext.push(`Métricas: ${JSON.stringify(config.metricsData)}`);
-
+      
       if (configContext.length > 0) {
         systemPrompt += `\n\nCONTEXTO DA SOLICITAÇÃO:\n${configContext.join('\n')}`;
       }
 
+      // Inject swipe file examples for the copywriter context
       if (config.swipeFileExamples && context === 'copywriter') {
-        systemPrompt += `\n\n## SWIPE FILE DO USUÁRIO\nUse estas copies como INSPIRAÇÃO de estilo, tom e estrutura:\n\n${config.swipeFileExamples}\n\nIMPORTANTE: Suas novas copies devem igualar ou superar esse nível.`;
+        systemPrompt += `\n\n## SWIPE FILE DO USUÁRIO (copies de referência que ele considera as melhores)\nUse estas copies como INSPIRAÇÃO de estilo, tom e estrutura. Analise o que funciona nelas e aplique os mesmos padrões nas novas copies geradas. NÃO copie literalmente, mas absorva a essência:\n\n${config.swipeFileExamples}\n\nIMPORTANTE: Essas copies são o padrão de qualidade do usuário. Suas novas copies devem igualar ou superar esse nível.`;
       }
     }
 
-    const creativityLevel = config?.creativity ?? 5;
-    const temperature = 0.3 + (creativityLevel - 1) * (0.9 / 9);
-
-    // ─── PROVIDER 1: Anthropic Claude (Primary) ───
-    if (ANTHROPIC_API_KEY) {
-      console.log('Using Anthropic Claude (claude-sonnet-4-20250514) as primary provider...');
-
-      const anthropicMessages = messages.map((msg: Message) => ({
+    // Format messages for Lovable AI (OpenAI-compatible format)
+    const aiMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(msg => ({
         role: msg.role,
-        content: msg.content,
-      }));
+        content: msg.content
+      }))
+    ];
 
-      try {
-        const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 4096,
-            system: systemPrompt,
-            messages: anthropicMessages,
-            stream: !!stream,
+    // Map creativity level (1-10) to temperature (0.3-1.2)
+    const creativityLevel = config?.creativity ?? 5;
+    const temperature = 0.3 + (creativityLevel - 1) * (0.9 / 9); // 1→0.3, 5→0.7, 10→1.2
+
+    console.log('Calling Lovable AI Gateway...', { temperature, creativityLevel });
+
+    let response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-3-flash-preview',
+        messages: aiMessages,
+        stream: stream,
+        max_tokens: 4096,
+        temperature: parseFloat(temperature.toFixed(2))
+      })
+    });
+
+    // Fallback to direct Gemini API on 429/402
+    if (response.status === 429 || response.status === 402) {
+      const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+      if (GEMINI_API_KEY) {
+        console.log(`Lovable AI returned ${response.status}, falling back to direct Gemini API...`);
+        await response.text(); // consume body
+
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const geminiBody = {
+          contents: aiMessages.map(m => ({
+            role: m.role === 'system' ? 'user' : m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.role === 'system' ? `[System Instructions]\n${m.content}` : m.content }]
+          })),
+          generationConfig: {
             temperature: parseFloat(temperature.toFixed(2)),
-          }),
-        });
-
-        if (anthropicResponse.ok) {
-          if (stream) {
-            // Transform Anthropic SSE → OpenAI-compatible SSE for the frontend
-            const reader = anthropicResponse.body!.getReader();
-            const encoder = new TextEncoder();
-            const decoder = new TextDecoder();
-
-            const transformedStream = new ReadableStream({
-              async start(controller) {
-                let buffer = '';
-                try {
-                  while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-                      controller.close();
-                      break;
-                    }
-                    buffer += decoder.decode(value, { stream: true });
-
-                    let newlineIdx: number;
-                    while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
-                      let line = buffer.slice(0, newlineIdx);
-                      buffer = buffer.slice(newlineIdx + 1);
-                      if (line.endsWith('\r')) line = line.slice(0, -1);
-                      if (!line.startsWith('data: ') || line.trim() === '') continue;
-
-                      const jsonStr = line.slice(6).trim();
-                      if (!jsonStr) continue;
-
-                      try {
-                        const event = JSON.parse(jsonStr);
-
-                        if (event.type === 'content_block_delta' && event.delta?.text) {
-                          const openaiChunk = {
-                            choices: [{ delta: { content: event.delta.text } }],
-                          };
-                          controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
-                        } else if (event.type === 'message_stop') {
-                          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-                          controller.close();
-                          return;
-                        } else if (event.type === 'error') {
-                          const errChunk = { error: event.error?.message || 'Erro do Claude' };
-                          controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));
-                          controller.close();
-                          return;
-                        }
-                      } catch {
-                        // ignore parse errors on individual SSE lines
-                      }
-                    }
-                  }
-                } catch (err) {
-                  console.error('Stream transform error:', err);
-                  controller.close();
-                }
-              },
-            });
-
-            return new Response(transformedStream, {
-              headers: {
-                ...corsHeaders,
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-              },
-            });
-          } else {
-            const data = await anthropicResponse.json();
-            const text = data.content
-              ?.filter((block: any) => block.type === 'text')
-              ?.map((block: any) => block.text)
-              ?.join('') || '';
-
-            const compatResponse = {
-              choices: [{ message: { role: 'assistant', content: text } }],
-              _provider: 'anthropic',
-            };
-            return new Response(JSON.stringify(compatResponse), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          }
-        } else {
-          const errText = await anthropicResponse.text();
-          console.error('Anthropic API error:', anthropicResponse.status, errText);
-          // Fall through to Lovable AI fallback below
-        }
-      } catch (err) {
-        console.error('Anthropic request failed:', err);
-        // Fall through to Lovable AI fallback below
-      }
-    }
-
-    // ─── PROVIDER 2: Lovable AI Gateway (Fallback) ───
-    if (LOVABLE_API_KEY) {
-      console.log('Using Lovable AI Gateway as fallback...');
-
-      const aiMessages = [
-        { role: 'system', content: systemPrompt },
-        ...messages.map((msg: Message) => ({ role: msg.role, content: msg.content })),
-      ];
-
-      let response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-3-flash-preview',
-          messages: aiMessages,
-          stream: stream,
-          max_tokens: 4096,
-          temperature: parseFloat(temperature.toFixed(2)),
-        }),
-      });
-
-      // Fallback to direct Gemini API on 429/402
-      if (response.status === 429 || response.status === 402) {
-        const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-        if (GEMINI_API_KEY) {
-          console.log(`Lovable AI returned ${response.status}, falling back to direct Gemini API...`);
-          await response.text();
-
-          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-          const geminiBody = {
-            contents: aiMessages.map(m => ({
-              role: m.role === 'system' ? 'user' : m.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: m.role === 'system' ? `[System Instructions]\n${m.content}` : m.content }],
-            })),
-            generationConfig: {
-              temperature: parseFloat(temperature.toFixed(2)),
-              maxOutputTokens: 4096,
-            },
-          };
-
-          const geminiResponse = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(geminiBody),
-          });
-
-          if (geminiResponse.ok) {
-            const geminiData = await geminiResponse.json();
-            const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            return new Response(JSON.stringify({
-              choices: [{ message: { role: 'assistant', content: text } }],
-              _fallback: 'gemini-direct',
-            }), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          } else {
-            const errText = await geminiResponse.text();
-            console.error('Gemini fallback also failed:', geminiResponse.status, errText);
-          }
-        }
-
-        const statusMsg = response.status === 429
-          ? 'Limite de requisições atingido. Tente novamente em alguns segundos.'
-          : 'Créditos insuficientes.';
-        return new Response(
-          JSON.stringify({ error: statusMsg }),
-          { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Lovable AI error:', response.status, errorText);
-        return new Response(
-          JSON.stringify({ error: 'Erro no serviço de IA', details: errorText }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      if (stream) {
-        return new Response(response.body, {
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
+            maxOutputTokens: 4096,
           },
+        };
+
+        const geminiResponse = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(geminiBody),
         });
-      } else {
-        const data = await response.json();
-        return new Response(JSON.stringify(data), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+
+        if (geminiResponse.ok) {
+          const geminiData = await geminiResponse.json();
+          const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          // Return in OpenAI-compatible format (non-streaming fallback)
+          const compatResponse = {
+            choices: [{ message: { role: 'assistant', content: text } }],
+            _fallback: 'gemini-direct',
+          };
+          return new Response(JSON.stringify(compatResponse), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        } else {
+          const errText = await geminiResponse.text();
+          console.error('Gemini fallback also failed:', geminiResponse.status, errText);
+        }
       }
+
+      // If fallback not available or also failed
+      const statusMsg = response.status === 429
+        ? 'Limite de requisições atingido. Tente novamente em alguns segundos.'
+        : 'Créditos insuficientes. Adicione créditos ao workspace.';
+      return new Response(
+        JSON.stringify({ error: statusMsg }),
+        { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    return new Response(
-      JSON.stringify({ error: 'Nenhum provedor de IA disponível.' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Lovable AI error:', response.status, errorText);
+      return new Response(
+        JSON.stringify({ error: 'Erro no serviço de IA', details: errorText }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (stream) {
+      // Return streaming response
+      return new Response(response.body, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive'
+        }
+      });
+    } else {
+      // Return non-streaming response
+      const data = await response.json();
+      return new Response(
+        JSON.stringify(data),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
   } catch (error) {
     console.error('AI chat error:', error);

@@ -6,23 +6,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Process ONE item per invocation to avoid edge function timeout with humanized delays
-const BATCH_SIZE = 1;
+const BATCH_SIZE = 20;
 const MAX_RETRIES = 5;
-// Items stuck in "processing" for more than this time (ms) are considered stale
-const STALE_LOCK_MS = 90_000; // 90 seconds
 const CIRCUIT_BREAKER_THRESHOLD = 5;
-const OUTBOUND_FETCH_TIMEOUT_MS = 10_000;
-const PRESENCE_FETCH_TIMEOUT_MS = 2_500;
-const AI_FETCH_TIMEOUT_MS = 12_000;
-
-// ===== ANTI-BAN: Default safety limits =====
-const DEFAULT_DAILY_LIMIT_NEW_INSTANCE = 10; // New numbers (<3 days): max 10 msgs/day
-const DEFAULT_DAILY_LIMIT_MATURE_INSTANCE = 200; // Mature numbers (>14 days): max 200 msgs/day
-const WARMUP_RAMP_DAYS = 14; // Days to reach full capacity
-const COLD_CONTACT_MIN_DELAY_SECONDS = 45; // Minimum delay for cold contacts (no prior interaction)
-const COLD_CONTACT_MAX_DELAY_SECONDS = 120; // Maximum delay for cold contacts
-const NUMBER_VALIDATION_TIMEOUT_MS = 5_000;
 
 const instanceFailures = new Map<string, number>();
 
@@ -72,13 +58,6 @@ interface Campaign {
   regras_aquecimento: any;
   started_at: string | null;
   variation_level: string;
-  sent_count: number;
-  instance_id: string | null;
-  include_optout_buttons: boolean;
-}
-
-interface SendResult {
-  remoteMessageId: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -91,20 +70,6 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
-
-    // ===== RECOVER STALE LOCKS =====
-    // Reset items stuck in "processing" for too long (edge function timed out previously)
-    const staleThreshold = new Date(Date.now() - STALE_LOCK_MS).toISOString();
-    const { data: staleItems, error: staleErr } = await supabase
-      .from("wa_queue")
-      .update({ status: "pending" })
-      .eq("status", "processing")
-      .lt("scheduled_for", staleThreshold)
-      .select("id");
-
-    if (!staleErr && staleItems && staleItems.length > 0) {
-      console.log(`Recovered ${staleItems.length} stale processing items back to pending`);
-    }
 
     const { data: queueItems, error: queueErr } = await supabase
       .from("wa_queue")
@@ -137,7 +102,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons")
+        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -146,48 +111,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ===== CHECK: Skip campaigns that are paused/cancelled BEFORE fetching instances =====
-    const activeCampaignIds = new Set<string>();
-    for (const cid of campaignIds) {
-      const campaign = campaignMap.get(cid);
-      if (campaign) {
-        // Re-check status from DB (in case it was just paused)
-        const { data: freshStatus } = await supabase
-          .from("wa_campaigns")
-          .select("status")
-          .eq("id", cid)
-          .single();
-        if (freshStatus && (freshStatus.status === "paused" || freshStatus.status === "cancelled")) {
-          console.log(`Campaign ${cid} is ${freshStatus.status}, returning all its items to pending`);
-          await supabase
-            .from("wa_queue")
-            .update({ status: "pending" })
-            .eq("campaign_id", cid)
-            .eq("status", "processing");
-        } else {
-          activeCampaignIds.add(cid);
-        }
-      }
-    }
-
-    // Filter items to only process active campaigns
-    const activeItems = items.filter(
-      (i) => !i.campaign_id || activeCampaignIds.has(i.campaign_id)
-    );
-
-    if (activeItems.length === 0) {
-      return new Response(JSON.stringify({ processed: 0, message: "All campaigns paused" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     // Fetch instances per user
-    const userIds = [...new Set(activeItems.map((i) => i.user_id))];
+    const userIds = [...new Set(items.map((i) => i.user_id))];
     const instanceMap = new Map<string, Instance[]>();
-    const todaySentByInstance = new Map<string, number>();
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTodayIso = startOfToday.toISOString();
 
     for (const uid of userIds) {
       const { data: instances } = await supabase
@@ -197,75 +123,21 @@ Deno.serve(async (req) => {
         .eq("is_active", true)
         .eq("status", "connected")
         .order("health_score", { ascending: false });
-
       if (instances && instances.length > 0) {
-        const typedInstances = instances as unknown as Instance[];
-        instanceMap.set(uid, typedInstances);
-
-        const instanceIds = typedInstances.map((inst) => inst.id);
-        const { data: todaySentRows } = await supabase
-          .from("wa_queue")
-          .select("instance_id")
-          .in("instance_id", instanceIds)
-          .in("status", ["sent", "delivered", "read"])
-          .gte("sent_at", startOfTodayIso);
-
-        if (todaySentRows) {
-          for (const row of todaySentRows as Array<{ instance_id: string | null }>) {
-            if (!row.instance_id) continue;
-            todaySentByInstance.set(row.instance_id, (todaySentByInstance.get(row.instance_id) || 0) + 1);
-          }
-        }
+        instanceMap.set(uid, instances as unknown as Instance[]);
       }
     }
 
+    const rotationCounters = new Map<string, { index: number; count: number }>();
     let processed = 0, succeeded = 0, failed = 0;
 
-    // Track recent message hashes to prevent duplicate messages
-    const recentMessageHashes = new Set<string>();
-
-    for (const item of activeItems) {
-      let selectedInstance: Instance | null = null;
+    for (const item of items) {
       try {
-        // ===== RE-CHECK campaign status before EVERY single message =====
-        if (item.campaign_id) {
-          const { data: liveStatus } = await supabase
-            .from("wa_campaigns")
-            .select("status")
-            .eq("id", item.campaign_id)
-            .single();
-
-          if (liveStatus && (liveStatus.status === "paused" || liveStatus.status === "cancelled")) {
-            console.log(`Campaign ${item.campaign_id} paused/cancelled mid-batch, stopping`);
-            await supabase
-              .from("wa_queue")
-              .update({ status: "pending" })
-              .eq("id", item.id);
-            processed++;
-            continue;
-          }
-        }
-
-        const { data: lockRow, error: lockErr } = await supabase
+        await supabase
           .from("wa_queue")
-          .update({
-            status: "processing",
-            // Reuse scheduled_for as lock timestamp for reliable stale-lock recovery
-            scheduled_for: new Date().toISOString(),
-          })
+          .update({ status: "processing" })
           .eq("id", item.id)
-          .eq("status", "pending")
-          .select("id")
-          .maybeSingle();
-
-        if (lockErr) {
-          throw new Error(`Failed to lock queue item: ${lockErr.message}`);
-        }
-
-        // Another worker already took this item
-        if (!lockRow) {
-          continue;
-        }
+          .eq("status", "pending");
 
         const campaign = item.campaign_id ? campaignMap.get(item.campaign_id) : null;
         const userInstances = instanceMap.get(item.user_id);
@@ -277,12 +149,7 @@ Deno.serve(async (req) => {
 
         // --- Smart Switcher: Instance Selection ---
         const instance = await selectSmartInstance(
-          supabase,
-          userInstances,
-          item,
-          campaign,
-          instanceFailures,
-          todaySentByInstance,
+          supabase, userInstances, item, campaign, rotationCounters, instanceFailures
         );
 
         if (!instance) {
@@ -290,174 +157,57 @@ Deno.serve(async (req) => {
           failed++; processed++; continue;
         }
 
-        selectedInstance = instance;
-
-        // --- Generate UNIQUE AI message for EACH contact ---
+        // --- Message Polymorphism: AI Generation ---
         let finalMessage = item.message;
         const variationLevel = campaign?.variation_level || "medium";
 
         if (campaign?.prompt_base) {
-          let genAttempts = 0;
-          const maxGenAttempts = 3;
-          let messageIsUnique = false;
-
-          while (genAttempts < maxGenAttempts && !messageIsUnique) {
-            try {
-              finalMessage = await generateAIMessage(
-                campaign.prompt_base,
-                item.phone,
-                item.contact_name,
-                item.contact_metadata,
-                variationLevel,
-                campaign.message_template,
-                supabase,
-                item.user_id
-              );
-
-              const hash = await generateHash(finalMessage);
-              if (!recentMessageHashes.has(hash)) {
-                recentMessageHashes.add(hash);
-                messageIsUnique = true;
-              } else {
-                console.log(`Duplicate message detected, regenerating (attempt ${genAttempts + 1})`);
-                genAttempts++;
-              }
-            } catch (aiErr) {
-              console.error("AI generation failed, using template with variation:", aiErr);
-              // Fallback: add random suffix to template
-              const suffixes = ["", " 😊", " 👋", "!", " 🙂", " ✨", ".", " 💡", " 🚀", " 📲"];
-              const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-              finalMessage = (campaign.message_template || item.message) + suffix;
-              messageIsUnique = true;
-            }
+          try {
+            finalMessage = await generateAIMessage(
+              campaign.prompt_base,
+              item.phone,
+              item.contact_name,
+              item.contact_metadata,
+              variationLevel,
+              campaign.message_template,
+              supabase,
+              item.user_id
+            );
+          } catch (aiErr) {
+            console.error("AI generation failed, using template:", aiErr);
+            finalMessage = campaign.message_template || item.message;
           }
         }
 
         const messageHash = await generateHash(finalMessage);
-        recentMessageHashes.add(messageHash);
 
-        // Cleanup old hashes (keep last 30)
-        if (recentMessageHashes.size > 30) {
-          const arr = Array.from(recentMessageHashes);
-          for (let i = 0; i < arr.length - 30; i++) {
-            recentMessageHashes.delete(arr[i]);
-          }
-        }
+        // --- Simulate Human Behavior ---
+        const typingDelay = 1000 + Math.random() * 2000;
+        await simulateTyping(instance, item.phone, typingDelay);
+        await sleep(500 + Math.random() * 1500);
 
-        // ===== ANTI-BAN: Validate number exists on WhatsApp before sending =====
-        if (instance.provider === "evolution") {
-          const numberValid = await validateWhatsAppNumber(instance, item.phone);
-          if (!numberValid) {
-            console.log(`Number ${item.phone} not on WhatsApp, skipping`);
-            await supabase
-              .from("wa_queue")
-              .update({ status: "failed", error_message: "Número não possui WhatsApp" })
-              .eq("id", item.id);
-            failed++; processed++; continue;
-          }
-        }
+        // --- Send via Provider Abstraction ---
+        await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
 
-        // ===== HUMANIZED SENDING SEQUENCE (kept short to fit edge function timeout) =====
-
-        // Step 1: Go online (simulate opening WhatsApp)
-        await simulateOnlinePresence(instance, item.phone);
-        await sleep(300 + Math.random() * 600); // keep fast to stay inside edge timeout
-
-        // Step 2: Type with realistic speed (bounded)
-        const messageLength = finalMessage.length;
-        const typingSpeedCps = 18 + Math.random() * 10;
-        const totalTypingMs = Math.max(800, Math.min((messageLength / typingSpeedCps) * 1000, 4000));
-        await simulateTyping(instance, item.phone, totalTypingMs);
-
-        // Step 3: Brief review before hitting send
-        await sleep(200 + Math.random() * 500);
-
-        // Step 5: SEND (re-check pause right before sending)
-        if (item.campaign_id) {
-          const { data: statusBeforeSend } = await supabase
-            .from("wa_campaigns")
-            .select("status")
-            .eq("id", item.campaign_id)
-            .single();
-
-          if (statusBeforeSend && (statusBeforeSend.status === "paused" || statusBeforeSend.status === "cancelled")) {
-            await supabase
-              .from("wa_queue")
-              .update({ status: "pending" })
-              .eq("id", item.id);
-            processed++;
-            continue;
-          }
-        }
-
-        // Decide if opt-in/opt-out buttons should be sent
-        const shouldSendOptoutButtons = campaign?.include_optout_buttons &&
-          !item.contact_metadata?.last_message_at; // only for first-time contacts
-
-        let sendResult: SendResult;
-        if (shouldSendOptoutButtons && instance.provider === "evolution") {
-          // Send message with interactive buttons via Evolution API
-          sendResult = await sendEvolutionButtonMessage(instance, item.phone, finalMessage, [
-            { buttonId: "optout_continue", buttonText: { displayText: "✅ Quero Continuar Recebendo" } },
-            { buttonId: "optout_stop", buttonText: { displayText: "❌ Não Quero Mais Receber" } },
-          ]);
-        } else {
-          sendResult = await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
-        }
         instanceFailures.set(instance.id, 0);
 
-        // Step 6: Read receipt
-        await sleep(200 + Math.random() * 500);
-        await simulateReadReceipt(instance, item.phone);
-
         // Mark success
-        const sentAt = new Date().toISOString();
         await supabase
           .from("wa_queue")
           .update({
             status: "sent",
-            sent_at: sentAt,
+            sent_at: new Date().toISOString(),
             message: finalMessage,
             instance_id: instance.id,
             message_hash: messageHash,
           })
           .eq("id", item.id);
 
-        // ===== SHADOW BAN DETECTION: Increment consecutive_undelivered =====
-        // When a delivery receipt arrives, it will reset this counter.
-        // If it reaches 10+, the instance is flagged as shadow-banned.
-        await supabase.rpc("increment_consecutive_undelivered", { iid: instance.id }).catch((err: any) => {
-          console.warn("increment_consecutive_undelivered failed:", err);
-        });
-
-        // ===== SAVE TO CRM INBOX =====
-        // Store every outgoing message so conversations appear in the unified inbox
-        const { error: inboxErr } = await supabase.from("wa_inbox").insert({
-          user_id: item.user_id,
-          campaign_id: item.campaign_id || null,
-          instance_id: instance.id,
-          phone: item.phone.replace(/\D/g, ""),
-          contact_name: item.contact_name || null,
-          direction: "outgoing",
-          message_type: item.media_type || "text",
-          content: finalMessage,
-          media_url: item.media_url || null,
-          remote_message_id: sendResult.remoteMessageId,
-          is_read: true,
-          created_at: sentAt,
-        });
-        if (inboxErr) {
-          console.warn("Failed to save outgoing message to inbox:", inboxErr);
-        }
-
-        // Update instance counters based on real sent count of the current day
-        const nextTodaySent = (todaySentByInstance.get(instance.id) ?? instance.messages_sent_today ?? 0) + 1;
-        todaySentByInstance.set(instance.id, nextTodaySent);
-
+        // Update instance counters
         await supabase
           .from("wa_instances")
           .update({
-            messages_sent_today: nextTodaySent,
+            messages_sent_today: instance.messages_sent_today + 1,
             last_message_at: new Date().toISOString(),
             last_used_at: new Date().toISOString(),
           })
@@ -471,102 +221,54 @@ Deno.serve(async (req) => {
         }
 
         if (item.campaign_id) {
-          const { error: rpcErr } = await supabase.rpc("increment_campaign_sent", { cid: item.campaign_id });
-          if (rpcErr) console.error("increment_campaign_sent failed:", rpcErr);
-          if (campaign) campaign.sent_count = (campaign.sent_count || 0) + 1;
+          await supabase.rpc("increment_campaign_sent", { cid: item.campaign_id });
         }
 
         succeeded++;
 
-        // ===== SCHEDULE NEXT ITEM WITH HUMANIZED DELAY =====
-        // Instead of sleeping (which can timeout the edge function),
-        // we push the scheduled_for of the next pending item forward.
+        // Delay between messages
         const delayRules = campaign?.regras_delay || {};
-        const rotationRules = campaign?.regras_rodizio || {};
-        
-        // ===== ANTI-BAN: Use MUCH longer delays for cold contacts =====
-        const isCurrentContactCold = !item.contact_metadata?.last_message_at;
-        const configuredMinD = delayRules.min || campaign?.min_delay_seconds || 20;
-        const configuredMaxD = delayRules.max || campaign?.max_delay_seconds || 60;
-        
-        const minD = isCurrentContactCold
-          ? Math.max(configuredMinD, COLD_CONTACT_MIN_DELAY_SECONDS)
-          : configuredMinD;
-        const maxD = isCurrentContactCold
-          ? Math.max(configuredMaxD, COLD_CONTACT_MAX_DELAY_SECONDS)
-          : configuredMaxD;
-        
-        const delaySec = minD + Math.random() * (maxD - minD);
-        // 30% chance of longer pause for cold contacts (was 20%)
-        const longPauseChance = isCurrentContactCold ? 0.35 : 0.20;
-        const longPauseSec = Math.random() < longPauseChance ? (60 + Math.random() * 120) : 0;
-
-        const rotationLimit = Math.max(
-          1,
-          rotationRules.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10,
-        );
-        const rotationPauseSec =
-          campaign &&
-          rotationRules.pausa_entre_instancias > 0 &&
-          campaign.sent_count > 0 &&
-          campaign.sent_count % rotationLimit === 0
-            ? rotationRules.pausa_entre_instancias
-            : 0;
-
-        const totalDelaySec = delaySec + longPauseSec + rotationPauseSec;
-
-        const nextScheduledFor = new Date(Date.now() + totalDelaySec * 1000).toISOString();
-        console.log(`Next message scheduled in ${Math.round(totalDelaySec)}s (cold=${isCurrentContactCold})`);
-
-        // Update the next pending item for this campaign to respect the delay
-        if (item.campaign_id) {
-          const { data: nextItems } = await supabase
-            .from("wa_queue")
-            .select("id")
-            .eq("campaign_id", item.campaign_id)
-            .eq("status", "pending")
-            .order("scheduled_for", { ascending: true })
-            .limit(1);
-
-          if (nextItems && nextItems.length > 0) {
-            await supabase
-              .from("wa_queue")
-              .update({ scheduled_for: nextScheduledFor })
-              .eq("id", nextItems[0].id);
-          }
-        }
-
+        const minD = (delayRules.min || campaign?.min_delay_seconds || 5) * 1000;
+        const maxD = (delayRules.max || campaign?.max_delay_seconds || 15) * 1000;
+        await sleep(minD + Math.random() * (maxD - minD));
       } catch (err) {
         console.error(`Error processing queue item ${item.id}:`, err);
         const errMsg = err instanceof Error ? err.message : "Unknown error";
 
         // Circuit breaker
-        if (selectedInstance) {
-          const currentFailures = (instanceFailures.get(selectedInstance.id) || 0) + 1;
-          instanceFailures.set(selectedInstance.id, currentFailures);
-          if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
-            console.warn(`Circuit breaker triggered for instance ${selectedInstance.id}`);
-            const { error: healthErr } = await supabase.rpc("decrement_instance_health", {
-              instance_id: selectedInstance.id,
-              decrement_value: 30,
-            });
-            if (healthErr) console.error("Health decrement failed:", healthErr);
+        const rotKey = item.campaign_id || item.user_id;
+        const rot = rotationCounters.get(rotKey);
+        const userInstances = instanceMap.get(item.user_id);
+        if (rot && userInstances) {
+          const failedInstance = userInstances[rot.index % userInstances.length];
+          if (failedInstance) {
+            const currentFailures = (instanceFailures.get(failedInstance.id) || 0) + 1;
+            instanceFailures.set(failedInstance.id, currentFailures);
+            if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+              console.warn(`Circuit breaker triggered for instance ${failedInstance.id}`);
+              await supabase.rpc("decrement_instance_health", {
+                instance_id: failedInstance.id,
+                decrement_value: 30,
+              }).catch((e: any) => console.error("Health decrement failed:", e));
 
+              // Trigger failover for banned instance
               try {
                 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-                await fetchWithTimeout(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
+                await fetch(`${supabaseUrl}/functions/v1/handle-instance-ban`, {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
                   },
                   body: JSON.stringify({
-                    instance_id: selectedInstance.id,
+                    instance_id: failedInstance.id,
                     user_id: item.user_id,
                   }),
-                }, OUTBOUND_FETCH_TIMEOUT_MS);
-            } catch (failoverErr) {
-              console.error("Failover trigger failed:", failoverErr);
+                });
+                console.log(`Failover triggered for instance ${failedInstance.id}`);
+              } catch (failoverErr) {
+                console.error("Failover trigger failed:", failoverErr);
+              }
             }
           }
         }
@@ -592,7 +294,6 @@ Deno.serve(async (req) => {
 
     // Check campaign completion
     for (const cid of campaignIds) {
-      if (!activeCampaignIds.has(cid)) continue; // Don't mark paused as completed
       const { count } = await supabase
         .from("wa_queue")
         .select("id", { count: "exact", head: true })
@@ -626,120 +327,86 @@ async function selectSmartInstance(
   userInstances: Instance[],
   item: QueueItem,
   campaign: Campaign | null,
-  failures: Map<string, number>,
-  todaySentByInstance: Map<string, number>,
+  rotationCounters: Map<string, { index: number; count: number }>,
+  failures: Map<string, number>
 ): Promise<Instance | null> {
   const aquecimento = campaign?.regras_aquecimento || {};
   const warmupDailyLimit = aquecimento.limite_diario_inicial || null;
-  const warmupRampDays = aquecimento.dias_rampa || WARMUP_RAMP_DAYS;
+  const warmupRampDays = aquecimento.dias_rampa || 7;
 
   const rodizio = campaign?.regras_rodizio || {};
-  const rotationLimit = Math.max(1, rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10);
+  const rotationLimit = rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10;
+  const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
+  const rotKey = item.campaign_id || item.user_id;
 
-  // Use ALL active instances for rotation
-  const scopedInstances = userInstances.length > 1
-    ? userInstances
-    : campaign?.instance_id
-      ? userInstances.filter((inst) => inst.id === campaign.instance_id)
-      : userInstances;
+  if (!rotationCounters.has(rotKey)) {
+    rotationCounters.set(rotKey, { index: 0, count: 0 });
+  }
+  const rot = rotationCounters.get(rotKey)!;
 
-  if (scopedInstances.length === 0) {
-    return null;
+  if (rot.count >= rotationLimit) {
+    rot.index = (rot.index + 1) % userInstances.length;
+    rot.count = 0;
+    if (pauseBetweenInstances > 0) await sleep(pauseBetweenInstances * 1000);
   }
 
-  // ===== ROTATION FIX: Query REAL per-instance sent counts for THIS campaign =====
-  // This is the source of truth — no race conditions with campaign.sent_count
-  const campaignInstanceCounts = new Map<string, number>();
-  for (const inst of scopedInstances) {
-    campaignInstanceCounts.set(inst.id, 0);
-  }
+  // Determine if contact is "cold" (no prior messages) for predictive routing
+  const isContactCold = !item.contact_metadata?.last_message_at;
 
-  if (item.campaign_id && scopedInstances.length > 1) {
-    const instanceIds = scopedInstances.map(i => i.id);
-    const { data: perInstCounts } = await supabase
-      .from("wa_queue")
-      .select("instance_id")
-      .eq("campaign_id", item.campaign_id)
-      .in("instance_id", instanceIds)
-      .in("status", ["sent", "delivered", "read"]);
-
-    if (perInstCounts) {
-      for (const row of perInstCounts as Array<{ instance_id: string }>) {
-        if (!row.instance_id) continue;
-        campaignInstanceCounts.set(row.instance_id, (campaignInstanceCounts.get(row.instance_id) || 0) + 1);
+  // Sort candidates: for cold leads, prioritize highest health_score; for warm leads, prefer least recently used
+  // Weighted random selection based on health_score for better load distribution
+  const sortedInstances = [...userInstances].sort((a, b) => {
+    if (isContactCold) {
+      // Weighted random: higher health_score = higher probability
+      const totalHealth = userInstances.reduce((sum, inst) => sum + inst.health_score, 0);
+      if (totalHealth > 0) {
+        const aWeight = a.health_score / totalHealth;
+        const bWeight = b.health_score / totalHealth;
+        return bWeight - aWeight;
       }
+      return b.health_score - a.health_score;
     }
-  }
-
-  // Determine which instance should be active based on real counts
-  // Strategy: Fill each instance up to rotationLimit before moving to next
-  // Order instances deterministically (by id to be stable across invocations)
-  const orderedInstances = [...scopedInstances].sort((a, b) => a.id.localeCompare(b.id));
-
-  // Find the "current" instance: the first one that hasn't reached rotationLimit yet in its current slot
-  // Total sent across all instances for this campaign
-  const totalCampaignSent = Array.from(campaignInstanceCounts.values()).reduce((a, b) => a + b, 0);
-  const rotationCycle = Math.floor(totalCampaignSent / rotationLimit);
-  const currentInstanceIndex = rotationCycle % orderedInstances.length;
-
-  console.log(`[ROTATION] totalSent=${totalCampaignSent}, rotationLimit=${rotationLimit}, cycle=${rotationCycle}, currentIdx=${currentInstanceIndex}, perInstance=${JSON.stringify(Object.fromEntries(campaignInstanceCounts))}`);
+    // For warm leads, prefer instances that have been used recently (continuity)
+    const aTime = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+    const bTime = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+    return bTime - aTime;
+  });
 
   let instance: Instance | null = null;
 
-  // Try the current rotation instance first, then fall back to others
-  for (let attempts = 0; attempts < orderedInstances.length; attempts++) {
-    const candidate = orderedInstances[(currentInstanceIndex + attempts) % orderedInstances.length];
+  for (let attempts = 0; attempts < sortedInstances.length; attempts++) {
+    const candidate = sortedInstances[(rot.index + attempts) % sortedInstances.length];
     const candidateFailures = failures.get(candidate.id) || 0;
 
     if (candidateFailures >= CIRCUIT_BREAKER_THRESHOLD) continue;
 
-    // ===== ANTI-BAN: Enforce daily limits (warmup OR default) =====
-    const instanceAgeDays = candidate.created_at
-      ? Math.floor((Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24))
-      : 999;
-
-    let dailyLimit: number;
-
-    if (warmupDailyLimit) {
-      // User-configured warmup
+    // Warmup check
+    if (warmupDailyLimit && candidate.created_at) {
+      const instanceAgeDays = Math.floor(
+        (Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24)
+      );
       if (instanceAgeDays < warmupRampDays) {
         const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / warmupRampDays);
-        dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
-      } else {
-        dailyLimit = warmupDailyLimit;
+        const dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
+        if (candidate.messages_sent_today >= dailyLimit) continue;
       }
-    } else {
-      // DEFAULT safety warmup (always applied when no custom config)
-      if (instanceAgeDays < WARMUP_RAMP_DAYS) {
-        const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / WARMUP_RAMP_DAYS);
-        dailyLimit = Math.max(5, Math.floor(DEFAULT_DAILY_LIMIT_NEW_INSTANCE + (DEFAULT_DAILY_LIMIT_MATURE_INSTANCE - DEFAULT_DAILY_LIMIT_NEW_INSTANCE) * rampMultiplier));
-      } else {
-        dailyLimit = DEFAULT_DAILY_LIMIT_MATURE_INSTANCE;
-      }
-    }
-
-    const candidateSentToday = todaySentByInstance.get(candidate.id) ?? candidate.messages_sent_today ?? 0;
-
-    if (candidateSentToday >= dailyLimit) {
-      console.log(`Instance ${candidate.instance_name} hit daily limit (${candidateSentToday}/${dailyLimit}), skipping`);
-      continue;
     }
 
     if (candidate.health_score < 20) continue;
 
+    // Provider-specific daily limits
     if (candidate.provider === "meta") {
+      // Meta API has a 250/day limit for new numbers, 1000/day after quality rating
       const metaLimit = candidate.health_score >= 80 ? 1000 : 250;
-      if (candidateSentToday >= metaLimit) continue;
+      if (candidate.messages_sent_today >= metaLimit) continue;
     }
 
     instance = candidate;
+    rot.index = (rot.index + attempts) % sortedInstances.length;
     break;
   }
 
-  // Never sleep here: long pauses must be applied by scheduling the NEXT item
-  const pauseBetweenInstances = rodizio.pausa_entre_instancias || 0;
-  void pauseBetweenInstances;
-
+  if (instance) rot.count++;
   return instance;
 }
 
@@ -751,11 +418,12 @@ async function sendMessageByProvider(
   text: string,
   mediaUrl: string | null,
   mediaType: string | null
-): Promise<SendResult> {
+) {
   if (instance.provider === "meta") {
-    return await sendToMetaAPI(instance, phone, text, mediaUrl, mediaType);
+    await sendToMetaAPI(instance, phone, text, mediaUrl, mediaType);
+  } else {
+    await sendToEvolutionAPI(instance, phone, text, mediaUrl, mediaType);
   }
-  return await sendToEvolutionAPI(instance, phone, text, mediaUrl, mediaType);
 }
 
 async function sendToMetaAPI(
@@ -764,7 +432,7 @@ async function sendToMetaAPI(
   text: string,
   mediaUrl: string | null,
   mediaType: string | null
-): Promise<SendResult> {
+) {
   const config = instance.meta_config || {};
   const phoneNumberId = config.phone_number_id;
   const accessToken = config.access_token_encrypted;
@@ -803,27 +471,20 @@ async function sendToMetaAPI(
     };
   }
 
-  const response = await fetchWithTimeout(url, {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(messageBody),
-  }, OUTBOUND_FETCH_TIMEOUT_MS);
+  });
 
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`Meta API error: ${response.status} - ${errText}`);
   }
-
-  const data = await response.json().catch(() => ({}));
-  const remoteMessageId = data?.messages?.[0]?.id || data?.message_id || null;
-
-  return { remoteMessageId };
 }
-
-// ====================== EVOLUTION API (V2 COMPATIBLE) ======================
 
 async function sendToEvolutionAPI(
   instance: Instance,
@@ -831,209 +492,42 @@ async function sendToEvolutionAPI(
   text: string,
   mediaUrl: string | null,
   mediaType: string | null
-): Promise<SendResult> {
+) {
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
-
-  // ===== PRE-FLIGHT: Verify instance is actually connected =====
-  await verifyEvolutionConnection(instance);
 
   if (mediaUrl && mediaType) {
-    // Evolution API v2: /message/sendMedia/{instance}
-    const v2Endpoint = `${apiUrl}/message/sendMedia/${instance.instance_name}`;
-    const v1Endpoints: Record<string, string> = {
-      image: "sendImage",
-      video: "sendVideo",
-      audio: "sendAudio",
-      document: "sendDocument",
-    };
+    const endpoint =
+      mediaType === "image" ? "sendImage" :
+      mediaType === "video" ? "sendVideo" :
+      mediaType === "audio" ? "sendAudio" : "sendDocument";
 
-    const mediaPayload = {
-      number,
-      mediatype: mediaType,
-      media: mediaUrl,
-      caption: text || "",
-      fileName: mediaType === "document" ? "file" : undefined,
-    };
-
-    let response = await fetchWithTimeout(v2Endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify(mediaPayload),
-    }, OUTBOUND_FETCH_TIMEOUT_MS);
-
-    if (response.status === 404) {
-      await response.text(); // consume v2 body
-      const v1Action = v1Endpoints[mediaType] || "sendDocument";
-      response = await fetchWithTimeout(`${apiUrl}/message/${v1Action}/${instance.instance_name}`, {
+    const response = await fetch(
+      `${apiUrl}/message/${endpoint}/${instance.instance_name}`,
+      {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-        body: JSON.stringify(mediaPayload),
-      }, OUTBOUND_FETCH_TIMEOUT_MS);
-    }
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Evolution API error (sendMedia): ${response.status} - ${errText}`);
-    }
-    const responseBody = await response.text();
-    const remoteMessageId = validateEvolutionResponse(responseBody, "sendMedia");
-    return { remoteMessageId };
-  }
-
-  const response = await fetchWithTimeout(
-    `${apiUrl}/message/sendText/${instance.instance_name}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify({ number, text }),
-    },
-    OUTBOUND_FETCH_TIMEOUT_MS
-  );
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
-  }
-  const responseBody = await response.text();
-  const remoteMessageId = validateEvolutionResponse(responseBody, "sendText");
-  return { remoteMessageId };
-}
-
-// ===== Verify instance connection status before sending =====
-async function verifyEvolutionConnection(instance: Instance) {
-  const apiUrl = instance.api_url.replace(/\/+$/, "");
-  try {
-    const response = await fetchWithTimeout(
-      `${apiUrl}/instance/connectionState/${instance.instance_name}`,
-      {
-        method: "GET",
-        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      },
-      5000
+        body: JSON.stringify({ number, mediatype: mediaType, media: mediaUrl, caption: text }),
+      }
     );
-
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Instance ${instance.instance_name} connection check failed: ${response.status} - ${errText}`);
+      throw new Error(`Evolution API error (${endpoint}): ${response.status} - ${errText}`);
     }
-
-    const data = await response.json();
-    // Evolution API returns { instance: { state: "open" } } when connected
-    const state = data?.instance?.state || data?.state || data?.connectionState;
-    
-    if (state && state !== "open" && state !== "connected") {
-      throw new Error(`Instance ${instance.instance_name} is not connected (state: ${state}). Reconnect the WhatsApp number.`);
-    }
-  } catch (err) {
-    if (err instanceof Error && (err.message.includes("not connected") || err.message.includes("connection check failed"))) {
-      throw err; // Re-throw connection errors
-    }
-    // If the connection check endpoint itself fails (404, timeout), log warning but proceed
-    console.warn(`Connection check for ${instance.instance_name} failed (non-critical):`, err);
-  }
-}
-
-// ===== Validate Evolution API response body for actual delivery =====
-function validateEvolutionResponse(responseBody: string, action: string): string | null {
-  try {
-    const data = JSON.parse(responseBody);
-
-    // Check for error indicators in response body even with 200 status
-    if (data.error) {
-      throw new Error(`Evolution API ${action} returned error in body: ${JSON.stringify(data.error)}`);
-    }
-
-    // Check for "not connected" or similar states in response
-    if (data.status === "ERROR" || data.status === "error") {
-      throw new Error(`Evolution API ${action} returned error status: ${data.message || JSON.stringify(data)}`);
-    }
-
-    const remoteMessageId =
-      data.key?.id ||
-      data.messageId ||
-      data.id ||
-      data.message?.key?.id ||
-      null;
-
-    if (remoteMessageId) {
-      console.log(`Message sent successfully via ${action}: ${remoteMessageId}`);
-      return remoteMessageId;
-    }
-
-    console.warn(`Evolution API ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
-    return null;
-  } catch (err) {
-    if (err instanceof Error && (err.message.includes("returned error") || err.message.includes("returned error status"))) {
-      throw err;
-    }
-    // JSON parse error — log but don't block (some versions return plain text on success)
-    console.warn(`Could not parse Evolution API ${action} response: ${responseBody.substring(0, 200)}`);
-    return null;
-  }
-}
-
-// ====================== EVOLUTION INTERACTIVE BUTTONS ======================
-
-async function sendEvolutionButtonMessage(
-  instance: Instance,
-  phone: string,
-  text: string,
-  buttons: Array<{ buttonId: string; buttonText: { displayText: string } }>,
-): Promise<SendResult> {
-  const apiUrl = instance.api_url.replace(/\/+$/, "");
-  const number = phone.replace(/\D/g, "");
-
-  // Verify connection before sending
-  await verifyEvolutionConnection(instance);
-
-  // Try Evolution API v2 buttons endpoint first
-  const payload = {
-    number,
-    title: "",
-    description: text,
-    buttons: buttons.map(b => ({
-      type: "reply",
-      title: b.buttonText.displayText.slice(0, 20), // WhatsApp button limit
-    })),
-    footer: "",
-  };
-
-  let response = await fetchWithTimeout(
-    `${apiUrl}/message/sendButtons/${instance.instance_name}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify(payload),
-    },
-    OUTBOUND_FETCH_TIMEOUT_MS,
-  );
-
-  // Fallback: if buttons endpoint fails, send as plain text with button text appended
-  if (!response.ok) {
-    const errText = await response.text();
-    console.warn(`[optout-buttons] Button send failed (${response.status}): ${errText}. Falling back to text.`);
-
-    const buttonLabels = buttons.map(b => `▪️ ${b.buttonText.displayText}`).join("\n");
-    const fallbackText = `${text}\n\n📋 _Responda com uma das opções:_\n${buttonLabels}`;
-
-    response = await fetchWithTimeout(
+  } else {
+    const response = await fetch(
       `${apiUrl}/message/sendText/${instance.instance_name}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-        body: JSON.stringify({ number, text: fallbackText }),
-      },
-      OUTBOUND_FETCH_TIMEOUT_MS,
+        body: JSON.stringify({ number, text }),
+      }
     );
-
     if (!response.ok) {
-      const errText2 = await response.text();
-      throw new Error(`Evolution API error (sendText fallback): ${response.status} - ${errText2}`);
+      const errText = await response.text();
+      throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
     }
   }
-  const responseBody = await response.text();
-  const remoteMessageId = validateEvolutionResponse(responseBody, "sendButtons");
-  return { remoteMessageId };
 }
 
 // ====================== MESSAGE POLYMORPHISM ======================
@@ -1061,6 +555,7 @@ async function generateAIMessage(
     if (extras) personalizationContext += `\nDados extras do lead: ${extras}`;
   }
 
+  // Fetch conversation history for warm leads (Phase 3 enhancement)
   let conversationHistory = "";
   if (supabaseClient && userId && phone) {
     try {
@@ -1084,78 +579,47 @@ async function generateAIMessage(
     }
   }
 
+  // Map variation level to temperature and instructions
   const levelConfig: Record<string, { temp: number; instruction: string }> = {
     low: {
-      temp: 0.6,
-      instruction: "Faça PEQUENAS variações: troque sinônimos, mude a ordem de frases, mas mantenha a estrutura próxima do original.",
+      temp: 0.5,
+      instruction: "Faça PEQUENAS variações: troque sinônimos, mude a ordem de frases, mas mantenha a estrutura muito próxima do original.",
     },
     medium: {
-      temp: 0.85,
-      instruction: "Faça variações MODERADAS: reescreva mantendo a essência, mas variando estrutura, abordagem e vocabulário significativamente. Cada mensagem DEVE ser completamente diferente da anterior.",
+      temp: 0.8,
+      instruction: "Faça variações MODERADAS: reescreva mantendo a essência, mas variando estrutura, abordagem e vocabulário significativamente.",
     },
     high: {
       temp: 1.0,
-      instruction: "Faça uma REESCRITA TOTALMENTE CRIATIVA: mude completamente a abordagem, use perspectivas diferentes, perguntas inesperadas, mantendo apenas a intenção central. NUNCA repita padrões.",
+      instruction: "Faça uma REESCRITA CRIATIVA: mude completamente a abordagem, use perspectivas diferentes, metáforas, perguntas ou afirmações inesperadas, mantendo apenas a intenção central.",
     },
   };
 
   const config = levelConfig[variationLevel] || levelConfig.medium;
 
-  // Randomize style for each message
-  const styleVariations = [
-    "Use um tom casual e direto, como um amigo indicando algo.",
-    "Seja mais formal e profissional.",
-    "Comece com uma pergunta envolvente que gere curiosidade.",
-    "Use uma abordagem empática e calorosa.",
-    "Vá direto ao ponto sem enrolação.",
-    "Comece com um dado curioso ou fato interessante.",
-    "Use humor leve e sutil.",
-    "Aborde como um consultor especialista dando uma dica valiosa.",
-    "Comece mencionando uma dor ou problema comum do mercado.",
-    "Use uma história curta ou analogia para prender a atenção.",
-  ];
-  const randomStyle = styleVariations[Math.floor(Math.random() * styleVariations.length)];
-
-  // Vary emoji usage
-  const emojiCount = Math.floor(Math.random() * 4); // 0-3
-  const emojiInstruction = emojiCount === 0
-    ? "NÃO use nenhum emoji nesta mensagem."
-    : `Use exatamente ${emojiCount} emoji(s) de forma natural.`;
-
-  // Vary message length
-  const lengthVariation = Math.random();
-  const lengthInstruction = lengthVariation < 0.3
-    ? "Mantenha a mensagem CURTA: 1-2 frases apenas."
-    : lengthVariation < 0.7
-    ? "Mensagem de tamanho MÉDIO: 2-3 parágrafos curtos."
-    : "Mensagem um pouco mais LONGA: 3-4 parágrafos curtos com mais contexto.";
-
-  // Random seed to ensure uniqueness
-  const randomSeed = Math.random().toString(36).substring(2, 10);
-
-  const systemPrompt = `Você é um redator especialista em mensagens de WhatsApp para prospecção. Cada mensagem que você gera deve ser ABSOLUTAMENTE ÚNICA.
+  const systemPrompt = `Você é um redator especialista em mensagens de WhatsApp para prospecção, com foco em evitar repetição e soar 100% natural e humano.
 
 REGRAS OBRIGATÓRIAS:
 - Gere UMA ÚNICA mensagem baseada na intenção fornecida
 - ${config.instruction}
-- ${randomStyle}
-- ${emojiInstruction}
-- ${lengthInstruction}
-- A mensagem deve soar 100% natural, como enviada por uma pessoa real digitando no celular
-- NÃO use saudações genéricas repetitivas
+- A mensagem deve soar natural, como enviada por uma pessoa real
+- NÃO use saudações genéricas como "Olá!" em todas as mensagens — varie o início
+- Use emojis com moderação (0-3 por mensagem)
+- Varie a estrutura: pergunta, afirmação, emoji, curiosidade
+- Mantenha entre 1-4 parágrafos curtos
 - NÃO inclua o número de telefone
-- Se dados do lead forem fornecidos, USE-OS naturalmente
-- Se houver histórico de conversa, CONSIDERE o contexto
+- Se dados do lead forem fornecidos, USE-OS para personalizar naturalmente
+- Se houver histórico de conversa, CONSIDERE o contexto para continuidade natural
+- Cada mensagem deve ser ÚNICA — nunca repita estruturas
 - MÁXIMO de 500 caracteres
-- NÃO use formatação de markdown (sem **, sem ##, sem *)
-- Responda APENAS com o texto da mensagem
-- SEED DE UNICIDADE: ${randomSeed} (use para garantir que esta mensagem seja diferente de todas as outras)`;
+- Tom profissional mas amigável
+- Responda APENAS com o texto da mensagem, sem explicações`;
 
   const userPrompt = messageTemplate
-    ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
-    : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
+    ? `Mensagem base: ${messageTemplate}\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma variação única e personalizada.`
+    : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem única, personalizada e natural.`;
 
-  const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -1170,7 +634,7 @@ REGRAS OBRIGATÓRIAS:
       temperature: config.temp,
       max_tokens: 500,
     }),
-  }, AI_FETCH_TIMEOUT_MS);
+  });
 
   if (!response.ok) {
     const errText = await response.text();
@@ -1181,73 +645,10 @@ REGRAS OBRIGATÓRIAS:
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty AI response");
 
-  // Strip any markdown formatting
-  return content.trim().replace(/\*\*/g, "").replace(/\*/g, "").replace(/^#+\s*/gm, "").replace(/^[-]\s+/gm, "");
-}
-
-// ====================== ANTI-BAN: NUMBER VALIDATION ======================
-
-async function validateWhatsAppNumber(instance: Instance, phone: string): Promise<boolean> {
-  try {
-    const apiUrl = instance.api_url.replace(/\/+$/, "");
-    const number = phone.replace(/\D/g, "");
-
-    const response = await fetchWithTimeout(
-      `${apiUrl}/chat/whatsappNumbers/${instance.instance_name}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-        body: JSON.stringify({ numbers: [number] }),
-      },
-      NUMBER_VALIDATION_TIMEOUT_MS,
-    );
-
-    if (!response.ok) {
-      // If endpoint not available, don't block sending
-      console.warn(`Number validation endpoint returned ${response.status}, proceeding anyway`);
-      return true;
-    }
-
-    const data = await response.json();
-    // Evolution API returns array: [{ exists: true/false, jid: "...", number: "..." }]
-    const results = Array.isArray(data) ? data : data?.data || data?.result || [];
-    
-    if (results.length > 0) {
-      const result = results[0];
-      if (result.exists === false) {
-        return false;
-      }
-    }
-
-    return true;
-  } catch (err) {
-    // On any error, don't block the send (validation is best-effort)
-    console.warn(`Number validation failed for ${phone}, proceeding:`, err);
-    return true;
-  }
+  return content.trim();
 }
 
 // ====================== HELPERS ======================
-
-async function fetchWithTimeout(
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-  timeoutMs = OUTBOUND_FETCH_TIMEOUT_MS,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error(`Request timeout after ${timeoutMs}ms`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
 async function markFailed(supabase: any, itemId: string, errorMessage: string) {
   await supabase
@@ -1268,66 +669,28 @@ async function generateHash(text: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 16);
 }
 
-// ====================== ANTI-BAN: HUMAN BEHAVIOR SIMULATION ======================
-
 async function simulateTyping(instance: Instance, phone: string, durationMs: number) {
+  // Only simulate typing for Evolution API (Meta doesn't support this)
   if (instance.provider === "meta") return;
 
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
 
-    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "composing" }),
-    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
+    });
 
     await sleep(durationMs);
 
-    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
+    await fetch(`${apiUrl}/chat/presence/${instance.instance_name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
       body: JSON.stringify({ id: jid, presence: "paused" }),
-    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
-  } catch (_) {
-    // Non-critical
+    });
+  } catch (err) {
+    console.warn("Typing simulation failed:", err);
   }
-}
-
-async function simulateOnlinePresence(instance: Instance, _phone: string) {
-  if (instance.provider === "meta") return;
-  try {
-    const apiUrl = instance.api_url.replace(/\/+$/, "");
-    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify({ presence: "available" }),
-    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
-  } catch (_) {}
-}
-
-async function simulateOfflinePresence(instance: Instance) {
-  if (instance.provider === "meta") return;
-  try {
-    const apiUrl = instance.api_url.replace(/\/+$/, "");
-    await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify({ presence: "unavailable" }),
-    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
-  } catch (_) {}
-}
-
-async function simulateReadReceipt(instance: Instance, phone: string) {
-  if (instance.provider === "meta") return;
-  try {
-    const apiUrl = instance.api_url.replace(/\/+$/, "");
-    const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
-    await fetchWithTimeout(`${apiUrl}/chat/markChatUnread/${instance.instance_name}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", apikey: instance.api_key_encrypted },
-      body: JSON.stringify({ chat: jid, lastMessage: { key: { fromMe: true } } }),
-    }, PRESENCE_FETCH_TIMEOUT_MS).catch(() => {});
-  } catch (_) {}
 }

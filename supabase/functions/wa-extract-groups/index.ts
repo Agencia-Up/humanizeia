@@ -11,7 +11,7 @@ async function getInstanceConfig(supabase: any, userId: string) {
     .from('wa_instances')
     .select('*')
     .eq('user_id', userId)
-    .eq('provider', 'evolution');
+    .eq('is_active', true);
 
   if (instances && instances.length > 0) {
     // For Evolution instances, use env vars for credentials
@@ -116,7 +116,9 @@ async function searchPublicGroups(baseUrl: string, apiKey: string, instanceName:
 }
 
 async function extractContacts(
-  configs: any[],
+  baseUrl: string,
+  apiKey: string,
+  instanceName: string,
   groupIds: string[],
   groups: any[],
   supabase: any,
@@ -129,148 +131,29 @@ async function extractContacts(
 
   for (const groupId of groupIds) {
     try {
+      const res = await fetch(`${baseUrl}/group/participants/${instanceName}?groupJid=${groupId}`, {
+        headers: { 'apikey': apiKey },
+      });
+
+      if (!res.ok) {
+        console.error(`Failed to fetch participants for ${groupId}: ${res.status}`);
+        continue;
+      }
+
+      const data = await res.json();
+      const participants = data?.participants || data || [];
       const groupData = groups?.find((g: any) => g.id === groupId);
       const groupName = groupData?.subject || groupId;
 
-      const orderedConfigs: any[] = [];
-      if (groupData?.instance_id) {
-        const byId = configs.find((c: any) => c.id === groupData.instance_id);
-        if (byId) orderedConfigs.push(byId);
-      }
-      if (groupData?.instance_name) {
-        const byName = configs.find((c: any) => c.instanceName === groupData.instance_name);
-        if (byName) orderedConfigs.push(byName);
-      }
-      orderedConfigs.push(...configs);
-
-      let participants: any[] = [];
-      const tried = new Set<string>();
-
-      for (const cfg of orderedConfigs) {
-        if (!cfg || cfg.provider !== 'evolution') continue;
-        const key = `${cfg.id || ''}:${cfg.instanceName || ''}`;
-        if (tried.has(key)) continue;
-        tried.add(key);
-
-        const cBaseUrl = (cfg.apiUrl || '').replace(/\/$/, '');
-        const url = `${cBaseUrl}/group/participants/${cfg.instanceName}?groupJid=${encodeURIComponent(groupId)}`;
-
-        const res = await fetch(url, {
-          headers: { 'apikey': cfg.apiKey },
-        });
-
-        if (!res.ok) {
-          console.warn(`[wa-extract-groups] Participants ${groupId} failed on ${cfg.instanceName}: ${res.status}`);
-          continue;
+      for (const p of (Array.isArray(participants) ? participants : [])) {
+        const phone = (p.id || p).replace(/@.*$/, '');
+        if (phone && phone.length >= 10) {
+          allContacts.push({
+            phone,
+            name: p.name || p.pushName || null,
+            group_name: groupName,
+          });
         }
-
-        const data = await res.json();
-        participants = data?.participants || data || [];
-        console.log(`[wa-extract-groups] Participants for ${groupId} fetched via ${cfg.instanceName}, count=${Array.isArray(participants) ? participants.length : 0}`);
-
-        // Try to fetch profile names for participants
-        const participantPhones: string[] = [];
-        for (const p of (Array.isArray(participants) ? participants : [])) {
-          const rawPhone = p.phoneNumber || p.id || '';
-          const phone = rawPhone.replace(/@.*$/, '').replace(/\D/g, '');
-          if (phone && phone.length >= 10) participantPhones.push(phone);
-        }
-
-        // Fetch contact profiles to get names
-        let profileMap = new Map<string, string>();
-        if (participantPhones.length > 0) {
-          // Method 1: Try chat/fetchContacts (batch)
-          try {
-            const profileRes = await fetch(`${cBaseUrl}/chat/fetchContacts/${cfg.instanceName}`, {
-              method: 'POST',
-              headers: { 'apikey': cfg.apiKey, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ numbers: participantPhones }),
-            });
-            if (profileRes.ok) {
-              const profileData = await profileRes.json();
-              const contacts = Array.isArray(profileData) ? profileData : (profileData?.contacts || profileData?.data || []);
-              for (const c of contacts) {
-                const cPhone = (c.id || c.jid || c.number || c.remoteJid || '').replace(/@.*$/, '').replace(/\D/g, '');
-                const cName = c.pushName || c.name || c.notify || c.verifiedName || c.profileName || null;
-                if (cPhone && cName) profileMap.set(cPhone, cName);
-              }
-              console.log(`[wa-extract-groups] fetchContacts: ${profileMap.size} names`);
-            } else {
-              console.warn(`[wa-extract-groups] fetchContacts returned ${profileRes.status}`);
-              await profileRes.text();
-            }
-          } catch (profileErr) {
-            console.warn(`[wa-extract-groups] fetchContacts failed:`, profileErr);
-          }
-
-          // Method 2: Try contact/find (batch)
-          if (profileMap.size === 0) {
-            try {
-              const findRes = await fetch(`${cBaseUrl}/contact/find/${cfg.instanceName}`, {
-                method: 'POST',
-                headers: { 'apikey': cfg.apiKey, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ numbers: participantPhones.slice(0, 100) }),
-              });
-              if (findRes.ok) {
-                const findData = await findRes.json();
-                const entries = Array.isArray(findData) ? findData : (findData?.contacts || findData?.data || []);
-                for (const c of entries) {
-                  const cPhone = (c.id || c.jid || c.number || c.wuid || '').replace(/@.*$/, '').replace(/\D/g, '');
-                  const cName = c.pushName || c.name || c.notify || c.verifiedName || c.displayName || null;
-                  if (cPhone && cName) profileMap.set(cPhone, cName);
-                }
-                console.log(`[wa-extract-groups] contact/find: ${profileMap.size} names`);
-              } else {
-                await findRes.text();
-              }
-            } catch { /* skip */ }
-          }
-
-          // Method 3: Try individual fetchProfile in parallel batches of 10 (max 50 contacts)
-          if (profileMap.size === 0) {
-            const phonesToCheck = participantPhones.slice(0, 50);
-            const batchSize = 10;
-            for (let bi = 0; bi < phonesToCheck.length; bi += batchSize) {
-              const batch = phonesToCheck.slice(bi, bi + batchSize);
-              const promises = batch.map(async (phone) => {
-                try {
-                  const profRes = await fetch(`${cBaseUrl}/chat/fetchProfile/${cfg.instanceName}`, {
-                    method: 'POST',
-                    headers: { 'apikey': cfg.apiKey, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ number: phone }),
-                  });
-                  if (profRes.ok) {
-                    const profData = await profRes.json();
-                    const pName = profData?.name || profData?.pushName || profData?.notify || profData?.verifiedName || profData?.profileName || null;
-                    if (pName) profileMap.set(phone, pName);
-                  } else {
-                    await profRes.text();
-                  }
-                } catch { /* skip */ }
-              });
-              await Promise.all(promises);
-            }
-            console.log(`[wa-extract-groups] fetchProfile parallel: ${profileMap.size} names`);
-          }
-        }
-
-        // Build contacts list
-        for (const p of (Array.isArray(participants) ? participants : [])) {
-          // phoneNumber field has the real number (e.g. "5511981110065@s.whatsapp.net")
-          const rawPhone = p.phoneNumber || p.id || '';
-          const phone = rawPhone.replace(/@.*$/, '').replace(/\D/g, '');
-          if (phone && phone.length >= 10) {
-            const name = p.pushName || p.name || p.notify || p.verifiedName || profileMap.get(phone) || null;
-            allContacts.push({ phone, name, group_name: groupName });
-          }
-        }
-
-        break;
-      }
-
-      if (!Array.isArray(participants) || participants.length === 0) {
-        // Only skip if we got no participants at all from any config
-        if (allContacts.filter(c => c.group_name === (groupData?.subject || groupId)).length === 0) continue;
       }
     } catch (err) {
       console.error(`Error processing group ${groupId}:`, err);
@@ -339,26 +222,15 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    // Auth check
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    const authClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const { data: userData, error: userError } = await authClient.auth.getUser();
-    if (userError || !userData?.user) {
-      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    const user_id = userData.user.id;
-
     const body = await req.json();
-    const { action, group_ids, groups, list_id, query, instance_id } = body;
+    const { user_id, action, group_ids, groups, list_id, query, instance_id } = body;
+
+    if (!user_id) {
+      return new Response(JSON.stringify({ success: false, error: 'user_id obrigatório' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     const configs = await getInstanceConfig(supabase, user_id);
     if (!configs || configs.length === 0) {
@@ -399,14 +271,9 @@ Deno.serve(async (req) => {
     // ===== ACTION: Extract contacts from selected groups =====
     if (action === 'extract_contacts' && group_ids?.length) {
       const result = await extractContacts(
-        configs,
-        group_ids,
-        groups,
-        supabase,
-        supabaseUrl,
-        supabaseServiceKey,
-        user_id,
-        list_id,
+        baseUrl, config.apiKey, config.instanceName,
+        group_ids, groups, supabase,
+        supabaseUrl, supabaseServiceKey, user_id, list_id
       );
       return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -121,114 +121,38 @@ Deno.serve(async (req) => {
     const now = Date.now();
     const effectiveBaseTime = Math.max(baseTime, now);
 
+    const queueRows = contactArr.map((c, i) => {
+      const randomDelay = minDelay + Math.random() * (maxDelay - minDelay);
+      const offset = i * randomDelay * 1000;
+      return {
+        user_id: userId,
+        campaign_id: campaign_id,
+        contact_id: c.id,
+        phone: c.phone,
+        message: campaign.message_template || "",
+        media_url: campaign.media_url || null,
+        media_type: campaign.media_type || null,
+        status: "pending",
+        scheduled_for: new Date(effectiveBaseTime + offset).toISOString(),
+        contact_metadata: c.metadata || null,
+        contact_name: c.name || null,
+      };
+    });
+
+    // Insert in batches of 500 with ON CONFLICT DO NOTHING for dedup
     const serviceClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Read current queue rows so resume/edit works from where it stopped
-    const { data: existingQueue, error: existingQueueErr } = await serviceClient
-      .from("wa_queue")
-      .select("id, contact_id, phone, status")
-      .eq("campaign_id", campaign_id);
-
-    if (existingQueueErr) {
-      console.error("Queue read error:", existingQueueErr);
-      return new Response(JSON.stringify({ error: "Failed to read existing queue" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const existingByContactId = new Map<string, { id: string; status: string }>();
-    const existingByPhone = new Map<string, { id: string; status: string }>();
-
-    for (const row of existingQueue || []) {
-      if (row.contact_id) existingByContactId.set(row.contact_id, { id: row.id, status: row.status });
-      if (row.phone) existingByPhone.set(String(row.phone).replace(/\D/g, ""), { id: row.id, status: row.status });
-    }
-
-    const terminalStatuses = new Set(["sent", "delivered", "read"]);
-
-    const rowsToReactivate: Array<Record<string, unknown>> = [];
-    const rowsToInsert: Array<Record<string, unknown>> = [];
-
-    let scheduleCursor = effectiveBaseTime;
-    const nextSchedule = () => {
-      const scheduledFor = new Date(scheduleCursor).toISOString();
-      const randomDelay = minDelay + Math.random() * (maxDelay - minDelay);
-      scheduleCursor += randomDelay * 1000;
-      return scheduledFor;
-    };
-
-    for (const c of contactArr) {
-      const existing = existingByContactId.get(c.id) || existingByPhone.get(c.phone);
-
-      // Keep already sent/delivered/read contacts untouched when resuming
-      if (existing && terminalStatuses.has(existing.status)) {
-        continue;
-      }
-
-      const scheduledFor = nextSchedule();
-
-      if (existing) {
-        // Resume paused/cancelled/processing from where campaign stopped
-        rowsToReactivate.push({
-          id: existing.id,
-          user_id: userId,
-          campaign_id,
-          contact_id: c.id,
-          phone: c.phone,
-          status: "pending",
-          scheduled_for: scheduledFor,
-          retry_count: 0,
-          error_message: null,
-          message: campaign.message_template || "",
-          media_url: campaign.media_url || null,
-          media_type: campaign.media_type || null,
-          contact_metadata: c.metadata || null,
-          contact_name: c.name || null,
-        });
-      } else {
-        rowsToInsert.push({
-          user_id: userId,
-          campaign_id,
-          contact_id: c.id,
-          phone: c.phone,
-          message: campaign.message_template || "",
-          media_url: campaign.media_url || null,
-          media_type: campaign.media_type || null,
-          status: "pending",
-          scheduled_for: scheduledFor,
-          contact_metadata: c.metadata || null,
-          contact_name: c.name || null,
-          retry_count: 0,
-        });
-      }
-    }
-
     const batchSize = 500;
-
-    for (let i = 0; i < rowsToReactivate.length; i += batchSize) {
-      const batch = rowsToReactivate.slice(i, i + batchSize);
-      const { error: reactivateErr } = await serviceClient
+    let insertedCount = 0;
+    for (let i = 0; i < queueRows.length; i += batchSize) {
+      const batch = queueRows.slice(i, i + batchSize);
+      const { data: inserted, error: insertErr } = await serviceClient
         .from("wa_queue")
-        .upsert(batch, { onConflict: "id" });
-
-      if (reactivateErr) {
-        console.error("Queue reactivate error:", reactivateErr);
-        return new Response(
-          JSON.stringify({ error: `Failed to reactivate queue batch at offset ${i}` }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-    }
-
-    for (let i = 0; i < rowsToInsert.length; i += batchSize) {
-      const batch = rowsToInsert.slice(i, i + batchSize);
-      const { error: insertErr } = await serviceClient
-        .from("wa_queue")
-        .insert(batch);
+        .upsert(batch, { onConflict: "campaign_id,contact_id", ignoreDuplicates: true })
+        .select("id");
 
       if (insertErr) {
         console.error("Queue insert error:", insertErr);
@@ -237,9 +161,8 @@ Deno.serve(async (req) => {
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      insertedCount += inserted?.length || batch.length;
     }
-
-    const enqueuedCount = rowsToReactivate.length + rowsToInsert.length;
 
     // Update campaign status and total_contacts
     await serviceClient
@@ -247,14 +170,14 @@ Deno.serve(async (req) => {
       .update({
         status: "running",
         total_contacts: contactArr.length,
-        started_at: campaign.started_at || new Date().toISOString(),
+        started_at: new Date().toISOString(),
       })
       .eq("id", campaign_id);
 
     return new Response(
       JSON.stringify({
         success: true,
-        enqueued: enqueuedCount,
+        enqueued: insertedCount,
         total_contacts: contactArr.length,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }

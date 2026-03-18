@@ -63,9 +63,6 @@ Deno.serve(async (req) => {
       media_type,
       tags,
       variation_level,
-      include_optout_buttons,
-      reply_auto_tag,
-      reply_auto_message,
     } = body;
 
     // --- Validation ---
@@ -232,9 +229,6 @@ Deno.serve(async (req) => {
       tags: Array.isArray(tags) && tags.length > 0 ? tags : null,
       organization_id: orgId,
       variation_level: variation_level || 'medium',
-      include_optout_buttons: include_optout_buttons === true,
-      reply_auto_tag: reply_auto_tag?.trim() || null,
-      reply_auto_message: reply_auto_message?.trim() || null,
     };
 
     // Determine status

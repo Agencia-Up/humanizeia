@@ -1,5 +1,4 @@
 import {
-  Database,
   Home,
   Brain,
   PenTool,
@@ -29,10 +28,6 @@ import {
   Zap,
   Smartphone,
   Bot,
-  Activity,
-  Radar,
-  Kanban,
-  ClipboardList,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -65,7 +60,6 @@ const aiItems = [
   { title: 'Agente Apollo', url: '/midas', icon: Brain },
   { title: 'Copywriter IA', url: '/copywriter', icon: PenTool },
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
-  { title: 'Base de Conhecimento', url: '/datastore', icon: Database },
 ];
 
 // 📈 Campanhas
@@ -83,14 +77,8 @@ const automationItems = [
 
 // 📊 Análises
 const analyticsItems = [
-  { title: 'Apollo Diagnóstico', url: '/apollo', icon: Radar },
   { title: 'Relatórios', url: '/reports', icon: FileText },
   { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
-];
-
-// 📋 CRM
-const crmItems = [
-  { title: 'Flux CRM', url: '/crm', icon: Kanban },
 ];
 
 // 🔗 Integrações
@@ -107,13 +95,13 @@ const learningItems = [
 const whatsappItems = [
   { title: 'Instâncias', url: '/whatsapp/instances', icon: Smartphone },
   { title: 'Inbox', url: '/whatsapp/inbox', icon: Inbox },
-  { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
+  { title: 'Campanhas', url: '/whatsapp/campaigns', icon: Megaphone },
   { title: 'Analytics', url: '/whatsapp/analytics', icon: BarChart3 },
   { title: 'Automações', url: '/whatsapp/automations', icon: Zap },
   { title: 'Agente IA', url: '/whatsapp/ai-agent', icon: Bot },
+  { title: 'Extrator de Grupos', url: '/whatsapp/groups', icon: Users },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
-  { title: 'CAPI Tracking', url: '/whatsapp/capi', icon: Activity },
-  { title: 'Formulários de Captura', url: '/capture-forms', icon: ClipboardList },
+  { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
 ];
 
 // ⚙️ Sistema
@@ -243,7 +231,6 @@ export function AppSidebar() {
     { label: '📈 Campanhas', items: campaignItems, triggerIcon: Rocket },
     { label: '⚙️ Automação', items: automationItems, triggerIcon: Settings2 },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
-    { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
     { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },

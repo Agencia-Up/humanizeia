@@ -218,24 +218,27 @@ Deno.serve(async (req) => {
 
     let userId: string;
 
-    // Support both authenticated calls (manual) and service calls (cron via service role key)
+    // Support both authenticated calls (manual) and service calls (cron)
     const authHeader = req.headers.get("Authorization");
-    const bearerToken = authHeader?.replace("Bearer ", "") || "";
-    
-    if (authHeader?.startsWith("Bearer ") && bearerToken !== serviceRoleKey) {
-      // User JWT - validate properly
+    if (authHeader?.startsWith("Bearer ")) {
       const supabase = createClient(supabaseUrl, anonKey, {
         global: { headers: { Authorization: authHeader } },
       });
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData?.user) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401, headers: corsHeaders,
-        });
+      const token = authHeader.replace("Bearer ", "");
+      const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
+      if (claimsError || !claimsData?.claims) {
+        // Check if this is a service role call (cron)
+        if (bodyUserId) {
+          userId = bodyUserId;
+        } else {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), {
+            status: 401, headers: corsHeaders,
+          });
+        }
+      } else {
+        userId = claimsData.claims.sub as string;
       }
-      userId = userData.user.id;
-    } else if (bearerToken === serviceRoleKey && bodyUserId) {
-      // Internal service-role call (cron) - trust user_id from body
+    } else if (bodyUserId) {
       userId = bodyUserId;
     } else {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {

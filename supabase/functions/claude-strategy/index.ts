@@ -33,85 +33,14 @@ interface CampaignContext {
 const model = 'claude-sonnet-4-20250514';
 
 function getSystemPrompt(): string {
-  return `Você é o **Agente Apollo 2.0 — Super Gestor de Tráfego Pago**, o sistema nervoso central de inteligência estratégica para tráfego pago da HumanizeAI. Você não é um simples gestor — é um ESTRATEGISTA que monitora, diagnostica e otimiza TODA a jornada do lead, utilizando uma base de conhecimento detalhada sobre o produto/serviço, público-alvo, objetivos e contexto de mercado.
+  return `Você é o SUPER GESTOR DE TRÁFEGO da HumanizeAI, um especialista sênior em mídia paga com 15+ anos de experiência em Meta Ads, Google Ads e TikTok Ads.
 
-# COMO UTILIZAR A BASE DE CONHECIMENTO
-
-Sempre que for solicitado a criar ou otimizar uma campanha, você DEVE consultar e aplicar as informações disponíveis nos seguintes pilares:
-
-## 1. O Produto/Serviço (A Oferta)
-- **Problema Resolvido:** Entenda a dor principal que o produto soluciona. Use isso para criar mensagens que ressoem profundamente.
-- **Benefícios/Diferenciais:** Destaque os 3 maiores benefícios e diferenciais competitivos em todos os materiais (criativos, textos, landing pages).
-- **Oferta Irresistível:** Utilize garantias, bônus, descontos para aumentar a atratividade e conversão.
-- **Ticket Médio/LTV:** Considere para definir estratégias de lance e otimização de orçamento que garantam rentabilidade a longo prazo.
-
-## 2. O Público-Alvo (A Persona)
-- **Dores, Medos e Desejos:** Baseie segmentação e mensagens nas dores e desejos profundos do cliente ideal. Crie conexões emocionais.
-- **Canais de Consumo:** Selecione plataformas adequadas e adapte formato e tom dos criativos.
-- **Objeções Comuns:** Antecipe e contorne objeções nos textos dos anúncios e CTAs.
-- **Dados Demográficos/Comportamentais:** Utilize para segmentações precisas e personalização.
-
-## 3. O Funil de Marketing e Metas (A Estratégia)
-- **Objetivo Principal:** Alinhe todas as ações ao objetivo principal. Otimize focando na métrica primária.
-- **CPA Ideal/Máximo:** Respeite o CPA máximo permitido, ajustando lances e segmentações.
-- **Jornada Pós-Clique:** Compreenda o processo pós-clique para otimizar a experiência e conversão final.
-
-## 4. Contexto de Mercado e Concorrência
-- **Concorrentes:** Analise estratégias dos concorrentes para identificar oportunidades de diferenciação.
-- **Erros a Evitar:** Identifique o que NÃO deve ser replicado, buscando abordagens inovadoras.
-- **Sazonalidade:** Ajuste investimento e mensagens de acordo com a sazonalidade.
-
-## 5. Ativos de Marca e Comunicação
-- **Tom de Voz:** Mantenha o tom de voz da marca consistente em todos os textos e criativos.
-- **Criativos de Sucesso:** Priorize tipos de criativos que historicamente performam melhor.
-- **Restrições de Comunicação:** Evite palavras, frases ou temas proibidos/sensíveis.
-
-# AÇÕES E SAÍDAS ESPERADAS
-
-Ao receber uma solicitação, você deve:
-1. **Analisar a Base de Conhecimento:** Consultar as informações relevantes para a tarefa.
-2. **Propor Estratégias:** Sugerir parâmetros de campanha, ideias de criativos e copy alinhados com a base.
-3. **Justificar Decisões:** Explicar como as informações influenciaram suas sugestões.
-4. **Identificar Lacunas:** Se faltar informação crucial, sinalizar e solicitar esclarecimentos.
-
-# CAMADAS DE INTELIGÊNCIA
-1. **MONITORAMENTO** → Coleta de dados em tempo real
-2. **DIAGNÓSTICO** → Identificação de anomalias usando árvores de decisão
-3. **PRESCRIÇÃO** → Recomendações acionáveis com dados que as sustentem
-4. **EXECUÇÃO** → Implementação automatizada via instruções JSON
-5. **APRENDIZADO** → Feedback loop contínuo e documentação de insights
-
-# PRINCÍPIOS INEGOCIÁVEIS
-• Toda recomendação DEVE ter DADOS que a sustentem
-• Nunca otimize uma etapa isoladamente — veja o funil completo
-• Prefira correções cirúrgicas a mudanças drásticas
-• Documente TODO aprendizado para uso futuro
-• Escale APENAS o que está validado
-
-# SISTEMA DE DIAGNÓSTICO (O Diferencial)
-
-## Mapa de Saúde do Funil
-Analise cada etapa e atribua um Health Score (0-100):
-- **TOPO** (Impressões → Cliques): CTR > 1.5% (Feed) | > 0.8% (Stories)
-- **MEIO** (Cliques → Leads): Conv. LP > 25% (Lead Magnet) | > 8% (Venda Direta)
-- **FUNDO** (Leads → Vendas): Taxa de Fechamento varia por ticket
-- **PÓS** (Vendas → Retenção): Churn < 5%/mês | Recompra > 20%
-
-## Árvore de Diagnóstico
-Quando uma métrica sai do padrão, execute diagnóstico:
-- CPL subiu? → CTR caiu junto? → SIM: Criativo fadigado | NÃO: Problema na LP ou segmentação
-- CTR alto + Conv. LP baixa → Desalinhamento criativo/LP
-- CPM subindo + CTR estável → Saturação de público
-- Frequência > 3 + CTR caindo → Fadiga de criativo
-- Leads altos + Vendas baixas → Lead desqualificado
-- CPA bom + ROAS ruim → Ticket médio baixo
-- Hook rate < 25% (vídeo) → Primeiros 3s fracos
-
-## Níveis de Alerta
-🟢 NORMAL: Métricas dentro do benchmark
-🟡 ATENÇÃO: Desvio 15-30% — monitorar 24h
-🟠 ALERTA: Desvio 30-50% — investigar causa
-🔴 CRÍTICO: Desvio > 50% — pausar e corrigir
+# SUAS RESPONSABILIDADES
+1. ANÁLISE: Entender produto, nicho, público-alvo
+2. ESTRATÉGIA: Criar planos completos de campanha
+3. VALIDAÇÃO: Avaliar campanhas antes de publicar
+4. OTIMIZAÇÃO: Analisar dados e sugerir melhorias
+5. EXECUÇÃO: Gerar instruções JSON para automação
 
 # CONHECIMENTO TÉCNICO
 
@@ -129,23 +58,12 @@ Quando uma métrica sai do padrão, execute diagnóstico:
 - Objetivos: TRAFFIC, CONVERSIONS, APP_INSTALL
 - Estrutura: Campaign > Ad Group > Ad
 
-## Análise de Criativos
-- Avalie tipo (imagem, vídeo, carrossel), estilo visual e mensagem
-- Selecione criativos alinhados com o objetivo da campanha
-- Sugira tipos de materiais faltantes
-
-## Framework de Testes A/B (Hierarquia de Impacto)
-1. OFERTA (maior impacto) → 2. PÚBLICO → 3. ÂNGULO/HOOK → 4. CRIATIVO → 5. COPY → 6. ELEMENTOS TÉCNICOS (menor)
-
 # REGRAS
-- Foque em ROI e resultados mensuráveis de LONGO PRAZO
+- Foque em ROI e resultados mensuráveis
 - Seja específico e acionável
 - Use português brasileiro
 - Moeda: Real (R$)
-- SEMPRE forneça respostas em JSON quando solicitado
-- Ao criar campanhas, SEMPRE selecione criativos da biblioteca quando disponíveis
-- Ao receber um produto: consulte dados → analise health score → identifique gargalo → proponha plano com prioridades → defina métricas de sucesso
-- Seja proativo, estratégico e utilize a base de conhecimento como guia principal para maximizar o desempenho das campanhas`;
+- SEMPRE forneça respostas em JSON quando solicitado, dentro de blocos de código`;
 }
 
 function buildStrategyPrompt(context: CampaignContext): string {
@@ -369,68 +287,9 @@ Analise os dados e retorne APENAS um JSON válido:
 }
 
 function buildChatPrompt(message: string, context?: CampaignContext): string {
-  let fullMessage = '';
-
-  // Detect campaign creation intent
-  const creationKeywords = [
-    'cri', 'criar', 'crie', 'monte', 'montar', 'gere', 'gerar',
-    'lance', 'lançar', 'faça', 'fazer', 'campanha', 'estratégia completa',
-    'publicar', 'configure', 'configurar'
-  ];
-  const msgLower = message.toLowerCase();
-  const isCreationIntent = creationKeywords.some(k => msgLower.includes(k)) &&
-    (msgLower.includes('campanha') || msgLower.includes('estratégia') || msgLower.includes('anúncio'));
-
-  if (isCreationIntent) {
-    fullMessage = `${message}
-
-IMPORTANTE: O usuário quer que você CRIE uma campanha real, não apenas explique como fazer.
-Se você tiver informações suficientes (produto, objetivo, orçamento, plataforma), retorne OBRIGATORIAMENTE um JSON executável no formato abaixo dentro de um bloco \`\`\`json.
-Se faltar alguma informação essencial, PERGUNTE ao usuário de forma objetiva o que falta.
-
-Informações essenciais mínimas:
-- Produto/serviço
-- Objetivo (vendas, leads, tráfego, awareness)
-- Orçamento (diário ou total)
-- Plataforma (meta, google, tiktok)
-
-Se tiver o mínimo, use valores padrão inteligentes para o resto e retorne o JSON:
-
-\`\`\`json
-{
-  "strategy": {
-    "summary": "Resumo da estratégia",
-    "approach": "Abordagem detalhada",
-    "expectedResults": { "impressions": "X", "clicks": "X", "conversions": "X", "estimatedCPA": "R$ X", "estimatedROAS": "Xx" }
-  },
-  "copies": {
-    "headlines": ["H1", "H2", "H3"],
-    "descriptions": ["D1", "D2"],
-    "primaryTexts": ["Texto 1"],
-    "ctas": ["Saiba Mais"]
-  },
-  "targeting": {
-    "primaryAudience": { "name": "Audiência", "description": "Desc", "demographics": {}, "interests": [] },
-    "secondaryAudiences": []
-  },
-  "optimization": {
-    "bidStrategy": "Menor custo",
-    "budgetAllocation": { "meta": 100 },
-    "testingPlan": []
-  },
-  "agentInstructions": [
-    { "id": "instr_001", "platform": "meta", "action": "create_campaign", "params": { "name": "...", "objective": "OUTCOME_SALES", "status": "PAUSED", "special_ad_categories": [] }, "priority": 1, "reason": "Criar campanha" },
-    { "id": "instr_002", "platform": "meta", "action": "create_adset", "params": { "campaign_id": "{{instr_001}}", "name": "...", "daily_budget": 5000, "status": "PAUSED", "targeting": { "geo_locations": { "countries": ["BR"] }, "age_min": 25, "age_max": 55 }, "optimization_goal": "OFFSITE_CONVERSIONS", "billing_event": "IMPRESSIONS", "bid_strategy": "LOWEST_COST_WITHOUT_CAP" }, "priority": 2, "dependsOn": ["instr_001"], "reason": "Criar conjunto" }
-  ]
-}
-\`\`\``;
-    if (context) {
-      fullMessage = `Contexto: ${context.product}, objetivo ${context.objective}, orçamento R$ ${context.budget}, plataformas: ${context.platforms.join(', ')}\n\n${fullMessage}`;
-    }
-  } else if (context) {
+  let fullMessage = message;
+  if (context) {
     fullMessage = `Contexto atual: ${context.product}, objetivo ${context.objective}, orçamento R$ ${context.budget}, plataformas: ${context.platforms.join(', ')}\n\nPergunta: ${message}`;
-  } else {
-    fullMessage = message;
   }
   return fullMessage;
 }
@@ -485,50 +344,12 @@ serve(async (req) => {
       );
     }
 
-    // Fetch user's creative library for strategy/chat actions
-    let creativesContext = '';
-    if (action === 'generateStrategy' || action === 'chat') {
-      try {
-        const { data: userCreatives } = await supabaseAuth
-          .from('creative_uploads')
-          .select('id, name, file_url, file_type, category, style, description, tags, ai_score, dimensions, created_at')
-          .eq('user_id', claimsData.user.id)
-          .order('created_at', { ascending: false })
-          .limit(50);
-
-        if (userCreatives && userCreatives.length > 0) {
-          const summary = userCreatives.map((c: any) => 
-            `- [${c.file_type.toUpperCase()}] "${c.name}" (Categoria: ${c.category}${c.style ? `, Estilo: ${c.style}` : ''}${c.dimensions ? `, ${c.dimensions}` : ''}${c.tags?.length ? `, Tags: ${c.tags.join(', ')}` : ''}${c.description ? `, Desc: ${c.description}` : ''}${c.ai_score ? `, Score: ${c.ai_score}/100` : ''}) URL: ${c.file_url}`
-          ).join('\n');
-
-          creativesContext = `\n\n## BIBLIOTECA DE CRIATIVOS DO USUÁRIO (${userCreatives.length} materiais disponíveis)
-${summary}
-
-INSTRUÇÕES SOBRE CRIATIVOS:
-- Analise os criativos disponíveis e SELECIONE os mais adequados para a campanha
-- Considere: tipo (imagem/vídeo), estilo visual, categoria e tags
-- Se os criativos não forem adequados, INFORME o usuário com feedback estratégico
-- Sugira quais tipos de criativos estão faltando para melhorar a performance
-- Ao criar instruções de anúncios (create_ad), inclua o campo "image_url" com a URL do criativo selecionado
-- Adicione um campo "selectedCreatives" no JSON da resposta com os IDs e motivos da seleção`;
-        } else {
-          creativesContext = `\n\n## BIBLIOTECA DE CRIATIVOS
-O usuário NÃO possui criativos na biblioteca. Informe que para criar campanhas com anúncios visuais, ele precisa:
-1. Acessar a Biblioteca de Criativos e enviar imagens/vídeos
-2. Categorizar os materiais por tipo (produto, lifestyle, prova social, etc.)
-3. Incluir variedade: vídeos curtos (até 30s), criativos com prova social, imagens com CTA claro`;
-        }
-      } catch (err) {
-        console.error('Error fetching creatives:', err);
-      }
-    }
-
     let prompt: string;
     let maxTokens: number;
 
     switch (action) {
       case 'generateStrategy':
-        prompt = buildStrategyPrompt(context) + creativesContext;
+        prompt = buildStrategyPrompt(context);
         maxTokens = 6000;
         break;
       case 'validateCampaign':
@@ -540,8 +361,8 @@ O usuário NÃO possui criativos na biblioteca. Informe que para criar campanhas
         maxTokens = 3000;
         break;
       case 'chat':
-        prompt = buildChatPrompt(message, context) + creativesContext;
-        maxTokens = 3000;
+        prompt = buildChatPrompt(message, context);
+        maxTokens = 2000;
         break;
       default:
         return new Response(

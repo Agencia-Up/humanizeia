@@ -210,28 +210,6 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     }
   }
 
-  // 2.5. Set webhook for this instance
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const webhookUrl = `${supabaseUrl}/functions/v1/wa-inbox-webhook`;
-  try {
-    await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: api_key },
-      body: JSON.stringify({
-        webhook: {
-          url: webhookUrl,
-          enabled: true,
-          webhook_by_events: false,
-          webhook_base64: false,
-          events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"],
-        },
-      }),
-    });
-    console.log(`[create-evolution-instance] Webhook set for ${instance_name}`);
-  } catch (webhookErr) {
-    console.warn('[create-evolution-instance] Failed to set webhook:', webhookErr);
-  }
-
   // 3. Save to wa_instances
   const { error: insertErr } = await supabase
     .from('wa_instances')

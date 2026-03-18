@@ -7,7 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   Play, Pause, CheckCircle, XCircle, Clock, Zap, Loader2,
-  RotateCcw, Wand2, Trash2, MoreVertical, Pencil,
+  RotateCcw, Wand2, Trash2, MoreVertical,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -48,10 +48,9 @@ export interface WACampaign {
 interface CampaignCardProps {
   campaign: WACampaign;
   onRefresh: () => void;
-  onEdit?: (campaign: WACampaign) => void;
 }
 
-export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps) {
+export function CampaignCard({ campaign, onRefresh }: CampaignCardProps) {
   const { toast } = useToast();
   const [isStarting, setIsStarting] = useState(false);
   const [isPausing, setIsPausing] = useState(false);
@@ -101,12 +100,12 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
         .update({ status: 'paused' })
         .eq('id', campaign.id);
 
-      // Return in-flight items to pending so campaign can resume from where it stopped
+      // Cancel pending queue items
       await supabase
         .from('wa_queue')
-        .update({ status: 'pending' })
+        .update({ status: 'cancelled' })
         .eq('campaign_id', campaign.id)
-        .in('status', ['processing', 'pending']);
+        .eq('status', 'pending');
 
       toast({ title: '⏸️ Campanha pausada' });
       onRefresh();
@@ -176,14 +175,9 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {(campaign.status === 'draft' || campaign.status === 'paused') && (
-                    <>
-                      <DropdownMenuItem onClick={() => onEdit?.(campaign)}>
-                        <Pencil className="h-4 w-4 mr-2" /> Editar
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={startCampaign} disabled={isStarting}>
-                        <Play className="h-4 w-4 mr-2" /> Iniciar
-                      </DropdownMenuItem>
-                    </>
+                    <DropdownMenuItem onClick={startCampaign} disabled={isStarting}>
+                      <Play className="h-4 w-4 mr-2" /> Iniciar
+                    </DropdownMenuItem>
                   )}
                   {campaign.status === 'running' && (
                     <DropdownMenuItem onClick={pauseCampaign} disabled={isPausing}>
@@ -213,13 +207,8 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
 
             <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
               <span className="flex items-center gap-1">
-                <CheckCircle className="h-3 w-3 text-green-500" /> {campaign.delivered_count} entrega confirmada
+                <CheckCircle className="h-3 w-3 text-green-500" /> {campaign.delivered_count} entregues
               </span>
-              {campaign.sent_count > 0 && campaign.delivered_count === 0 && campaign.status !== 'draft' && (
-                <span className="flex items-center gap-1 text-yellow-600">
-                  ⚠️ Sem confirmação de entrega
-                </span>
-              )}
               <span className="flex items-center gap-1">
                 <XCircle className="h-3 w-3 text-destructive" /> {campaign.failed_count} falhas
               </span>

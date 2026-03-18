@@ -70,7 +70,7 @@ export function useMetaCampaigns(options: UseMetaCampaignsOptions = {}) {
       return callMetaApi({
         endpoint: campaignId,
         method: 'POST',
-        params: { daily_budget: String(Math.round(dailyBudget * 100)) },
+        body: { daily_budget: Math.round(dailyBudget * 100) },
       });
     },
     onSuccess: () => {
