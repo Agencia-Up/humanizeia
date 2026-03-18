@@ -22,7 +22,8 @@ export default function DatastoreManager() {
   const [selectedDatastore, setSelectedDatastore] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false);
-  const [addSourceType, setAddSourceType] = useState<'text' | 'url' | 'file'>('text');
+  const [addSourceType, setAddSourceType] = useState<'text' | 'url' | 'file' | 'template'>('text');
+  const [isTemplateOpen, setIsTemplateOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
