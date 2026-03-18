@@ -65,33 +65,15 @@ serve(async (req) => {
     const chunks = splitIntoChunks(content, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP)
     console.log(`Created ${chunks.length} chunks`)
 
-    // 4. Gerar embeddings via Gemini
-    const geminiApiKey = Deno.env.get('GEMINI_API_KEY')
-    if (!geminiApiKey) throw new Error('GEMINI_API_KEY not configured')
-
-    const batchSize = 20
-    const chunksToInsert: any[] = []
-
-    for (let i = 0; i < chunks.length; i += batchSize) {
-      const batch = chunks.slice(i, i + batchSize)
-
-      const embeddings = await generateGeminiEmbeddings(
-        geminiApiKey,
-        batch.map(c => c.text)
-      )
-
-      for (let j = 0; j < batch.length; j++) {
-        chunksToInsert.push({
-          datastore_id: source.datastore_id,
-          source_id: source_id,
-          user_id: source.user_id,
-          content: batch[j].text,
-          embedding: JSON.stringify(embeddings[j]),
-          chunk_index: i + j,
-          tokens_count: estimateTokens(batch[j].text),
-        })
-      }
-    }
+    // 4. Preparar chunks para inserção (sem embeddings - usa full-text search via trigger)
+    const chunksToInsert = chunks.map((chunk, index) => ({
+      datastore_id: source.datastore_id,
+      source_id: source_id,
+      user_id: source.user_id,
+      content: chunk.text,
+      chunk_index: index,
+      tokens_count: estimateTokens(chunk.text),
+    }))
 
     // 5. Deletar chunks antigos
     await supabase
@@ -99,7 +81,7 @@ serve(async (req) => {
       .delete()
       .eq('source_id', source_id)
 
-    // 6. Inserir novos chunks
+    // 6. Inserir novos chunks (trigger auto-gera search_vector)
     const { error: insertError } = await supabase
       .from('datastore_chunks')
       .insert(chunksToInsert)
@@ -184,37 +166,7 @@ function splitIntoChunks(text: string, chunkSize: number, overlap: number) {
   return chunks
 }
 
-async function generateGeminiEmbeddings(apiKey: string, texts: string[]): Promise<number[][]> {
-  const results: number[][] = []
-
-  for (const text of texts) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'models/text-embedding-004',
-          content: { parts: [{ text }] },
-          taskType: 'RETRIEVAL_DOCUMENT',
-        }),
-      }
-    )
-
-    if (!response.ok) {
-      const err = await response.text()
-      throw new Error(`Gemini Embedding API error: ${err}`)
-    }
-
-    const data = await response.json()
-    results.push(data.embedding.values)
-  }
-
-  return results
-}
-
 async function fetchUrlContent(url: string): Promise<string> {
-  // Try Firecrawl first if available
   const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY')
   if (firecrawlKey) {
     try {
@@ -232,7 +184,6 @@ async function fetchUrlContent(url: string): Promise<string> {
     }
   }
 
-  // Simple HTML fetch fallback
   const response = await fetch(url)
   const html = await response.text()
   return html
