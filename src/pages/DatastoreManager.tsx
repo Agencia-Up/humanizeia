@@ -13,15 +13,17 @@ import { toast } from "sonner";
 import {
   Database, Plus, FileText, Link, Type, Search,
   Trash2, RefreshCw, Upload, CheckCircle, XCircle,
-  Clock, Sparkles
+  Clock, Sparkles, BookOpen
 } from "lucide-react";
+import { KnowledgeBaseTemplateForm } from "@/components/datastore/KnowledgeBaseTemplateForm";
 
 export default function DatastoreManager() {
   const { datastores, isLoading, createDatastore, deleteDatastore } = useDatastore();
   const [selectedDatastore, setSelectedDatastore] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false);
-  const [addSourceType, setAddSourceType] = useState<'text' | 'url' | 'file'>('text');
+  const [addSourceType, setAddSourceType] = useState<'text' | 'url' | 'file' | 'template'>('text');
+  const [isTemplateOpen, setIsTemplateOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -222,35 +224,51 @@ export default function DatastoreManager() {
                         <DialogTrigger asChild>
                           <Button size="sm"><Plus className="w-4 h-4 mr-2" />Adicionar</Button>
                         </DialogTrigger>
-                        <DialogContent>
+                        <DialogContent className="max-w-2xl">
                           <DialogHeader><DialogTitle>Adicionar Conteúdo</DialogTitle></DialogHeader>
                           <div className="space-y-4 py-4">
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 flex-wrap">
                               <Button variant={addSourceType === 'text' ? 'default' : 'outline'} size="sm" onClick={() => setAddSourceType('text')}>
                                 <Type className="w-4 h-4 mr-2" />Texto
                               </Button>
                               <Button variant={addSourceType === 'url' ? 'default' : 'outline'} size="sm" onClick={() => setAddSourceType('url')}>
                                 <Link className="w-4 h-4 mr-2" />URL
                               </Button>
+                              <Button variant={addSourceType === 'template' ? 'default' : 'outline'} size="sm" onClick={() => setAddSourceType('template')}>
+                                <BookOpen className="w-4 h-4 mr-2" />Template
+                              </Button>
                             </div>
-                            <div className="space-y-2">
-                              <Label>Nome</Label>
-                              <Input placeholder="Ex: FAQ de Preços" value={newSource.name} onChange={(e) => setNewSource({ ...newSource, name: e.target.value })} />
-                            </div>
-                            {addSourceType === 'text' ? (
-                              <div className="space-y-2">
-                                <Label>Conteúdo</Label>
-                                <Textarea placeholder="Cole o texto aqui..." rows={8} value={newSource.content} onChange={(e) => setNewSource({ ...newSource, content: e.target.value })} />
-                              </div>
+
+                            {addSourceType === 'template' ? (
+                              <KnowledgeBaseTemplateForm
+                                onSubmit={async (data) => {
+                                  await addTextSource.mutateAsync(data);
+                                  setIsAddSourceOpen(false);
+                                }}
+                                isPending={addTextSource.isPending}
+                              />
                             ) : (
-                              <div className="space-y-2">
-                                <Label>URL</Label>
-                                <Input placeholder="https://..." value={newSource.url} onChange={(e) => setNewSource({ ...newSource, url: e.target.value })} />
-                              </div>
+                              <>
+                                <div className="space-y-2">
+                                  <Label>Nome</Label>
+                                  <Input placeholder="Ex: FAQ de Preços" value={newSource.name} onChange={(e) => setNewSource({ ...newSource, name: e.target.value })} />
+                                </div>
+                                {addSourceType === 'text' ? (
+                                  <div className="space-y-2">
+                                    <Label>Conteúdo</Label>
+                                    <Textarea placeholder="Cole o texto aqui..." rows={8} value={newSource.content} onChange={(e) => setNewSource({ ...newSource, content: e.target.value })} />
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    <Label>URL</Label>
+                                    <Input placeholder="https://..." value={newSource.url} onChange={(e) => setNewSource({ ...newSource, url: e.target.value })} />
+                                  </div>
+                                )}
+                                <Button onClick={handleAddSource} disabled={!newSource.name || (addSourceType === 'text' ? !newSource.content : !newSource.url) || addTextSource.isPending || addUrlSource.isPending} className="w-full">
+                                  {addTextSource.isPending || addUrlSource.isPending ? "Adicionando..." : "Adicionar"}
+                                </Button>
+                              </>
                             )}
-                            <Button onClick={handleAddSource} disabled={!newSource.name || (addSourceType === 'text' ? !newSource.content : !newSource.url) || addTextSource.isPending || addUrlSource.isPending} className="w-full">
-                              {addTextSource.isPending || addUrlSource.isPending ? "Adicionando..." : "Adicionar"}
-                            </Button>
                           </div>
                         </DialogContent>
                       </Dialog>
