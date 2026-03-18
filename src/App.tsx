@@ -42,6 +42,7 @@ import MetaPixels from "./pages/MetaPixels";
 import MetaAudiences from "./pages/MetaAudiences";
 import WhatsAppCAPI from "./pages/WhatsAppCAPI";
 import ApolloDashboard from "./pages/ApolloDashboard";
+import FluxCRM from "./pages/FluxCRM";
 
 const queryClient = new QueryClient();
 
