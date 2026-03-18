@@ -224,7 +224,7 @@ export default function DatastoreManager() {
                         <DialogTrigger asChild>
                           <Button size="sm"><Plus className="w-4 h-4 mr-2" />Adicionar</Button>
                         </DialogTrigger>
-                        <DialogContent>
+                        <DialogContent className="max-w-2xl">
                           <DialogHeader><DialogTitle>Adicionar Conteúdo</DialogTitle></DialogHeader>
                           <div className="space-y-4 py-4">
                             <div className="flex gap-2 flex-wrap">
