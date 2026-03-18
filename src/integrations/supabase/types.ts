@@ -1875,56 +1875,116 @@ export type Database = {
         Row: {
           action_source: string
           batch_id: string | null
+          content_category: string | null
+          content_ids: string[] | null
+          content_name: string | null
+          content_type: string | null
           created_at: string
+          currency: string | null
           custom_data: Json | null
           error_message: string | null
+          event_id: string | null
           event_name: string
           event_source_url: string | null
           event_time: string
           id: string
+          meta_response: Json | null
+          num_items: number | null
+          order_id: string | null
           pixel_id: string
+          predicted_ltv: number | null
           response_body: Json | null
           response_code: number | null
           sent_at: string | null
           status: string
+          user_city: string | null
+          user_country: string | null
           user_data: Json | null
+          user_email_hash: string | null
+          user_external_id: string | null
+          user_fbc: string | null
+          user_fbp: string | null
           user_id: string
+          user_ip: string | null
+          user_phone_hash: string | null
+          user_user_agent: string | null
+          value: number | null
         }
         Insert: {
           action_source?: string
           batch_id?: string | null
+          content_category?: string | null
+          content_ids?: string[] | null
+          content_name?: string | null
+          content_type?: string | null
           created_at?: string
+          currency?: string | null
           custom_data?: Json | null
           error_message?: string | null
+          event_id?: string | null
           event_name: string
           event_source_url?: string | null
           event_time?: string
           id?: string
+          meta_response?: Json | null
+          num_items?: number | null
+          order_id?: string | null
           pixel_id: string
+          predicted_ltv?: number | null
           response_body?: Json | null
           response_code?: number | null
           sent_at?: string | null
           status?: string
+          user_city?: string | null
+          user_country?: string | null
           user_data?: Json | null
+          user_email_hash?: string | null
+          user_external_id?: string | null
+          user_fbc?: string | null
+          user_fbp?: string | null
           user_id: string
+          user_ip?: string | null
+          user_phone_hash?: string | null
+          user_user_agent?: string | null
+          value?: number | null
         }
         Update: {
           action_source?: string
           batch_id?: string | null
+          content_category?: string | null
+          content_ids?: string[] | null
+          content_name?: string | null
+          content_type?: string | null
           created_at?: string
+          currency?: string | null
           custom_data?: Json | null
           error_message?: string | null
+          event_id?: string | null
           event_name?: string
           event_source_url?: string | null
           event_time?: string
           id?: string
+          meta_response?: Json | null
+          num_items?: number | null
+          order_id?: string | null
           pixel_id?: string
+          predicted_ltv?: number | null
           response_body?: Json | null
           response_code?: number | null
           sent_at?: string | null
           status?: string
+          user_city?: string | null
+          user_country?: string | null
           user_data?: Json | null
+          user_email_hash?: string | null
+          user_external_id?: string | null
+          user_fbc?: string | null
+          user_fbp?: string | null
           user_id?: string
+          user_ip?: string | null
+          user_phone_hash?: string | null
+          user_user_agent?: string | null
+          value?: number | null
         }
         Relationships: [
           {
