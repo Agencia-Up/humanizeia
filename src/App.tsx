@@ -91,6 +91,7 @@ const App = () => (
           <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
           <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
           <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
+          <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

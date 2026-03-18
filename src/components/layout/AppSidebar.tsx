@@ -239,6 +239,7 @@ export function AppSidebar() {
     { label: '📈 Campanhas', items: campaignItems, triggerIcon: Rocket },
     { label: '⚙️ Automação', items: automationItems, triggerIcon: Settings2 },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
+    { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
     { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
