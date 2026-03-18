@@ -102,6 +102,7 @@ const whatsappItems = [
   { title: 'Extrator de Grupos', url: '/whatsapp/groups', icon: Users },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
   { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
+  { title: 'CAPI Funil', url: '/whatsapp/capi', icon: TrendingUp },
 ];
 
 // ⚙️ Sistema
