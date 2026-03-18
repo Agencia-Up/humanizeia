@@ -93,12 +93,66 @@ const ApolloAgent = () => {
   return (
     <MainLayout>
       <div className="flex h-[calc(100vh-80px)] max-h-[calc(100vh-80px)]">
+        {/* Conversation History Panel */}
+        {historyOpen && (
+          <div className="w-72 border-r border-border/50 flex flex-col bg-muted/30">
+            <div className="flex items-center justify-between p-3 border-b border-border/50">
+              <span className="text-sm font-semibold text-foreground">Conversas</span>
+              <div className="flex gap-1">
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={newConversation}>
+                  <MessageSquarePlus className="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setHistoryOpen(false)}>
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+            <ScrollArea className="flex-1">
+              <div className="p-2 space-y-1">
+                {isLoadingConversations && (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+                {conversations.map((conv) => (
+                  <button
+                    key={conv.id}
+                    onClick={() => { selectConversation(conv.id); setHistoryOpen(false); }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                      activeConversationId === conv.id
+                        ? 'bg-primary/10 text-primary border border-primary/20'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                    }`}
+                  >
+                    <p className="truncate font-medium">{conv.title}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {formatDistanceToNow(new Date(conv.updated_at), { addSuffix: true, locale: ptBR })}
+                    </p>
+                  </button>
+                ))}
+                {!isLoadingConversations && conversations.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-4">Nenhuma conversa salva</p>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
+
         {/* Main Chat Area */}
         <div className="flex flex-col flex-1 min-w-0">
           
           {/* HEADER */}
           <div className="flex items-center justify-between p-4 border-b border-border/50">
             <div className="flex items-center gap-3">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => setHistoryOpen(!historyOpen)}
+                className="text-muted-foreground hover:text-foreground h-9 w-9"
+                title="Histórico de conversas"
+              >
+                <History className="w-5 h-5" />
+              </Button>
               <div className="w-11 h-11 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-lg shadow-primary/20">
                 <Brain className="w-6 h-6 text-primary-foreground" />
               </div>
@@ -117,14 +171,26 @@ const ApolloAgent = () => {
               </div>
             </div>
             
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={clearChat}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={newConversation}
+                className="text-muted-foreground hover:text-foreground"
+                title="Nova conversa"
+              >
+                <MessageSquarePlus className="w-4 h-4" />
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={clearChat}
+                className="text-muted-foreground hover:text-foreground"
+                title="Apagar conversa"
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
 
           {/* MESSAGE AREA */}
