@@ -41,6 +41,7 @@ export function Topbar() {
         <Button variant="ghost" size="icon" onClick={toggleDarkMode} className="text-muted-foreground hover:text-foreground">
           {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
+        <ApolloAlertBell />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
