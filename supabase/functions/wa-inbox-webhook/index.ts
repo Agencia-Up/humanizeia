@@ -419,6 +419,177 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
   }
 }
 
+// ====================== UTM / FBCLID EXTRACTION ======================
+
+function extractUTMParams(msg: any, content: string) {
+  const result: any = { hasData: false };
+
+  // Source 1: Meta referral object (Click-to-WhatsApp ads)
+  const referral = msg.referral;
+  if (referral) {
+    if (referral.source_url) {
+      try {
+        const url = new URL(referral.source_url);
+        result.fbclid = url.searchParams.get("fbclid") || null;
+        result.utm_source = url.searchParams.get("utm_source") || null;
+        result.utm_campaign = url.searchParams.get("utm_campaign") || null;
+        result.utm_medium = url.searchParams.get("utm_medium") || null;
+        result.utm_content = url.searchParams.get("utm_content") || null;
+        result.utm_term = url.searchParams.get("utm_term") || null;
+      } catch {}
+    }
+    if (referral.headline) result.ad_headline = referral.headline;
+    if (referral.body) result.ad_body = referral.body;
+    result.hasData = true;
+  }
+
+  // Source 2: URLs in message body
+  if (content) {
+    const urlMatch = content.match(/https?:\/\/[^\s]+/);
+    if (urlMatch) {
+      try {
+        const url = new URL(urlMatch[0]);
+        if (!result.fbclid) result.fbclid = url.searchParams.get("fbclid") || null;
+        if (!result.utm_source) result.utm_source = url.searchParams.get("utm_source") || null;
+        if (!result.utm_campaign) result.utm_campaign = url.searchParams.get("utm_campaign") || null;
+        if (!result.utm_medium) result.utm_medium = url.searchParams.get("utm_medium") || null;
+        if (!result.utm_content) result.utm_content = url.searchParams.get("utm_content") || null;
+        if (!result.utm_term) result.utm_term = url.searchParams.get("utm_term") || null;
+        if (result.fbclid || result.utm_source) result.hasData = true;
+      } catch {}
+    }
+  }
+
+  return result;
+}
+
+// ====================== CAPI FUNNEL EVENT FIRING ======================
+
+async function fireCAPIFunnelEvent(
+  supabase: any,
+  userId: string,
+  params: {
+    phone: string;
+    contact_id: string;
+    event_name: string;
+    funnel_stage: string;
+    fbclid?: string | null;
+    utm_source?: string | null;
+    utm_campaign?: string | null;
+    value?: number;
+    currency?: string;
+    custom_data?: any;
+  }
+) {
+  try {
+    // Get user's active pixel
+    const { data: pixel } = await supabase
+      .from("meta_pixels")
+      .select("id, pixel_id, access_token_encrypted")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
+
+    // Record funnel event
+    await supabase.from("wa_capi_funnel").insert({
+      user_id: userId,
+      phone: params.phone,
+      contact_id: params.contact_id,
+      event_name: params.event_name,
+      funnel_stage: params.funnel_stage,
+      fbclid: params.fbclid || null,
+      utm_source: params.utm_source || null,
+      utm_campaign: params.utm_campaign || null,
+      pixel_id: pixel?.id || null,
+      value: params.value || null,
+      currency: params.currency || "BRL",
+      custom_data: params.custom_data || null,
+      event_sent: false,
+    });
+
+    // Update contact funnel stage
+    const capiEventRecord = { [params.event_name]: new Date().toISOString() };
+    const { data: contactData } = await supabase
+      .from("wa_contacts")
+      .select("capi_events_sent")
+      .eq("id", params.contact_id)
+      .single();
+
+    const existingEvents = (contactData?.capi_events_sent as any) || {};
+    await supabase
+      .from("wa_contacts")
+      .update({
+        funnel_stage: params.funnel_stage,
+        funnel_updated_at: new Date().toISOString(),
+        capi_events_sent: { ...existingEvents, ...capiEventRecord },
+      })
+      .eq("id", params.contact_id);
+
+    // Fire CAPI event if pixel is configured
+    if (pixel?.access_token_encrypted && pixel?.pixel_id) {
+      const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
+      const eventData: any = {
+        event_name: params.event_name,
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: crypto.randomUUID(),
+        action_source: "website",
+        user_data: {
+          ph: [await hashData(params.phone)],
+          ...(params.fbclid && { fbc: params.fbclid }),
+        },
+      };
+
+      if (params.value || params.currency) {
+        eventData.custom_data = {
+          ...(params.value && { value: params.value }),
+          currency: params.currency || "BRL",
+          ...params.custom_data,
+        };
+      }
+
+      const metaRes = await fetch(`${META_GRAPH_URL}/${pixel.pixel_id}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data: [eventData],
+          access_token: pixel.access_token_encrypted,
+        }),
+      });
+
+      const metaData = await metaRes.json();
+
+      // Update funnel event as sent
+      await supabase
+        .from("wa_capi_funnel")
+        .update({
+          event_sent: true,
+          sent_at: new Date().toISOString(),
+          meta_response: metaData,
+        })
+        .eq("contact_id", params.contact_id)
+        .eq("event_name", params.event_name)
+        .eq("event_sent", false)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      console.log(`[CAPI] ${params.event_name} fired for ${params.phone}: ${metaData.events_received || 0} received`);
+    } else {
+      console.log(`[CAPI] ${params.event_name} queued for ${params.phone} (no pixel configured)`);
+    }
+  } catch (err) {
+    console.error(`[CAPI] Error firing ${params.event_name}:`, err);
+  }
+}
+
+async function hashData(input: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input.toLowerCase().trim());
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 // ====================== SHARED: AI CATEGORIZATION + AUTOMATIONS + AI AGENT ======================
 
 async function categorizeAndAutomate(
@@ -439,6 +610,13 @@ async function categorizeAndAutomate(
       .eq("id", inboxMsgId);
 
     if (contactId) {
+      // Get contact data for CAPI
+      const { data: contactData } = await supabase
+        .from("wa_contacts")
+        .select("fbclid, utm_source, utm_campaign, funnel_stage, capi_events_sent")
+        .eq("id", contactId)
+        .single();
+
       if (aiCategory.category === "opt-out") {
         await supabase
           .from("wa_contacts")
@@ -449,6 +627,20 @@ async function categorizeAndAutomate(
           .from("wa_contacts")
           .update({ status: "qualified" } as any)
           .eq("id", contactId);
+
+        // ===== Fire CAPI: Lead Qualified =====
+        const alreadySent = (contactData?.capi_events_sent as any)?.LeadQualified;
+        if (!alreadySent) {
+          await fireCAPIFunnelEvent(supabase, instance.user_id, {
+            phone,
+            contact_id: contactId,
+            event_name: "LeadQualified",
+            funnel_stage: "qualified",
+            fbclid: contactData?.fbclid,
+            utm_source: contactData?.utm_source,
+            utm_campaign: contactData?.utm_campaign,
+          });
+        }
       }
     }
 
