@@ -2162,6 +2162,90 @@ export type Database = {
         }
         Relationships: []
       }
+      external_webhooks: {
+        Row: {
+          auto_tags: string[] | null
+          created_at: string | null
+          description: string | null
+          field_mapping: Json | null
+          id: string
+          is_active: boolean | null
+          last_received_at: string | null
+          name: string
+          organization_id: string | null
+          platform: string | null
+          send_whatsapp: boolean | null
+          slug: string
+          total_errors: number | null
+          total_processed: number | null
+          total_received: number | null
+          updated_at: string | null
+          user_id: string
+          wa_delay_seconds: number | null
+          wa_instance_id: string | null
+          wa_message_template: string | null
+        }
+        Insert: {
+          auto_tags?: string[] | null
+          created_at?: string | null
+          description?: string | null
+          field_mapping?: Json | null
+          id?: string
+          is_active?: boolean | null
+          last_received_at?: string | null
+          name: string
+          organization_id?: string | null
+          platform?: string | null
+          send_whatsapp?: boolean | null
+          slug: string
+          total_errors?: number | null
+          total_processed?: number | null
+          total_received?: number | null
+          updated_at?: string | null
+          user_id: string
+          wa_delay_seconds?: number | null
+          wa_instance_id?: string | null
+          wa_message_template?: string | null
+        }
+        Update: {
+          auto_tags?: string[] | null
+          created_at?: string | null
+          description?: string | null
+          field_mapping?: Json | null
+          id?: string
+          is_active?: boolean | null
+          last_received_at?: string | null
+          name?: string
+          organization_id?: string | null
+          platform?: string | null
+          send_whatsapp?: boolean | null
+          slug?: string
+          total_errors?: number | null
+          total_processed?: number | null
+          total_received?: number | null
+          updated_at?: string | null
+          user_id?: string
+          wa_delay_seconds?: number | null
+          wa_instance_id?: string | null
+          wa_message_template?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "external_webhooks_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "external_webhooks_wa_instance_id_fkey"
+            columns: ["wa_instance_id"]
+            isOneToOne: false
+            referencedRelation: "wa_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       historico_reports: {
         Row: {
           canal: string
@@ -3819,6 +3903,69 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      webhook_logs: {
+        Row: {
+          contact_id: string | null
+          created_at: string | null
+          error_message: string | null
+          extracted_data: Json | null
+          id: string
+          ip_address: string | null
+          processed_at: string | null
+          raw_payload: Json
+          status: string | null
+          user_agent: string | null
+          webhook_id: string
+          whatsapp_sent: boolean | null
+          whatsapp_sent_at: string | null
+        }
+        Insert: {
+          contact_id?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          extracted_data?: Json | null
+          id?: string
+          ip_address?: string | null
+          processed_at?: string | null
+          raw_payload: Json
+          status?: string | null
+          user_agent?: string | null
+          webhook_id: string
+          whatsapp_sent?: boolean | null
+          whatsapp_sent_at?: string | null
+        }
+        Update: {
+          contact_id?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          extracted_data?: Json | null
+          id?: string
+          ip_address?: string | null
+          processed_at?: string | null
+          raw_payload?: Json
+          status?: string | null
+          user_agent?: string | null
+          webhook_id?: string
+          whatsapp_sent?: boolean | null
+          whatsapp_sent_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "webhook_logs_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "wa_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "webhook_logs_webhook_id_fkey"
+            columns: ["webhook_id"]
+            isOneToOne: false
+            referencedRelation: "external_webhooks"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       whatsapp_config: {
         Row: {
