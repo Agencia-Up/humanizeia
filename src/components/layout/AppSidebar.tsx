@@ -85,6 +85,11 @@ const analyticsItems = [
   { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
 ];
 
+// 📋 CRM
+const crmItems = [
+  { title: 'Flux CRM', url: '/crm', icon: Kanban },
+];
+
 // 🔗 Integrações
 const integrationItems = [
   { title: 'Integrações', url: '/integrations', icon: Plug },
