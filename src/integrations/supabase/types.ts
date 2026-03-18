@@ -3507,6 +3507,7 @@ export type Database = {
         Returns: undefined
       }
       get_user_email: { Args: { _user_id: string }; Returns: string }
+      hash_user_data: { Args: { input: string }; Returns: string }
       increment_campaign_delivered: {
         Args: { cid: string }
         Returns: undefined
