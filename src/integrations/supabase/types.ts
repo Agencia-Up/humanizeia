@@ -1821,9 +1821,60 @@ export type Database = {
         }
         Relationships: []
       }
+      meta_capi_batches: {
+        Row: {
+          batch_size: number
+          created_at: string
+          error_message: string | null
+          events_failed: number
+          events_sent: number
+          id: string
+          pixel_id: string
+          response_body: Json | null
+          sent_at: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          batch_size?: number
+          created_at?: string
+          error_message?: string | null
+          events_failed?: number
+          events_sent?: number
+          id?: string
+          pixel_id: string
+          response_body?: Json | null
+          sent_at?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          batch_size?: number
+          created_at?: string
+          error_message?: string | null
+          events_failed?: number
+          events_sent?: number
+          id?: string
+          pixel_id?: string
+          response_body?: Json | null
+          sent_at?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_capi_batches_pixel_id_fkey"
+            columns: ["pixel_id"]
+            isOneToOne: false
+            referencedRelation: "meta_pixels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       meta_capi_events: {
         Row: {
           action_source: string
+          batch_id: string | null
           created_at: string
           custom_data: Json | null
           error_message: string | null
@@ -1841,6 +1892,7 @@ export type Database = {
         }
         Insert: {
           action_source?: string
+          batch_id?: string | null
           created_at?: string
           custom_data?: Json | null
           error_message?: string | null
@@ -1858,6 +1910,7 @@ export type Database = {
         }
         Update: {
           action_source?: string
+          batch_id?: string | null
           created_at?: string
           custom_data?: Json | null
           error_message?: string | null
@@ -1874,6 +1927,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "meta_capi_events_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "meta_capi_batches"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "meta_capi_events_pixel_id_fkey"
             columns: ["pixel_id"]
