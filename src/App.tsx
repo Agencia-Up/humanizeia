@@ -44,6 +44,7 @@ import WhatsAppCAPI from "./pages/WhatsAppCAPI";
 import ApolloDashboard from "./pages/ApolloDashboard";
 import FluxCRM from "./pages/FluxCRM";
 import DatastoreManager from "./pages/DatastoreManager";
+import CaptureForms from "./pages/CaptureForms";
 
 const queryClient = new QueryClient();
 
