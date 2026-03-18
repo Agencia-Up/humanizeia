@@ -1803,6 +1803,158 @@ export type Database = {
         }
         Relationships: []
       }
+      datastore_chunks: {
+        Row: {
+          chunk_index: number
+          content: string
+          created_at: string
+          datastore_id: string
+          embedding: string | null
+          id: string
+          metadata: Json | null
+          source_id: string
+          tokens_count: number
+          user_id: string
+        }
+        Insert: {
+          chunk_index?: number
+          content: string
+          created_at?: string
+          datastore_id: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          source_id: string
+          tokens_count?: number
+          user_id: string
+        }
+        Update: {
+          chunk_index?: number
+          content?: string
+          created_at?: string
+          datastore_id?: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          source_id?: string
+          tokens_count?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "datastore_chunks_datastore_id_fkey"
+            columns: ["datastore_id"]
+            isOneToOne: false
+            referencedRelation: "datastores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "datastore_chunks_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "datastore_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      datastore_sources: {
+        Row: {
+          chunks_count: number
+          content: string | null
+          created_at: string
+          datastore_id: string
+          error_message: string | null
+          file_path: string | null
+          id: string
+          name: string
+          source_type: string
+          status: string
+          tokens_count: number
+          updated_at: string
+          url: string | null
+          user_id: string
+        }
+        Insert: {
+          chunks_count?: number
+          content?: string | null
+          created_at?: string
+          datastore_id: string
+          error_message?: string | null
+          file_path?: string | null
+          id?: string
+          name: string
+          source_type?: string
+          status?: string
+          tokens_count?: number
+          updated_at?: string
+          url?: string | null
+          user_id: string
+        }
+        Update: {
+          chunks_count?: number
+          content?: string | null
+          created_at?: string
+          datastore_id?: string
+          error_message?: string | null
+          file_path?: string | null
+          id?: string
+          name?: string
+          source_type?: string
+          status?: string
+          tokens_count?: number
+          updated_at?: string
+          url?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "datastore_sources_datastore_id_fkey"
+            columns: ["datastore_id"]
+            isOneToOne: false
+            referencedRelation: "datastores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      datastores: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          total_chunks: number
+          total_documents: number
+          total_tokens: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          total_chunks?: number
+          total_documents?: number
+          total_tokens?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          total_chunks?: number
+          total_documents?: number
+          total_tokens?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       historico_reports: {
         Row: {
           canal: string
@@ -3574,6 +3726,20 @@ export type Database = {
       is_org_owner: {
         Args: { _organization_id: string; _user_id: string }
         Returns: boolean
+      }
+      search_datastore_chunks: {
+        Args: {
+          p_datastore_id: string
+          p_match_count?: number
+          p_match_threshold?: number
+          p_query_embedding: string
+        }
+        Returns: {
+          content: string
+          id: string
+          similarity: number
+          source_name: string
+        }[]
       }
     }
     Enums: {
