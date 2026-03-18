@@ -30,6 +30,7 @@ import {
   Bot,
   Activity,
   Radar,
+  Kanban,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -82,6 +83,11 @@ const analyticsItems = [
   { title: 'Apollo Diagnóstico', url: '/apollo', icon: Radar },
   { title: 'Relatórios', url: '/reports', icon: FileText },
   { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
+];
+
+// 📋 CRM
+const crmItems = [
+  { title: 'Flux CRM', url: '/crm', icon: Kanban },
 ];
 
 // 🔗 Integrações
@@ -233,6 +239,7 @@ export function AppSidebar() {
     { label: '📈 Campanhas', items: campaignItems, triggerIcon: Rocket },
     { label: '⚙️ Automação', items: automationItems, triggerIcon: Settings2 },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
+    { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
     { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
