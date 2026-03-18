@@ -106,13 +106,44 @@ async function handleMetaWebhook(supabase: any, body: any) {
           messageType = "sticker";
         }
 
+        // ===== Extract UTM/fbclid from referral (Click-to-WhatsApp ads) =====
+        const utmData = extractUTMParams(msg, content);
+
         const { data: contact } = await supabase
           .from("wa_contacts")
-          .select("id")
+          .select("id, fbclid, funnel_stage, capi_events_sent")
           .eq("user_id", instance.user_id)
           .eq("phone", phone)
           .limit(1)
           .maybeSingle();
+
+        // Update contact with UTM data if available and not already set
+        if (contact?.id && utmData.hasData) {
+          const updateFields: any = {};
+          if (utmData.fbclid && !contact.fbclid) updateFields.fbclid = utmData.fbclid;
+          if (utmData.utm_source) updateFields.utm_source = utmData.utm_source;
+          if (utmData.utm_campaign) updateFields.utm_campaign = utmData.utm_campaign;
+          if (utmData.utm_medium) updateFields.utm_medium = utmData.utm_medium;
+          if (utmData.utm_content) updateFields.utm_content = utmData.utm_content;
+          if (utmData.utm_term) updateFields.utm_term = utmData.utm_term;
+          if (Object.keys(updateFields).length > 0) {
+            await supabase.from("wa_contacts").update(updateFields).eq("id", contact.id);
+          }
+        }
+
+        // ===== Fire Lead CAPI event on first message =====
+        const isFirstMessage = !contact?.funnel_stage || contact.funnel_stage === "new";
+        if (isFirstMessage && contact?.id) {
+          await fireCAPIFunnelEvent(supabase, instance.user_id, {
+            phone,
+            contact_id: contact.id,
+            event_name: "Lead",
+            funnel_stage: "lead",
+            fbclid: utmData.fbclid || contact.fbclid,
+            utm_source: utmData.utm_source,
+            utm_campaign: utmData.utm_campaign,
+          });
+        }
 
         const { data: inboxMsg, error: insertErr } = await supabase
           .from("wa_inbox")
