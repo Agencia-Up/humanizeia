@@ -95,6 +95,7 @@ const App = () => (
           <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
           <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
           <Route path="/datastore" element={<ProtectedRoute><DatastoreManager /></ProtectedRoute>} />
+          <Route path="/capture-forms" element={<ProtectedRoute><CaptureForms /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

@@ -113,6 +113,7 @@ const whatsappItems = [
   { title: 'Agente IA', url: '/whatsapp/ai-agent', icon: Bot },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
   { title: 'CAPI Tracking', url: '/whatsapp/capi', icon: Activity },
+  { title: 'Formulários de Captura', url: '/capture-forms', icon: ClipboardList },
 ];
 
 // ⚙️ Sistema
