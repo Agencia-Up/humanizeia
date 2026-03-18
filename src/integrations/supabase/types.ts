@@ -1812,6 +1812,7 @@ export type Database = {
           embedding: string | null
           id: string
           metadata: Json | null
+          search_vector: unknown
           source_id: string
           tokens_count: number
           user_id: string
@@ -1824,6 +1825,7 @@ export type Database = {
           embedding?: string | null
           id?: string
           metadata?: Json | null
+          search_vector?: unknown
           source_id: string
           tokens_count?: number
           user_id: string
@@ -1836,6 +1838,7 @@ export type Database = {
           embedding?: string | null
           id?: string
           metadata?: Json | null
+          search_vector?: unknown
           source_id?: string
           tokens_count?: number
           user_id?: string
@@ -3733,6 +3736,19 @@ export type Database = {
           p_match_count?: number
           p_match_threshold?: number
           p_query_embedding: string
+        }
+        Returns: {
+          content: string
+          id: string
+          similarity: number
+          source_name: string
+        }[]
+      }
+      search_datastore_fulltext: {
+        Args: {
+          p_datastore_id: string
+          p_match_count?: number
+          p_query: string
         }
         Returns: {
           content: string
