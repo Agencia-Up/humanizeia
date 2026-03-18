@@ -1,4 +1,5 @@
 import {
+  Activity,
   Home,
   Brain,
   PenTool,
