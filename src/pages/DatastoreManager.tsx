@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useDatastore, useDatastoreSources, useDatastoreSearch } from "@/hooks/useDatastore";
-import MainLayout from "@/components/layout/MainLayout";
+import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
