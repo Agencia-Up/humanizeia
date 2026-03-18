@@ -11,6 +11,7 @@ import { useAppStore } from '@/store/appStore';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAuth } from '@/hooks/useAuth';
 import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
+import { ApolloAlertBell } from '@/components/apollo/ApolloAlertBell';
 
 export function Topbar() {
   const navigate = useNavigate();
