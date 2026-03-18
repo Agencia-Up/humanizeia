@@ -87,6 +87,9 @@ verify_jwt = false
 [functions.handle-instance-ban]
 verify_jwt = false
 
+[functions.setup-webhooks]
+verify_jwt = false
+
 [functions.meta-capi-send]
 verify_jwt = false
 

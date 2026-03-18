@@ -4,15 +4,18 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { useClaudeChat } from '@/hooks/useClaudeChat';
+import { CampaignFormDialog, CampaignFormData } from '@/components/whatsapp/CampaignFormDialog';
 import {
   Send, Plus, CheckCircle, XCircle, MessageCircle, Users,
-  Upload, Loader2, Trash2, List, Zap,
+  Upload, Loader2, Trash2, List, Zap, Sparkles, Pencil, Check, X,
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { CSVUploadDialog } from '@/components/broadcast/CSVUploadDialog';
-import { NewCampaignDialog } from '@/components/broadcast/NewCampaignDialog';
 import { CampaignCard, type WACampaign } from '@/components/broadcast/CampaignCard';
 import {
   AlertDialog,
@@ -40,6 +43,7 @@ interface WAInstance {
   is_active: boolean;
   health_score: number;
   provider: string;
+  status: string;
 }
 
 export default function WhatsAppBroadcast() {
@@ -50,9 +54,20 @@ export default function WhatsAppBroadcast() {
   const [instances, setInstances] = useState<WAInstance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showUpload, setShowUpload] = useState(false);
-  const [showNewCampaign, setShowNewCampaign] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteListId, setDeleteListId] = useState<string | null>(null);
   const [isDeletingList, setIsDeletingList] = useState(false);
+  const [editingCampaign, setEditingCampaign] = useState<(CampaignFormData & { id: string }) | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [aiVariations, setAiVariations] = useState<string[]>([]);
+  const [renamingListId, setRenamingListId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const { sendSingleMessage, isLoading: aiLoading } = useClaudeChat({
+    context: 'copywriter',
+    config: { creativity: 0.8, variations: 3 },
+  });
 
   const fetchData = useCallback(async () => {
     if (!user) return;
@@ -61,7 +76,7 @@ export default function WhatsAppBroadcast() {
       const [campaignsRes, listsRes, instancesRes] = await Promise.all([
         supabase
           .from('wa_campaigns')
-          .select('id, name, message_template, prompt_base, status, total_contacts, sent_count, delivered_count, failed_count, min_delay_seconds, max_delay_seconds, variation_level, rotation_messages_per_instance, created_at, started_at, completed_at')
+          .select('*')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase
@@ -71,7 +86,7 @@ export default function WhatsAppBroadcast() {
           .order('created_at', { ascending: false }),
         supabase
           .from('wa_instances')
-          .select('id, friendly_name, phone_number, is_active, health_score, provider')
+          .select('id, friendly_name, phone_number, is_active, health_score, provider, status')
           .eq('user_id', user.id)
           .eq('is_active', true),
       ]);
@@ -97,6 +112,106 @@ export default function WhatsAppBroadcast() {
     return () => clearInterval(interval);
   }, [campaigns, fetchData]);
 
+  // Campaign form submit (create or edit)
+  const handleFormSubmit = async (data: CampaignFormData) => {
+    if (!user) return;
+    if (!data.name.trim()) {
+      toast({ title: 'Nome obrigatório', variant: 'destructive' });
+      return;
+    }
+    if (!data.message_template.trim() && !data.prompt_base.trim()) {
+      toast({ title: 'Informe a mensagem base ou o prompt para IA', variant: 'destructive' });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const payload = {
+        campaign_id: editingCampaign?.id || null,
+        name: data.name.trim(),
+        message_template: data.message_template.trim(),
+        prompt_base: data.prompt_base.trim() || null,
+        listas_alvo: data.listas_alvo,
+        regras_delay: data.regras_delay,
+        regras_rodizio: data.regras_rodizio,
+        regras_aquecimento: data.regras_aquecimento,
+        start_time: data.start_time,
+        end_time: data.end_time,
+        instance_id: data.instance_id,
+        media_url: data.media_url || null,
+        media_type: data.media_type || null,
+        tags: data.tags.length > 0 ? data.tags : null,
+        variation_level: data.variation_level || 'medium',
+        include_optout_buttons: data.include_optout_buttons ?? false,
+      };
+
+      const { data: result, error } = await supabase.functions.invoke('save-campaign', {
+        body: payload,
+      });
+
+      if (error) throw error;
+      if (result?.error) {
+        const details = result.details ? `\n${(result.details as string[]).join('\n')}` : '';
+        toast({ title: result.error, description: details, variant: 'destructive' });
+        setSaving(false);
+        return;
+      }
+
+      toast({ title: editingCampaign ? '✅ Campanha atualizada!' : '✅ Campanha criada!' });
+      setEditingCampaign(null);
+      setDialogOpen(false);
+      fetchData();
+    } catch (err: any) {
+      toast({ title: 'Erro ao salvar campanha', description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGeneratePreview = async (prompt: string) => {
+    if (!prompt.trim()) {
+      toast({ title: 'Escreva o prompt base antes de gerar prévia', variant: 'destructive' });
+      return;
+    }
+    try {
+      const response = await sendSingleMessage(
+        `Gere exatamente 3 variações de mensagem de WhatsApp com base nesta intenção: "${prompt}". 
+Cada variação deve ser humanizada, pessoal e diferente das outras. 
+Use emojis com moderação. Separe cada variação com "---".
+Não numere as variações. Não inclua explicações adicionais.`
+      );
+      const variations = response.split('---').map((v: string) => v.trim()).filter(Boolean);
+      setAiVariations(variations);
+      setPreviewOpen(true);
+    } catch {
+      toast({ title: 'Erro ao gerar variações', variant: 'destructive' });
+    }
+  };
+
+  const handleEdit = (campaign: any) => {
+    setEditingCampaign({
+      id: campaign.id,
+      name: campaign.name,
+      prompt_base: campaign.prompt_base || '',
+      message_template: campaign.message_template,
+      listas_alvo: campaign.listas_alvo || campaign.list_ids || [],
+      regras_delay: campaign.regras_delay || { min: campaign.min_delay_seconds, max: campaign.max_delay_seconds },
+      regras_rodizio: campaign.regras_rodizio || { mensagens_por_instancia: campaign.rotation_messages_per_instance, pausa_entre_instancias: 300 },
+      regras_aquecimento: campaign.regras_aquecimento || { enabled: false, initial_messages: 20 },
+      start_time: campaign.start_time || campaign.scheduled_at,
+      end_time: campaign.end_time || null,
+      instance_id: campaign.instance_id,
+      media_url: campaign.media_url || '',
+      media_type: campaign.media_type || '',
+      tags: campaign.tags || [],
+      variation_level: campaign.variation_level || 'medium',
+      include_optout_buttons: campaign.include_optout_buttons ?? false,
+      reply_auto_tag: campaign.reply_auto_tag || '',
+      reply_auto_message: campaign.reply_auto_message || '',
+    });
+    setDialogOpen(true);
+  };
+
   const deleteList = async () => {
     if (!deleteListId) return;
     setIsDeletingList(true);
@@ -117,6 +232,26 @@ export default function WhatsAppBroadcast() {
   const totalSent = campaigns.reduce((sum, c) => sum + c.sent_count, 0);
   const totalFailed = campaigns.reduce((sum, c) => sum + c.failed_count, 0);
 
+  const handleRenameList = async (listId: string) => {
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      toast({ title: 'Nome não pode ficar vazio', variant: 'destructive' });
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('wa_contact_lists')
+        .update({ name: trimmed })
+        .eq('id', listId);
+      if (error) throw error;
+      toast({ title: '✅ Lista renomeada!' });
+      setRenamingListId(null);
+      fetchData();
+    } catch (err: any) {
+      toast({ title: 'Erro ao renomear', description: err.message, variant: 'destructive' });
+    }
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -135,7 +270,7 @@ export default function WhatsAppBroadcast() {
             <Button variant="outline" onClick={() => setShowUpload(true)}>
               <Upload className="h-4 w-4 mr-2" /> Importar Contatos
             </Button>
-            <Button onClick={() => setShowNewCampaign(true)}>
+            <Button onClick={() => { setEditingCampaign(null); setDialogOpen(true); }}>
               <Plus className="h-4 w-4 mr-2" /> Nova Campanha
             </Button>
           </div>
@@ -193,7 +328,7 @@ export default function WhatsAppBroadcast() {
                     <Button variant="outline" onClick={() => setShowUpload(true)}>
                       <Upload className="h-4 w-4 mr-2" /> Importar Contatos
                     </Button>
-                    <Button onClick={() => setShowNewCampaign(true)}>
+                    <Button onClick={() => { setEditingCampaign(null); setDialogOpen(true); }}>
                       <Plus className="h-4 w-4 mr-2" /> Nova Campanha
                     </Button>
                   </div>
@@ -201,7 +336,7 @@ export default function WhatsAppBroadcast() {
               </Card>
             ) : (
               campaigns.map(campaign => (
-                <CampaignCard key={campaign.id} campaign={campaign} onRefresh={fetchData} />
+                <CampaignCard key={campaign.id} campaign={campaign} onRefresh={fetchData} onEdit={handleEdit} />
               ))
             )}
           </TabsContent>
@@ -232,7 +367,28 @@ export default function WhatsAppBroadcast() {
                           <Users className="h-5 w-5 text-primary" />
                         </div>
                         <div>
-                          <p className="font-medium">{list.name}</p>
+                          {renamingListId === list.id ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                className="h-7 text-sm w-48"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleRenameList(list.id);
+                                  if (e.key === 'Escape') setRenamingListId(null);
+                                }}
+                              />
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-green-500" onClick={() => handleRenameList(list.id)}>
+                                <Check className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRenamingListId(null)}>
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <p className="font-medium">{list.name}</p>
+                          )}
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Badge variant="secondary" className="text-[10px]">{list.contact_count} contatos</Badge>
                             <span>•</span>
@@ -242,14 +398,24 @@ export default function WhatsAppBroadcast() {
                           </div>
                         </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                        onClick={() => setDeleteListId(list.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-primary"
+                          onClick={() => { setRenamingListId(list.id); setRenameValue(list.name); }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => setDeleteListId(list.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 ))}
@@ -259,26 +425,55 @@ export default function WhatsAppBroadcast() {
         </Tabs>
       </div>
 
-      {/* Dialogs */}
+      {/* Campaign Form Dialog (create + edit) */}
+      <CampaignFormDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onSubmit={handleFormSubmit}
+        onGeneratePreview={handleGeneratePreview}
+        contactLists={lists}
+        instances={instances}
+        saving={saving}
+        aiLoading={aiLoading}
+        editingCampaign={editingCampaign}
+      />
+
+      {/* AI Variations Preview */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Prévia de Variações IA
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+            {aiVariations.map((v, i) => (
+              <Card key={i} className="bg-muted/30">
+                <CardContent className="p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Variação {i + 1}</p>
+                  <p className="text-sm whitespace-pre-wrap">{v}</p>
+                </CardContent>
+              </Card>
+            ))}
+            {aiVariations.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-4">Nenhuma variação gerada ainda.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* CSV Upload Dialog */}
       {user && (
-        <>
-          <CSVUploadDialog
-            open={showUpload}
-            onOpenChange={setShowUpload}
-            userId={user.id}
-            onUploadComplete={fetchData}
-          />
-          <NewCampaignDialog
-            open={showNewCampaign}
-            onOpenChange={setShowNewCampaign}
-            userId={user.id}
-            lists={lists}
-            instances={instances}
-            onCreated={fetchData}
-          />
-        </>
+        <CSVUploadDialog
+          open={showUpload}
+          onOpenChange={setShowUpload}
+          userId={user.id}
+          onUploadComplete={fetchData}
+        />
       )}
 
+      {/* Delete list confirm */}
       <AlertDialog open={!!deleteListId} onOpenChange={() => setDeleteListId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

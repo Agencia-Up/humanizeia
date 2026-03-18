@@ -1,340 +1,199 @@
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
+
+// Pixel CRUD
+export function useMetaPixels() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  const pixelsQuery = useQuery({
+    queryKey: ['meta-pixels', user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('meta_pixels')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
+  });
+
+  const addPixel = useMutation({
+    mutationFn: async (pixel: { pixel_id: string; pixel_name: string; domain?: string }) => {
+      const { data, error } = await supabase
+        .from('meta_pixels')
+        .insert({ ...pixel, user_id: user!.id })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['meta-pixels'] });
+      toast.success('Pixel adicionado com sucesso');
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const togglePixel = useMutation({
+    mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
+      const { error } = await supabase
+        .from('meta_pixels')
+        .update({ is_active })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['meta-pixels'] }),
+  });
+
+  const deletePixel = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('meta_pixels').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['meta-pixels'] });
+      toast.success('Pixel removido');
+    },
+  });
+
+  return { pixels: pixelsQuery.data || [], isLoading: pixelsQuery.isLoading, addPixel, togglePixel, deletePixel };
+}
+
+// CAPI event sending
+export function useCAPISend() {
+  const sendEvents = useCallback(
+    async (pixelId: string, events: CAPIEvent[]) => {
+      const { data, error } = await supabase.functions.invoke('meta-capi-send', {
+        body: { pixel_id: pixelId, events },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    []
+  );
+
+  return { sendEvents };
+}
+
+// CAPI event history
+export function useCAPIEvents(pixelId?: string) {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: ['capi-events', pixelId],
+    queryFn: async () => {
+      let query = supabase
+        .from('meta_capi_events')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (pixelId) query = query.eq('pixel_id', pixelId);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
+  });
+}
 
 export interface CAPIEvent {
-  pixel_id: string;
   event_name: string;
+  event_time?: string;
   event_source_url?: string;
   action_source?: string;
-  user_email_hash?: string;
-  user_phone_hash?: string;
-  user_external_id?: string;
-  user_fbc?: string;
-  user_fbp?: string;
-  user_ip?: string;
-  user_user_agent?: string;
-  user_city?: string;
-  user_country?: string;
-  value?: number;
-  currency?: string;
-  content_name?: string;
-  content_category?: string;
-  content_ids?: string[];
-  content_type?: string;
-  num_items?: number;
-  order_id?: string;
-  predicted_ltv?: number;
+  user_data?: Record<string, any>;
   custom_data?: Record<string, any>;
 }
 
-export interface MetaPixelRecord {
-  id: string;
-  pixel_id: string;
-  pixel_name: string;
-  is_active: boolean;
-  domain: string | null;
-  access_token_encrypted: string | null;
-  events_total: number | null;
-  events_today: number | null;
-  last_event_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
+// Full-funnel CAPI tracking hooks
+export function useCAPITracking() {
+  const { sendEvents } = useCAPISend();
+  const { pixels } = useMetaPixels();
 
-export function useCAPI() {
-  const { user } = useAuth();
-  const { toast } = useToast();
-  const [isTracking, setIsTracking] = useState(false);
-  const [isSending, setIsSending] = useState(false);
+  const getActivePixelId = () => pixels.find((p: any) => p.is_active)?.id;
 
-  const trackEvent = useCallback(async (event: CAPIEvent) => {
-    setIsTracking(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('meta-capi-track', {
-        body: event,
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
-    } catch (err: any) {
-      toast({
-        title: 'Erro ao rastrear evento',
-        description: err.message,
-        variant: 'destructive',
-      });
-      throw err;
-    } finally {
-      setIsTracking(false);
-    }
-  }, [toast]);
-
-  const sendBatch = useCallback(async (pixelId: string, eventIds: string[]) => {
-    setIsSending(true);
-    try {
-      // Fetch pending events
-      const { data: events, error: fetchError } = await supabase
-        .from('meta_capi_events')
-        .select('*')
-        .eq('pixel_id', pixelId)
-        .in('id', eventIds)
-        .eq('status', 'pending');
-
-      if (fetchError) throw fetchError;
-      if (!events || events.length === 0) {
-        toast({ title: 'Nenhum evento pendente encontrado' });
-        return null;
-      }
-
-      const { data, error } = await supabase.functions.invoke('meta-capi-send', {
-        body: { pixel_id: pixelId, events },
-      });
-
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
-      toast({
-        title: 'Eventos enviados!',
-        description: `${data.events_sent} evento(s) enviado(s) com sucesso.`,
-      });
-      return data;
-    } catch (err: any) {
-      toast({
-        title: 'Erro ao enviar eventos',
-        description: err.message,
-        variant: 'destructive',
-      });
-      throw err;
-    } finally {
-      setIsSending(false);
-    }
-  }, [toast]);
-
-  const sendAllPending = useCallback(async (pixelId: string) => {
-    setIsSending(true);
-    try {
-      const { data: events, error: fetchError } = await supabase
-        .from('meta_capi_events')
-        .select('*')
-        .eq('pixel_id', pixelId)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: true })
-        .limit(1000);
-
-      if (fetchError) throw fetchError;
-      if (!events || events.length === 0) {
-        toast({ title: 'Nenhum evento pendente' });
-        return null;
-      }
-
-      const { data, error } = await supabase.functions.invoke('meta-capi-send', {
-        body: { pixel_id: pixelId, events },
-      });
-
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
-      toast({
-        title: 'Lote enviado!',
-        description: `${data.events_sent} de ${events.length} evento(s) enviado(s).`,
-      });
-      return data;
-    } catch (err: any) {
-      toast({
-        title: 'Erro ao enviar lote',
-        description: err.message,
-        variant: 'destructive',
-      });
-      throw err;
-    } finally {
-      setIsSending(false);
-    }
-  }, [toast]);
-
-  const getPixels = useCallback(async (): Promise<MetaPixelRecord[]> => {
-    if (!user) return [];
-    const { data, error } = await supabase
-      .from('meta_pixels')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return (data || []) as MetaPixelRecord[];
-  }, [user]);
-
-  const getEvents = useCallback(async (pixelId: string, status?: string, limit = 50) => {
-    let query = supabase
-      .from('meta_capi_events')
-      .select('*')
-      .eq('pixel_id', pixelId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (status) query = query.eq('status', status);
-
-    const { data, error } = await query;
-    if (error) throw error;
-    return data || [];
-  }, []);
-
-  const getBatches = useCallback(async (pixelId: string, limit = 20) => {
-    const { data, error } = await supabase
-      .from('meta_capi_batches')
-      .select('*')
-      .eq('pixel_id', pixelId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (error) throw error;
-    return data || [];
-  }, []);
-
-  // ---- Convenience methods for common Meta standard events ----
-
-  const trackLead = useCallback(async (
-    pixelId: string,
-    userData: {
-      email?: string;
-      phone?: string;
-      externalId?: string;
-      fbc?: string;
-      fbp?: string;
-      ip?: string;
-      userAgent?: string;
-      city?: string;
-      country?: string;
+  const buildEvent = (eventName: string, opts: {
+    phone?: string; email?: string; value?: number;
+    currency?: string; source?: string; customData?: Record<string, any>;
+  } = {}): CAPIEvent => ({
+    event_name: eventName,
+    action_source: 'system_generated',
+    user_data: {
+      ...(opts.phone && { ph: [opts.phone] }),
+      ...(opts.email && { em: [opts.email] }),
     },
-    extra?: {
-      value?: number;
-      currency?: string;
-      contentName?: string;
-      sourceUrl?: string;
-      customData?: Record<string, any>;
-    }
-  ) => {
-    return trackEvent({
-      pixel_id: pixelId,
-      event_name: 'Lead',
-      action_source: 'website',
-      event_source_url: extra?.sourceUrl,
-      user_email_hash: userData.email,
-      user_phone_hash: userData.phone,
-      user_external_id: userData.externalId,
-      user_fbc: userData.fbc,
-      user_fbp: userData.fbp,
-      user_ip: userData.ip,
-      user_user_agent: userData.userAgent,
-      user_city: userData.city,
-      user_country: userData.country,
-      value: extra?.value,
-      currency: extra?.currency || 'BRL',
-      content_name: extra?.contentName,
-      custom_data: extra?.customData,
-    });
-  }, [trackEvent]);
-
-  const trackPurchase = useCallback(async (
-    pixelId: string,
-    userData: {
-      email?: string;
-      phone?: string;
-      externalId?: string;
-      fbc?: string;
-      fbp?: string;
-      ip?: string;
-      userAgent?: string;
+    custom_data: {
+      ...(opts.value !== undefined && { value: opts.value, currency: opts.currency || 'BRL' }),
+      source: opts.source || 'whatsapp',
+      ...opts.customData,
     },
-    purchaseData: {
-      value: number;
-      currency?: string;
-      contentIds?: string[];
-      contentName?: string;
-      contentType?: string;
-      numItems?: number;
-      orderId?: string;
-      sourceUrl?: string;
-    }
-  ) => {
-    return trackEvent({
-      pixel_id: pixelId,
-      event_name: 'Purchase',
-      action_source: 'website',
-      event_source_url: purchaseData.sourceUrl,
-      user_email_hash: userData.email,
-      user_phone_hash: userData.phone,
-      user_external_id: userData.externalId,
-      user_fbc: userData.fbc,
-      user_fbp: userData.fbp,
-      user_ip: userData.ip,
-      user_user_agent: userData.userAgent,
-      value: purchaseData.value,
-      currency: purchaseData.currency || 'BRL',
-      content_ids: purchaseData.contentIds,
-      content_name: purchaseData.contentName,
-      content_type: purchaseData.contentType,
-      num_items: purchaseData.numItems,
-      order_id: purchaseData.orderId,
-    });
-  }, [trackEvent]);
+  });
 
-  const trackInitiateCheckout = useCallback(async (
-    pixelId: string,
-    userData: { email?: string; phone?: string; externalId?: string; fbc?: string; fbp?: string },
-    extra?: { value?: number; currency?: string; contentIds?: string[]; numItems?: number; sourceUrl?: string }
-  ) => {
-    return trackEvent({
-      pixel_id: pixelId,
-      event_name: 'InitiateCheckout',
-      action_source: 'website',
-      event_source_url: extra?.sourceUrl,
-      user_email_hash: userData.email,
-      user_phone_hash: userData.phone,
-      user_external_id: userData.externalId,
-      user_fbc: userData.fbc,
-      user_fbp: userData.fbp,
-      value: extra?.value,
-      currency: extra?.currency || 'BRL',
-      content_ids: extra?.contentIds,
-      num_items: extra?.numItems,
-    });
-  }, [trackEvent]);
+  // Stage 1: Lead (first contact via WhatsApp)
+  const trackLead = useCallback(
+    async (data?: { phone?: string; email?: string; value?: number; source?: string }) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) { console.warn('[CAPI] No active pixel'); return; }
+      return sendEvents(pixelId, [buildEvent('Lead', data)]);
+    },
+    [pixels]
+  );
 
-  const trackViewContent = useCallback(async (
-    pixelId: string,
-    userData: { email?: string; phone?: string; fbc?: string; fbp?: string },
-    extra?: { value?: number; currency?: string; contentName?: string; contentCategory?: string; contentIds?: string[]; sourceUrl?: string }
-  ) => {
-    return trackEvent({
-      pixel_id: pixelId,
-      event_name: 'ViewContent',
-      action_source: 'website',
-      event_source_url: extra?.sourceUrl,
-      user_email_hash: userData.email,
-      user_phone_hash: userData.phone,
-      user_fbc: userData.fbc,
-      user_fbp: userData.fbp,
-      value: extra?.value,
-      currency: extra?.currency || 'BRL',
-      content_name: extra?.contentName,
-      content_category: extra?.contentCategory,
-      content_ids: extra?.contentIds,
-    });
-  }, [trackEvent]);
+  // Stage 2: Qualified Lead (AI qualifies the contact)
+  const trackQualifiedLead = useCallback(
+    async (data?: { phone?: string; email?: string; source?: string }) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) return;
+      return sendEvents(pixelId, [buildEvent('CompleteRegistration', {
+        ...data,
+        customData: { status: 'qualified', lead_category: 'qualified' },
+      })]);
+    },
+    [pixels]
+  );
 
-  return {
-    trackEvent,
-    trackLead,
-    trackPurchase,
-    trackInitiateCheckout,
-    trackViewContent,
-    sendBatch,
-    sendAllPending,
-    getPixels,
-    getEvents,
-    getBatches,
-    isTracking,
-    isSending,
-  };
+  // Stage 3: Proposal/Checkout (user sends proposal)
+  const trackInitiateCheckout = useCallback(
+    async (data: { phone?: string; email?: string; value?: number; currency?: string }) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) return;
+      return sendEvents(pixelId, [buildEvent('InitiateCheckout', data)]);
+    },
+    [pixels]
+  );
+
+  // Stage 4: Purchase (sale confirmed)
+  const trackPurchase = useCallback(
+    async (data: { value: number; currency?: string; phone?: string; email?: string }) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) return;
+      return sendEvents(pixelId, [buildEvent('Purchase', data)]);
+    },
+    [pixels]
+  );
+
+  // Custom event
+  const trackCustom = useCallback(
+    async (eventName: string, customData?: Record<string, any>, userData?: Record<string, any>) => {
+      const pixelId = getActivePixelId();
+      if (!pixelId) return;
+      return sendEvents(pixelId, [{
+        event_name: eventName,
+        action_source: 'system_generated',
+        user_data: userData || {},
+        custom_data: customData || {},
+      }]);
+    },
+    [pixels]
+  );
+
+  return { trackLead, trackQualifiedLead, trackInitiateCheckout, trackPurchase, trackCustom };
 }

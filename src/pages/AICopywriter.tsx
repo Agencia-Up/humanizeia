@@ -42,6 +42,7 @@ import { useCopyFormulas } from '@/hooks/useCopyFormulas';
 const platforms = [
   { value: 'meta', label: 'Meta Ads' },
   { value: 'google', label: 'Google Ads' },
+  { value: 'whatsapp', label: 'WhatsApp' },
 ];
 
 const metaAdTypes = [
@@ -57,6 +58,14 @@ const googleAdTypes = [
   { value: 'youtube', label: 'YouTube' },
   { value: 'pmax', label: 'Performance Max' },
   { value: 'demandgen', label: 'Demand Gen' },
+];
+
+const whatsappAdTypes = [
+  { value: 'cold_outreach', label: 'Prospecção Fria' },
+  { value: 'follow_up', label: 'Follow-up' },
+  { value: 'reactivation', label: 'Reativação de Lead' },
+  { value: 'offer', label: 'Oferta / Promoção' },
+  { value: 'nurturing', label: 'Nutrição de Lead' },
 ];
 
 const tones = [
@@ -119,7 +128,7 @@ export default function AICopywriter() {
   const [showFormulaForm, setShowFormulaForm] = useState(false);
   const [newFormula, setNewFormula] = useState({ name: '', full_name: '', description: '', example: '' });
 
-  const adTypes = platform === 'meta' ? metaAdTypes : googleAdTypes;
+  const adTypes = platform === 'meta' ? metaAdTypes : platform === 'whatsapp' ? whatsappAdTypes : googleAdTypes;
 
   const { sendSingleMessage } = useClaudeChat({
     context: 'copywriter',
@@ -205,15 +214,30 @@ export default function AICopywriter() {
       ? { fullName: selectedFormulaData.full_name, description: selectedFormulaData.description, example: selectedFormulaData.example }
       : null;
 
-    const prompt = `Gere ${variations} variações de copy para anúncio.
+    const whatsappContext = platform === 'whatsapp'
+      ? `\n\nCONTEXTO WHATSAPP: Esta copy será usada para disparo em massa via WhatsApp para prospecção de leads frios.
+Tipo: ${adTypes.find(t => t.value === adType)?.label || adType}
+REGRAS IMPORTANTES para WhatsApp:
+- Mensagens curtas e diretas (máx 500 caracteres por variação)
+- Linguagem pessoal e humanizada, como se fosse uma conversa 1-a-1
+- NÃO use formatações de anúncio (sem headline separada)
+- Use quebras de linha para facilitar leitura no celular
+- O "headline" no JSON deve ser a primeira frase de abertura (gancho)
+- O "description" deve ser o corpo completo da mensagem
+- O "cta" deve ser uma frase de ação conversacional (ex: "Posso te enviar mais detalhes?")
+- Evite parecer spam ou mensagem genérica de marketing
+- Cada variação deve ser significativamente diferente das outras`
+      : '';
+
+    const prompt = `Gere ${variations} variações de copy para ${platform === 'whatsapp' ? 'mensagem de WhatsApp' : 'anúncio'}.
     
 Produto: ${product}
 Descrição: ${description}
 Tom: ${tone}
 Objetivo: ${objective}
-Incluir emojis: ${includeEmojis ? 'sim' : 'não'}
+Incluir emojis: ${includeEmojis ? 'sim, com moderação' : 'não'}
 Incluir CTA: ${includeCTA ? 'sim' : 'não'}
-Criatividade: ${creativity[0]}/10${selectedTriggers.length > 0 ? `\nGatilhos mentais obrigatórios: ${selectedTriggers.map(t => mentalTriggers.find(mt => mt.value === t)?.label || t).join(', ')}. Use esses gatilhos de forma natural no texto.` : ''}${formulaContext ? `\nFórmula de Copy: ${formulaContext.fullName}\nDescrição da fórmula: ${formulaContext.description}\nEstrutura: ${formulaContext.example.replace(/\n/g, ' | ')}` : ''}`;
+Criatividade: ${creativity[0]}/10${whatsappContext}${selectedTriggers.length > 0 ? `\nGatilhos mentais obrigatórios: ${selectedTriggers.map(t => mentalTriggers.find(mt => mt.value === t)?.label || t).join(', ')}. Use esses gatilhos de forma natural no texto.` : ''}${formulaContext ? `\nFórmula de Copy: ${formulaContext.fullName}\nDescrição da fórmula: ${formulaContext.description}\nEstrutura: ${formulaContext.example.replace(/\n/g, ' | ')}` : ''}`;
 
     // Build swipe file context for the AI
     const swipeFileExamples = swipeFiles

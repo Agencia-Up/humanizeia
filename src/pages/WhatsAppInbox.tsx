@@ -6,12 +6,13 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
   Inbox, Search, Send, Loader2, Check, CheckCheck,
-  Sparkles, User, Archive, ArrowLeft, MessageCircle, Tag,
+  Sparkles, User, Archive, ArrowLeft, MessageCircle, Tag, Phone,
 } from 'lucide-react';
 import { TagBadge } from '@/components/whatsapp/TagBadge';
 import { TagSelector } from '@/components/whatsapp/TagSelector';
@@ -48,6 +49,7 @@ interface WaInstance {
   id: string;
   instance_name: string;
   friendly_name: string | null;
+  phone_number: string | null;
   status: string;
   is_active: boolean;
 }
@@ -95,6 +97,7 @@ export default function WhatsAppInbox() {
   const [isMobileShowChat, setIsMobileShowChat] = useState(false);
   const [filterTags, setFilterTags] = useState<string[]>([]);
   const [contactTags, setContactTags] = useState<Record<string, string[]>>({});
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -145,11 +148,11 @@ export default function WhatsAppInbox() {
     if (!user) return;
     const { data } = await supabase
       .from('wa_instances')
-      .select('id, instance_name, friendly_name, status, is_active')
+      .select('id, instance_name, friendly_name, phone_number, status, is_active')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .eq('status', 'connected');
-    if (data) setInstances(data);
+    if (data) setInstances(data as unknown as WaInstance[]);
   }, [user]);
 
   // Fetch messages for selected conversation
@@ -221,6 +224,22 @@ export default function WhatsAppInbox() {
   useEffect(() => {
     if (selectedPhone) {
       fetchMessages(selectedPhone);
+      // Auto-select instance that last messaged this contact
+      supabase
+        .from('wa_inbox')
+        .select('instance_id')
+        .eq('user_id', user?.id || '')
+        .eq('phone', selectedPhone)
+        .eq('direction', 'outgoing')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .then(({ data }) => {
+          if (data && data.length > 0 && data[0].instance_id) {
+            setSelectedInstanceId(data[0].instance_id);
+          } else if (instances.length > 0) {
+            setSelectedInstanceId(instances[0].id);
+          }
+        });
     }
   }, [selectedPhone, fetchMessages]);
 
@@ -273,22 +292,23 @@ export default function WhatsAppInbox() {
       return;
     }
 
+    const instanceId = selectedInstanceId || instances[0].id;
+
     setSending(true);
     try {
       const { data, error } = await supabase.functions.invoke('wa-send-reply', {
         body: {
-          instance_id: instances[0].id,
+          instance_id: instanceId,
           phone: selectedPhone,
           content: replyText.trim(),
         },
       });
       if (error) throw error;
       setReplyText('');
-      // Message will appear via realtime subscription or we add optimistically
       const optimisticMsg: InboxMessage = {
         id: crypto.randomUUID(),
         user_id: user.id,
-        instance_id: instances[0].id,
+        instance_id: instanceId,
         phone: selectedPhone,
         contact_name: null,
         direction: 'outgoing',
@@ -503,6 +523,15 @@ export default function WhatsAppInbox() {
                             <div className={`flex items-center justify-end gap-1 mt-1 ${
                               msg.direction === 'outgoing' ? 'text-primary-foreground/60' : 'text-muted-foreground'
                             }`}>
+                              {/* Show which instance sent the message */}
+                              {msg.direction === 'outgoing' && msg.instance_id && instances.length > 1 && (() => {
+                                const inst = instances.find(i => i.id === msg.instance_id);
+                                return inst ? (
+                                  <span className="text-[9px] mr-1 opacity-60">
+                                    via {inst.friendly_name || inst.instance_name}
+                                  </span>
+                                ) : null;
+                              })()}
                               <span className="text-[10px]">
                                 {format(new Date(msg.created_at), 'HH:mm')}
                               </span>
@@ -527,8 +556,40 @@ export default function WhatsAppInbox() {
                   )}
                 </ScrollArea>
 
-                {/* Reply Input */}
-                <div className="p-3 border-t">
+                {/* Reply Input with Instance Selector */}
+                <div className="p-3 border-t space-y-2">
+                  {/* Instance Selector */}
+                  {instances.length > 1 && (
+                    <div className="flex items-center gap-2">
+                      <Phone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      <span className="text-xs text-muted-foreground shrink-0">Enviar de:</span>
+                      <Select
+                        value={selectedInstanceId || instances[0]?.id}
+                        onValueChange={setSelectedInstanceId}
+                      >
+                        <SelectTrigger className="h-7 text-xs flex-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {instances.map(inst => (
+                            <SelectItem key={inst.id} value={inst.id} className="text-xs">
+                              {inst.friendly_name || inst.instance_name}
+                              {inst.phone_number ? ` (${inst.phone_number})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {instances.length === 1 && (
+                    <div className="flex items-center gap-2">
+                      <Phone className="h-3 w-3 text-muted-foreground" />
+                      <span className="text-[11px] text-muted-foreground">
+                        Enviando de: {instances[0].friendly_name || instances[0].instance_name}
+                        {instances[0].phone_number ? ` (${instances[0].phone_number})` : ''}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <Input
                       placeholder="Digite sua mensagem..."
@@ -547,7 +608,7 @@ export default function WhatsAppInbox() {
                     </Button>
                   </div>
                   {instances.length === 0 && (
-                    <p className="text-xs text-destructive mt-1">Nenhuma instância conectada para enviar mensagens.</p>
+                    <p className="text-xs text-destructive">Nenhuma instância conectada para enviar mensagens.</p>
                   )}
                 </div>
               </>

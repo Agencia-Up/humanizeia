@@ -11,11 +11,31 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
-    const { user_id, search_query, location, radius, list_id, list_name } = body;
+    // Auth check
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const authClient = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { global: { headers: { Authorization: authHeader } } }
+    );
+    const { data: userData, error: userError } = await authClient.auth.getUser();
+    if (userError || !userData?.user) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const user_id = userData.user.id;
 
-    if (!user_id || !search_query) {
-      return new Response(JSON.stringify({ success: false, error: 'user_id e search_query são obrigatórios' }), {
+    const body = await req.json();
+    const { search_query, location, radius, list_id, list_name } = body;
+
+    if (!search_query) {
+      return new Response(JSON.stringify({ success: false, error: 'search_query é obrigatório' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

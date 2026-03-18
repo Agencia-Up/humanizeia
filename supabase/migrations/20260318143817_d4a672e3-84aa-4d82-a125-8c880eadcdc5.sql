@@ -1,1 +1,0 @@
-UPDATE wa_instances SET is_active = true, status = 'connected' WHERE id = '119793b6-3683-4d77-abe9-245dc8c60608';

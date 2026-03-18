@@ -1,113 +1,62 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
+import { useMetaPixels, useCAPIEvents, useCAPISend } from '@/hooks/useCAPI';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Switch } from '@/components/ui/switch';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
-import { useCAPI, MetaPixelRecord } from '@/hooks/useCAPI';
-import { useToast } from '@/hooks/use-toast';
-import { Plus, Radio, Send, RefreshCw, Eye, Trash2, Activity, BarChart3 } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Plus, Trash2, Send, Activity, Radio, Eye } from 'lucide-react';
+import { toast } from 'sonner';
 import { format } from 'date-fns';
 
 export default function MetaPixels() {
-  const { user } = useAuth();
-  const { toast } = useToast();
-  const { getPixels, getEvents, getBatches, sendAllPending, isSending } = useCAPI();
-  const [pixels, setPixels] = useState<MetaPixelRecord[]>([]);
-  const [selectedPixel, setSelectedPixel] = useState<MetaPixelRecord | null>(null);
-  const [events, setEvents] = useState<any[]>([]);
-  const [batches, setBatches] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [newPixel, setNewPixel] = useState({ pixel_id: '', pixel_name: '', domain: '', access_token: '' });
+  const { pixels, isLoading, addPixel, togglePixel, deletePixel } = useMetaPixels();
+  const [selectedPixelId, setSelectedPixelId] = useState<string | undefined>();
+  const { data: events } = useCAPIEvents(selectedPixelId);
+  const { sendEvents } = useCAPISend();
 
-  const loadPixels = async () => {
-    setLoading(true);
-    try {
-      const data = await getPixels();
-      setPixels(data);
-      if (data.length > 0 && !selectedPixel) {
-        setSelectedPixel(data[0]);
-      }
-    } catch {
-      // handled by hook
-    } finally {
-      setLoading(false);
+  const [newPixel, setNewPixel] = useState({ pixel_id: '', pixel_name: '', domain: '' });
+  const [addOpen, setAddOpen] = useState(false);
+
+  // Test event form
+  const [testEvent, setTestEvent] = useState({ event_name: 'Purchase', event_source_url: '', value: '' });
+  const [testOpen, setTestOpen] = useState(false);
+  const [testPixelId, setTestPixelId] = useState('');
+
+  const handleAddPixel = () => {
+    if (!newPixel.pixel_id || !newPixel.pixel_name) {
+      toast.error('Preencha ID e nome do pixel');
+      return;
     }
+    addPixel.mutate(newPixel, {
+      onSuccess: () => {
+        setNewPixel({ pixel_id: '', pixel_name: '', domain: '' });
+        setAddOpen(false);
+      },
+    });
   };
 
-  const loadPixelData = async (pixel: MetaPixelRecord) => {
+  const handleSendTestEvent = async () => {
+    if (!testPixelId) return;
     try {
-      const [evts, bts] = await Promise.all([
-        getEvents(pixel.id),
-        getBatches(pixel.id),
+      await sendEvents(testPixelId, [
+        {
+          event_name: testEvent.event_name,
+          event_source_url: testEvent.event_source_url || undefined,
+          action_source: 'website',
+          custom_data: testEvent.value ? { value: parseFloat(testEvent.value), currency: 'BRL' } : {},
+        },
       ]);
-      setEvents(evts);
-      setBatches(bts);
-    } catch {
-      // handled
-    }
-  };
-
-  useEffect(() => {
-    if (user) loadPixels();
-  }, [user]);
-
-  useEffect(() => {
-    if (selectedPixel) loadPixelData(selectedPixel);
-  }, [selectedPixel]);
-
-  const handleAddPixel = async () => {
-    if (!user || !newPixel.pixel_id || !newPixel.pixel_name) return;
-    try {
-      const { error } = await supabase.from('meta_pixels').insert({
-        user_id: user.id,
-        pixel_id: newPixel.pixel_id,
-        pixel_name: newPixel.pixel_name,
-        domain: newPixel.domain || null,
-        access_token_encrypted: newPixel.access_token || null,
-        is_active: true,
-      });
-      if (error) throw error;
-      toast({ title: 'Pixel adicionado!', description: `${newPixel.pixel_name} foi cadastrado.` });
-      setShowAddDialog(false);
-      setNewPixel({ pixel_id: '', pixel_name: '', domain: '', access_token: '' });
-      loadPixels();
+      toast.success('Evento de teste enviado com sucesso!');
+      setTestOpen(false);
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
-    }
-  };
-
-  const handleDeletePixel = async (id: string) => {
-    try {
-      const { error } = await supabase.from('meta_pixels').delete().eq('id', id);
-      if (error) throw error;
-      toast({ title: 'Pixel removido' });
-      if (selectedPixel?.id === id) setSelectedPixel(null);
-      loadPixels();
-    } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
-    }
-  };
-
-  const handleSendPending = async () => {
-    if (!selectedPixel) return;
-    await sendAllPending(selectedPixel.id);
-    loadPixelData(selectedPixel);
-  };
-
-  const statusColor = (status: string) => {
-    switch (status) {
-      case 'sent': case 'completed': return 'default';
-      case 'pending': return 'secondary';
-      case 'failed': return 'destructive';
-      default: return 'outline';
+      toast.error(err.message);
     }
   };
 
@@ -116,154 +65,174 @@ export default function MetaPixels() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold lg:text-3xl">Meta Pixels & CAPI</h1>
-            <p className="text-muted-foreground">
-              Gerencie seus pixels e envios de eventos via Conversions API
-            </p>
+            <h1 className="text-2xl font-bold text-foreground">Meta Pixels & CAPI</h1>
+            <p className="text-muted-foreground">Gerencie seus pixels e envie eventos via Conversions API</p>
           </div>
-          <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
               <Button><Plus className="mr-2 h-4 w-4" /> Adicionar Pixel</Button>
             </DialogTrigger>
             <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Adicionar Pixel Meta</DialogTitle>
-                <DialogDescription>Cadastre um novo pixel para rastrear eventos via CAPI.</DialogDescription>
-              </DialogHeader>
+              <DialogHeader><DialogTitle>Novo Pixel</DialogTitle></DialogHeader>
               <div className="space-y-4">
-                <div><Label>Pixel ID</Label><Input placeholder="123456789" value={newPixel.pixel_id} onChange={e => setNewPixel(p => ({ ...p, pixel_id: e.target.value }))} /></div>
-                <div><Label>Nome</Label><Input placeholder="Meu Pixel" value={newPixel.pixel_name} onChange={e => setNewPixel(p => ({ ...p, pixel_name: e.target.value }))} /></div>
-                <div><Label>Domínio (opcional)</Label><Input placeholder="meusite.com" value={newPixel.domain} onChange={e => setNewPixel(p => ({ ...p, domain: e.target.value }))} /></div>
-                <div><Label>Access Token CAPI</Label><Input type="password" placeholder="EAAxxxxxxx..." value={newPixel.access_token} onChange={e => setNewPixel(p => ({ ...p, access_token: e.target.value }))} /></div>
-                <Button onClick={handleAddPixel} className="w-full">Salvar Pixel</Button>
+                <div>
+                  <Label>Pixel ID</Label>
+                  <Input placeholder="Ex: 123456789" value={newPixel.pixel_id} onChange={(e) => setNewPixel({ ...newPixel, pixel_id: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Nome</Label>
+                  <Input placeholder="Pixel Principal" value={newPixel.pixel_name} onChange={(e) => setNewPixel({ ...newPixel, pixel_name: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Domínio (opcional)</Label>
+                  <Input placeholder="seusite.com.br" value={newPixel.domain} onChange={(e) => setNewPixel({ ...newPixel, domain: e.target.value })} />
+                </div>
+                <Button onClick={handleAddPixel} disabled={addPixel.isPending} className="w-full">
+                  {addPixel.isPending ? 'Salvando...' : 'Adicionar Pixel'}
+                </Button>
               </div>
             </DialogContent>
           </Dialog>
         </div>
 
-        {/* Pixel Cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {pixels.map(pixel => (
-            <Card
-              key={pixel.id}
-              className={`cursor-pointer transition-all ${selectedPixel?.id === pixel.id ? 'ring-2 ring-primary' : 'hover:shadow-md'}`}
-              onClick={() => setSelectedPixel(pixel)}
-            >
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">{pixel.pixel_name}</CardTitle>
-                  <Badge variant={pixel.is_active ? 'default' : 'secondary'}>
-                    {pixel.is_active ? 'Ativo' : 'Inativo'}
-                  </Badge>
+        <Tabs defaultValue="pixels">
+          <TabsList>
+            <TabsTrigger value="pixels"><Radio className="mr-2 h-4 w-4" />Pixels</TabsTrigger>
+            <TabsTrigger value="events"><Activity className="mr-2 h-4 w-4" />Eventos CAPI</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="pixels" className="space-y-4">
+            {isLoading ? (
+              <Card><CardContent className="p-8 text-center text-muted-foreground">Carregando pixels...</CardContent></Card>
+            ) : pixels.length === 0 ? (
+              <Card><CardContent className="p-8 text-center text-muted-foreground">Nenhum pixel cadastrado. Clique em "Adicionar Pixel" para começar.</CardContent></Card>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {pixels.map((pixel: any) => (
+                  <Card key={pixel.id}>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <div>
+                        <CardTitle className="text-base">{pixel.pixel_name}</CardTitle>
+                        <CardDescription className="font-mono text-xs">{pixel.pixel_id}</CardDescription>
+                      </div>
+                      <Switch checked={pixel.is_active} onCheckedChange={(checked) => togglePixel.mutate({ id: pixel.id, is_active: checked })} />
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {pixel.domain && <Badge variant="outline">{pixel.domain}</Badge>}
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Eventos hoje</span>
+                        <span className="font-medium">{pixel.events_today || 0}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total de eventos</span>
+                        <span className="font-medium">{pixel.events_total || 0}</span>
+                      </div>
+                      {pixel.last_event_at && (
+                        <p className="text-xs text-muted-foreground">
+                          Último evento: {format(new Date(pixel.last_event_at), 'dd/MM HH:mm')}
+                        </p>
+                      )}
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" className="flex-1" onClick={() => { setTestPixelId(pixel.id); setTestOpen(true); }}>
+                          <Send className="mr-1 h-3 w-3" /> Testar
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setSelectedPixelId(pixel.id)}>
+                          <Eye className="h-3 w-3" />
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={() => deletePixel.mutate(pixel.id)}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="events">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Histórico de Eventos CAPI</CardTitle>
+                <div className="flex gap-2">
+                  <Select value={selectedPixelId || 'all'} onValueChange={(v) => setSelectedPixelId(v === 'all' ? undefined : v)}>
+                    <SelectTrigger className="w-[200px]"><SelectValue placeholder="Todos os pixels" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os pixels</SelectItem>
+                      {pixels.map((p: any) => (
+                        <SelectItem key={p.id} value={p.id}>{p.pixel_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <CardDescription className="font-mono text-xs">{pixel.pixel_id}</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Eventos: {pixel.events_total || 0}</span>
-                  <Button variant="ghost" size="icon" onClick={e => { e.stopPropagation(); handleDeletePixel(pixel.id); }}>
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-                {pixel.last_event_at && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Último evento: {format(new Date(pixel.last_event_at), 'dd/MM HH:mm')}
-                  </p>
-                )}
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Evento</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>URL</TableHead>
+                      <TableHead>Data</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(events || []).map((evt: any) => (
+                      <TableRow key={evt.id}>
+                        <TableCell className="font-medium">{evt.event_name}</TableCell>
+                        <TableCell>
+                          <Badge variant={evt.status === 'sent' ? 'default' : evt.status === 'failed' ? 'destructive' : 'secondary'}>
+                            {evt.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="max-w-[200px] truncate text-xs">{evt.event_source_url || '—'}</TableCell>
+                        <TableCell className="text-xs">{format(new Date(evt.created_at), 'dd/MM HH:mm:ss')}</TableCell>
+                      </TableRow>
+                    ))}
+                    {(!events || events.length === 0) && (
+                      <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">Nenhum evento registrado</TableCell></TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
-          ))}
-          {!loading && pixels.length === 0 && (
-            <Card className="col-span-full p-8 text-center">
-              <Radio className="mx-auto h-12 w-12 text-muted-foreground/50 mb-4" />
-              <p className="text-muted-foreground">Nenhum pixel cadastrado. Adicione seu primeiro pixel.</p>
-            </Card>
-          )}
-        </div>
+          </TabsContent>
+        </Tabs>
 
-        {/* Selected Pixel Details */}
-        {selectedPixel && (
-          <Tabs defaultValue="events" className="space-y-4">
-            <div className="flex items-center justify-between">
-              <TabsList>
-                <TabsTrigger value="events" className="gap-2"><Activity className="h-4 w-4" />Eventos</TabsTrigger>
-                <TabsTrigger value="batches" className="gap-2"><BarChart3 className="h-4 w-4" />Lotes</TabsTrigger>
-              </TabsList>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => loadPixelData(selectedPixel)}>
-                  <RefreshCw className="mr-2 h-4 w-4" /> Atualizar
-                </Button>
-                <Button size="sm" onClick={handleSendPending} disabled={isSending}>
-                  <Send className="mr-2 h-4 w-4" /> Enviar Pendentes
-                </Button>
+        {/* Test Event Dialog */}
+        <Dialog open={testOpen} onOpenChange={setTestOpen}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Enviar Evento de Teste</DialogTitle></DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label>Tipo de Evento</Label>
+                <Select value={testEvent.event_name} onValueChange={(v) => setTestEvent({ ...testEvent, event_name: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Purchase">Purchase</SelectItem>
+                    <SelectItem value="AddToCart">AddToCart</SelectItem>
+                    <SelectItem value="InitiateCheckout">InitiateCheckout</SelectItem>
+                    <SelectItem value="Lead">Lead</SelectItem>
+                    <SelectItem value="ViewContent">ViewContent</SelectItem>
+                    <SelectItem value="CompleteRegistration">CompleteRegistration</SelectItem>
+                    <SelectItem value="PageView">PageView</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
+              <div>
+                <Label>URL de Origem (opcional)</Label>
+                <Input placeholder="https://seusite.com.br/checkout" value={testEvent.event_source_url} onChange={(e) => setTestEvent({ ...testEvent, event_source_url: e.target.value })} />
+              </div>
+              <div>
+                <Label>Valor (opcional)</Label>
+                <Input type="number" placeholder="99.90" value={testEvent.value} onChange={(e) => setTestEvent({ ...testEvent, value: e.target.value })} />
+              </div>
+              <Button onClick={handleSendTestEvent} className="w-full">
+                <Send className="mr-2 h-4 w-4" /> Enviar Evento
+              </Button>
             </div>
-
-            <TabsContent value="events">
-              <Card>
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Evento</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Valor</TableHead>
-                        <TableHead>Source</TableHead>
-                        <TableHead>Data</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {events.map(evt => (
-                        <TableRow key={evt.id}>
-                          <TableCell className="font-medium">{evt.event_name}</TableCell>
-                          <TableCell><Badge variant={statusColor(evt.status)}>{evt.status}</Badge></TableCell>
-                          <TableCell>{evt.value ? `${evt.currency || 'BRL'} ${evt.value}` : '-'}</TableCell>
-                          <TableCell className="text-xs">{evt.action_source}</TableCell>
-                          <TableCell className="text-xs">{format(new Date(evt.created_at), 'dd/MM HH:mm')}</TableCell>
-                        </TableRow>
-                      ))}
-                      {events.length === 0 && (
-                        <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Nenhum evento registrado</TableCell></TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="batches">
-              <Card>
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Enviados</TableHead>
-                        <TableHead>Falhas</TableHead>
-                        <TableHead>Total</TableHead>
-                        <TableHead>Data</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {batches.map(batch => (
-                        <TableRow key={batch.id}>
-                          <TableCell><Badge variant={statusColor(batch.status)}>{batch.status}</Badge></TableCell>
-                          <TableCell className="text-green-600">{batch.events_sent}</TableCell>
-                          <TableCell className="text-destructive">{batch.events_failed}</TableCell>
-                          <TableCell>{batch.batch_size}</TableCell>
-                          <TableCell className="text-xs">{format(new Date(batch.created_at), 'dd/MM HH:mm')}</TableCell>
-                        </TableRow>
-                      ))}
-                      {batches.length === 0 && (
-                        <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Nenhum lote enviado</TableCell></TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        )}
+          </DialogContent>
+        </Dialog>
       </div>
     </MainLayout>
   );

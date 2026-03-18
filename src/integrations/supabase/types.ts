@@ -579,30 +579,6 @@ export type Database = {
         }
         Relationships: []
       }
-      apollo_conversations: {
-        Row: {
-          created_at: string
-          id: string
-          title: string
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          title?: string
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          title?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
       apollo_diagnostics: {
         Row: {
           campaign_id: string | null
@@ -757,47 +733,6 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
-      }
-      apollo_messages: {
-        Row: {
-          content: string
-          conversation_id: string
-          created_at: string
-          data: Json | null
-          id: string
-          message_type: string
-          role: string
-          user_id: string
-        }
-        Insert: {
-          content: string
-          conversation_id: string
-          created_at?: string
-          data?: Json | null
-          id?: string
-          message_type?: string
-          role: string
-          user_id: string
-        }
-        Update: {
-          content?: string
-          conversation_id?: string
-          created_at?: string
-          data?: Json | null
-          id?: string
-          message_type?: string
-          role?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "apollo_messages_conversation_id_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "apollo_conversations"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       apollo_recommendations: {
         Row: {
@@ -1177,145 +1112,6 @@ export type Database = {
             columns: ["ad_account_id"]
             isOneToOne: false
             referencedRelation: "ad_accounts"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      capture_form_submissions: {
-        Row: {
-          created_at: string | null
-          custom_data: Json | null
-          email: string | null
-          error_message: string | null
-          fbclid: string | null
-          form_id: string
-          id: string
-          ip_address: string | null
-          name: string | null
-          phone: string | null
-          processed_at: string | null
-          status: string | null
-          user_agent: string | null
-          utm_campaign: string | null
-          utm_content: string | null
-          utm_medium: string | null
-          utm_source: string | null
-          utm_term: string | null
-        }
-        Insert: {
-          created_at?: string | null
-          custom_data?: Json | null
-          email?: string | null
-          error_message?: string | null
-          fbclid?: string | null
-          form_id: string
-          id?: string
-          ip_address?: string | null
-          name?: string | null
-          phone?: string | null
-          processed_at?: string | null
-          status?: string | null
-          user_agent?: string | null
-          utm_campaign?: string | null
-          utm_content?: string | null
-          utm_medium?: string | null
-          utm_source?: string | null
-          utm_term?: string | null
-        }
-        Update: {
-          created_at?: string | null
-          custom_data?: Json | null
-          email?: string | null
-          error_message?: string | null
-          fbclid?: string | null
-          form_id?: string
-          id?: string
-          ip_address?: string | null
-          name?: string | null
-          phone?: string | null
-          processed_at?: string | null
-          status?: string | null
-          user_agent?: string | null
-          utm_campaign?: string | null
-          utm_content?: string | null
-          utm_medium?: string | null
-          utm_source?: string | null
-          utm_term?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "capture_form_submissions_form_id_fkey"
-            columns: ["form_id"]
-            isOneToOne: false
-            referencedRelation: "capture_forms"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      capture_forms: {
-        Row: {
-          auto_add_to_crm: boolean | null
-          auto_create_contact: boolean | null
-          auto_fire_capi: boolean | null
-          auto_send_whatsapp: boolean | null
-          created_at: string | null
-          custom_fields: Json | null
-          description: string | null
-          id: string
-          instance_id: string | null
-          is_active: boolean | null
-          name: string
-          redirect_url: string | null
-          submission_count: number | null
-          tags: string[] | null
-          updated_at: string | null
-          user_id: string
-          welcome_message: string | null
-        }
-        Insert: {
-          auto_add_to_crm?: boolean | null
-          auto_create_contact?: boolean | null
-          auto_fire_capi?: boolean | null
-          auto_send_whatsapp?: boolean | null
-          created_at?: string | null
-          custom_fields?: Json | null
-          description?: string | null
-          id?: string
-          instance_id?: string | null
-          is_active?: boolean | null
-          name: string
-          redirect_url?: string | null
-          submission_count?: number | null
-          tags?: string[] | null
-          updated_at?: string | null
-          user_id: string
-          welcome_message?: string | null
-        }
-        Update: {
-          auto_add_to_crm?: boolean | null
-          auto_create_contact?: boolean | null
-          auto_fire_capi?: boolean | null
-          auto_send_whatsapp?: boolean | null
-          created_at?: string | null
-          custom_fields?: Json | null
-          description?: string | null
-          id?: string
-          instance_id?: string | null
-          is_active?: boolean | null
-          name?: string
-          redirect_url?: string | null
-          submission_count?: number | null
-          tags?: string[] | null
-          updated_at?: string | null
-          user_id?: string
-          welcome_message?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "capture_forms_instance_id_fkey"
-            columns: ["instance_id"]
-            isOneToOne: false
-            referencedRelation: "wa_instances"
             referencedColumns: ["id"]
           },
         ]
@@ -1931,7 +1727,6 @@ export type Database = {
           id: string
           is_default: boolean | null
           name: string
-          pipeline_id: string | null
           position: number
           updated_at: string | null
           user_id: string
@@ -1942,7 +1737,6 @@ export type Database = {
           id?: string
           is_default?: boolean | null
           name: string
-          pipeline_id?: string | null
           position?: number
           updated_at?: string | null
           user_id: string
@@ -1953,298 +1747,11 @@ export type Database = {
           id?: string
           is_default?: boolean | null
           name?: string
-          pipeline_id?: string | null
           position?: number
           updated_at?: string | null
           user_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "crm_pipeline_stages_pipeline_id_fkey"
-            columns: ["pipeline_id"]
-            isOneToOne: false
-            referencedRelation: "crm_pipelines"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      crm_pipelines: {
-        Row: {
-          color: string
-          created_at: string
-          description: string | null
-          id: string
-          is_active: boolean
-          is_default: boolean
-          name: string
-          sort_order: number
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          color?: string
-          created_at?: string
-          description?: string | null
-          id?: string
-          is_active?: boolean
-          is_default?: boolean
-          name: string
-          sort_order?: number
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          color?: string
-          created_at?: string
-          description?: string | null
-          id?: string
-          is_active?: boolean
-          is_default?: boolean
-          name?: string
-          sort_order?: number
-          updated_at?: string
-          user_id?: string
-        }
         Relationships: []
-      }
-      datastore_chunks: {
-        Row: {
-          chunk_index: number
-          content: string
-          created_at: string
-          datastore_id: string
-          embedding: string | null
-          id: string
-          metadata: Json | null
-          search_vector: unknown
-          source_id: string
-          tokens_count: number
-          user_id: string
-        }
-        Insert: {
-          chunk_index?: number
-          content: string
-          created_at?: string
-          datastore_id: string
-          embedding?: string | null
-          id?: string
-          metadata?: Json | null
-          search_vector?: unknown
-          source_id: string
-          tokens_count?: number
-          user_id: string
-        }
-        Update: {
-          chunk_index?: number
-          content?: string
-          created_at?: string
-          datastore_id?: string
-          embedding?: string | null
-          id?: string
-          metadata?: Json | null
-          search_vector?: unknown
-          source_id?: string
-          tokens_count?: number
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "datastore_chunks_datastore_id_fkey"
-            columns: ["datastore_id"]
-            isOneToOne: false
-            referencedRelation: "datastores"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "datastore_chunks_source_id_fkey"
-            columns: ["source_id"]
-            isOneToOne: false
-            referencedRelation: "datastore_sources"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      datastore_sources: {
-        Row: {
-          chunks_count: number
-          content: string | null
-          created_at: string
-          datastore_id: string
-          error_message: string | null
-          file_path: string | null
-          id: string
-          name: string
-          source_type: string
-          status: string
-          tokens_count: number
-          updated_at: string
-          url: string | null
-          user_id: string
-        }
-        Insert: {
-          chunks_count?: number
-          content?: string | null
-          created_at?: string
-          datastore_id: string
-          error_message?: string | null
-          file_path?: string | null
-          id?: string
-          name: string
-          source_type?: string
-          status?: string
-          tokens_count?: number
-          updated_at?: string
-          url?: string | null
-          user_id: string
-        }
-        Update: {
-          chunks_count?: number
-          content?: string | null
-          created_at?: string
-          datastore_id?: string
-          error_message?: string | null
-          file_path?: string | null
-          id?: string
-          name?: string
-          source_type?: string
-          status?: string
-          tokens_count?: number
-          updated_at?: string
-          url?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "datastore_sources_datastore_id_fkey"
-            columns: ["datastore_id"]
-            isOneToOne: false
-            referencedRelation: "datastores"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      datastores: {
-        Row: {
-          created_at: string
-          description: string | null
-          id: string
-          is_active: boolean
-          name: string
-          total_chunks: number
-          total_documents: number
-          total_tokens: number
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          description?: string | null
-          id?: string
-          is_active?: boolean
-          name: string
-          total_chunks?: number
-          total_documents?: number
-          total_tokens?: number
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          description?: string | null
-          id?: string
-          is_active?: boolean
-          name?: string
-          total_chunks?: number
-          total_documents?: number
-          total_tokens?: number
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
-      external_webhooks: {
-        Row: {
-          auto_tags: string[] | null
-          created_at: string | null
-          description: string | null
-          field_mapping: Json | null
-          id: string
-          is_active: boolean | null
-          last_received_at: string | null
-          name: string
-          organization_id: string | null
-          platform: string | null
-          send_whatsapp: boolean | null
-          slug: string
-          total_errors: number | null
-          total_processed: number | null
-          total_received: number | null
-          updated_at: string | null
-          user_id: string
-          wa_delay_seconds: number | null
-          wa_instance_id: string | null
-          wa_message_template: string | null
-        }
-        Insert: {
-          auto_tags?: string[] | null
-          created_at?: string | null
-          description?: string | null
-          field_mapping?: Json | null
-          id?: string
-          is_active?: boolean | null
-          last_received_at?: string | null
-          name: string
-          organization_id?: string | null
-          platform?: string | null
-          send_whatsapp?: boolean | null
-          slug: string
-          total_errors?: number | null
-          total_processed?: number | null
-          total_received?: number | null
-          updated_at?: string | null
-          user_id: string
-          wa_delay_seconds?: number | null
-          wa_instance_id?: string | null
-          wa_message_template?: string | null
-        }
-        Update: {
-          auto_tags?: string[] | null
-          created_at?: string | null
-          description?: string | null
-          field_mapping?: Json | null
-          id?: string
-          is_active?: boolean | null
-          last_received_at?: string | null
-          name?: string
-          organization_id?: string | null
-          platform?: string | null
-          send_whatsapp?: boolean | null
-          slug?: string
-          total_errors?: number | null
-          total_processed?: number | null
-          total_received?: number | null
-          updated_at?: string | null
-          user_id?: string
-          wa_delay_seconds?: number | null
-          wa_instance_id?: string | null
-          wa_message_template?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "external_webhooks_organization_id_fkey"
-            columns: ["organization_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "external_webhooks_wa_instance_id_fkey"
-            columns: ["wa_instance_id"]
-            isOneToOne: false
-            referencedRelation: "wa_instances"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       historico_reports: {
         Row: {
@@ -3904,69 +3411,6 @@ export type Database = {
         }
         Relationships: []
       }
-      webhook_logs: {
-        Row: {
-          contact_id: string | null
-          created_at: string | null
-          error_message: string | null
-          extracted_data: Json | null
-          id: string
-          ip_address: string | null
-          processed_at: string | null
-          raw_payload: Json
-          status: string | null
-          user_agent: string | null
-          webhook_id: string
-          whatsapp_sent: boolean | null
-          whatsapp_sent_at: string | null
-        }
-        Insert: {
-          contact_id?: string | null
-          created_at?: string | null
-          error_message?: string | null
-          extracted_data?: Json | null
-          id?: string
-          ip_address?: string | null
-          processed_at?: string | null
-          raw_payload: Json
-          status?: string | null
-          user_agent?: string | null
-          webhook_id: string
-          whatsapp_sent?: boolean | null
-          whatsapp_sent_at?: string | null
-        }
-        Update: {
-          contact_id?: string | null
-          created_at?: string | null
-          error_message?: string | null
-          extracted_data?: Json | null
-          id?: string
-          ip_address?: string | null
-          processed_at?: string | null
-          raw_payload?: Json
-          status?: string | null
-          user_agent?: string | null
-          webhook_id?: string
-          whatsapp_sent?: boolean | null
-          whatsapp_sent_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "webhook_logs_contact_id_fkey"
-            columns: ["contact_id"]
-            isOneToOne: false
-            referencedRelation: "wa_contacts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "webhook_logs_webhook_id_fkey"
-            columns: ["webhook_id"]
-            isOneToOne: false
-            referencedRelation: "external_webhooks"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       whatsapp_config: {
         Row: {
           api_key: string
@@ -4063,7 +3507,6 @@ export type Database = {
         Returns: undefined
       }
       get_user_email: { Args: { _user_id: string }; Returns: string }
-      hash_user_data: { Args: { input: string }; Returns: string }
       increment_campaign_delivered: {
         Args: { cid: string }
         Returns: undefined
@@ -4080,33 +3523,6 @@ export type Database = {
       is_org_owner: {
         Args: { _organization_id: string; _user_id: string }
         Returns: boolean
-      }
-      search_datastore_chunks: {
-        Args: {
-          p_datastore_id: string
-          p_match_count?: number
-          p_match_threshold?: number
-          p_query_embedding: string
-        }
-        Returns: {
-          content: string
-          id: string
-          similarity: number
-          source_name: string
-        }[]
-      }
-      search_datastore_fulltext: {
-        Args: {
-          p_datastore_id: string
-          p_match_count?: number
-          p_query: string
-        }
-        Returns: {
-          content: string
-          id: string
-          similarity: number
-          source_name: string
-        }[]
       }
     }
     Enums: {

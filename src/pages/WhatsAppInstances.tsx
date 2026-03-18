@@ -87,8 +87,55 @@ export default function WhatsAppInstances() {
   const [connectOpen, setConnectOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [isVerifyingAll, setIsVerifyingAll] = useState(false);
 
-  const fetchInstances = async () => {
+  const verifyInstanceStatus = async (instanceId: string, silent = false) => {
+    setVerifyingId(instanceId);
+    try {
+      const { data, error } = await supabase.functions.invoke('verify-instance-status', {
+        body: { instance_id: instanceId },
+      });
+      if (error) throw error;
+      
+      if (data?.status_changed) {
+        // Update local state
+        setInstances(prev => prev.map(i => 
+          i.id === instanceId 
+            ? { ...i, status: data.current_status, is_active: data.is_connected, health_score: data.is_connected ? i.health_score : 0 }
+            : i
+        ));
+        if (!silent) {
+          toast({ 
+            title: data.is_connected ? 'Instância conectada' : '⚠️ Instância desconectada',
+            description: data.message,
+            variant: data.is_connected ? 'default' : 'destructive',
+          });
+        }
+      } else if (!silent) {
+        toast({ title: 'Status verificado', description: data.message });
+      }
+    } catch (err: any) {
+      if (!silent) {
+        toast({ title: 'Erro ao verificar', description: err.message, variant: 'destructive' });
+      }
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  const verifyAllInstances = async (instanceList: WaInstance[]) => {
+    setIsVerifyingAll(true);
+    const evolutionInstances = instanceList.filter(i => i.provider !== 'meta');
+    for (const inst of evolutionInstances) {
+      await verifyInstanceStatus(inst.id, true);
+    }
+    setIsVerifyingAll(false);
+    // Re-fetch to get updated data
+    await fetchInstances(true);
+  };
+
+  const fetchInstances = async (skipVerify = false) => {
     if (!user) return;
     setIsLoading(true);
     try {
@@ -99,7 +146,12 @@ export default function WhatsAppInstances() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setInstances((data as unknown as WaInstance[]) || []);
+      const list = (data as unknown as WaInstance[]) || [];
+      setInstances(list);
+      // Auto-verify all Evolution instances on first load
+      if (!skipVerify && list.length > 0) {
+        setTimeout(() => verifyAllInstances(list), 500);
+      }
     } catch (err: any) {
       console.error('Error fetching instances:', err);
     } finally {
@@ -157,13 +209,26 @@ export default function WhatsAppInstances() {
               Gerencie seus números de WhatsApp conectados para disparo em massa
             </p>
           </div>
-          <Button
-            onClick={() => setConnectOpen(true)}
-            className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white gap-2"
-          >
-            <Plus className="h-4 w-4" />
-            Conectar Número
-          </Button>
+          <div className="flex gap-2">
+            {instances.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={() => verifyAllInstances(instances)}
+                disabled={isVerifyingAll}
+                className="gap-2"
+              >
+                {isVerifyingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Verificar Todos
+              </Button>
+            )}
+            <Button
+              onClick={() => setConnectOpen(true)}
+              className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              Conectar Número
+            </Button>
+          </div>
         </div>
 
         {/* Stats */}
@@ -294,6 +359,18 @@ export default function WhatsAppInstances() {
 
                     {/* Actions */}
                     <div className="flex gap-2 pt-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => verifyInstanceStatus(instance.id)}
+                        disabled={verifyingId === instance.id}
+                      >
+                        {verifyingId === instance.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"

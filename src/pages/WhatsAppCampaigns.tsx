@@ -217,6 +217,9 @@ Não numere as variações. Não inclua explicações adicionais.`
       media_type: c.media_type || '',
       tags: c.tags || [],
       variation_level: (c as any).variation_level || 'medium',
+      include_optout_buttons: (c as any).include_optout_buttons ?? false,
+      reply_auto_tag: (c as any).reply_auto_tag || '',
+      reply_auto_message: (c as any).reply_auto_message || '',
     });
     setDialogOpen(true);
   };
@@ -236,7 +239,14 @@ Não numere as variações. Não inclua explicações adicionais.`
 
   const handlePauseCampaign = async (id: string) => {
     const { error } = await supabase.from('wa_campaigns').update({ status: 'paused' } as any).eq('id', id);
+
     if (!error) {
+      await supabase
+        .from('wa_queue')
+        .update({ status: 'pending' } as any)
+        .eq('campaign_id', id)
+        .in('status', ['processing', 'pending']);
+
       toast({ title: 'Campanha pausada' });
       fetchCampaigns();
     }

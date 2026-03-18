@@ -6,556 +6,649 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// ====================== DIAGNOSTIC TREE ======================
-
-interface DiagnosticRule {
-  symptom: string;
-  metric: string;
-  threshold: number;
-  comparison: "below" | "above";
-  stage: string;
-  diagnoses: {
-    problem: string;
-    cause: string;
-    severity: "low" | "medium" | "high" | "critical";
-    category: string;
-    actions: { title: string; action_type: string; description: string; impact: string }[];
-    secondaryCheck?: { metric: string; comparison: "below" | "above"; threshold: number };
-  }[];
-}
-
-const DIAGNOSTIC_TREE: DiagnosticRule[] = [
-  {
-    symptom: "CTR Baixo",
-    metric: "ctr",
-    threshold: 1.0,
-    comparison: "below",
-    stage: "topo",
-    diagnoses: [
-      {
-        problem: "CTR abaixo do benchmark",
-        cause: "Criativo fraco ou desalinhado com o público",
-        severity: "high",
-        category: "creative",
-        actions: [
-          { title: "Criar novos criativos", action_type: "create_creative", description: "Testar 3-5 novos criativos com hooks diferentes", impact: "+30-50% CTR esperado" },
-          { title: "Testar novos ângulos de copy", action_type: "update_copy", description: "Reescrever headlines focando em dores e desejos", impact: "+20-40% CTR esperado" },
-        ],
-        secondaryCheck: { metric: "frequency", comparison: "above", threshold: 3 },
-      },
-      {
-        problem: "Público desalinhado",
-        cause: "Segmentação muito ampla ou errada",
-        severity: "medium",
-        category: "audience",
-        actions: [
-          { title: "Refinar público-alvo", action_type: "update_audience", description: "Criar lookalike de compradores ou leads qualificados", impact: "+25% CTR esperado" },
-          { title: "Testar interesses específicos", action_type: "test_audience", description: "Segmentar por interesses de nicho relacionados", impact: "+15-30% CTR esperado" },
-        ],
-      },
-    ],
-  },
-  {
-    symptom: "CPA Alto",
-    metric: "cpa",
-    threshold: 100,
-    comparison: "above",
-    stage: "fundo",
-    diagnoses: [
-      {
-        problem: "CPA acima do target",
-        cause: "Funil de conversão quebrado ou Landing Page ineficiente",
-        severity: "high",
-        category: "funnel",
-        actions: [
-          { title: "Revisar Landing Page", action_type: "review_landing_page", description: "Verificar velocidade, CTA, formulário e prova social", impact: "-20-40% CPA esperado" },
-          { title: "Ativar CAPI", action_type: "enable_capi", description: "Configurar Conversions API para melhorar atribuição", impact: "-15-25% CPA esperado" },
-        ],
-      },
-      {
-        problem: "Lead desqualificado convertendo",
-        cause: "Copy atraindo público errado",
-        severity: "medium",
-        category: "copy",
-        actions: [
-          { title: "Qualificar copy", action_type: "update_copy", description: "Adicionar qualificadores na copy para filtrar leads ruins", impact: "-20% CPA esperado" },
-        ],
-      },
-    ],
-  },
-  {
-    symptom: "Frequência Alta",
-    metric: "frequency",
-    threshold: 3.0,
-    comparison: "above",
-    stage: "topo",
-    diagnoses: [
-      {
-        problem: "Criativo fatigado",
-        cause: "Público já viu o anúncio muitas vezes",
-        severity: "high",
-        category: "creative",
-        actions: [
-          { title: "Rotacionar criativos", action_type: "rotate_creative", description: "Substituir criativos com frequência >3 por novos", impact: "Restaurar CTR original" },
-          { title: "Expandir público", action_type: "expand_audience", description: "Ampliar segmentação ou criar novos públicos", impact: "-30% frequência" },
-        ],
-      },
-    ],
-  },
-  {
-    symptom: "CPM Alto",
-    metric: "cpm",
-    threshold: 40,
-    comparison: "above",
-    stage: "topo",
-    diagnoses: [
-      {
-        problem: "CPM acima do benchmark",
-        cause: "Alta competição no leilão ou público premium",
-        severity: "medium",
-        category: "budget",
-        actions: [
-          { title: "Ajustar horários de veiculação", action_type: "schedule_ads", description: "Concentrar budget nos horários com menor competição", impact: "-15-25% CPM" },
-          { title: "Testar placements alternativos", action_type: "test_placements", description: "Adicionar Stories, Reels e Audience Network", impact: "-20% CPM médio" },
-        ],
-      },
-    ],
-  },
-  {
-    symptom: "ROAS Baixo",
-    metric: "roas",
-    threshold: 2.0,
-    comparison: "below",
-    stage: "fundo",
-    diagnoses: [
-      {
-        problem: "ROAS abaixo do target",
-        cause: "Atribuição incompleta ou produto errado sendo promovido",
-        severity: "critical",
-        category: "revenue",
-        actions: [
-          { title: "Ativar CAPI completo", action_type: "enable_capi", description: "Configurar server-side tracking para capturar todas as conversões", impact: "+20-50% ROAS atribuído" },
-          { title: "Promover bestseller", action_type: "update_product", description: "Focar budget no produto com maior margem e conversão", impact: "+30% ROAS" },
-          { title: "Revisar estratégia de preço", action_type: "review_pricing", description: "Ajustar oferta e ticket médio para melhorar retorno", impact: "+15-25% ROAS" },
-        ],
-      },
-    ],
-  },
-  {
-    symptom: "Taxa de Conversão Baixa",
-    metric: "conversion_rate",
-    threshold: 2.0,
-    comparison: "below",
-    stage: "meio",
-    diagnoses: [
-      {
-        problem: "Conversão baixa no funil",
-        cause: "Desconexão entre anúncio e página de destino",
-        severity: "high",
-        category: "funnel",
-        actions: [
-          { title: "Alinhar mensagem", action_type: "align_message", description: "Garantir que a LP entrega o que o anúncio promete", impact: "+30% conversão" },
-          { title: "Adicionar prova social", action_type: "add_social_proof", description: "Depoimentos, cases e números na LP", impact: "+20% conversão" },
-        ],
-      },
-    ],
-  },
-];
-
-// ====================== HEALTH SCORE CALCULATION ======================
-
-interface MetricData {
-  ctr?: number;
-  cpa?: number;
-  cpm?: number;
-  roas?: number;
-  frequency?: number;
-  conversion_rate?: number;
-  spend?: number;
-  impressions?: number;
-  clicks?: number;
-  conversions?: number;
-}
-
-function calculateHealthScore(metrics: MetricData, benchmarks: Record<string, number>): number {
-  let score = 100;
-  const deductions: { reason: string; points: number }[] = [];
-
-  // CTR check
-  if (metrics.ctr !== undefined && benchmarks.ctr) {
-    const ratio = metrics.ctr / benchmarks.ctr;
-    if (ratio < 0.5) { deductions.push({ reason: "CTR crítico", points: 25 }); }
-    else if (ratio < 0.75) { deductions.push({ reason: "CTR baixo", points: 15 }); }
-    else if (ratio < 1.0) { deductions.push({ reason: "CTR abaixo benchmark", points: 5 }); }
-  }
-
-  // CPA check
-  if (metrics.cpa !== undefined && benchmarks.cpa) {
-    const ratio = metrics.cpa / benchmarks.cpa;
-    if (ratio > 2.0) { deductions.push({ reason: "CPA crítico", points: 25 }); }
-    else if (ratio > 1.5) { deductions.push({ reason: "CPA alto", points: 15 }); }
-    else if (ratio > 1.2) { deductions.push({ reason: "CPA acima benchmark", points: 5 }); }
-  }
-
-  // Frequency check
-  if (metrics.frequency !== undefined && metrics.frequency > 4) {
-    deductions.push({ reason: "Frequência muito alta", points: 20 });
-  } else if (metrics.frequency !== undefined && metrics.frequency > 3) {
-    deductions.push({ reason: "Frequência alta", points: 10 });
-  }
-
-  // ROAS check
-  if (metrics.roas !== undefined && benchmarks.roas) {
-    const ratio = metrics.roas / benchmarks.roas;
-    if (ratio < 0.3) { deductions.push({ reason: "ROAS crítico", points: 30 }); }
-    else if (ratio < 0.6) { deductions.push({ reason: "ROAS baixo", points: 15 }); }
-    else if (ratio < 0.9) { deductions.push({ reason: "ROAS abaixo benchmark", points: 5 }); }
-  }
-
-  // CPM check
-  if (metrics.cpm !== undefined && benchmarks.cpm) {
-    const ratio = metrics.cpm / benchmarks.cpm;
-    if (ratio > 2.0) { deductions.push({ reason: "CPM muito alto", points: 15 }); }
-    else if (ratio > 1.5) { deductions.push({ reason: "CPM alto", points: 8 }); }
-  }
-
-  for (const d of deductions) {
-    score -= d.points;
-  }
-
-  return Math.max(0, Math.min(100, score));
-}
-
-function classifyStage(metrics: MetricData): string {
-  if (!metrics.conversions && !metrics.clicks) return "topo";
-  if (metrics.conversions && metrics.conversions > 0) return "fundo";
-  if (metrics.clicks && metrics.clicks > 0) return "meio";
-  return "topo";
-}
-
-// ====================== MAIN HANDLER ======================
-
+/**
+ * apollo-analyze: Full diagnostic analysis engine
+ * 
+ * Collects campaign metrics → Calculates health scores → Runs diagnostic tree →
+ * Generates recommendations → Creates alerts → Stores learnings
+ */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: corsHeaders,
+      });
+    }
+
     const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } }
+    );
+
+    const token = authHeader.replace("Bearer ", "");
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData?.user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: corsHeaders,
+      });
+    }
+    const userId = userData.user.id;
+
+    const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const body = await req.json();
-    const { user_id, campaign_id, metrics, action } = body;
+    const body = await req.json().catch(() => ({}));
+    const { campaign_id, action } = body;
 
-    if (!user_id) {
-      return new Response(JSON.stringify({ error: "user_id required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // ===== Handle specific actions =====
+    if (action === "approve_recommendation") {
+      return await handleApproveRecommendation(admin, userId, body);
     }
-
-    // Action: run full diagnostic
-    if (action === "diagnose" || !action) {
-      return await runDiagnostic(supabase, user_id, campaign_id, metrics);
-    }
-
-    // Action: get summary
-    if (action === "summary") {
-      return await getSummary(supabase, user_id);
-    }
-
-    // Action: execute recommendation
-    if (action === "execute_recommendation") {
-      const { recommendation_id } = body;
-      return await executeRecommendation(supabase, user_id, recommendation_id);
-    }
-
-    // Action: dismiss alert
     if (action === "dismiss_alert") {
-      const { alert_id } = body;
-      await supabase.from("apollo_alerts").update({ is_dismissed: true }).eq("id", alert_id).eq("user_id", user_id);
-      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return await handleDismissAlert(admin, userId, body);
     }
 
-    return new Response(JSON.stringify({ error: "Invalid action" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    // ===== MAIN ANALYSIS FLOW =====
+
+    // Step 1: Collect campaign metrics
+    const metrics = await collectMetrics(admin, userId, campaign_id);
+    if (!metrics.campaigns.length) {
+      return new Response(JSON.stringify({
+        status: "no_data",
+        message: "Nenhuma campanha ativa encontrada para análise",
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Step 2: Get/set benchmarks
+    const benchmarks = await getOrCreateBenchmarks(admin, userId);
+
+    // Step 3: Calculate health scores per stage
+    const healthScores = await calculateHealthScores(admin, userId, metrics, benchmarks);
+
+    // Step 4: Run diagnostic tree
+    const diagnostics = await runDiagnosticTree(admin, userId, metrics, benchmarks, healthScores);
+
+    // Step 5: Generate AI-powered recommendations
+    const recommendations = await generateRecommendations(admin, userId, diagnostics);
+
+    // Step 6: Create alerts for critical issues
+    const alerts = await createAlerts(admin, userId, diagnostics, healthScores);
+
+    // Step 7: AI deep analysis with Lovable AI
+    let aiAnalysis = null;
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (LOVABLE_API_KEY) {
+      aiAnalysis = await getAIAnalysis(LOVABLE_API_KEY, metrics, healthScores, diagnostics);
+    }
+
+    return new Response(JSON.stringify({
+      status: "analyzed",
+      overall_score: Math.round(healthScores.reduce((s: number, h: any) => s + h.score, 0) / Math.max(healthScores.length, 1)),
+      health_scores: healthScores,
+      diagnostics_count: diagnostics.length,
+      recommendations_count: recommendations.length,
+      alerts_count: alerts.length,
+      ai_analysis: aiAnalysis,
+      campaigns_analyzed: metrics.campaigns.length,
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
   } catch (err) {
     console.error("[apollo-analyze] Error:", err);
-    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500, headers: corsHeaders,
     });
   }
 });
 
-async function runDiagnostic(supabase: any, userId: string, campaignId: string | null, metricsInput: MetricData | null) {
-  // Get benchmarks
-  const { data: userBenchmarks } = await supabase
+// ====================== METRICS COLLECTION ======================
+
+async function collectMetrics(admin: any, userId: string, campaignId?: string) {
+  let query = admin
+    .from("campaigns")
+    .select("id, name, platform, status, daily_budget, objective, external_id")
+    .eq("user_id", userId)
+    .in("status", ["active", "paused"]);
+
+  if (campaignId) query = query.eq("id", campaignId);
+
+  const { data: campaigns } = await query;
+  if (!campaigns?.length) return { campaigns: [], metrics: [] };
+
+  const campaignIds = campaigns.map((c: any) => c.id);
+
+  // Get last 7 days of metrics
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const { data: metrics } = await admin
+    .from("campaign_metrics")
+    .select("*")
+    .in("campaign_id", campaignIds)
+    .gte("date", sevenDaysAgo)
+    .order("date", { ascending: false });
+
+  return { campaigns: campaigns || [], metrics: metrics || [] };
+}
+
+// ====================== BENCHMARKS ======================
+
+async function getOrCreateBenchmarks(admin: any, userId: string) {
+  const { data: existing } = await admin
     .from("apollo_benchmarks")
     .select("*")
     .eq("user_id", userId);
 
-  const benchmarks: Record<string, number> = {
-    ctr: 1.5,
-    cpa: 50,
-    cpm: 25,
-    roas: 3.0,
-    frequency: 3.0,
-    conversion_rate: 3.0,
+  if (existing?.length > 0) return existing;
+
+  // Create default industry benchmarks
+  const defaults = [
+    { metric_name: "ctr", stage: "topo", benchmark_value: 1.5, platform: "meta" },
+    { metric_name: "ctr", stage: "meio", benchmark_value: 2.0, platform: "meta" },
+    { metric_name: "cpc", stage: "topo", benchmark_value: 2.5, platform: "meta" },
+    { metric_name: "cpc", stage: "meio", benchmark_value: 3.0, platform: "meta" },
+    { metric_name: "cpa", stage: "fundo", benchmark_value: 50, platform: "meta" },
+    { metric_name: "roas", stage: "fundo", benchmark_value: 3.0, platform: "meta" },
+    { metric_name: "conversion_rate", stage: "fundo", benchmark_value: 2.5, platform: "meta" },
+    { metric_name: "frequency", stage: "topo", benchmark_value: 3.0, platform: "meta" },
+  ];
+
+  const records = defaults.map((d) => ({
+    ...d,
+    user_id: userId,
+    source: "industry",
+  }));
+
+  await admin.from("apollo_benchmarks").insert(records);
+  return records;
+}
+
+// ====================== HEALTH SCORES ======================
+
+async function calculateHealthScores(admin: any, userId: string, metrics: any, benchmarks: any) {
+  const { campaigns, metrics: metricRows } = metrics;
+  if (!metricRows.length) return [];
+
+  // Aggregate metrics
+  const totals = metricRows.reduce((acc: any, m: any) => {
+    acc.spend += Number(m.spend) || 0;
+    acc.impressions += Number(m.impressions) || 0;
+    acc.clicks += Number(m.clicks) || 0;
+    acc.conversions += Number(m.conversions) || 0;
+    acc.conversion_value += Number(m.conversion_value) || 0;
+    acc.reach += Number(m.reach) || 0;
+    return acc;
+  }, { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_value: 0, reach: 0 });
+
+  const ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
+  const cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
+  const cpa = totals.conversions > 0 ? totals.spend / totals.conversions : 0;
+  const roas = totals.spend > 0 ? totals.conversion_value / totals.spend : 0;
+  const frequency = totals.reach > 0 ? totals.impressions / totals.reach : 0;
+  const convRate = totals.clicks > 0 ? (totals.conversions / totals.clicks) * 100 : 0;
+
+  const getBenchmark = (metric: string, stage: string) => {
+    const b = benchmarks.find((bm: any) => bm.metric_name === metric && bm.stage === stage);
+    return b?.benchmark_value || null;
   };
 
-  // Override with user benchmarks
-  if (userBenchmarks?.length) {
-    for (const b of userBenchmarks) {
-      benchmarks[b.metric_name] = b.benchmark_value;
-    }
-  }
+  // Calculate scores per stage
+  const stages = [
+    {
+      stage: "topo",
+      score: calculateStageScore(ctr, getBenchmark("ctr", "topo"), frequency, getBenchmark("frequency", "topo")),
+      metrics: { ctr, frequency, impressions: totals.impressions, reach: totals.reach },
+    },
+    {
+      stage: "meio",
+      score: calculateStageScore(ctr, getBenchmark("ctr", "meio"), cpc, getBenchmark("cpc", "meio"), true),
+      metrics: { ctr, cpc, clicks: totals.clicks },
+    },
+    {
+      stage: "fundo",
+      score: calculateFundoScore(cpa, getBenchmark("cpa", "fundo"), roas, getBenchmark("roas", "fundo"), convRate, getBenchmark("conversion_rate", "fundo")),
+      metrics: { cpa, roas, conversions: totals.conversions, conversion_value: totals.conversion_value, convRate },
+    },
+    {
+      stage: "pos_venda",
+      score: roas >= 2 ? Math.min(100, Math.round(roas * 25)) : 30,
+      metrics: { roas, ltv_estimate: totals.conversion_value / Math.max(totals.conversions, 1) },
+    },
+  ];
 
-  // Get metrics from campaigns if not provided
-  let metrics: MetricData = metricsInput || {};
-  if (!metricsInput && campaignId) {
-    const { data: campaignMetrics } = await supabase
-      .from("campaign_metrics")
-      .select("*")
-      .eq("campaign_id", campaignId)
-      .order("date", { ascending: false })
-      .limit(7);
-
-    if (campaignMetrics?.length) {
-      const totals = campaignMetrics.reduce((acc: any, m: any) => ({
-        spend: (acc.spend || 0) + (m.spend || 0),
-        impressions: (acc.impressions || 0) + (m.impressions || 0),
-        clicks: (acc.clicks || 0) + (m.clicks || 0),
-        conversions: (acc.conversions || 0) + (m.conversions || 0),
-        conversion_value: (acc.conversion_value || 0) + (m.conversion_value || 0),
-      }), {});
-
-      metrics = {
-        ctr: totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0,
-        cpa: totals.conversions > 0 ? totals.spend / totals.conversions : 0,
-        cpm: totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0,
-        roas: totals.spend > 0 ? totals.conversion_value / totals.spend : 0,
-        spend: totals.spend,
-        impressions: totals.impressions,
-        clicks: totals.clicks,
-        conversions: totals.conversions,
-      };
-    }
-  }
-
-  // Calculate health score
-  const stage = classifyStage(metrics);
-  const score = calculateHealthScore(metrics, benchmarks);
-
-  // Get previous score for trend
-  const { data: prevScores } = await supabase
+  // Get previous scores for trend
+  const { data: prevScores } = await admin
     .from("apollo_health_scores")
-    .select("score")
+    .select("stage, score")
     .eq("user_id", userId)
     .order("calculated_at", { ascending: false })
-    .limit(1);
+    .limit(4);
 
-  const previousScore = prevScores?.[0]?.score || null;
-  const trend = previousScore !== null
-    ? score > previousScore ? "up" : score < previousScore ? "down" : "stable"
-    : "stable";
+  const prevMap: Record<string, number> = {};
+  for (const ps of (prevScores || [])) {
+    if (!prevMap[ps.stage]) prevMap[ps.stage] = ps.score;
+  }
 
-  // Save health score
-  const { data: healthScore } = await supabase
-    .from("apollo_health_scores")
-    .insert({
-      user_id: userId,
-      campaign_id: campaignId || null,
-      score,
-      stage,
-      previous_score: previousScore,
-      trend,
-      metrics,
-    })
-    .select()
-    .single();
+  const records = stages.map((s) => ({
+    user_id: userId,
+    stage: s.stage,
+    score: Math.round(Math.max(0, Math.min(100, s.score))),
+    previous_score: prevMap[s.stage] ?? null,
+    metrics: s.metrics,
+    trend: prevMap[s.stage] !== undefined
+      ? s.score > prevMap[s.stage] + 5 ? "up" : s.score < prevMap[s.stage] - 5 ? "down" : "stable"
+      : "stable",
+    calculated_at: new Date().toISOString(),
+  }));
 
-  // Run diagnostic tree
+  await admin.from("apollo_health_scores").insert(records);
+  return records;
+}
+
+function calculateStageScore(ctr: number, ctrBench: number | null, secondary: number, secBench: number | null, invertSecondary = false) {
+  let score = 50;
+  if (ctrBench && ctr > 0) {
+    const ratio = ctr / ctrBench;
+    score = Math.min(100, Math.round(ratio * 50));
+  }
+  if (secBench && secondary > 0) {
+    const ratio = invertSecondary ? secBench / secondary : secondary / secBench;
+    const secScore = Math.min(100, Math.round(ratio * 50));
+    score = Math.round((score + secScore) / 2);
+  }
+  return score;
+}
+
+function calculateFundoScore(cpa: number, cpaBench: number | null, roas: number, roasBench: number | null, convRate: number, convBench: number | null) {
+  let scores: number[] = [];
+  if (cpaBench && cpa > 0) scores.push(Math.min(100, Math.round((cpaBench / cpa) * 50)));
+  if (roasBench && roas > 0) scores.push(Math.min(100, Math.round((roas / roasBench) * 50)));
+  if (convBench && convRate > 0) scores.push(Math.min(100, Math.round((convRate / convBench) * 50)));
+  return scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b) / scores.length) : 50;
+}
+
+// ====================== DIAGNOSTIC TREE ======================
+
+async function runDiagnosticTree(admin: any, userId: string, metrics: any, benchmarks: any, healthScores: any) {
   const diagnostics: any[] = [];
+  const { metrics: metricRows, campaigns } = metrics;
+
+  if (!metricRows.length) return diagnostics;
+
+  const totals = metricRows.reduce((acc: any, m: any) => {
+    acc.spend += Number(m.spend) || 0;
+    acc.impressions += Number(m.impressions) || 0;
+    acc.clicks += Number(m.clicks) || 0;
+    acc.conversions += Number(m.conversions) || 0;
+    acc.conversion_value += Number(m.conversion_value) || 0;
+    acc.reach += Number(m.reach) || 0;
+    return acc;
+  }, { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_value: 0, reach: 0 });
+
+  const ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
+  const cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
+  const cpa = totals.conversions > 0 ? totals.spend / totals.conversions : 0;
+  const roas = totals.spend > 0 ? totals.conversion_value / totals.spend : 0;
+  const frequency = totals.reach > 0 ? totals.impressions / totals.reach : 0;
+  const convRate = totals.clicks > 0 ? (totals.conversions / totals.clicks) * 100 : 0;
+
+  // === DIAGNOSTIC TREE ===
+
+  // 1. Creative Fatigue: CTR baixo + frequência alta
+  if (ctr < 1.0 && frequency > 3.5) {
+    diagnostics.push({
+      problem: "Fadiga de Criativo Detectada",
+      diagnosis: `CTR de ${ctr.toFixed(2)}% abaixo do mínimo e frequência de ${frequency.toFixed(1)} muito alta`,
+      cause: "Os mesmos criativos estão sendo exibidos repetidamente para o mesmo público, causando 'banner blindness'",
+      stage: "topo",
+      severity: "critical",
+      category: "creative_fatigue",
+      evidence: { ctr, frequency, threshold_ctr: 1.0, threshold_frequency: 3.5 },
+    });
+  } else if (ctr < 1.5 && frequency > 2.5) {
+    diagnostics.push({
+      problem: "Sinais de Fadiga de Criativo",
+      diagnosis: `CTR de ${ctr.toFixed(2)}% em queda e frequência de ${frequency.toFixed(1)} moderadamente alta`,
+      cause: "Criativos começando a perder eficiência com aumento da frequência",
+      stage: "topo",
+      severity: "high",
+      category: "creative_fatigue",
+      evidence: { ctr, frequency },
+    });
+  }
+
+  // 2. Audience Saturation: Frequência alta + CPA subindo
+  if (frequency > 4.0) {
+    diagnostics.push({
+      problem: "Saturação de Audiência",
+      diagnosis: `Frequência de ${frequency.toFixed(1)} indica que o público está esgotado`,
+      cause: "O público-alvo é muito pequeno ou as campanhas estão rodando há muito tempo sem rotação de audiência",
+      stage: "meio",
+      severity: "high",
+      category: "audience_saturation",
+      evidence: { frequency },
+    });
+  }
+
+  // 3. Budget Waste: Gasto alto + conversões baixas
+  if (totals.spend > 100 && totals.conversions === 0) {
+    diagnostics.push({
+      problem: "Desperdício de Orçamento",
+      diagnosis: `R$ ${totals.spend.toFixed(2)} gastos sem nenhuma conversão`,
+      cause: "Segmentação incorreta, landing page com problemas ou oferta não atrativa",
+      stage: "fundo",
+      severity: "critical",
+      category: "budget_waste",
+      evidence: { spend: totals.spend, conversions: 0 },
+    });
+  } else if (cpa > 100 && totals.spend > 200) {
+    diagnostics.push({
+      problem: "CPA Muito Alto",
+      diagnosis: `CPA de R$ ${cpa.toFixed(2)} está acima do aceitável`,
+      cause: "Funil com vazamento entre clique e conversão. Verificar landing page e proposta de valor",
+      stage: "fundo",
+      severity: "high",
+      category: "budget_waste",
+      evidence: { cpa, spend: totals.spend },
+    });
+  }
+
+  // 4. Landing Page Issue: Cliques altos + conversão baixa
+  if (totals.clicks > 100 && convRate < 1.0) {
+    diagnostics.push({
+      problem: "Problema na Landing Page",
+      diagnosis: `${totals.clicks} cliques mas taxa de conversão de apenas ${convRate.toFixed(2)}%`,
+      cause: "A landing page não está convertendo. Possíveis causas: tempo de carregamento, formulário longo, falta de prova social, CTA fraco",
+      stage: "fundo",
+      severity: "high",
+      category: "landing_page",
+      evidence: { clicks: totals.clicks, convRate },
+    });
+  }
+
+  // 5. Low ROAS
+  if (roas > 0 && roas < 1.5 && totals.spend > 100) {
+    diagnostics.push({
+      problem: "ROAS Abaixo do Ponto de Equilíbrio",
+      diagnosis: `ROAS de ${roas.toFixed(2)}x não cobre custos operacionais`,
+      cause: "Valor médio de compra baixo, ticket médio insuficiente ou público frio demais",
+      stage: "fundo",
+      severity: "critical",
+      category: "bid_strategy",
+      evidence: { roas, spend: totals.spend, revenue: totals.conversion_value },
+    });
+  }
+
+  // 6. Good performance detection
+  if (roas > 3.0 && ctr > 2.0) {
+    diagnostics.push({
+      problem: "Performance Excelente 🎉",
+      diagnosis: `ROAS de ${roas.toFixed(2)}x e CTR de ${ctr.toFixed(2)}% estão acima dos benchmarks`,
+      cause: "Estratégia bem alinhada entre criativo, audiência e oferta",
+      stage: "fundo",
+      severity: "low",
+      category: "performance",
+      evidence: { roas, ctr },
+    });
+  }
+
+  // Save diagnostics
+  if (diagnostics.length > 0) {
+    const records = diagnostics.map((d) => ({
+      user_id: userId,
+      ...d,
+    }));
+    await admin.from("apollo_diagnostics").insert(records);
+  }
+
+  return diagnostics;
+}
+
+// ====================== RECOMMENDATIONS ======================
+
+async function generateRecommendations(admin: any, userId: string, diagnostics: any[]) {
   const recommendations: any[] = [];
-  const alerts: any[] = [];
 
-  for (const rule of DIAGNOSTIC_TREE) {
-    const metricValue = (metrics as any)[rule.metric];
-    if (metricValue === undefined || metricValue === null) continue;
+  for (const diag of diagnostics) {
+    if (diag.severity === "low") continue; // Skip positive diagnostics
 
-    let triggered = false;
-    if (rule.comparison === "below" && metricValue < rule.threshold) triggered = true;
-    if (rule.comparison === "above" && metricValue > rule.threshold) triggered = true;
-
-    if (!triggered) continue;
-
-    for (const diag of rule.diagnoses) {
-      // Optional secondary check
-      if (diag.secondaryCheck) {
-        const secValue = (metrics as any)[diag.secondaryCheck.metric];
-        if (secValue !== undefined) {
-          const secTriggered = diag.secondaryCheck.comparison === "above"
-            ? secValue > diag.secondaryCheck.threshold
-            : secValue < diag.secondaryCheck.threshold;
-          // If secondary check fails, reduce severity
-          if (!secTriggered) continue;
-        }
-      }
-
-      // Save diagnostic
-      const { data: savedDiag } = await supabase
-        .from("apollo_diagnostics")
-        .insert({
-          user_id: userId,
-          campaign_id: campaignId || null,
-          health_score_id: healthScore?.id || null,
-          stage: rule.stage,
-          severity: diag.severity,
-          category: diag.category,
-          problem: diag.problem,
-          cause: diag.cause,
-          diagnosis: `${rule.symptom}: ${diag.problem}`,
-          evidence: { metric: rule.metric, value: metricValue, threshold: rule.threshold, benchmarks },
-        })
-        .select()
-        .single();
-
-      diagnostics.push(savedDiag);
-
-      // Save recommendations
-      for (const action of diag.actions) {
-        const { data: savedRec } = await supabase
-          .from("apollo_recommendations")
-          .insert({
-            user_id: userId,
-            campaign_id: campaignId || null,
-            diagnostic_id: savedDiag?.id || null,
-            title: action.title,
-            description: action.description,
-            action_type: action.action_type,
-            impact_estimate: action.impact,
-            priority: diag.severity === "critical" ? 1 : diag.severity === "high" ? 3 : diag.severity === "medium" ? 5 : 7,
-            status: "pending",
-          })
-          .select()
-          .single();
-        recommendations.push(savedRec);
-      }
-
-      // Create alert for high/critical
-      if (diag.severity === "high" || diag.severity === "critical") {
-        const { data: savedAlert } = await supabase
-          .from("apollo_alerts")
-          .insert({
-            user_id: userId,
-            campaign_id: campaignId || null,
-            diagnostic_id: savedDiag?.id || null,
-            level: diag.severity === "critical" ? "critical" : "warning",
-            title: rule.symptom,
-            description: `${diag.problem}: ${diag.cause}`,
-            metric: rule.metric,
-            current_value: String(metricValue),
-            benchmark_value: String(rule.threshold),
-            deviation: String(((metricValue - rule.threshold) / rule.threshold * 100).toFixed(1)) + "%",
-            actions: diag.actions.map(a => a.title),
-          })
-          .select()
-          .single();
-        alerts.push(savedAlert);
-      }
+    const recs = getRecommendationsForDiagnostic(diag);
+    for (const rec of recs) {
+      recommendations.push({
+        user_id: userId,
+        title: rec.title,
+        description: rec.description,
+        action_type: rec.action_type,
+        action_config: rec.action_config || {},
+        priority: diag.severity === "critical" ? 9 : diag.severity === "high" ? 7 : 5,
+        impact_estimate: rec.impact_estimate,
+      });
     }
   }
 
-  // Save learning if we found issues
-  if (diagnostics.length > 0) {
-    await supabase.from("apollo_learning").insert({
+  if (recommendations.length > 0) {
+    await admin.from("apollo_recommendations").insert(recommendations);
+  }
+  return recommendations;
+}
+
+function getRecommendationsForDiagnostic(diag: any) {
+  const recs: any[] = [];
+
+  switch (diag.category) {
+    case "creative_fatigue":
+      recs.push({
+        title: "Renovar criativos",
+        description: "Crie 3-5 novos criativos com ângulos diferentes. Teste variações de headline, imagem e CTA.",
+        action_type: "change_creative",
+        impact_estimate: "CTR pode melhorar 30-50%",
+      });
+      recs.push({
+        title: "Reduzir frequência",
+        description: "Aumente o tamanho do público ou reduza o orçamento para diminuir a frequência abaixo de 3x.",
+        action_type: "adjust_audience",
+        impact_estimate: "Redução de fadiga em 1-2 dias",
+      });
+      break;
+
+    case "audience_saturation":
+      recs.push({
+        title: "Expandir audiência",
+        description: "Crie Lookalike audiences de 3-5% ou adicione novos interesses para expandir o alcance.",
+        action_type: "adjust_audience",
+        impact_estimate: "Alcance pode dobrar",
+      });
+      recs.push({
+        title: "Testar novo público",
+        description: "Lance um teste A/B com um público completamente novo para encontrar novas oportunidades.",
+        action_type: "manual",
+        impact_estimate: "Descoberta de novos segmentos lucrativos",
+      });
+      break;
+
+    case "budget_waste":
+      recs.push({
+        title: "Pausar campanhas sem conversão",
+        description: "Campanhas com gasto significativo e zero conversões devem ser pausadas para análise.",
+        action_type: "pause",
+        impact_estimate: "Economia imediata do orçamento",
+      });
+      recs.push({
+        title: "Revisar segmentação",
+        description: "Verifique se o público está alinhado com o produto. Teste exclusões de audiência.",
+        action_type: "adjust_audience",
+        impact_estimate: "Melhoria de qualidade dos leads",
+      });
+      break;
+
+    case "landing_page":
+      recs.push({
+        title: "Otimizar landing page",
+        description: "Reduza tempo de carregamento, simplifique formulário e adicione prova social (depoimentos, números).",
+        action_type: "manual",
+        impact_estimate: "Taxa de conversão pode melhorar 50-100%",
+      });
+      break;
+
+    case "bid_strategy":
+      recs.push({
+        title: "Ajustar estratégia de lance",
+        description: "Mude para 'Custo por Resultado' ou 'ROAS Mínimo' para controlar melhor o retorno.",
+        action_type: "change_bid",
+        impact_estimate: "ROAS pode melhorar 20-40%",
+      });
+      recs.push({
+        title: "Aumentar ticket médio",
+        description: "Considere upsell, bundles ou oferta premium para aumentar o valor médio de conversão.",
+        action_type: "manual",
+        impact_estimate: "Melhoria direta no ROAS",
+      });
+      break;
+  }
+
+  return recs;
+}
+
+// ====================== ALERTS ======================
+
+async function createAlerts(admin: any, userId: string, diagnostics: any[], healthScores: any[]) {
+  const alerts: any[] = [];
+
+  for (const diag of diagnostics) {
+    if (diag.severity === "low") continue;
+
+    alerts.push({
       user_id: userId,
-      category: "diagnostic",
-      insight: `Diagnóstico encontrou ${diagnostics.length} problema(s): ${diagnostics.map(d => d.problem).join(", ")}`,
-      confidence: 0.8,
-      source_campaigns: campaignId ? [campaignId] : [],
-      evidence: { metrics, diagnostics_count: diagnostics.length, score },
+      level: diag.severity === "critical" ? "critical" : "warning",
+      title: diag.problem,
+      description: diag.diagnosis,
+      metric: diag.category,
+      current_value: JSON.stringify(diag.evidence),
+      actions: diag.category === "creative_fatigue"
+        ? ["Renovar criativos", "Ver biblioteca"]
+        : diag.category === "budget_waste"
+        ? ["Pausar campanha", "Revisar segmentação"]
+        : ["Ver detalhes", "Gerar recomendação"],
     });
   }
 
-  return new Response(JSON.stringify({
-    health_score: { score, stage, trend, previous_score: previousScore },
-    diagnostics,
-    recommendations,
-    alerts,
-    metrics,
-    benchmarks,
-  }), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+  // Score drop alerts
+  for (const hs of healthScores) {
+    if (hs.previous_score && hs.score < hs.previous_score - 15) {
+      alerts.push({
+        user_id: userId,
+        level: "warning",
+        title: `Score ${hs.stage} caiu ${hs.previous_score - hs.score} pontos`,
+        description: `Health Score do estágio "${hs.stage}" caiu de ${hs.previous_score} para ${hs.score}`,
+        metric: "health_score",
+        current_value: String(hs.score),
+        benchmark_value: String(hs.previous_score),
+        deviation: `-${hs.previous_score - hs.score}`,
+      });
+    }
+  }
+
+  if (alerts.length > 0) {
+    await admin.from("apollo_alerts").insert(alerts);
+  }
+  return alerts;
 }
 
-async function getSummary(supabase: any, userId: string) {
-  const [healthRes, diagRes, recRes, alertRes] = await Promise.all([
-    supabase.from("apollo_health_scores").select("*").eq("user_id", userId).order("calculated_at", { ascending: false }).limit(5),
-    supabase.from("apollo_diagnostics").select("*").eq("user_id", userId).eq("is_resolved", false).order("created_at", { ascending: false }).limit(20),
-    supabase.from("apollo_recommendations").select("*").eq("user_id", userId).eq("status", "pending").order("priority", { ascending: true }).limit(10),
-    supabase.from("apollo_alerts").select("*").eq("user_id", userId).eq("is_dismissed", false).order("created_at", { ascending: false }).limit(10),
-  ]);
+// ====================== AI ANALYSIS ======================
 
-  return new Response(JSON.stringify({
-    health_scores: healthRes.data || [],
-    diagnostics: diagRes.data || [],
-    recommendations: recRes.data || [],
-    alerts: alertRes.data || [],
-  }), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+async function getAIAnalysis(apiKey: string, metrics: any, healthScores: any, diagnostics: any) {
+  try {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [
+          {
+            role: "system",
+            content: `Você é o Apollo, um agente especialista em tráfego pago e diagnóstico de funis. 
+Analise os dados fornecidos e dê um resumo executivo em português brasileiro.
+Seja direto, use emojis, e foque em ações práticas. Máximo 300 palavras.
+Formato: 
+1. Resumo da saúde geral
+2. Top 3 problemas prioritários  
+3. Top 3 ações recomendadas
+4. Previsão para próximos 7 dias`,
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              campaigns_count: metrics.campaigns.length,
+              health_scores: healthScores,
+              diagnostics: diagnostics.map((d: any) => ({
+                problem: d.problem,
+                severity: d.severity,
+                category: d.category,
+              })),
+              metrics_summary: {
+                total_spend: metrics.metrics.reduce((s: number, m: any) => s + (Number(m.spend) || 0), 0),
+                total_conversions: metrics.metrics.reduce((s: number, m: any) => s + (Number(m.conversions) || 0), 0),
+                days_analyzed: 7,
+              },
+            }),
+          },
+        ],
+        max_tokens: 800,
+      }),
+    });
+
+    if (!res.ok) {
+      console.error("[apollo-analyze] AI error:", res.status);
+      return null;
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || null;
+  } catch (err) {
+    console.error("[apollo-analyze] AI analysis error:", err);
+    return null;
+  }
 }
 
-async function executeRecommendation(supabase: any, userId: string, recommendationId: string) {
-  const { data: rec } = await supabase
+// ====================== ACTION HANDLERS ======================
+
+async function handleApproveRecommendation(admin: any, userId: string, body: any) {
+  const { recommendation_id } = body;
+  await admin
     .from("apollo_recommendations")
-    .select("*")
-    .eq("id", recommendationId)
-    .eq("user_id", userId)
-    .single();
+    .update({ status: "approved", executed_at: new Date().toISOString() })
+    .eq("id", recommendation_id)
+    .eq("user_id", userId);
 
-  if (!rec) {
-    return new Response(JSON.stringify({ error: "Recommendation not found" }), {
-      status: 404,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  // Log the action
-  await supabase.from("apollo_action_log").insert({
+  await admin.from("apollo_action_log").insert({
     user_id: userId,
-    campaign_id: rec.campaign_id,
-    recommendation_id: recommendationId,
-    action_type: rec.action_type,
-    action_details: { title: rec.title, description: rec.description },
-    before_state: {},
-    success: true,
+    recommendation_id,
+    action_type: "approve",
     executed_by: "user",
   });
 
-  // Mark recommendation as executed
-  await supabase.from("apollo_recommendations").update({
-    status: "executed",
-    executed_at: new Date().toISOString(),
-    result: "Ação executada pelo usuário",
-  }).eq("id", recommendationId);
+  return new Response(JSON.stringify({ ok: true }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
 
-  // Resolve related diagnostic
-  if (rec.diagnostic_id) {
-    await supabase.from("apollo_diagnostics").update({
-      is_resolved: true,
-      resolved_at: new Date().toISOString(),
-    }).eq("id", rec.diagnostic_id);
-  }
+async function handleDismissAlert(admin: any, userId: string, body: any) {
+  const { alert_id } = body;
+  await admin
+    .from("apollo_alerts")
+    .update({ is_dismissed: true })
+    .eq("id", alert_id)
+    .eq("user_id", userId);
 
-  return new Response(JSON.stringify({ ok: true, action_type: rec.action_type }), {
+  return new Response(JSON.stringify({ ok: true }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }

@@ -6,190 +6,238 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
-
+/**
+ * wa-capi-track-lead: Full-funnel CAPI event sender for WhatsApp leads
+ * 
+ * Supports funnel stages:
+ *   lead → qualified → checkout → purchase
+ * 
+ * Body params:
+ *   - phone (required)
+ *   - funnel_stage: "lead" | "qualified" | "checkout" | "purchase" | custom
+ *   - value?: number (for checkout/purchase)
+ *   - currency?: string (default BRL)
+ *   - fbclid?: string
+ *   - utm_source?: string
+ *   - utm_campaign?: string
+ *   - custom_data?: object
+ */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: corsHeaders,
+      });
+    }
+
     const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } }
+    );
+
+    const token = authHeader.replace("Bearer ", "");
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData?.user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: corsHeaders,
+      });
+    }
+    const userId = userData.user.id;
+
+    const {
+      phone,
+      funnel_stage = "lead",
+      value,
+      currency = "BRL",
+      fbclid,
+      utm_source,
+      utm_campaign,
+      custom_data = {},
+    } = await req.json();
+
+    if (!phone) {
+      return new Response(JSON.stringify({ error: "phone is required" }), {
+        status: 400, headers: corsHeaders,
+      });
+    }
+
+    // Map funnel stage to Meta event name
+    const stageToEvent: Record<string, string> = {
+      lead: "Lead",
+      qualified: "CompleteRegistration",
+      checkout: "InitiateCheckout",
+      purchase: "Purchase",
+    };
+    const eventName = stageToEvent[funnel_stage] || funnel_stage;
+
+    const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const body = await req.json();
-    const {
-      user_id,
-      contact_id,
-      phone,
-      event_name = "Lead",
-      funnel_stage = "lead",
-      value,
-      currency = "BRL",
-      custom_data,
-      pixel_id: requestedPixelId,
-    } = body;
-
-    if (!user_id || !phone) {
-      return new Response(
-        JSON.stringify({ error: "user_id and phone are required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Get contact data for fbclid/utm
-    let contactData: any = null;
-    let resolvedContactId = contact_id;
-
-    if (contact_id) {
-      const { data } = await supabase
-        .from("wa_contacts")
-        .select("id, fbclid, utm_source, utm_campaign, utm_medium, capi_events_sent, funnel_stage")
-        .eq("id", contact_id)
-        .single();
-      contactData = data;
-    } else {
-      // Find contact by phone
-      const { data } = await supabase
-        .from("wa_contacts")
-        .select("id, fbclid, utm_source, utm_campaign, utm_medium, capi_events_sent, funnel_stage")
-        .eq("user_id", user_id)
-        .eq("phone", phone)
-        .limit(1)
-        .maybeSingle();
-      contactData = data;
-      resolvedContactId = data?.id;
-    }
-
-    // Check if event already sent for this contact
-    const existingEvents = (contactData?.capi_events_sent as any) || {};
-    if (existingEvents[event_name]) {
-      return new Response(
-        JSON.stringify({ success: true, already_sent: true, event_name }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Get pixel
-    let pixelQuery = supabase
+    // Get active pixel
+    const { data: pixel } = await admin
       .from("meta_pixels")
-      .select("id, pixel_id, access_token_encrypted")
-      .eq("user_id", user_id)
-      .eq("is_active", true);
+      .select("id, pixel_id, access_token_encrypted, events_today, events_total")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
 
-    if (requestedPixelId) {
-      pixelQuery = pixelQuery.eq("id", requestedPixelId);
+    if (!pixel) {
+      return new Response(JSON.stringify({ error: "No active pixel found" }), {
+        status: 404, headers: corsHeaders,
+      });
     }
 
-    const { data: pixel } = await pixelQuery.limit(1).maybeSingle();
+    // Get access token
+    const { data: adAccount } = await admin
+      .from("ad_accounts")
+      .select("access_token_encrypted")
+      .eq("user_id", userId)
+      .eq("platform", "meta")
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
 
-    // Record funnel event
-    await supabase.from("wa_capi_funnel").insert({
-      user_id,
-      phone,
-      contact_id: resolvedContactId || null,
-      event_name,
-      funnel_stage,
-      fbclid: contactData?.fbclid || null,
-      utm_source: contactData?.utm_source || null,
-      utm_campaign: contactData?.utm_campaign || null,
-      pixel_id: pixel?.id || null,
-      value: value || null,
-      currency,
-      custom_data: custom_data || null,
-      event_sent: false,
-    });
+    const accessToken = pixel.access_token_encrypted || adAccount?.access_token_encrypted;
 
     // Update contact funnel stage
-    if (resolvedContactId) {
-      const capiEventRecord = { [event_name]: new Date().toISOString() };
-      await supabase
-        .from("wa_contacts")
-        .update({
-          funnel_stage,
-          funnel_updated_at: new Date().toISOString(),
-          capi_events_sent: { ...existingEvents, ...capiEventRecord },
-        })
-        .eq("id", resolvedContactId);
-    }
+    await admin
+      .from("wa_contacts")
+      .update({
+        funnel_stage,
+        funnel_updated_at: new Date().toISOString(),
+        ...(fbclid && { fbclid }),
+        ...(utm_source && { utm_source }),
+        ...(utm_campaign && { utm_campaign }),
+      })
+      .eq("user_id", userId)
+      .eq("phone", phone);
 
-    let metaResponse: any = null;
+    // Hash phone
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(phone));
+    const hashedPhone = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
 
-    // Fire to Meta if pixel configured
-    if (pixel?.access_token_encrypted && pixel?.pixel_id) {
-      const phoneHash = await hashData(phone);
-      const eventData: any = {
-        event_name,
-        event_time: Math.floor(Date.now() / 1000),
-        event_id: crypto.randomUUID(),
-        action_source: "website",
-        user_data: {
-          ph: [phoneHash],
-          ...(contactData?.fbclid && { fbc: contactData.fbclid }),
-        },
-      };
+    const eventPayload = {
+      event_name: eventName,
+      event_time: Math.floor(Date.now() / 1000),
+      action_source: "system_generated" as const,
+      user_data: {
+        ph: [hashedPhone],
+        ...(fbclid && { fbc: `fb.1.${Date.now()}.${fbclid}` }),
+      },
+      custom_data: {
+        source: "whatsapp",
+        funnel_stage,
+        ...(value !== undefined && { value, currency }),
+        ...custom_data,
+      },
+    };
 
-      if (value || custom_data) {
-        eventData.custom_data = {
-          ...(value && { value }),
-          currency,
-          ...custom_data,
-        };
+    let status = "pending";
+    let responseBody: any = null;
+    let responseCode: number | null = null;
+    let errorMessage: string | null = null;
+
+    if (accessToken) {
+      const metaRes = await fetch(
+        `https://graph.facebook.com/v21.0/${pixel.pixel_id}/events`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            data: [eventPayload],
+            access_token: accessToken,
+          }),
+        }
+      );
+
+      responseBody = await metaRes.json();
+      responseCode = metaRes.status;
+      status = responseBody.error ? "failed" : "sent";
+      errorMessage = responseBody.error?.message || null;
+
+      // Update pixel stats
+      if (!responseBody.error) {
+        await admin
+          .from("meta_pixels")
+          .update({
+            last_event_at: new Date().toISOString(),
+            events_today: (pixel.events_today || 0) + 1,
+            events_total: (pixel.events_total || 0) + 1,
+          })
+          .eq("id", pixel.id);
       }
-
-      const metaRes = await fetch(`${META_GRAPH_URL}/${pixel.pixel_id}/events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          data: [eventData],
-          access_token: pixel.access_token_encrypted,
-        }),
-      });
-
-      metaResponse = await metaRes.json();
-
-      // Mark as sent
-      await supabase
-        .from("wa_capi_funnel")
-        .update({
-          event_sent: true,
-          sent_at: new Date().toISOString(),
-          meta_response: metaResponse,
-        })
-        .eq("contact_id", resolvedContactId)
-        .eq("event_name", event_name)
-        .eq("event_sent", false)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      console.log(`[wa-capi-track-lead] ${event_name} fired for ${phone}: ${metaResponse.events_received || 0} received`);
     }
+
+    // Log in meta_capi_events
+    await admin.from("meta_capi_events").insert({
+      user_id: userId,
+      pixel_id: pixel.id,
+      event_name: eventName,
+      event_time: new Date().toISOString(),
+      action_source: "system_generated",
+      user_data: eventPayload.user_data,
+      custom_data: eventPayload.custom_data,
+      status,
+      response_code: responseCode,
+      response_body: responseBody,
+      error_message: errorMessage,
+      sent_at: status === "sent" ? new Date().toISOString() : null,
+    });
+
+    // Log in wa_capi_funnel
+    const { data: contact } = await admin
+      .from("wa_contacts")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("phone", phone)
+      .limit(1)
+      .maybeSingle();
+
+    await admin.from("wa_capi_funnel").insert({
+      user_id: userId,
+      contact_id: contact?.id || null,
+      phone,
+      pixel_id: pixel.id,
+      funnel_stage,
+      event_name: eventName,
+      event_sent: status === "sent",
+      meta_response: responseBody,
+      custom_data: eventPayload.custom_data,
+      value: value || null,
+      currency,
+      fbclid: fbclid || null,
+      utm_source: utm_source || null,
+      utm_campaign: utm_campaign || null,
+      sent_at: status === "sent" ? new Date().toISOString() : null,
+    });
 
     return new Response(
       JSON.stringify({
-        success: true,
-        event_name,
+        success: status === "sent",
+        status,
+        event_name: eventName,
         funnel_stage,
-        pixel_configured: !!pixel?.access_token_encrypted,
-        meta_response: metaResponse,
+        events_received: responseBody?.events_received,
+        error: errorMessage,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
     console.error("[wa-capi-track-lead] Error:", err);
-    return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500, headers: corsHeaders,
+    });
   }
 });
-
-async function hashData(input: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input.toLowerCase().trim());
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}

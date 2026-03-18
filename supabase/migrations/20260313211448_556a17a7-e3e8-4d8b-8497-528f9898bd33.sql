@@ -1,0 +1,1 @@
+UPDATE wa_ai_agents SET is_active = true WHERE id = '8cd91703-addc-4bd0-a03a-9a2eddb8cfa8';

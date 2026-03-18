@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,6 +30,8 @@ import {
   Plus,
   Trash2,
   Pencil,
+  Upload,
+  FolderPlus,
 } from 'lucide-react';
 import { SwipeFileTab } from '@/components/copywriter/SwipeFileTab';
 import { SavedImagesTab } from '@/components/creative-studio/SavedImagesTab';
@@ -171,7 +173,22 @@ export default function AICreativeStudio() {
   const [selectedImage, setSelectedImage] = useState<GeneratedImage | null>(null);
   const [savingIndex, setSavingIndex] = useState<number | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [referenceImage, setReferenceImage] = useState<string | null>(null);
+  const [referenceFileName, setReferenceFileName] = useState<string | null>(null);
+  const [sendingToLibrary, setSendingToLibrary] = useState<number | null>(null);
+  const refImageInputRef = useRef<HTMLInputElement>(null);
 
+  const handleReferenceImageSelect = (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast({ title: 'Arquivo muito grande', description: 'Máximo de 10MB.', variant: 'destructive' });
+      return;
+    }
+    setReferenceFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (e) => setReferenceImage(e.target?.result as string);
+    reader.readAsDataURL(file);
+  };
 
   const handleGenerate = async () => {
     if (!prompt) {
@@ -211,6 +228,7 @@ export default function AICreativeStudio() {
           secondaryColor: colors[1] || colors[0] || '#8B5CF6',
           styleIntensity: styleIntensity[0],
           variations,
+          referenceImage: referenceImage || undefined,
         }),
       });
 
@@ -344,6 +362,51 @@ export default function AICreativeStudio() {
     setActiveTab('remove-bg');
   };
 
+  const handleSendToLibrary = async (image: GeneratedImage, index: number) => {
+    if (!user) {
+      toast({ title: 'Faça login para enviar à biblioteca', variant: 'destructive' });
+      return;
+    }
+    setSendingToLibrary(index);
+    try {
+      const base64Data = image.imageUrl.split(',')[1];
+      if (!base64Data) throw new Error('Imagem inválida');
+      const byteString = atob(base64Data);
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+      const blob = new Blob([ab], { type: 'image/png' });
+
+      const path = `${user.id}/library/${Date.now()}_${Math.random().toString(36).slice(2)}.png`;
+      const { error: uploadError } = await supabase.storage.from('creatives').upload(path, blob, { contentType: 'image/png' });
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage.from('creatives').getPublicUrl(path);
+      const dims: Record<string, string> = { 'feed-1x1': '1080x1080', 'feed-4x5': '1080x1350', 'stories-9x16': '1080x1920', 'reels-9x16': '1080x1920', 'landscape-16x9': '1920x1080', 'display-300x250': '300x250', 'display-728x90': '728x90' };
+
+      const { error: dbError } = await supabase.from('creative_uploads').insert({
+        user_id: user.id,
+        name: `Criativo ${format} - ${new Date().toLocaleDateString('pt-BR')}`,
+        file_url: publicUrl,
+        thumbnail_url: publicUrl,
+        file_type: 'image',
+        mime_type: 'image/png',
+        file_size_bytes: blob.size,
+        dimensions: dims[format] || format,
+        category: 'gerado-ia',
+        tags: [style, format, 'ai-generated'],
+        description: image.description || prompt,
+      });
+      if (dbError) throw dbError;
+      toast({ title: '📚 Enviado para Biblioteca!', description: 'Criativo disponível na Biblioteca de Criativos.' });
+    } catch (err) {
+      console.error('Send to library error:', err);
+      toast({ title: 'Erro ao enviar para biblioteca', description: err instanceof Error ? err.message : 'Erro desconhecido', variant: 'destructive' });
+    } finally {
+      setSendingToLibrary(null);
+    }
+  };
+
   const renderTabContent = () => (
     <>
       <TabsContent value="generate" className="mt-0 space-y-6">
@@ -370,13 +433,58 @@ export default function AICreativeStudio() {
                 </div>
               </div>
 
+              {/* Reference Image Upload */}
+              <div className="space-y-2">
+                <Label>Imagem de Referência (opcional)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Envie uma imagem para a IA usar como base e criar variações
+                </p>
+                {referenceImage ? (
+                  <div className="relative rounded-lg border border-border/50 overflow-hidden">
+                    <img src={referenceImage} alt="Referência" className="w-full max-h-40 object-contain bg-muted/30" />
+                    <div className="absolute top-1.5 right-1.5 flex gap-1">
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-7 w-7"
+                        onClick={() => { setReferenceImage(null); setReferenceFileName(null); }}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <div className="bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground truncate">
+                      {referenceFileName}
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => refImageInputRef.current?.click()}
+                    className="w-full flex flex-col items-center gap-1.5 rounded-lg border-2 border-dashed border-muted-foreground/25 px-4 py-5 transition-all hover:border-primary/50 hover:bg-muted/30"
+                  >
+                    <Upload className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Clique para enviar • PNG, JPG, WebP até 10MB</span>
+                  </button>
+                )}
+                <input
+                  ref={refImageInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleReferenceImageSelect(f); e.target.value = ''; }}
+                />
+              </div>
+
               {/* Prompt — most important */}
               <div className="space-y-2">
                 <Label>Descrição da Imagem</Label>
                 <Textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Descreva a imagem que deseja criar... Ex: Produto cosmético elegante sobre fundo rosa com flores"
+                  placeholder={referenceImage
+                    ? "Descreva como quer modificar esta imagem... Ex: Mude o fundo para azul, adicione texto promocional"
+                    : "Descreva a imagem que deseja criar... Ex: Produto cosmético elegante sobre fundo rosa com flores"
+                  }
                   rows={3}
                 />
               </div>
@@ -596,6 +704,15 @@ export default function AICreativeStudio() {
                             </Button>
                             <Button size="icon" variant="secondary" title="Gerar Copy" onClick={(e) => { e.stopPropagation(); handleGenerateCopy(image); }}>
                               <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="secondary"
+                              title="Enviar para Biblioteca"
+                              onClick={(e) => { e.stopPropagation(); handleSendToLibrary(image, index); }}
+                              disabled={sendingToLibrary === index}
+                            >
+                              {sendingToLibrary === index ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FolderPlus className="h-4 w-4" />}
                             </Button>
                           </div>
                           <Badge className="absolute left-2 top-2 bg-black/50">

@@ -142,7 +142,7 @@ export function useClaudeService() {
   const chat = useCallback(async (
     message: string,
     context?: CampaignContext
-  ): Promise<string | null> => {
+  ): Promise<string | StrategyResponse | null> => {
     setIsLoading(true);
     setError(null);
     
@@ -169,9 +169,24 @@ export function useClaudeService() {
       }
 
       const data = await response.json();
-      const responseText = data.response;
+      const responseText = data.response as string;
       
       setConversationHistory(data.history);
+
+      // Try to detect structured strategy JSON in the response
+      const jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1]);
+          if (parsed.agentInstructions && parsed.strategy) {
+            // It's a strategy response - return it as StrategyResponse
+            return parsed as StrategyResponse;
+          }
+        } catch {
+          // Not valid JSON, return as text
+        }
+      }
+
       return responseText;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';

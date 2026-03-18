@@ -99,6 +99,25 @@ async function handleMetaWebhook(supabase: any, body: any) {
           content = msg.video?.caption || "";
         } else if (msg.type === "audio") {
           messageType = "audio";
+          console.log(`[wa-inbox-webhook] Audio message detected from Meta. audioId: ${msg.audio?.id}`);
+          const audioId = msg.audio?.id;
+          if (audioId) {
+            try {
+              const transcription = await transcribeAudioFromMeta(supabase, instance, audioId);
+              if (transcription) {
+                content = transcription;
+                console.log(`[wa-inbox-webhook] Meta audio transcribed: ${content.substring(0, 80)}`);
+              } else {
+                content = "[Mensagem de áudio recebida]";
+                console.warn("[wa-inbox-webhook] Meta audio transcription returned null");
+              }
+            } catch (transcErr) {
+              content = "[Mensagem de áudio recebida]";
+              console.error("[wa-inbox-webhook] Meta audio transcription error:", transcErr);
+            }
+          } else {
+            content = "[Mensagem de áudio recebida]";
+          }
         } else if (msg.type === "document") {
           messageType = "document";
           content = msg.document?.filename || "";
@@ -106,43 +125,25 @@ async function handleMetaWebhook(supabase: any, body: any) {
           messageType = "sticker";
         }
 
-        // ===== Extract UTM/fbclid from referral (Click-to-WhatsApp ads) =====
-        const utmData = extractUTMParams(msg, content);
+        // ===== Extract UTMs/fbclid from Meta referral or message text =====
+        const referral = msg.referral || value.referral || null;
+        const utmParams = extractUTMParams(content, referral);
 
         const { data: contact } = await supabase
           .from("wa_contacts")
-          .select("id, fbclid, funnel_stage, capi_events_sent")
+          .select("id")
           .eq("user_id", instance.user_id)
           .eq("phone", phone)
           .limit(1)
           .maybeSingle();
 
-        // Update contact with UTM data if available and not already set
-        if (contact?.id && utmData.hasData) {
-          const updateFields: any = {};
-          if (utmData.fbclid && !contact.fbclid) updateFields.fbclid = utmData.fbclid;
-          if (utmData.utm_source) updateFields.utm_source = utmData.utm_source;
-          if (utmData.utm_campaign) updateFields.utm_campaign = utmData.utm_campaign;
-          if (utmData.utm_medium) updateFields.utm_medium = utmData.utm_medium;
-          if (utmData.utm_content) updateFields.utm_content = utmData.utm_content;
-          if (utmData.utm_term) updateFields.utm_term = utmData.utm_term;
-          if (Object.keys(updateFields).length > 0) {
-            await supabase.from("wa_contacts").update(updateFields).eq("id", contact.id);
-          }
-        }
-
-        // ===== Fire Lead CAPI event on first message =====
-        const isFirstMessage = !contact?.funnel_stage || contact.funnel_stage === "new";
-        if (isFirstMessage && contact?.id) {
-          await fireCAPIFunnelEvent(supabase, instance.user_id, {
-            phone,
-            contact_id: contact.id,
-            event_name: "Lead",
-            funnel_stage: "lead",
-            fbclid: utmData.fbclid || contact.fbclid,
-            utm_source: utmData.utm_source,
-            utm_campaign: utmData.utm_campaign,
-          });
+        // Update contact with UTM data if available
+        if (contact?.id && Object.keys(utmParams).length > 0) {
+          await supabase
+            .from("wa_contacts")
+            .update(utmParams)
+            .eq("id", contact.id);
+          console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
         }
 
         const { data: inboxMsg, error: insertErr } = await supabase
@@ -211,38 +212,31 @@ async function handleMetaDeliveryStatus(supabase: any, instance: any, status: an
 
   if (!queueStatus) return;
 
-  const updateData: any = { status: queueStatus };
-  if (deliveredAt) updateData.delivered_at = deliveredAt;
-  if (readAt) updateData.read_at = readAt;
-
-  const { data: updatedItems } = await supabase
-    .from("wa_queue")
-    .update(updateData)
-    .eq("phone", phone)
-    .eq("instance_id", instance.id)
-    .in("status", ["sent", "delivered"])
-    .order("sent_at", { ascending: false })
-    .limit(1)
-    .select("campaign_id");
-
-  if (deliveredAt && updatedItems?.length > 0 && updatedItems[0].campaign_id) {
-    await supabase.rpc("increment_campaign_delivered", { cid: updatedItems[0].campaign_id }).catch(() => {});
-  }
+  await updateQueueStatusFromDeliverySignal(supabase, {
+    instanceId: instance.id,
+    userId: instance.user_id,
+    phone,
+    remoteMessageId: status.id || null,
+    queueStatus,
+    deliveredAt,
+    readAt,
+  });
 }
 
 // ====================== EVOLUTION WEBHOOK HANDLER ======================
 
 async function handleEvolutionWebhook(supabase: any, body: any) {
   const event = body.event;
+  const normalizedEvent = String(event || "").toLowerCase().replace(/_/g, ".");
   const instanceName = body.instance;
   const messageData = body.data;
 
-  if (event === "messages.update" && messageData) {
+  if (normalizedEvent === "messages.update" && messageData) {
     return await handleEvolutionDeliveryStatus(supabase, instanceName, messageData);
   }
 
-  if (event !== "messages.upsert" || !messageData) {
-    return new Response(JSON.stringify({ ok: true, skipped: true }), {
+  if (normalizedEvent !== "messages.upsert" || !messageData) {
+    return new Response(JSON.stringify({ ok: true, skipped: true, event }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
@@ -264,6 +258,13 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   const message = messageData.message || messageData;
   const key = messageData.key || {};
 
+  // DEBUG: Log full messageData structure to understand LID format
+  console.log("[wa-inbox-webhook] Full messageData keys:", JSON.stringify(Object.keys(messageData)));
+  console.log("[wa-inbox-webhook] key:", JSON.stringify(key));
+  if (messageData.pushName) console.log("[wa-inbox-webhook] pushName:", messageData.pushName);
+  if (messageData.participant) console.log("[wa-inbox-webhook] participant:", messageData.participant);
+  if (messageData.messageTimestamp) console.log("[wa-inbox-webhook] timestamp:", messageData.messageTimestamp);
+
   if (key.fromMe) {
     return new Response(JSON.stringify({ ok: true, skipped: "outgoing" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -271,7 +272,34 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   }
 
   const remoteJid = key.remoteJid || "";
-  const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+  const remoteJidAlt = key.remoteJidAlt || "";
+
+  // contact phone used for DB/history; replyTarget used to send back via Evolution
+  let phone = "";
+  let replyTarget = "";
+
+  const toDigits = (value: string) => value.replace(/\D/g, "");
+
+  if (remoteJid.endsWith("@lid")) {
+    // Prefer real phone when Evolution provides remoteJidAlt
+    if (remoteJidAlt.endsWith("@s.whatsapp.net")) {
+      phone = toDigits(remoteJidAlt);
+      replyTarget = phone; // send using real phone number
+    } else {
+      // Fallback: keep LID JID as destination (required for some LID-only contacts)
+      phone = toDigits(remoteJid.replace("@lid", ""));
+      replyTarget = remoteJid;
+      console.warn(`[wa-inbox-webhook] LID without remoteJidAlt for ${remoteJid}; using LID as reply target`);
+    }
+  } else {
+    phone = toDigits(remoteJid);
+    replyTarget = phone;
+  }
+
+  // Final fallback to avoid empty destination
+  if (!phone) phone = toDigits(remoteJidAlt || remoteJid);
+  if (!replyTarget) replyTarget = phone;
+
   const pushName = messageData.pushName || null;
   const remoteMessageId = key.id || null;
 
@@ -283,6 +311,18 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     content = message.conversation;
   } else if (message.extendedTextMessage?.text) {
     content = message.extendedTextMessage.text;
+  } else if (message.buttonsResponseMessage) {
+    // Interactive button response
+    messageType = "text";
+    content = message.buttonsResponseMessage.selectedDisplayText || 
+              message.buttonsResponseMessage.selectedButtonId || "";
+  } else if (message.listResponseMessage) {
+    messageType = "text";
+    content = message.listResponseMessage.title || message.listResponseMessage.singleSelectReply?.selectedRowId || "";
+  } else if (message.templateButtonReplyMessage) {
+    messageType = "text";
+    content = message.templateButtonReplyMessage.selectedDisplayText || 
+              message.templateButtonReplyMessage.selectedId || "";
   } else if (message.imageMessage) {
     messageType = "image";
     content = message.imageMessage.caption || "";
@@ -294,6 +334,21 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   } else if (message.audioMessage) {
     messageType = "audio";
     mediaUrl = message.audioMessage.url || null;
+    console.log(`[wa-inbox-webhook] Audio message detected from Evolution. mediaUrl: ${mediaUrl}, mimetype: ${message.audioMessage.mimetype}`);
+    // Transcribe audio to text
+    try {
+      const transcription = await transcribeAudioFromEvolution(supabase, instance, messageData, instanceName);
+      if (transcription) {
+        content = transcription;
+        console.log(`[wa-inbox-webhook] Audio transcribed successfully: ${content.substring(0, 80)}`);
+      } else {
+        content = "[Mensagem de áudio recebida]";
+        console.warn("[wa-inbox-webhook] Audio transcription returned null, using fallback content");
+      }
+    } catch (transcErr) {
+      content = "[Mensagem de áudio recebida]";
+      console.error("[wa-inbox-webhook] Audio transcription threw error:", transcErr);
+    }
   } else if (message.documentMessage) {
     messageType = "document";
     content = message.documentMessage.fileName || "";
@@ -302,74 +357,55 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     messageType = "sticker";
   }
 
-  // ===== Extract UTM/fbclid from message URLs (Evolution doesn't have referral) =====
-  const utmData = extractUTMParams({ referral: null }, content);
+    // ===== Extract UTMs/fbclid from Evolution message text =====
+    const utmParams = extractUTMParams(content, null);
 
-  const { data: contact } = await supabase
-    .from("wa_contacts")
-    .select("id, fbclid, funnel_stage, capi_events_sent")
-    .eq("user_id", instance.user_id)
-    .eq("phone", phone)
-    .limit(1)
-    .maybeSingle();
+    const { data: contact } = await supabase
+      .from("wa_contacts")
+      .select("id")
+      .eq("user_id", instance.user_id)
+      .eq("phone", phone)
+      .limit(1)
+      .maybeSingle();
 
-  // Update contact with UTM data if available
-  if (contact?.id && utmData.hasData) {
-    const updateFields: any = {};
-    if (utmData.fbclid && !contact.fbclid) updateFields.fbclid = utmData.fbclid;
-    if (utmData.utm_source) updateFields.utm_source = utmData.utm_source;
-    if (utmData.utm_campaign) updateFields.utm_campaign = utmData.utm_campaign;
-    if (utmData.utm_medium) updateFields.utm_medium = utmData.utm_medium;
-    if (utmData.utm_content) updateFields.utm_content = utmData.utm_content;
-    if (utmData.utm_term) updateFields.utm_term = utmData.utm_term;
-    if (Object.keys(updateFields).length > 0) {
-      await supabase.from("wa_contacts").update(updateFields).eq("id", contact.id);
+    // Update contact with UTM data if available
+    if (contact?.id && Object.keys(utmParams).length > 0) {
+      await supabase
+        .from("wa_contacts")
+        .update(utmParams)
+        .eq("id", contact.id);
+      console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
     }
-  }
 
-  // ===== Fire Lead CAPI event on first message =====
-  const isFirstMessage = !contact?.funnel_stage || contact.funnel_stage === "new";
-  if (isFirstMessage && contact?.id) {
-    await fireCAPIFunnelEvent(supabase, instance.user_id, {
-      phone,
-      contact_id: contact.id,
-      event_name: "Lead",
-      funnel_stage: "lead",
-      fbclid: utmData.fbclid || contact.fbclid,
-      utm_source: utmData.utm_source,
-      utm_campaign: utmData.utm_campaign,
-    });
-  }
+    const { data: inboxMsg, error: insertErr } = await supabase
+      .from("wa_inbox")
+      .insert({
+        user_id: instance.user_id,
+        instance_id: instance.id,
+        contact_id: contact?.id || null,
+        phone,
+        contact_name: pushName,
+        direction: "incoming",
+        message_type: messageType,
+        content,
+        media_url: mediaUrl,
+        remote_message_id: remoteMessageId,
+        is_read: false,
+      })
+      .select("id")
+      .single();
 
-  const { data: inboxMsg, error: insertErr } = await supabase
-    .from("wa_inbox")
-    .insert({
-      user_id: instance.user_id,
-      instance_id: instance.id,
-      contact_id: contact?.id || null,
-      phone,
-      contact_name: pushName,
-      direction: "incoming",
-      message_type: messageType,
-      content,
-      media_url: mediaUrl,
-      remote_message_id: remoteMessageId,
-      is_read: false,
-    })
-    .select("id")
-    .single();
+    if (insertErr) {
+      console.error("Insert inbox error:", insertErr);
+      return new Response(JSON.stringify({ error: "Failed to save message" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-  if (insertErr) {
-    console.error("Insert inbox error:", insertErr);
-    return new Response(JSON.stringify({ error: "Failed to save message" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  if (content && content.trim().length > 0) {
-    await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id);
-  }
+    if (content && content.trim().length > 0) {
+      await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget);
+    }
 
   return new Response(
     JSON.stringify({ ok: true, inbox_id: inboxMsg.id }),
@@ -381,60 +417,60 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
   try {
     const updates = Array.isArray(messageData) ? messageData : [messageData];
 
+    const { data: instance } = await supabase
+      .from("wa_instances")
+      .select("id, user_id")
+      .eq("instance_name", instanceName)
+      .single();
+
+    if (!instance) {
+      return new Response(
+        JSON.stringify({ ok: true, warning: "instance_not_found" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     for (const update of updates) {
       const key = update.key || {};
-      const status = update.status;
-      const remoteMessageId = key.id;
-
-      if (!remoteMessageId || !status) continue;
+      const statusRaw = update.status;
+      const statusNormalized = String(statusRaw ?? "").toLowerCase();
+      const remoteMessageId = key.id || update.id || update.messageId || null;
 
       let queueStatus: string | null = null;
       let deliveredAt: string | null = null;
       let readAt: string | null = null;
 
-      switch (status) {
-        case "DELIVERY_ACK": case "delivered": case 3:
-          queueStatus = "delivered"; deliveredAt = new Date().toISOString(); break;
-        case "READ": case "read": case 4:
-        case "PLAYED": case 5:
-          queueStatus = "read"; readAt = new Date().toISOString(); break;
-        case "ERROR": case "failed": case 0:
-          queueStatus = "failed"; break;
-        case "SERVER_ACK": case "sent": case 1: case 2:
-          continue;
-        default: continue;
+      if (statusRaw === 3 || statusNormalized === "delivered" || statusNormalized === "delivery_ack") {
+        queueStatus = "delivered";
+        deliveredAt = new Date().toISOString();
+      } else if (
+        statusRaw === 4 ||
+        statusRaw === 5 ||
+        statusNormalized === "read" ||
+        statusNormalized === "played"
+      ) {
+        queueStatus = "read";
+        readAt = new Date().toISOString();
+      } else if (statusRaw === 0 || statusNormalized === "error" || statusNormalized === "failed") {
+        queueStatus = "failed";
+      } else {
+        // Ignore server ACK / sent
+        continue;
       }
 
       if (!queueStatus) continue;
 
-      const phone = (key.remoteJid || "").replace("@s.whatsapp.net", "").replace("@g.us", "");
-      if (!phone) continue;
+      const phone = normalizePhone(key.remoteJid || key.remoteJidAlt || update.recipient || "");
 
-      const { data: instance } = await supabase
-        .from("wa_instances")
-        .select("id, user_id")
-        .eq("instance_name", instanceName)
-        .single();
-
-      if (!instance) continue;
-
-      const updateData: any = { status: queueStatus };
-      if (deliveredAt) updateData.delivered_at = deliveredAt;
-      if (readAt) updateData.read_at = readAt;
-
-      const { data: updatedItems } = await supabase
-        .from("wa_queue")
-        .update(updateData)
-        .eq("phone", phone)
-        .eq("instance_id", instance.id)
-        .in("status", ["sent", "delivered"])
-        .order("sent_at", { ascending: false })
-        .limit(1)
-        .select("campaign_id");
-
-      if (deliveredAt && updatedItems?.length > 0 && updatedItems[0].campaign_id) {
-        await supabase.rpc("increment_campaign_delivered", { cid: updatedItems[0].campaign_id }).catch(() => {});
-      }
+      await updateQueueStatusFromDeliverySignal(supabase, {
+        instanceId: instance.id,
+        userId: instance.user_id,
+        phone,
+        remoteMessageId,
+        queueStatus,
+        deliveredAt,
+        readAt,
+      });
     }
 
     return new Response(
@@ -450,175 +486,97 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
   }
 }
 
-// ====================== UTM / FBCLID EXTRACTION ======================
-
-function extractUTMParams(msg: any, content: string) {
-  const result: any = { hasData: false };
-
-  // Source 1: Meta referral object (Click-to-WhatsApp ads)
-  const referral = msg.referral;
-  if (referral) {
-    if (referral.source_url) {
-      try {
-        const url = new URL(referral.source_url);
-        result.fbclid = url.searchParams.get("fbclid") || null;
-        result.utm_source = url.searchParams.get("utm_source") || null;
-        result.utm_campaign = url.searchParams.get("utm_campaign") || null;
-        result.utm_medium = url.searchParams.get("utm_medium") || null;
-        result.utm_content = url.searchParams.get("utm_content") || null;
-        result.utm_term = url.searchParams.get("utm_term") || null;
-      } catch {}
-    }
-    if (referral.headline) result.ad_headline = referral.headline;
-    if (referral.body) result.ad_body = referral.body;
-    result.hasData = true;
-  }
-
-  // Source 2: URLs in message body
-  if (content) {
-    const urlMatch = content.match(/https?:\/\/[^\s]+/);
-    if (urlMatch) {
-      try {
-        const url = new URL(urlMatch[0]);
-        if (!result.fbclid) result.fbclid = url.searchParams.get("fbclid") || null;
-        if (!result.utm_source) result.utm_source = url.searchParams.get("utm_source") || null;
-        if (!result.utm_campaign) result.utm_campaign = url.searchParams.get("utm_campaign") || null;
-        if (!result.utm_medium) result.utm_medium = url.searchParams.get("utm_medium") || null;
-        if (!result.utm_content) result.utm_content = url.searchParams.get("utm_content") || null;
-        if (!result.utm_term) result.utm_term = url.searchParams.get("utm_term") || null;
-        if (result.fbclid || result.utm_source) result.hasData = true;
-      } catch {}
-    }
-  }
-
-  return result;
+function normalizePhone(value: string | null | undefined): string {
+  return (value || "").replace(/\D/g, "");
 }
 
-// ====================== CAPI FUNNEL EVENT FIRING ======================
-
-async function fireCAPIFunnelEvent(
+async function updateQueueStatusFromDeliverySignal(
   supabase: any,
-  userId: string,
   params: {
-    phone: string;
-    contact_id: string;
-    event_name: string;
-    funnel_stage: string;
-    fbclid?: string | null;
-    utm_source?: string | null;
-    utm_campaign?: string | null;
-    value?: number;
-    currency?: string;
-    custom_data?: any;
+    instanceId: string;
+    userId: string;
+    phone: string | null | undefined;
+    remoteMessageId: string | null;
+    queueStatus: string;
+    deliveredAt: string | null;
+    readAt: string | null;
   }
 ) {
-  try {
-    // Get user's active pixel
-    const { data: pixel } = await supabase
-      .from("meta_pixels")
-      .select("id, pixel_id, access_token_encrypted")
+  const { instanceId, userId, phone, remoteMessageId, queueStatus, deliveredAt, readAt } = params;
+
+  const updateData: any = { status: queueStatus };
+  if (deliveredAt) {
+    updateData.delivered_at = deliveredAt;
+    updateData.delivery_confirmed_at = deliveredAt;
+  }
+  if (readAt) {
+    updateData.read_at = readAt;
+    if (!updateData.delivery_confirmed_at) {
+      updateData.delivery_confirmed_at = readAt;
+    }
+  }
+
+  let matchedPhone = normalizePhone(phone);
+  let matchedCampaignId: string | null = null;
+  let matchedCreatedAt: string | null = null;
+
+  if (remoteMessageId) {
+    const { data: outMsg } = await supabase
+      .from("wa_inbox")
+      .select("phone, campaign_id, created_at")
       .eq("user_id", userId)
-      .eq("is_active", true)
+      .eq("instance_id", instanceId)
+      .eq("direction", "outgoing")
+      .eq("remote_message_id", remoteMessageId)
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    // Record funnel event
-    await supabase.from("wa_capi_funnel").insert({
-      user_id: userId,
-      phone: params.phone,
-      contact_id: params.contact_id,
-      event_name: params.event_name,
-      funnel_stage: params.funnel_stage,
-      fbclid: params.fbclid || null,
-      utm_source: params.utm_source || null,
-      utm_campaign: params.utm_campaign || null,
-      pixel_id: pixel?.id || null,
-      value: params.value || null,
-      currency: params.currency || "BRL",
-      custom_data: params.custom_data || null,
-      event_sent: false,
-    });
-
-    // Update contact funnel stage
-    const capiEventRecord = { [params.event_name]: new Date().toISOString() };
-    const { data: contactData } = await supabase
-      .from("wa_contacts")
-      .select("capi_events_sent")
-      .eq("id", params.contact_id)
-      .single();
-
-    const existingEvents = (contactData?.capi_events_sent as any) || {};
-    await supabase
-      .from("wa_contacts")
-      .update({
-        funnel_stage: params.funnel_stage,
-        funnel_updated_at: new Date().toISOString(),
-        capi_events_sent: { ...existingEvents, ...capiEventRecord },
-      })
-      .eq("id", params.contact_id);
-
-    // Fire CAPI event if pixel is configured
-    if (pixel?.access_token_encrypted && pixel?.pixel_id) {
-      const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
-      const eventData: any = {
-        event_name: params.event_name,
-        event_time: Math.floor(Date.now() / 1000),
-        event_id: crypto.randomUUID(),
-        action_source: "website",
-        user_data: {
-          ph: [await hashData(params.phone)],
-          ...(params.fbclid && { fbc: params.fbclid }),
-        },
-      };
-
-      if (params.value || params.currency) {
-        eventData.custom_data = {
-          ...(params.value && { value: params.value }),
-          currency: params.currency || "BRL",
-          ...params.custom_data,
-        };
-      }
-
-      const metaRes = await fetch(`${META_GRAPH_URL}/${pixel.pixel_id}/events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          data: [eventData],
-          access_token: pixel.access_token_encrypted,
-        }),
-      });
-
-      const metaData = await metaRes.json();
-
-      // Update funnel event as sent
-      await supabase
-        .from("wa_capi_funnel")
-        .update({
-          event_sent: true,
-          sent_at: new Date().toISOString(),
-          meta_response: metaData,
-        })
-        .eq("contact_id", params.contact_id)
-        .eq("event_name", params.event_name)
-        .eq("event_sent", false)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      console.log(`[CAPI] ${params.event_name} fired for ${params.phone}: ${metaData.events_received || 0} received`);
-    } else {
-      console.log(`[CAPI] ${params.event_name} queued for ${params.phone} (no pixel configured)`);
+    if (outMsg) {
+      matchedPhone = normalizePhone(outMsg.phone);
+      matchedCampaignId = outMsg.campaign_id || null;
+      matchedCreatedAt = outMsg.created_at || null;
     }
-  } catch (err) {
-    console.error(`[CAPI] Error firing ${params.event_name}:`, err);
   }
-}
 
-async function hashData(input: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input.toLowerCase().trim());
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+  let query = supabase
+    .from("wa_queue")
+    .update(updateData)
+    .eq("instance_id", instanceId)
+    .in("status", ["sent", "delivered"]);
+
+  if (matchedPhone) {
+    query = query.eq("phone", matchedPhone);
+  }
+
+  if (matchedCampaignId) {
+    query = query.eq("campaign_id", matchedCampaignId);
+  }
+
+  if (matchedCreatedAt) {
+    const matchedAtMs = new Date(matchedCreatedAt).getTime();
+    const lowerBound = new Date(matchedAtMs - 6 * 60 * 60 * 1000).toISOString();
+    const upperBound = new Date(matchedAtMs + 15 * 60 * 1000).toISOString();
+    query = query.gte("sent_at", lowerBound).lte("sent_at", upperBound);
+  }
+
+  const { data: updatedItems } = await query
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .select("campaign_id");
+
+  const campaignId = updatedItems?.[0]?.campaign_id || matchedCampaignId;
+  if (deliveredAt && campaignId) {
+    await supabase.rpc("increment_campaign_delivered", { cid: campaignId }).catch(() => {});
+  }
+
+  // ===== SHADOW BAN DETECTION: Reset consecutive_undelivered on confirmed delivery =====
+  if (queueStatus === "delivered" || queueStatus === "read") {
+    await supabase
+      .from("wa_instances")
+      .update({ consecutive_undelivered: 0, shadow_ban_suspect: false })
+      .eq("id", instanceId);
+  }
 }
 
 // ====================== SHARED: AI CATEGORIZATION + AUTOMATIONS + AI AGENT ======================
@@ -630,9 +588,68 @@ async function categorizeAndAutomate(
   content: string,
   phone: string,
   pushName: string | null,
-  contactId: string | null
+  contactId: string | null,
+  replyTarget?: string,
 ) {
   try {
+    // ===== Check for opt-in/opt-out button responses first =====
+    const lowerContent = content.toLowerCase().trim();
+    const isOptoutButton = lowerContent.includes("não quero mais receber") ||
+      lowerContent.includes("optout_stop") ||
+      lowerContent === "❌ não quero mais receber";
+    const isOptinButton = lowerContent.includes("quero continuar recebendo") ||
+      lowerContent.includes("optout_continue") ||
+      lowerContent === "✅ quero continuar recebendo";
+
+    if (isOptoutButton && contactId) {
+      // Move to blacklist
+      await supabase
+        .from("wa_contacts")
+        .update({ is_valid: false, tags: ["blacklist", "opt-out"] } as any)
+        .eq("id", contactId);
+
+      // Send confirmation message
+      await sendOptoutConfirmation(supabase, instance, phone, replyTarget);
+
+      await supabase
+        .from("wa_inbox")
+        .update({ ai_category: "opt-out", ai_sentiment: "negative" })
+        .eq("id", inboxMsgId);
+
+      console.log(`[opt-out] Contact ${phone} moved to blacklist`);
+      return;
+    }
+
+    if (isOptinButton && contactId) {
+      // Mark as engaged
+      const { data: currentContact } = await supabase
+        .from("wa_contacts")
+        .select("tags")
+        .eq("id", contactId)
+        .maybeSingle();
+
+      const currentTags = (currentContact?.tags as string[] | null) || [];
+      const newTags = [...currentTags.filter(t => t !== "blacklist" && t !== "opt-out")];
+      if (!newTags.includes("opt-in")) newTags.push("opt-in");
+      if (!newTags.includes("engaged")) newTags.push("engaged");
+
+      await supabase
+        .from("wa_contacts")
+        .update({ is_valid: true, tags: newTags } as any)
+        .eq("id", contactId);
+
+      // Send confirmation
+      await sendOptinConfirmation(supabase, instance, phone, replyTarget);
+
+      await supabase
+        .from("wa_inbox")
+        .update({ ai_category: "interested", ai_sentiment: "positive" })
+        .eq("id", inboxMsgId);
+
+      console.log(`[opt-in] Contact ${phone} confirmed engagement`);
+      return;
+    }
+
     const aiCategory = await categorizeWithAI(content);
 
     await supabase
@@ -641,42 +658,51 @@ async function categorizeAndAutomate(
       .eq("id", inboxMsgId);
 
     if (contactId) {
-      // Get contact data for CAPI
-      const { data: contactData } = await supabase
-        .from("wa_contacts")
-        .select("fbclid, utm_source, utm_campaign, funnel_stage, capi_events_sent")
-        .eq("id", contactId)
-        .single();
-
       if (aiCategory.category === "opt-out") {
         await supabase
           .from("wa_contacts")
-          .update({ is_valid: false, tags: ["blacklist"], status: "blacklist" } as any)
+          .update({ is_valid: false, tags: ["blacklist"] } as any)
           .eq("id", contactId);
       } else if (aiCategory.category === "interested" || aiCategory.category === "question") {
-        await supabase
+        const { data: currentContact } = await supabase
           .from("wa_contacts")
-          .update({ status: "qualified" } as any)
-          .eq("id", contactId);
+          .select("tags")
+          .eq("id", contactId)
+          .maybeSingle();
 
-        // ===== Fire CAPI: Lead Qualified =====
-        const alreadySent = (contactData?.capi_events_sent as any)?.LeadQualified;
-        if (!alreadySent) {
-          await fireCAPIFunnelEvent(supabase, instance.user_id, {
-            phone,
-            contact_id: contactId,
-            event_name: "LeadQualified",
-            funnel_stage: "qualified",
-            fbclid: contactData?.fbclid,
-            utm_source: contactData?.utm_source,
-            utm_campaign: contactData?.utm_campaign,
-          });
+        const currentTags = (currentContact?.tags as string[] | null) || [];
+        if (!currentTags.includes("qualified")) {
+          await supabase
+            .from("wa_contacts")
+            .update({ tags: [...currentTags, "qualified"] } as any)
+            .eq("id", contactId);
         }
       }
     }
 
+    // ===== Campaign Auto-Tag & Auto-Reply =====
+    await handleCampaignAutoReply(supabase, instance, phone, contactId, replyTarget);
+
     // ===== AI Agent Auto-Reply =====
-    await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category);
+    await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
+
+    // ===== CAPI Full-Funnel Tracking =====
+    if (aiCategory.category === "interested" || aiCategory.category === "question") {
+      // Stage 1: Lead event (first meaningful contact)
+      await sendCAPIEvent(supabase, instance.user_id, phone, "Lead", {
+        lead_category: aiCategory.category,
+        source: "whatsapp",
+      });
+    }
+
+    if (aiCategory.category === "interested") {
+      // Stage 2: Qualified Lead (contact shows buying intent)
+      await sendCAPIEvent(supabase, instance.user_id, phone, "CompleteRegistration", {
+        lead_category: "qualified",
+        source: "whatsapp",
+        status: "qualified",
+      });
+    }
 
     const triggerEvent =
       aiCategory.category === "interested" ? "lead_interested" :
@@ -708,6 +734,169 @@ async function categorizeAndAutomate(
   }
 }
 
+// ====================== CAMPAIGN AUTO-TAG & AUTO-REPLY ======================
+
+async function handleCampaignAutoReply(
+  supabase: any,
+  instance: any,
+  phone: string,
+  contactId: string | null,
+  replyTarget?: string,
+) {
+  try {
+    // Find recent campaigns that sent to this phone number (last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: queueItems } = await supabase
+      .from("wa_queue")
+      .select("campaign_id")
+      .eq("phone", phone)
+      .eq("user_id", instance.user_id)
+      .in("status", ["sent", "delivered", "read"])
+      .gte("sent_at", thirtyDaysAgo)
+      .order("sent_at", { ascending: false })
+      .limit(5);
+
+    if (!queueItems || queueItems.length === 0) return;
+
+    // Get unique campaign IDs
+    const campaignIds = [...new Set(queueItems.map((q: any) => q.campaign_id).filter(Boolean))];
+    if (campaignIds.length === 0) return;
+
+    // Fetch campaigns with auto-tag or auto-reply configured
+    const { data: campaigns } = await supabase
+      .from("wa_campaigns")
+      .select("id, reply_auto_tag, reply_auto_message")
+      .in("id", campaignIds)
+      .or("reply_auto_tag.neq.,reply_auto_message.neq.");
+
+    if (!campaigns || campaigns.length === 0) return;
+
+    // Track if we already sent an auto-reply to avoid duplicates
+    let autoReplySent = false;
+
+    for (const campaign of campaigns) {
+      // ===== Auto-Tag =====
+      if (campaign.reply_auto_tag && contactId) {
+        const { data: currentContact } = await supabase
+          .from("wa_contacts")
+          .select("tags")
+          .eq("id", contactId)
+          .maybeSingle();
+
+        const currentTags: string[] = (currentContact?.tags as string[] | null) || [];
+        const newTag = campaign.reply_auto_tag.trim();
+        if (!currentTags.includes(newTag)) {
+          await supabase
+            .from("wa_contacts")
+            .update({ tags: [...currentTags, newTag] } as any)
+            .eq("id", contactId);
+          console.log(`[campaign-auto-tag] Added tag "${newTag}" to contact ${phone} (campaign ${campaign.id})`);
+        }
+      }
+
+      // ===== Auto-Reply (send only once, from the most recent campaign) =====
+      if (campaign.reply_auto_message && !autoReplySent) {
+        // Check if we already sent an auto-reply for this campaign to this phone
+        const { data: existingReply } = await supabase
+          .from("wa_inbox")
+          .select("id")
+          .eq("user_id", instance.user_id)
+          .eq("phone", phone)
+          .eq("direction", "outgoing")
+          .eq("campaign_id", campaign.id)
+          .ilike("content", campaign.reply_auto_message.substring(0, 50) + "%")
+          .limit(1);
+
+        if (existingReply && existingReply.length > 0) {
+          console.log(`[campaign-auto-reply] Already sent auto-reply to ${phone} for campaign ${campaign.id}`);
+          continue;
+        }
+
+        // Send the auto-reply message
+        const destination = replyTarget || phone;
+        await sendAutoReplyMessage(supabase, instance, destination, campaign.reply_auto_message, campaign.id, phone);
+        autoReplySent = true;
+        console.log(`[campaign-auto-reply] Sent follow-up to ${phone} for campaign ${campaign.id}`);
+      }
+    }
+  } catch (err) {
+    console.error("[campaign-auto-reply] Error:", err);
+  }
+}
+
+async function sendAutoReplyMessage(
+  supabase: any,
+  instance: any,
+  destination: string,
+  message: string,
+  campaignId: string,
+  phone: string,
+) {
+  try {
+    // Get instance details for sending
+    const { data: inst } = await supabase
+      .from("wa_instances")
+      .select("instance_name, provider, meta_config")
+      .eq("id", instance.id)
+      .single();
+
+    if (!inst) return;
+
+    if (inst.provider === "meta") {
+      // Send via Meta API
+      const metaConfig = inst.meta_config || {};
+      const accessToken = metaConfig.access_token;
+      const phoneNumberId = metaConfig.phone_number_id;
+      if (!accessToken || !phoneNumberId) return;
+
+      await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: phone,
+          type: "text",
+          text: { body: message },
+        }),
+      });
+    } else {
+      // Send via Evolution API
+      const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL");
+      const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY");
+      if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) return;
+
+      const isJid = destination.includes("@");
+      const sendPayload: any = { text: message };
+      if (isJid) {
+        sendPayload.number = destination;
+      } else {
+        sendPayload.number = destination;
+      }
+
+      await fetch(`${EVOLUTION_API_URL}/message/sendText/${inst.instance_name}`, {
+        method: "POST",
+        headers: { "apikey": EVOLUTION_API_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify(sendPayload),
+      });
+    }
+
+    // Save to inbox
+    await supabase.from("wa_inbox").insert({
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      phone,
+      direction: "outgoing",
+      message_type: "text",
+      content: message,
+      campaign_id: campaignId,
+      is_read: true,
+    });
+  } catch (err) {
+    console.error("[sendAutoReplyMessage] Error:", err);
+  }
+}
+
 // ====================== AI AGENT AUTO-REPLY ======================
 
 async function handleAIAgentReply(
@@ -717,20 +906,36 @@ async function handleAIAgentReply(
   phone: string,
   pushName: string | null,
   category: string,
+  replyTarget?: string,
 ) {
   try {
     // Find active AI agent for this instance or user
+    // Supports multi-instance assignment via instance_ids array
     const { data: agents } = await supabase
       .from("wa_ai_agents")
       .select("*")
       .eq("user_id", instance.user_id)
-      .eq("is_active", true)
-      .or(`instance_id.eq.${instance.id},instance_id.is.null`);
+      .eq("is_active", true);
 
     if (!agents || agents.length === 0) return;
 
-    // Prefer instance-specific agent, fallback to global
-    const agent = agents.find((a: any) => a.instance_id === instance.id) || agents[0];
+    // Find the best matching agent:
+    // 1. Agent with this instance in instance_ids array
+    // 2. Agent with instance_id matching this instance
+    // 3. Agent with no instances assigned (global)
+    const agent = agents.find((a: any) => {
+      const ids = a.instance_ids || [];
+      return Array.isArray(ids) && ids.length > 0 && ids.includes(instance.id);
+    }) || agents.find((a: any) => a.instance_id === instance.id)
+       || agents.find((a: any) => {
+      const ids = a.instance_ids || [];
+      return (!ids || ids.length === 0) && !a.instance_id;
+    });
+
+    if (!agent) {
+      console.log("[ai-agent] No matching agent for instance:", instance.id);
+      return;
+    }
 
     // Check blocked categories
     const blockedCategories = agent.blocked_categories || ["opt-out", "spam"];
@@ -757,65 +962,229 @@ async function handleAIAgentReply(
       }
     }
 
-    // Fetch conversation history for context
+    // Fetch conversation history for context (more messages = better context)
     const { data: history } = await supabase
       .from("wa_inbox")
-      .select("direction, content, created_at")
+      .select("direction, content, created_at, message_type")
       .eq("user_id", instance.user_id)
       .eq("phone", phone)
       .order("created_at", { ascending: false })
-      .limit(10);
+      .limit(20);
 
-    const conversationContext = (history || [])
+    // Build conversation as proper alternating messages for better AI context
+    const historyMessages = (history || [])
       .reverse()
-      .map((m: any) => `${m.direction === "incoming" ? "Cliente" : "Atendente"}: ${m.content}`)
-      .join("\n");
+      .filter((m: any) => m.content && m.content.trim())
+      .map((m: any) => ({
+        role: m.direction === "incoming" ? "user" as const : "assistant" as const,
+        content: m.content,
+      }));
+
+    // Fetch recent AI replies to avoid repetition (deduplication)
+    const recentReplies = (history || [])
+      .filter((m: any) => m.direction === "outgoing")
+      .slice(0, 8)
+      .map((m: any) => m.content?.trim().toLowerCase() || "");
 
     // Generate AI reply
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+
+    const rawModel = agent.model || "google/gemini-2.5-flash";
+    const isAnthropicModel = rawModel.startsWith("anthropic/");
+
+    if (!isAnthropicModel && !LOVABLE_API_KEY) {
       console.error("[ai-agent] LOVABLE_API_KEY not configured");
       return;
     }
-
-    const systemPrompt = agent.system_prompt + `\n\nContexto da conversa:\n${conversationContext}\n\nNome do cliente: ${pushName || "Desconhecido"}`;
-
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: agent.model || "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content },
-        ],
-        temperature: parseFloat(agent.temperature) || 0.7,
-        max_tokens: agent.max_tokens || 500,
-      }),
-    });
-
-    if (!aiResponse.ok) {
-      const errStatus = aiResponse.status;
-      if (errStatus === 429) {
-        console.error("[ai-agent] Rate limited, skipping reply");
-      } else if (errStatus === 402) {
-        console.error("[ai-agent] Payment required for AI gateway");
-      } else {
-        console.error(`[ai-agent] AI error: ${errStatus}`);
-      }
+    if (isAnthropicModel && !ANTHROPIC_API_KEY) {
+      console.error("[ai-agent] ANTHROPIC_API_KEY not configured for Anthropic model");
       return;
     }
 
-    const aiData = await aiResponse.json();
-    const replyText = aiData.choices?.[0]?.message?.content?.trim();
+    const humanizationRules = `
+
+REGRAS AVANÇADAS DE HUMANIZAÇÃO (PRIORIDADE MÁXIMA):
+
+🎭 PERSONA:
+- Você é uma PESSOA REAL, não um chatbot. Nunca diga "sou uma IA" ou "como assistente virtual"
+- Tenha personalidade: seja caloroso, genuíno, autêntico
+- Responda como alguém que realmente se importa com o cliente
+
+💬 ESTILO DE ESCRITA (WhatsApp real):
+- Escreva EXATAMENTE como uma pessoa digita no WhatsApp: frases curtas, informais, diretas
+- Use letras minúsculas quando natural (ex: "oi", "beleza", "show")
+- Abreviações naturais quando o tom permitir: "vc", "tb", "pq", "blz", "msg"
+- Máximo 3 linhas por mensagem — quebre em blocos se precisar explicar algo longo
+- NUNCA use formatação markdown (**negrito**, *itálico*, listas com •)
+- NUNCA use cabeçalhos, bullets ou formatação de documento
+
+🎲 VARIAÇÃO OBRIGATÓRIA:
+- NUNCA comece duas mensagens consecutivas da mesma forma
+- Alterne entre estilos: às vezes comece respondendo direto, às vezes com uma interjeição
+- Interjeições naturais: "Ahh", "Hmm", "Poxa", "Eita", "Show", "Massa", "Boa", "Olha só"
+- Evite SEMPRE: "Olá! Como posso ajudar?", "Estou aqui para ajudar", "Claro!", "Com certeza!"
+- Se já usou "oi" na última resposta, use outra coisa agora
+- Varie cumprimentos: "E aí", "Fala", "Opa", "Eii", "Oi oi"
+
+🧠 CONSCIÊNCIA CONTEXTUAL:
+- Leia TODO o histórico antes de responder
+- Referencie coisas que o cliente disse antes naturalmente
+- Se o cliente já perguntou algo, não peça de novo
+- Adapte seu tom ao tom do cliente: formal → formal, descontraído → descontraído
+- Se o cliente mandou áudio (transcrito), responda naturalmente como se tivesse ouvido
+
+😊 EMPATIA REAL:
+- Valide sentimentos: "Entendo sua preocupação", "faz total sentido"
+- Se o cliente está frustrado, reconheça antes de resolver
+- Comemore conquistas do cliente: "Que legal!", "Show demais!"
+- Use humor leve quando apropriado
+
+⚠️ ANTI-ROBÔ (evite a todo custo):
+- Nunca liste benefícios com bullets ou numeração
+- Nunca use "Espero ter ajudado!" ou "Fico à disposição!"
+- Nunca responda com parágrafos longos e estruturados
+- Nunca use linguagem corporativa engessada
+- Nunca repita o nome do cliente em toda mensagem
+- Se precisar listar algo, faça de forma conversacional: "tem o plano X que custa Y, e tem também o Z que..."
+
+RESPOSTAS ANTERIORES DO AGENTE (para NÃO repetir frases/aberturas):
+${recentReplies.slice(0, 5).map((r, i) => `[${i+1}]: ${r.substring(0, 80)}`).join("\n")}
+Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e vocabulário.
+`;
+
+    const clientName = pushName || null;
+    const nameInstruction = clientName 
+      ? `\nNome do cliente: ${clientName} (use o nome com moderação, não em toda mensagem)`
+      : `\nNome do cliente: desconhecido (não pergunte o nome a menos que seja necessário para o atendimento)`;
+
+    const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction;
+
+    const maxTokensValue = agent.max_tokens || 500;
+    const effectiveTemp = Math.max(parseFloat(agent.temperature) || 0.7, 0.75);
+
+    let aiData: any = null;
+
+    if (isAnthropicModel) {
+      // ── Direct Anthropic API call ──
+      const anthropicModel = rawModel.replace("anthropic/", "");
+      const anthropicMessages = [
+        ...historyMessages.slice(-14).map((m: any) => ({
+          role: m.role === "system" ? "user" : m.role,
+          content: m.content,
+        })),
+        { role: "user", content },
+      ];
+
+      console.log(`[ai-agent] Calling Anthropic directly with model: ${anthropicModel}`);
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": ANTHROPIC_API_KEY!,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: anthropicModel,
+          system: systemPrompt,
+          messages: anthropicMessages,
+          max_tokens: maxTokensValue,
+          temperature: effectiveTemp,
+        }),
+      });
+
+      if (res.ok) {
+        const anthropicData = await res.json();
+        // Normalize to OpenAI-like format
+        aiData = {
+          choices: [{
+            message: {
+              content: anthropicData.content?.[0]?.text || "",
+            },
+          }],
+        };
+      } else {
+        const errBody = await res.text().catch(() => "");
+        console.error(`[ai-agent] Anthropic error: ${res.status} - ${errBody}`);
+      }
+    } else {
+      // ── Lovable AI Gateway call ──
+      const modelMap: Record<string, string> = {
+        "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
+        "gemini-3-flash-preview": "google/gemini-2.5-flash",
+        "openai/gpt-5": "google/gemini-2.5-pro",
+        "openai/gpt-5-mini": "google/gemini-2.5-flash",
+        "openai/gpt-5-nano": "google/gemini-2.5-flash-lite",
+        "openai/gpt-5.2": "google/gemini-2.5-pro",
+      };
+      const selectedModel = modelMap[rawModel] || rawModel;
+      const isOpenAI = selectedModel.startsWith("openai/");
+
+      const aiMessages = [
+        { role: "system", content: systemPrompt },
+        ...historyMessages.slice(-14),
+        { role: "user", content },
+      ];
+
+      const aiPayload = {
+        model: selectedModel,
+        messages: aiMessages,
+        temperature: effectiveTemp,
+        ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
+      };
+
+      console.log(`[ai-agent] Calling AI Gateway with model: ${selectedModel}, history: ${historyMessages.length} msgs`);
+
+      const modelsToTry = [selectedModel, "google/gemini-2.5-flash"];
+      const uniqueModels = [...new Set(modelsToTry)];
+
+      for (const model of uniqueModels) {
+        const isModelOpenAI = model.startsWith("openai/");
+        const { max_tokens, max_completion_tokens, ...basePayload } = aiPayload as any;
+        const tokenParam = isModelOpenAI
+          ? { max_completion_tokens: max_completion_tokens || max_tokens || 500 }
+          : { max_tokens: max_tokens || max_completion_tokens || 500 };
+
+        const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ...basePayload, ...tokenParam, model }),
+        });
+
+        if (res.ok) {
+          aiData = await res.json();
+          break;
+        }
+
+        const errBody = await res.text().catch(() => "");
+        console.error(`[ai-agent] AI error with model ${model}: ${res.status} - ${errBody}`);
+      }
+    }
+
+    if (!aiData) {
+      console.error("[ai-agent] All AI models failed");
+      return;
+    }
+
+    let replyText = aiData.choices?.[0]?.message?.content?.trim();
 
     if (!replyText) {
       console.log("[ai-agent] Empty AI response, skipping");
       return;
     }
+
+    // Post-process: clean up any markdown formatting the AI might add
+    replyText = replyText
+      .replace(/\*\*(.*?)\*\*/g, "$1")  // Remove **bold**
+      .replace(/\*(.*?)\*/g, "$1")      // Remove *italic*
+      .replace(/^[-•]\s/gm, "")         // Remove bullet points
+      .replace(/^\d+\.\s/gm, "")        // Remove numbered lists
+      .replace(/^#+\s/gm, "")           // Remove headers
+      .trim();
 
     // Simulate typing delay
     const delay = agent.reply_delay_ms || 3000;
@@ -840,18 +1209,22 @@ async function handleAIAgentReply(
       const apiUrl = (evolutionApiUrl || instanceData.api_url).replace(/\/+$/, "");
       const apiKey = evolutionApiKey || instanceData.api_key_encrypted;
 
+      const destination = replyTarget || phone;
+      console.log(`[ai-agent] Sending reply to destination: ${destination}`);
+
       const sendRes = await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           apikey: apiKey,
         },
-        body: JSON.stringify({ number: phone, text: replyText }),
+        body: JSON.stringify({ number: destination, text: replyText }),
       });
 
       sendSuccess = sendRes.ok;
       if (!sendSuccess) {
-        console.error(`[ai-agent] Evolution send error: ${sendRes.status}`);
+        const errText = await sendRes.text();
+        console.error(`[ai-agent] Evolution send error: ${sendRes.status} - ${errText}`);
       }
     } else if (instanceData.provider === "meta") {
       // Meta API send
@@ -900,10 +1273,115 @@ async function handleAIAgentReply(
         .eq("id", agent.id);
 
       console.log(`[ai-agent] Reply sent to ${phone}: ${replyText.substring(0, 50)}...`);
+
+      // ===== Forward to n8n webhook if configured =====
+      if (agent.n8n_webhook_url) {
+        try {
+          const webhookPayload = {
+            event: "ai_agent_reply",
+            agent_id: agent.id,
+            agent_name: agent.name,
+            agent_type: agent.agent_type || "generic",
+            company_name: agent.company_name || "",
+            services: agent.services || "",
+            phone,
+            contact_name: pushName,
+            contact_id: contactId,
+            incoming_message: content,
+            ai_reply: replyText,
+            category,
+            instance_id: instance.id,
+            user_id: instance.user_id,
+            timestamp: new Date().toISOString(),
+          };
+
+          const n8nRes = await fetch(agent.n8n_webhook_url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(webhookPayload),
+          });
+
+          console.log(`[ai-agent] n8n webhook response: ${n8nRes.status}`);
+        } catch (n8nErr) {
+          console.error("[ai-agent] n8n webhook error:", n8nErr);
+        }
+      }
     }
   } catch (err) {
     console.error("[ai-agent] Auto-reply error:", err);
   }
+}
+
+// ====================== OPT-IN/OPT-OUT CONFIRMATION MESSAGES ======================
+
+async function sendOptoutConfirmation(supabase: any, instance: any, phone: string, replyTarget?: string) {
+  try {
+    const confirmMsg = "✅ Sua solicitação foi processada. Você não receberá mais mensagens nossas. Caso mude de ideia, basta nos enviar uma mensagem. Obrigado! 🙏";
+    await sendAutoReply(supabase, instance, phone, confirmMsg, replyTarget);
+  } catch (err) {
+    console.error("[opt-out] Failed to send confirmation:", err);
+  }
+}
+
+async function sendOptinConfirmation(supabase: any, instance: any, phone: string, replyTarget?: string) {
+  try {
+    const confirmMsg = "🎉 Que bom que você quer continuar! Vamos enviar apenas conteúdos relevantes para você. Obrigado pela confiança! 💚";
+    await sendAutoReply(supabase, instance, phone, confirmMsg, replyTarget);
+  } catch (err) {
+    console.error("[opt-in] Failed to send confirmation:", err);
+  }
+}
+
+async function sendAutoReply(supabase: any, instance: any, phone: string, text: string, replyTarget?: string) {
+  const { data: instanceData } = await supabase
+    .from("wa_instances")
+    .select("instance_name, provider, api_url, api_key_encrypted, meta_config")
+    .eq("id", instance.id)
+    .single();
+
+  if (!instanceData) return;
+
+  const destination = replyTarget || phone;
+
+  if (instanceData.provider === "evolution") {
+    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+    const apiUrl = (evolutionApiUrl || instanceData.api_url).replace(/\/+$/, "");
+    const apiKey = evolutionApiKey || instanceData.api_key_encrypted;
+
+    const res = await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: apiKey },
+      body: JSON.stringify({ number: destination, text }),
+    });
+
+    if (!res.ok) {
+      console.error("[auto-reply] Evolution send error:", await res.text());
+    }
+  } else if (instanceData.provider === "meta") {
+    const config = instanceData.meta_config || {};
+    const phoneNumberId = config.phone_number_id;
+    const accessToken = config.access_token_encrypted || instanceData.api_key_encrypted;
+
+    if (phoneNumberId && accessToken) {
+      await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ messaging_product: "whatsapp", to: phone, type: "text", text: { body: text } }),
+      });
+    }
+  }
+
+  // Save to inbox
+  await supabase.from("wa_inbox").insert({
+    user_id: instance.user_id,
+    instance_id: instance.id,
+    phone,
+    direction: "outgoing",
+    message_type: "text",
+    content: text,
+    is_read: true,
+  });
 }
 
 async function categorizeWithAI(content: string): Promise<{ category: string; sentiment: string }> {
@@ -1019,4 +1497,374 @@ async function executeAutomation(
       last_triggered_at: new Date().toISOString(),
     })
     .eq("id", automation.id);
+}
+
+// ====================== AUDIO TRANSCRIPTION ======================
+
+async function transcribeAudioFromEvolution(
+  supabase: any,
+  instance: any,
+  messageData: any,
+  instanceName: string,
+): Promise<string | null> {
+  try {
+    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+
+    const { data: instanceData } = await supabase
+      .from("wa_instances")
+      .select("api_url, api_key_encrypted")
+      .eq("id", instance.id)
+      .single();
+
+    const apiUrl = (evolutionApiUrl || instanceData?.api_url || "").replace(/\/+$/, "");
+    const apiKey = evolutionApiKey || instanceData?.api_key_encrypted;
+
+    if (!apiUrl || !apiKey) {
+      console.error("[audio-transcribe] Missing Evolution API credentials");
+      return null;
+    }
+
+    const key = messageData.key || {};
+    const message = messageData.message || messageData;
+    console.log(`[audio-transcribe] Requesting base64 from Evolution: ${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`);
+    console.log(`[audio-transcribe] Key: ${JSON.stringify(key)}`);
+
+    // Try V2 endpoint first, then V1
+    let base64Audio: string | null = null;
+    let mimetype = "audio/ogg";
+
+    // Attempt 1: Standard endpoint with full message body
+    const mediaRes = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: apiKey,
+      },
+      body: JSON.stringify({ message: { key, message: message } }),
+    });
+
+    console.log(`[audio-transcribe] Evolution response status: ${mediaRes.status}`);
+
+    if (mediaRes.ok) {
+      const mediaData = await mediaRes.json();
+      console.log(`[audio-transcribe] Evolution response keys: ${JSON.stringify(Object.keys(mediaData))}`);
+      base64Audio = mediaData.base64 || mediaData.data?.base64 || mediaData.mediaBase64 || null;
+      mimetype = mediaData.mimetype || mediaData.data?.mimetype || message.audioMessage?.mimetype || "audio/ogg";
+    } else {
+      const errText = await mediaRes.text();
+      console.error(`[audio-transcribe] Evolution getBase64 failed: ${mediaRes.status} - ${errText}`);
+      
+      // Attempt 2: Try with just key (some Evolution versions)
+      const mediaRes2 = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: apiKey,
+        },
+        body: JSON.stringify({ message: { key }, convertToMp4: false }),
+      });
+
+      console.log(`[audio-transcribe] Evolution retry status: ${mediaRes2.status}`);
+      if (mediaRes2.ok) {
+        const mediaData2 = await mediaRes2.json();
+        base64Audio = mediaData2.base64 || mediaData2.data?.base64 || mediaData2.mediaBase64 || null;
+        mimetype = mediaData2.mimetype || mediaData2.data?.mimetype || message.audioMessage?.mimetype || "audio/ogg";
+      } else {
+        await mediaRes2.text(); // consume body
+      }
+    }
+
+    if (!base64Audio) {
+      console.error("[audio-transcribe] No base64 audio returned from Evolution after all attempts");
+      return null;
+    }
+
+    console.log(`[audio-transcribe] Got base64 audio, length: ${base64Audio.length}, mimetype: ${mimetype}`);
+    return await transcribeWithGemini(base64Audio, mimetype);
+  } catch (err) {
+    console.error("[audio-transcribe] Evolution transcription error:", err);
+    return null;
+  }
+}
+
+async function transcribeAudioFromMeta(
+  supabase: any,
+  instance: any,
+  mediaId: string,
+): Promise<string | null> {
+  try {
+    const { data: instanceData } = await supabase
+      .from("wa_instances")
+      .select("api_key_encrypted, meta_config")
+      .eq("id", instance.id)
+      .single();
+
+    const metaConfig = instanceData?.meta_config || {};
+    const accessToken = metaConfig.access_token_encrypted || instanceData?.api_key_encrypted;
+
+    if (!accessToken) {
+      console.error("[audio-transcribe] Missing Meta access token");
+      return null;
+    }
+
+    // Step 1: Get media URL from Meta
+    const mediaInfoRes = await fetch(`https://graph.facebook.com/v21.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!mediaInfoRes.ok) {
+      console.error(`[audio-transcribe] Meta media info error: ${mediaInfoRes.status}`);
+      return null;
+    }
+
+    const mediaInfo = await mediaInfoRes.json();
+    const mediaUrl = mediaInfo.url;
+    const mimetype = mediaInfo.mime_type || "audio/ogg";
+
+    if (!mediaUrl) return null;
+
+    // Step 2: Download the audio
+    const audioRes = await fetch(mediaUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!audioRes.ok) {
+      console.error(`[audio-transcribe] Meta audio download error: ${audioRes.status}`);
+      return null;
+    }
+
+    const audioBuffer = await audioRes.arrayBuffer();
+    const { encode: base64Encode } = await import("https://deno.land/std@0.168.0/encoding/base64.ts");
+    const base64Audio = base64Encode(audioBuffer);
+
+    return await transcribeWithGemini(base64Audio, mimetype);
+  } catch (err) {
+    console.error("[audio-transcribe] Meta transcription error:", err);
+    return null;
+  }
+}
+
+async function transcribeWithGemini(base64Audio: string, mimetype: string): Promise<string | null> {
+  const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+  if (!GEMINI_API_KEY) {
+    console.error("[audio-transcribe] GEMINI_API_KEY not configured");
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: mimetype,
+                    data: base64Audio,
+                  },
+                },
+                {
+                  text: "Transcreva este áudio de forma precisa. Retorne APENAS o texto falado, sem comentários adicionais, formatação ou prefixos como 'Transcrição:'. Se o áudio estiver vazio ou inaudível, retorne exatamente: [áudio inaudível]",
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 1000,
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`[audio-transcribe] Gemini error: ${response.status} - ${errText}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const transcription = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+    if (!transcription || transcription === "[áudio inaudível]") {
+      console.log("[audio-transcribe] No transcription available");
+      return null;
+    }
+
+    console.log(`[audio-transcribe] Transcribed: ${transcription.substring(0, 80)}...`);
+    return transcription;
+  } catch (err) {
+    console.error("[audio-transcribe] Gemini transcription error:", err);
+    return null;
+  }
+}
+
+// ====================== CAPI FULL-FUNNEL EVENT SENDER ======================
+
+async function sendCAPIEvent(
+  supabase: any,
+  userId: string,
+  phone: string,
+  eventName: string,
+  customData: Record<string, any> = {},
+  extraUserData: Record<string, any> = {},
+) {
+  try {
+    // Find user's active pixel
+    const { data: pixel } = await supabase
+      .from("meta_pixels")
+      .select("id, pixel_id, access_token_encrypted, events_today, events_total")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
+
+    if (!pixel) {
+      console.log(`[capi] No active pixel found, skipping ${eventName}`);
+      return;
+    }
+
+    // Get access token from pixel or ad_accounts
+    const { data: adAccount } = await supabase
+      .from("ad_accounts")
+      .select("access_token_encrypted")
+      .eq("user_id", userId)
+      .eq("platform", "meta")
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
+
+    const accessToken = pixel.access_token_encrypted || adAccount?.access_token_encrypted;
+    if (!accessToken) {
+      console.log(`[capi] No access token, queuing ${eventName}`);
+      await supabase.from("meta_capi_events").insert({
+        user_id: userId,
+        pixel_id: pixel.id,
+        event_name: eventName,
+        action_source: "system_generated",
+        user_data: { ph: [phone], ...extraUserData },
+        custom_data: customData,
+        status: "pending",
+      });
+      return;
+    }
+
+    // Hash phone for CAPI (SHA256)
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(phone));
+    const hashedPhone = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    const eventTime = Math.floor(Date.now() / 1000);
+
+    const metaRes = await fetch(`https://graph.facebook.com/v21.0/${pixel.pixel_id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        data: [
+          {
+            event_name: eventName,
+            event_time: eventTime,
+            action_source: "system_generated",
+            user_data: {
+              ph: [hashedPhone],
+              ...extraUserData,
+            },
+            custom_data: {
+              ...customData,
+              source: customData.source || "whatsapp",
+            },
+          },
+        ],
+        access_token: accessToken,
+      }),
+    });
+
+    const metaData = await metaRes.json();
+
+    // Log event
+    await supabase.from("meta_capi_events").insert({
+      user_id: userId,
+      pixel_id: pixel.id,
+      event_name: eventName,
+      event_time: new Date().toISOString(),
+      action_source: "system_generated",
+      user_data: { ph: [hashedPhone], ...extraUserData },
+      custom_data: { ...customData, source: customData.source || "whatsapp" },
+      status: metaData.error ? "failed" : "sent",
+      response_code: metaRes.status,
+      response_body: metaData,
+      error_message: metaData.error?.message || null,
+      sent_at: new Date().toISOString(),
+    });
+
+    // Update pixel stats
+    await supabase
+      .from("meta_pixels")
+      .update({
+        last_event_at: new Date().toISOString(),
+        events_today: (pixel.events_today || 0) + 1,
+        events_total: (pixel.events_total || 0) + 1,
+      })
+      .eq("id", pixel.id);
+
+    if (metaData.error) {
+      console.error(`[capi] ${eventName} error:`, metaData.error.message);
+    } else {
+      console.log(`[capi] ${eventName} sent for ${phone.substring(0, 6)}***`);
+    }
+  } catch (err) {
+    console.error(`[capi] Error sending ${eventName}:`, err);
+  }
+}
+
+// ====================== UTM/FBCLID EXTRACTION ======================
+
+function extractUTMParams(
+  messageText: string,
+  referral: any | null,
+): Record<string, string> {
+  const params: Record<string, string> = {};
+
+  // 1. Extract from Meta referral object (Click-to-WhatsApp ads)
+  if (referral) {
+    if (referral.source_url) {
+      try {
+        const url = new URL(referral.source_url);
+        const fbclid = url.searchParams.get("fbclid");
+        const utmSource = url.searchParams.get("utm_source");
+        const utmCampaign = url.searchParams.get("utm_campaign");
+        if (fbclid) params.fbclid = fbclid;
+        if (utmSource) params.utm_source = utmSource;
+        if (utmCampaign) params.utm_campaign = utmCampaign;
+      } catch { /* invalid URL */ }
+    }
+    // Meta ad referral fields
+    if (referral.headline) params.utm_campaign = params.utm_campaign || referral.headline;
+    if (referral.source_type === "ad" && !params.utm_source) params.utm_source = "meta_ads";
+  }
+
+  // 2. Extract from URLs found in message text
+  const urlRegex = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi;
+  const urls = messageText.match(urlRegex) || [];
+
+  for (const rawUrl of urls) {
+    try {
+      const url = new URL(rawUrl);
+      const fbclid = url.searchParams.get("fbclid");
+      const utmSource = url.searchParams.get("utm_source");
+      const utmCampaign = url.searchParams.get("utm_campaign");
+      if (fbclid && !params.fbclid) params.fbclid = fbclid;
+      if (utmSource && !params.utm_source) params.utm_source = utmSource;
+      if (utmCampaign && !params.utm_campaign) params.utm_campaign = utmCampaign;
+    } catch { /* invalid URL */ }
+  }
+
+  return params;
 }

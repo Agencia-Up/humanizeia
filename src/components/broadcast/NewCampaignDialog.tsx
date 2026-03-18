@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Send, AlertTriangle, Wand2, Clock, RotateCcw } from 'lucide-react';
+import { Loader2, Send, AlertTriangle, Wand2, Clock, RotateCcw, ImagePlus, Video, X, Upload } from 'lucide-react';
 
 interface ContactList {
   id: string;
@@ -40,6 +40,7 @@ interface NewCampaignDialogProps {
 export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances, onCreated }: NewCampaignDialogProps) {
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state
   const [name, setName] = useState('');
@@ -53,15 +54,74 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
   const [useAI, setUseAI] = useState(true);
   const [rotationLimit, setRotationLimit] = useState(10);
 
+  // Media state
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [mediaPreview, setMediaPreview] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+
   const totalContacts = lists
     .filter(l => selectedLists.includes(l.id))
     .reduce((sum, l) => sum + l.contact_count, 0);
+
+  const handleMediaSelect = (file: File) => {
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    if (!isImage && !isVideo) {
+      toast({ title: 'Formato inválido', description: 'Envie uma imagem (PNG, JPG, WebP) ou vídeo (MP4, MOV)', variant: 'destructive' });
+      return;
+    }
+    const maxSize = isVideo ? 16 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast({ title: 'Arquivo muito grande', description: `Máximo ${isVideo ? '16' : '5'}MB`, variant: 'destructive' });
+      return;
+    }
+    setMediaFile(file);
+    setMediaType(isImage ? 'image' : 'video');
+    setMediaPreview(URL.createObjectURL(file));
+  };
+
+  const removeMedia = () => {
+    if (mediaPreview) URL.revokeObjectURL(mediaPreview);
+    setMediaFile(null);
+    setMediaPreview(null);
+    setMediaType(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const uploadMedia = async (): Promise<string | null> => {
+    if (!mediaFile) return null;
+    setIsUploadingMedia(true);
+    try {
+      const ext = mediaFile.name.split('.').pop() || 'bin';
+      const path = `campaign-media/${userId}/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from('creatives').upload(path, mediaFile, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from('creatives').getPublicUrl(path);
+      return publicUrl;
+    } catch (err: any) {
+      toast({ title: 'Erro no upload', description: err.message, variant: 'destructive' });
+      return null;
+    } finally {
+      setIsUploadingMedia(false);
+    }
+  };
 
   const handleCreate = async () => {
     if (!name.trim() || !messageTemplate.trim() || selectedLists.length === 0) return;
     setIsSaving(true);
 
     try {
+      // Upload media first if present
+      let uploadedMediaUrl: string | null = null;
+      if (mediaFile) {
+        uploadedMediaUrl = await uploadMedia();
+        if (!uploadedMediaUrl && mediaFile) {
+          setIsSaving(false);
+          return; // Upload failed, abort
+        }
+      }
+
       const { error } = await supabase.from('wa_campaigns').insert({
         user_id: userId,
         instance_id: selectedInstance || null,
@@ -77,6 +137,8 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
         rotation_messages_per_instance: rotationLimit,
         regras_delay: { min: minDelay, max: maxDelay },
         regras_rodizio: { mensagens_por_instancia: rotationLimit },
+        media_url: uploadedMediaUrl,
+        media_type: mediaType,
         status: 'draft',
       });
 
@@ -104,6 +166,7 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
     setVariationLevel('medium');
     setUseAI(true);
     setRotationLimit(10);
+    removeMedia();
   };
 
   return (
@@ -144,6 +207,60 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
             <p className="text-xs text-muted-foreground">
               Use {'{{nome}}'} para personalizar. Máx 1000 caracteres.
             </p>
+          </div>
+
+          {/* Media Upload */}
+          <div className="space-y-2">
+            <Label className="font-semibold flex items-center gap-2">
+              <ImagePlus className="h-4 w-4" />
+              Mídia (opcional)
+            </Label>
+            {mediaPreview ? (
+              <div className="relative rounded-lg border border-border overflow-hidden bg-muted/30">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute top-2 right-2 z-10 h-7 w-7 rounded-full bg-background/80 hover:bg-destructive hover:text-destructive-foreground"
+                  onClick={removeMedia}
+                  type="button"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+                {mediaType === 'image' ? (
+                  <img src={mediaPreview} alt="Preview" className="max-h-40 w-full object-contain" />
+                ) : (
+                  <video src={mediaPreview} className="max-h-40 w-full object-contain" controls />
+                )}
+                <div className="px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground border-t border-border">
+                  {mediaType === 'image' ? <ImagePlus className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}
+                  <span className="truncate">{mediaFile?.name}</span>
+                  <Badge variant="secondary" className="text-[10px] ml-auto">
+                    {((mediaFile?.size || 0) / 1024 / 1024).toFixed(1)}MB
+                  </Badge>
+                </div>
+              </div>
+            ) : (
+              <div
+                className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 px-4 py-6 transition-colors hover:border-primary/50 hover:bg-muted/30"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-8 w-8 text-muted-foreground mb-2" />
+                <p className="text-sm font-medium">Arraste ou clique para enviar</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Imagem (PNG, JPG, WebP até 5MB) ou Vídeo (MP4, MOV até 16MB)
+                </p>
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleMediaSelect(file);
+              }}
+            />
           </div>
 
           {/* AI Section */}
@@ -305,12 +422,12 @@ export function NewCampaignDialog({ open, onOpenChange, userId, lists, instances
 
           <Button
             onClick={handleCreate}
-            disabled={isSaving || !name.trim() || !messageTemplate.trim() || selectedLists.length === 0}
+            disabled={isSaving || isUploadingMedia || !name.trim() || !messageTemplate.trim() || selectedLists.length === 0}
             className="w-full"
             size="lg"
           >
-            {isSaving ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Criando...</>
+            {isSaving || isUploadingMedia ? (
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {isUploadingMedia ? 'Enviando mídia...' : 'Criando...'}</>
             ) : (
               <><Send className="h-4 w-4 mr-2" /> Criar Campanha ({totalContacts} contatos)</>
             )}

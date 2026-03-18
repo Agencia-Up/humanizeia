@@ -28,20 +28,21 @@ import NotFound from "./pages/NotFound";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
 import LandingPage from "./pages/LandingPage";
-import WhatsAppGroups from "./pages/WhatsAppGroups";
+// WhatsAppGroups merged into WhatsAppContacts
 import WhatsAppContacts from "./pages/WhatsAppContacts";
 import WhatsAppBroadcast from "./pages/WhatsAppBroadcast";
-import WhatsAppCampaigns from "./pages/WhatsAppCampaigns";
+// WhatsAppCampaigns removed - merged into WhatsAppBroadcast
 import WhatsAppInbox from "./pages/WhatsAppInbox";
 import WhatsAppAnalytics from "./pages/WhatsAppAnalytics";
 import WhatsAppAutomations from "./pages/WhatsAppAutomations";
 import WhatsAppInstances from "./pages/WhatsAppInstances";
 import CriarCampanha from "./pages/CriarCampanha";
 import WhatsAppAIAgent from "./pages/WhatsAppAIAgent";
-import WhatsAppCAPI from "./pages/WhatsAppCAPI";
 import MetaPixels from "./pages/MetaPixels";
 import MetaAudiences from "./pages/MetaAudiences";
+import WhatsAppCAPI from "./pages/WhatsAppCAPI";
 import ApolloDashboard from "./pages/ApolloDashboard";
+import FluxCRM from "./pages/FluxCRM";
 
 const queryClient = new QueryClient();
 
@@ -76,20 +77,21 @@ const App = () => (
           <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
           <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
           <Route path="/midas" element={<ProtectedRoute><MidasAgent /></ProtectedRoute>} />
-          <Route path="/apollo/diagnostico" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
           <Route path="/apollo/criar-campanha" element={<ProtectedRoute><CriarCampanha /></ProtectedRoute>} />
           <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
-          <Route path="/whatsapp/campaigns" element={<ProtectedRoute><WhatsAppCampaigns /></ProtectedRoute>} />
-          <Route path="/whatsapp/groups" element={<ProtectedRoute><WhatsAppGroups /></ProtectedRoute>} />
+          {/* /whatsapp/campaigns route removed - merged into /whatsapp/broadcast */}
+          {/* /whatsapp/groups route removed - merged into /whatsapp/contacts */}
           <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />
           <Route path="/whatsapp/broadcast" element={<ProtectedRoute><WhatsAppBroadcast /></ProtectedRoute>} />
           <Route path="/whatsapp/analytics" element={<ProtectedRoute><WhatsAppAnalytics /></ProtectedRoute>} />
           <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
           <Route path="/whatsapp/instances" element={<ProtectedRoute><WhatsAppInstances /></ProtectedRoute>} />
           <Route path="/whatsapp/ai-agent" element={<ProtectedRoute><WhatsAppAIAgent /></ProtectedRoute>} />
-          <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
           <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
           <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
+          <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
+          <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
+          <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
