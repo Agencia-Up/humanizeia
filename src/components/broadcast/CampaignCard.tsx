@@ -64,7 +64,7 @@ export function CampaignCard({ campaign, onRefresh }: CampaignCardProps) {
   const startCampaign = async () => {
     setIsStarting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await (supabase.auth as any).getSession();
       if (!session?.access_token) throw new Error('Não autenticado');
 
       const res = await fetch(
