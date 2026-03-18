@@ -191,8 +191,144 @@ export function useCAPI() {
     return data || [];
   }, []);
 
+  // ---- Convenience methods for common Meta standard events ----
+
+  const trackLead = useCallback(async (
+    pixelId: string,
+    userData: {
+      email?: string;
+      phone?: string;
+      externalId?: string;
+      fbc?: string;
+      fbp?: string;
+      ip?: string;
+      userAgent?: string;
+      city?: string;
+      country?: string;
+    },
+    extra?: {
+      value?: number;
+      currency?: string;
+      contentName?: string;
+      sourceUrl?: string;
+      customData?: Record<string, any>;
+    }
+  ) => {
+    return trackEvent({
+      pixel_id: pixelId,
+      event_name: 'Lead',
+      action_source: 'website',
+      event_source_url: extra?.sourceUrl,
+      user_email_hash: userData.email,
+      user_phone_hash: userData.phone,
+      user_external_id: userData.externalId,
+      user_fbc: userData.fbc,
+      user_fbp: userData.fbp,
+      user_ip: userData.ip,
+      user_user_agent: userData.userAgent,
+      user_city: userData.city,
+      user_country: userData.country,
+      value: extra?.value,
+      currency: extra?.currency || 'BRL',
+      content_name: extra?.contentName,
+      custom_data: extra?.customData,
+    });
+  }, [trackEvent]);
+
+  const trackPurchase = useCallback(async (
+    pixelId: string,
+    userData: {
+      email?: string;
+      phone?: string;
+      externalId?: string;
+      fbc?: string;
+      fbp?: string;
+      ip?: string;
+      userAgent?: string;
+    },
+    purchaseData: {
+      value: number;
+      currency?: string;
+      contentIds?: string[];
+      contentName?: string;
+      contentType?: string;
+      numItems?: number;
+      orderId?: string;
+      sourceUrl?: string;
+    }
+  ) => {
+    return trackEvent({
+      pixel_id: pixelId,
+      event_name: 'Purchase',
+      action_source: 'website',
+      event_source_url: purchaseData.sourceUrl,
+      user_email_hash: userData.email,
+      user_phone_hash: userData.phone,
+      user_external_id: userData.externalId,
+      user_fbc: userData.fbc,
+      user_fbp: userData.fbp,
+      user_ip: userData.ip,
+      user_user_agent: userData.userAgent,
+      value: purchaseData.value,
+      currency: purchaseData.currency || 'BRL',
+      content_ids: purchaseData.contentIds,
+      content_name: purchaseData.contentName,
+      content_type: purchaseData.contentType,
+      num_items: purchaseData.numItems,
+      order_id: purchaseData.orderId,
+    });
+  }, [trackEvent]);
+
+  const trackInitiateCheckout = useCallback(async (
+    pixelId: string,
+    userData: { email?: string; phone?: string; externalId?: string; fbc?: string; fbp?: string },
+    extra?: { value?: number; currency?: string; contentIds?: string[]; numItems?: number; sourceUrl?: string }
+  ) => {
+    return trackEvent({
+      pixel_id: pixelId,
+      event_name: 'InitiateCheckout',
+      action_source: 'website',
+      event_source_url: extra?.sourceUrl,
+      user_email_hash: userData.email,
+      user_phone_hash: userData.phone,
+      user_external_id: userData.externalId,
+      user_fbc: userData.fbc,
+      user_fbp: userData.fbp,
+      value: extra?.value,
+      currency: extra?.currency || 'BRL',
+      content_ids: extra?.contentIds,
+      num_items: extra?.numItems,
+    });
+  }, [trackEvent]);
+
+  const trackViewContent = useCallback(async (
+    pixelId: string,
+    userData: { email?: string; phone?: string; fbc?: string; fbp?: string },
+    extra?: { value?: number; currency?: string; contentName?: string; contentCategory?: string; contentIds?: string[]; sourceUrl?: string }
+  ) => {
+    return trackEvent({
+      pixel_id: pixelId,
+      event_name: 'ViewContent',
+      action_source: 'website',
+      event_source_url: extra?.sourceUrl,
+      user_email_hash: userData.email,
+      user_phone_hash: userData.phone,
+      user_fbc: userData.fbc,
+      user_fbp: userData.fbp,
+      value: extra?.value,
+      currency: extra?.currency || 'BRL',
+      content_name: extra?.contentName,
+      content_category: extra?.contentCategory,
+      content_ids: extra?.contentIds,
+    });
+  }, [trackEvent]);
+
   return {
     trackEvent,
+    trackLead,
+    trackPurchase,
+    trackInitiateCheckout,
+    trackViewContent,
     sendBatch,
     sendAllPending,
     getPixels,
