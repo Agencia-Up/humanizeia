@@ -104,3 +104,6 @@ verify_jwt = false
 
 [functions.process-datastore-source]
 verify_jwt = false
+
+[functions.search-datastore]
+verify_jwt = false
