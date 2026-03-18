@@ -125,6 +125,10 @@ async function handleMetaWebhook(supabase: any, body: any) {
           messageType = "sticker";
         }
 
+        // ===== Extract UTMs/fbclid from Meta referral or message text =====
+        const referral = msg.referral || value.referral || null;
+        const utmParams = extractUTMParams(content, referral);
+
         const { data: contact } = await supabase
           .from("wa_contacts")
           .select("id")
@@ -132,6 +136,15 @@ async function handleMetaWebhook(supabase: any, body: any) {
           .eq("phone", phone)
           .limit(1)
           .maybeSingle();
+
+        // Update contact with UTM data if available
+        if (contact?.id && Object.keys(utmParams).length > 0) {
+          await supabase
+            .from("wa_contacts")
+            .update(utmParams)
+            .eq("id", contact.id);
+          console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
+        }
 
         const { data: inboxMsg, error: insertErr } = await supabase
           .from("wa_inbox")
