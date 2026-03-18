@@ -1727,6 +1727,7 @@ export type Database = {
           id: string
           is_default: boolean | null
           name: string
+          pipeline_id: string | null
           position: number
           updated_at: string | null
           user_id: string
@@ -1737,6 +1738,7 @@ export type Database = {
           id?: string
           is_default?: boolean | null
           name: string
+          pipeline_id?: string | null
           position?: number
           updated_at?: string | null
           user_id: string
@@ -1747,8 +1749,56 @@ export type Database = {
           id?: string
           is_default?: boolean | null
           name?: string
+          pipeline_id?: string | null
           position?: number
           updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_pipeline_stages_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipelines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_pipelines: {
+        Row: {
+          color: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          is_default: boolean
+          name: string
+          sort_order: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          name: string
+          sort_order?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          name?: string
+          sort_order?: number
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
