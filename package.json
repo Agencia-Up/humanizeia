@@ -51,6 +51,7 @@
     "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.6.0",
+    "esbuild": "^0.27.4",
     "framer-motion": "^12.31.2",
     "input-otp": "^1.4.2",
     "lucide-react": "0.454.0",
