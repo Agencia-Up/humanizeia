@@ -1824,40 +1824,52 @@ export type Database = {
       meta_capi_batches: {
         Row: {
           batch_size: number
+          completed_at: string | null
           created_at: string
           error_message: string | null
+          events_count: number | null
           events_failed: number
           events_sent: number
           id: string
+          meta_response: Json | null
           pixel_id: string
           response_body: Json | null
           sent_at: string | null
+          started_at: string | null
           status: string
           user_id: string
         }
         Insert: {
           batch_size?: number
+          completed_at?: string | null
           created_at?: string
           error_message?: string | null
+          events_count?: number | null
           events_failed?: number
           events_sent?: number
           id?: string
+          meta_response?: Json | null
           pixel_id: string
           response_body?: Json | null
           sent_at?: string | null
+          started_at?: string | null
           status?: string
           user_id: string
         }
         Update: {
           batch_size?: number
+          completed_at?: string | null
           created_at?: string
           error_message?: string | null
+          events_count?: number | null
           events_failed?: number
           events_sent?: number
           id?: string
+          meta_response?: Json | null
           pixel_id?: string
           response_body?: Json | null
           sent_at?: string | null
+          started_at?: string | null
           status?: string
           user_id?: string
         }
