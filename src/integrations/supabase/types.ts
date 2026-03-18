@@ -579,6 +579,30 @@ export type Database = {
         }
         Relationships: []
       }
+      apollo_conversations: {
+        Row: {
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       apollo_diagnostics: {
         Row: {
           campaign_id: string | null
@@ -733,6 +757,47 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      apollo_messages: {
+        Row: {
+          content: string
+          conversation_id: string
+          created_at: string
+          data: Json | null
+          id: string
+          message_type: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          content: string
+          conversation_id: string
+          created_at?: string
+          data?: Json | null
+          id?: string
+          message_type?: string
+          role: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          conversation_id?: string
+          created_at?: string
+          data?: Json | null
+          id?: string
+          message_type?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "apollo_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "apollo_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       apollo_recommendations: {
         Row: {

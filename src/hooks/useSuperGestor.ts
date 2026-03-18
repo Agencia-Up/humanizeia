@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useClaudeService } from '@/services/claude/useClaudeService';
+import { useApolloConversations } from '@/hooks/useApolloConversations';
 import type {
   CampaignContext,
   StrategyResponse,
@@ -27,13 +28,29 @@ function generateId() {
 
 export function useSuperGestor() {
   const claude = useClaudeService();
+  const persistence = useApolloConversations();
   const [isExecuting, setIsExecuting] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [strategy, setStrategy] = useState<StrategyResponse | null>(null);
   const [validation, setValidation] = useState<ValidationResponse | null>(null);
   const [lastExecution, setLastExecution] = useState<ExecutionSummary | null>(null);
 
-  const addMessage = useCallback((
+  // Sync messages from persistence when a conversation is selected
+  useEffect(() => {
+    if (persistence.messages.length > 0) {
+      const mapped: ChatMessage[] = persistence.messages.map(m => ({
+        id: m.id,
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        timestamp: new Date(m.created_at),
+        type: (m.message_type || 'text') as ChatMessage['type'],
+        data: m.data,
+      }));
+      setMessages(mapped);
+    }
+  }, [persistence.messages]);
+
+  const addMessage = useCallback(async (
     role: 'user' | 'assistant',
     content: string,
     type?: ChatMessage['type'],
@@ -48,28 +65,52 @@ export function useSuperGestor() {
       data,
     };
     setMessages(prev => [...prev, msg]);
+
+    // Persist to database
+    if (persistence.activeConversationId) {
+      await persistence.saveMessage(
+        persistence.activeConversationId,
+        role,
+        content,
+        type || 'text',
+        data,
+      );
+    }
+
     return msg;
-  }, []);
+  }, [persistence]);
+
+  // Ensure there's an active conversation (create one if needed)
+  const ensureConversation = useCallback(async (): Promise<string | null> => {
+    if (persistence.activeConversationId) return persistence.activeConversationId;
+    const id = await persistence.createConversation();
+    if (id) {
+      persistence.setActiveConversationId(id);
+    }
+    return id;
+  }, [persistence]);
 
   // Gerar estratégia completa
   const generateStrategy = useCallback(async (context: CampaignContext) => {
-    addMessage('user', `🎯 Criar estratégia para: ${context.product} (${context.objective})`);
+    await ensureConversation();
+    await addMessage('user', `🎯 Criar estratégia para: ${context.product} (${context.objective})`);
 
     const result = await claude.generateStrategy(context);
     setStrategy(result);
 
     if (result) {
-      addMessage('assistant', `✨ **Estratégia gerada com sucesso!**\n\n${result.strategy.summary}`, 'strategy', result);
+      await addMessage('assistant', `✨ **Estratégia gerada com sucesso!**\n\n${result.strategy.summary}`, 'strategy', result);
     } else {
-      addMessage('assistant', `❌ **Erro:** ${claude.error || 'Não foi possível gerar a estratégia.'}`);
+      await addMessage('assistant', `❌ **Erro:** ${claude.error || 'Não foi possível gerar a estratégia.'}`);
     }
 
     return result;
-  }, [claude, addMessage]);
+  }, [claude, addMessage, ensureConversation]);
 
   // Validar campanha
   const validateCampaign = useCallback(async (campaign: unknown, context: CampaignContext) => {
-    addMessage('user', '✅ Validar estratégia antes de publicar');
+    await ensureConversation();
+    await addMessage('user', '✅ Validar estratégia antes de publicar');
 
     const result = await claude.validateCampaign(campaign, context);
     setValidation(result);
@@ -77,42 +118,43 @@ export function useSuperGestor() {
     if (result) {
       const emoji = result.isValid ? '✅' : '⚠️';
       const text = result.isValid ? 'Aprovado' : 'Precisa de ajustes';
-      addMessage('assistant', `${emoji} **Validação: ${result.score}/100** - ${text}`, 'validation', result);
+      await addMessage('assistant', `${emoji} **Validação: ${result.score}/100** - ${text}`, 'validation', result);
     } else {
-      addMessage('assistant', `❌ **Erro:** ${claude.error || 'Erro ao validar'}`);
+      await addMessage('assistant', `❌ **Erro:** ${claude.error || 'Erro ao validar'}`);
     }
 
     return result;
-  }, [claude, addMessage]);
+  }, [claude, addMessage, ensureConversation]);
 
   // Analisar performance
   const analyzePerformance = useCallback(async (campaigns: unknown[], performanceData: unknown) => {
-    addMessage('user', '📊 Analisar performance das campanhas');
+    await ensureConversation();
+    await addMessage('user', '📊 Analisar performance das campanhas');
 
     const result = await claude.analyzeAndOptimize(campaigns, performanceData);
 
     if (result) {
-      addMessage('assistant', `📊 **Análise de Performance**\n\n${result.analysis}`, 'optimization', result);
+      await addMessage('assistant', `📊 **Análise de Performance**\n\n${result.analysis}`, 'optimization', result);
     } else {
-      addMessage('assistant', `❌ **Erro:** ${claude.error || 'Erro ao analisar'}`);
+      await addMessage('assistant', `❌ **Erro:** ${claude.error || 'Erro ao analisar'}`);
     }
 
     return result;
-  }, [claude, addMessage]);
+  }, [claude, addMessage, ensureConversation]);
 
-  // Chat livre (detects strategy responses automatically)
+  // Chat livre
   const chat = useCallback(async (message: string, context?: CampaignContext) => {
     if (!message.trim()) return null;
-    addMessage('user', message);
+    await ensureConversation();
+    await addMessage('user', message);
 
     const response = await claude.chat(message, context);
 
     if (response) {
-      // Check if the response is a StrategyResponse (has agentInstructions)
       if (typeof response === 'object' && response !== null && 'agentInstructions' in response && 'strategy' in response) {
         const strategyResponse = response as StrategyResponse;
         setStrategy(strategyResponse);
-        addMessage(
+        await addMessage(
           'assistant',
           `✨ **Estratégia gerada com sucesso!**\n\n${strategyResponse.strategy.summary}\n\n` +
           `📋 **${strategyResponse.agentInstructions.length} ações** prontas para execução.\n` +
@@ -121,14 +163,14 @@ export function useSuperGestor() {
           strategyResponse
         );
       } else {
-        addMessage('assistant', response as string);
+        await addMessage('assistant', response as string);
       }
     } else {
-      addMessage('assistant', `❌ **Erro:** ${claude.error || 'Erro ao enviar mensagem'}`);
+      await addMessage('assistant', `❌ **Erro:** ${claude.error || 'Erro ao enviar mensagem'}`);
     }
 
     return response;
-  }, [claude, addMessage]);
+  }, [claude, addMessage, ensureConversation]);
 
   // Executar estratégia
   const executeStrategy = useCallback(async (
@@ -136,13 +178,13 @@ export function useSuperGestor() {
     options?: { dryRun?: boolean }
   ) => {
     if (!strategyToExecute?.agentInstructions?.length) {
-      addMessage('assistant', '❌ Estratégia não contém instruções para executar');
+      await addMessage('assistant', '❌ Estratégia não contém instruções para executar');
       return null;
     }
 
     setIsExecuting(true);
     const modeText = options?.dryRun ? '(Modo Simulação)' : '';
-    addMessage('user', `🚀 Executar estratégia e criar campanhas ${modeText}`);
+    await addMessage('user', `🚀 Executar estratégia e criar campanhas ${modeText}`);
 
     try {
       const summary = await campaignAgent.executeInstructions(
@@ -163,7 +205,7 @@ export function useSuperGestor() {
       const endMs = new Date(summary.completedAt).getTime();
       const elapsed = Math.round((endMs - startMs) / 1000);
 
-      addMessage(
+      await addMessage(
         'assistant',
         `${emoji} **Execução ${options?.dryRun ? 'simulada ' : ''}concluída!**\n\n` +
         `• Total de ações: ${summary.total}\n` +
@@ -177,7 +219,7 @@ export function useSuperGestor() {
       return summary;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Erro na execução';
-      addMessage('assistant', `❌ **Erro na execução:** ${errorMsg}`);
+      await addMessage('assistant', `❌ **Erro na execução:** ${errorMsg}`);
       return null;
     } finally {
       setIsExecuting(false);
@@ -202,14 +244,41 @@ export function useSuperGestor() {
     }
   }, []);
 
-  // Limpar chat e estados
-  const clearChat = useCallback(() => {
+  // Start new conversation
+  const newConversation = useCallback(async () => {
     setMessages([]);
     setStrategy(null);
     setValidation(null);
     setLastExecution(null);
     claude.clearHistory();
-  }, [claude]);
+    persistence.setActiveConversationId(null);
+    persistence.setMessages([]);
+    const id = await persistence.createConversation();
+    if (id) {
+      persistence.setActiveConversationId(id);
+    }
+  }, [claude, persistence]);
+
+  // Clear chat (delete current conversation)
+  const clearChat = useCallback(async () => {
+    if (persistence.activeConversationId) {
+      await persistence.deleteConversation(persistence.activeConversationId);
+    }
+    setMessages([]);
+    setStrategy(null);
+    setValidation(null);
+    setLastExecution(null);
+    claude.clearHistory();
+  }, [claude, persistence]);
+
+  // Select existing conversation
+  const selectConversation = useCallback(async (conversationId: string) => {
+    setStrategy(null);
+    setValidation(null);
+    setLastExecution(null);
+    claude.clearHistory();
+    await persistence.selectConversation(conversationId);
+  }, [claude, persistence]);
 
   return {
     isLoading: claude.isLoading,
@@ -219,6 +288,14 @@ export function useSuperGestor() {
     strategy,
     validation,
     lastExecution,
+
+    // Conversation management
+    conversations: persistence.conversations,
+    activeConversationId: persistence.activeConversationId,
+    isLoadingConversations: persistence.isLoadingConversations,
+    isLoadingMessages: persistence.isLoadingMessages,
+    selectConversation,
+    newConversation,
 
     generateStrategy,
     validateCampaign,
