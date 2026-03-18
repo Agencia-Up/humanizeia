@@ -1116,6 +1116,145 @@ export type Database = {
           },
         ]
       }
+      capture_form_submissions: {
+        Row: {
+          created_at: string | null
+          custom_data: Json | null
+          email: string | null
+          error_message: string | null
+          fbclid: string | null
+          form_id: string
+          id: string
+          ip_address: string | null
+          name: string | null
+          phone: string | null
+          processed_at: string | null
+          status: string | null
+          user_agent: string | null
+          utm_campaign: string | null
+          utm_content: string | null
+          utm_medium: string | null
+          utm_source: string | null
+          utm_term: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          custom_data?: Json | null
+          email?: string | null
+          error_message?: string | null
+          fbclid?: string | null
+          form_id: string
+          id?: string
+          ip_address?: string | null
+          name?: string | null
+          phone?: string | null
+          processed_at?: string | null
+          status?: string | null
+          user_agent?: string | null
+          utm_campaign?: string | null
+          utm_content?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          custom_data?: Json | null
+          email?: string | null
+          error_message?: string | null
+          fbclid?: string | null
+          form_id?: string
+          id?: string
+          ip_address?: string | null
+          name?: string | null
+          phone?: string | null
+          processed_at?: string | null
+          status?: string | null
+          user_agent?: string | null
+          utm_campaign?: string | null
+          utm_content?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "capture_form_submissions_form_id_fkey"
+            columns: ["form_id"]
+            isOneToOne: false
+            referencedRelation: "capture_forms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      capture_forms: {
+        Row: {
+          auto_add_to_crm: boolean | null
+          auto_create_contact: boolean | null
+          auto_fire_capi: boolean | null
+          auto_send_whatsapp: boolean | null
+          created_at: string | null
+          custom_fields: Json | null
+          description: string | null
+          id: string
+          instance_id: string | null
+          is_active: boolean | null
+          name: string
+          redirect_url: string | null
+          submission_count: number | null
+          tags: string[] | null
+          updated_at: string | null
+          user_id: string
+          welcome_message: string | null
+        }
+        Insert: {
+          auto_add_to_crm?: boolean | null
+          auto_create_contact?: boolean | null
+          auto_fire_capi?: boolean | null
+          auto_send_whatsapp?: boolean | null
+          created_at?: string | null
+          custom_fields?: Json | null
+          description?: string | null
+          id?: string
+          instance_id?: string | null
+          is_active?: boolean | null
+          name: string
+          redirect_url?: string | null
+          submission_count?: number | null
+          tags?: string[] | null
+          updated_at?: string | null
+          user_id: string
+          welcome_message?: string | null
+        }
+        Update: {
+          auto_add_to_crm?: boolean | null
+          auto_create_contact?: boolean | null
+          auto_fire_capi?: boolean | null
+          auto_send_whatsapp?: boolean | null
+          created_at?: string | null
+          custom_fields?: Json | null
+          description?: string | null
+          id?: string
+          instance_id?: string | null
+          is_active?: boolean | null
+          name?: string
+          redirect_url?: string | null
+          submission_count?: number | null
+          tags?: string[] | null
+          updated_at?: string | null
+          user_id?: string
+          welcome_message?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "capture_forms_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "wa_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       competitor_ads: {
         Row: {
           ai_analysis: Json | null
