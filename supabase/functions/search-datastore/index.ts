@@ -21,48 +21,21 @@ serve(async (req) => {
       datastore_id,
       query,
       match_count = 5,
-      similarity_threshold = 0.5,
     } = await req.json()
 
     if (!datastore_id || !query) {
       throw new Error('datastore_id and query are required')
     }
 
-    // 1. Gerar embedding da query via Gemini
-    const geminiApiKey = Deno.env.get('GEMINI_API_KEY')
-    if (!geminiApiKey) throw new Error('GEMINI_API_KEY not configured')
-
     const startTime = Date.now()
 
-    const embResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${geminiApiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'models/text-embedding-004',
-          content: { parts: [{ text: query }] },
-          taskType: 'RETRIEVAL_QUERY',
-        }),
-      }
-    )
-
-    if (!embResponse.ok) {
-      const err = await embResponse.text()
-      throw new Error(`Gemini Embedding error: ${err}`)
-    }
-
-    const embData = await embResponse.json()
-    const queryEmbedding = embData.embedding.values
-
-    // 2. Buscar via função SQL existente
+    // Busca via full-text search (PostgreSQL) — sem API key externa
     const { data: results, error: searchError } = await supabase.rpc(
-      'search_datastore_chunks',
+      'search_datastore_fulltext',
       {
         p_datastore_id: datastore_id,
-        p_query_embedding: JSON.stringify(queryEmbedding),
+        p_query: query,
         p_match_count: match_count,
-        p_match_threshold: similarity_threshold,
       }
     )
 
