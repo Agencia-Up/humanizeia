@@ -32,6 +32,7 @@ import { ptBR } from 'date-fns/locale';
 const ApolloAgent = () => {
   const [input, setInput] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const {
@@ -42,6 +43,12 @@ const ApolloAgent = () => {
     chat,
     executeStrategy,
     clearChat,
+    conversations,
+    activeConversationId,
+    isLoadingConversations,
+    isLoadingMessages,
+    selectConversation,
+    newConversation,
   } = useSuperGestor();
 
   useEffect(() => {
