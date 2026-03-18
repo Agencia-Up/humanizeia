@@ -11,6 +11,7 @@ import { useAppStore } from '@/store/appStore';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAuth } from '@/hooks/useAuth';
 import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
+import { ApolloAlertBell } from '@/components/apollo/ApolloAlertBell';
 
 export function Topbar() {
   const navigate = useNavigate();
@@ -40,6 +41,7 @@ export function Topbar() {
         <Button variant="ghost" size="icon" onClick={toggleDarkMode} className="text-muted-foreground hover:text-foreground">
           {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
+        <ApolloAlertBell />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

@@ -1,4 +1,5 @@
 import {
+  Activity,
   Home,
   Brain,
   PenTool,
@@ -59,6 +60,7 @@ const dashboardItems = [
 // 🤖 Inteligência IA
 const aiItems = [
   { title: 'Agente Apollo', url: '/midas', icon: Brain },
+  { title: 'Diagnóstico Apollo', url: '/apollo/diagnostico', icon: Activity },
   { title: 'Copywriter IA', url: '/copywriter', icon: PenTool },
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
 ];
