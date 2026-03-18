@@ -1599,6 +1599,160 @@ export type Database = {
         }
         Relationships: []
       }
+      crm_activities: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          lead_id: string
+          metadata: Json | null
+          type: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          lead_id: string
+          metadata?: Json | null
+          type: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          lead_id?: string
+          metadata?: Json | null
+          type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_activities_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "crm_leads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_leads: {
+        Row: {
+          assigned_to: string | null
+          company: string | null
+          created_at: string | null
+          currency: string | null
+          custom_fields: Json | null
+          email: string | null
+          expected_close_date: string | null
+          id: string
+          lost_at: string | null
+          lost_reason: string | null
+          name: string
+          notes: string | null
+          phone: string | null
+          position: number
+          priority: string | null
+          source: string | null
+          stage_id: string | null
+          tags: string[] | null
+          updated_at: string | null
+          user_id: string
+          value: number | null
+          won_at: string | null
+        }
+        Insert: {
+          assigned_to?: string | null
+          company?: string | null
+          created_at?: string | null
+          currency?: string | null
+          custom_fields?: Json | null
+          email?: string | null
+          expected_close_date?: string | null
+          id?: string
+          lost_at?: string | null
+          lost_reason?: string | null
+          name: string
+          notes?: string | null
+          phone?: string | null
+          position?: number
+          priority?: string | null
+          source?: string | null
+          stage_id?: string | null
+          tags?: string[] | null
+          updated_at?: string | null
+          user_id: string
+          value?: number | null
+          won_at?: string | null
+        }
+        Update: {
+          assigned_to?: string | null
+          company?: string | null
+          created_at?: string | null
+          currency?: string | null
+          custom_fields?: Json | null
+          email?: string | null
+          expected_close_date?: string | null
+          id?: string
+          lost_at?: string | null
+          lost_reason?: string | null
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          position?: number
+          priority?: string | null
+          source?: string | null
+          stage_id?: string | null
+          tags?: string[] | null
+          updated_at?: string | null
+          user_id?: string
+          value?: number | null
+          won_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_leads_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipeline_stages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_pipeline_stages: {
+        Row: {
+          color: string
+          created_at: string | null
+          id: string
+          is_default: boolean | null
+          name: string
+          position: number
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string | null
+          id?: string
+          is_default?: boolean | null
+          name: string
+          position?: number
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string | null
+          id?: string
+          is_default?: boolean | null
+          name?: string
+          position?: number
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       historico_reports: {
         Row: {
           canal: string
