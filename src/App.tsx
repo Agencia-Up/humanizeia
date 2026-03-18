@@ -38,6 +38,7 @@ import WhatsAppAutomations from "./pages/WhatsAppAutomations";
 import WhatsAppInstances from "./pages/WhatsAppInstances";
 import CriarCampanha from "./pages/CriarCampanha";
 import WhatsAppAIAgent from "./pages/WhatsAppAIAgent";
+import WhatsAppCAPI from "./pages/WhatsAppCAPI";
 import MetaPixels from "./pages/MetaPixels";
 import MetaAudiences from "./pages/MetaAudiences";
 
