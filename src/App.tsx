@@ -43,6 +43,7 @@ import MetaAudiences from "./pages/MetaAudiences";
 import WhatsAppCAPI from "./pages/WhatsAppCAPI";
 import ApolloDashboard from "./pages/ApolloDashboard";
 import FluxCRM from "./pages/FluxCRM";
+import DatastoreManager from "./pages/DatastoreManager";
 
 const queryClient = new QueryClient();
 
@@ -92,6 +93,7 @@ const App = () => (
           <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
           <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
           <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
+          <Route path="/datastore" element={<ProtectedRoute><DatastoreManager /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

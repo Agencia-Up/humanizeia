@@ -1,4 +1,5 @@
 import {
+  Database,
   Home,
   Brain,
   PenTool,
@@ -63,6 +64,7 @@ const aiItems = [
   { title: 'Agente Apollo', url: '/midas', icon: Brain },
   { title: 'Copywriter IA', url: '/copywriter', icon: PenTool },
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
+  { title: 'Base de Conhecimento', url: '/datastore', icon: Database },
 ];
 
 // 📈 Campanhas
