@@ -3,18 +3,44 @@ import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Search, DollarSign, Users, TrendingUp, Filter } from 'lucide-react';
+import { Plus, Search, DollarSign, Users, TrendingUp, Filter, ChevronDown, Layers } from 'lucide-react';
 import { KanbanColumn } from '@/components/crm/KanbanColumn';
 import { LeadFormDialog } from '@/components/crm/LeadFormDialog';
 import { useFluxCRM, type CRMLead } from '@/hooks/useFluxCRM';
 import { Card } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 
 export default function FluxCRM() {
-  const { stages, leads, loading, addLead, updateLead, deleteLead, moveLead, getLeadsByStage, totalValue } = useFluxCRM();
+  const {
+    pipelines, activePipelineId, setActivePipelineId,
+    stages, leads, loading,
+    addPipeline, deletePipeline,
+    addLead, updateLead, deleteLead, moveLead,
+    getLeadsByStage, totalValue,
+  } = useFluxCRM();
+
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<CRMLead | null>(null);
   const [defaultStageId, setDefaultStageId] = useState<string>('');
+  const [newPipelineOpen, setNewPipelineOpen] = useState(false);
+  const [newPipelineName, setNewPipelineName] = useState('');
+
+  const activePipeline = pipelines.find((p) => p.id === activePipelineId);
 
   const handleDragEnd = (result: DropResult) => {
     const { draggableId, destination } = result;
@@ -42,6 +68,13 @@ export default function FluxCRM() {
     }
   };
 
+  const handleCreatePipeline = () => {
+    if (!newPipelineName.trim()) return;
+    addPipeline({ name: newPipelineName.trim() });
+    setNewPipelineName('');
+    setNewPipelineOpen(false);
+  };
+
   const filteredLeadsByStage = (stageId: string) => {
     const stageLeads = getLeadsByStage(stageId);
     if (!search) return stageLeads;
@@ -62,9 +95,48 @@ export default function FluxCRM() {
       <div className="flex flex-col h-full">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 pb-2">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Flux CRM</h1>
-            <p className="text-sm text-muted-foreground">Pipeline de vendas e gestão de leads</p>
+          <div className="flex items-center gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold text-foreground">Flux CRM</h1>
+                {/* Pipeline selector */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1.5 ml-2">
+                      <Layers className="h-3.5 w-3.5" />
+                      {activePipeline?.name || 'Pipeline'}
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    {pipelines.map((p) => (
+                      <DropdownMenuItem
+                        key={p.id}
+                        onClick={() => setActivePipelineId(p.id)}
+                        className={p.id === activePipelineId ? 'bg-accent' : ''}
+                      >
+                        <div className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: p.color }} />
+                        {p.name}
+                        {p.is_default && <span className="text-xs text-muted-foreground ml-2">(padrão)</span>}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setNewPipelineOpen(true)}>
+                      <Plus className="h-3.5 w-3.5 mr-2" /> Novo Pipeline
+                    </DropdownMenuItem>
+                    {activePipeline && !activePipeline.is_default && (
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() => deletePipeline(activePipeline.id)}
+                      >
+                        Excluir Pipeline
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <p className="text-sm text-muted-foreground">Pipeline de vendas e gestão de leads</p>
+            </div>
           </div>
           <Button onClick={() => openNewLead()} className="gap-2">
             <Plus className="h-4 w-4" /> Novo Lead
@@ -155,6 +227,30 @@ export default function FluxCRM() {
         stages={stages}
         defaultStageId={defaultStageId}
       />
+
+      {/* New Pipeline Dialog */}
+      <Dialog open={newPipelineOpen} onOpenChange={setNewPipelineOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Novo Pipeline</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label>Nome do Pipeline</Label>
+              <Input
+                value={newPipelineName}
+                onChange={(e) => setNewPipelineName(e.target.value)}
+                placeholder="Ex: Pipeline de Vendas B2B"
+                onKeyDown={(e) => e.key === 'Enter' && handleCreatePipeline()}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewPipelineOpen(false)}>Cancelar</Button>
+            <Button onClick={handleCreatePipeline} disabled={!newPipelineName.trim()}>Criar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </MainLayout>
   );
 }
