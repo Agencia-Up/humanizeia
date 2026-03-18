@@ -13,8 +13,9 @@ import { toast } from "sonner";
 import {
   Database, Plus, FileText, Link, Type, Search,
   Trash2, RefreshCw, Upload, CheckCircle, XCircle,
-  Clock, Sparkles
+  Clock, Sparkles, BookOpen
 } from "lucide-react";
+import { KnowledgeBaseTemplateForm } from "@/components/datastore/KnowledgeBaseTemplateForm";
 
 export default function DatastoreManager() {
   const { datastores, isLoading, createDatastore, deleteDatastore } = useDatastore();
