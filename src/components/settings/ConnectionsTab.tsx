@@ -86,7 +86,7 @@ const PLATFORMS: PlatformDef[] = [
     steps: [
       { title: 'Clique em "Conectar"', description: 'Um botão simples — sem precisar instalar nada no seu computador.' },
       { title: 'Faça login no Google', description: 'Use o mesmo e-mail e senha que você já usa no Google Ads. Nenhum código ou API é necessário.' },
-      { title: 'Permita o acesso (clique em "Permitir")', description: 'O Google vai perguntar se o HumanizeAI pode ver seus dados de anúncios. Basta clicar "Permitir". Suas senhas nunca são compartilhadas.' },
+      { title: 'Permita o acesso (clique em "Permitir")', description: 'O Google vai perguntar se o LogosIA pode ver seus dados de anúncios. Basta clicar "Permitir". Suas senhas nunca são compartilhadas.' },
       { title: 'Escolha sua conta de anúncios', description: 'Se você tem mais de uma conta no Google Ads, é só clicar na que deseja usar.' },
       { title: '✅ Pronto! Tudo conectado', description: 'Suas campanhas, gastos e resultados aparecerão automaticamente no seu Dashboard.' },
     ],
