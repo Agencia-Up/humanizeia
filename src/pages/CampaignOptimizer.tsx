@@ -41,6 +41,9 @@ import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 import { MidasActionList, type MidasAction } from '@/components/optimizer/MidasActionCard';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
+import { type MetaDatePreset } from '@/hooks/useMetaDashboard';
 
 // ── Helpers ──────────────────────────────────────────────
 
@@ -53,12 +56,15 @@ const statusVariant = (s: string) => {
   return 'bg-muted text-muted-foreground';
 };
 
-const fmtCurrency = (v: number) =>
-  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// fmtCurrency is defined dynamically inside the component using account currency
+const fmtCurrencyStatic = (v: number, currency = 'BRL') => {
+  const symbol = currency === 'USD' ? 'US$' : currency === 'BRL' ? 'R$' : currency;
+  return `${symbol} ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
 
-const fmtBudget = (cents: number | string | undefined) => {
+const fmtBudget = (cents: number | string | undefined, currency = 'BRL') => {
   if (!cents) return 'N/A';
-  return fmtCurrency(Number(cents) / 100);
+  return fmtCurrencyStatic(Number(cents) / 100, currency);
 };
 
 const fmtNum = (n: number) =>
@@ -125,25 +131,34 @@ export default function CampaignOptimizer() {
   const [manualOppData, setManualOppData] = useState('');
   const [manualAudData, setManualAudData] = useState('');
   const [midasActions, setMidasActions] = useState<MidasAction[]>([]);
+  const [dateRange, setDateRange] = useState<MetaDatePreset>('last_30d');
 
   // Connections
-  const { connectedAccount: metaAccount, isLoading: metaLoading } = useMetaConnection();
+  const { connectedAccount: metaAccount, connectedAccounts: metaAccounts, selectConnectedAccount, isLoading: metaLoading } = useMetaConnection();
   const { connectedAccount: googleAccount, isLoading: googleLoading } = useGoogleAdsConnection();
   const { callMetaApi } = useMetaApi();
   const isMetaConnected = !!metaAccount;
   const isGoogleConnected = !!googleAccount;
 
-  // Campaigns + insights
-  const { campaigns, isLoading: campaignsLoading, error: campaignsError, refetch, updateCampaignStatus, updateCampaignBudget } =
-    useMetaCampaigns();
-
   const accountId = metaAccount?.account_id;
+  const accountCurrency = metaAccount?.currency || 'BRL';
+
+  // Currency-aware formatter bound to selected account
+  const fmtCurrency = useCallback(
+    (v: number) => fmtCurrencyStatic(v, accountCurrency),
+    [accountCurrency]
+  );
+
+  // Campaigns + insights — always pass accountId so edge function fetches the correct account
+  const { campaigns, isLoading: campaignsLoading, error: campaignsError, refetch, updateCampaignStatus, updateCampaignBudget } =
+    useMetaCampaigns({ accountId });
+
   const campaignInsights = useMetaInsights({
     accountId,
-    datePreset: 'last_7d',
+    datePreset: dateRange,
     level: 'campaign',
     fields: 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,cpm,reach,frequency',
-    enabled: isMetaConnected,
+    enabled: isMetaConnected && !!accountId,
   });
 
   // Merge campaigns + metrics
@@ -248,6 +263,7 @@ export default function CampaignOptimizer() {
         endpoint: action.campaignId,
         method: 'POST',
         body: { status: 'PAUSED' },
+        targetAccountId: accountId,
       });
       toast({ title: '⏸️ Campanha pausada com sucesso!', description: action.campaignName });
     } else if (action.type === 'activate') {
@@ -255,6 +271,7 @@ export default function CampaignOptimizer() {
         endpoint: action.campaignId,
         method: 'POST',
         body: { status: 'ACTIVE' },
+        targetAccountId: accountId,
       });
       toast({ title: '▶️ Campanha ativada com sucesso!', description: action.campaignName });
     } else if (action.type === 'increase_budget') {
@@ -267,8 +284,9 @@ export default function CampaignOptimizer() {
           endpoint: action.campaignId,
           method: 'POST',
           body: { daily_budget: newBudget },
+          targetAccountId: accountId,
         });
-        toast({ title: '📈 Orçamento aumentado!', description: `${fmtBudget(campaign.daily_budget)} → ${fmtBudget(String(newBudget))}` });
+        toast({ title: '📈 Orçamento aumentado!', description: `${fmtBudget(campaign.daily_budget, accountCurrency)} → ${fmtBudget(String(newBudget), accountCurrency)}` });
       }
     } else if (action.type === 'decrease_budget') {
       const campaign = enrichedCampaigns.find(c => c.id === action.campaignId);
@@ -279,9 +297,10 @@ export default function CampaignOptimizer() {
         await callMetaApi({
           endpoint: action.campaignId,
           method: 'POST',
-          body: { daily_budget: Math.max(newBudget, 100) }, // min R$1
+          body: { daily_budget: Math.max(newBudget, 100) },
+          targetAccountId: accountId,
         });
-        toast({ title: '📉 Orçamento reduzido!', description: `${fmtBudget(campaign.daily_budget)} → ${fmtBudget(String(newBudget))}` });
+        toast({ title: '📉 Orçamento reduzido!', description: `${fmtBudget(campaign.daily_budget, accountCurrency)} → ${fmtBudget(String(newBudget), accountCurrency)}` });
       }
     } else if (action.type === 'notify') {
       toast({ title: '🔔 Alerta registrado', description: `Monitorando: ${action.campaignName}` });
@@ -289,7 +308,7 @@ export default function CampaignOptimizer() {
 
     // Refresh campaign data after action
     refetch();
-  }, [callMetaApi, enrichedCampaigns, toast, refetch]);
+  }, [callMetaApi, enrichedCampaigns, toast, refetch, accountId, accountCurrency]);
 
   const diagDelta = useRef('');
   const { sendMessage: sendDiag } = useClaudeChat({
@@ -336,9 +355,9 @@ Dados da campanha:
 - ID: ${selected.id}
 - Status: ${selected.effective_status}
 - Objetivo: ${selected.objective}
-- Orçamento diário: ${fmtBudget(selected.daily_budget)}
+- Orçamento diário: ${fmtBudget(selected.daily_budget, accountCurrency)}
 
-Métricas últimos 7 dias:
+Métricas (período: ${dateRange === 'today' ? 'hoje' : dateRange === 'yesterday' ? 'ontem' : dateRange === 'last_7d' ? 'últimos 7 dias' : 'últimos 30 dias'}):
 - Gasto: ${fmtCurrency(selected.spend)}
 - Impressões: ${fmtNum(selected.impressions)}
 - Cliques: ${selected.clicks}
@@ -375,7 +394,7 @@ IMPORTANTE: Sempre inclua pelo menos 2 tags [ACTION:...] com ações específica
     let dataBlock: string;
     if (hasAuto) {
       const summary = enrichedCampaigns.map((c) =>
-        `${c.name} | Status: ${c.effective_status} | Gasto: ${fmtCurrency(c.spend)} | CTR: ${c.ctr.toFixed(2)}% | CPC: ${fmtCurrency(c.cpc)} | CPM: ${fmtCurrency(c.cpm)} | Alcance: ${fmtNum(c.reach)} | Freq: ${c.frequency.toFixed(2)} | Orç: ${fmtBudget(c.daily_budget)}`
+        `${c.name} | Status: ${c.effective_status} | Gasto: ${fmtCurrency(c.spend)} | CTR: ${c.ctr.toFixed(2)}% | CPC: ${fmtCurrency(c.cpc)} | CPM: ${fmtCurrency(c.cpm)} | Alcance: ${fmtNum(c.reach)} | Freq: ${c.frequency.toFixed(2)} | Orç: ${fmtBudget(c.daily_budget, accountCurrency)}`
       ).join('\n');
       dataBlock = summary;
     } else {
@@ -505,10 +524,35 @@ Responda em Markdown com:
               Otimize suas campanhas com análises e recomendações de IA
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-2 self-start sm:self-auto">
-            <RefreshCw className="h-4 w-4" />
-            Atualizar
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+            {metaAccounts.length > 1 && (
+              <Select
+                value={metaAccount?.id || ''}
+                onValueChange={(id) => selectConnectedAccount(id)}
+              >
+                <SelectTrigger className="h-8 min-w-[160px] max-w-[220px] text-xs">
+                  <SelectValue placeholder="Selecionar conta" />
+                </SelectTrigger>
+                <SelectContent>
+                  {metaAccounts.map((account) => (
+                    <SelectItem key={account.id} value={account.id}>
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate max-w-[130px]">{account.account_name}</span>
+                        <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground">
+                          {account.currency || 'BRL'}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <DateRangeFilter value={dateRange} onChange={setDateRange} />
+            <Button variant="outline" size="sm" onClick={() => { refetch(); campaignInsights.refresh(); }} className="gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Atualizar
+            </Button>
+          </div>
         </div>
 
         {/* Connection Cards */}
@@ -565,6 +609,7 @@ Responda em Markdown com:
                           selectedId={selectedId}
                           isLoading={isDataLoading}
                           onSelect={handleSelectCampaign}
+                          currency={accountCurrency}
                         />
                       </motion.div>
                     ) : (
@@ -605,6 +650,7 @@ Responda em Markdown com:
                           onBudgetChange={setBudgetValue}
                           onCopy={copyToClipboard}
                           isStatusPending={updateCampaignStatus.isPending}
+                          currency={accountCurrency}
                         />
                       </motion.div>
                     )}
@@ -619,6 +665,7 @@ Responda em Markdown com:
                       selectedId={selectedId}
                       isLoading={isDataLoading}
                       onSelect={(id) => setSelectedId(id)}
+                      currency={accountCurrency}
                     />
                   </div>
                   <div className="lg:col-span-3 min-w-0">
@@ -646,6 +693,7 @@ Responda em Markdown com:
                       onBudgetChange={setBudgetValue}
                       onCopy={copyToClipboard}
                       isStatusPending={updateCampaignStatus.isPending}
+                      currency={accountCurrency}
                     />
                   </div>
                 </div>
@@ -766,11 +814,13 @@ function CampaignList({
   selectedId,
   isLoading,
   onSelect,
+  currency = 'BRL',
 }: {
   campaigns: CampaignWithMetrics[];
   selectedId: string | null;
   isLoading: boolean;
   onSelect: (id: string) => void;
+  currency?: string;
 }) {
   return (
     <div className="rounded-xl border border-border/50 bg-card/50 backdrop-blur-sm overflow-hidden">
@@ -826,10 +876,10 @@ function CampaignList({
                       <div className="flex items-center gap-1">
                         <span className={`inline-block h-1.5 w-1.5 rounded-full ${healthDotColor('cpc', c.cpc)}`} />
                         <span className="text-muted-foreground">CPC</span>
-                        <span className={`font-semibold ${healthColor('cpc', c.cpc)}`}>R${c.cpc.toFixed(2)}</span>
+                        <span className={`font-semibold ${healthColor('cpc', c.cpc)}`}>{fmtCurrencyStatic(c.cpc, currency)}</span>
                       </div>
                       <div className="ml-auto text-muted-foreground">
-                        {fmtCurrency(c.spend)}
+                        {fmtCurrencyStatic(c.spend, currency)}
                       </div>
                     </div>
                   )}
@@ -859,6 +909,7 @@ function CampaignDetail({
   onBudgetChange,
   onCopy,
   isStatusPending,
+  currency = 'BRL',
 }: {
   selected: CampaignWithMetrics | null;
   diagnosticMd: string;
@@ -875,6 +926,7 @@ function CampaignDetail({
   onBudgetChange: (val: string) => void;
   onCopy: (text: string) => void;
   isStatusPending: boolean;
+  currency?: string;
 }) {
   if (!selected) {
     return (
@@ -935,21 +987,28 @@ function CampaignDetail({
 
       <div className="h-[calc(100vh-420px)] min-h-[300px] max-h-[600px] overflow-y-auto overflow-x-hidden">
         <div className="p-4 space-y-5 w-full max-w-full">
+          {/* No activity warning */}
+          {selected.spend === 0 && selected.impressions === 0 && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-400">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>Sem dados no período selecionado. Tente um intervalo maior (ex: 30 dias) ou verifique se a campanha teve veiculação ativa.</span>
+            </div>
+          )}
           {/* Metrics Grid */}
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
-            <MetricCard label="Gasto" value={fmtCurrency(selected.spend)} icon={<DollarSign className="h-3.5 w-3.5" />} />
+            <MetricCard label="Gasto" value={fmtCurrencyStatic(selected.spend, currency)} icon={<DollarSign className="h-3.5 w-3.5" />} />
             <MetricCard label="Impressões" value={fmtNum(selected.impressions)} icon={<Eye className="h-3.5 w-3.5" />} />
             <MetricCard label="Cliques" value={fmtNum(selected.clicks)} icon={<MousePointerClick className="h-3.5 w-3.5" />} />
             <MetricCard label="Alcance" value={fmtNum(selected.reach)} icon={<Users className="h-3.5 w-3.5" />} />
             <MetricCard
               label="CPC"
-              value={fmtCurrency(selected.cpc)}
+              value={fmtCurrencyStatic(selected.cpc, currency)}
               dotColor={healthDotColor('cpc', selected.cpc)}
               valueColor={healthColor('cpc', selected.cpc)}
             />
             <MetricCard
               label="CPM"
-              value={fmtCurrency(selected.cpm)}
+              value={fmtCurrencyStatic(selected.cpm, currency)}
               dotColor={healthDotColor('cpm', selected.cpm)}
               valueColor={healthColor('cpm', selected.cpm)}
             />

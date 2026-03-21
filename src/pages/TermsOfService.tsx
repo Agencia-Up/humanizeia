@@ -17,14 +17,14 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-xl font-semibold mb-2">1. Aceitação dos termos</h2>
             <p className="text-muted-foreground">
-              Ao acessar ou usar a plataforma HumanizeAI, você concorda em cumprir estes Termos de Serviço. Se você não concordar com qualquer parte destes termos, não poderá acessar ou usar nossos serviços.
+              Ao acessar ou usar a plataforma LogosIA, você concorda em cumprir estes Termos de Serviço. Se você não concordar com qualquer parte destes termos, não poderá acessar ou usar nossos serviços.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold mb-2">2. Descrição do serviço</h2>
             <p className="text-muted-foreground">
-              A HumanizeAI é uma plataforma de gestão e otimização de campanhas publicitárias que utiliza inteligência artificial para análise de dados, geração de insights, criação de conteúdo e relatórios automatizados. Os serviços incluem integração com plataformas de anúncios, ferramentas de copywriting, estúdio criativo e automação de relatórios.
+              A LogosIA é uma plataforma de gestão e otimização de campanhas publicitárias que utiliza inteligência artificial para análise de dados, geração de insights, criação de conteúdo e relatórios automatizados. Os serviços incluem integração com plataformas de anúncios, ferramentas de copywriting, estúdio criativo e automação de relatórios.
             </p>
           </section>
 
@@ -50,21 +50,21 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-xl font-semibold mb-2">5. Integrações com plataformas de terceiros</h2>
             <p className="text-muted-foreground">
-              Ao conectar contas de plataformas de terceiros (Meta, Google, TikTok, Shopify), você autoriza a HumanizeAI a acessar e processar os dados disponibilizados conforme as permissões concedidas. A HumanizeAI não se responsabiliza por alterações nas APIs ou políticas dessas plataformas que possam afetar o funcionamento dos serviços.
+              Ao conectar contas de plataformas de terceiros (Meta, Google, TikTok, Shopify), você autoriza a LogosIA a acessar e processar os dados disponibilizados conforme as permissões concedidas. A LogosIA não se responsabiliza por alterações nas APIs ou políticas dessas plataformas que possam afetar o funcionamento dos serviços.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold mb-2">6. Propriedade intelectual</h2>
             <p className="text-muted-foreground">
-              Todo o conteúdo, design, código e funcionalidades da plataforma são propriedade da HumanizeAI. Os conteúdos gerados pela IA para o usuário (copies, criativos, relatórios) são de propriedade do usuário que os gerou.
+              Todo o conteúdo, design, código e funcionalidades da plataforma são propriedade da LogosIA. Os conteúdos gerados pela IA para o usuário (copies, criativos, relatórios) são de propriedade do usuário que os gerou.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold mb-2">7. Limitação de responsabilidade</h2>
             <p className="text-muted-foreground">
-              A HumanizeAI fornece insights e recomendações baseados em IA como ferramenta de apoio à decisão. Não garantimos resultados específicos de campanhas publicitárias. O usuário é o único responsável pelas decisões tomadas com base nas informações fornecidas pela plataforma.
+              A LogosIA fornece insights e recomendações baseados em IA como ferramenta de apoio à decisão. Não garantimos resultados específicos de campanhas publicitárias. O usuário é o único responsável pelas decisões tomadas com base nas informações fornecidas pela plataforma.
             </p>
           </section>
 
@@ -105,7 +105,7 @@ export default function TermsOfService() {
         </div>
 
         <div className="mt-12 pt-6 border-t border-border text-center text-xs text-muted-foreground">
-          <p>© {new Date().getFullYear()} HumanizeAI. Todos os direitos reservados.</p>
+          <p>© {new Date().getFullYear()} LogosIA. Todos os direitos reservados.</p>
         </div>
       </div>
     </div>

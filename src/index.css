@@ -2,31 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
-/* HumanizeAI Design System - Dark Mode First */
+/* LogosIA Design System - Dark Mode First */
 
 @layer base {
   :root {
-    /* Light mode */
-    --background: 160 10% 97%;
-    --foreground: 210 50% 5%;
+    /* Light mode - Sabedoria Tecnológica */
+    --background: 220 20% 97%;
+    --foreground: 231 40% 15%;
 
     --card: 0 0% 100%;
-    --card-foreground: 210 50% 5%;
+    --card-foreground: 231 40% 15%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 210 50% 5%;
+    --popover-foreground: 231 40% 15%;
 
-    --primary: 168 80% 40%;
+    --primary: 231 75% 30%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 174 62% 47%;
-    --secondary-foreground: 0 0% 100%;
+    --secondary: 45 100% 50%;
+    --secondary-foreground: 231 40% 15%;
 
-    --muted: 160 20% 94%;
-    --muted-foreground: 200 15% 40%;
+    --muted: 220 15% 92%;
+    --muted-foreground: 220 10% 45%;
 
-    --accent: 174 62% 47%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 45 100% 50%;
+    --accent-foreground: 231 40% 15%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
@@ -37,56 +37,56 @@
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 0%;
 
-    --border: 170 15% 85%;
-    --input: 170 15% 85%;
-    --ring: 168 80% 40%;
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 231 75% 30%;
 
     --radius: 0.75rem;
 
     /* Gradient colors */
-    --gradient-start: 168 80% 40%;
-    --gradient-end: 174 62% 47%;
+    --gradient-start: 231 75% 30%;
+    --gradient-end: 45 100% 50%;
 
     /* Sidebar */
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 210 50% 5%;
-    --sidebar-primary: 168 80% 40%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 160 20% 94%;
-    --sidebar-accent-foreground: 210 50% 5%;
-    --sidebar-border: 170 15% 85%;
-    --sidebar-ring: 168 80% 40%;
+    --sidebar-background: 231 40% 12%;
+    --sidebar-foreground: 220 20% 95%;
+    --sidebar-primary: 45 100% 50%;
+    --sidebar-primary-foreground: 231 40% 15%;
+    --sidebar-accent: 231 40% 18%;
+    --sidebar-accent-foreground: 220 20% 95%;
+    --sidebar-border: 231 30% 22%;
+    --sidebar-ring: 45 100% 50%;
 
     /* Chart colors */
-    --chart-1: 168 80% 40%;
-    --chart-2: 174 62% 47%;
+    --chart-1: 231 75% 45%;
+    --chart-2: 45 100% 50%;
     --chart-3: 200 70% 50%;
-    --chart-4: 38 92% 50%;
+    --chart-4: 160 84% 39%;
     --chart-5: 0 84% 60%;
   }
 
   .dark {
-    /* Dark mode - HumanizeAI Theme */
-    --background: 200 40% 6%;
-    --foreground: 160 30% 96%;
+    /* Dark mode - LogosIA Sabedoria Theme */
+    --background: 231 35% 8%;
+    --foreground: 220 20% 95%;
 
-    --card: 195 33% 12%;
-    --card-foreground: 160 30% 96%;
+    --card: 231 30% 13%;
+    --card-foreground: 220 20% 95%;
 
-    --popover: 195 33% 12%;
-    --popover-foreground: 160 30% 96%;
+    --popover: 231 30% 13%;
+    --popover-foreground: 220 20% 95%;
 
-    --primary: 168 80% 40%;
+    --primary: 231 70% 50%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 174 62% 47%;
-    --secondary-foreground: 0 0% 100%;
+    --secondary: 45 100% 50%;
+    --secondary-foreground: 231 40% 15%;
 
-    --muted: 195 33% 17%;
-    --muted-foreground: 170 20% 65%;
+    --muted: 231 25% 18%;
+    --muted-foreground: 220 15% 60%;
 
-    --accent: 174 62% 47%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 45 100% 50%;
+    --accent-foreground: 231 40% 15%;
 
     --destructive: 0 63% 31%;
     --destructive-foreground: 0 0% 100%;
@@ -97,29 +97,29 @@
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 0%;
 
-    --border: 195 33% 21%;
-    --input: 195 33% 17%;
-    --ring: 168 80% 40%;
+    --border: 231 25% 22%;
+    --input: 231 25% 18%;
+    --ring: 231 70% 50%;
 
     /* Gradient colors */
-    --gradient-start: 168 80% 40%;
-    --gradient-end: 174 62% 47%;
+    --gradient-start: 231 70% 50%;
+    --gradient-end: 45 100% 50%;
 
     /* Sidebar */
-    --sidebar-background: 200 40% 6%;
-    --sidebar-foreground: 160 30% 96%;
-    --sidebar-primary: 168 80% 40%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 195 33% 17%;
-    --sidebar-accent-foreground: 160 30% 96%;
-    --sidebar-border: 195 33% 21%;
-    --sidebar-ring: 168 80% 40%;
+    --sidebar-background: 231 35% 8%;
+    --sidebar-foreground: 220 20% 95%;
+    --sidebar-primary: 45 100% 50%;
+    --sidebar-primary-foreground: 231 40% 15%;
+    --sidebar-accent: 231 25% 18%;
+    --sidebar-accent-foreground: 220 20% 95%;
+    --sidebar-border: 231 25% 22%;
+    --sidebar-ring: 45 100% 50%;
 
     /* Chart colors */
-    --chart-1: 168 80% 40%;
-    --chart-2: 174 62% 47%;
-    --chart-3: 200 70% 50%;
-    --chart-4: 38 92% 50%;
+    --chart-1: 231 70% 55%;
+    --chart-2: 45 100% 50%;
+    --chart-3: 200 70% 55%;
+    --chart-4: 160 84% 44%;
     --chart-5: 0 84% 60%;
   }
 }
@@ -132,6 +132,11 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6,
+  .font-heading {
+    font-family: 'Lexend', 'Inter', system-ui, sans-serif;
   }
 
   /* Custom scrollbar for dark mode */

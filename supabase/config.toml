@@ -1,4 +1,4 @@
-project_id = "qrxsiixufdiemwwyhxvd"
+project_id = "seyljsqmhlopkcauhlor"
 
 [functions.academy-ai]
 verify_jwt = false
@@ -99,5 +99,17 @@ verify_jwt = false
 [functions.wa-capi-track-lead]
 verify_jwt = false
 
+[functions.apollo-agent]
+verify_jwt = false
+
 [functions.apollo-analyze]
+verify_jwt = false
+
+[functions.apollo-cron-runner]
+verify_jwt = false
+
+[functions.apollo-measure-outcomes]
+verify_jwt = false
+
+[functions.jose-debug]
 verify_jwt = false

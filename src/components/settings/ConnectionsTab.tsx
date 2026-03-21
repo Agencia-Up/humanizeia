@@ -70,7 +70,7 @@ const PLATFORMS: PlatformDef[] = [
     steps: [
       { title: 'Clique em "Conectar"', description: 'Você será redirecionado para a página de login do Facebook.' },
       { title: 'Faça login na sua conta', description: 'Use sua conta pessoal ou de administrador do Facebook.' },
-      { title: 'Autorize o acesso', description: 'O HumanizeAI solicitará permissão para ler dados de campanhas.' },
+      { title: 'Autorize o acesso', description: 'O LogosIA solicitará permissão para ler dados de campanhas.' },
       { title: 'Selecione a conta de anúncios', description: 'Escolha qual conta deseja gerenciar na plataforma.' },
       { title: 'Pronto!', description: 'Suas campanhas e métricas serão importadas automaticamente.' },
     ],
@@ -130,7 +130,7 @@ const PLATFORMS: PlatformDef[] = [
     steps: [
       { title: 'Clique em "Conectar"', description: 'Você será redirecionado para o TikTok Business.' },
       { title: 'Faça login na sua conta', description: 'Use sua conta TikTok Business ou de anunciante.' },
-      { title: 'Autorize o acesso', description: 'O HumanizeAI solicitará permissão para ler campanhas.' },
+      { title: 'Autorize o acesso', description: 'O LogosIA solicitará permissão para ler campanhas.' },
       { title: 'Selecione a conta de anúncios', description: 'Escolha o Advertiser ID que deseja gerenciar.' },
       { title: 'Pronto!', description: 'Suas campanhas TikTok serão importadas automaticamente.' },
     ],
@@ -146,7 +146,7 @@ const PLATFORMS: PlatformDef[] = [
     steps: [
       { title: 'Clique em "Conectar"', description: 'Você será redirecionado para o LinkedIn.' },
       { title: 'Faça login na sua conta', description: 'Use seu perfil pessoal ou conta de administrador.' },
-      { title: 'Autorize o acesso', description: 'O HumanizeAI solicitará permissão para gerenciar anúncios.' },
+      { title: 'Autorize o acesso', description: 'O LogosIA solicitará permissão para gerenciar anúncios.' },
       { title: 'Selecione a página da empresa', description: 'Escolha a Company Page que deseja gerenciar.' },
       { title: 'Pronto!', description: 'Suas campanhas LinkedIn serão importadas.' },
     ],

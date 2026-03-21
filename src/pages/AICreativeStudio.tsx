@@ -15,11 +15,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { 
-  Sparkles, 
-  Download, 
+import {
+  Sparkles,
+  Download,
   Save,
-  RefreshCw, 
+  RefreshCw,
   ImagePlus,
   Eraser,
   Maximize2,
@@ -32,12 +32,15 @@ import {
   Pencil,
   Upload,
   FolderPlus,
+  ShieldCheck,
 } from 'lucide-react';
 import { SwipeFileTab } from '@/components/copywriter/SwipeFileTab';
 import { SavedImagesTab } from '@/components/creative-studio/SavedImagesTab';
 import { RemoveBackgroundTab } from '@/components/creative-studio/RemoveBackgroundTab';
 import { ImageEditorTab } from '@/components/creative-studio/ImageEditorTab';
 import { ResizeTab } from '@/components/creative-studio/ResizeTab';
+import { CreativeScoreDisplay } from '@/components/creative-studio/CreativeScoreDisplay';
+import { generateCreativeScore, type CreativeInsight } from '@/utils/generateCreativeScore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { StudioHeader } from '@/components/layout/StudioHeader';
 
@@ -176,6 +179,9 @@ export default function AICreativeStudio() {
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [referenceFileName, setReferenceFileName] = useState<string | null>(null);
   const [sendingToLibrary, setSendingToLibrary] = useState<number | null>(null);
+  const [creativeScore, setCreativeScore] = useState<number | null>(null);
+  const [creativeInsights, setCreativeInsights] = useState<CreativeInsight[]>([]);
+  const [isAnalyzingScore, setIsAnalyzingScore] = useState(false);
   const refImageInputRef = useRef<HTMLInputElement>(null);
 
   const handleReferenceImageSelect = (file: File) => {
@@ -405,6 +411,25 @@ export default function AICreativeStudio() {
     } finally {
       setSendingToLibrary(null);
     }
+  };
+
+  const handleCheckScore = () => {
+    setIsAnalyzingScore(true);
+    setCreativeScore(null);
+    setCreativeInsights([]);
+
+    // Simula delay de análise (será substituído por chamada real à Vision API)
+    setTimeout(() => {
+      const result = generateCreativeScore({
+        has_text: headline.length > 0,
+        has_cta: includeCTA && ctaText.length > 0,
+        image_format: format,
+        text_length: headline.length + (ctaText?.length || 0),
+      });
+      setCreativeScore(result.score);
+      setCreativeInsights(result.insights);
+      setIsAnalyzingScore(false);
+    }, 1800);
   };
 
   const renderTabContent = () => (
@@ -640,11 +665,42 @@ export default function AICreativeStudio() {
                   </>
                 )}
               </Button>
+
+              <Button
+                className="w-full"
+                size="lg"
+                variant="outline"
+                onClick={handleCheckScore}
+                disabled={isAnalyzingScore}
+              >
+                {isAnalyzingScore ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    Analisando...
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="mr-2 h-4 w-4" />
+                    Verificar Score
+                  </>
+                )}
+              </Button>
             </CardContent>
           </Card>
 
+          {/* Score Column — shown when score exists or analyzing */}
+          {(creativeScore !== null || isAnalyzingScore) && (
+            <div className="lg:col-span-1 order-last lg:order-none">
+              <CreativeScoreDisplay
+                score={creativeScore ?? 0}
+                insights={creativeInsights}
+                isAnalyzing={isAnalyzingScore}
+              />
+            </div>
+          )}
+
           {/* Results Column */}
-          <Card className="border-border/50 bg-card/50 backdrop-blur-sm lg:col-span-3">
+          <Card className={`border-border/50 bg-card/50 backdrop-blur-sm ${creativeScore !== null || isAnalyzingScore ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
             <CardHeader>
               <CardTitle className="text-lg">Resultados</CardTitle>
             </CardHeader>

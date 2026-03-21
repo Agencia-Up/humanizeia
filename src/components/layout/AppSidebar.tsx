@@ -3,13 +3,8 @@ import {
   Brain,
   PenTool,
   Palette,
-  Rocket,
-  DollarSign,
-  FlaskConical,
-  Settings2,
   Layers,
   FolderOpen,
-  FileText,
   BarChart3,
   Plug,
   GraduationCap,
@@ -20,7 +15,6 @@ import {
   X,
   LogOut,
   MessageCircle,
-  Users,
   Contact,
   Send,
   Megaphone,
@@ -31,6 +25,7 @@ import {
   Activity,
   Radar,
   Kanban,
+  Target,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -58,30 +53,28 @@ const dashboardItems = [
   { title: 'Painel', url: '/', icon: Home },
 ];
 
-// 🤖 Inteligência IA
+// 👑 Agentes IA — Equipe Salomão
+const agentItems = [
+  { title: 'SALOMÃO — Orquestrador', url: '/salomao', icon: Sparkles },
+  { title: 'JOSÉ — Tráfego Pago', url: '/apollo', icon: Radar },
+  { title: 'PAULO — Copywriter', url: '/copywriter', icon: PenTool },
+  { title: 'BEZALEL — Design', url: '/creative-studio', icon: Palette },
+  { title: 'DAVI — Social Media', url: '/davi', icon: Send },
+  { title: 'NOÉ — Funil', url: '/noe', icon: Layers },
+  { title: 'JOÃO — Email', url: '/joao', icon: Megaphone },
+  { title: 'PEDRO — Atendimento', url: '/whatsapp/ai-agent', icon: Bot },
+  { title: 'DANIEL — Estratégia', url: '/daniel', icon: Brain },
+];
+
+// 🤖 Ferramentas IA
 const aiItems = [
-  { title: 'Agente Apollo', url: '/midas', icon: Brain },
-  { title: 'Copywriter IA', url: '/copywriter', icon: PenTool },
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
-];
-
-// 📈 Campanhas
-const campaignItems = [
-  { title: 'Otimizador de Campanhas', url: '/optimizer', icon: Rocket },
-  { title: 'Alocador de Verba', url: '/budget', icon: DollarSign },
-  { title: 'Laboratório A/B', url: '/ab-testing', icon: FlaskConical },
-];
-
-// ⚙️ Automação
-const automationItems = [
-  { title: 'Regras Automáticas', url: '/rules', icon: Settings2 },
-  { title: 'Pixel Unificado', url: '/pixel', icon: Layers },
+  { title: 'Inteligência Criativa', url: '/creative-intelligence', icon: Target },
+  { title: 'Radar de Concorrentes', url: '/competitor-radar', icon: Radar },
 ];
 
 // 📊 Análises
 const analyticsItems = [
-  { title: 'Apollo Diagnóstico', url: '/apollo', icon: Radar },
-  { title: 'Relatórios', url: '/reports', icon: FileText },
   { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
 ];
 
@@ -118,17 +111,18 @@ const systemItems = [
 ];
 
 type NavItem = { title: string; url: string; icon: React.ComponentType<{ className?: string }>; badge?: number };
+type NavGroupConfig = { label: string; items: NavItem[]; triggerIcon: React.ComponentType<{ className?: string }>; dataTour?: string };
 
-function NavGroup({ 
-  label, items, collapsed, isOpen, onToggle, triggerIcon: TriggerIcon 
-}: { 
-  label: string; items: NavItem[]; collapsed?: boolean; isOpen?: boolean; onToggle?: () => void; triggerIcon: React.ComponentType<{ className?: string }>;
+function NavGroup({
+  label, items, collapsed, isOpen, onToggle, triggerIcon: TriggerIcon, dataTour
+}: {
+  label: string; items: NavItem[]; collapsed?: boolean; isOpen?: boolean; onToggle?: () => void; triggerIcon: React.ComponentType<{ className?: string }>; dataTour?: string;
 }) {
   const groupBadge = items.reduce((sum, item) => sum + (item.badge || 0), 0);
 
   if (collapsed) {
     return (
-      <Collapsible open={isOpen} onOpenChange={onToggle}>
+      <Collapsible open={isOpen} onOpenChange={onToggle} {...(dataTour ? { 'data-tour': dataTour } : {})}>
         <div className={`rounded-md transition-colors duration-200 ${isOpen ? 'bg-muted/40' : ''}`}>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -171,7 +165,7 @@ function NavGroup({
   }
 
   return (
-    <Collapsible open={isOpen} onOpenChange={onToggle}>
+    <Collapsible open={isOpen} onOpenChange={onToggle} {...(dataTour ? { 'data-tour': dataTour } : {})}>
       <SidebarGroup>
         <CollapsibleTrigger asChild>
           <SidebarGroupLabel className="text-xs uppercase tracking-wider text-muted-foreground/70 cursor-pointer hover:text-muted-foreground transition-colors">
@@ -233,11 +227,10 @@ export function AppSidebar() {
     badge: item.url === '/' ? unreadCount : 0,
   }));
 
-  const groups = [
+  const groups: NavGroupConfig[] = [
     { label: '🏠 Dashboard', items: dashboardWithBadges, triggerIcon: Home },
-    { label: '🤖 Inteligência IA', items: aiItems, triggerIcon: Brain },
-    { label: '📈 Campanhas', items: campaignItems, triggerIcon: Rocket },
-    { label: '⚙️ Automação', items: automationItems, triggerIcon: Settings2 },
+    { label: '👑 Agentes IA', items: agentItems, triggerIcon: Sparkles, dataTour: 'sidebar-agents' },
+    { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
     { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
@@ -252,15 +245,15 @@ export function AppSidebar() {
         {collapsed ? (
           <div className="flex justify-center">
             <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
-              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-8 w-8 object-contain" />
+              <img src="/logosia-logo.png" alt="LogosIA" className="h-8 w-8 object-contain" />
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-10 w-10 shrink-0 rounded-xl object-contain" />
+              <img src="/logosia-logo.png" alt="LogosIA" className="h-10 w-10 shrink-0 rounded-xl object-contain" />
               <div className="flex flex-col">
-                <span className="text-lg font-bold gradient-text">HumanizeAI</span>
+                <span className="text-lg font-bold gradient-text">LogosIA</span>
                 <span className="text-xs text-muted-foreground">Platform</span>
               </div>
             </div>
@@ -281,13 +274,14 @@ export function AppSidebar() {
             isOpen={openSidebarGroups.includes(group.label)}
             onToggle={() => toggleSidebarGroup(group.label)}
             triggerIcon={group.triggerIcon}
+            dataTour={group.dataTour}
           />
         ))}
       </SidebarContent>
 
       <SidebarFooter className={`border-t border-border/50 p-2 ${collapsed ? 'items-center' : ''}`}>
         <SidebarMenu>
-          <SidebarMenuItem>
+          <SidebarMenuItem data-tour="dark-mode">
             <SidebarMenuButton tooltip={isDarkMode ? 'Modo Claro' : 'Modo Escuro'} onClick={toggleDarkMode}>
               {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               <span>{isDarkMode ? 'Modo Claro' : 'Modo Escuro'}</span>

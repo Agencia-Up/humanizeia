@@ -10,6 +10,8 @@ interface UseMetaCampaignsOptions {
   filtering?: any[];
   datePreset?: string;
   enabled?: boolean;
+  /** Explicitly pass the account_id to fetch campaigns for the correct account */
+  accountId?: string;
 }
 
 export function useMetaCampaigns(options: UseMetaCampaignsOptions = {}) {
@@ -23,9 +25,13 @@ export function useMetaCampaigns(options: UseMetaCampaignsOptions = {}) {
     filtering,
     datePreset = 'last_7d',
     enabled = true,
+    accountId: propAccountId,
   } = options;
 
-  const cacheKey = `campaigns:${fields}:${filtering ? JSON.stringify(filtering) : 'all'}`;
+  // Use explicitly passed accountId, else fall back to hook's own connection instance
+  const resolvedAccountId = propAccountId || connectedAccount?.account_id;
+
+  const cacheKey = `campaigns:${resolvedAccountId}:${fields}:${filtering ? JSON.stringify(filtering) : 'all'}`;
 
   const fetchFn = useCallback(async () => {
     const params: Record<string, any> = { fields, limit: '100' };
@@ -35,13 +41,14 @@ export function useMetaCampaigns(options: UseMetaCampaignsOptions = {}) {
     return callMetaApi({
       endpoint: `act_{ad_account_id}/campaigns`,
       params,
+      targetAccountId: resolvedAccountId,
     });
-  }, [callMetaApi, fields, filtering]);
+  }, [callMetaApi, fields, filtering, resolvedAccountId]);
 
   const cached = useMetaCachedQuery({
     cacheKey,
     fetchFn,
-    enabled: enabled && !!connectedAccount,
+    enabled: enabled && !!resolvedAccountId,
   });
 
   const updateCampaignStatus = useMutation({
@@ -50,6 +57,7 @@ export function useMetaCampaigns(options: UseMetaCampaignsOptions = {}) {
         endpoint: campaignId,
         method: 'POST',
         body: { status },
+        targetAccountId: resolvedAccountId,
       });
     },
     onSuccess: () => {
@@ -71,6 +79,7 @@ export function useMetaCampaigns(options: UseMetaCampaignsOptions = {}) {
         endpoint: campaignId,
         method: 'POST',
         params: { daily_budget: String(Math.round(dailyBudget * 100)) },
+        targetAccountId: resolvedAccountId,
       });
     },
     onSuccess: () => {

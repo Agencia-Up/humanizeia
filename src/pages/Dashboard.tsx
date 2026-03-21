@@ -12,11 +12,14 @@ import { EfficiencyScatterChart } from '@/components/dashboard/EfficiencyScatter
 import { WeekdayHeatmap } from '@/components/dashboard/WeekdayHeatmap';
 import { AIInsightsCard } from '@/components/dashboard/AIInsightsCard';
 import { AnomalyAlertsWidget } from '@/components/dashboard/AnomalyAlertsWidget';
+import { AgentStatusWidget } from '@/components/dashboard/AgentStatusWidget';
 import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
 import { useMetaDashboard, MetaDatePreset } from '@/hooks/useMetaDashboard';
+import { useMetaConnection } from '@/hooks/useMetaConnection';
 import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
 import { useAuth } from '@/hooks/useAuth';
 import { Sparkles, MessageCircle, Loader2, Plug, ShieldCheck, BarChart3, TrendingUp, ArrowRight } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MetaRefreshIndicator } from '@/components/dashboard/MetaRefreshIndicator';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -33,13 +36,15 @@ export default function Dashboard() {
   const [dateRange, setDateRange] = useState<MetaDatePreset>('last_7d');
   const [isSending, setIsSending] = useState(false);
 
+  const { connectedAccount, connectedAccounts, selectConnectedAccount } = useMetaConnection();
+
   const {
     isConnected, isLoading, kpis, trendData, campaignData,
     dailySpendData, bestCreatives, worstCreatives, performanceSummary,
     anomalies,
     isTrendLoading, isCampaignLoading, isAdLoading, isSpendLoading,
     isRefreshing, lastUpdated, refreshAll,
-  } = useMetaDashboard(dateRange);
+  } = useMetaDashboard(dateRange, connectedAccount?.account_id, connectedAccount?.currency ?? undefined);
 
   const { processAnomalies } = useCampaignNotifications();
 
@@ -59,7 +64,8 @@ export default function Dashboard() {
       const ctr = kpis.find(k => k.id === 'ctr')?.value || 0;
       const cpc = kpis.find(k => k.id === 'cpc')?.value || 0;
 
-      const reportContent = `📊 *RELATÓRIO META ADS*\n\n💰 *MÉTRICAS*\n\nInvestimento: R$ ${spend.toLocaleString('pt-BR')}\nImpressões: ${impressions.toLocaleString('pt-BR')}\nCliques: ${clicks.toLocaleString('pt-BR')}\nCTR: ${ctr.toFixed(2)}%\nCPC: R$ ${cpc.toFixed(2)}\nAlcance: ${(performanceSummary?.totalReach || 0).toLocaleString('pt-BR')}\nCPM: R$ ${(performanceSummary?.avgCPM || 0).toFixed(2)}\n\n✅ Relatório gerado por HumanizeAI`;
+      const currencySymbol = connectedAccount?.currency === 'USD' ? 'US$' : 'R$';
+      const reportContent = `📊 *RELATÓRIO META ADS*\n\n💰 *MÉTRICAS*\n\nInvestimento: ${currencySymbol} ${spend.toLocaleString('pt-BR')}\nImpressões: ${impressions.toLocaleString('pt-BR')}\nCliques: ${clicks.toLocaleString('pt-BR')}\nCTR: ${ctr.toFixed(2)}%\nCPC: ${currencySymbol} ${cpc.toFixed(2)}\nAlcance: ${(performanceSummary?.totalReach || 0).toLocaleString('pt-BR')}\nCPM: ${currencySymbol} ${(performanceSummary?.avgCPM || 0).toFixed(2)}\n\n✅ Relatório gerado por LogosIA`;
 
       const { data, error } = await supabase.functions.invoke('send-whatsapp-report', {
         body: { action: 'send_report', reportContent },
@@ -186,7 +192,29 @@ export default function Dashboard() {
               <span>Painel de Performance — seus anúncios em tempo real</span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {connectedAccounts.length > 1 && (
+              <Select
+                value={connectedAccount?.id || ''}
+                onValueChange={(id) => selectConnectedAccount(id)}
+              >
+                <SelectTrigger className="h-8 min-w-[160px] max-w-[220px] text-xs">
+                  <SelectValue placeholder="Selecionar conta" />
+                </SelectTrigger>
+                <SelectContent>
+                  {connectedAccounts.map((account) => (
+                    <SelectItem key={account.id} value={account.id}>
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate max-w-[130px]">{account.account_name}</span>
+                        <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground">
+                          {account.currency || 'BRL'}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <MetaRefreshIndicator
               isRefreshing={isRefreshing}
               lastUpdated={lastUpdated}
@@ -202,7 +230,7 @@ export default function Dashboard() {
         </motion.div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8">
+        <div data-tour="kpi-cards" className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4">
           {isLoading ? (
             Array.from({ length: 8 }).map((_, i) => (
               <Skeleton key={i} className="h-[100px] rounded-lg" />
@@ -229,10 +257,11 @@ export default function Dashboard() {
           <EfficiencyScatterChart data={campaignData} isLoading={isCampaignLoading} />
         </div>
 
-        {/* 2-column grid: Weekday Heatmap + AI Insights */}
-        <div className="grid gap-6 lg:grid-cols-2">
+        {/* 3-column grid: Weekday Heatmap + AI Insights + Agent Status */}
+        <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
           <WeekdayHeatmap data={trendData} isLoading={isTrendLoading} />
           <AIInsightsCard insights={defaultInsights} />
+          <AgentStatusWidget />
         </div>
 
         {/* Campaign Table */}

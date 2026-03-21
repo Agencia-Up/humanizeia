@@ -28,18 +28,16 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } =
-      await supabase.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: corsHeaders,
       });
     }
-    const userId = claimsData.claims.sub as string;
+    const userId = user.id;
 
-    const { endpoint, params, method, body } = await req.json();
+    const { endpoint, params, method, body, targetAccountId } = await req.json();
 
     if (endpoint === undefined || endpoint === null) {
       return new Response(
@@ -48,18 +46,26 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get user's active Meta ad account with token
+    // Get user's Meta ad account - use targetAccountId if provided, else fallback to first
     const adminClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { data: adAccount, error: accountError } = await adminClient
+    let accountQuery = adminClient
       .from("ad_accounts")
       .select("*")
       .eq("user_id", userId)
       .eq("platform", "meta")
-      .eq("is_active", true)
+      .eq("is_active", true);
+
+    // If a specific account was requested, filter by account_id
+    if (targetAccountId) {
+      accountQuery = accountQuery.eq("account_id", targetAccountId);
+    }
+
+    const { data: adAccount, error: accountError } = await accountQuery
+      .order("created_at", { ascending: true })
       .limit(1)
       .single();
 

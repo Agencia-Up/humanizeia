@@ -48,11 +48,14 @@ interface ConnectedAccount {
   timezone: string | null;
 }
 
+const SELECTED_ACCOUNT_KEY = 'logosia_selected_meta_account_id';
+
 export function useMetaConnection() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectedAccount, setConnectedAccount] = useState<ConnectedAccount | null>(null);
+  const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [availableAccounts, setAvailableAccounts] = useState<MetaAdAccount[]>([]);
   const [pixels, setPixels] = useState<MetaPixel[]>([]);
@@ -70,20 +73,37 @@ export function useMetaConnection() {
         .eq('user_id', user.id)
         .eq('platform', 'meta')
         .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
+        .order('created_at', { ascending: true });
 
-      if (!error && data) {
-        setConnectedAccount(data as ConnectedAccount);
+      if (!error && data && data.length > 0) {
+        setConnectedAccounts(data as ConnectedAccount[]);
+        // Restore previously selected account from localStorage, else use first
+        const savedId = localStorage.getItem(SELECTED_ACCOUNT_KEY);
+        const savedAccount = savedId ? data.find(a => a.id === savedId) : null;
+        setConnectedAccount(savedAccount ?? (data[0] as ConnectedAccount));
       } else {
+        setConnectedAccounts([]);
         setConnectedAccount(null);
       }
     } catch {
+      setConnectedAccounts([]);
       setConnectedAccount(null);
     } finally {
       setIsLoading(false);
     }
   }, [user]);
+
+  const selectConnectedAccount = useCallback((accountId: string) => {
+    setConnectedAccounts(prev => {
+      const found = prev.find(a => a.id === accountId);
+      if (found) {
+        // Persist the selection so it survives page navigation
+        localStorage.setItem(SELECTED_ACCOUNT_KEY, accountId);
+        setConnectedAccount(found);
+      }
+      return prev;
+    });
+  }, []);
 
   useEffect(() => {
     fetchConnectedAccount();
@@ -201,7 +221,7 @@ export function useMetaConnection() {
     }
   };
 
-  const selectAccount = async (account: MetaAdAccount) => {
+  const selectAccount = async (account: MetaAdAccount | ConnectedAccount) => {
     if (!pendingToken) return;
     setIsConnecting(true);
     try {
@@ -249,6 +269,7 @@ export function useMetaConnection() {
         .eq('id', connectedAccount.id);
 
       if (error) throw error;
+      localStorage.removeItem(SELECTED_ACCOUNT_KEY);
       setConnectedAccount(null);
       toast({
         title: 'Conta desconectada',
@@ -267,6 +288,7 @@ export function useMetaConnection() {
     isConnecting,
     isLoading,
     connectedAccount,
+    connectedAccounts,
     availableAccounts,
     pixels,
     pages,
@@ -274,6 +296,7 @@ export function useMetaConnection() {
     startOAuth,
     handleCallback,
     selectAccount,
+    selectConnectedAccount,
     disconnect,
     connectWithToken,
     refresh: fetchConnectedAccount,
