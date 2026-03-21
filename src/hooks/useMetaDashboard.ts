@@ -22,6 +22,11 @@ export interface Anomaly {
   changePercent: number;
 }
 
+function formatCurrency(value: number, currency: string): string {
+  const symbol = currency === 'USD' ? 'US$' : currency === 'BRL' ? 'R$' : currency;
+  return `${symbol} ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function getPreviousPeriodRange(datePreset: MetaDatePreset): { since: string; until: string } {
   const today = new Date();
   const fmt = (d: Date) => d.toISOString().split('T')[0];
@@ -66,13 +71,15 @@ function calcChange(current: number, previous: number): number {
   return Number((((current - previous) / previous) * 100).toFixed(1));
 }
 
-export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
+export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d', selectedAccountId?: string, selectedCurrency?: string) {
   const { connectedAccount, isLoading: isLoadingConnection } = useMetaConnection();
   const isConnected = !!connectedAccount;
+  // Use explicitly passed accountId/currency if provided (account switcher), else fall back to hook's own instance
+  const currency = selectedCurrency || connectedAccount?.currency || 'BRL';
 
   const previousRange = useMemo(() => getPreviousPeriodRange(datePreset), [datePreset]);
 
-  const accountId = connectedAccount?.account_id;
+  const accountId = selectedAccountId || connectedAccount?.account_id;
 
   const accountInsights = useMetaInsights({
     accountId,
@@ -178,14 +185,14 @@ export function useMetaDashboard(datePreset: MetaDatePreset = 'last_7d') {
     const { cpa: pCpa, roas: pRoas } = prev.spend ? extractConversionMetrics(prev) : { cpa: 0, roas: 0 };
 
     return [
-      { id: 'gasto', label: 'Total Gasto', value: spend, formattedValue: `R$ ${spend.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`, change: calcChange(spend, pSpend), sparkline: [] },
+      { id: 'gasto', label: 'Total Gasto', value: spend, formattedValue: formatCurrency(spend, currency), change: calcChange(spend, pSpend), sparkline: [] },
       { id: 'impressoes', label: 'Impressões', value: impressions, formattedValue: impressions >= 1000 ? `${(impressions / 1000).toFixed(1)}k` : impressions.toLocaleString('pt-BR'), change: calcChange(impressions, pImpressions), sparkline: [] },
       { id: 'cliques', label: 'Cliques', value: clicks, formattedValue: clicks >= 1000 ? `${(clicks / 1000).toFixed(1)}k` : clicks.toLocaleString('pt-BR'), change: calcChange(clicks, pClicks), sparkline: [] },
       { id: 'ctr', label: 'CTR', value: ctr, formattedValue: `${ctr.toFixed(2)}%`, change: calcChange(ctr, pCtr), sparkline: [] },
-      { id: 'cpc', label: 'CPC', value: cpc, formattedValue: `R$ ${cpc.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: calcChange(cpc, pCpc), sparkline: [] },
-      { id: 'cpm', label: 'CPM', value: cpm, formattedValue: `R$ ${cpm.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: calcChange(cpm, pCpm), sparkline: [] },
+      { id: 'cpc', label: 'CPC', value: cpc, formattedValue: formatCurrency(cpc, currency), change: calcChange(cpc, pCpc), sparkline: [] },
+      { id: 'cpm', label: 'CPM', value: cpm, formattedValue: formatCurrency(cpm, currency), change: calcChange(cpm, pCpm), sparkline: [] },
       { id: 'roas', label: 'ROAS', value: roas, formattedValue: roas > 0 ? `${roas.toFixed(2)}x` : '—', change: calcChange(roas, pRoas), sparkline: [] },
-      { id: 'cpa', label: 'CPA', value: cpa, formattedValue: cpa > 0 ? `R$ ${cpa.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—', change: calcChange(cpa, pCpa), sparkline: [] },
+      { id: 'cpa', label: 'CPA', value: cpa, formattedValue: cpa > 0 ? formatCurrency(cpa, currency) : '—', change: calcChange(cpa, pCpa), sparkline: [] },
     ];
   };
 

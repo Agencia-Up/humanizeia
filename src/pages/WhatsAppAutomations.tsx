@@ -28,6 +28,7 @@ interface Automation {
 }
 
 const TRIGGER_OPTIONS = [
+  { value: 'new_lead', label: 'Novo lead criado no FluxCRM', icon: UserCheck },
   { value: 'lead_interested', label: 'Lead classificado como Interessado', icon: UserCheck },
   { value: 'lead_question', label: 'Lead fez pergunta', icon: UserCheck },
   { value: 'lead_opt_out', label: 'Lead pediu opt-out', icon: UserX },

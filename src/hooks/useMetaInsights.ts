@@ -15,6 +15,7 @@ interface UseMetaInsightsOptions {
 
 function buildCacheKey(options: UseMetaInsightsOptions): string {
   const parts = ['insights'];
+  if (options.accountId) parts.push(options.accountId);
   if (options.datePreset) parts.push(options.datePreset);
   if (options.timeRange) parts.push(`${options.timeRange.since}_${options.timeRange.until}`);
   if (options.timeIncrement) parts.push(`ti${options.timeIncrement}`);
@@ -60,8 +61,10 @@ export function useMetaInsights(options: UseMetaInsightsOptions = {}) {
     return callMetaApi({
       endpoint: `act_{ad_account_id}/insights`,
       params,
+      // Pass accountId so the edge function fetches data for the correct account
+      targetAccountId: accountId ?? undefined,
     });
-  }, [callMetaApi, fields, timeRange, datePreset, timeIncrement, breakdowns, level]);
+  }, [callMetaApi, fields, timeRange, datePreset, timeIncrement, breakdowns, level, accountId]);
 
   const result = useMetaCachedQuery({
     cacheKey,

@@ -6,6 +6,7 @@ CREATE POLICY "Users can delete own formulas"
   USING (auth.uid() = user_id AND is_default = false);
 
 -- Add missing trigger for auto-creating profiles on signup
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW

@@ -6,6 +6,8 @@ interface MetaApiOptions {
   params?: Record<string, any>;
   method?: 'GET' | 'POST' | 'DELETE';
   body?: Record<string, any>;
+  /** Pass the account_id (e.g. "act_123456") to target a specific ad account */
+  targetAccountId?: string;
 }
 
 export function useMetaApi() {

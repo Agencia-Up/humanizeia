@@ -28,6 +28,9 @@ export interface CRMLead {
   position: number;
   priority: string;
   expected_close_date: string | null;
+  follow_up_date: string | null;
+  utm_source: string | null;
+  utm_campaign: string | null;
   won_at: string | null;
   lost_at: string | null;
   lost_reason: string | null;
@@ -81,9 +84,36 @@ export function useFluxCRM() {
 
   const addLead = async (lead: Partial<CRMLead>) => {
     if (!user) return;
-    const { error } = await supabase.from('crm_leads').insert({ ...lead, user_id: user.id } as never);
+    const { data: insertedLead, error } = await supabase.from('crm_leads').insert({ ...lead, user_id: user.id } as never).select().single();
     if (error) { toast.error('Erro ao criar lead'); return; }
     toast.success('Lead criado!');
+    
+    // Dispara webhook de Novo Lead se houver automação
+    try {
+      const { data: automations } = await supabase
+        .from('wa_automations')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .eq('trigger_event', 'new_lead')
+        .eq('action_type', 'notify_webhook');
+        
+      if (automations && automations.length > 0) {
+        automations.forEach(async (auto) => {
+          const config = auto.action_config as Record<string, any>;
+          if (config?.webhook_url) {
+            fetch(config.webhook_url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ lead: insertedLead, event: 'new_lead' })
+            }).catch(console.error);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Erro ao disparar webhook:', err);
+    }
+    
     fetchData();
   };
 

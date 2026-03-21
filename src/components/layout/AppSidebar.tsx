@@ -3,13 +3,8 @@ import {
   Brain,
   PenTool,
   Palette,
-  Rocket,
-  DollarSign,
-  FlaskConical,
-  Settings2,
   Layers,
   FolderOpen,
-  FileText,
   BarChart3,
   Plug,
   GraduationCap,
@@ -20,7 +15,6 @@ import {
   X,
   LogOut,
   MessageCircle,
-  Users,
   Contact,
   Send,
   Megaphone,
@@ -31,6 +25,7 @@ import {
   Activity,
   Radar,
   Kanban,
+  Target,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -58,30 +53,27 @@ const dashboardItems = [
   { title: 'Painel', url: '/', icon: Home },
 ];
 
-// 🤖 Inteligência IA
+// 👑 Agentes IA — Equipe Salomão
+const agentItems = [
+  { title: 'SALOMÃO — Orquestrador', url: '/salomao', icon: Sparkles },
+  { title: 'JOSÉ — Tráfego Pago', url: '/apollo', icon: Radar },
+  { title: 'PAULO — Copywriter', url: '/copywriter', icon: PenTool },
+  { title: 'BEZALEL — Design', url: '/creative-studio', icon: Palette },
+  { title: 'DAVI — Social Media', url: '/davi', icon: Send },
+  { title: 'NOÉ — Funil', url: '/noe', icon: Layers },
+  { title: 'JOÃO — Email', url: '/joao', icon: Megaphone },
+  { title: 'PEDRO — Atendimento', url: '/whatsapp/ai-agent', icon: Bot },
+  { title: 'DANIEL — Estratégia', url: '/daniel', icon: Brain },
+];
+
+// 🤖 Ferramentas IA
 const aiItems = [
-  { title: 'Agente Apollo', url: '/midas', icon: Brain },
-  { title: 'Copywriter IA', url: '/copywriter', icon: PenTool },
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
-];
-
-// 📈 Campanhas
-const campaignItems = [
-  { title: 'Otimizador de Campanhas', url: '/optimizer', icon: Rocket },
-  { title: 'Alocador de Verba', url: '/budget', icon: DollarSign },
-  { title: 'Laboratório A/B', url: '/ab-testing', icon: FlaskConical },
-];
-
-// ⚙️ Automação
-const automationItems = [
-  { title: 'Regras Automáticas', url: '/rules', icon: Settings2 },
-  { title: 'Pixel Unificado', url: '/pixel', icon: Layers },
+  { title: 'Inteligência Criativa', url: '/creative-intelligence', icon: Target },
 ];
 
 // 📊 Análises
 const analyticsItems = [
-  { title: 'Apollo Diagnóstico', url: '/apollo', icon: Radar },
-  { title: 'Relatórios', url: '/reports', icon: FileText },
   { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
 ];
 
@@ -235,9 +227,8 @@ export function AppSidebar() {
 
   const groups = [
     { label: '🏠 Dashboard', items: dashboardWithBadges, triggerIcon: Home },
-    { label: '🤖 Inteligência IA', items: aiItems, triggerIcon: Brain },
-    { label: '📈 Campanhas', items: campaignItems, triggerIcon: Rocket },
-    { label: '⚙️ Automação', items: automationItems, triggerIcon: Settings2 },
+    { label: '👑 Agentes IA', items: agentItems, triggerIcon: Sparkles },
+    { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
     { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },

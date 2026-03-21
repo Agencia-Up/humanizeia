@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/User/AppData/Roaming/**)",
+      "Read(//c/Users/User/**)",
+      "Bash(cmd.exe /c \"node --version && npm --version\")",
+      "Bash(cmd.exe /c \"node -v\")",
+      "Bash(cmd.exe /c \"where node 2>&1 & where npm 2>&1\")",
+      "Bash(powershell.exe -Command \"node --version; npm --version\")",
+      "Bash(powershell.exe -Command \"winget install OpenJS.NodeJS.LTS\")",
+      "Bash(powershell.exe -Command \"winget install OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements\")",
+      "Bash(powershell.exe -Command \"cd ''C:\\\\Users\\\\User\\\\OneDrive\\\\CLAUDECODE\\\\humanizeia''; npm install\")",
+      "Bash(powershell.exe -Command \"[System.Environment]::GetEnvironmentVariable\\(''PATH'', ''Machine''\\) | Select-String -Pattern ''node'' -SimpleMatch\")",
+      "Bash(powershell.exe -Command \"& ''C:\\\\Program Files\\\\nodejs\\\\npm.cmd'' install --prefix ''C:\\\\Users\\\\User\\\\OneDrive\\\\CLAUDECODE\\\\humanizeia''\")",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -NoProfile -Command \"Get-NetTCPConnection -LocalPort 8080 -State Listen | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_-Force }; Write-Host ''Done''\")",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -NoProfile -Command \"Stop-Process -Name node -Force -ErrorAction SilentlyContinue; Write-Host ''Done''\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -NoProfile -Command \"Get-ChildItem ''C:\\\\Users\\\\User\\\\OneDrive\\\\CLAUDECODE\\\\humanizeia\\\\node_modules\\\\.bin\\\\'' | Where-Object { $_.Name -like ''*vite*'' } | Select-Object Name\")",
+      "Bash(find /c/Users/User/OneDrive/CLAUDECODE/humanizeia/supabase -name *.sql)",
+      "Bash(find /c/Users/User/OneDrive/CLAUDECODE/humanizeia/supabase/migrations -name *meta* -o -name *ad*)",
+      "Bash(xargs grep:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -NoProfile -Command \"where.exe supabase\")",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -NoProfile -Command \"npx supabase --version\")",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -NoProfile -Command \":*)",
+      "Bash(find /c/Users/User/OneDrive/CLAUDECODE/humanizeia/src -type f -name \"*.tsx\" -exec grep -l \"formattedMessage\\\\|onSubmit.*form\\\\|handleSubmit\" {})",
+      "Bash(powershell.exe -Command \"Get-Item ''C:/Users/User/supabase-cli.tar.gz'' | Select Length\")",
+      "Bash(powershell.exe -NonInteractive -Command \"curl.exe -s ''https://seyljsqmhlopkcauhlor.supabase.co/auth/v1/admin/users'' -H ''Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNleWxqc3FtaGxvcGtjYXVobG9yIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MzkzMDEyNywiZXhwIjoyMDg5NTA2MTI3fQ.b5oaiDazO1ncJYdwlHJo-tnOx88UBjeIwCf175eBrJM'' -H ''apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNleWxqc3FtaGxvcGtjYXVobG9yIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MzkzMDEyNywiZXhwIjoyMDg5NTA2MTI3fQ.b5oaiDazO1ncJYdwlHJo-tnOx88UBjeIwCf175eBrJM''\")",
+      "Bash(powershell -Command \"& ''C:\\\\Program Files\\\\nodejs\\\\npx.cmd'' supabase functions deploy apollo-agent --no-verify-jwt --project-ref seyljsqmhlopkcauhlor\")"
+    ]
+  }
+}

@@ -11,7 +11,7 @@ import { Sparkles, Building2, Mail, Users, Loader2, Check, ArrowRight } from 'lu
 
 export default function Onboarding() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const { pendingInvites, createOrganization, acceptInvite } = useOrganization();
   const { toast } = useToast();
 
@@ -19,6 +19,14 @@ export default function Onboarding() {
   const [orgName, setOrgName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!user) {
     return <Navigate to="/auth" replace />;

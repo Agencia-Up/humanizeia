@@ -21,7 +21,7 @@ export function LeadFormDialog({ open, onClose, onSave, onDelete, lead, stages, 
   const [form, setForm] = useState({
     name: '', email: '', phone: '', company: '', value: 0,
     source: '', notes: '', priority: 'medium', stage_id: defaultStageId || '',
-    tags: '',
+    tags: '', follow_up_date: '', utm_source: '', utm_campaign: ''
   });
 
   useEffect(() => {
@@ -31,9 +31,11 @@ export function LeadFormDialog({ open, onClose, onSave, onDelete, lead, stages, 
         company: lead.company || '', value: lead.value || 0, source: lead.source || '',
         notes: lead.notes || '', priority: lead.priority || 'medium',
         stage_id: lead.stage_id || '', tags: (lead.tags || []).join(', '),
+        follow_up_date: lead.follow_up_date ? lead.follow_up_date.split('T')[0] : '', 
+        utm_source: lead.utm_source || '', utm_campaign: lead.utm_campaign || ''
       });
     } else {
-      setForm({ name: '', email: '', phone: '', company: '', value: 0, source: '', notes: '', priority: 'medium', stage_id: defaultStageId || '', tags: '' });
+      setForm({ name: '', email: '', phone: '', company: '', value: 0, source: '', notes: '', priority: 'medium', stage_id: defaultStageId || '', tags: '', follow_up_date: '', utm_source: '', utm_campaign: '' });
     }
   }, [lead, defaultStageId]);
 
@@ -51,6 +53,9 @@ export function LeadFormDialog({ open, onClose, onSave, onDelete, lead, stages, 
       priority: form.priority,
       stage_id: form.stage_id || null,
       tags: form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+      follow_up_date: form.follow_up_date || null,
+      utm_source: form.utm_source || null,
+      utm_campaign: form.utm_campaign || null,
     });
     onClose();
   };
@@ -112,6 +117,18 @@ export function LeadFormDialog({ open, onClose, onSave, onDelete, lead, stages, 
             <div>
               <Label>Tags (separadas por vírgula)</Label>
               <Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="vip, urgente" />
+            </div>
+            <div>
+              <Label>Data de Follow-up</Label>
+              <Input type="date" value={form.follow_up_date} onChange={(e) => setForm({ ...form, follow_up_date: e.target.value })} />
+            </div>
+            <div>
+              <Label>UTM Source</Label>
+              <Input value={form.utm_source} onChange={(e) => setForm({ ...form, utm_source: e.target.value })} placeholder="Ex: google_ads" />
+            </div>
+            <div>
+              <Label>UTM Campaign</Label>
+              <Input value={form.utm_campaign} onChange={(e) => setForm({ ...form, utm_campaign: e.target.value })} placeholder="Ex: promo_agosto" />
             </div>
             <div className="col-span-2">
               <Label>Notas</Label>
