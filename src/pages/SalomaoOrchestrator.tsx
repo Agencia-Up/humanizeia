@@ -27,7 +27,7 @@ const AGENTS = [
     url: '/copywriter',
   },
   {
-    id: 'bezalel', name: 'BEZALEL', role: 'Designer', icon: Palette,
+    id: 'miriam', name: 'MIRIAM', role: 'Designer', icon: Palette,
     description: 'Cria imagens, banners e criativos com IA. Remove fundo, redimensiona e gera variações.',
     status: 'active', color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20',
     url: '/creative-studio',
@@ -45,7 +45,7 @@ const AGENTS = [
     url: null,
   },
   {
-    id: 'noe', name: 'NOÉ', role: 'Gestor de Funil', icon: Layers,
+    id: 'lucas', name: 'LUCAS', role: 'Gestor de Funil', icon: Layers,
     description: 'Mapeia e otimiza toda a jornada do cliente: anúncio → landing page → checkout → retenção.',
     status: 'coming', color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20',
     url: null,
@@ -169,7 +169,7 @@ export default function SalomaoOrchestrator() {
                   <p className="text-[10px]">Copywriter</p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-purple-400">├── BEZALEL</p>
+                  <p className="text-purple-400">├── MIRIAM</p>
                   <p className="text-[10px]">Design</p>
                 </div>
                 <div className="space-y-1">
@@ -181,7 +181,7 @@ export default function SalomaoOrchestrator() {
                   <p className="text-[10px]">Social Media</p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-orange-400">├── NOÉ</p>
+                  <p className="text-orange-400">├── LUCAS</p>
                   <p className="text-[10px]">Funil</p>
                 </div>
                 <div className="space-y-1">

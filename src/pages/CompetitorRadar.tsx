@@ -364,7 +364,7 @@ export default function CompetitorRadar() {
                           className="flex-1 text-xs h-8 hover:bg-purple-500/10 hover:text-purple-400 hover:border-purple-500/30 transition-colors"
                         >
                           <Palette className="h-3 w-3 mr-1.5" />
-                          Inspirar BEZALEL
+                          Inspirar MIRIAM
                         </Button>
                       </div>
                     </div>

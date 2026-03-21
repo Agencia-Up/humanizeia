@@ -111,7 +111,7 @@ export function CreativeScoreDisplay({ score, insights, isAnalyzing }: CreativeS
           <Sparkles className="h-4 w-4 text-primary" />
           Pre-Flight Check
           <Badge variant="outline" className="ml-auto text-[10px] font-normal">
-            BEZALEL
+            MIRIAM
           </Badge>
         </CardTitle>
         <p className="text-xs text-muted-foreground">

@@ -206,7 +206,7 @@ export function useCreativeIntelligence() {
     }
   }, [user?.id, toast]);
 
-  // ── Request creative variation from BEZALEL ──
+  // ── Request creative variation from MIRIAM ──
   const requestVariation = useCallback(async (creativeId: string, instructions?: string) => {
     if (!user?.id) return null;
     try {
@@ -218,7 +218,7 @@ export function useCreativeIntelligence() {
         },
       });
       if (error) throw error;
-      toast({ title: 'Variação solicitada', description: 'BEZALEL está gerando uma nova variação do criativo.' });
+      toast({ title: 'Variação solicitada', description: 'MIRIAM está gerando uma nova variação do criativo.' });
       return data;
     } catch (err: any) {
       toast({ title: 'Erro ao gerar variação', description: err.message, variant: 'destructive' });
@@ -248,7 +248,7 @@ export function useCreativeIntelligence() {
       const topPerformers = creatives.filter(c => (c.performance_score || 0) >= 75).length;
       const activeInAds = perfs.filter(p => p.status === 'active').length;
       const runningTests = abTests.filter(t => t.status === 'running').length;
-      const byBezalel = creatives.filter(c => c.created_by === 'bezalel').length;
+      const byBezalel = creatives.filter(c => c.created_by === 'miriam').length;
       const byUser = creatives.filter(c => c.created_by === 'usuario').length;
 
       return {
