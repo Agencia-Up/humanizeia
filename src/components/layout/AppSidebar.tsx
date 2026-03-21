@@ -242,18 +242,14 @@ export function AppSidebar() {
       <SidebarHeader className="border-b border-border/50 p-4">
         {collapsed ? (
           <div className="flex justify-center">
-            <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
-              <img src="/logosia-brand.png" alt="Logos IA" className="h-8 w-8 object-contain" />
+            <button onClick={toggleSidebar} className="flex h-10 w-full shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
+              <img src="/logosia-brand.png" alt="Logos IA" className="h-8 w-auto object-contain" />
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src="/logosia-brand.png" alt="Logos IA" className="h-10 w-10 shrink-0 rounded-xl object-contain" />
-              <div className="flex flex-col">
-                <span className="text-lg font-bold gradient-text">Logos IA</span>
-                <span className="text-xs text-muted-foreground">Platform</span>
-              </div>
+              <img src="/logosia-brand.png" alt="Logos IA" className="h-10 w-auto shrink-0 object-contain" />
             </div>
             <button onClick={toggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors">
               <X className="h-4 w-4 text-muted-foreground" />
