@@ -20,7 +20,7 @@ export function MainLayout({ children }: MainLayoutProps) {
           <div className="flex-1 flex flex-col overflow-auto p-4 lg:p-6">
             {children}
             <footer className="mt-auto pt-6 pb-3 border-t border-border/40 text-center text-xs text-muted-foreground flex items-center justify-center gap-3 flex-wrap">
-              <span>© {new Date().getFullYear()} HumanizeAI</span>
+              <span>© {new Date().getFullYear()} Logos IA</span>
               <span className="text-border">•</span>
               <Link to="/privacy" className="hover:text-primary transition-colors">Política de Privacidade</Link>
               <span className="text-border">•</span>

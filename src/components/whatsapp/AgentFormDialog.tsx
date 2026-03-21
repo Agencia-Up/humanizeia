@@ -426,7 +426,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
 
                 <div className="space-y-2">
                   <Label>Nome da empresa</Label>
-                  <Input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Ex: HumanizeAI" />
+                  <Input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Ex: Logos IA" />
                 </div>
 
                 <div className="space-y-2">

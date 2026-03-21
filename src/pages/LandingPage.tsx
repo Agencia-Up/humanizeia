@@ -14,8 +14,8 @@ export default function LandingPage() {
       {/* Header */}
       <header className="border-b border-border/40 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <img src="/humanizeai-logo.png" alt="HumanizeAI TF" className="h-10 w-10 rounded-xl object-contain" />
-          <span className="text-xl font-bold">HumanizeAI TF</span>
+          <img src="/logosia-logo.png" alt="Logos IA" className="h-10 w-10 rounded-xl object-contain" />
+          <span className="text-xl font-bold">Logos IA</span>
         </div>
 
         {/* Botões de ação no menu */}
@@ -71,7 +71,7 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="border-t border-border/40 px-6 py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-3 flex-wrap">
-        <span>© {new Date().getFullYear()} HumanizeAI TF. Todos os direitos reservados.</span>
+        <span>© {new Date().getFullYear()} Logos IA. Todos os direitos reservados.</span>
         <span className="text-border">•</span>
         <a href="/privacy-policy.html" className="hover:text-primary transition-colors">Política de Privacidade</a>
         <span className="text-border">•</span>

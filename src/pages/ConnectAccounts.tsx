@@ -166,7 +166,7 @@ export default function ConnectAccounts() {
             <Sparkles className="h-7 w-7 text-primary-foreground" />
           </div>
           <h1 className="text-2xl font-bold text-foreground">
-            <span className="gradient-text">HumanizeAI</span>
+            <span className="gradient-text">Logos IA</span>
           </h1>
           <p className="text-xs text-muted-foreground">Configuração inicial</p>
         </motion.div>
@@ -540,7 +540,7 @@ export default function ConnectAccounts() {
 
         {/* Footer */}
         <p className="text-center text-[10px] text-muted-foreground/60">
-          ✦ HumanizeAI — Inteligência que humaniza seus resultados ✦
+          ✦ Logos IA — Inteligência que humaniza seus resultados ✦
         </p>
       </div>
     </div>
