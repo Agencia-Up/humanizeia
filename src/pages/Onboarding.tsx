@@ -64,7 +64,7 @@ export default function Onboarding() {
           <div className="flex h-12 w-12 items-center justify-center rounded-xl gradient-primary">
             <Sparkles className="h-6 w-6 text-primary-foreground" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Bem-vindo ao HumanizeAI</h1>
+          <h1 className="text-2xl font-bold text-foreground">Bem-vindo ao Logos IA</h1>
           <p className="text-sm text-muted-foreground">
             Configure sua empresa para começar
           </p>

@@ -59,7 +59,7 @@ export default function Dashboard() {
       const ctr = kpis.find(k => k.id === 'ctr')?.value || 0;
       const cpc = kpis.find(k => k.id === 'cpc')?.value || 0;
 
-      const reportContent = `📊 *RELATÓRIO META ADS*\n\n💰 *MÉTRICAS*\n\nInvestimento: R$ ${spend.toLocaleString('pt-BR')}\nImpressões: ${impressions.toLocaleString('pt-BR')}\nCliques: ${clicks.toLocaleString('pt-BR')}\nCTR: ${ctr.toFixed(2)}%\nCPC: R$ ${cpc.toFixed(2)}\nAlcance: ${(performanceSummary?.totalReach || 0).toLocaleString('pt-BR')}\nCPM: R$ ${(performanceSummary?.avgCPM || 0).toFixed(2)}\n\n✅ Relatório gerado por HumanizeAI`;
+      const reportContent = `📊 *RELATÓRIO META ADS*\n\n💰 *MÉTRICAS*\n\nInvestimento: R$ ${spend.toLocaleString('pt-BR')}\nImpressões: ${impressions.toLocaleString('pt-BR')}\nCliques: ${clicks.toLocaleString('pt-BR')}\nCTR: ${ctr.toFixed(2)}%\nCPC: R$ ${cpc.toFixed(2)}\nAlcance: ${(performanceSummary?.totalReach || 0).toLocaleString('pt-BR')}\nCPM: R$ ${(performanceSummary?.avgCPM || 0).toFixed(2)}\n\n✅ Relatório gerado por Logos IA`;
 
       const { data, error } = await supabase.functions.invoke('send-whatsapp-report', {
         body: { action: 'send_report', reportContent },

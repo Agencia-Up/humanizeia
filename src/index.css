@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* HumanizeAI Design System - Dark Mode First */
+/* Logos IA Design System - Dark Mode First */
 
 @layer base {
   :root {
@@ -66,7 +66,7 @@
   }
 
   .dark {
-    /* Dark mode - HumanizeAI Theme */
+    /* Dark mode - Logos IA Theme */
     --background: 200 40% 6%;
     --foreground: 160 30% 96%;
 

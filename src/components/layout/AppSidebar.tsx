@@ -252,15 +252,15 @@ export function AppSidebar() {
         {collapsed ? (
           <div className="flex justify-center">
             <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
-              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-8 w-8 object-contain" />
+              <img src="/logosia-logo.png" alt="Logos IA" className="h-8 w-8 object-contain" />
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src="/humanizeai-logo.png" alt="HumanizeAI" className="h-10 w-10 shrink-0 rounded-xl object-contain" />
+              <img src="/logosia-logo.png" alt="Logos IA" className="h-10 w-10 shrink-0 rounded-xl object-contain" />
               <div className="flex flex-col">
-                <span className="text-lg font-bold gradient-text">HumanizeAI</span>
+                <span className="text-lg font-bold gradient-text">Logos IA</span>
                 <span className="text-xs text-muted-foreground">Platform</span>
               </div>
             </div>
