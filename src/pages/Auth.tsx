@@ -184,7 +184,7 @@ export default function Auth() {
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="w-full max-w-md space-y-6">
           <div className="flex flex-col items-center gap-2 text-center">
-            <img src="/logosia-logo.png" alt="Logos IA" className="h-14 w-14 rounded-xl object-contain" />
+            <img src="/logosia-brand.png" alt="Logos IA" className="h-14 w-14 rounded-xl object-contain" />
             <h1 className="text-2xl font-bold text-foreground">Recuperar Senha</h1>
             <p className="text-sm text-muted-foreground">Enviaremos um link para redefinir sua senha</p>
           </div>
@@ -252,7 +252,7 @@ export default function Auth() {
       <div className="w-full max-w-md space-y-6">
         {/* Logo */}
         <div className="flex flex-col items-center gap-2 text-center">
-          <img src="/logosia-logo.png" alt="Logos IA" className="h-14 w-14 rounded-xl object-contain" />
+          <img src="/logosia-brand.png" alt="Logos IA" className="h-14 w-14 rounded-xl object-contain" />
           <h1 className="text-2xl font-bold text-foreground">Logos IA</h1>
           <p className="text-sm text-muted-foreground">Plataforma inteligente de marketing e IA</p>
         </div>

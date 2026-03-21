@@ -14,7 +14,7 @@ export default function LandingPage() {
       {/* Header */}
       <header className="border-b border-border/40 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <img src="/logosia-logo.png" alt="Logos IA" className="h-10 w-10 rounded-xl object-contain" />
+          <img src="/logosia-brand.png" alt="Logos IA" className="h-10 w-10 rounded-xl object-contain" />
           <span className="text-xl font-bold">Logos IA</span>
         </div>
 
