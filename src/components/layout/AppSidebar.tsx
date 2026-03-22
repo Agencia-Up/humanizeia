@@ -243,13 +243,13 @@ export function AppSidebar() {
         {collapsed ? (
           <div className="flex justify-center">
             <button onClick={toggleSidebar} className="flex h-10 w-full shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
-              <img src="/logosia-brand.png" alt="Logos IA" className="h-8 w-auto object-contain mix-blend-multiply dark:mix-blend-normal dark:bg-white dark:p-1 dark:rounded-md" />
+              <img src="/logosia-brand.png" alt="Logos IA" className="h-10 w-auto object-contain mix-blend-multiply dark:mix-blend-normal dark:bg-white dark:p-1 dark:rounded-lg" />
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src="/logosia-brand.png" alt="Logos IA" className="h-10 w-auto shrink-0 object-contain mix-blend-multiply dark:mix-blend-normal dark:bg-white dark:p-1.5 dark:rounded-lg" />
+              <img src="/logosia-brand.png" alt="Logos IA" className="h-14 w-auto max-w-[180px] shrink-0 object-contain mix-blend-multiply dark:mix-blend-normal dark:bg-white dark:p-1.5 dark:rounded-xl" />
             </div>
             <button onClick={toggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors">
               <X className="h-4 w-4 text-muted-foreground" />
