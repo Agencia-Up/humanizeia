@@ -19,7 +19,7 @@ import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 import { toast } from 'sonner';
 import { CreativeUploadPanel } from '@/components/creative-library/CreativeUploadPanel';
 
-export default function CreativeLibrary() {
+export default function CreativeLibrary({ embedded = false }: { embedded?: boolean }) {
   const [activeTab, setActiveTab] = useState('my-creatives');
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [search, setSearch] = useState('');
@@ -141,15 +141,17 @@ export default function CreativeLibrary() {
     toast.success('Copiado para a área de transferência!');
   };
 
-  return (
-    <MainLayout>
+  const content = (
+    <>
       <div className="space-y-6">
+        {!embedded && (
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold lg:text-3xl">Biblioteca de Criativos</h1>
             <p className="text-muted-foreground">Gerencie seus criativos e materiais de marketing</p>
           </div>
         </div>
+        )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid w-full grid-cols-2 max-w-md">
@@ -404,6 +406,9 @@ export default function CreativeLibrary() {
           )}
         </DialogContent>
       </Dialog>
-    </MainLayout>
+    </>
   );
+
+  if (embedded) return content;
+  return <MainLayout>{content}</MainLayout>;
 }

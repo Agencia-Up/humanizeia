@@ -83,6 +83,31 @@ Deno.serve(async (req) => {
       return await handleSaveCronConfig(admin, user.id, body, corsHeaders);
     }
 
+    // ── Get lead stats for dashboard ──
+    if (bodyAction === "get_lead_stats") {
+      return await handleGetLeadStats(admin, user.id, targetAccountId, corsHeaders);
+    }
+
+    // ── Get geographic performance ──
+    if (bodyAction === "get_geo_performance") {
+      return await handleGeoPerformance(admin, user.id, targetAccountId, datePreset, corsHeaders);
+    }
+
+    // ── Get ROI/profit report ──
+    if (bodyAction === "get_roi_report") {
+      return await handleROIReport(admin, user.id, targetAccountId, datePreset, corsHeaders);
+    }
+
+    // ── Get PME config ──
+    if (bodyAction === "get_pme_config") {
+      return await handleGetPMEConfig(admin, user.id, corsHeaders);
+    }
+
+    // ── Save PME config ──
+    if (bodyAction === "save_pme_config") {
+      return await handleSavePMEConfig(admin, user.id, body, corsHeaders);
+    }
+
     // ── Debug / connection test ──
     if (bodyAction === "debug") {
       // SELECT inclui access_token_encrypted para poder fazer o ping
@@ -803,6 +828,10 @@ CAPACIDADES NÍVEL 6:
 ✅ Pacing de orçamento em tempo real
 ✅ Detecção de subcapitalização de vencedores
 ✅ Calibração de confiança por aprendizado acumulado
+✅ Módulo PME: Gestão de leads e funil de vendas
+✅ Módulo PME: Análise geográfica regional
+✅ Módulo PME: ROI real com dados de vendas
+✅ Módulo PME: Detecção de leads parados
 
 BENCHMARKS (moeda: ${currency}):
 - CTR: fraco < 0.8%, bom > 1.5%, excelente > 3%
@@ -1756,6 +1785,26 @@ async function sendDailyReport(
     lines.push(``);
   }
 
+  // PME Lead stats
+  try {
+    const now = new Date();
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const { data: monthLeads } = await admin.from("leads").select("status, sale_value").eq("user_id", userId).gte("created_at", firstOfMonth);
+
+    if (monthLeads && monthLeads.length > 0) {
+      const sales = monthLeads.filter((l: any) => l.status === 'venda_realizada');
+      const staleCount = monthLeads.filter((l: any) => ['novo', 'em_atendimento'].includes(l.status)).length;
+      const totalSales = sales.reduce((s: number, l: any) => s + (Number(l.sale_value) || 0), 0);
+
+      lines.push(`👥 *Leads do Mês:*`);
+      lines.push(`   Total: ${monthLeads.length} | Vendas: ${sales.length} | Faturamento: R$ ${totalSales.toFixed(2)}`);
+      if (staleCount > 0) {
+        lines.push(`   ⚠️ ${staleCount} leads aguardando atendimento`);
+      }
+      lines.push(``);
+    }
+  } catch { /* table may not exist yet */ }
+
   lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
   lines.push(`🤖 _Gerado por JOSÉ Governador — LogosIA_`);
 
@@ -1775,4 +1824,385 @@ async function sendDailyReport(
   } catch (err) {
     console.error("[apollo-agent] WhatsApp daily report error:", err);
   }
+}
+
+// ── PME Module: Lead Stats ────────────────────────────────────────────────────
+
+async function handleGetLeadStats(admin: any, userId: string, targetAccountId: string, corsHeaders: any) {
+  const now = new Date();
+  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+  // Get leads this month
+  const { data: leads, error } = await admin
+    .from("leads")
+    .select("*")
+    .eq("user_id", userId)
+    .gte("created_at", firstOfMonth);
+
+  if (error) {
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const allLeads = leads || [];
+  const totalLeads = allLeads.length;
+  const qualifiedLeads = allLeads.filter((l: any) => ['qualificado', 'proposta', 'venda_realizada'].includes(l.status));
+  const salesLeads = allLeads.filter((l: any) => l.status === 'venda_realizada');
+  const totalSalesValue = salesLeads.reduce((s: number, l: any) => s + (Number(l.sale_value) || 0), 0);
+
+  // Get ad spend this month from Meta insights
+  let totalSpend = 0;
+  try {
+    let accountQuery = admin.from("ad_accounts").select("*")
+      .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+    if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
+    const { data: adAccount } = await accountQuery.limit(1).single();
+
+    if (adAccount?.access_token_encrypted) {
+      const insUrl = new URL(`https://graph.facebook.com/v21.0/act_${adAccount.account_id}/insights`);
+      insUrl.searchParams.set("access_token", adAccount.access_token_encrypted);
+      insUrl.searchParams.set("fields", "spend");
+      insUrl.searchParams.set("date_preset", "this_month");
+      const insRes = await fetch(insUrl.toString());
+      const insData = await insRes.json();
+      totalSpend = Number(insData.data?.[0]?.spend || 0);
+    }
+  } catch { /* ignore */ }
+
+  // Lead stats by status
+  const statusCounts: Record<string, number> = {};
+  const temperatureCounts: Record<string, number> = {};
+  const campaignCounts: Record<string, number> = {};
+
+  for (const lead of allLeads) {
+    statusCounts[lead.status] = (statusCounts[lead.status] || 0) + 1;
+    temperatureCounts[lead.temperature] = (temperatureCounts[lead.temperature] || 0) + 1;
+    if (lead.campaign_name) {
+      campaignCounts[lead.campaign_name] = (campaignCounts[lead.campaign_name] || 0) + 1;
+    }
+  }
+
+  // Stale leads (no interaction in 24h+)
+  const staleThreshold = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const staleLeads = allLeads.filter((l: any) =>
+    ['novo', 'em_atendimento'].includes(l.status) && l.last_interaction_at < staleThreshold
+  );
+
+  const conversionRate = totalLeads > 0 ? (salesLeads.length / totalLeads) * 100 : 0;
+  const cplq = qualifiedLeads.length > 0 && totalSpend > 0 ? totalSpend / qualifiedLeads.length : 0;
+  const cac = salesLeads.length > 0 && totalSpend > 0 ? totalSpend / salesLeads.length : 0;
+  const roi = totalSpend > 0 ? ((totalSalesValue - totalSpend) / totalSpend) * 100 : 0;
+
+  return new Response(JSON.stringify({
+    total_leads: totalLeads,
+    qualified_leads: qualifiedLeads.length,
+    sales_count: salesLeads.length,
+    total_sales_value: totalSalesValue,
+    total_spend: totalSpend,
+    conversion_rate: Number(conversionRate.toFixed(1)),
+    cplq: Number(cplq.toFixed(2)),
+    cac: Number(cac.toFixed(2)),
+    roi: Number(roi.toFixed(1)),
+    status_breakdown: statusCounts,
+    temperature_breakdown: temperatureCounts,
+    campaign_breakdown: campaignCounts,
+    stale_leads_count: staleLeads.length,
+    stale_leads: staleLeads.map((l: any) => ({ id: l.id, name: l.contact_name, phone: l.contact_phone, campaign: l.campaign_name, hours_stale: Math.round((now.getTime() - new Date(l.last_interaction_at).getTime()) / 3600000) })),
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// ── PME Module: Geographic Performance ────────────────────────────────────────
+
+async function handleGeoPerformance(admin: any, userId: string, targetAccountId: string, datePreset: string, corsHeaders: any) {
+  try {
+    let accountQuery = admin.from("ad_accounts").select("*")
+      .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+    if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
+    const { data: adAccount } = await accountQuery.limit(1).single();
+
+    if (!adAccount?.access_token_encrypted) {
+      return new Response(JSON.stringify({ error: "Conta não encontrada" }), { status: 404, headers: corsHeaders });
+    }
+
+    // Fetch regional breakdown from Meta API
+    const url = new URL(`https://graph.facebook.com/v21.0/act_${adAccount.account_id}/insights`);
+    url.searchParams.set("access_token", adAccount.access_token_encrypted);
+    url.searchParams.set("fields", "impressions,clicks,spend,ctr,cpc,actions,action_values");
+    url.searchParams.set("date_preset", datePreset);
+    url.searchParams.set("breakdowns", "region");
+    url.searchParams.set("limit", "50");
+
+    const res = await fetch(url.toString());
+    const data = await res.json();
+
+    if (data.error) {
+      return new Response(JSON.stringify({ error: data.error.message }), { status: 400, headers: corsHeaders });
+    }
+
+    const regions = (data.data || []).map((r: any) => {
+      const spend = Number(r.spend || 0);
+      const conversions = r.actions?.find((a: any) => a.action_type.includes("purchase") || a.action_type.includes("lead"))?.value || 0;
+      const revenue = r.action_values?.find((a: any) => a.action_type.includes("purchase"))?.value || 0;
+
+      return {
+        region: r.region || "Desconhecida",
+        impressions: Number(r.impressions || 0),
+        clicks: Number(r.clicks || 0),
+        spend,
+        ctr: Number(r.ctr || 0),
+        cpc: Number(r.cpc || 0),
+        conversions: Number(conversions),
+        revenue: Number(revenue),
+        roas: spend > 0 ? Number(revenue) / spend : 0,
+        cpa: Number(conversions) > 0 ? spend / Number(conversions) : 0,
+      };
+    }).sort((a: any, b: any) => b.spend - a.spend);
+
+    // Save snapshot
+    for (const region of regions.slice(0, 20)) {
+      try {
+        await admin.from("geo_performance").upsert({
+          user_id: userId,
+          account_id: adAccount.id,
+          region: region.region,
+          region_type: "state",
+          impressions: region.impressions,
+          clicks: region.clicks,
+          spend: region.spend,
+          conversions: region.conversions,
+          ctr: region.ctr,
+          cpc: region.cpc,
+          cpa: region.cpa,
+          roas: region.roas,
+          date_preset: datePreset,
+          snapshot_date: new Date().toISOString().split("T")[0],
+        }, { onConflict: "user_id,account_id,region,snapshot_date" });
+      } catch { /* ignore */ }
+    }
+
+    // Identify best/worst regions
+    const withSpend = regions.filter((r: any) => r.spend > 0);
+    const bestRegion = withSpend.length > 0 ? withSpend.reduce((a: any, b: any) => (a.roas > b.roas ? a : b)) : null;
+    const worstRegion = withSpend.length > 0 ? withSpend.reduce((a: any, b: any) => (a.roas < b.roas && a.spend > 10 ? a : b)) : null;
+
+    return new Response(JSON.stringify({
+      regions,
+      total_regions: regions.length,
+      best_region: bestRegion,
+      worst_region: worstRegion,
+      insights: generateGeoInsights(regions),
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err?.message }), { status: 500, headers: corsHeaders });
+  }
+}
+
+function generateGeoInsights(regions: any[]): string[] {
+  const insights: string[] = [];
+  const withSpend = regions.filter((r: any) => r.spend > 0);
+
+  if (withSpend.length === 0) return ["Sem dados geográficos suficientes para análise."];
+
+  const totalSpend = withSpend.reduce((s: number, r: any) => s + r.spend, 0);
+  const top3 = withSpend.slice(0, 3);
+  const top3Spend = top3.reduce((s: number, r: any) => s + r.spend, 0);
+  const top3Pct = totalSpend > 0 ? (top3Spend / totalSpend) * 100 : 0;
+
+  insights.push(`📍 Top 3 regiões concentram ${top3Pct.toFixed(0)}% do investimento: ${top3.map((r: any) => r.region).join(", ")}`);
+
+  const highCPC = withSpend.filter((r: any) => r.cpc > withSpend.reduce((s: number, x: any) => s + x.cpc, 0) / withSpend.length * 1.5);
+  if (highCPC.length > 0) {
+    insights.push(`⚠️ CPC acima da média em: ${highCPC.map((r: any) => r.region).slice(0, 3).join(", ")}`);
+  }
+
+  const lowCTR = withSpend.filter((r: any) => r.ctr < 0.5 && r.impressions > 1000);
+  if (lowCTR.length > 0) {
+    insights.push(`📉 CTR baixo em: ${lowCTR.map((r: any) => `${r.region} (${r.ctr.toFixed(2)}%)`).slice(0, 3).join(", ")}`);
+  }
+
+  return insights;
+}
+
+// ── PME Module: ROI Report ────────────────────────────────────────────────────
+
+async function handleROIReport(admin: any, userId: string, targetAccountId: string, datePreset: string, corsHeaders: any) {
+  const now = new Date();
+  let startDate: Date;
+
+  switch (datePreset) {
+    case "today": startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()); break;
+    case "yesterday": startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1); break;
+    case "last_7d": startDate = new Date(now.getTime() - 7 * 86400000); break;
+    case "last_14d": startDate = new Date(now.getTime() - 14 * 86400000); break;
+    case "last_30d": default: startDate = new Date(now.getTime() - 30 * 86400000); break;
+  }
+
+  // Get sales data
+  const { data: sales } = await admin
+    .from("sales_data")
+    .select("*")
+    .eq("user_id", userId)
+    .gte("sale_date", startDate.toISOString().split("T")[0]);
+
+  // Get leads with sales
+  const { data: leadSales } = await admin
+    .from("leads")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("status", "venda_realizada")
+    .gte("sale_date", startDate.toISOString());
+
+  // Get PME config for margin
+  const { data: pmeConfig } = await admin
+    .from("pme_config")
+    .select("profit_margin_percent, average_ticket")
+    .eq("user_id", userId)
+    .single();
+
+  const marginPct = pmeConfig?.profit_margin_percent || 30;
+  const avgTicket = pmeConfig?.average_ticket || 0;
+
+  // Get ad spend
+  let totalSpend = 0;
+  let campaignSpends: Record<string, number> = {};
+  try {
+    let accountQuery = admin.from("ad_accounts").select("*")
+      .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+    if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
+    const { data: adAccount } = await accountQuery.limit(1).single();
+
+    if (adAccount?.access_token_encrypted) {
+      const insUrl = new URL(`https://graph.facebook.com/v21.0/act_${adAccount.account_id}/insights`);
+      insUrl.searchParams.set("access_token", adAccount.access_token_encrypted);
+      insUrl.searchParams.set("fields", "campaign_id,campaign_name,spend");
+      insUrl.searchParams.set("date_preset", datePreset);
+      insUrl.searchParams.set("level", "campaign");
+      insUrl.searchParams.set("limit", "100");
+      const insRes = await fetch(insUrl.toString());
+      const insData = await insRes.json();
+      for (const row of (insData.data || [])) {
+        const s = Number(row.spend || 0);
+        totalSpend += s;
+        campaignSpends[row.campaign_id] = s;
+      }
+    }
+  } catch { /* ignore */ }
+
+  // Calculate metrics
+  const allSales = [...(sales || []), ...(leadSales || []).map((l: any) => ({ sale_value: l.sale_value, campaign_id_meta: l.campaign_id_meta, campaign_name: l.campaign_name }))];
+
+  // Deduplicate by lead_id if present
+  const uniqueSales = allSales;
+  const totalRevenue = uniqueSales.reduce((s: number, r: any) => s + (Number(r.sale_value) || 0), 0);
+  const totalProfit = totalRevenue * (marginPct / 100);
+  const netProfit = totalProfit - totalSpend;
+  const roi = totalSpend > 0 ? ((totalRevenue - totalSpend) / totalSpend) * 100 : 0;
+  const roiProfit = totalSpend > 0 ? ((netProfit) / totalSpend) * 100 : 0;
+  const roas = totalSpend > 0 ? totalRevenue / totalSpend : 0;
+  const cac = uniqueSales.length > 0 && totalSpend > 0 ? totalSpend / uniqueSales.length : 0;
+
+  // Per-campaign ROI
+  const campaignROI: any[] = [];
+  const campaignSalesMap: Record<string, { count: number; revenue: number }> = {};
+  for (const sale of uniqueSales) {
+    const cid = sale.campaign_id_meta || "unknown";
+    if (!campaignSalesMap[cid]) campaignSalesMap[cid] = { count: 0, revenue: 0 };
+    campaignSalesMap[cid].count++;
+    campaignSalesMap[cid].revenue += Number(sale.sale_value) || 0;
+  }
+
+  for (const [cid, data] of Object.entries(campaignSalesMap)) {
+    const spend = campaignSpends[cid] || 0;
+    campaignROI.push({
+      campaign_id: cid,
+      campaign_name: uniqueSales.find((s: any) => s.campaign_id_meta === cid)?.campaign_name || cid,
+      sales_count: data.count,
+      revenue: data.revenue,
+      spend,
+      profit: data.revenue * (marginPct / 100) - spend,
+      roas: spend > 0 ? data.revenue / spend : 0,
+      cac: data.count > 0 && spend > 0 ? spend / data.count : 0,
+    });
+  }
+
+  return new Response(JSON.stringify({
+    period: datePreset,
+    total_spend: totalSpend,
+    total_revenue: totalRevenue,
+    total_profit: totalProfit,
+    net_profit: netProfit,
+    roi: Number(roi.toFixed(1)),
+    roi_profit: Number(roiProfit.toFixed(1)),
+    roas: Number(roas.toFixed(2)),
+    cac: Number(cac.toFixed(2)),
+    total_sales: uniqueSales.length,
+    average_ticket: uniqueSales.length > 0 ? totalRevenue / uniqueSales.length : avgTicket,
+    margin_percent: marginPct,
+    campaign_roi: campaignROI.sort((a, b) => b.revenue - a.revenue),
+    summary: generateROISummary(totalSpend, totalRevenue, netProfit, roi, roas, uniqueSales.length, cac),
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+function generateROISummary(spend: number, revenue: number, netProfit: number, roi: number, roas: number, sales: number, cac: number): string {
+  const lines: string[] = [];
+
+  if (revenue === 0 && spend > 0) {
+    lines.push("⚠️ Nenhuma venda registrada no período. Cadastre suas vendas para ver o ROI real.");
+    lines.push("💡 Use a aba 'Leads' para classificar leads e registrar vendas.");
+    return lines.join("\n");
+  }
+
+  if (netProfit > 0) {
+    lines.push(`✅ Lucro líquido positivo: R$ ${netProfit.toFixed(2)} no período.`);
+  } else if (netProfit < 0) {
+    lines.push(`⚠️ Prejuízo no período: R$ ${Math.abs(netProfit).toFixed(2)}.`);
+  }
+
+  lines.push(`📊 ROAS real: ${roas.toFixed(1)}x (cada R$1 investido retornou R$ ${roas.toFixed(2)})`);
+
+  if (cac > 0) {
+    lines.push(`👤 Custo por cliente: R$ ${cac.toFixed(2)}`);
+  }
+
+  if (sales > 0) {
+    const avgTicket = revenue / sales;
+    lines.push(`🎯 Ticket médio: R$ ${avgTicket.toFixed(2)} | ${sales} vendas`);
+  }
+
+  return lines.join("\n");
+}
+
+// ── PME Module: Config ────────────────────────────────────────────────────────
+
+async function handleGetPMEConfig(admin: any, userId: string, corsHeaders: any) {
+  const { data } = await admin.from("pme_config").select("*").eq("user_id", userId).single();
+  return new Response(JSON.stringify(data || {}), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+async function handleSavePMEConfig(admin: any, userId: string, body: any, corsHeaders: any) {
+  const {
+    business_type, monthly_revenue_range, service_radius_km,
+    target_cities, target_states, average_ticket, profit_margin_percent,
+    lead_response_time_target_minutes, gmb_place_id, sales_scripts,
+    lead_stale_hours,
+  } = body;
+
+  try {
+    await admin.from("pme_config").upsert({
+      user_id: userId,
+      business_type,
+      monthly_revenue_range,
+      service_radius_km: service_radius_km ?? 30,
+      target_cities: target_cities || [],
+      target_states: target_states || [],
+      average_ticket,
+      profit_margin_percent: profit_margin_percent ?? 30,
+      lead_response_time_target_minutes: lead_response_time_target_minutes ?? 15,
+      gmb_place_id,
+      sales_scripts: sales_scripts || [],
+      lead_stale_hours: lead_stale_hours ?? 24,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+  } catch { /* ignore */ }
+
+  return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }

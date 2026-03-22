@@ -206,7 +206,7 @@ export function useCreativeIntelligence() {
     }
   }, [user?.id, toast]);
 
-  // ── Request creative variation from MIRIAM ──
+  // ── Request creative variation from MARIA ──
   const requestVariation = useCallback(async (creativeId: string, instructions?: string) => {
     if (!user?.id) return null;
     try {
@@ -218,7 +218,7 @@ export function useCreativeIntelligence() {
         },
       });
       if (error) throw error;
-      toast({ title: 'Variação solicitada', description: 'MIRIAM está gerando uma nova variação do criativo.' });
+      toast({ title: 'Variação solicitada', description: 'MARIA está gerando uma nova variação do criativo.' });
       return data;
     } catch (err: any) {
       toast({ title: 'Erro ao gerar variação', description: err.message, variant: 'destructive' });

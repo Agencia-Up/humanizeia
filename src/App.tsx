@@ -47,6 +47,7 @@ const SalomaoOrchestrator = lazy(() => import("./pages/SalomaoOrchestrator"));
 const FluxCRM = lazy(() => import("./pages/FluxCRM"));
 const CreativeIntelligence = lazy(() => import("./pages/CreativeIntelligence"));
 const CompetitorRadar = lazy(() => import("./pages/CompetitorRadar"));
+const LeadManagement = lazy(() => import('./pages/LeadManagement'));
 
 const queryClient = new QueryClient();
 
@@ -102,6 +103,7 @@ const App = () => (
             <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
             <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
             <Route path="/competitor-radar" element={<ProtectedRoute><CompetitorRadar /></ProtectedRoute>} />
+            <Route path="/leads" element={<ProtectedRoute><LeadManagement /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>

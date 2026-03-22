@@ -231,4 +231,17 @@
       transform: translateY(0);
     }
   }
+
+  /* Logo container for light-background logos on dark themes */
+  .logo-container {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 12px;
+    padding: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dark .logo-container {
+    background: rgba(255, 255, 255, 0.92);
+  }
 }

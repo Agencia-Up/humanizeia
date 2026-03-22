@@ -70,7 +70,7 @@ export default function CreativeIntelligence() {
               <Brain className="h-7 w-7 text-purple-400" />
               Inteligência Criativa
               <Badge variant="outline" className="text-xs border-purple-500/30 text-purple-400">
-                JOSÉ + MIRIAM
+                JOSÉ + MARIA
               </Badge>
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
@@ -91,7 +91,7 @@ export default function CreativeIntelligence() {
             <KPICard icon={<Crown className="h-4 w-4 text-yellow-400" />} label="Top Performers" value={stats.topPerformers} />
             <KPICard icon={<Flame className="h-4 w-4 text-red-400" />} label="Exaustos" value={stats.exhausted} />
             <KPICard icon={<FlaskConical className="h-4 w-4 text-purple-400" />} label="Testes A/B" value={stats.runningTests} sub="ativos" />
-            <KPICard icon={<Palette className="h-4 w-4 text-purple-400" />} label="Por MIRIAM" value={stats.byBezalel} />
+            <KPICard icon={<Palette className="h-4 w-4 text-purple-400" />} label="Por MARIA" value={stats.byBezalel} />
           </div>
         )}
 
@@ -127,7 +127,7 @@ export default function CreativeIntelligence() {
                   <SelectItem value="all">Todos</SelectItem>
                   <SelectItem value="top">Top Performers (75+)</SelectItem>
                   <SelectItem value="exhausted">Exaustos (fadiga 70+)</SelectItem>
-                  <SelectItem value="miriam">Criados por MIRIAM</SelectItem>
+                  <SelectItem value="miriam">Criados por MARIA</SelectItem>
                   <SelectItem value="unused">Nunca Usados</SelectItem>
                 </SelectContent>
               </Select>
@@ -143,7 +143,7 @@ export default function CreativeIntelligence() {
                 <CardContent className="py-12 text-center">
                   <Image className="h-12 w-12 mx-auto text-muted-foreground/30 mb-3" />
                   <p className="text-sm text-muted-foreground">Nenhum criativo encontrado</p>
-                  <p className="text-xs text-muted-foreground mt-1">Envie criativos na Biblioteca ou gere com MIRIAM</p>
+                  <p className="text-xs text-muted-foreground mt-1">Envie criativos na Biblioteca ou gere com MARIA</p>
                 </CardContent>
               </Card>
             ) : (
@@ -252,7 +252,7 @@ function CreativeCard({ creative: c }: { creative: CreativeWithScore }) {
         {c.created_by === 'miriam' && (
           <div className="absolute bottom-2 left-2">
             <Badge className="text-[10px] h-5 bg-purple-500/80 border-purple-400/30">
-              <Palette className="h-3 w-3 mr-1" /> MIRIAM
+              <Palette className="h-3 w-3 mr-1" /> MARIA
             </Badge>
           </div>
         )}
@@ -382,13 +382,13 @@ function LogEntry({ entry }: { entry: any }) {
 
 function AutoFlowDiagram() {
   const steps = [
-    { icon: <Palette className="h-5 w-5 text-purple-400" />, agent: 'MIRIAM', title: 'Gera Criativos', desc: 'IA gera imagens, videos e copies. Usuario também pode enviar.' },
+    { icon: <Palette className="h-5 w-5 text-purple-400" />, agent: 'MARIA', title: 'Gera Criativos', desc: 'IA gera imagens, videos e copies. Usuario também pode enviar.' },
     { icon: <Layers className="h-5 w-5 text-blue-400" />, agent: 'BIBLIOTECA', title: 'Armazena na Biblioteca', desc: 'Criativos são classificados por nicho, tipo e objetivo.' },
     { icon: <Brain className="h-5 w-5 text-emerald-400" />, agent: 'JOSE', title: 'Seleção Inteligente', desc: 'JOSE seleciona os melhores com base em performance historica.' },
     { icon: <Target className="h-5 w-5 text-amber-400" />, agent: 'META ADS', title: 'Sobe Campanhas', desc: 'Criativos são inseridos nos anuncios via Meta Ads API.' },
     { icon: <BarChart3 className="h-5 w-5 text-cyan-400" />, agent: 'JOSE', title: 'Monitora Metricas', desc: 'CTR, CPA, ROAS, frequencia monitorados em tempo real.' },
     { icon: <FlaskConical className="h-5 w-5 text-purple-400" />, agent: 'JOSE', title: 'Testa Variações', desc: 'A/B testing continuo para encontrar os melhores criativos.' },
-    { icon: <RefreshCw className="h-5 w-5 text-orange-400" />, agent: 'JOSE + MIRIAM', title: 'Substitui e Otimiza', desc: 'Criativos exaustos são substituidos, vencedores são escalados.' },
+    { icon: <RefreshCw className="h-5 w-5 text-orange-400" />, agent: 'JOSE + MARIA', title: 'Substitui e Otimiza', desc: 'Criativos exaustos são substituidos, vencedores são escalados.' },
   ];
 
   return (
@@ -431,7 +431,7 @@ function AutoFlowDiagram() {
             Gestor de tráfego autônomo com inteligência criativa integrada
           </p>
           <p className="text-xs text-muted-foreground text-center mt-1">
-            JOSÉ + MIRIAM trabalham juntos 24/7 sem intervenção manual
+            JOSÉ + MARIA trabalham juntos 24/7 sem intervenção manual
           </p>
         </div>
       </CardContent>

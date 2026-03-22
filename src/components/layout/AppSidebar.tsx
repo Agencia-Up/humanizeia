@@ -26,6 +26,7 @@ import {
   Radar,
   Kanban,
   Target,
+  Users,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -57,10 +58,11 @@ const dashboardItems = [
 const agentItems = [
   { title: 'SALOMÃO — Orquestrador', url: '/salomao', icon: Sparkles },
   { title: 'JOSÉ — Tráfego Pago', url: '/apollo', icon: Radar },
+  { title: 'MARCOS — Leads', url: '/leads', icon: Users },
   { title: 'PAULO — Copywriter', url: '/copywriter', icon: PenTool },
-  { title: 'MIRIAM — Design', url: '/creative-studio', icon: Palette },
+  { title: 'MARIA — Design', url: '/creative-studio', icon: Palette },
   { title: 'DAVI — Social Media', url: '/davi', icon: Send },
-  { title: 'LUCAS — Funil', url: '/noe', icon: Layers },
+  { title: 'LUCAS — Funil', url: '/funil', icon: Layers },
   { title: 'JOÃO — Email', url: '/joao', icon: Megaphone },
   { title: 'PEDRO — Atendimento', url: '/whatsapp/ai-agent', icon: Bot },
   { title: 'DANIEL — Estratégia', url: '/daniel', icon: Brain },
@@ -75,7 +77,7 @@ const aiItems = [
 
 // 📊 Análises
 const analyticsItems = [
-  { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
+  { title: 'Biblioteca Criativa', url: '/creative-studio?tab=biblioteca', icon: FolderOpen },
 ];
 
 // 📋 CRM
@@ -245,13 +247,17 @@ export function AppSidebar() {
         {collapsed ? (
           <div className="flex justify-center">
             <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
-              <img src="/logosia-logo.png" alt="LogosIA" className="h-8 w-8 object-contain" />
+              <span className="logo-container">
+                <img src="/logosia-logo.png" alt="LogosIA" className="h-7 w-7 object-contain rounded-lg" />
+              </span>
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src="/logosia-logo.png" alt="LogosIA" className="h-10 w-10 shrink-0 rounded-xl object-contain" />
+              <span className="logo-container">
+                <img src="/logosia-logo.png" alt="LogosIA" className="h-10 w-10 shrink-0 rounded-lg object-contain" />
+              </span>
               <div className="flex flex-col">
                 <span className="text-lg font-bold gradient-text">LogosIA</span>
                 <span className="text-xs text-muted-foreground">Platform</span>

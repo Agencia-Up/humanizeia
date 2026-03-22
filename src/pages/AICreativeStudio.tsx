@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, lazy, Suspense, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,6 +34,8 @@ import {
   Upload,
   FolderPlus,
   ShieldCheck,
+  FolderOpen,
+  Loader2,
 } from 'lucide-react';
 import { SwipeFileTab } from '@/components/copywriter/SwipeFileTab';
 import { SavedImagesTab } from '@/components/creative-studio/SavedImagesTab';
@@ -43,6 +46,8 @@ import { CreativeScoreDisplay } from '@/components/creative-studio/CreativeScore
 import { generateCreativeScore, type CreativeInsight } from '@/utils/generateCreativeScore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { StudioHeader } from '@/components/layout/StudioHeader';
+
+const CreativeLibrary = lazy(() => import('./CreativeLibrary'));
 
 const quickTemplates = [
   {
@@ -153,13 +158,23 @@ const tabConfig = [
   { value: 'remove-bg', label: 'Remover Fundo', icon: Eraser },
   { value: 'resize', label: 'Redimensionar', icon: Maximize2 },
   { value: 'images', label: 'Imagens', icon: ImageIcon },
+  { value: 'biblioteca', label: 'Biblioteca', icon: FolderOpen },
 ];
 
 export default function AICreativeStudio() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = usePersistedState('cs-active-tab', 'generate');
   const [removeBgImage, setRemoveBgImage] = useState<{ url: string; name: string } | null>(null);
+
+  // Honor ?tab= query parameter from sidebar navigation
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam && tabConfig.some(t => t.value === tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [searchParams]);
 
   const [format, setFormat] = useState('feed-1x1');
   const [style, setStyle] = useState('photorealistic');
@@ -809,6 +824,17 @@ export default function AICreativeStudio() {
 
       <TabsContent value="images" className="mt-0">
         <SavedImagesTab />
+      </TabsContent>
+
+      <TabsContent value="biblioteca" className="mt-0">
+        <Suspense fallback={
+          <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            Carregando Biblioteca...
+          </div>
+        }>
+          <CreativeLibrary embedded />
+        </Suspense>
       </TabsContent>
 
     </>
