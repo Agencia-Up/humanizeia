@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Sparkles, BarChart3, Zap, Shield } from 'lucide-react';
+import { LogosIALogo, LogosIAIcon } from '@/components/brand/LogosIALogo';
 
 export default function LandingPage() {
   const { user, loading } = useAuth();
@@ -14,10 +15,8 @@ export default function LandingPage() {
       {/* Header */}
       <header className="border-b border-border/40 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="logo-container">
-            <img src="/logosia-logo.png" alt="LogosIA" className="h-10 w-10 rounded-lg object-contain" />
-          </span>
-          <span className="text-xl font-bold">LogosIA</span>
+          <LogosIAIcon size={38} />
+          <LogosIALogo size="sm" showText iconOnly={false} />
         </div>
 
         {/* Botões de ação no menu */}

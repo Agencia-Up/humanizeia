@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { Mail, Lock, User, Loader2, ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { LogosIALogo } from '@/components/brand/LogosIALogo';
 import { z } from 'zod';
 
 const emailSchema = z.string().email('Email inválido');
@@ -176,9 +177,7 @@ export default function Auth() {
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="w-full max-w-md space-y-6">
           <div className="flex flex-col items-center gap-2 text-center">
-            <span className="logo-container p-2">
-              <img src="/logosia-logo.png" alt="LogosIA" className="h-16 w-16 rounded-lg object-contain" />
-            </span>
+            <LogosIALogo size="lg" />
             <h1 className="text-2xl font-bold text-foreground">Recuperar Senha</h1>
             <p className="text-sm text-muted-foreground">Enviaremos um link para redefinir sua senha</p>
           </div>

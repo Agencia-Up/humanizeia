@@ -28,6 +28,7 @@ import {
   Target,
   Users,
 } from 'lucide-react';
+import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
 import { useAuth } from '@/hooks/useAuth';
@@ -246,21 +247,17 @@ export function AppSidebar() {
       <SidebarHeader className="border-b border-border/50 p-4">
         {collapsed ? (
           <div className="flex justify-center">
-            <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
-              <span className="logo-container">
-                <img src="/logosia-logo.png" alt="LogosIA" className="h-7 w-7 object-contain rounded-lg" />
-              </span>
+            <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent/50 transition-colors">
+              <LogosIAIcon size={30} />
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="logo-container">
-                <img src="/logosia-logo.png" alt="LogosIA" className="h-10 w-10 shrink-0 rounded-lg object-contain" />
-              </span>
+              <LogosIAIcon size={38} />
               <div className="flex flex-col">
-                <span className="text-lg font-bold gradient-text">LogosIA</span>
-                <span className="text-xs text-muted-foreground">Platform</span>
+                <LogosIALogo size="sm" showText iconOnly={false} className="" />
+                <span className="text-[10px] text-muted-foreground tracking-wider uppercase">Marketing & IA</span>
               </div>
             </div>
             <button onClick={toggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors">
