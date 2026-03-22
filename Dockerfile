@@ -1,17 +1,25 @@
-# Estágio 1: Build (Ambiente Node para compilar o código React/Vite)
+# Estágio 1: Build
 FROM node:20-alpine as build
 WORKDIR /app
 
 # Instala as dependências primeiro (otimização de cache do Docker)
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 # Copia o resto do código
 COPY . .
 
-# Variáveis falsas de build (Se não forem preenchidas no Easypanel, o build não quebra)
-ENV VITE_SUPABASE_URL=""
-ENV VITE_SUPABASE_ANON_KEY=""
+# Recebe as variáveis preenchidas no Easypanel (via --build-arg)
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ARG VITE_SUPABASE_PROJECT_ID
+ARG VITE_SUPABASE_PUBLISHABLE_KEY
+
+# Repassa para o ambiente para o Vite enxergar durante o build
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+ENV VITE_SUPABASE_PROJECT_ID=$VITE_SUPABASE_PROJECT_ID
+ENV VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY
 
 # Compila o site para a pasta dist/
 RUN npm run build
