@@ -45,6 +45,7 @@ const WhatsAppCAPI = lazy(() => import("./pages/WhatsAppCAPI"));
 const ApolloDashboard = lazy(() => import("./pages/ApolloDashboard"));
 const SalomaoOrchestrator = lazy(() => import("./pages/SalomaoOrchestrator"));
 const FluxCRM = lazy(() => import("./pages/FluxCRM"));
+const CRMContacts = lazy(() => import("./pages/CRMContacts"));
 const CreativeIntelligence = lazy(() => import("./pages/CreativeIntelligence"));
 
 const queryClient = new QueryClient();
@@ -99,6 +100,7 @@ const App = () => (
             <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
             <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
             <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
+            <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
             <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>

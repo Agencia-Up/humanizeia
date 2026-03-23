@@ -80,6 +80,7 @@ const analyticsItems = [
 // 📋 CRM
 const crmItems = [
   { title: 'Flux CRM', url: '/crm', icon: Kanban },
+  { title: 'Contatos', url: '/crm/contacts', icon: Contact },
 ];
 
 // 🔗 Integrações

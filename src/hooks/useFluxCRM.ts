@@ -64,11 +64,17 @@ export function useFluxCRM() {
 
       let stagesData = (stagesRes.data || []) as unknown as PipelineStage[];
 
-      // Seed default stages if none exist
+      // Seed default stages if none exist — use upsert to avoid duplicates on re-render race conditions
       if (stagesData.length === 0) {
         const toInsert = DEFAULT_STAGES.map((s) => ({ ...s, user_id: user.id, is_default: true }));
-        const { data } = await supabase.from('crm_pipeline_stages').insert(toInsert).select();
-        stagesData = (data || []) as unknown as PipelineStage[];
+        const { data } = await supabase
+          .from('crm_pipeline_stages')
+          .upsert(toInsert, { onConflict: 'user_id,name', ignoreDuplicates: true })
+          .select();
+        // Refetch cleanly after seeding
+        const { data: freshStages } = await supabase
+          .from('crm_pipeline_stages').select('*').eq('user_id', user.id).order('position');
+        stagesData = (freshStages || data || []) as unknown as PipelineStage[];
       }
 
       setStages(stagesData);
