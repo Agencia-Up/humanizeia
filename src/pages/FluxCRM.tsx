@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,17 @@ export default function FluxCRM() {
   const [selectedLead, setSelectedLead] = useState<CRMLead | null>(null);
   const [defaultStageId, setDefaultStageId] = useState<string>('');
 
+  // Deduplicate stages by name to prevent duplicate Kanban columns
+  const uniqueStages = useMemo(() => {
+    const seen = new Set<string>();
+    return stages.filter((s) => {
+      const key = s.name.toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [stages]);
+
   const handleDragEnd = (result: DropResult) => {
     const { draggableId, destination } = result;
     if (!destination) return;
@@ -24,7 +35,7 @@ export default function FluxCRM() {
 
   const openNewLead = (stageId?: string) => {
     setSelectedLead(null);
-    setDefaultStageId(stageId || stages[0]?.id || '');
+    setDefaultStageId(stageId || uniqueStages[0]?.id || '');
     setDialogOpen(true);
   };
 
@@ -131,7 +142,7 @@ export default function FluxCRM() {
           <div className="flex-1 overflow-x-auto px-4 pb-4">
             <DragDropContext onDragEnd={handleDragEnd}>
               <div className="flex gap-4 h-full min-h-0">
-                {stages.map((stage) => (
+                {uniqueStages.map((stage) => (
                   <KanbanColumn
                     key={stage.id}
                     stage={stage}
