@@ -27,9 +27,28 @@ export default function FluxCRM() {
     });
   }, [stages]);
 
+  // Map from stage name (lower) → canonical stage id (the one uniqueStages uses)
+  const canonicalStageId = useMemo(() => {
+    const map = new Map<string, string>();
+    uniqueStages.forEach((s) => map.set(s.name.toLowerCase().trim(), s.id));
+    return map;
+  }, [uniqueStages]);
+
+  // All stage IDs that share the same name as a given unique stage id
+  const allIdsForStage = useMemo(() => {
+    const map = new Map<string, string[]>(); // canonicalId → all matching IDs
+    uniqueStages.forEach((us) => {
+      const key = us.name.toLowerCase().trim();
+      const all = stages.filter((s) => s.name.toLowerCase().trim() === key).map((s) => s.id);
+      map.set(us.id, all);
+    });
+    return map;
+  }, [uniqueStages, stages]);
+
   const handleDragEnd = (result: DropResult) => {
     const { draggableId, destination } = result;
     if (!destination) return;
+    // destination.droppableId is the canonical stage id (from uniqueStages)
     moveLead(draggableId, destination.droppableId, destination.index);
   };
 
@@ -54,7 +73,11 @@ export default function FluxCRM() {
   };
 
   const filteredLeadsByStage = (stageId: string) => {
-    const stageLeads = getLeadsByStage(stageId);
+    // Get all DB stage IDs that map to this canonical stage column
+    const allIds = allIdsForStage.get(stageId) || [stageId];
+    const stageLeads = leads
+      .filter((l) => l.stage_id && allIds.includes(l.stage_id))
+      .sort((a, b) => a.position - b.position);
     if (!search) return stageLeads;
     const q = search.toLowerCase();
     return stageLeads.filter(
