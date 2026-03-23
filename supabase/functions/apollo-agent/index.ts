@@ -188,6 +188,16 @@ Deno.serve(async (req) => {
       return await handleGetAdsets(admin, user.id, targetAccountId, campaignId, datePreset, corsHeaders);
     }
 
+    // ── Smart asset selection (creatives + copies) ──
+    if (bodyAction === "smart_select_assets") {
+      return await handleSmartSelectAssets(admin, user.id, targetAccountId, campaignId, actionParams, corsHeaders);
+    }
+
+    // ── Register creative+copy performance ──
+    if (bodyAction === "register_asset_performance") {
+      return await handleRegisterAssetPerformance(admin, user.id, body, corsHeaders);
+    }
+
     // ────────────────────────────────────────────────────────────
     // MAIN ANALYSIS FLOW
     // ────────────────────────────────────────────────────────────
@@ -2205,4 +2215,214 @@ async function handleSavePMEConfig(admin: any, userId: string, body: any, corsHe
   } catch { /* ignore */ }
 
   return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// ── Smart Asset Selection (Phase 1: Agent Integration) ──────────────────────
+
+async function handleSmartSelectAssets(
+  admin: any, userId: string, targetAccountId: string,
+  campaignId: string, params: any, corsHeaders: any
+) {
+  const { objective, platform = 'meta', ad_type = 'feed', limit = 5 } = params || {};
+
+  // 1. Fetch top-performing creatives for this objective
+  let creativeQuery = admin
+    .from('creative_uploads')
+    .select('id, name, file_url, thumbnail_url, file_type, category, tags, style, performance_score, ai_score, avg_ctr, avg_roas, fatigue_score, best_objective, best_audience, times_used')
+    .eq('user_id', userId)
+    .lt('fatigue_score', 70) // Exclude fatigued creatives
+    .order('performance_score', { ascending: false })
+    .limit(limit * 2);
+
+  // Filter by objective if provided
+  if (objective) {
+    creativeQuery = creativeQuery.or(`best_objective.eq.${objective},best_objective.is.null`);
+  }
+
+  const { data: creatives } = await creativeQuery;
+
+  // 2. Fetch top-performing ad copies
+  let copyQuery = admin
+    .from('ad_copies')
+    .select('id, headline, description, primary_text, cta, tone, objective, ai_score, performance_score, avg_ctr, times_used, status')
+    .eq('user_id', userId)
+    .eq('status', 'available')
+    .eq('platform', platform)
+    .order('performance_score', { ascending: false })
+    .limit(limit * 2);
+
+  if (objective) {
+    copyQuery = copyQuery.or(`objective.eq.${objective},objective.is.null`);
+  }
+
+  const { data: copies } = await copyQuery;
+
+  // 3. Fetch historical best-performing pairs
+  const { data: bestPairs } = await admin
+    .from('creative_copy_pairs')
+    .select('creative_id, ad_copy_id, combined_score, ctr, roas')
+    .eq('user_id', userId)
+    .gt('combined_score', 60)
+    .order('combined_score', { ascending: false })
+    .limit(10);
+
+  // 4. Score and rank combinations
+  const recommendations: any[] = [];
+  const topCreatives = (creatives || []).slice(0, limit);
+  const topCopies = (copies || []).slice(0, limit);
+
+  for (const creative of topCreatives) {
+    // Find best copy for this creative
+    const pairedCopyId = bestPairs?.find((p: any) => p.creative_id === creative.id)?.ad_copy_id;
+    const bestCopy = pairedCopyId
+      ? topCopies.find((c: any) => c.id === pairedCopyId) || topCopies[0]
+      : topCopies[0];
+
+    if (!bestCopy) continue;
+
+    const combinedScore = Math.round(
+      (creative.performance_score || creative.ai_score || 50) * 0.5 +
+      (bestCopy.performance_score || bestCopy.ai_score || 50) * 0.3 +
+      (creative.fatigue_score ? (100 - creative.fatigue_score) * 0.2 : 20)
+    );
+
+    recommendations.push({
+      creative: {
+        id: creative.id,
+        name: creative.name,
+        file_url: creative.file_url,
+        thumbnail_url: creative.thumbnail_url,
+        performance_score: creative.performance_score,
+        fatigue_score: creative.fatigue_score,
+        best_audience: creative.best_audience,
+      },
+      copy: {
+        id: bestCopy.id,
+        headline: bestCopy.headline,
+        description: bestCopy.description,
+        primary_text: bestCopy.primary_text,
+        cta: bestCopy.cta,
+        performance_score: bestCopy.performance_score,
+      },
+      combined_score: combinedScore,
+      reason: `Criativo score ${creative.performance_score || creative.ai_score}/100 + Copy score ${bestCopy.performance_score || bestCopy.ai_score}/100. Fadiga: ${creative.fatigue_score || 0}%`,
+    });
+  }
+
+  // Sort by combined score
+  recommendations.sort((a: any, b: any) => b.combined_score - a.combined_score);
+
+  // Log selection
+  for (const rec of recommendations.slice(0, 3)) {
+    try {
+      await admin.from('creative_selection_log').insert({
+        user_id: userId,
+        creative_id: rec.creative.id,
+        action: 'selected',
+        reason: `Smart select for campaign ${campaignId || 'new'}: ${rec.reason}`,
+        score_at_selection: rec.creative.performance_score,
+        metadata: { ad_copy_id: rec.copy.id, combined_score: rec.combined_score },
+      });
+    } catch { /* ignore */ }
+  }
+
+  return new Response(JSON.stringify({
+    recommendations: recommendations.slice(0, limit),
+    total_creatives: creatives?.length || 0,
+    total_copies: copies?.length || 0,
+    best_pairs: bestPairs?.length || 0,
+  }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+
+// ── Register Asset Performance (Phase 1: Agent Integration) ─────────────────
+
+async function handleRegisterAssetPerformance(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { creative_id, ad_copy_id, campaign_id_meta, ad_id_meta, metrics } = body;
+
+  if (!creative_id && !ad_copy_id) {
+    return new Response(JSON.stringify({ error: 'creative_id or ad_copy_id required' }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const { impressions = 0, clicks = 0, conversions = 0, spend = 0, revenue = 0 } = metrics || {};
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const roas = spend > 0 ? revenue / spend : 0;
+
+  // Update creative_uploads performance
+  if (creative_id) {
+    try {
+      const { data: existing } = await admin.from('creative_uploads')
+        .select('total_impressions, total_clicks, total_spend, total_conversions, times_used')
+        .eq('id', creative_id).single();
+
+      if (existing) {
+        const newImpressions = (existing.total_impressions || 0) + impressions;
+        const newClicks = (existing.total_clicks || 0) + clicks;
+        const newSpend = (existing.total_spend || 0) + spend;
+        const newConversions = (existing.total_conversions || 0) + conversions;
+        const newCtr = newImpressions > 0 ? (newClicks / newImpressions) * 100 : 0;
+
+        await admin.from('creative_uploads').update({
+          total_impressions: newImpressions,
+          total_clicks: newClicks,
+          total_spend: newSpend,
+          total_conversions: newConversions,
+          avg_ctr: Number(newCtr.toFixed(3)),
+          times_used: (existing.times_used || 0) + 1,
+          last_used_at: new Date().toISOString(),
+        }).eq('id', creative_id);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Update ad_copies performance
+  if (ad_copy_id) {
+    try {
+      const { data: existing } = await admin.from('ad_copies')
+        .select('total_impressions, total_clicks, times_used')
+        .eq('id', ad_copy_id).single();
+
+      if (existing) {
+        const newImpressions = (existing.total_impressions || 0) + impressions;
+        const newClicks = (existing.total_clicks || 0) + clicks;
+        const newCtr = newImpressions > 0 ? (newClicks / newImpressions) * 100 : 0;
+
+        await admin.from('ad_copies').update({
+          total_impressions: newImpressions,
+          total_clicks: newClicks,
+          avg_ctr: Number(newCtr.toFixed(3)),
+          times_used: (existing.times_used || 0) + 1,
+        }).eq('id', ad_copy_id);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Update or create pair record
+  if (creative_id && ad_copy_id) {
+    try {
+      const combinedScore = Math.round(
+        (ctr > 2 ? 30 : ctr > 1 ? 20 : 10) +
+        (roas > 3 ? 40 : roas > 1.5 ? 25 : 10) +
+        (conversions > 5 ? 30 : conversions > 0 ? 15 : 0)
+      );
+
+      await admin.from('creative_copy_pairs').upsert({
+        user_id: userId,
+        creative_id,
+        ad_copy_id,
+        campaign_id_meta,
+        ad_id_meta,
+        impressions,
+        clicks,
+        conversions,
+        ctr: Number(ctr.toFixed(3)),
+        roas: Number(roas.toFixed(3)),
+        combined_score: combinedScore,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'creative_id,ad_copy_id,campaign_id_meta' });
+    } catch { /* ignore */ }
+  }
+
+  return new Response(JSON.stringify({ success: true }),
+    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
