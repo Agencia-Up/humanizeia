@@ -67,7 +67,7 @@ function ContactRow({ lead, stage }: { lead: CRMLead; stage: PipelineStage | und
 
 // ─── Stage Group ────────────────────────────────────────────────────────────
 function StageGroup({ stage, leads }: { stage: PipelineStage; leads: CRMLead[] }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
 
   return (
     <div className="mb-6">
