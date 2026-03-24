@@ -48,7 +48,7 @@ interface ConnectedAccount {
   timezone: string | null;
 }
 
-const SELECTED_ACCOUNT_KEY = 'humanizeai_selected_meta_account_id';
+const SELECTED_ACCOUNT_KEY = 'logosia_selected_meta_account_id';
 
 export function useMetaConnection() {
   const { user } = useAuth();

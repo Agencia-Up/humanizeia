@@ -12,6 +12,7 @@ import { EfficiencyScatterChart } from '@/components/dashboard/EfficiencyScatter
 import { WeekdayHeatmap } from '@/components/dashboard/WeekdayHeatmap';
 import { AIInsightsCard } from '@/components/dashboard/AIInsightsCard';
 import { AnomalyAlertsWidget } from '@/components/dashboard/AnomalyAlertsWidget';
+import { AgentStatusWidget } from '@/components/dashboard/AgentStatusWidget';
 import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
 import { useMetaDashboard, MetaDatePreset } from '@/hooks/useMetaDashboard';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
@@ -64,7 +65,7 @@ export default function Dashboard() {
       const cpc = kpis.find(k => k.id === 'cpc')?.value || 0;
 
       const currencySymbol = connectedAccount?.currency === 'USD' ? 'US$' : 'R$';
-      const reportContent = `📊 *RELATÓRIO META ADS*\n\n💰 *MÉTRICAS*\n\nInvestimento: ${currencySymbol} ${spend.toLocaleString('pt-BR')}\nImpressões: ${impressions.toLocaleString('pt-BR')}\nCliques: ${clicks.toLocaleString('pt-BR')}\nCTR: ${ctr.toFixed(2)}%\nCPC: ${currencySymbol} ${cpc.toFixed(2)}\nAlcance: ${(performanceSummary?.totalReach || 0).toLocaleString('pt-BR')}\nCPM: ${currencySymbol} ${(performanceSummary?.avgCPM || 0).toFixed(2)}\n\n✅ Relatório gerado por Logos IA`;
+      const reportContent = `📊 *RELATÓRIO META ADS*\n\n💰 *MÉTRICAS*\n\nInvestimento: ${currencySymbol} ${spend.toLocaleString('pt-BR')}\nImpressões: ${impressions.toLocaleString('pt-BR')}\nCliques: ${clicks.toLocaleString('pt-BR')}\nCTR: ${ctr.toFixed(2)}%\nCPC: ${currencySymbol} ${cpc.toFixed(2)}\nAlcance: ${(performanceSummary?.totalReach || 0).toLocaleString('pt-BR')}\nCPM: ${currencySymbol} ${(performanceSummary?.avgCPM || 0).toFixed(2)}\n\n✅ Relatório gerado por LogosIA`;
 
       const { data, error } = await supabase.functions.invoke('send-whatsapp-report', {
         body: { action: 'send_report', reportContent },
@@ -229,7 +230,7 @@ export default function Dashboard() {
         </motion.div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8">
+        <div data-tour="kpi-cards" className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4">
           {isLoading ? (
             Array.from({ length: 8 }).map((_, i) => (
               <Skeleton key={i} className="h-[100px] rounded-lg" />
@@ -256,10 +257,11 @@ export default function Dashboard() {
           <EfficiencyScatterChart data={campaignData} isLoading={isCampaignLoading} />
         </div>
 
-        {/* 2-column grid: Weekday Heatmap + AI Insights */}
-        <div className="grid gap-6 lg:grid-cols-2">
+        {/* 3-column grid: Weekday Heatmap + AI Insights + Agent Status */}
+        <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
           <WeekdayHeatmap data={trendData} isLoading={isTrendLoading} />
           <AIInsightsCard insights={defaultInsights} />
+          <AgentStatusWidget />
         </div>
 
         {/* Campaign Table */}

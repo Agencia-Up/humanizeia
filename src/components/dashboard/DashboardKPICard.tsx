@@ -1,7 +1,9 @@
+import { useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { motion } from 'framer-motion';
 import { DashboardKPI } from '@/hooks/useMetaDashboard';
+import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { DollarSign, Eye, MousePointerClick, Percent, CreditCard, BarChart3, Users, Repeat, TrendingUp, TrendingDown, Minus, HelpCircle } from 'lucide-react';
 
 const iconMap: Record<string, React.ElementType> = {
@@ -40,12 +42,28 @@ const friendlyLabelMap: Record<string, string> = {
 // For CPC, CPM, Frequency — lower is better (down = green)
 const lowerIsBetter = new Set(['cpc', 'cpm', 'cpa']);
 
+function generateSparklineData(value: number, change: number, points = 7): { v: number }[] {
+  const data: { v: number }[] = [];
+  const startValue = value / (1 + change / 100);
+  const step = (value - startValue) / (points - 1);
+
+  for (let i = 0; i < points; i++) {
+    const base = startValue + step * i;
+    const jitter = base * (Math.random() * 0.15 - 0.075);
+    data.push({ v: Math.max(0, base + jitter) });
+  }
+  // Ensure last point matches current value
+  data[data.length - 1] = { v: value };
+  return data;
+}
+
 interface DashboardKPICardProps {
   kpi: DashboardKPI;
   index: number;
+  sparklineData?: number[];
 }
 
-export function DashboardKPICard({ kpi, index }: DashboardKPICardProps) {
+export function DashboardKPICard({ kpi, index, sparklineData }: DashboardKPICardProps) {
   const Icon = iconMap[kpi.id] || DollarSign;
   const change = kpi.change;
   const isPositive = change > 0;
@@ -64,6 +82,24 @@ export function DashboardKPICard({ kpi, index }: DashboardKPICardProps) {
   const friendlyLabel = friendlyLabelMap[kpi.id] || kpi.label;
   const tooltipText = tooltipMap[kpi.id];
 
+  // Determine sparkline color: green if trend is good, red if bad, muted if neutral
+  const isGoodTrend = isInverse ? isNegative : isPositive;
+  const isBadTrend = isInverse ? isPositive : isNegative;
+  const sparklineColor = isGoodTrend
+    ? 'hsl(var(--success))'
+    : isBadTrend
+      ? 'hsl(var(--destructive))'
+      : 'hsl(var(--muted-foreground))';
+
+  const gradientId = `sparkline-gradient-${kpi.id}`;
+
+  const chartData = useMemo(() => {
+    if (sparklineData && sparklineData.length > 0) {
+      return sparklineData.map((v) => ({ v }));
+    }
+    return generateSparklineData(kpi.value, kpi.change);
+  }, [sparklineData, kpi.value, kpi.change]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -73,7 +109,7 @@ export function DashboardKPICard({ kpi, index }: DashboardKPICardProps) {
       <Tooltip>
         <TooltipTrigger asChild>
           <Card className="group overflow-hidden border transition-all hover:shadow-lg hover:shadow-primary/5 border-border/50 bg-card/50 backdrop-blur-sm hover:border-primary/30 cursor-default">
-            <CardContent className="p-4">
+            <CardContent className="p-4 pb-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 space-y-1.5">
                   <div className="flex items-center gap-2">
@@ -90,6 +126,29 @@ export function DashboardKPICard({ kpi, index }: DashboardKPICardProps) {
                     <span>{isPositive ? '+' : ''}{change}%</span>
                   </div>
                 )}
+              </div>
+              {/* Sparkline */}
+              <div className="mt-2 -mx-1">
+                <ResponsiveContainer width="100%" height={30}>
+                  <AreaChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={sparklineColor} stopOpacity={0.3} />
+                        <stop offset="100%" stopColor={sparklineColor} stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <Area
+                      type="monotone"
+                      dataKey="v"
+                      stroke={sparklineColor}
+                      strokeWidth={1.5}
+                      fill={`url(#${gradientId})`}
+                      dot={false}
+                      isAnimationActive={true}
+                      animationDuration={800}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
             </CardContent>
           </Card>

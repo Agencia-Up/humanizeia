@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, Radar, PenTool, Palette, Send,
-  Layers, Megaphone, Bot, Brain, Lock, CheckCircle,
+  Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
 } from 'lucide-react';
 
 const AGENTS = [
@@ -27,7 +27,7 @@ const AGENTS = [
     url: '/copywriter',
   },
   {
-    id: 'bezalel', name: 'BEZALEL', role: 'Designer', icon: Palette,
+    id: 'maria', name: 'MARIA', role: 'Designer', icon: Palette,
     description: 'Cria imagens, banners e criativos com IA. Remove fundo, redimensiona e gera variações.',
     status: 'active', color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20',
     url: '/creative-studio',
@@ -45,7 +45,7 @@ const AGENTS = [
     url: null,
   },
   {
-    id: 'noe', name: 'NOÉ', role: 'Gestor de Funil', icon: Layers,
+    id: 'lucas', name: 'LUCAS', role: 'Gestor de Funil', icon: Layers,
     description: 'Mapeia e otimiza toda a jornada do cliente: anúncio → landing page → checkout → retenção.',
     status: 'coming', color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20',
     url: null,
@@ -55,6 +55,13 @@ const AGENTS = [
     description: 'Cria sequências de nutrição, segmenta listas e envia campanhas no timing certo.',
     status: 'coming', color: 'text-indigo-400', bg: 'bg-indigo-500/10 border-indigo-500/20',
     url: null,
+  },
+  {
+    id: 'marcos', name: 'MARCOS', role: 'Gestor de Leads',
+    description: 'Gerencia leads, funil de vendas e conversões. Mini-CRM integrado com WhatsApp.',
+    status: 'active', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-500/20',
+    url: '/leads',
+    icon: Users,
   },
   {
     id: 'pedro', name: 'PEDRO', role: 'SDR & Atendimento', icon: Bot,
@@ -80,7 +87,7 @@ export default function SalomaoOrchestrator() {
           </div>
           <p className="text-muted-foreground text-lg">A Agência de Marketing Digital do Futuro</p>
           <p className="text-sm text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-            9 agentes especializados de IA trabalhando em equipe. Cada um é um especialista completo na sua área —
+            10 agentes especializados de IA trabalhando em equipe. Cada um é um especialista completo na sua área —
             juntos formam a primeira agência 100% autônoma do Brasil.
           </p>
           <div className="flex items-center justify-center gap-4 pt-2">
@@ -169,7 +176,7 @@ export default function SalomaoOrchestrator() {
                   <p className="text-[10px]">Copywriter</p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-purple-400">├── BEZALEL</p>
+                  <p className="text-purple-400">├── MARIA</p>
                   <p className="text-[10px]">Design</p>
                 </div>
                 <div className="space-y-1">
@@ -181,12 +188,16 @@ export default function SalomaoOrchestrator() {
                   <p className="text-[10px]">Social Media</p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-orange-400">├── NOÉ</p>
+                  <p className="text-orange-400">├── LUCAS</p>
                   <p className="text-[10px]">Funil</p>
                 </div>
                 <div className="space-y-1">
                   <p className="text-indigo-400">├── JOÃO</p>
                   <p className="text-[10px]">Email</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-teal-400">├── MARCOS</p>
+                  <p className="text-[10px]">Leads</p>
                 </div>
                 <div className="space-y-1">
                   <p className="text-teal-400">└── PEDRO</p>

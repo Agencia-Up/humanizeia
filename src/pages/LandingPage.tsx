@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Sparkles, BarChart3, Zap, Shield } from 'lucide-react';
+import { LogosIALogo, LogosIAIcon } from '@/components/brand/LogosIALogo';
 
 export default function LandingPage() {
   const { user, loading } = useAuth();
@@ -14,7 +15,8 @@ export default function LandingPage() {
       {/* Header */}
       <header className="border-b border-border/40 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <img src="/logosia-brand.png" alt="Logos IA" className="h-14 w-auto max-w-[200px] object-contain mix-blend-multiply dark:mix-blend-normal dark:bg-white dark:p-1.5 dark:rounded-xl" />
+          <LogosIAIcon size={38} />
+          <LogosIALogo size="sm" showText iconOnly={false} />
         </div>
 
         {/* Botões de ação no menu */}
@@ -70,7 +72,7 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="border-t border-border/40 px-6 py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-3 flex-wrap">
-        <span>© {new Date().getFullYear()} Logos IA. Todos os direitos reservados.</span>
+        <span>© {new Date().getFullYear()} LogosIA. Todos os direitos reservados.</span>
         <span className="text-border">•</span>
         <a href="/privacy-policy.html" className="hover:text-primary transition-colors">Política de Privacidade</a>
         <span className="text-border">•</span>

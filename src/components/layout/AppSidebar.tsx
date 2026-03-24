@@ -26,7 +26,13 @@ import {
   Radar,
   Kanban,
   Target,
+  Users,
+  Linkedin,
+  Search,
+  Instagram,
+  Calendar,
 } from 'lucide-react';
+import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
 import { useAuth } from '@/hooks/useAuth';
@@ -57,10 +63,11 @@ const dashboardItems = [
 const agentItems = [
   { title: 'SALOMÃO — Orquestrador', url: '/salomao', icon: Sparkles },
   { title: 'JOSÉ — Tráfego Pago', url: '/apollo', icon: Radar },
+  { title: 'MARCOS — Leads', url: '/leads', icon: Users },
   { title: 'PAULO — Copywriter', url: '/copywriter', icon: PenTool },
-  { title: 'BEZALEL — Design', url: '/creative-studio', icon: Palette },
+  { title: 'MARIA — Design', url: '/creative-studio', icon: Palette },
   { title: 'DAVI — Social Media', url: '/davi', icon: Send },
-  { title: 'NOÉ — Funil', url: '/noe', icon: Layers },
+  { title: 'LUCAS — Funil', url: '/funil', icon: Layers },
   { title: 'JOÃO — Email', url: '/joao', icon: Megaphone },
   { title: 'PEDRO — Atendimento', url: '/whatsapp/ai-agent', icon: Bot },
   { title: 'DANIEL — Estratégia', url: '/daniel', icon: Brain },
@@ -70,17 +77,30 @@ const agentItems = [
 const aiItems = [
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
   { title: 'Inteligência Criativa', url: '/creative-intelligence', icon: Target },
+  { title: 'Radar de Concorrentes', url: '/competitor-radar', icon: Radar },
 ];
 
 // 📊 Análises
 const analyticsItems = [
-  { title: 'Biblioteca Criativa', url: '/library', icon: FolderOpen },
+  { title: 'Biblioteca Criativa', url: '/creative-studio?tab=biblioteca', icon: FolderOpen },
 ];
 
 // 📋 CRM
 const crmItems = [
   { title: 'Flux CRM', url: '/crm', icon: Kanban },
   { title: 'Contatos', url: '/crm/contacts', icon: Contact },
+];
+
+// 📈 Plataformas de Ads
+const platformItems = [
+  { title: 'Google Ads', url: '/google-ads', icon: Search },
+  { title: 'LinkedIn Ads', url: '/linkedin-ads', icon: Linkedin },
+];
+
+// 📱 Social Media
+const socialItems = [
+  { title: 'DAVI — Carrosséis', url: '/davi', icon: Instagram },
+  { title: 'Calendário de Posts', url: '/davi?tab=calendario', icon: Calendar },
 ];
 
 // 🔗 Integrações
@@ -111,17 +131,18 @@ const systemItems = [
 ];
 
 type NavItem = { title: string; url: string; icon: React.ComponentType<{ className?: string }>; badge?: number };
+type NavGroupConfig = { label: string; items: NavItem[]; triggerIcon: React.ComponentType<{ className?: string }>; dataTour?: string };
 
-function NavGroup({ 
-  label, items, collapsed, isOpen, onToggle, triggerIcon: TriggerIcon 
-}: { 
-  label: string; items: NavItem[]; collapsed?: boolean; isOpen?: boolean; onToggle?: () => void; triggerIcon: React.ComponentType<{ className?: string }>;
+function NavGroup({
+  label, items, collapsed, isOpen, onToggle, triggerIcon: TriggerIcon, dataTour
+}: {
+  label: string; items: NavItem[]; collapsed?: boolean; isOpen?: boolean; onToggle?: () => void; triggerIcon: React.ComponentType<{ className?: string }>; dataTour?: string;
 }) {
   const groupBadge = items.reduce((sum, item) => sum + (item.badge || 0), 0);
 
   if (collapsed) {
     return (
-      <Collapsible open={isOpen} onOpenChange={onToggle}>
+      <Collapsible open={isOpen} onOpenChange={onToggle} {...(dataTour ? { 'data-tour': dataTour } : {})}>
         <div className={`rounded-md transition-colors duration-200 ${isOpen ? 'bg-muted/40' : ''}`}>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -164,7 +185,7 @@ function NavGroup({
   }
 
   return (
-    <Collapsible open={isOpen} onOpenChange={onToggle}>
+    <Collapsible open={isOpen} onOpenChange={onToggle} {...(dataTour ? { 'data-tour': dataTour } : {})}>
       <SidebarGroup>
         <CollapsibleTrigger asChild>
           <SidebarGroupLabel className="text-xs uppercase tracking-wider text-muted-foreground/70 cursor-pointer hover:text-muted-foreground transition-colors">
@@ -226,12 +247,14 @@ export function AppSidebar() {
     badge: item.url === '/' ? unreadCount : 0,
   }));
 
-  const groups = [
+  const groups: NavGroupConfig[] = [
     { label: '🏠 Dashboard', items: dashboardWithBadges, triggerIcon: Home },
-    { label: '👑 Agentes IA', items: agentItems, triggerIcon: Sparkles },
+    { label: '👑 Agentes IA', items: agentItems, triggerIcon: Sparkles, dataTour: 'sidebar-agents' },
     { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
     { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
+    { label: '📈 Plataformas', items: platformItems, triggerIcon: BarChart3 },
+    { label: '📱 Social Media', items: socialItems, triggerIcon: Instagram },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
     { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
@@ -243,14 +266,18 @@ export function AppSidebar() {
       <SidebarHeader className="border-b border-border/50 p-4">
         {collapsed ? (
           <div className="flex justify-center">
-            <button onClick={toggleSidebar} className="flex h-10 w-full shrink-0 items-center justify-center rounded-xl hover:bg-accent transition-colors">
-              <img src="/logosia-brand.png" alt="Logos IA" className="h-10 w-auto object-contain mix-blend-multiply dark:mix-blend-normal dark:bg-white dark:p-1 dark:rounded-lg" />
+            <button onClick={toggleSidebar} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent/50 transition-colors">
+              <LogosIAIcon size={30} />
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src="/logosia-brand.png" alt="Logos IA" className="h-14 w-auto max-w-[180px] shrink-0 object-contain mix-blend-multiply dark:mix-blend-normal dark:bg-white dark:p-1.5 dark:rounded-xl" />
+              <LogosIAIcon size={38} />
+              <div className="flex flex-col">
+                <LogosIALogo size="sm" showText iconOnly={false} className="" />
+                <span className="text-[10px] text-muted-foreground tracking-wider uppercase">Marketing & IA</span>
+              </div>
             </div>
             <button onClick={toggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors">
               <X className="h-4 w-4 text-muted-foreground" />
@@ -269,13 +296,14 @@ export function AppSidebar() {
             isOpen={openSidebarGroups.includes(group.label)}
             onToggle={() => toggleSidebarGroup(group.label)}
             triggerIcon={group.triggerIcon}
+            dataTour={group.dataTour}
           />
         ))}
       </SidebarContent>
 
       <SidebarFooter className={`border-t border-border/50 p-2 ${collapsed ? 'items-center' : ''}`}>
         <SidebarMenu>
-          <SidebarMenuItem>
+          <SidebarMenuItem data-tour="dark-mode">
             <SidebarMenuButton tooltip={isDarkMode ? 'Modo Claro' : 'Modo Escuro'} onClick={toggleDarkMode}>
               {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               <span>{isDarkMode ? 'Modo Claro' : 'Modo Escuro'}</span>

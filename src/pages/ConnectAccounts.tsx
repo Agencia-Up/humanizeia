@@ -16,6 +16,7 @@ import { AccountSelector } from '@/components/onboarding/AccountSelector';
 import { SuccessAnimation } from '@/components/onboarding/SuccessAnimation';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import { useGoogleAdsConnection } from '@/hooks/useGoogleAdsConnection';
+import { useLinkedInConnection } from '@/hooks/useLinkedInConnection';
 import { useToast } from '@/hooks/use-toast';
 
 const STEPS = ['Boas-vindas', 'Conectar', 'Escolher conta', 'Pronto!'];
@@ -53,9 +54,10 @@ export default function ConnectAccounts() {
   const { toast } = useToast();
   const meta = useMetaConnection();
   const google = useGoogleAdsConnection();
+  const linkedin = useLinkedInConnection();
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
-  const [activePlatform, setActivePlatform] = useState<'meta' | 'google' | null>(null);
+  const [activePlatform, setActivePlatform] = useState<'meta' | 'google' | 'linkedin' | null>(null);
   const [showTokenForm, setShowTokenForm] = useState(false);
   const [manualToken, setManualToken] = useState('');
   const [manualAccountId, setManualAccountId] = useState('1576723380197751');
@@ -88,6 +90,11 @@ export default function ConnectAccounts() {
   const handleGoogleConnect = async () => {
     setActivePlatform('google');
     await google.startOAuth();
+  };
+
+  const handleLinkedInConnect = async () => {
+    setActivePlatform('linkedin');
+    await linkedin.startOAuth();
   };
 
   const handleConnectWithToken = async () => {
@@ -140,7 +147,13 @@ export default function ConnectAccounts() {
       ? 'connecting'
       : 'disconnected';
 
-  const anyConnected = metaStatus === 'connected' || googleStatus === 'connected';
+  const linkedinStatus = linkedin.connectedAccount
+    ? 'connected'
+    : linkedin.isConnecting
+      ? 'connecting'
+      : 'disconnected';
+
+  const anyConnected = metaStatus === 'connected' || googleStatus === 'connected' || linkedinStatus === 'connected';
   const anyAccountsAvailable = meta.availableAccounts.length > 0 || google.availableAccounts.length > 0;
   const canProceedFromConnect = anyConnected || anyAccountsAvailable;
 
@@ -166,7 +179,7 @@ export default function ConnectAccounts() {
             <Sparkles className="h-7 w-7 text-primary-foreground" />
           </div>
           <h1 className="text-2xl font-bold text-foreground">
-            <span className="gradient-text">Logos IA</span>
+            <span className="gradient-text">LogosIA</span>
           </h1>
           <p className="text-xs text-muted-foreground">Configuração inicial</p>
         </motion.div>
@@ -289,6 +302,79 @@ export default function ConnectAccounts() {
                         status={googleStatus}
                         onClick={handleGoogleConnect}
                       />
+                      <OAuthButton
+                        platform="linkedin"
+                        status={linkedinStatus}
+                        onClick={handleLinkedInConnect}
+                      />
+                    </div>
+
+                    {/* SEPARADOR */}
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-px bg-border/60" />
+                      <span className="text-xs text-muted-foreground">ou</span>
+                      <div className="flex-1 h-px bg-border/60" />
+                    </div>
+
+                    {/* CONECTAR COM TOKEN */}
+                    <div className="rounded-xl border border-border/60 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setShowTokenForm(!showTokenForm)}
+                        className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-foreground hover:bg-muted/40 transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Key className="h-4 w-4 text-primary" />
+                          Conectar Meta com Token de Acesso
+                        </div>
+                        {showTokenForm ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                      </button>
+
+                      {showTokenForm && (
+                        <div className="border-t border-border/60 bg-muted/20 p-4 space-y-3">
+                          <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 p-3">
+                            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
+                            <p className="text-xs text-amber-600 dark:text-amber-400">
+                              Use um <strong>token de longa duração</strong> do Meta Business Suite. Tokens temporários expiram em 60 dias.
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-xs">Token de Acesso Meta *</Label>
+                            <Input
+                              type="password"
+                              placeholder="EAAxxxxxxxxx..."
+                              value={manualToken}
+                              onChange={(e) => setManualToken(e.target.value)}
+                              className="text-xs font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-xs">ID da Conta de Anúncios (opcional)</Label>
+                            <Input
+                              type="text"
+                              placeholder="ex: 1576723380197751"
+                              value={manualAccountId}
+                              onChange={(e) => setManualAccountId(e.target.value)}
+                              className="text-xs font-mono"
+                            />
+                            <p className="text-[10px] text-muted-foreground">Se deixar em branco, vamos buscar todas as contas disponíveis.</p>
+                          </div>
+
+                          <Button
+                            onClick={handleConnectWithToken}
+                            disabled={isConnectingToken || !manualToken.trim()}
+                            className="w-full gradient-primary text-primary-foreground text-sm"
+                          >
+                            {isConnectingToken ? (
+                              <><span className="animate-spin mr-2">⟳</span> Validando token...</>
+                            ) : (
+                              <><Key className="h-4 w-4 mr-2" /> Conectar com Token</>
+                            )}
+                          </Button>
+                        </div>
+                      )}
                     </div>
 
                     {/* SEPARADOR */}
@@ -540,7 +626,7 @@ export default function ConnectAccounts() {
 
         {/* Footer */}
         <p className="text-center text-[10px] text-muted-foreground/60">
-          ✦ Logos IA — Inteligência que humaniza seus resultados ✦
+          ✦ LogosIA — Inteligência que transforma seus resultados ✦
         </p>
       </div>
     </div>

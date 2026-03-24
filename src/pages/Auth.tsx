@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { Mail, Lock, User, Loader2, ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { LogosIALogo } from '@/components/brand/LogosIALogo';
 import { z } from 'zod';
 
 const emailSchema = z.string().email('Email inválido');
@@ -26,7 +27,7 @@ async function sendEmail(payload: Record<string, string>) {
 export default function Auth() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { signIn, signUp, user, loading: authLoading } = useAuth();
+  const { signIn, signUp, user } = useAuth();
   const { toast } = useToast();
 
   // Aba inicial: se vier ?tab=signup abre Cadastro direto
@@ -51,14 +52,6 @@ export default function Auth() {
   const [forgotName, setForgotName] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
-
-  if (authLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
 
   // Redirect se já autenticado
   if (user) return <Navigate to="/dashboard" replace />;
@@ -183,9 +176,9 @@ export default function Auth() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="w-full max-w-md space-y-6">
-          <div className="flex flex-col items-center gap-4 text-center">
-            <img src="/logosia-brand.png" alt="Logos IA" className="h-24 sm:h-28 w-auto object-contain mix-blend-multiply dark:mix-blend-normal dark:bg-white dark:p-3 dark:rounded-2xl" />
-            <h1 className="text-xl font-bold text-foreground">Recuperar Senha</h1>
+          <div className="flex flex-col items-center gap-2 text-center">
+            <LogosIALogo size="lg" />
+            <h1 className="text-2xl font-bold text-foreground">Recuperar Senha</h1>
             <p className="text-sm text-muted-foreground">Enviaremos um link para redefinir sua senha</p>
           </div>
 
@@ -251,8 +244,11 @@ export default function Auth() {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-md space-y-6">
         {/* Logo */}
-        <div className="flex flex-col items-center gap-4 text-center pb-2">
-          <img src="/logosia-brand.png" alt="Logos IA" className="h-24 sm:h-32 w-auto object-contain mix-blend-multiply dark:mix-blend-normal dark:bg-white dark:p-3 dark:rounded-2xl" />
+        <div className="flex flex-col items-center gap-2 text-center">
+          <span className="logo-container p-2">
+            <img src="/logosia-logo.png" alt="LogosIA" className="h-16 w-16 rounded-lg object-contain" />
+          </span>
+          <h1 className="text-2xl font-bold text-foreground">LogosIA</h1>
           <p className="text-sm text-muted-foreground">Plataforma inteligente de marketing e IA</p>
         </div>
 

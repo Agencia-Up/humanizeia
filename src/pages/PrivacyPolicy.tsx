@@ -104,7 +104,7 @@ export default function PrivacyPolicy() {
         </div>
 
         <div className="mt-12 pt-6 border-t border-border text-center text-xs text-muted-foreground">
-          <p>© {new Date().getFullYear()} Logos IA. Todos os direitos reservados.</p>
+          <p>© {new Date().getFullYear()} LogosIA. Todos os direitos reservados.</p>
         </div>
       </div>
     </div>
