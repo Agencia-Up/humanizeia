@@ -82,6 +82,10 @@ export default function DaviSocialMedia() {
     setGeneratedCarousel, fetchPosts, generateCarousel, saveDraft, schedulePost, publishNow, deleteDraft,
   } = useSocialMedia();
 
+  const {
+    uploads, isLoading: uploadsLoading, isUploading,
+    uploadFile, deleteUpload, toggleFavorite,
+  } = useCreativeUploads();
   // Generator form state
   const [topic, setTopic] = useState('');
   const [audience, setAudience] = useState('');
