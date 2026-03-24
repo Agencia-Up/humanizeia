@@ -3,7 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Sparkles, BarChart3, Zap, Shield } from 'lucide-react';
-import { LogosIALogo, LogosIAIcon } from '@/components/brand/LogosIALogo';
+import { LogosIALogo } from '@/components/brand/LogosIALogo';
 
 export default function LandingPage() {
   const { user, loading } = useAuth();
