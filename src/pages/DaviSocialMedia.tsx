@@ -191,12 +191,15 @@ export default function DaviSocialMedia() {
 
         {/* Main Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="gerador" className="gap-1.5">
               <Sparkles className="h-3.5 w-3.5" /> Gerador IA
             </TabsTrigger>
             <TabsTrigger value="posts" className="gap-1.5">
               <Layers className="h-3.5 w-3.5" /> Meus Posts {posts.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{posts.length}</Badge>}
+            </TabsTrigger>
+            <TabsTrigger value="biblioteca" className="gap-1.5">
+              <FolderOpen className="h-3.5 w-3.5" /> Biblioteca {uploads.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{uploads.length}</Badge>}
             </TabsTrigger>
             <TabsTrigger value="calendario" className="gap-1.5">
               <Calendar className="h-3.5 w-3.5" /> Calendário
