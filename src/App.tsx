@@ -50,6 +50,7 @@ const CompetitorRadar = lazy(() => import("./pages/CompetitorRadar"));
 const LeadManagement = lazy(() => import('./pages/LeadManagement'));
 const GoogleAdsDashboard = lazy(() => import('./pages/GoogleAdsDashboard'));
 const LinkedInAdsDashboard = lazy(() => import('./pages/LinkedInAdsDashboard'));
+const DaviSocialMedia = lazy(() => import('./pages/DaviSocialMedia'));
 
 const queryClient = new QueryClient();
 
@@ -108,6 +109,7 @@ const App = () => (
             <Route path="/leads" element={<ProtectedRoute><LeadManagement /></ProtectedRoute>} />
             <Route path="/google-ads" element={<ProtectedRoute><GoogleAdsDashboard /></ProtectedRoute>} />
             <Route path="/linkedin-ads" element={<ProtectedRoute><LinkedInAdsDashboard /></ProtectedRoute>} />
+            <Route path="/davi" element={<ProtectedRoute><DaviSocialMedia /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>

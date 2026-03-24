@@ -29,6 +29,8 @@ import {
   Users,
   Linkedin,
   Search,
+  Instagram,
+  Calendar,
 } from 'lucide-react';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useNavigate } from 'react-router-dom';
@@ -92,6 +94,12 @@ const crmItems = [
 const platformItems = [
   { title: 'Google Ads', url: '/google-ads', icon: Search },
   { title: 'LinkedIn Ads', url: '/linkedin-ads', icon: Linkedin },
+];
+
+// 📱 Social Media
+const socialItems = [
+  { title: 'DAVI — Carrosséis', url: '/davi', icon: Instagram },
+  { title: 'Calendário de Posts', url: '/davi?tab=calendario', icon: Calendar },
 ];
 
 // 🔗 Integrações
@@ -245,6 +253,7 @@ export function AppSidebar() {
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
     { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
     { label: '📈 Plataformas', items: platformItems, triggerIcon: BarChart3 },
+    { label: '📱 Social Media', items: socialItems, triggerIcon: Instagram },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
     { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
