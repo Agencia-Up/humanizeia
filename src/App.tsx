@@ -10,7 +10,9 @@ import { Loader2 } from "lucide-react";
 // Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
-const Dashboard = lazy(() => import("./pages/Dashboard"));
+const AgentHub = lazy(() => import("./pages/AgentHub"));
+const MetricsDashboard = lazy(() => import("./pages/Dashboard"));
+const Tutorials = lazy(() => import("./pages/Tutorials"));
 const AICopywriter = lazy(() => import("./pages/AICopywriter"));
 const AICreativeStudio = lazy(() => import("./pages/AICreativeStudio"));
 const CampaignOptimizer = lazy(() => import("./pages/CampaignOptimizer"));
