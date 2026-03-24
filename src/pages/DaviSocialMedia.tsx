@@ -12,10 +12,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { useSocialMedia, CarouselSlide, SocialPost } from '@/hooks/useSocialMedia';
+import { useCreativeUploads, CreativeUpload } from '@/hooks/useCreativeUploads';
 import {
   Calendar, CheckCircle, ChevronLeft, ChevronRight, Clock, Copy,
-  Eye, Hash, Heart, Layers, Loader2, MessageCircle,
-  RefreshCw, Send, Share2, Sparkles, Trash2, Instagram, Zap,
+  Eye, FolderOpen, Hash, Heart, Image, Layers, Loader2, MessageCircle,
+  RefreshCw, Send, Share2, Sparkles, Star, Trash2, Upload, Instagram, Zap,
 } from 'lucide-react';
 
 // Slide Preview Card
