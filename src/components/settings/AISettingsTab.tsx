@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { Save, Eye, EyeOff, Sparkles, Image, Brain, Info } from 'lucide-react';
 
-const STORAGE_KEY = 'humanizeai-ai-settings';
+const STORAGE_KEY = 'logosia-ai-settings';
 
 interface AISettings {
   copyProvider: string;

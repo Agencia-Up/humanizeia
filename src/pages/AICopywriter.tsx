@@ -30,8 +30,10 @@ import {
   Save,
   Plus,
   Trash2,
+  Zap,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from '@/integrations/supabase/client';
 import { StudioHeader, type StudioTab } from '@/components/layout/StudioHeader';
 import { CopyResult, mockCopyTemplates } from '@/data/mockData';
 import { SwipeFileTab } from '@/components/copywriter/SwipeFileTab';
@@ -335,6 +337,34 @@ Criatividade: ${creativity[0]}/10${whatsappContext}${selectedTriggers.length > 0
     setFavorites((prev) =>
       prev.includes(id) ? prev.filter((fid) => fid !== id) : [...prev, id]
     );
+  };
+
+  const saveToAdCopies = async (copy: CopyResult) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      toast({ title: 'Erro', description: 'Faça login para salvar copies.', variant: 'destructive' });
+      return;
+    }
+
+    const { error } = await supabase.from('ad_copies' as any).insert({
+      user_id: user.id,
+      headline: copy.headline || '',
+      description: copy.description || '',
+      primary_text: copy.description || '',
+      cta: copy.cta || '',
+      platform: platform || 'meta',
+      ad_type: adType || 'feed',
+      tone: tone || '',
+      objective: objective || '',
+      ai_score: copy.score || 70,
+      status: 'available',
+    });
+
+    if (error) {
+      toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Copy salva para campanhas!', description: 'Disponível para JOSÉ usar nas campanhas.' });
+    }
   };
 
   const handleGenerateVariation = useCallback(async (result: CopyResult) => {
@@ -824,6 +854,15 @@ Retorne APENAS um JSON no formato: {"headline": "...", "description": "...", "ct
                                 >
                                   <BookmarkPlus className="mr-2 h-3 w-3" />
                                   Salvar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  className="bg-primary/90 hover:bg-primary text-primary-foreground"
+                                  onClick={() => saveToAdCopies(result)}
+                                >
+                                  <Zap className="mr-1 h-3 w-3" />
+                                  Para JOSE
                                 </Button>
                                 <Button
                                   size="sm"

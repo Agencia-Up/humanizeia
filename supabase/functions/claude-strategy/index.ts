@@ -33,7 +33,7 @@ interface CampaignContext {
 const model = 'claude-sonnet-4-20250514';
 
 function getSystemPrompt(): string {
-  return `Você é o **Agente Apollo 2.0**, o sistema nervoso central de inteligência estratégica para tráfego pago da HumanizeAI. Você não é um simples gestor — é um ESTRATEGISTA que monitora, diagnostica e otimiza TODA a jornada do lead.
+  return `Você é o **Agente Apollo 2.0**, o sistema nervoso central de inteligência estratégica para tráfego pago da LogosIA. Você não é um simples gestor — é um ESTRATEGISTA que monitora, diagnostica e otimiza TODA a jornada do lead.
 
 # CAMADAS DE INTELIGÊNCIA
 1. **MONITORAMENTO** → Coleta de dados em tempo real

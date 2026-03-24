@@ -167,6 +167,210 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── Fetch campaigns with insights ──
+    if (action === "get_campaigns") {
+      const adminClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const { data: account } = await adminClient.from("ad_accounts").select("*")
+        .eq("user_id", userId).eq("platform", "google").eq("is_active", true).limit(1).maybeSingle();
+      if (!account) return new Response(JSON.stringify({ error: "Conta Google Ads não encontrada" }), { status: 404, headers: corsHeaders });
+
+      const creds = JSON.parse(account.access_token_encrypted);
+      const accessToken = await getAccessToken(creds.client_id, creds.client_secret, creds.refresh_token);
+      const customerId = account.account_id;
+      const { date_range = "LAST_30_DAYS" } = body;
+
+      // GAQL query for campaigns with metrics
+      const gaqlQuery = `
+        SELECT
+          campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
+          campaign.bidding_strategy_type, campaign_budget.amount_micros,
+          metrics.impressions, metrics.clicks, metrics.cost_micros,
+          metrics.conversions, metrics.conversions_value, metrics.ctr,
+          metrics.average_cpc, metrics.average_cpm, metrics.cost_per_conversion
+        FROM campaign
+        WHERE campaign.status != 'REMOVED'
+          AND segments.date DURING ${date_range}
+        ORDER BY metrics.cost_micros DESC
+        LIMIT 50
+      `;
+
+      const searchRes = await fetch(`${GOOGLE_ADS_API}/customers/${customerId}/googleAds:searchStream`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "developer-token": creds.developer_token,
+          "login-customer-id": customerId,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: gaqlQuery }),
+      });
+      const searchData = await searchRes.json();
+
+      if (searchData.error) {
+        return new Response(JSON.stringify({ error: searchData.error.message || "Erro Google Ads API" }), { status: 400, headers: corsHeaders });
+      }
+
+      // Parse results
+      const campaigns = (searchData[0]?.results || []).map((r: any) => {
+        const c = r.campaign || {};
+        const m = r.metrics || {};
+        const b = r.campaignBudget || {};
+        const spend = (m.costMicros || 0) / 1_000_000;
+        const cpc = (m.averageCpc || 0) / 1_000_000;
+        const cpm = (m.averageCpm || 0) / 1_000_000;
+        const ctr = m.ctr || 0;
+        const conversions = m.conversions || 0;
+        const revenue = m.conversionsValue || 0;
+        const roas = spend > 0 ? revenue / spend : 0;
+        const cpa = conversions > 0 ? spend / conversions : 0;
+        const dailyBudget = (b.amountMicros || 0) / 1_000_000;
+
+        // Health score
+        let score = 50;
+        if (m.impressions > 0) {
+          let pts = 0, cnt = 0;
+          if (ctr >= 0.05) pts += 100; else if (ctr >= 0.02) pts += 70; else if (ctr > 0) pts += 30; cnt++;
+          if (cpc > 0 && cpc <= 3) pts += 100; else if (cpc <= 6) pts += 60; else if (cpc > 0) pts += 20; cnt++;
+          if (roas >= 4) pts += 100; else if (roas >= 2) pts += 70; else if (roas > 0) pts += 40; if (roas > 0) cnt++;
+          score = cnt > 0 ? Math.round(pts / cnt) : 50;
+        }
+
+        return {
+          id: c.id, name: c.name, status: c.status,
+          channel_type: c.advertisingChannelType,
+          bidding_strategy: c.biddingStrategyType,
+          daily_budget: dailyBudget,
+          spend, impressions: m.impressions || 0, clicks: m.clicks || 0,
+          ctr: Number((ctr * 100).toFixed(2)), cpc: Number(cpc.toFixed(2)),
+          cpm: Number(cpm.toFixed(2)), conversions, revenue: Number(revenue.toFixed(2)),
+          roas: Number(roas.toFixed(2)), cpa: Number(cpa.toFixed(2)),
+          health_score: score,
+        };
+      });
+
+      const overallHealth = campaigns.length > 0
+        ? Math.round(campaigns.reduce((s: number, c: any) => s + c.health_score, 0) / campaigns.length)
+        : 50;
+
+      return new Response(JSON.stringify({
+        platform: "google",
+        account: { id: customerId, name: account.account_name, currency: account.currency || "BRL" },
+        campaigns,
+        health_score: overallHealth,
+        date_range,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── Fetch ad groups for a campaign ──
+    if (action === "get_ad_groups") {
+      const adminClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const { data: account } = await adminClient.from("ad_accounts").select("*")
+        .eq("user_id", userId).eq("platform", "google").eq("is_active", true).limit(1).maybeSingle();
+      if (!account) return new Response(JSON.stringify({ error: "Conta não encontrada" }), { status: 404, headers: corsHeaders });
+
+      const creds = JSON.parse(account.access_token_encrypted);
+      const accessToken = await getAccessToken(creds.client_id, creds.client_secret, creds.refresh_token);
+      const { campaign_id, date_range = "LAST_30_DAYS" } = body;
+
+      const gaql = `
+        SELECT
+          ad_group.id, ad_group.name, ad_group.status, ad_group.type,
+          metrics.impressions, metrics.clicks, metrics.cost_micros,
+          metrics.conversions, metrics.ctr, metrics.average_cpc
+        FROM ad_group
+        WHERE campaign.id = ${campaign_id}
+          AND segments.date DURING ${date_range}
+        ORDER BY metrics.cost_micros DESC
+        LIMIT 30
+      `;
+
+      const res = await fetch(`${GOOGLE_ADS_API}/customers/${account.account_id}/googleAds:searchStream`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "developer-token": creds.developer_token,
+          "login-customer-id": account.account_id,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: gaql }),
+      });
+      const data = await res.json();
+
+      const adGroups = (data[0]?.results || []).map((r: any) => ({
+        id: r.adGroup?.id, name: r.adGroup?.name, status: r.adGroup?.status,
+        type: r.adGroup?.type,
+        impressions: r.metrics?.impressions || 0, clicks: r.metrics?.clicks || 0,
+        spend: (r.metrics?.costMicros || 0) / 1_000_000,
+        conversions: r.metrics?.conversions || 0,
+        ctr: Number(((r.metrics?.ctr || 0) * 100).toFixed(2)),
+        cpc: Number(((r.metrics?.averageCpc || 0) / 1_000_000).toFixed(2)),
+      }));
+
+      return new Response(JSON.stringify({ ad_groups: adGroups }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── Pause/Activate campaign ──
+    if (action === "update_campaign_status") {
+      const adminClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const { data: account } = await adminClient.from("ad_accounts").select("*")
+        .eq("user_id", userId).eq("platform", "google").eq("is_active", true).limit(1).maybeSingle();
+      if (!account) return new Response(JSON.stringify({ error: "Conta não encontrada" }), { status: 404, headers: corsHeaders });
+
+      const creds = JSON.parse(account.access_token_encrypted);
+      const accessToken = await getAccessToken(creds.client_id, creds.client_secret, creds.refresh_token);
+      const { campaign_id, new_status } = body; // ENABLED or PAUSED
+
+      const mutateRes = await fetch(`${GOOGLE_ADS_API}/customers/${account.account_id}/campaigns:mutate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "developer-token": creds.developer_token,
+          "login-customer-id": account.account_id,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          operations: [{
+            update: { resourceName: `customers/${account.account_id}/campaigns/${campaign_id}`, status: new_status },
+            updateMask: "status",
+          }],
+        }),
+      });
+      const mutateData = await mutateRes.json();
+
+      return new Response(JSON.stringify({ success: !mutateData.error, data: mutateData }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── Update campaign budget ──
+    if (action === "update_budget") {
+      const adminClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const { data: account } = await adminClient.from("ad_accounts").select("*")
+        .eq("user_id", userId).eq("platform", "google").eq("is_active", true).limit(1).maybeSingle();
+      if (!account) return new Response(JSON.stringify({ error: "Conta não encontrada" }), { status: 404, headers: corsHeaders });
+
+      const creds = JSON.parse(account.access_token_encrypted);
+      const accessToken = await getAccessToken(creds.client_id, creds.client_secret, creds.refresh_token);
+      const { budget_id, new_amount } = body; // new_amount in currency units
+
+      const mutateRes = await fetch(`${GOOGLE_ADS_API}/customers/${account.account_id}/campaignBudgets:mutate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "developer-token": creds.developer_token,
+          "login-customer-id": account.account_id,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          operations: [{
+            update: { resourceName: `customers/${account.account_id}/campaignBudgets/${budget_id}`, amountMicros: Math.round(new_amount * 1_000_000).toString() },
+            updateMask: "amount_micros",
+          }],
+        }),
+      });
+      const mutateData = await mutateRes.json();
+
+      return new Response(JSON.stringify({ success: !mutateData.error, data: mutateData }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "query") {
       // Fetch credentials from ad_accounts
       const adminClient = createClient(

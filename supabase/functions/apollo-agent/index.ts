@@ -83,6 +83,31 @@ Deno.serve(async (req) => {
       return await handleSaveCronConfig(admin, user.id, body, corsHeaders);
     }
 
+    // ── Get lead stats for dashboard ──
+    if (bodyAction === "get_lead_stats") {
+      return await handleGetLeadStats(admin, user.id, targetAccountId, corsHeaders);
+    }
+
+    // ── Get geographic performance ──
+    if (bodyAction === "get_geo_performance") {
+      return await handleGeoPerformance(admin, user.id, targetAccountId, datePreset, corsHeaders);
+    }
+
+    // ── Get ROI/profit report ──
+    if (bodyAction === "get_roi_report") {
+      return await handleROIReport(admin, user.id, targetAccountId, datePreset, corsHeaders);
+    }
+
+    // ── Get PME config ──
+    if (bodyAction === "get_pme_config") {
+      return await handleGetPMEConfig(admin, user.id, corsHeaders);
+    }
+
+    // ── Save PME config ──
+    if (bodyAction === "save_pme_config") {
+      return await handleSavePMEConfig(admin, user.id, body, corsHeaders);
+    }
+
     // ── Debug / connection test ──
     if (bodyAction === "debug") {
       // SELECT inclui access_token_encrypted para poder fazer o ping
@@ -161,6 +186,16 @@ Deno.serve(async (req) => {
     // ── Get ad set drill-down ──
     if (bodyAction === "get_adsets") {
       return await handleGetAdsets(admin, user.id, targetAccountId, campaignId, datePreset, corsHeaders);
+    }
+
+    // ── Smart asset selection (creatives + copies) ──
+    if (bodyAction === "smart_select_assets") {
+      return await handleSmartSelectAssets(admin, user.id, targetAccountId, campaignId, actionParams, corsHeaders);
+    }
+
+    // ── Register creative+copy performance ──
+    if (bodyAction === "register_asset_performance") {
+      return await handleRegisterAssetPerformance(admin, user.id, body, corsHeaders);
     }
 
     // ────────────────────────────────────────────────────────────
@@ -803,6 +838,10 @@ CAPACIDADES NÍVEL 6:
 ✅ Pacing de orçamento em tempo real
 ✅ Detecção de subcapitalização de vencedores
 ✅ Calibração de confiança por aprendizado acumulado
+✅ Módulo PME: Gestão de leads e funil de vendas
+✅ Módulo PME: Análise geográfica regional
+✅ Módulo PME: ROI real com dados de vendas
+✅ Módulo PME: Detecção de leads parados
 
 BENCHMARKS (moeda: ${currency}):
 - CTR: fraco < 0.8%, bom > 1.5%, excelente > 3%
@@ -1226,52 +1265,263 @@ async function handleCloneCampaign(admin: any, userId: string, targetAccountId: 
 }
 
 async function cloneCampaignOnMeta(accessToken: string, accountId: string, campaignId: string, extraParams: any) {
-  // Fetch source campaign
+  // ── Step 1: Fetch source campaign info (for naming) ──
   const campUrl = new URL(`${META_GRAPH_URL}/${campaignId}`);
   campUrl.searchParams.set("access_token", accessToken);
-  campUrl.searchParams.set("fields", "name,objective,daily_budget,lifetime_budget,status,special_ad_categories,bid_strategy");
+  campUrl.searchParams.set("fields", "name,objective,status");
   const campRes = await fetch(campUrl.toString());
   const campData = await campRes.json();
-  if (campData.error) throw new Error(campData.error.message);
+  if (campData.error) throw new Error(`Erro ao buscar campanha: ${campData.error.message}`);
 
-  // Create new campaign (PAUSED — user activates manually)
   const newCampName = `${campData.name} [CLONE ${new Date().toLocaleDateString("pt-BR")}]`;
+
+  // ── Step 2: Use Meta Copy API — copies campaign + ad sets + ads + creatives ──
+  // This is the official Meta API for deep-copying campaigns with all children
+  const copyUrl = new URL(`${META_GRAPH_URL}/${campaignId}/copies`);
+  copyUrl.searchParams.set("access_token", accessToken);
+  copyUrl.searchParams.set("deep_copy", "true"); // Copy ad sets and ads too
+  copyUrl.searchParams.set("rename_options", JSON.stringify({ rename_suffix: ` [CLONE ${new Date().toLocaleDateString("pt-BR")}]` }));
+  copyUrl.searchParams.set("status_option", "PAUSED"); // Create everything PAUSED
+
+  console.log(`[apollo-agent] Cloning campaign ${campaignId} via Meta Copy API (deep_copy=true)...`);
+
+  const copyRes = await fetch(copyUrl.toString(), { method: "POST" });
+  const copyResult = await copyRes.json();
+
+  if (copyResult.error) {
+    console.error(`[apollo-agent] Meta Copy API error:`, JSON.stringify(copyResult.error));
+
+    // Fallback: if Copy API fails, try manual clone with full ad set + ad creation
+    console.log(`[apollo-agent] Falling back to manual clone...`);
+    return await manualCloneCampaign(accessToken, accountId, campaignId, campData, newCampName, extraParams);
+  }
+
+  // Copy API returns array of copied object IDs
+  // Format: { "copied_campaign_id": "123", "copied_adset_ids": [...], "copied_ad_ids": [...] }
+  // or sometimes just { "campaign_group_id": "123" }
+  const newCampaignId = copyResult.copied_campaign_id || copyResult.campaign_group_id || copyResult.id;
+
+  if (!newCampaignId) {
+    console.error(`[apollo-agent] Copy API returned unexpected format:`, JSON.stringify(copyResult));
+    // Fallback to manual clone
+    return await manualCloneCampaign(accessToken, accountId, campaignId, campData, newCampName, extraParams);
+  }
+
+  // If budget override requested, update the new campaign budget
+  if (extraParams?.budget_override) {
+    try {
+      const updateUrl = new URL(`${META_GRAPH_URL}/${newCampaignId}`);
+      updateUrl.searchParams.set("access_token", accessToken);
+      updateUrl.searchParams.set("daily_budget", String(Math.round(extraParams.budget_override * 100)));
+      await fetch(updateUrl.toString(), { method: "POST" });
+    } catch (e: any) {
+      console.warn(`[apollo-agent] Failed to update cloned campaign budget: ${e?.message}`);
+    }
+  }
+
+  // Verify clone has ad sets and ads
+  const verifyAdSets = await fetchCampaignAdSets(accessToken, newCampaignId);
+  console.log(`[apollo-agent] Clone via Copy API successful. New campaign: ${newCampaignId}, AdSets: ${verifyAdSets.length}`);
+
+  return {
+    new_campaign_id: newCampaignId,
+    new_campaign_name: newCampName,
+    adsets_cloned: verifyAdSets.length,
+    method: "copy_api",
+  };
+}
+
+/**
+ * Manual fallback clone: creates campaign + ad sets + ads one by one
+ * Used when Meta's Copy API is not available or fails
+ */
+async function manualCloneCampaign(accessToken: string, accountId: string, sourceCampaignId: string, campData: any, newCampName: string, extraParams: any) {
+  // ── Create new campaign ──
+  const campFieldsUrl = new URL(`${META_GRAPH_URL}/${sourceCampaignId}`);
+  campFieldsUrl.searchParams.set("access_token", accessToken);
+  campFieldsUrl.searchParams.set("fields", "name,objective,daily_budget,lifetime_budget,special_ad_categories,bid_strategy,buying_type");
+  const campFieldsRes = await fetch(campFieldsUrl.toString());
+  const fullCampData = await campFieldsRes.json();
+  if (fullCampData.error) throw new Error(`Erro ao buscar detalhes da campanha: ${fullCampData.error.message}`);
+
   const newCampUrl = new URL(`${META_GRAPH_URL}/act_${accountId}/campaigns`);
   newCampUrl.searchParams.set("access_token", accessToken);
   newCampUrl.searchParams.set("name", newCampName);
-  newCampUrl.searchParams.set("objective", campData.objective);
+  newCampUrl.searchParams.set("objective", fullCampData.objective);
   newCampUrl.searchParams.set("status", "PAUSED");
-  // special_ad_categories is REQUIRED by Meta API — always send it (empty array if none)
-  newCampUrl.searchParams.set("special_ad_categories", JSON.stringify(campData.special_ad_categories || []));
-  if (campData.daily_budget && extraParams?.budget_override) {
+  newCampUrl.searchParams.set("special_ad_categories", JSON.stringify(fullCampData.special_ad_categories || []));
+  if (fullCampData.daily_budget && extraParams?.budget_override) {
     newCampUrl.searchParams.set("daily_budget", String(Math.round(extraParams.budget_override * 100)));
-  } else if (campData.daily_budget) {
-    newCampUrl.searchParams.set("daily_budget", campData.daily_budget);
+  } else if (fullCampData.daily_budget) {
+    newCampUrl.searchParams.set("daily_budget", fullCampData.daily_budget);
   }
+  if (fullCampData.bid_strategy) {
+    newCampUrl.searchParams.set("bid_strategy", fullCampData.bid_strategy);
+  }
+
   const newCampRes = await fetch(newCampUrl.toString(), { method: "POST" });
   const newCamp = await newCampRes.json();
-  if (newCamp.error) throw new Error(newCamp.error.message);
-
+  if (newCamp.error) throw new Error(`Erro ao criar campanha: ${newCamp.error.message}`);
   const newCampaignId = newCamp.id;
 
-  // Fetch and clone ad sets
-  const adsets = await fetchCampaignAdSets(accessToken, campaignId);
-  for (const adset of adsets.slice(0, 5)) { // max 5 adsets per clone for safety
+  console.log(`[apollo-agent] Manual clone: new campaign ${newCampaignId} created`);
+
+  // ── Clone ad sets ──
+  const sourceAdSets = await fetchCampaignAdSets(accessToken, sourceCampaignId);
+  let adsetsCloned = 0;
+  let adsCloned = 0;
+  const errors: string[] = [];
+
+  for (const adset of sourceAdSets.slice(0, 10)) {
     try {
-      const asUrl = new URL(`${META_GRAPH_URL}/act_${accountId}/adsets`);
-      asUrl.searchParams.set("access_token", accessToken);
-      asUrl.searchParams.set("campaign_id", newCampaignId);
-      asUrl.searchParams.set("name", adset.name);
-      asUrl.searchParams.set("optimization_goal", adset.optimization_goal || "REACH");
-      asUrl.searchParams.set("billing_event", adset.billing_event || "IMPRESSIONS");
-      asUrl.searchParams.set("status", "PAUSED");
-      if (adset.daily_budget) asUrl.searchParams.set("daily_budget", adset.daily_budget);
-      if (adset.targeting) asUrl.searchParams.set("targeting", JSON.stringify(adset.targeting));
-      await fetch(asUrl.toString(), { method: "POST" });
-    } catch { /* continue cloning other adsets */ }
+      // Fetch full ad set details for cloning
+      const adsetDetailUrl = new URL(`${META_GRAPH_URL}/${adset.id}`);
+      adsetDetailUrl.searchParams.set("access_token", accessToken);
+      adsetDetailUrl.searchParams.set("fields", "name,optimization_goal,billing_event,bid_strategy,bid_amount,daily_budget,lifetime_budget,targeting,promoted_object,start_time,end_time,pacing_type,attribution_spec");
+      const adsetDetailRes = await fetch(adsetDetailUrl.toString());
+      const adsetDetail = await adsetDetailRes.json();
+      if (adsetDetail.error) {
+        errors.push(`AdSet ${adset.name}: ${adsetDetail.error.message}`);
+        continue;
+      }
+
+      // Create new ad set
+      const newAsUrl = new URL(`${META_GRAPH_URL}/act_${accountId}/adsets`);
+      newAsUrl.searchParams.set("access_token", accessToken);
+      newAsUrl.searchParams.set("campaign_id", newCampaignId);
+      newAsUrl.searchParams.set("name", `${adsetDetail.name} [CLONE]`);
+      newAsUrl.searchParams.set("optimization_goal", adsetDetail.optimization_goal || "REACH");
+      newAsUrl.searchParams.set("billing_event", adsetDetail.billing_event || "IMPRESSIONS");
+      newAsUrl.searchParams.set("status", "PAUSED");
+
+      // Budget
+      if (adsetDetail.daily_budget) {
+        newAsUrl.searchParams.set("daily_budget", adsetDetail.daily_budget);
+      } else if (adsetDetail.lifetime_budget) {
+        newAsUrl.searchParams.set("lifetime_budget", adsetDetail.lifetime_budget);
+      }
+
+      // Targeting — REQUIRED
+      if (adsetDetail.targeting) {
+        newAsUrl.searchParams.set("targeting", JSON.stringify(adsetDetail.targeting));
+      } else {
+        // Minimum targeting: country
+        newAsUrl.searchParams.set("targeting", JSON.stringify({ geo_locations: { countries: ["BR"] } }));
+      }
+
+      // Promoted object (e.g., pixel_id, page_id)
+      if (adsetDetail.promoted_object) {
+        newAsUrl.searchParams.set("promoted_object", JSON.stringify(adsetDetail.promoted_object));
+      }
+
+      // Start time — REQUIRED for most ad sets
+      if (adsetDetail.start_time) {
+        newAsUrl.searchParams.set("start_time", adsetDetail.start_time);
+      } else {
+        // Set start time to tomorrow
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(0, 0, 0, 0);
+        newAsUrl.searchParams.set("start_time", tomorrow.toISOString());
+      }
+
+      // End time (if exists)
+      if (adsetDetail.end_time) {
+        const endDate = new Date(adsetDetail.end_time);
+        if (endDate > new Date()) {
+          newAsUrl.searchParams.set("end_time", adsetDetail.end_time);
+        }
+      }
+
+      // Bid strategy
+      if (adsetDetail.bid_strategy) {
+        newAsUrl.searchParams.set("bid_strategy", adsetDetail.bid_strategy);
+      }
+      if (adsetDetail.bid_amount) {
+        newAsUrl.searchParams.set("bid_amount", adsetDetail.bid_amount);
+      }
+
+      // Attribution
+      if (adsetDetail.attribution_spec) {
+        newAsUrl.searchParams.set("attribution_spec", JSON.stringify(adsetDetail.attribution_spec));
+      }
+
+      const newAsRes = await fetch(newAsUrl.toString(), { method: "POST" });
+      const newAs = await newAsRes.json();
+
+      if (newAs.error) {
+        errors.push(`AdSet ${adset.name}: ${newAs.error.message}`);
+        console.error(`[apollo-agent] Failed to clone ad set ${adset.name}:`, newAs.error.message);
+        continue;
+      }
+
+      const newAdSetId = newAs.id;
+      adsetsCloned++;
+      console.log(`[apollo-agent] Cloned ad set: ${adset.name} → ${newAdSetId}`);
+
+      // ── Clone ads within this ad set ──
+      const sourceAds = await fetchAdSetAds(accessToken, adset.id);
+      for (const ad of sourceAds.slice(0, 20)) {
+        try {
+          // Fetch full ad details including creative
+          const adDetailUrl = new URL(`${META_GRAPH_URL}/${ad.id}`);
+          adDetailUrl.searchParams.set("access_token", accessToken);
+          adDetailUrl.searchParams.set("fields", "name,creative{id},tracking_specs,conversion_specs");
+          const adDetailRes = await fetch(adDetailUrl.toString());
+          const adDetail = await adDetailRes.json();
+          if (adDetail.error) {
+            errors.push(`Ad ${ad.name}: ${adDetail.error.message}`);
+            continue;
+          }
+
+          const creativeId = adDetail.creative?.id;
+          if (!creativeId) {
+            errors.push(`Ad ${ad.name}: sem creative_id`);
+            continue;
+          }
+
+          // Create new ad with the SAME creative (reuses existing creative)
+          const newAdUrl = new URL(`${META_GRAPH_URL}/act_${accountId}/ads`);
+          newAdUrl.searchParams.set("access_token", accessToken);
+          newAdUrl.searchParams.set("adset_id", newAdSetId);
+          newAdUrl.searchParams.set("name", `${ad.name} [CLONE]`);
+          newAdUrl.searchParams.set("creative", JSON.stringify({ creative_id: creativeId }));
+          newAdUrl.searchParams.set("status", "PAUSED");
+
+          if (adDetail.tracking_specs) {
+            newAdUrl.searchParams.set("tracking_specs", JSON.stringify(adDetail.tracking_specs));
+          }
+
+          const newAdRes = await fetch(newAdUrl.toString(), { method: "POST" });
+          const newAd = await newAdRes.json();
+
+          if (newAd.error) {
+            errors.push(`Ad ${ad.name}: ${newAd.error.message}`);
+            console.error(`[apollo-agent] Failed to clone ad ${ad.name}:`, newAd.error.message);
+          } else {
+            adsCloned++;
+            console.log(`[apollo-agent] Cloned ad: ${ad.name} → ${newAd.id}`);
+          }
+        } catch (adErr: any) {
+          errors.push(`Ad ${ad.name}: ${adErr?.message}`);
+        }
+      }
+    } catch (asErr: any) {
+      errors.push(`AdSet ${adset.name}: ${asErr?.message}`);
+      console.error(`[apollo-agent] Ad set clone error:`, asErr?.message);
+    }
   }
 
-  return { new_campaign_id: newCampaignId, new_campaign_name: newCampName };
+  console.log(`[apollo-agent] Manual clone complete. Campaign: ${newCampaignId}, AdSets: ${adsetsCloned}, Ads: ${adsCloned}, Errors: ${errors.length}`);
+
+  return {
+    new_campaign_id: newCampaignId,
+    new_campaign_name: newCampName,
+    adsets_cloned: adsetsCloned,
+    ads_cloned: adsCloned,
+    errors: errors.length > 0 ? errors : undefined,
+    method: "manual",
+  };
 }
 
 // ── History / config helpers ──────────────────────────────────────────────────
@@ -1545,8 +1795,28 @@ async function sendDailyReport(
     lines.push(``);
   }
 
+  // PME Lead stats
+  try {
+    const now = new Date();
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const { data: monthLeads } = await admin.from("leads").select("status, sale_value").eq("user_id", userId).gte("created_at", firstOfMonth);
+
+    if (monthLeads && monthLeads.length > 0) {
+      const sales = monthLeads.filter((l: any) => l.status === 'venda_realizada');
+      const staleCount = monthLeads.filter((l: any) => ['novo', 'em_atendimento'].includes(l.status)).length;
+      const totalSales = sales.reduce((s: number, l: any) => s + (Number(l.sale_value) || 0), 0);
+
+      lines.push(`👥 *Leads do Mês:*`);
+      lines.push(`   Total: ${monthLeads.length} | Vendas: ${sales.length} | Faturamento: R$ ${totalSales.toFixed(2)}`);
+      if (staleCount > 0) {
+        lines.push(`   ⚠️ ${staleCount} leads aguardando atendimento`);
+      }
+      lines.push(``);
+    }
+  } catch { /* table may not exist yet */ }
+
   lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`🤖 _Gerado por JOSÉ Governador — HumanizeIA_`);
+  lines.push(`🤖 _Gerado por JOSÉ Governador — LogosIA_`);
 
   try {
     await fetch(`${waCfg.api_url}/message/sendText/${waCfg.instance_name || "default"}`, {
@@ -1564,4 +1834,595 @@ async function sendDailyReport(
   } catch (err) {
     console.error("[apollo-agent] WhatsApp daily report error:", err);
   }
+}
+
+// ── PME Module: Lead Stats ────────────────────────────────────────────────────
+
+async function handleGetLeadStats(admin: any, userId: string, targetAccountId: string, corsHeaders: any) {
+  const now = new Date();
+  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+  // Get leads this month
+  const { data: leads, error } = await admin
+    .from("leads")
+    .select("*")
+    .eq("user_id", userId)
+    .gte("created_at", firstOfMonth);
+
+  if (error) {
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const allLeads = leads || [];
+  const totalLeads = allLeads.length;
+  const qualifiedLeads = allLeads.filter((l: any) => ['qualificado', 'proposta', 'venda_realizada'].includes(l.status));
+  const salesLeads = allLeads.filter((l: any) => l.status === 'venda_realizada');
+  const totalSalesValue = salesLeads.reduce((s: number, l: any) => s + (Number(l.sale_value) || 0), 0);
+
+  // Get ad spend this month from Meta insights
+  let totalSpend = 0;
+  try {
+    let accountQuery = admin.from("ad_accounts").select("*")
+      .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+    if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
+    const { data: adAccount } = await accountQuery.limit(1).single();
+
+    if (adAccount?.access_token_encrypted) {
+      const insUrl = new URL(`https://graph.facebook.com/v21.0/act_${adAccount.account_id}/insights`);
+      insUrl.searchParams.set("access_token", adAccount.access_token_encrypted);
+      insUrl.searchParams.set("fields", "spend");
+      insUrl.searchParams.set("date_preset", "this_month");
+      const insRes = await fetch(insUrl.toString());
+      const insData = await insRes.json();
+      totalSpend = Number(insData.data?.[0]?.spend || 0);
+    }
+  } catch { /* ignore */ }
+
+  // Lead stats by status
+  const statusCounts: Record<string, number> = {};
+  const temperatureCounts: Record<string, number> = {};
+  const campaignCounts: Record<string, number> = {};
+
+  for (const lead of allLeads) {
+    statusCounts[lead.status] = (statusCounts[lead.status] || 0) + 1;
+    temperatureCounts[lead.temperature] = (temperatureCounts[lead.temperature] || 0) + 1;
+    if (lead.campaign_name) {
+      campaignCounts[lead.campaign_name] = (campaignCounts[lead.campaign_name] || 0) + 1;
+    }
+  }
+
+  // Stale leads (no interaction in 24h+)
+  const staleThreshold = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const staleLeads = allLeads.filter((l: any) =>
+    ['novo', 'em_atendimento'].includes(l.status) && l.last_interaction_at < staleThreshold
+  );
+
+  const conversionRate = totalLeads > 0 ? (salesLeads.length / totalLeads) * 100 : 0;
+  const cplq = qualifiedLeads.length > 0 && totalSpend > 0 ? totalSpend / qualifiedLeads.length : 0;
+  const cac = salesLeads.length > 0 && totalSpend > 0 ? totalSpend / salesLeads.length : 0;
+  const roi = totalSpend > 0 ? ((totalSalesValue - totalSpend) / totalSpend) * 100 : 0;
+
+  return new Response(JSON.stringify({
+    total_leads: totalLeads,
+    qualified_leads: qualifiedLeads.length,
+    sales_count: salesLeads.length,
+    total_sales_value: totalSalesValue,
+    total_spend: totalSpend,
+    conversion_rate: Number(conversionRate.toFixed(1)),
+    cplq: Number(cplq.toFixed(2)),
+    cac: Number(cac.toFixed(2)),
+    roi: Number(roi.toFixed(1)),
+    status_breakdown: statusCounts,
+    temperature_breakdown: temperatureCounts,
+    campaign_breakdown: campaignCounts,
+    stale_leads_count: staleLeads.length,
+    stale_leads: staleLeads.map((l: any) => ({ id: l.id, name: l.contact_name, phone: l.contact_phone, campaign: l.campaign_name, hours_stale: Math.round((now.getTime() - new Date(l.last_interaction_at).getTime()) / 3600000) })),
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// ── PME Module: Geographic Performance ────────────────────────────────────────
+
+async function handleGeoPerformance(admin: any, userId: string, targetAccountId: string, datePreset: string, corsHeaders: any) {
+  try {
+    let accountQuery = admin.from("ad_accounts").select("*")
+      .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+    if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
+    const { data: adAccount } = await accountQuery.limit(1).single();
+
+    if (!adAccount?.access_token_encrypted) {
+      return new Response(JSON.stringify({ error: "Conta não encontrada" }), { status: 404, headers: corsHeaders });
+    }
+
+    // Fetch regional breakdown from Meta API
+    const url = new URL(`https://graph.facebook.com/v21.0/act_${adAccount.account_id}/insights`);
+    url.searchParams.set("access_token", adAccount.access_token_encrypted);
+    url.searchParams.set("fields", "impressions,clicks,spend,ctr,cpc,actions,action_values");
+    url.searchParams.set("date_preset", datePreset);
+    url.searchParams.set("breakdowns", "region");
+    url.searchParams.set("limit", "50");
+
+    const res = await fetch(url.toString());
+    const data = await res.json();
+
+    if (data.error) {
+      return new Response(JSON.stringify({ error: data.error.message }), { status: 400, headers: corsHeaders });
+    }
+
+    const regions = (data.data || []).map((r: any) => {
+      const spend = Number(r.spend || 0);
+      const conversions = r.actions?.find((a: any) => a.action_type.includes("purchase") || a.action_type.includes("lead"))?.value || 0;
+      const revenue = r.action_values?.find((a: any) => a.action_type.includes("purchase"))?.value || 0;
+
+      return {
+        region: r.region || "Desconhecida",
+        impressions: Number(r.impressions || 0),
+        clicks: Number(r.clicks || 0),
+        spend,
+        ctr: Number(r.ctr || 0),
+        cpc: Number(r.cpc || 0),
+        conversions: Number(conversions),
+        revenue: Number(revenue),
+        roas: spend > 0 ? Number(revenue) / spend : 0,
+        cpa: Number(conversions) > 0 ? spend / Number(conversions) : 0,
+      };
+    }).sort((a: any, b: any) => b.spend - a.spend);
+
+    // Save snapshot
+    for (const region of regions.slice(0, 20)) {
+      try {
+        await admin.from("geo_performance").upsert({
+          user_id: userId,
+          account_id: adAccount.id,
+          region: region.region,
+          region_type: "state",
+          impressions: region.impressions,
+          clicks: region.clicks,
+          spend: region.spend,
+          conversions: region.conversions,
+          ctr: region.ctr,
+          cpc: region.cpc,
+          cpa: region.cpa,
+          roas: region.roas,
+          date_preset: datePreset,
+          snapshot_date: new Date().toISOString().split("T")[0],
+        }, { onConflict: "user_id,account_id,region,snapshot_date" });
+      } catch { /* ignore */ }
+    }
+
+    // Identify best/worst regions
+    const withSpend = regions.filter((r: any) => r.spend > 0);
+    const bestRegion = withSpend.length > 0 ? withSpend.reduce((a: any, b: any) => (a.roas > b.roas ? a : b)) : null;
+    const worstRegion = withSpend.length > 0 ? withSpend.reduce((a: any, b: any) => (a.roas < b.roas && a.spend > 10 ? a : b)) : null;
+
+    return new Response(JSON.stringify({
+      regions,
+      total_regions: regions.length,
+      best_region: bestRegion,
+      worst_region: worstRegion,
+      insights: generateGeoInsights(regions),
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err?.message }), { status: 500, headers: corsHeaders });
+  }
+}
+
+function generateGeoInsights(regions: any[]): string[] {
+  const insights: string[] = [];
+  const withSpend = regions.filter((r: any) => r.spend > 0);
+
+  if (withSpend.length === 0) return ["Sem dados geográficos suficientes para análise."];
+
+  const totalSpend = withSpend.reduce((s: number, r: any) => s + r.spend, 0);
+  const top3 = withSpend.slice(0, 3);
+  const top3Spend = top3.reduce((s: number, r: any) => s + r.spend, 0);
+  const top3Pct = totalSpend > 0 ? (top3Spend / totalSpend) * 100 : 0;
+
+  insights.push(`📍 Top 3 regiões concentram ${top3Pct.toFixed(0)}% do investimento: ${top3.map((r: any) => r.region).join(", ")}`);
+
+  const highCPC = withSpend.filter((r: any) => r.cpc > withSpend.reduce((s: number, x: any) => s + x.cpc, 0) / withSpend.length * 1.5);
+  if (highCPC.length > 0) {
+    insights.push(`⚠️ CPC acima da média em: ${highCPC.map((r: any) => r.region).slice(0, 3).join(", ")}`);
+  }
+
+  const lowCTR = withSpend.filter((r: any) => r.ctr < 0.5 && r.impressions > 1000);
+  if (lowCTR.length > 0) {
+    insights.push(`📉 CTR baixo em: ${lowCTR.map((r: any) => `${r.region} (${r.ctr.toFixed(2)}%)`).slice(0, 3).join(", ")}`);
+  }
+
+  return insights;
+}
+
+// ── PME Module: ROI Report ────────────────────────────────────────────────────
+
+async function handleROIReport(admin: any, userId: string, targetAccountId: string, datePreset: string, corsHeaders: any) {
+  const now = new Date();
+  let startDate: Date;
+
+  switch (datePreset) {
+    case "today": startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()); break;
+    case "yesterday": startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1); break;
+    case "last_7d": startDate = new Date(now.getTime() - 7 * 86400000); break;
+    case "last_14d": startDate = new Date(now.getTime() - 14 * 86400000); break;
+    case "last_30d": default: startDate = new Date(now.getTime() - 30 * 86400000); break;
+  }
+
+  // Get sales data
+  const { data: sales } = await admin
+    .from("sales_data")
+    .select("*")
+    .eq("user_id", userId)
+    .gte("sale_date", startDate.toISOString().split("T")[0]);
+
+  // Get leads with sales
+  const { data: leadSales } = await admin
+    .from("leads")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("status", "venda_realizada")
+    .gte("sale_date", startDate.toISOString());
+
+  // Get PME config for margin
+  const { data: pmeConfig } = await admin
+    .from("pme_config")
+    .select("profit_margin_percent, average_ticket")
+    .eq("user_id", userId)
+    .single();
+
+  const marginPct = pmeConfig?.profit_margin_percent || 30;
+  const avgTicket = pmeConfig?.average_ticket || 0;
+
+  // Get ad spend
+  let totalSpend = 0;
+  let campaignSpends: Record<string, number> = {};
+  try {
+    let accountQuery = admin.from("ad_accounts").select("*")
+      .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+    if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
+    const { data: adAccount } = await accountQuery.limit(1).single();
+
+    if (adAccount?.access_token_encrypted) {
+      const insUrl = new URL(`https://graph.facebook.com/v21.0/act_${adAccount.account_id}/insights`);
+      insUrl.searchParams.set("access_token", adAccount.access_token_encrypted);
+      insUrl.searchParams.set("fields", "campaign_id,campaign_name,spend");
+      insUrl.searchParams.set("date_preset", datePreset);
+      insUrl.searchParams.set("level", "campaign");
+      insUrl.searchParams.set("limit", "100");
+      const insRes = await fetch(insUrl.toString());
+      const insData = await insRes.json();
+      for (const row of (insData.data || [])) {
+        const s = Number(row.spend || 0);
+        totalSpend += s;
+        campaignSpends[row.campaign_id] = s;
+      }
+    }
+  } catch { /* ignore */ }
+
+  // Calculate metrics
+  const allSales = [...(sales || []), ...(leadSales || []).map((l: any) => ({ sale_value: l.sale_value, campaign_id_meta: l.campaign_id_meta, campaign_name: l.campaign_name }))];
+
+  // Deduplicate by lead_id if present
+  const uniqueSales = allSales;
+  const totalRevenue = uniqueSales.reduce((s: number, r: any) => s + (Number(r.sale_value) || 0), 0);
+  const totalProfit = totalRevenue * (marginPct / 100);
+  const netProfit = totalProfit - totalSpend;
+  const roi = totalSpend > 0 ? ((totalRevenue - totalSpend) / totalSpend) * 100 : 0;
+  const roiProfit = totalSpend > 0 ? ((netProfit) / totalSpend) * 100 : 0;
+  const roas = totalSpend > 0 ? totalRevenue / totalSpend : 0;
+  const cac = uniqueSales.length > 0 && totalSpend > 0 ? totalSpend / uniqueSales.length : 0;
+
+  // Per-campaign ROI
+  const campaignROI: any[] = [];
+  const campaignSalesMap: Record<string, { count: number; revenue: number }> = {};
+  for (const sale of uniqueSales) {
+    const cid = sale.campaign_id_meta || "unknown";
+    if (!campaignSalesMap[cid]) campaignSalesMap[cid] = { count: 0, revenue: 0 };
+    campaignSalesMap[cid].count++;
+    campaignSalesMap[cid].revenue += Number(sale.sale_value) || 0;
+  }
+
+  for (const [cid, data] of Object.entries(campaignSalesMap)) {
+    const spend = campaignSpends[cid] || 0;
+    campaignROI.push({
+      campaign_id: cid,
+      campaign_name: uniqueSales.find((s: any) => s.campaign_id_meta === cid)?.campaign_name || cid,
+      sales_count: data.count,
+      revenue: data.revenue,
+      spend,
+      profit: data.revenue * (marginPct / 100) - spend,
+      roas: spend > 0 ? data.revenue / spend : 0,
+      cac: data.count > 0 && spend > 0 ? spend / data.count : 0,
+    });
+  }
+
+  return new Response(JSON.stringify({
+    period: datePreset,
+    total_spend: totalSpend,
+    total_revenue: totalRevenue,
+    total_profit: totalProfit,
+    net_profit: netProfit,
+    roi: Number(roi.toFixed(1)),
+    roi_profit: Number(roiProfit.toFixed(1)),
+    roas: Number(roas.toFixed(2)),
+    cac: Number(cac.toFixed(2)),
+    total_sales: uniqueSales.length,
+    average_ticket: uniqueSales.length > 0 ? totalRevenue / uniqueSales.length : avgTicket,
+    margin_percent: marginPct,
+    campaign_roi: campaignROI.sort((a, b) => b.revenue - a.revenue),
+    summary: generateROISummary(totalSpend, totalRevenue, netProfit, roi, roas, uniqueSales.length, cac),
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+function generateROISummary(spend: number, revenue: number, netProfit: number, roi: number, roas: number, sales: number, cac: number): string {
+  const lines: string[] = [];
+
+  if (revenue === 0 && spend > 0) {
+    lines.push("⚠️ Nenhuma venda registrada no período. Cadastre suas vendas para ver o ROI real.");
+    lines.push("💡 Use a aba 'Leads' para classificar leads e registrar vendas.");
+    return lines.join("\n");
+  }
+
+  if (netProfit > 0) {
+    lines.push(`✅ Lucro líquido positivo: R$ ${netProfit.toFixed(2)} no período.`);
+  } else if (netProfit < 0) {
+    lines.push(`⚠️ Prejuízo no período: R$ ${Math.abs(netProfit).toFixed(2)}.`);
+  }
+
+  lines.push(`📊 ROAS real: ${roas.toFixed(1)}x (cada R$1 investido retornou R$ ${roas.toFixed(2)})`);
+
+  if (cac > 0) {
+    lines.push(`👤 Custo por cliente: R$ ${cac.toFixed(2)}`);
+  }
+
+  if (sales > 0) {
+    const avgTicket = revenue / sales;
+    lines.push(`🎯 Ticket médio: R$ ${avgTicket.toFixed(2)} | ${sales} vendas`);
+  }
+
+  return lines.join("\n");
+}
+
+// ── PME Module: Config ────────────────────────────────────────────────────────
+
+async function handleGetPMEConfig(admin: any, userId: string, corsHeaders: any) {
+  const { data } = await admin.from("pme_config").select("*").eq("user_id", userId).single();
+  return new Response(JSON.stringify(data || {}), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+async function handleSavePMEConfig(admin: any, userId: string, body: any, corsHeaders: any) {
+  const {
+    business_type, monthly_revenue_range, service_radius_km,
+    target_cities, target_states, average_ticket, profit_margin_percent,
+    lead_response_time_target_minutes, gmb_place_id, sales_scripts,
+    lead_stale_hours,
+  } = body;
+
+  try {
+    await admin.from("pme_config").upsert({
+      user_id: userId,
+      business_type,
+      monthly_revenue_range,
+      service_radius_km: service_radius_km ?? 30,
+      target_cities: target_cities || [],
+      target_states: target_states || [],
+      average_ticket,
+      profit_margin_percent: profit_margin_percent ?? 30,
+      lead_response_time_target_minutes: lead_response_time_target_minutes ?? 15,
+      gmb_place_id,
+      sales_scripts: sales_scripts || [],
+      lead_stale_hours: lead_stale_hours ?? 24,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+  } catch { /* ignore */ }
+
+  return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// ── Smart Asset Selection (Phase 1: Agent Integration) ──────────────────────
+
+async function handleSmartSelectAssets(
+  admin: any, userId: string, targetAccountId: string,
+  campaignId: string, params: any, corsHeaders: any
+) {
+  const { objective, platform = 'meta', ad_type = 'feed', limit = 5 } = params || {};
+
+  // 1. Fetch top-performing creatives for this objective
+  let creativeQuery = admin
+    .from('creative_uploads')
+    .select('id, name, file_url, thumbnail_url, file_type, category, tags, style, performance_score, ai_score, avg_ctr, avg_roas, fatigue_score, best_objective, best_audience, times_used')
+    .eq('user_id', userId)
+    .lt('fatigue_score', 70) // Exclude fatigued creatives
+    .order('performance_score', { ascending: false })
+    .limit(limit * 2);
+
+  // Filter by objective if provided
+  if (objective) {
+    creativeQuery = creativeQuery.or(`best_objective.eq.${objective},best_objective.is.null`);
+  }
+
+  const { data: creatives } = await creativeQuery;
+
+  // 2. Fetch top-performing ad copies
+  let copyQuery = admin
+    .from('ad_copies')
+    .select('id, headline, description, primary_text, cta, tone, objective, ai_score, performance_score, avg_ctr, times_used, status')
+    .eq('user_id', userId)
+    .eq('status', 'available')
+    .eq('platform', platform)
+    .order('performance_score', { ascending: false })
+    .limit(limit * 2);
+
+  if (objective) {
+    copyQuery = copyQuery.or(`objective.eq.${objective},objective.is.null`);
+  }
+
+  const { data: copies } = await copyQuery;
+
+  // 3. Fetch historical best-performing pairs
+  const { data: bestPairs } = await admin
+    .from('creative_copy_pairs')
+    .select('creative_id, ad_copy_id, combined_score, ctr, roas')
+    .eq('user_id', userId)
+    .gt('combined_score', 60)
+    .order('combined_score', { ascending: false })
+    .limit(10);
+
+  // 4. Score and rank combinations
+  const recommendations: any[] = [];
+  const topCreatives = (creatives || []).slice(0, limit);
+  const topCopies = (copies || []).slice(0, limit);
+
+  for (const creative of topCreatives) {
+    // Find best copy for this creative
+    const pairedCopyId = bestPairs?.find((p: any) => p.creative_id === creative.id)?.ad_copy_id;
+    const bestCopy = pairedCopyId
+      ? topCopies.find((c: any) => c.id === pairedCopyId) || topCopies[0]
+      : topCopies[0];
+
+    if (!bestCopy) continue;
+
+    const combinedScore = Math.round(
+      (creative.performance_score || creative.ai_score || 50) * 0.5 +
+      (bestCopy.performance_score || bestCopy.ai_score || 50) * 0.3 +
+      (creative.fatigue_score ? (100 - creative.fatigue_score) * 0.2 : 20)
+    );
+
+    recommendations.push({
+      creative: {
+        id: creative.id,
+        name: creative.name,
+        file_url: creative.file_url,
+        thumbnail_url: creative.thumbnail_url,
+        performance_score: creative.performance_score,
+        fatigue_score: creative.fatigue_score,
+        best_audience: creative.best_audience,
+      },
+      copy: {
+        id: bestCopy.id,
+        headline: bestCopy.headline,
+        description: bestCopy.description,
+        primary_text: bestCopy.primary_text,
+        cta: bestCopy.cta,
+        performance_score: bestCopy.performance_score,
+      },
+      combined_score: combinedScore,
+      reason: `Criativo score ${creative.performance_score || creative.ai_score}/100 + Copy score ${bestCopy.performance_score || bestCopy.ai_score}/100. Fadiga: ${creative.fatigue_score || 0}%`,
+    });
+  }
+
+  // Sort by combined score
+  recommendations.sort((a: any, b: any) => b.combined_score - a.combined_score);
+
+  // Log selection
+  for (const rec of recommendations.slice(0, 3)) {
+    try {
+      await admin.from('creative_selection_log').insert({
+        user_id: userId,
+        creative_id: rec.creative.id,
+        action: 'selected',
+        reason: `Smart select for campaign ${campaignId || 'new'}: ${rec.reason}`,
+        score_at_selection: rec.creative.performance_score,
+        metadata: { ad_copy_id: rec.copy.id, combined_score: rec.combined_score },
+      });
+    } catch { /* ignore */ }
+  }
+
+  return new Response(JSON.stringify({
+    recommendations: recommendations.slice(0, limit),
+    total_creatives: creatives?.length || 0,
+    total_copies: copies?.length || 0,
+    best_pairs: bestPairs?.length || 0,
+  }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+
+// ── Register Asset Performance (Phase 1: Agent Integration) ─────────────────
+
+async function handleRegisterAssetPerformance(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { creative_id, ad_copy_id, campaign_id_meta, ad_id_meta, metrics } = body;
+
+  if (!creative_id && !ad_copy_id) {
+    return new Response(JSON.stringify({ error: 'creative_id or ad_copy_id required' }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const { impressions = 0, clicks = 0, conversions = 0, spend = 0, revenue = 0 } = metrics || {};
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const roas = spend > 0 ? revenue / spend : 0;
+
+  // Update creative_uploads performance
+  if (creative_id) {
+    try {
+      const { data: existing } = await admin.from('creative_uploads')
+        .select('total_impressions, total_clicks, total_spend, total_conversions, times_used')
+        .eq('id', creative_id).single();
+
+      if (existing) {
+        const newImpressions = (existing.total_impressions || 0) + impressions;
+        const newClicks = (existing.total_clicks || 0) + clicks;
+        const newSpend = (existing.total_spend || 0) + spend;
+        const newConversions = (existing.total_conversions || 0) + conversions;
+        const newCtr = newImpressions > 0 ? (newClicks / newImpressions) * 100 : 0;
+
+        await admin.from('creative_uploads').update({
+          total_impressions: newImpressions,
+          total_clicks: newClicks,
+          total_spend: newSpend,
+          total_conversions: newConversions,
+          avg_ctr: Number(newCtr.toFixed(3)),
+          times_used: (existing.times_used || 0) + 1,
+          last_used_at: new Date().toISOString(),
+        }).eq('id', creative_id);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Update ad_copies performance
+  if (ad_copy_id) {
+    try {
+      const { data: existing } = await admin.from('ad_copies')
+        .select('total_impressions, total_clicks, times_used')
+        .eq('id', ad_copy_id).single();
+
+      if (existing) {
+        const newImpressions = (existing.total_impressions || 0) + impressions;
+        const newClicks = (existing.total_clicks || 0) + clicks;
+        const newCtr = newImpressions > 0 ? (newClicks / newImpressions) * 100 : 0;
+
+        await admin.from('ad_copies').update({
+          total_impressions: newImpressions,
+          total_clicks: newClicks,
+          avg_ctr: Number(newCtr.toFixed(3)),
+          times_used: (existing.times_used || 0) + 1,
+        }).eq('id', ad_copy_id);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Update or create pair record
+  if (creative_id && ad_copy_id) {
+    try {
+      const combinedScore = Math.round(
+        (ctr > 2 ? 30 : ctr > 1 ? 20 : 10) +
+        (roas > 3 ? 40 : roas > 1.5 ? 25 : 10) +
+        (conversions > 5 ? 30 : conversions > 0 ? 15 : 0)
+      );
+
+      await admin.from('creative_copy_pairs').upsert({
+        user_id: userId,
+        creative_id,
+        ad_copy_id,
+        campaign_id_meta,
+        ad_id_meta,
+        impressions,
+        clicks,
+        conversions,
+        ctr: Number(ctr.toFixed(3)),
+        roas: Number(roas.toFixed(3)),
+        combined_score: combinedScore,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'creative_id,ad_copy_id,campaign_id_meta' });
+    } catch { /* ignore */ }
+  }
+
+  return new Response(JSON.stringify({ success: true }),
+    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }

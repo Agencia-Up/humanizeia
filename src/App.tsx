@@ -45,8 +45,14 @@ const WhatsAppCAPI = lazy(() => import("./pages/WhatsAppCAPI"));
 const ApolloDashboard = lazy(() => import("./pages/ApolloDashboard"));
 const SalomaoOrchestrator = lazy(() => import("./pages/SalomaoOrchestrator"));
 const FluxCRM = lazy(() => import("./pages/FluxCRM"));
-const CRMContacts = lazy(() => import("./pages/CRMContacts"));
 const CreativeIntelligence = lazy(() => import("./pages/CreativeIntelligence"));
+const CompetitorRadar = lazy(() => import("./pages/CompetitorRadar"));
+const LeadManagement = lazy(() => import('./pages/LeadManagement'));
+const GoogleAdsDashboard = lazy(() => import('./pages/GoogleAdsDashboard'));
+const LinkedInAdsDashboard = lazy(() => import('./pages/LinkedInAdsDashboard'));
+const DaviSocialMedia = lazy(() => import('./pages/DaviSocialMedia'));
+const JoaoEmail = lazy(() => import('./pages/JoaoEmail'));
+const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
 
 const queryClient = new QueryClient();
 
@@ -100,8 +106,14 @@ const App = () => (
             <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
             <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
             <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
-            <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
             <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
+            <Route path="/competitor-radar" element={<ProtectedRoute><CompetitorRadar /></ProtectedRoute>} />
+            <Route path="/leads" element={<ProtectedRoute><LeadManagement /></ProtectedRoute>} />
+            <Route path="/google-ads" element={<ProtectedRoute><GoogleAdsDashboard /></ProtectedRoute>} />
+            <Route path="/linkedin-ads" element={<ProtectedRoute><LinkedInAdsDashboard /></ProtectedRoute>} />
+            <Route path="/davi" element={<ProtectedRoute><DaviSocialMedia /></ProtectedRoute>} />
+            <Route path="/joao" element={<ProtectedRoute><JoaoEmail /></ProtectedRoute>} />
+            <Route path="/daniel" element={<ProtectedRoute><DanielEstrategia /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>

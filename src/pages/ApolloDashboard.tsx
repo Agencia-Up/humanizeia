@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +13,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { AILog, AILogEntry } from '@/components/apollo/AILog';
+import { GoldenRulesTab } from '@/components/apollo/GoldenRulesTab';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import {
   useApolloAgent, useApolloHistory, useApolloCronConfig,
@@ -23,7 +26,7 @@ import {
   ChevronDown, ChevronRight, Clock, Copy, GitFork, HelpCircle,
   Loader2, Minus, Pause, Play, Radar, Settings, Sparkles,
   ThumbsDown, TrendingDown, TrendingUp, Zap, Sun, BarChart3,
-  Flame, Gauge, PieChart, RefreshCw, MessageCircle, Phone,
+  Flame, Gauge, PieChart, RefreshCw, MessageCircle, Phone, Shield,
 } from 'lucide-react';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -73,6 +76,38 @@ function deltaBadge(val: number | null | undefined, invert = false) {
 
 const fmt = (n: number, d = 2) => n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 
+// ── Metric translations for non-technical users ──
+const METRIC_HELP: Record<string, { friendly: string; tip: string }> = {
+  'CTR': { friendly: 'Taxa de Interesse', tip: 'Percentual de pessoas que viram seu anúncio e clicaram. Acima de 1.5% é ótimo!' },
+  'CPC': { friendly: 'Custo por Visita', tip: 'Quanto você paga cada vez que alguém clica no anúncio. Quanto menor, melhor!' },
+  'ROAS': { friendly: 'Retorno (ROI)', tip: 'Para cada R$1 investido, quanto voltou em vendas. Acima de 3x é excelente!' },
+  'CPA': { friendly: 'Custo por Resultado', tip: 'Quanto custa cada conversão ou venda. Quanto menor, mais eficiente!' },
+  'Gasto': { friendly: 'Investimento', tip: 'Total investido no período selecionado' },
+  'Impressões': { friendly: 'Visualizações', tip: 'Quantas vezes seu anúncio apareceu para as pessoas' },
+  'Frequência': { friendly: 'Repetição', tip: 'Quantas vezes a mesma pessoa viu seu anúncio. Acima de 4x pode causar irritação!' },
+  'Conversões': { friendly: 'Resultados', tip: 'Número de ações valiosas (vendas, leads) geradas pelo anúncio' },
+  'Orçamento/dia': { friendly: 'Limite Diário', tip: 'Valor máximo que será gasto por dia nesta campanha' },
+};
+
+function MetricLabel({ label, currencySymbol }: { label: string; currencySymbol?: string }) {
+  const help = METRIC_HELP[label];
+  if (!help) return <p className="text-muted-foreground text-[10px]">{label}</p>;
+  return (
+    <div className="flex items-center gap-0.5">
+      <p className="text-muted-foreground text-[10px]">{help.friendly}</p>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <HelpCircle className="h-2.5 w-2.5 text-muted-foreground/50 cursor-help" />
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-[220px]">
+          <p className="text-xs font-medium mb-0.5">{label}</p>
+          <p className="text-xs text-muted-foreground">{help.tip}</p>
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 const DATE_PRESETS: { value: ApolloDatePreset; label: string }[] = [
   { value: 'today', label: 'Hoje' }, { value: 'yesterday', label: 'Ontem' },
   { value: 'last_7d', label: 'Últimos 7 dias' }, { value: 'last_14d', label: 'Últimos 14 dias' },
@@ -108,8 +143,12 @@ function CampaignCard({
           </div>
         </div>
         <div className="text-right flex-shrink-0">
-          <div className={`text-2xl font-bold ${healthColor(s)}`}>{s}</div>
-          <div className={`text-[10px] font-semibold ${healthColor(s)}`}>{healthLabel(s)}</div>
+          <div className="flex flex-col items-center">
+            <div className={`relative w-12 h-12 rounded-full border-4 flex items-center justify-center ${s >= 70 ? 'border-emerald-500 bg-emerald-500/10' : s >= 45 ? 'border-amber-500 bg-amber-500/10' : 'border-red-500 bg-red-500/10'}`}>
+              <span className={`text-lg font-bold ${healthColor(s)}`}>{s}</span>
+            </div>
+            <div className={`text-[10px] font-semibold mt-0.5 ${healthColor(s)}`}>{healthLabel(s)}</div>
+          </div>
         </div>
       </div>
 
@@ -128,7 +167,7 @@ function CampaignCard({
           { label: 'Orçamento/dia', val: campaign.daily_budget ? `${currencySymbol} ${fmt(campaign.daily_budget)}` : 'N/A' },
         ].map(({ label, val, highlight }) => (
           <div key={label}>
-            <p className="text-muted-foreground text-[10px]">{label}</p>
+            <MetricLabel label={label} />
             <p className={`font-semibold text-xs ${highlight || ''}`}>{val}</p>
           </div>
         ))}
@@ -269,6 +308,17 @@ function ActionCard({ action, onExecute, onDismiss, isExecuting }: {
           <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
           <span>A campanha clonada será criada em modo <strong>PAUSADO</strong>. Você precisará ativá-la no Meta Ads Manager.</span>
         </div>
+      )}
+      {(action.priority === 'critical' || action.priority === 'high') && (
+        <Button
+          size="sm"
+          className="w-full h-9 text-xs gap-1.5 font-semibold gradient-primary glow-primary text-primary-foreground"
+          onClick={onExecute}
+          disabled={isExecuting}
+        >
+          {isExecuting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+          JOSÉ, Resolver Agora
+        </Button>
       )}
       <div className="flex gap-2">
         <Button size="sm" className="flex-1 h-8 text-xs gap-1" onClick={onExecute} disabled={isExecuting}>
@@ -467,6 +517,9 @@ export default function ApolloDashboard() {
   const [adsetCache, setAdsetCache] = useState<Record<string, any[]>>({});
   const [loadingAdsets, setLoadingAdsets] = useState<Record<string, boolean>>({});
   const [sessionLoaded, setSessionLoaded] = useState(false);
+  const [aiLogEntries, setAiLogEntries] = useState<AILogEntry[]>([]);
+  const [aiLogOpen, setAiLogOpen] = useState(true);
+  const prevIsAnalyzing = useRef(false);
 
   const accountId = connectedAccount?.account_id;
 
@@ -477,6 +530,79 @@ export default function ApolloDashboard() {
       loadSavedSession(accountId);
     }
   }, [sessionLoaded, session, isAnalyzing, accountId, loadSavedSession]);
+  // ── AI Log: populate when analysis starts ──
+  useEffect(() => {
+    if (isAnalyzing && !prevIsAnalyzing.current) {
+      const now = new Date();
+      const campaignCount = session?.campaigns?.length || 0;
+      const initial: AILogEntry[] = [
+        { id: 'start', type: 'analyzing', message: `Iniciando análise JOSÉ Governador — Nível 6...`, timestamp: new Date(now.getTime()) },
+        { id: 'fetch', type: 'analyzing', message: `Conectando à Meta API e coletando dados de ${campaignCount || 'todas as'} campanhas...`, timestamp: new Date(now.getTime() + 500) },
+        { id: 'dimensions', type: 'analyzing', message: 'Processando 8 dimensões: WoW · Fadiga Criativa · Pacing · Portfólio · Sazonalidade · Anomalias · Aprendizado · IA', timestamp: new Date(now.getTime() + 1200) },
+        { id: 'health', type: 'analyzing', message: 'Calculando health scores individuais e score geral do portfólio...', timestamp: new Date(now.getTime() + 2000) },
+      ];
+      setAiLogEntries(initial);
+      setAiLogOpen(true);
+    }
+    prevIsAnalyzing.current = isAnalyzing;
+  }, [isAnalyzing, session?.campaigns?.length]);
+
+  // ── AI Log: add completion entries when session loads ──
+  useEffect(() => {
+    if (session && !isAnalyzing && aiLogEntries.length > 0) {
+      const now = new Date();
+      const completionEntries: AILogEntry[] = [];
+      const campaignCount = session.campaigns?.length || 0;
+      const criticalCount = session.campaigns?.filter((c: any) => c.health_score < 45).length || 0;
+      const actionCount = session.actions?.length || 0;
+
+      completionEntries.push({
+        id: 'campaigns-done',
+        type: 'success',
+        message: `${campaignCount} campanhas analisadas com sucesso.`,
+        timestamp: new Date(now.getTime()),
+      });
+
+      if (criticalCount > 0) {
+        completionEntries.push({
+          id: 'critical-alert',
+          type: 'warning',
+          message: `${criticalCount} campanha(s) em estado crítico detectada(s) — ação imediata recomendada.`,
+          timestamp: new Date(now.getTime() + 200),
+        });
+      }
+
+      if (session.health_score !== undefined) {
+        const scoreType = session.health_score >= 70 ? 'success' : session.health_score >= 45 ? 'insight' : 'warning';
+        completionEntries.push({
+          id: 'health-score',
+          type: scoreType as AILogEntry['type'],
+          message: `Health Score geral: ${session.health_score}/100 — ${session.health_score >= 70 ? 'Saudável' : session.health_score >= 45 ? 'Atenção necessária' : 'Crítico'}.`,
+          timestamp: new Date(now.getTime() + 400),
+        });
+      }
+
+      if (actionCount > 0) {
+        completionEntries.push({
+          id: 'actions-generated',
+          type: 'action',
+          message: `${actionCount} ação(ões) gerada(s) pelo JOSÉ para otimização.`,
+          timestamp: new Date(now.getTime() + 600),
+        });
+      }
+
+      completionEntries.push({
+        id: 'complete',
+        type: 'success',
+        message: 'Análise concluída. Revise as recomendações nas abas abaixo.',
+        timestamp: new Date(now.getTime() + 800),
+      });
+
+      setAiLogEntries(prev => [...prev, ...completionEntries]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, isAnalyzing]);
+
   const currency = session?.account?.currency || connectedAccount?.currency || 'BRL';
   const currencySymbol = currency === 'USD' ? 'US$' : 'R$';
 
@@ -532,6 +658,10 @@ export default function ApolloDashboard() {
   }, [adsetCache, getAdSets, accountId, datePreset]);
 
   const overallScore = session?.health_score ?? null;
+  const overallHealthText = overallScore === null ? '' :
+    overallScore >= 70 ? 'Suas campanhas estão saudáveis e gerando bons resultados!' :
+    overallScore >= 45 ? 'Algumas campanhas precisam de atenção. Confira as recomendações do JOSÉ.' :
+    'Atenção! Campanhas com problemas sérios detectados. Ação recomendada!';
   const snapshots = history?.snapshots || [];
   const outcomes = history?.outcomes || [];
   const clones = history?.clones || [];
@@ -578,9 +708,11 @@ export default function ApolloDashboard() {
               </SelectContent>
             </Select>
 
-            <div className="flex items-center gap-2 bg-card border rounded-lg px-3 h-9">
+            <div className={`flex items-center gap-2 border rounded-lg px-3 h-9 transition-all duration-500 ${autoExecute ? 'bg-primary/10 border-primary/40 animate-pulse-glow' : 'bg-card'}`}>
               <Switch id="auto-exec" checked={autoExecute} onCheckedChange={setAutoExecute} className="scale-75" />
-              <Label htmlFor="auto-exec" className="text-xs cursor-pointer whitespace-nowrap">Auto-safe</Label>
+              <Label htmlFor="auto-exec" className={`text-xs cursor-pointer whitespace-nowrap ${autoExecute ? 'text-primary font-semibold' : ''}`}>
+                {autoExecute ? '⚡ Auto-Pilot ATIVO' : 'Auto-Pilot'}
+              </Label>
             </div>
 
             <Button onClick={handleAnalyze} disabled={isAnalyzing || isLoadingSession || !accountId} className="gap-2 h-9">
@@ -642,6 +774,7 @@ export default function ApolloDashboard() {
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mb-2"><Activity className="h-3 w-3" />Score Geral</p>
                   <div className={`text-4xl font-bold ${overallScore !== null ? healthColor(overallScore) : ''}`}>{overallScore ?? '—'}</div>
                   {overallScore !== null && <p className={`text-xs font-semibold mt-0.5 ${healthColor(overallScore)}`}>{healthLabel(overallScore)}</p>}
+                  {overallHealthText && <p className="text-[10px] text-muted-foreground mt-1 leading-tight">{overallHealthText}</p>}
                 </CardContent>
               </Card>
               <Card><CardContent className="pt-5 pb-4"><p className="text-xs text-muted-foreground mb-2">Campanhas</p><div className="text-4xl font-bold">{session.campaigns.length}</div><p className="text-xs text-muted-foreground">analisadas</p></CardContent></Card>
@@ -654,6 +787,23 @@ export default function ApolloDashboard() {
                 <Sparkles className="h-5 w-5 text-primary mt-0.5 flex-shrink-0" />
                 <p className="text-sm leading-relaxed">{session.summary}</p>
               </div>
+            )}
+
+            {/* ── AI Log ── */}
+            {aiLogEntries.length > 0 && (
+              <Collapsible open={aiLogOpen} onOpenChange={setAiLogOpen}>
+                <CollapsibleTrigger asChild>
+                  <button className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
+                    {aiLogOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                    <Brain className="h-3.5 w-3.5 text-primary" />
+                    Log de Pensamento IA
+                    <Badge variant="outline" className="text-[9px] px-1 h-4">{aiLogEntries.length}</Badge>
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2">
+                  <AILog entries={aiLogEntries} isAnalyzing={isAnalyzing} />
+                </CollapsibleContent>
+              </Collapsible>
             )}
           </>
         )}
@@ -703,6 +853,7 @@ export default function ApolloDashboard() {
               <TabsTrigger value="learning" className="gap-1 text-xs"><Activity className="h-3 w-3" />Aprendizado</TabsTrigger>
               <TabsTrigger value="history" className="gap-1 text-xs"><Clock className="h-3 w-3" />Histórico {executedActions.length > 0 && <Badge variant="secondary" className="text-[10px] h-4 px-1">{executedActions.length}</Badge>}</TabsTrigger>
               <TabsTrigger value="seasonal" className="gap-1 text-xs"><Sun className="h-3 w-3" />Sazonalidade</TabsTrigger>
+              <TabsTrigger value="golden-rules" className="gap-1 text-xs"><Shield className="h-3 w-3" />Regras de Ouro</TabsTrigger>
               <TabsTrigger value="schedule" className="gap-1 text-xs"><Settings className="h-3 w-3" />Agendamento</TabsTrigger>
             </TabsList>
 
@@ -1053,6 +1204,11 @@ export default function ApolloDashboard() {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+
+            {/* Regras de Ouro */}
+            <TabsContent value="golden-rules" className="mt-4">
+              <GoldenRulesTab />
             </TabsContent>
 
             {/* Schedule */}

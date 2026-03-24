@@ -39,6 +39,10 @@ interface AppState {
   // Polling interval (minutes)
   pollingIntervalMinutes: number;
   setPollingIntervalMinutes: (minutes: number) => void;
+
+  // Product Tour
+  showProductTour: boolean;
+  setShowProductTour: (show: boolean) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -96,9 +100,13 @@ export const useAppStore = create<AppState>()(
       // Polling interval (default 5 min)
       pollingIntervalMinutes: 5,
       setPollingIntervalMinutes: (minutes) => set({ pollingIntervalMinutes: minutes }),
+
+      // Product Tour
+      showProductTour: false,
+      setShowProductTour: (show) => set({ showProductTour: show }),
     }),
     {
-      name: 'humanizeai-storage',
+      name: 'logosia-storage',
       partialize: (state) => ({
         isDarkMode: state.isDarkMode,
         sidebarOpen: state.sidebarOpen,
@@ -111,7 +119,7 @@ export const useAppStore = create<AppState>()(
 
 // Initialize dark mode on load
 if (typeof window !== 'undefined') {
-  const stored = localStorage.getItem('humanizeai-storage');
+  const stored = localStorage.getItem('logosia-storage');
   if (stored) {
     const parsed = JSON.parse(stored);
     if (parsed.state?.isDarkMode) {

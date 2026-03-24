@@ -1,7 +1,7 @@
 {
   "site_url": "http://localhost:8080",
   "uri_allow_list": "http://localhost:8080,http://localhost:8080/**,http://localhost:4173",
-  "mailer_subjects_confirmation": "Confirme seu cadastro - HumanizeAI TF",
-  "mailer_subjects_recovery": "Recuperacao de senha - HumanizeAI TF",
-  "mailer_subjects_email_change": "Confirme sua mudanca de email - HumanizeAI TF"
+  "mailer_subjects_confirmation": "Confirme seu cadastro - LogosIA",
+  "mailer_subjects_recovery": "Recuperacao de senha - LogosIA",
+  "mailer_subjects_email_change": "Confirme sua mudanca de email - LogosIA"
 }

@@ -5,7 +5,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// ─── PALETA DE CORES HumanizeAI TF ────────────────────────────────────────
+// ─── PALETA DE CORES LogosIA ────────────────────────────────────────
 const COLORS = {
   primary:    '#14b89a',
   secondary:  '#2bbdab',
@@ -23,7 +23,7 @@ function baseTemplate(content: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HumanizeAI TF</title>
+  <title>LogosIA</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background-color: ${COLORS.dark}; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: ${COLORS.text}; }
@@ -48,7 +48,7 @@ function baseTemplate(content: string): string {
                     display:inline-block;
                   ">
                     <span style="font-size:22px; font-weight:800; color:#ffffff; letter-spacing:-0.5px;">
-                      ✦ HumanizeAI TF
+                      ✦ LogosIA
                     </span>
                   </td>
                 </tr>
@@ -85,13 +85,13 @@ function baseTemplate(content: string): string {
           <tr>
             <td align="center" style="padding-top:32px;">
               <p style="color:${COLORS.muted}; font-size:12px; line-height:1.6;">
-                © ${new Date().getFullYear()} HumanizeAI TF. Todos os direitos reservados.<br>
+                © ${new Date().getFullYear()} LogosIA. Todos os direitos reservados.<br>
                 Você está recebendo este email porque possui uma conta em nossa plataforma.
               </p>
               <p style="margin-top:12px;">
-                <a href="https://humanizeai.com.br/privacy-policy" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Política de Privacidade</a>
+                <a href="https://logosia.com.br/privacy-policy" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Política de Privacidade</a>
                 <span style="color:${COLORS.cardBorder};">|</span>
-                <a href="https://humanizeai.com.br/terms-of-service" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Termos de Serviço</a>
+                <a href="https://logosia.com.br/terms-of-service" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Termos de Serviço</a>
               </p>
             </td>
           </tr>
@@ -226,7 +226,7 @@ function resetPasswordEmail(name: string, resetUrl: string): string {
       Recuperação de Senha
     </h1>
     <p style="text-align:center; color:${COLORS.muted}; font-size:15px; margin-bottom:32px;">
-      Olá, <strong style="color:${COLORS.text};">${name}</strong>! Recebemos uma solicitação para redefinir a senha da sua conta HumanizeAI TF.
+      Olá, <strong style="color:${COLORS.text};">${name}</strong>! Recebemos uma solicitação para redefinir a senha da sua conta LogosIA.
     </p>
 
     <!-- ALERTA -->
@@ -256,7 +256,7 @@ function resetPasswordEmail(name: string, resetUrl: string): string {
     </p>
 
     <p style="color:${COLORS.muted}; font-size:12px; text-align:center; margin-top:20px;">
-      Por segurança, nunca compartilhe este link com ninguém. A equipe HumanizeAI TF jamais pedirá sua senha.
+      Por segurança, nunca compartilhe este link com ninguém. A equipe LogosIA jamais pedirá sua senha.
     </p>
   `;
   return baseTemplate(content);
@@ -353,10 +353,10 @@ Deno.serve(async (req) => {
     let html = '';
     const appUrl = redirectTo?.includes('localhost')
       ? 'http://localhost:8080'
-      : 'https://humanizeai.com.br';
+      : 'https://logosia.com.br';
 
     if (type === 'welcome') {
-      subject = '🎉 Bem-vindo à HumanizeAI TF!';
+      subject = '🎉 Bem-vindo à LogosIA!';
       html = welcomeEmail(name, `${appUrl}/auth`);
 
     } else if (type === 'reset_password') {
@@ -381,12 +381,12 @@ Deno.serve(async (req) => {
         });
       }
 
-      subject = '🔐 Recuperação de senha - HumanizeAI TF';
+      subject = '🔐 Recuperação de senha - LogosIA';
       html = resetPasswordEmail(name, data.properties.action_link);
 
     } else if (type === 'email_change') {
       const { newEmail, confirmUrl } = body;
-      subject = '✉️ Confirme seu novo email - HumanizeAI TF';
+      subject = '✉️ Confirme seu novo email - LogosIA';
       html = emailChangeEmail(name, newEmail, confirmUrl ?? `${appUrl}/auth`);
 
     } else {
@@ -404,7 +404,7 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'HumanizeAI TF <onboarding@resend.dev>',
+        from: 'LogosIA <onboarding@resend.dev>',
         to: [email],
         subject,
         html,

@@ -48,7 +48,7 @@ interface ConnectedAccount {
   timezone: string | null;
 }
 
-const SELECTED_ACCOUNT_KEY = 'humanizeai_selected_meta_account_id';
+const SELECTED_ACCOUNT_KEY = 'logosia_selected_meta_account_id';
 
 export function useMetaConnection() {
   const { user } = useAuth();
@@ -221,7 +221,7 @@ export function useMetaConnection() {
     }
   };
 
-  const selectAccount = async (account: MetaAdAccount | ConnectedAccount) => {
+  const selectAccount = async (account: any) => {
     if (!pendingToken) return;
     setIsConnecting(true);
     try {

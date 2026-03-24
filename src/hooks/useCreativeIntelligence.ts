@@ -98,7 +98,7 @@ export function useCreativeIntelligence() {
     setIsLoading(true);
     try {
       let query = supabase
-        .from('creative_uploads')
+        .from('creative_uploads' as any)
         .select('*')
         .eq('user_id', user.id)
         .order('performance_score', { ascending: false })
@@ -126,7 +126,7 @@ export function useCreativeIntelligence() {
     if (!user?.id) return [];
     try {
       const { data, error } = await supabase
-        .from('creative_performance')
+        .from('creative_performance' as any)
         .select('*')
         .eq('user_id', user.id)
         .eq('creative_id', creativeId)
@@ -145,7 +145,7 @@ export function useCreativeIntelligence() {
     if (!user?.id) return [];
     try {
       let query = supabase
-        .from('creative_ab_tests')
+        .from('creative_ab_tests' as any)
         .select('*')
         .eq('user_id', user.id)
         .order('started_at', { ascending: false });
@@ -166,7 +166,7 @@ export function useCreativeIntelligence() {
     if (!user?.id) return [];
     try {
       const { data, error } = await supabase
-        .from('creative_selection_log')
+        .from('creative_selection_log' as any)
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
@@ -206,7 +206,7 @@ export function useCreativeIntelligence() {
     }
   }, [user?.id, toast]);
 
-  // ── Request creative variation from BEZALEL ──
+  // ── Request creative variation from MARIA ──
   const requestVariation = useCallback(async (creativeId: string, instructions?: string) => {
     if (!user?.id) return null;
     try {
@@ -218,7 +218,7 @@ export function useCreativeIntelligence() {
         },
       });
       if (error) throw error;
-      toast({ title: 'Variação solicitada', description: 'BEZALEL está gerando uma nova variação do criativo.' });
+      toast({ title: 'Variação solicitada', description: 'MARIA está gerando uma nova variação do criativo.' });
       return data;
     } catch (err: any) {
       toast({ title: 'Erro ao gerar variação', description: err.message, variant: 'destructive' });
@@ -231,9 +231,9 @@ export function useCreativeIntelligence() {
     if (!user?.id) return null;
     try {
       const [uploads, performances, tests] = await Promise.all([
-        supabase.from('creative_uploads').select('id, performance_score, fatigue_score, times_used, total_impressions, avg_ctr, avg_roas, file_type, created_by').eq('user_id', user.id),
-        supabase.from('creative_performance').select('id, status, performance_score').eq('user_id', user.id),
-        supabase.from('creative_ab_tests').select('id, status, winner').eq('user_id', user.id),
+        supabase.from('creative_uploads' as any).select('id, performance_score, fatigue_score, times_used, total_impressions, avg_ctr, avg_roas, file_type, created_by').eq('user_id', user.id),
+        supabase.from('creative_performance' as any).select('id, status, performance_score').eq('user_id', user.id),
+        supabase.from('creative_ab_tests' as any).select('id, status, winner').eq('user_id', user.id),
       ]);
 
       const creatives = (uploads.data || []) as any[];
@@ -248,7 +248,7 @@ export function useCreativeIntelligence() {
       const topPerformers = creatives.filter(c => (c.performance_score || 0) >= 75).length;
       const activeInAds = perfs.filter(p => p.status === 'active').length;
       const runningTests = abTests.filter(t => t.status === 'running').length;
-      const byBezalel = creatives.filter(c => c.created_by === 'bezalel').length;
+      const byBezalel = creatives.filter(c => c.created_by === 'miriam').length;
       const byUser = creatives.filter(c => c.created_by === 'usuario').length;
 
       return {
