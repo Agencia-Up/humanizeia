@@ -23,3 +23,19 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Supabase temp files
+supabase/.temp/
+
+# Local scripts and temp files
+build.bat
+tsc-check.bat
+generate-doc.cjs
+generate-report.cjs
+humanizzei-preview.png
+logos-preview.html
+*.docx
+Gemini_Generated_Image_*
+
+# Claude local settings
+.claude/settings.local.json
