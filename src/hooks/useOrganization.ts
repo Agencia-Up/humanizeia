@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './useAuth';
+import { useQuery } from '@tanstack/react-query';
 
 interface Organization {
   id: string;
@@ -21,52 +21,51 @@ interface OrganizationInvite {
 
 export function useOrganization() {
   const { user } = useAuth();
-  const [organization, setOrganization] = useState<Organization | null>(null);
-  const [pendingInvites, setPendingInvites] = useState<OrganizationInvite[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-    loadOrganization();
-    loadPendingInvites();
-  }, [user]);
+  // Load Organization using React Query for automatic deduplication and caching
+  const { data: organization = null, isLoading: loadingOrg, refetch: reload } = useQuery({
+    queryKey: ['organization', user?.id],
+    queryFn: async () => {
+      if (!user) return null;
+      
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('organization_id')
+        .eq('id', user.id)
+        .single();
 
-  const loadOrganization = async () => {
-    if (!user) return;
-    
-    // Check profile for organization_id
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('organization_id')
-      .eq('id', user.id)
-      .single();
+      if (profileError || !profile?.organization_id) return null;
 
-    if (profile?.organization_id) {
-      const { data: org } = await supabase
+      const { data: org, error: orgError } = await supabase
         .from('organizations')
         .select('*')
         .eq('id', profile.organization_id)
         .single();
       
-      setOrganization(org);
-    }
-    setLoading(false);
-  };
+      if (orgError) return null;
+      return org as Organization;
+    },
+    enabled: !!user,
+    staleTime: 1000 * 60 * 5, // Cache for 5 minutes
+  });
 
-  const loadPendingInvites = async () => {
-    if (!user?.email) return;
+  // Load Pending Invites
+  const { data: pendingInvites = [], isLoading: loadingInvites } = useQuery({
+    queryKey: ['organization-invites', user?.email],
+    queryFn: async () => {
+      if (!user?.email) return [];
 
-    const { data } = await supabase
-      .from('organization_invites')
-      .select('*, organizations(name)')
-      .eq('email', user.email)
-      .eq('status', 'pending');
+      const { data } = await supabase
+        .from('organization_invites')
+        .select('*, organizations(name)')
+        .eq('email', user.email)
+        .eq('status', 'pending');
 
-    setPendingInvites((data as unknown as OrganizationInvite[]) || []);
-  };
+      return (data as unknown as OrganizationInvite[]) || [];
+    },
+    enabled: !!user?.email,
+    staleTime: 1000 * 60 * 2, // Cache for 2 minutes
+  });
 
   const createOrganization = async (name: string) => {
     const trimmedName = name.trim();
@@ -81,9 +80,8 @@ export function useOrganization() {
       return { error };
     }
 
-    const org = data as Organization;
-    setOrganization(org);
-    return { error: null, organization: org };
+    reload(); // Refresh the query
+    return { error: null, organization: data as Organization };
   };
 
   const acceptInvite = async (inviteId: string) => {
@@ -117,8 +115,7 @@ export function useOrganization() {
       .update({ organization_id: invite.organization_id })
       .eq('id', user.id);
 
-    await loadOrganization();
-    await loadPendingInvites();
+    reload();
     return { error: null };
   };
 
@@ -139,10 +136,11 @@ export function useOrganization() {
   return {
     organization,
     pendingInvites,
-    loading,
+    loading: loadingOrg || loadingInvites,
     createOrganization,
     acceptInvite,
     sendInvite,
-    reload: loadOrganization,
+    reload,
   };
 }
+
