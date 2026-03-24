@@ -56,7 +56,8 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 
 // 🏠 Dashboard
 const dashboardItems = [
-  { title: 'Painel', url: '/', icon: Home },
+  { title: 'Home', url: '/dashboard', icon: Home },
+  { title: 'Métricas', url: '/metrics', icon: BarChart3 },
 ];
 
 // 👑 Agentes IA — Equipe Salomão
@@ -110,7 +111,7 @@ const integrationItems = [
 
 // 🎓 Aprendizado
 const learningItems = [
-  { title: 'Academia IA', url: '/academy', icon: GraduationCap },
+  { title: 'Tutoriais', url: '/tutorials', icon: GraduationCap },
 ];
 
 // 💬 WhatsApp
