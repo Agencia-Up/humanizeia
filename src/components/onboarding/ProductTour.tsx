@@ -22,6 +22,7 @@ const tourSteps: Step[] = [
     placement: 'center',
     disableBeacon: true,
     content: '',
+    content: '',
     data: {
       emoji: '🚀',
       title: 'Bem-vindo ao LogosIA!',
@@ -34,6 +35,7 @@ const tourSteps: Step[] = [
     target: '[data-tour="sidebar-agents"]',
     placement: 'right',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '📋',
       title: 'Navegação — Equipe Salomão',
@@ -46,6 +48,7 @@ const tourSteps: Step[] = [
     target: '[data-tour="sidebar-agents"] a[href="/salomao"]',
     placement: 'right',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '👑',
       title: 'SALOMÃO — Orquestrador',
@@ -58,6 +61,7 @@ const tourSteps: Step[] = [
     target: '[data-tour="sidebar-agents"] a[href="/apollo"]',
     placement: 'right',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '🎯',
       title: 'JOSÉ — Tráfego Pago',
@@ -70,6 +74,7 @@ const tourSteps: Step[] = [
     target: '[data-tour="sidebar-agents"] a[href="/creative-studio"]',
     placement: 'right',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '🎨',
       title: 'MARIA — Design Criativo',
@@ -82,6 +87,7 @@ const tourSteps: Step[] = [
     target: '[data-tour="sidebar-agents"] a[href="/leads"]',
     placement: 'right',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '👥',
       title: 'MARCOS — Gestão de Leads',
@@ -94,6 +100,7 @@ const tourSteps: Step[] = [
     target: '[data-tour="kpi-cards"]',
     placement: 'bottom',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '📊',
       title: 'Painel de Métricas',
@@ -106,6 +113,7 @@ const tourSteps: Step[] = [
     target: 'a[href="/whatsapp/instances"]',
     placement: 'right',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '💬',
       title: 'WhatsApp Business',
@@ -118,6 +126,7 @@ const tourSteps: Step[] = [
     target: 'a[href="/integrations"]',
     placement: 'right',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '🔗',
       title: 'Integrações & Conexões',
@@ -130,6 +139,7 @@ const tourSteps: Step[] = [
     target: '[data-tour="dark-mode"]',
     placement: 'right',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '🌙',
       title: 'Modo Escuro / Claro',
@@ -142,6 +152,7 @@ const tourSteps: Step[] = [
     target: 'a[href="/settings"]',
     placement: 'right',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '⚙️',
       title: 'Configurações',
@@ -154,6 +165,7 @@ const tourSteps: Step[] = [
     target: 'body',
     placement: 'center',
     disableBeacon: true,
+    content: '',
     data: {
       emoji: '🎉',
       title: 'Tudo pronto!',

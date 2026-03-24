@@ -63,7 +63,7 @@ export function useSocialMedia() {
     setLoading(true);
     try {
       let query = supabase
-        .from('social_posts')
+        .from('social_posts' as any)
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
@@ -115,7 +115,7 @@ export function useSocialMedia() {
     if (!user) return null;
     try {
       const { data, error } = await supabase
-        .from('social_posts')
+        .from('social_posts' as any)
         .insert({
           user_id: user.id,
           platform: post.platform || 'instagram',
@@ -143,7 +143,7 @@ export function useSocialMedia() {
   const schedulePost = useCallback(async (postId: string, scheduledAt: string) => {
     try {
       const { error } = await supabase
-        .from('social_posts')
+        .from('social_posts' as any)
         .update({ status: 'scheduled', scheduled_at: scheduledAt })
         .eq('id', postId)
         .eq('user_id', user?.id);
@@ -187,7 +187,7 @@ export function useSocialMedia() {
       if (error) throw error;
       if (data?.insights) {
         await supabase
-          .from('social_posts')
+          .from('social_posts' as any)
           .update({ insights: data.insights })
           .eq('id', postId);
         await fetchPosts();
@@ -200,7 +200,7 @@ export function useSocialMedia() {
   // ─── Delete Draft ────────────────────────────────────────────────────────
   const deleteDraft = useCallback(async (postId: string) => {
     try {
-      await supabase.from('social_posts').delete().eq('id', postId).eq('user_id', user?.id);
+      await supabase.from('social_posts' as any).delete().eq('id', postId).eq('user_id', user?.id);
       toast({ title: 'Rascunho removido' });
       await fetchPosts();
     } catch (err: any) {

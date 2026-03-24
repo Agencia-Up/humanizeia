@@ -24,7 +24,7 @@ export function useLinkedInConnection() {
     setIsLoading(true);
     try {
       const { data, error } = await supabase
-        .from('connected_accounts')
+        .from('connected_accounts' as any)
         .select('*')
         .eq('user_id', user.id)
         .eq('platform', 'linkedin')
@@ -102,7 +102,7 @@ export function useLinkedInConnection() {
     if (!connectedAccount || !user) return;
     try {
       await supabase
-        .from('connected_accounts')
+        .from('connected_accounts' as any)
         .delete()
         .eq('user_id', user.id)
         .eq('platform', 'linkedin');
