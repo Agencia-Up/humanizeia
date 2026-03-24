@@ -61,16 +61,16 @@ const dashboardItems = [
 
 // 👑 Agentes IA — Equipe Salomão
 const agentItems = [
-  { title: 'SALOMÃO — Orquestrador', url: '/salomao', icon: Sparkles },
-  { title: 'JOSÉ — Tráfego Pago', url: '/apollo', icon: Radar },
-  { title: 'MARCOS — Leads', url: '/leads', icon: Users },
-  { title: 'PAULO — Copywriter', url: '/copywriter', icon: PenTool },
-  { title: 'MARIA — Design', url: '/creative-studio', icon: Palette },
-  { title: 'DAVI — Social Media', url: '/davi', icon: Send },
-  { title: 'LUCAS — Funil', url: '/funil', icon: Layers },
-  { title: 'JOÃO — Email', url: '/joao', icon: Megaphone },
-  { title: 'PEDRO — Atendimento', url: '/whatsapp/ai-agent', icon: Bot },
-  { title: 'DANIEL — Estratégia', url: '/daniel', icon: Brain },
+  { title: '🏛️ Salomão — Orquestrador', url: '/agents/salomao', icon: Sparkles },
+  { title: '📊 José — Tráfego Pago', url: '/agents/jose', icon: Radar },
+  { title: '🎯 Marcos — Leads', url: '/agents/marcos', icon: Users },
+  { title: '✍️ Paulo — Copywriter', url: '/agents/paulo', icon: PenTool },
+  { title: '🎨 Maria — Design', url: '/agents/maria', icon: Palette },
+  { title: '📱 Davi — Social Media', url: '/agents/davi', icon: Send },
+  { title: '🔀 Lucas — Funil', url: '/agents/lucas', icon: Layers },
+  { title: '📧 João — Email', url: '/agents/joao', icon: Megaphone },
+  { title: '💬 Pedro — Atendimento', url: '/agents/pedro', icon: Bot },
+  { title: '🧠 Daniel — Estratégia', url: '/agents/daniel', icon: Brain },
 ];
 
 // 🤖 Ferramentas IA
