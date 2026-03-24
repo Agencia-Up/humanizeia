@@ -16,6 +16,7 @@ import { AccountSelector } from '@/components/onboarding/AccountSelector';
 import { SuccessAnimation } from '@/components/onboarding/SuccessAnimation';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import { useGoogleAdsConnection } from '@/hooks/useGoogleAdsConnection';
+import { useLinkedInConnection } from '@/hooks/useLinkedInConnection';
 import { useToast } from '@/hooks/use-toast';
 
 const STEPS = ['Boas-vindas', 'Conectar', 'Escolher conta', 'Pronto!'];
@@ -53,9 +54,10 @@ export default function ConnectAccounts() {
   const { toast } = useToast();
   const meta = useMetaConnection();
   const google = useGoogleAdsConnection();
+  const linkedin = useLinkedInConnection();
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
-  const [activePlatform, setActivePlatform] = useState<'meta' | 'google' | null>(null);
+  const [activePlatform, setActivePlatform] = useState<'meta' | 'google' | 'linkedin' | null>(null);
   const [showTokenForm, setShowTokenForm] = useState(false);
   const [manualToken, setManualToken] = useState('');
   const [manualAccountId, setManualAccountId] = useState('1576723380197751');
@@ -88,6 +90,11 @@ export default function ConnectAccounts() {
   const handleGoogleConnect = async () => {
     setActivePlatform('google');
     await google.startOAuth();
+  };
+
+  const handleLinkedInConnect = async () => {
+    setActivePlatform('linkedin');
+    await linkedin.startOAuth();
   };
 
   const handleConnectWithToken = async () => {
@@ -140,7 +147,13 @@ export default function ConnectAccounts() {
       ? 'connecting'
       : 'disconnected';
 
-  const anyConnected = metaStatus === 'connected' || googleStatus === 'connected';
+  const linkedinStatus = linkedin.connectedAccount
+    ? 'connected'
+    : linkedin.isConnecting
+      ? 'connecting'
+      : 'disconnected';
+
+  const anyConnected = metaStatus === 'connected' || googleStatus === 'connected' || linkedinStatus === 'connected';
   const anyAccountsAvailable = meta.availableAccounts.length > 0 || google.availableAccounts.length > 0;
   const canProceedFromConnect = anyConnected || anyAccountsAvailable;
 
@@ -288,6 +301,11 @@ export default function ConnectAccounts() {
                         platform="google"
                         status={googleStatus}
                         onClick={handleGoogleConnect}
+                      />
+                      <OAuthButton
+                        platform="linkedin"
+                        status={linkedinStatus}
+                        onClick={handleLinkedInConnect}
                       />
                     </div>
 

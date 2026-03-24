@@ -48,6 +48,8 @@ const FluxCRM = lazy(() => import("./pages/FluxCRM"));
 const CreativeIntelligence = lazy(() => import("./pages/CreativeIntelligence"));
 const CompetitorRadar = lazy(() => import("./pages/CompetitorRadar"));
 const LeadManagement = lazy(() => import('./pages/LeadManagement'));
+const GoogleAdsDashboard = lazy(() => import('./pages/GoogleAdsDashboard'));
+const LinkedInAdsDashboard = lazy(() => import('./pages/LinkedInAdsDashboard'));
 
 const queryClient = new QueryClient();
 
@@ -104,6 +106,8 @@ const App = () => (
             <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
             <Route path="/competitor-radar" element={<ProtectedRoute><CompetitorRadar /></ProtectedRoute>} />
             <Route path="/leads" element={<ProtectedRoute><LeadManagement /></ProtectedRoute>} />
+            <Route path="/google-ads" element={<ProtectedRoute><GoogleAdsDashboard /></ProtectedRoute>} />
+            <Route path="/linkedin-ads" element={<ProtectedRoute><LinkedInAdsDashboard /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>

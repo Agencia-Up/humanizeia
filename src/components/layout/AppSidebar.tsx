@@ -27,6 +27,8 @@ import {
   Kanban,
   Target,
   Users,
+  Linkedin,
+  Search,
 } from 'lucide-react';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useNavigate } from 'react-router-dom';
@@ -84,6 +86,12 @@ const analyticsItems = [
 // 📋 CRM
 const crmItems = [
   { title: 'Flux CRM', url: '/crm', icon: Kanban },
+];
+
+// 📈 Plataformas de Ads
+const platformItems = [
+  { title: 'Google Ads', url: '/google-ads', icon: Search },
+  { title: 'LinkedIn Ads', url: '/linkedin-ads', icon: Linkedin },
 ];
 
 // 🔗 Integrações
@@ -236,6 +244,7 @@ export function AppSidebar() {
     { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
     { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
+    { label: '📈 Plataformas', items: platformItems, triggerIcon: BarChart3 },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
     { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
