@@ -79,7 +79,7 @@ export default function JoaoEmail() {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(20);
-    setDrafts((data as EmailDraft[]) || []);
+    setDrafts((data as unknown as EmailDraft[]) || []);
     setLoading(false);
   };
 

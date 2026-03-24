@@ -73,7 +73,7 @@ export function useSocialMedia() {
 
       const { data, error } = await query;
       if (error) throw error;
-      setPosts((data as SocialPost[]) || []);
+      setPosts((data as unknown as SocialPost[]) || []);
     } catch (err: any) {
       toast({ title: 'Erro ao carregar posts', description: err.message, variant: 'destructive' });
     } finally {
@@ -132,7 +132,7 @@ export function useSocialMedia() {
       if (error) throw error;
       toast({ title: 'Rascunho salvo!', description: 'Post salvo como rascunho.' });
       await fetchPosts();
-      return data as SocialPost;
+      return data as unknown as SocialPost;
     } catch (err: any) {
       toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
       return null;

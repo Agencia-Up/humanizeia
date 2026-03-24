@@ -22,7 +22,6 @@ const tourSteps: Step[] = [
     placement: 'center',
     disableBeacon: true,
     content: '',
-    content: '',
     data: {
       emoji: '🚀',
       title: 'Bem-vindo ao LogosIA!',

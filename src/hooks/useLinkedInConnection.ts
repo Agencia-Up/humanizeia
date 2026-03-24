@@ -32,7 +32,7 @@ export function useLinkedInConnection() {
         .maybeSingle();
 
       if (!error && data) {
-        setConnectedAccount(data as ConnectedAccount);
+        setConnectedAccount(data as unknown as ConnectedAccount);
       } else {
         setConnectedAccount(null);
       }
