@@ -15,8 +15,7 @@ export default function LandingPage() {
       {/* Header */}
       <header className="border-b border-border/40 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <LogosIAIcon size={38} />
-          <LogosIALogo size="sm" showText iconOnly={false} />
+          <LogosIALogo size="sm" showText />
         </div>
 
         {/* Botões de ação no menu */}
