@@ -221,7 +221,7 @@ export function useMetaConnection() {
     }
   };
 
-  const selectAccount = async (account: MetaAdAccount | ConnectedAccount) => {
+  const selectAccount = async (account: any) => {
     if (!pendingToken) return;
     setIsConnecting(true);
     try {
