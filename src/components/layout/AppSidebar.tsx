@@ -73,10 +73,6 @@ const integrationItems = [
   { title: 'Integrações', url: '/integrations', icon: Plug },
 ];
 
-// 🎓 Aprendizado
-const learningItems = [
-  { title: 'Tutoriais', url: '/tutorials', icon: GraduationCap },
-];
 
 // 💬 WhatsApp
 const whatsappItems = [
@@ -218,7 +214,7 @@ export function AppSidebar() {
     { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
-    { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
+    
     { label: '⚙️ Sistema', items: systemItems, triggerIcon: Settings },
   ];
 
