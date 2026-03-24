@@ -60,20 +60,6 @@ const dashboardItems = [
   { title: 'Métricas', url: '/metrics', icon: BarChart3 },
 ];
 
-// 👑 Agentes IA — Equipe Salomão
-const agentItems = [
-  { title: 'SALOMÃO — Orquestrador', url: '/salomao', icon: Sparkles },
-  { title: 'JOSÉ — Tráfego Pago', url: '/apollo', icon: Radar },
-  { title: 'MARCOS — Leads', url: '/leads', icon: Users },
-  { title: 'PAULO — Copywriter', url: '/copywriter', icon: PenTool },
-  { title: 'MARIA — Design', url: '/creative-studio', icon: Palette },
-  { title: 'DAVI — Social Media', url: '/davi', icon: Send },
-  { title: 'LUCAS — Funil', url: '/funil', icon: Layers },
-  { title: 'JOÃO — Email', url: '/joao', icon: Megaphone },
-  { title: 'PEDRO — Atendimento', url: '/whatsapp/ai-agent', icon: Bot },
-  { title: 'DANIEL — Estratégia', url: '/daniel', icon: Brain },
-];
-
 // 🤖 Ferramentas IA
 const aiItems = [
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
