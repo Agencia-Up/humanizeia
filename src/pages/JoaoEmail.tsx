@@ -74,12 +74,12 @@ export default function JoaoEmail() {
     if (!user) return;
     setLoading(true);
     const { data } = await supabase
-      .from('email_drafts')
+      .from('email_drafts' as any)
       .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(20);
-    setDrafts((data as EmailDraft[]) || []);
+    setDrafts((data as unknown as EmailDraft[]) || []);
     setLoading(false);
   };
 
@@ -112,7 +112,7 @@ export default function JoaoEmail() {
   const handleSaveDraft = async () => {
     if (!generated || !user) return;
     try {
-      await supabase.from('email_drafts').insert({
+      await supabase.from('email_drafts' as any).insert({
         user_id: user.id,
         subject: generated.subject,
         preview_text: generated.preview,
@@ -325,7 +325,7 @@ export default function JoaoEmail() {
                           <Copy className="h-3.5 w-3.5" />
                         </Button>
                         <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-500"
-                          onClick={async () => { await supabase.from('email_drafts').delete().eq('id', draft.id); fetchDrafts(); }}>
+                          onClick={async () => { await supabase.from('email_drafts' as any).delete().eq('id', draft.id); fetchDrafts(); }}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>

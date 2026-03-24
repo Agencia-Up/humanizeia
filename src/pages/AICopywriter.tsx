@@ -346,7 +346,7 @@ Criatividade: ${creativity[0]}/10${whatsappContext}${selectedTriggers.length > 0
       return;
     }
 
-    const { error } = await supabase.from('ad_copies').insert({
+    const { error } = await supabase.from('ad_copies' as any).insert({
       user_id: user.id,
       headline: copy.headline || '',
       description: copy.description || '',

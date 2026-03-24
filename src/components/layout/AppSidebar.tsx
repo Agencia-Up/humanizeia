@@ -273,11 +273,8 @@ export function AppSidebar() {
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <LogosIAIcon size={38} />
-              <div className="flex flex-col">
-                <LogosIALogo size="sm" showText iconOnly={false} className="" />
-                <span className="text-[10px] text-muted-foreground tracking-wider uppercase">Marketing & IA</span>
-              </div>
+              <LogosIALogo size="sm" showText className="" />
+              <span className="text-[10px] text-muted-foreground tracking-wider uppercase">Marketing & IA</span>
             </div>
             <button onClick={toggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors">
               <X className="h-4 w-4 text-muted-foreground" />

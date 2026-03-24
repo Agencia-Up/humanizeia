@@ -181,16 +181,18 @@ export default function Dashboard() {
 
   return (
     <MainLayout>
-      <div className="space-y-6">
-        {/* Header */}
+      <div className="space-y-8">
+        {/* Header — elegant greeting */}
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
           className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold lg:text-3xl">Olá, {firstName}! 👋</h1>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="space-y-1.5">
+            <h1 className="text-3xl font-bold lg:text-4xl tracking-tight">
+              Olá, <span className="gradient-text">{firstName}</span>! 👋
+            </h1>
+            <p className="flex items-center gap-2 text-sm text-muted-foreground/80">
               <Sparkles className="h-4 w-4 text-primary" />
-              <span>Painel de Performance — seus anúncios em tempo real</span>
-            </div>
+              Acompanhe seus resultados em tempo real
+            </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {connectedAccounts.length > 1 && (
@@ -198,7 +200,7 @@ export default function Dashboard() {
                 value={connectedAccount?.id || ''}
                 onValueChange={(id) => selectConnectedAccount(id)}
               >
-                <SelectTrigger className="h-8 min-w-[160px] max-w-[220px] text-xs">
+                <SelectTrigger className="h-9 min-w-[160px] max-w-[220px] text-xs rounded-xl border-border/40 bg-card/50 backdrop-blur-sm">
                   <SelectValue placeholder="Selecionar conta" />
                 </SelectTrigger>
                 <SelectContent>
@@ -222,18 +224,18 @@ export default function Dashboard() {
             />
             <DateRangeFilter value={dateRange} onChange={setDateRange} />
             <Button onClick={handleSendWhatsApp} disabled={isSending} size="sm"
-              className="h-8 gap-1.5 bg-success hover:bg-success/90 text-success-foreground">
+              className="h-9 gap-1.5 rounded-xl bg-success hover:bg-success/90 text-success-foreground shadow-sm">
               {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
               <span className="hidden sm:inline">Enviar WhatsApp</span>
             </Button>
           </div>
         </motion.div>
 
-        {/* KPI Cards */}
-        <div data-tour="kpi-cards" className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4">
+        {/* KPI Cards — refined grid */}
+        <div data-tour="kpi-cards" className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4">
           {isLoading ? (
             Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-[100px] rounded-lg" />
+              <Skeleton key={i} className="h-[120px] rounded-xl" />
             ))
           ) : (
             kpis.map((kpi, index) => <DashboardKPICard key={kpi.id} kpi={kpi} index={index} />)
@@ -251,13 +253,13 @@ export default function Dashboard() {
         {/* Trend Chart */}
         <TrendChart data={trendData} isLoading={isTrendLoading} />
 
-        {/* 2-column grid: Donut + Efficiency Scatter */}
+        {/* 2-column grid */}
         <div className="grid gap-6 lg:grid-cols-2">
           <SpendDistributionChart data={campaignData} isLoading={isCampaignLoading} />
           <EfficiencyScatterChart data={campaignData} isLoading={isCampaignLoading} />
         </div>
 
-        {/* 3-column grid: Weekday Heatmap + AI Insights + Agent Status */}
+        {/* 3-column grid */}
         <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
           <WeekdayHeatmap data={trendData} isLoading={isTrendLoading} />
           <AIInsightsCard insights={defaultInsights} />
