@@ -504,6 +504,22 @@ export default function DaviSocialMedia() {
             </div>
           </TabsContent>
 
+          {/* ─── BIBLIOTECA TAB ─── */}
+          <TabsContent value="biblioteca" className="mt-5">
+            <CreativeLibrarySection
+              uploads={uploads}
+              isLoading={uploadsLoading}
+              isUploading={isUploading}
+              onUpload={uploadFile}
+              onDelete={deleteUpload}
+              onToggleFavorite={toggleFavorite}
+              onUseInPost={(upload) => {
+                setCaption(prev => prev ? prev + '\n\n' : '' + `📸 ${upload.name}`);
+                setActiveTab('gerador');
+              }}
+            />
+          </TabsContent>
+
           {/* ─── CALENDAR TAB ─── */}
           <TabsContent value="calendario" className="mt-5">
             <ContentCalendar posts={posts} />
