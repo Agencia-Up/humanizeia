@@ -1,8 +1,9 @@
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ConnectionsTab } from '@/components/settings/ConnectionsTab';
 import { IntegrationsTab } from '@/components/settings/IntegrationsTab';
+import { LeadCaptureTab } from '@/components/settings/LeadCaptureTab';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plug, Wrench } from 'lucide-react';
+import { Plug, Wrench, Terminal } from 'lucide-react';
 
 export default function Integrations() {
   return (
@@ -25,6 +26,10 @@ export default function Integrations() {
               <Wrench className="h-4 w-4" />
               Outras Integrações
             </TabsTrigger>
+            <TabsTrigger value="capture" className="gap-2">
+              <Terminal className="h-4 w-4" />
+              Captura de Leads
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="connections">
@@ -33,6 +38,10 @@ export default function Integrations() {
 
           <TabsContent value="other">
             <IntegrationsTab />
+          </TabsContent>
+
+          <TabsContent value="capture">
+            <LeadCaptureTab />
           </TabsContent>
         </Tabs>
       </div>
