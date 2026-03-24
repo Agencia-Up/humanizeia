@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export interface PipelineStage {
   id: string;
@@ -49,52 +49,102 @@ const DEFAULT_STAGES = [
 
 export function useFluxCRM() {
   const { user } = useAuth();
-  const [stages, setStages] = useState<PipelineStage[]>([]);
-  const [leads, setLeads] = useState<CRMLead[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
-  const fetchData = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    try {
-      const [stagesRes, leadsRes] = await Promise.all([
-        supabase.from('crm_pipeline_stages').select('*').eq('user_id', user.id).order('position'),
-        supabase.from('crm_leads').select('*').eq('user_id', user.id).order('position'),
-      ]);
+  // Load Stages
+  const { data: stages = [], isLoading: loadingStages } = useQuery({
+    queryKey: ['crm-stages', user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from('crm_pipeline_stages')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('position');
 
-      let stagesData = (stagesRes.data || []) as unknown as PipelineStage[];
+      if (error) throw error;
+      
+      let stagesData = (data || []) as unknown as PipelineStage[];
 
-      // Seed default stages if none exist — use upsert to avoid duplicates on re-render race conditions
+      // Seed default stages if none exist
       if (stagesData.length === 0) {
         const toInsert = DEFAULT_STAGES.map((s) => ({ ...s, user_id: user.id, is_default: true }));
-        const { data } = await supabase
+        await supabase
           .from('crm_pipeline_stages')
-          .upsert(toInsert, { onConflict: 'user_id,name', ignoreDuplicates: true })
-          .select();
-        // Refetch cleanly after seeding
-        const { data: freshStages } = await supabase
-          .from('crm_pipeline_stages').select('*').eq('user_id', user.id).order('position');
-        stagesData = (freshStages || data || []) as unknown as PipelineStage[];
+          .upsert(toInsert, { onConflict: 'user_id,name', ignoreDuplicates: true });
+        
+        const { data: fresh } = await supabase
+          .from('crm_pipeline_stages')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('position');
+        
+        stagesData = (fresh || []) as unknown as PipelineStage[];
       }
+      return stagesData;
+    },
+    enabled: !!user,
+  });
 
-      setStages(stagesData);
-      setLeads((leadsRes.data || []) as unknown as CRMLead[]);
-    } catch {
-      toast.error('Erro ao carregar CRM');
-    } finally {
-      setLoading(false);
+  // Load Leads
+  const { data: leads = [], isLoading: loadingLeads, refetch: refetchLeads } = useQuery({
+    queryKey: ['crm-leads', user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from('crm_leads')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('position');
+
+      if (error) throw error;
+      return (data || []) as unknown as CRMLead[];
+    },
+    enabled: !!user,
+  });
+
+  // Mutations
+  const addLeadMutation = useMutation({
+    mutationFn: async (lead: Partial<CRMLead>) => {
+      if (!user) throw new Error('Not authenticated');
+      const { data, error } = await supabase
+        .from('crm_leads')
+        .insert({ ...lead, user_id: user.id } as never)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (insertedLead) => {
+      toast.success('Lead criado!');
+      queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+      
+      // Webhook trigger logic
+      triggerWebhook(insertedLead);
+    },
+    onError: () => toast.error('Erro ao criar lead'),
+  });
+
+  const moveLeadMutation = useMutation({
+    mutationFn: async ({ leadId, stageId, position }: { leadId: string, stageId: string, position: number }) => {
+      const { error } = await supabase
+        .from('crm_leads')
+        .update({ stage_id: stageId, position } as never)
+        .eq('id', leadId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+    },
+    onError: (err) => {
+      console.error(err);
+      toast.error('Erro ao mover lead');
     }
-  }, [user]);
+  });
 
-  useEffect(() => { fetchData(); }, [fetchData]);
-
-  const addLead = async (lead: Partial<CRMLead>) => {
+  const triggerWebhook = async (lead: any) => {
     if (!user) return;
-    const { data: insertedLead, error } = await supabase.from('crm_leads').insert({ ...lead, user_id: user.id } as never).select().single();
-    if (error) { toast.error('Erro ao criar lead'); return; }
-    toast.success('Lead criado!');
-    
-    // Dispara webhook de Novo Lead se houver automação
     try {
       const { data: automations } = await supabase
         .from('wa_automations')
@@ -111,7 +161,7 @@ export function useFluxCRM() {
             fetch(config.webhook_url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ lead: insertedLead, event: 'new_lead' })
+              body: JSON.stringify({ lead, event: 'new_lead' })
             }).catch(console.error);
           }
         });
@@ -119,43 +169,28 @@ export function useFluxCRM() {
     } catch (err) {
       console.warn('Erro ao disparar webhook:', err);
     }
-    
-    fetchData();
-  };
-
-  const updateLead = async (id: string, updates: Partial<CRMLead>) => {
-    const { error } = await supabase.from('crm_leads').update(updates as never).eq('id', id);
-    if (error) { toast.error('Erro ao atualizar lead'); return; }
-    fetchData();
   };
 
   const deleteLead = async (id: string) => {
     const { error } = await supabase.from('crm_leads').delete().eq('id', id);
     if (error) { toast.error('Erro ao excluir lead'); return; }
     toast.success('Lead excluído');
-    fetchData();
+    queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
   };
-
-  const moveLead = async (leadId: string, newStageId: string, newPosition: number) => {
-    // Optimistic update
-    setLeads((prev) =>
-      prev.map((l) => (l.id === leadId ? { ...l, stage_id: newStageId, position: newPosition } : l))
-    );
-    const { error } = await supabase
-      .from('crm_leads')
-      .update({ stage_id: newStageId, position: newPosition } as never)
-      .eq('id', leadId);
-    if (error) { toast.error('Erro ao mover lead'); fetchData(); }
-  };
-
-  const getLeadsByStage = (stageId: string) =>
-    leads.filter((l) => l.stage_id === stageId).sort((a, b) => a.position - b.position);
 
   const totalValue = leads.reduce((sum, l) => sum + (l.value || 0), 0);
 
   return {
-    stages, leads, loading,
-    addLead, updateLead, deleteLead, moveLead,
-    getLeadsByStage, totalValue, refetch: fetchData,
+    stages,
+    leads,
+    loading: loadingStages || loadingLeads,
+    addLead: addLeadMutation.mutateAsync,
+    moveLead: (leadId: string, newStageId: string, newPosition: number) => 
+      moveLeadMutation.mutate({ leadId, stageId: newStageId, position: newPosition }),
+    getLeadsByStage: (stageId: string) =>
+      leads.filter((l) => l.stage_id === stageId).sort((a, b) => a.position - b.position),
+    totalValue,
+    refetch: refetchLeads,
   };
 }
+
