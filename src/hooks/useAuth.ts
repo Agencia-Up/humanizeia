@@ -3,7 +3,7 @@ import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
 // ID do projeto Supabase atual — sessões de outros projetos são inválidas
-const CURRENT_PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID || 'qrxsiixufdiemwwyhxvd';
+const CURRENT_PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID || 'seyljsqmhlopkcauhlor';
 
 /**
  * Remove do localStorage qualquer sessão Supabase que não seja do projeto atual.
