@@ -236,7 +236,7 @@ export function AppSidebar() {
 
   const groups: NavGroupConfig[] = [
     { label: '🏠 Dashboard', items: dashboardWithBadges, triggerIcon: Home },
-    { label: '👑 Agentes IA', items: agentItems, triggerIcon: Sparkles, dataTour: 'sidebar-agents' },
+    
     { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
     { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
     { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
