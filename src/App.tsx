@@ -95,6 +95,7 @@ const App = () => (
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
             <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
+            <Route path="/tutorials" element={<ProtectedRoute><Tutorials /></ProtectedRoute>} />
             <Route path="/midas" element={<ProtectedRoute><MidasAgent /></ProtectedRoute>} />
             <Route path="/apollo/criar-campanha" element={<ProtectedRoute><CriarCampanha /></ProtectedRoute>} />
             <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
