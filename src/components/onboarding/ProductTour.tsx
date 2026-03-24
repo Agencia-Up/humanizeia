@@ -136,7 +136,7 @@ const tourSteps: Step[] = [
   // 10 — Dark mode
   {
     target: '[data-tour="dark-mode"]',
-    placement: 'right',
+    placement: 'top',
     disableBeacon: true,
     content: '',
     data: {
@@ -489,7 +489,7 @@ function CustomTooltip({
 const joyrideStyles = {
   options: {
     primaryColor: '#1A237E',
-    zIndex: 10000,
+    zIndex: 99999,
     overlayColor: 'rgba(10, 10, 30, 0.65)',
   },
   spotlight: {
