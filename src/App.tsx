@@ -7,31 +7,9 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Loader2 } from "lucide-react";
 
-// Public pages
+// Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
-const LandingPage = lazy(() => import("./pages/LandingPage"));
-const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
-const TermsOfService = lazy(() => import("./pages/TermsOfService"));
-const NotFound = lazy(() => import("./pages/NotFound"));
-const Onboarding = lazy(() => import("./pages/Onboarding"));
-
-// Agent Home (grid)
-const AgentHome = lazy(() => import("./pages/AgentHome"));
-
-// Agent Dashboards
-const SalomaoAgent = lazy(() => import("./pages/agents/SalomaoAgent"));
-const JoseAgent = lazy(() => import("./pages/agents/JoseAgent"));
-const MarcosAgent = lazy(() => import("./pages/agents/MarcosAgent"));
-const PauloAgent = lazy(() => import("./pages/agents/PauloAgent"));
-const MariaAgent = lazy(() => import("./pages/agents/MariaAgent"));
-const DaviAgent = lazy(() => import("./pages/agents/DaviAgent"));
-const LucasAgent = lazy(() => import("./pages/agents/LucasAgent"));
-const JoaoAgent = lazy(() => import("./pages/agents/JoaoAgent"));
-const PedroAgent = lazy(() => import("./pages/agents/PedroAgent"));
-const DanielAgent = lazy(() => import("./pages/agents/DanielAgent"));
-
-// Tools / existing pages (keeping old routes alive)
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const AICopywriter = lazy(() => import("./pages/AICopywriter"));
 const AICreativeStudio = lazy(() => import("./pages/AICreativeStudio"));
@@ -45,34 +23,37 @@ const Reports = lazy(() => import("./pages/Reports"));
 const AIAcademy = lazy(() => import("./pages/AIAcademy"));
 const Settings = lazy(() => import("./pages/Settings"));
 const MidasAgent = lazy(() => import("./pages/MidasAgent"));
+const Onboarding = lazy(() => import("./pages/Onboarding"));
 const ConnectAccounts = lazy(() => import("./pages/ConnectAccounts"));
 const UnifiedPixel = lazy(() => import("./pages/UnifiedPixel"));
 const Integrations = lazy(() => import("./pages/Integrations"));
-const FluxCRM = lazy(() => import("./pages/FluxCRM"));
-const CRMContacts = lazy(() => import("./pages/CRMContacts"));
-const CreativeIntelligence = lazy(() => import("./pages/CreativeIntelligence"));
-const CompetitorRadar = lazy(() => import("./pages/CompetitorRadar"));
-const LeadManagement = lazy(() => import("./pages/LeadManagement"));
-const GoogleAdsDashboard = lazy(() => import("./pages/GoogleAdsDashboard"));
-const LinkedInAdsDashboard = lazy(() => import("./pages/LinkedInAdsDashboard"));
-const DaviSocialMedia = lazy(() => import("./pages/DaviSocialMedia"));
-const JoaoEmail = lazy(() => import("./pages/JoaoEmail"));
-const DanielEstrategia = lazy(() => import("./pages/DanielEstrategia"));
-const ApolloDashboard = lazy(() => import("./pages/ApolloDashboard"));
-const SalomaoOrchestrator = lazy(() => import("./pages/SalomaoOrchestrator"));
-const CriarCampanha = lazy(() => import("./pages/CriarCampanha"));
-
-// WhatsApp
+const NotFound = lazy(() => import("./pages/NotFound"));
+const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
+const TermsOfService = lazy(() => import("./pages/TermsOfService"));
+const LandingPage = lazy(() => import("./pages/LandingPage"));
 const WhatsAppContacts = lazy(() => import("./pages/WhatsAppContacts"));
 const WhatsAppBroadcast = lazy(() => import("./pages/WhatsAppBroadcast"));
 const WhatsAppInbox = lazy(() => import("./pages/WhatsAppInbox"));
 const WhatsAppAnalytics = lazy(() => import("./pages/WhatsAppAnalytics"));
 const WhatsAppAutomations = lazy(() => import("./pages/WhatsAppAutomations"));
 const WhatsAppInstances = lazy(() => import("./pages/WhatsAppInstances"));
+const CriarCampanha = lazy(() => import("./pages/CriarCampanha"));
 const WhatsAppAIAgent = lazy(() => import("./pages/WhatsAppAIAgent"));
-const WhatsAppCAPI = lazy(() => import("./pages/WhatsAppCAPI"));
 const MetaPixels = lazy(() => import("./pages/MetaPixels"));
 const MetaAudiences = lazy(() => import("./pages/MetaAudiences"));
+const WhatsAppCAPI = lazy(() => import("./pages/WhatsAppCAPI"));
+const ApolloDashboard = lazy(() => import("./pages/ApolloDashboard"));
+const SalomaoOrchestrator = lazy(() => import("./pages/SalomaoOrchestrator"));
+const FluxCRM = lazy(() => import("./pages/FluxCRM"));
+const CRMContacts = lazy(() => import("./pages/CRMContacts"));
+const CreativeIntelligence = lazy(() => import("./pages/CreativeIntelligence"));
+const CompetitorRadar = lazy(() => import("./pages/CompetitorRadar"));
+const LeadManagement = lazy(() => import('./pages/LeadManagement'));
+const GoogleAdsDashboard = lazy(() => import('./pages/GoogleAdsDashboard'));
+const LinkedInAdsDashboard = lazy(() => import('./pages/LinkedInAdsDashboard'));
+const DaviSocialMedia = lazy(() => import('./pages/DaviSocialMedia'));
+const JoaoEmail = lazy(() => import('./pages/JoaoEmail'));
+const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
 
 const queryClient = new QueryClient();
 
@@ -90,33 +71,13 @@ const App = () => (
       <BrowserRouter>
         <Suspense fallback={<PageLoader />}>
           <Routes>
-            {/* Public */}
-            <Route path="/" element={<LandingPage />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/onboarding" element={<Onboarding />} />
-
-            {/* Agent Home */}
-            <Route path="/dashboard" element={<ProtectedRoute><AgentHome /></ProtectedRoute>} />
-
-            {/* Agent Dashboards — New */}
-            <Route path="/agents/salomao" element={<ProtectedRoute><SalomaoAgent /></ProtectedRoute>} />
-            <Route path="/agents/jose" element={<ProtectedRoute><JoseAgent /></ProtectedRoute>} />
-            <Route path="/agents/marcos" element={<ProtectedRoute><MarcosAgent /></ProtectedRoute>} />
-            <Route path="/agents/paulo" element={<ProtectedRoute><PauloAgent /></ProtectedRoute>} />
-            <Route path="/agents/maria" element={<ProtectedRoute><MariaAgent /></ProtectedRoute>} />
-            <Route path="/agents/davi" element={<ProtectedRoute><DaviAgent /></ProtectedRoute>} />
-            <Route path="/agents/lucas" element={<ProtectedRoute><LucasAgent /></ProtectedRoute>} />
-            <Route path="/agents/joao" element={<ProtectedRoute><JoaoAgent /></ProtectedRoute>} />
-            <Route path="/agents/pedro" element={<ProtectedRoute><PedroAgent /></ProtectedRoute>} />
-            <Route path="/agents/daniel" element={<ProtectedRoute><DanielAgent /></ProtectedRoute>} />
-
-            {/* Legacy routes (still functional) */}
-            <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
-            <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
-            <Route path="/apollo/criar-campanha" element={<ProtectedRoute><CriarCampanha /></ProtectedRoute>} />
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/connect-accounts" element={<ProtectedRoute><ConnectAccounts /></ProtectedRoute>} />
             <Route path="/copywriter" element={<ProtectedRoute><AICopywriter /></ProtectedRoute>} />
             <Route path="/creative-studio" element={<ProtectedRoute><AICreativeStudio /></ProtectedRoute>} />
@@ -132,6 +93,19 @@ const App = () => (
             <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
             <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
             <Route path="/midas" element={<ProtectedRoute><MidasAgent /></ProtectedRoute>} />
+            <Route path="/apollo/criar-campanha" element={<ProtectedRoute><CriarCampanha /></ProtectedRoute>} />
+            <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
+            <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />
+            <Route path="/whatsapp/broadcast" element={<ProtectedRoute><WhatsAppBroadcast /></ProtectedRoute>} />
+            <Route path="/whatsapp/analytics" element={<ProtectedRoute><WhatsAppAnalytics /></ProtectedRoute>} />
+            <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
+            <Route path="/whatsapp/instances" element={<ProtectedRoute><WhatsAppInstances /></ProtectedRoute>} />
+            <Route path="/whatsapp/ai-agent" element={<ProtectedRoute><WhatsAppAIAgent /></ProtectedRoute>} />
+            <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
+            <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
+            <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
+            <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
+            <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
             <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
             <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
             <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
@@ -142,19 +116,6 @@ const App = () => (
             <Route path="/davi" element={<ProtectedRoute><DaviSocialMedia /></ProtectedRoute>} />
             <Route path="/joao" element={<ProtectedRoute><JoaoEmail /></ProtectedRoute>} />
             <Route path="/daniel" element={<ProtectedRoute><DanielEstrategia /></ProtectedRoute>} />
-
-            {/* WhatsApp */}
-            <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
-            <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />
-            <Route path="/whatsapp/broadcast" element={<ProtectedRoute><WhatsAppBroadcast /></ProtectedRoute>} />
-            <Route path="/whatsapp/analytics" element={<ProtectedRoute><WhatsAppAnalytics /></ProtectedRoute>} />
-            <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
-            <Route path="/whatsapp/instances" element={<ProtectedRoute><WhatsAppInstances /></ProtectedRoute>} />
-            <Route path="/whatsapp/ai-agent" element={<ProtectedRoute><WhatsAppAIAgent /></ProtectedRoute>} />
-            <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
-            <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
-            <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
-
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>

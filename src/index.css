@@ -1,103 +1,126 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* LogosIA Design System - Dark Mode First */
+
 @layer base {
   :root {
-    --background: 240 10% 96%;
-    --foreground: 240 10% 10%;
+    /* Light mode - Sabedoria Tecnológica */
+    --background: 220 20% 97%;
+    --foreground: 231 40% 15%;
+
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 10%;
+    --card-foreground: 231 40% 15%;
+
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 10%;
-    --primary: 258 58% 54%;
+    --popover-foreground: 231 40% 15%;
+
+    --primary: 231 75% 30%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 5% 92%;
-    --secondary-foreground: 240 10% 10%;
-    --muted: 240 5% 92%;
-    --muted-foreground: 240 4% 46%;
-    --accent: 258 58% 54%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 72% 51%;
+
+    --secondary: 45 100% 50%;
+    --secondary-foreground: 231 40% 15%;
+
+    --muted: 220 15% 92%;
+    --muted-foreground: 220 10% 45%;
+
+    --accent: 45 100% 50%;
+    --accent-foreground: 231 40% 15%;
+
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
+
     --success: 160 84% 39%;
     --success-foreground: 0 0% 100%;
+
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 0%;
-    --border: 240 6% 90%;
-    --input: 240 6% 90%;
-    --ring: 258 58% 54%;
-    --radius: 1rem;
 
-    --sidebar-background: 240 10% 8%;
-    --sidebar-foreground: 240 6% 90%;
-    --sidebar-primary: 258 58% 54%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 8% 14%;
-    --sidebar-accent-foreground: 240 6% 90%;
-    --sidebar-border: 0 0% 100% / 0.07;
-    --sidebar-ring: 258 58% 54%;
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 231 75% 30%;
 
-    --chart-1: 258 58% 54%;
-    --chart-2: 38 92% 50%;
+    --radius: 0.75rem;
+
+    /* Gradient colors */
+    --gradient-start: 231 75% 30%;
+    --gradient-end: 45 100% 50%;
+
+    /* Sidebar */
+    --sidebar-background: 231 40% 12%;
+    --sidebar-foreground: 220 20% 95%;
+    --sidebar-primary: 45 100% 50%;
+    --sidebar-primary-foreground: 231 40% 15%;
+    --sidebar-accent: 231 40% 18%;
+    --sidebar-accent-foreground: 220 20% 95%;
+    --sidebar-border: 231 30% 22%;
+    --sidebar-ring: 45 100% 50%;
+
+    /* Chart colors */
+    --chart-1: 231 75% 45%;
+    --chart-2: 45 100% 50%;
     --chart-3: 200 70% 50%;
     --chart-4: 160 84% 39%;
-    --chart-5: 0 72% 51%;
-
-    /* Agent colors */
-    --agent-salomao: 38 92% 53%;
-    --agent-jose: 258 58% 54%;
-    --agent-marcos: 217 91% 60%;
-    --agent-paulo: 163 74% 48%;
-    --agent-maria: 330 81% 71%;
-    --agent-davi: 213 94% 68%;
-    --agent-lucas: 27 96% 61%;
-    --agent-joao: 263 70% 76%;
-    --agent-pedro: 160 64% 52%;
-    --agent-daniel: 0 91% 71%;
+    --chart-5: 0 84% 60%;
   }
 
   .dark {
-    --background: 240 10% 4%;
-    --foreground: 240 6% 96%;
-    --card: 240 8% 7%;
-    --card-foreground: 240 6% 96%;
-    --popover: 240 8% 7%;
-    --popover-foreground: 240 6% 96%;
-    --primary: 258 58% 54%;
+    /* Dark mode - LogosIA Sabedoria Theme */
+    --background: 231 35% 8%;
+    --foreground: 220 20% 95%;
+
+    --card: 231 30% 13%;
+    --card-foreground: 220 20% 95%;
+
+    --popover: 231 30% 13%;
+    --popover-foreground: 220 20% 95%;
+
+    --primary: 231 70% 50%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 8% 12%;
-    --secondary-foreground: 240 6% 96%;
-    --muted: 240 8% 12%;
-    --muted-foreground: 240 4% 50%;
-    --accent: 258 58% 54%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 72% 51%;
+
+    --secondary: 45 100% 50%;
+    --secondary-foreground: 231 40% 15%;
+
+    --muted: 231 25% 18%;
+    --muted-foreground: 220 15% 60%;
+
+    --accent: 45 100% 50%;
+    --accent-foreground: 231 40% 15%;
+
+    --destructive: 0 63% 31%;
     --destructive-foreground: 0 0% 100%;
+
     --success: 160 84% 39%;
     --success-foreground: 0 0% 100%;
+
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 0%;
-    --border: 0 0% 100% / 0.07;
-    --input: 0 0% 100% / 0.07;
-    --ring: 258 58% 54%;
 
-    --sidebar-background: 240 10% 4%;
-    --sidebar-foreground: 240 6% 90%;
-    --sidebar-primary: 258 58% 54%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 8% 10%;
-    --sidebar-accent-foreground: 240 6% 90%;
-    --sidebar-border: 0 0% 100% / 0.07;
-    --sidebar-ring: 258 58% 54%;
+    --border: 231 25% 22%;
+    --input: 231 25% 18%;
+    --ring: 231 70% 50%;
 
-    --chart-1: 258 58% 60%;
-    --chart-2: 38 92% 50%;
+    /* Gradient colors */
+    --gradient-start: 231 70% 50%;
+    --gradient-end: 45 100% 50%;
+
+    /* Sidebar */
+    --sidebar-background: 231 35% 8%;
+    --sidebar-foreground: 220 20% 95%;
+    --sidebar-primary: 45 100% 50%;
+    --sidebar-primary-foreground: 231 40% 15%;
+    --sidebar-accent: 231 25% 18%;
+    --sidebar-accent-foreground: 220 20% 95%;
+    --sidebar-border: 231 25% 22%;
+    --sidebar-ring: 45 100% 50%;
+
+    /* Chart colors */
+    --chart-1: 231 70% 55%;
+    --chart-2: 45 100% 50%;
     --chart-3: 200 70% 55%;
     --chart-4: 160 84% 44%;
-    --chart-5: 0 72% 55%;
+    --chart-5: 0 84% 60%;
   }
 }
 
@@ -105,62 +128,111 @@
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: 'DM Sans', system-ui, sans-serif;
-  }
-  h1, h2, h3, h4, h5, h6, .font-heading {
-    font-family: 'Syne', system-ui, sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
   }
 
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { @apply bg-muted-foreground/20 rounded-full; }
-  ::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground/40; }
+  h1, h2, h3, h4, h5, h6,
+  .font-heading {
+    font-family: 'Lexend', 'Inter', system-ui, sans-serif;
+  }
+
+  /* Custom scrollbar for dark mode */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted/30;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/30 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50;
+  }
 }
 
 @layer utilities {
+  /* Gradient utilities */
   .gradient-primary {
-    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--agent-salomao)));
+    background: linear-gradient(135deg, hsl(var(--gradient-start)), hsl(var(--gradient-end)));
   }
+
   .gradient-text {
-    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--agent-salomao)));
+    background: linear-gradient(135deg, hsl(var(--gradient-start)), hsl(var(--gradient-end)));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
-  .glow-primary { box-shadow: 0 0 24px hsl(var(--primary) / 0.25); }
 
-  .animate-fade-up {
-    animation: fadeUp 0.4s ease-out both;
+  .gradient-border {
+    position: relative;
+    background: hsl(var(--card));
+    border-radius: var(--radius);
   }
+
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    background: linear-gradient(135deg, hsl(var(--gradient-start)), hsl(var(--gradient-end)));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  /* Glow effects */
+  .glow-primary {
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.3);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 20px hsl(var(--accent) / 0.3);
+  }
+
+  /* Animation utilities */
   .animate-fade-in {
-    animation: fadeIn 0.3s ease-out both;
+    animation: fadeIn 0.3s ease-out;
   }
+
   .animate-slide-up {
-    animation: slideUp 0.3s ease-out both;
-  }
-  .animate-pulse-ring {
-    animation: pulseRing 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    animation: slideUp 0.3s ease-out;
   }
 
-  @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
+  .animate-pulse-slow {
+    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
+
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-  @keyframes slideUp {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes pulseRing {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.6; transform: scale(1.15); }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Legacy logo container - kept for backwards compat */
   .logo-container {
     display: inline-flex;
     align-items: center;

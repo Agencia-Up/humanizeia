@@ -4,6 +4,7 @@ import {
   PenTool,
   Palette,
   Layers,
+  FolderOpen,
   BarChart3,
   Plug,
   GraduationCap,
@@ -30,19 +31,6 @@ import {
   Search,
   Instagram,
   Calendar,
-  BookOpen,
-  Video,
-  ShoppingCart,
-  CreditCard,
-  Globe,
-  Mail,
-  Database,
-  Webhook,
-  LayoutDashboard,
-  Eye,
-  Filter,
-  TrendingUp,
-  PieChart,
 } from 'lucide-react';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useNavigate } from 'react-router-dom';
@@ -66,33 +54,35 @@ import {
 } from '@/components/ui/sidebar';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 
-// 📊 Dashboard — Visão Geral
+// 🏠 Dashboard
 const dashboardItems = [
-  { title: 'Visão Geral', url: '/dashboard', icon: LayoutDashboard },
-  { title: 'Métricas', url: '/analytics', icon: TrendingUp },
-  { title: 'Relatórios', url: '/reports', icon: PieChart },
+  { title: 'Painel', url: '/', icon: Home },
 ];
 
-// 👑 Agentes IA
+// 👑 Agentes IA — Equipe Salomão
 const agentItems = [
-  { title: '🏛️ Salomão — Orquestrador', url: '/agents/salomao', icon: Sparkles },
-  { title: '📊 José — Tráfego Pago', url: '/agents/jose', icon: Radar },
-  { title: '🎯 Marcos — Leads', url: '/agents/marcos', icon: Users },
-  { title: '✍️ Paulo — Copywriter', url: '/agents/paulo', icon: PenTool },
-  { title: '🎨 Maria — Design', url: '/agents/maria', icon: Palette },
-  { title: '📱 Davi — Social Media', url: '/agents/davi', icon: Send },
-  { title: '🔀 Lucas — Funil', url: '/agents/lucas', icon: Layers },
-  { title: '📧 João — Email', url: '/agents/joao', icon: Megaphone },
-  { title: '💬 Pedro — Atendimento', url: '/agents/pedro', icon: Bot },
-  { title: '🧠 Daniel — Estratégia', url: '/agents/daniel', icon: Brain },
+  { title: 'SALOMÃO — Orquestrador', url: '/salomao', icon: Sparkles },
+  { title: 'JOSÉ — Tráfego Pago', url: '/apollo', icon: Radar },
+  { title: 'MARCOS — Leads', url: '/leads', icon: Users },
+  { title: 'PAULO — Copywriter', url: '/copywriter', icon: PenTool },
+  { title: 'MARIA — Design', url: '/creative-studio', icon: Palette },
+  { title: 'DAVI — Social Media', url: '/davi', icon: Send },
+  { title: 'LUCAS — Funil', url: '/funil', icon: Layers },
+  { title: 'JOÃO — Email', url: '/joao', icon: Megaphone },
+  { title: 'PEDRO — Atendimento', url: '/whatsapp/ai-agent', icon: Bot },
+  { title: 'DANIEL — Estratégia', url: '/daniel', icon: Brain },
 ];
 
-// 🛠️ Ferramentas
-const toolItems = [
+// 🤖 Ferramentas IA
+const aiItems = [
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
   { title: 'Inteligência Criativa', url: '/creative-intelligence', icon: Target },
   { title: 'Radar de Concorrentes', url: '/competitor-radar', icon: Radar },
-  { title: 'Biblioteca Criativa', url: '/creative-studio?tab=biblioteca', icon: Eye },
+];
+
+// 📊 Análises
+const analyticsItems = [
+  { title: 'Biblioteca Criativa', url: '/creative-studio?tab=biblioteca', icon: FolderOpen },
 ];
 
 // 📋 CRM
@@ -113,22 +103,14 @@ const socialItems = [
   { title: 'Calendário de Posts', url: '/davi?tab=calendario', icon: Calendar },
 ];
 
-// 🔗 Integrações — TODAS
+// 🔗 Integrações
 const integrationItems = [
-  { title: 'Painel de Integrações', url: '/integrations', icon: Plug },
-  { title: 'Meta Ads', url: '/integrations?tab=meta', icon: Globe },
-  { title: 'Google Ads', url: '/integrations?tab=google', icon: Search },
-  { title: 'Google Analytics', url: '/integrations?tab=ga4', icon: BarChart3 },
-  { title: 'TikTok Ads', url: '/integrations?tab=tiktok', icon: Smartphone },
-  { title: 'LinkedIn Ads', url: '/integrations?tab=linkedin', icon: Linkedin },
-  { title: 'Zapier', url: '/integrations?tab=zapier', icon: Zap },
-  { title: 'Hotmart', url: '/integrations?tab=hotmart', icon: ShoppingCart },
-  { title: 'Stripe', url: '/integrations?tab=stripe', icon: CreditCard },
-  { title: 'Mailchimp', url: '/integrations?tab=mailchimp', icon: Mail },
-  { title: 'Webhook', url: '/integrations?tab=webhook', icon: Webhook },
-  { title: 'Evolution API', url: '/integrations?tab=evolution', icon: MessageCircle },
-  { title: 'Shopify', url: '/integrations?tab=shopify', icon: ShoppingCart },
-  { title: 'RD Station', url: '/integrations?tab=rdstation', icon: Database },
+  { title: 'Integrações', url: '/integrations', icon: Plug },
+];
+
+// 🎓 Aprendizado
+const learningItems = [
+  { title: 'Academia IA', url: '/academy', icon: GraduationCap },
 ];
 
 // 💬 WhatsApp
@@ -141,13 +123,6 @@ const whatsappItems = [
   { title: 'Agente IA', url: '/whatsapp/ai-agent', icon: Bot },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
   { title: 'CAPI Tracking', url: '/whatsapp/capi', icon: Activity },
-];
-
-// 🎓 Tutoriais
-const tutorialItems = [
-  { title: 'Academia IA', url: '/academy', icon: GraduationCap },
-  { title: 'Guias de Início', url: '/academy?tab=inicio', icon: BookOpen },
-  { title: 'Vídeo Tutoriais', url: '/academy?tab=videos', icon: Video },
 ];
 
 // ⚙️ Sistema
@@ -188,11 +163,16 @@ function NavGroup({
                   <SidebarMenuButton asChild tooltip={item.title}>
                     <NavLink
                       to={item.url}
-                      end={item.url === '/dashboard'}
+                      end={item.url === '/'}
                       className="relative text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
                       activeClassName="bg-primary/10 text-primary font-medium"
                     >
                       <item.icon className="h-4 w-4" />
+                      {(item.badge || 0) > 0 && (
+                        <Badge className="absolute -right-1 -top-1 h-4 w-4 rounded-full p-0 text-[9px] gradient-primary border-0 flex items-center justify-center">
+                          {item.badge}
+                        </Badge>
+                      )}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -225,7 +205,7 @@ function NavGroup({
                   <SidebarMenuButton asChild tooltip={item.title}>
                     <NavLink 
                       to={item.url} 
-                      end={item.url === '/dashboard'}
+                      end={item.url === '/'}
                       className="text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
                       activeClassName="bg-primary/10 text-primary font-medium"
                     >
@@ -261,16 +241,23 @@ export function AppSidebar() {
     navigate('/auth');
   };
 
+  // Inject badges into nav items
+  const dashboardWithBadges = dashboardItems.map((item) => ({
+    ...item,
+    badge: item.url === '/' ? unreadCount : 0,
+  }));
+
   const groups: NavGroupConfig[] = [
-    { label: '📊 Dashboard', items: dashboardItems, triggerIcon: LayoutDashboard },
+    { label: '🏠 Dashboard', items: dashboardWithBadges, triggerIcon: Home },
     { label: '👑 Agentes IA', items: agentItems, triggerIcon: Sparkles, dataTour: 'sidebar-agents' },
-    { label: '🛠️ Ferramentas', items: toolItems, triggerIcon: Brain },
+    { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
+    { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
     { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
     { label: '📈 Plataformas', items: platformItems, triggerIcon: BarChart3 },
     { label: '📱 Social Media', items: socialItems, triggerIcon: Instagram },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
-    { label: '🎓 Tutoriais', items: tutorialItems, triggerIcon: GraduationCap },
+    { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
     { label: '⚙️ Sistema', items: systemItems, triggerIcon: Settings },
   ];
 
@@ -286,7 +273,7 @@ export function AppSidebar() {
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <LogosIALogo size="sm" showText />
+              <LogosIALogo size="sm" showText className="" />
               <span className="text-[10px] text-muted-foreground tracking-wider uppercase">Marketing & IA</span>
             </div>
             <button onClick={toggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors">
