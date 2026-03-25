@@ -32,6 +32,7 @@ import {
   Instagram,
   Calendar,
   CreditCard,
+  FileCode2,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -67,6 +68,7 @@ const aiItems = [
   { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
   { title: 'Inteligência Criativa', url: '/creative-intelligence', icon: Target },
   { title: 'Radar de Concorrentes', url: '/competitor-radar', icon: Radar },
+  { title: 'Gerador de Prompt IA', url: '/gerador-prompt', icon: FileCode2 },
 ];
 
 
