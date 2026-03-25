@@ -24,12 +24,12 @@ interface Agent {
 const agents: Agent[] = [
   { name: 'SALOMÃO', role: 'Orquestrador', icon: Sparkles, active: true, color: 'text-amber-500' },
   { name: 'JOSÉ', role: 'Tráfego Pago', icon: Radar, active: true, color: 'text-blue-500' },
-  { name: 'PAULO', role: 'Copywriter', icon: PenTool, active: false, color: 'text-violet-500' },
-  { name: 'MARIA', role: 'Design', icon: Palette, active: false, color: 'text-pink-500' },
+  { name: 'PAULO', role: 'Copywriter', icon: PenTool, active: true, color: 'text-violet-500' },
+  { name: 'MARIA', role: 'Design', icon: Palette, active: true, color: 'text-pink-500' },
   { name: 'DAVI', role: 'Social Media', icon: Send, active: false, color: 'text-cyan-500' },
   { name: 'LUCAS', role: 'Funil', icon: Layers, active: false, color: 'text-orange-500' },
-  { name: 'JOÃO', role: 'Email', icon: Megaphone, active: false, color: 'text-emerald-500' },
-  { name: 'MARCOS', role: 'Gestor de Leads', icon: Users, active: false, color: 'text-teal-500' },
+  { name: 'JOÃO', role: 'Email', icon: Megaphone, active: true, color: 'text-emerald-500' },
+  { name: 'MARCOS', role: 'Gestor de Leads', icon: Users, active: true, color: 'text-teal-500' },
   { name: 'PEDRO', role: 'Atendimento', icon: Bot, active: false, color: 'text-rose-500' },
   { name: 'DANIEL', role: 'Estratégia', icon: Brain, active: false, color: 'text-indigo-500' },
 ];
