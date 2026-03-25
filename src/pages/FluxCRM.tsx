@@ -3,9 +3,10 @@ import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Search, DollarSign, Users, TrendingUp, Filter } from 'lucide-react';
+import { Plus, Search, DollarSign, Users, TrendingUp, Filter, Sparkles, RefreshCw } from 'lucide-react';
 import { KanbanColumn } from '@/components/crm/KanbanColumn';
 import { LeadFormDialog } from '@/components/crm/LeadFormDialog';
+import LeadDetailModal from '@/features/orchestrator/components/LeadDetailModal';
 import { useFluxCRM, type CRMLead } from '@/hooks/useFluxCRM';
 import { Card } from '@/components/ui/card';
 
@@ -13,10 +14,11 @@ export default function FluxCRM() {
   const { stages, leads, loading, addLead, updateLead, deleteLead, moveLead, getLeadsByStage, totalValue } = useFluxCRM();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<CRMLead | null>(null);
   const [defaultStageId, setDefaultStageId] = useState<string>('');
 
-  // Deduplicate stages by name to prevent duplicate Kanban columns
+  // ... (useMemo code remains same, keeping concise)
   const uniqueStages = useMemo(() => {
     const seen = new Set<string>();
     return stages.filter((s) => {
@@ -27,16 +29,8 @@ export default function FluxCRM() {
     });
   }, [stages]);
 
-  // Map from stage name (lower) → canonical stage id (the one uniqueStages uses)
-  const canonicalStageId = useMemo(() => {
-    const map = new Map<string, string>();
-    uniqueStages.forEach((s) => map.set(s.name.toLowerCase().trim(), s.id));
-    return map;
-  }, [uniqueStages]);
-
-  // All stage IDs that share the same name as a given unique stage id
   const allIdsForStage = useMemo(() => {
-    const map = new Map<string, string[]>(); // canonicalId → all matching IDs
+    const map = new Map<string, string[]>();
     uniqueStages.forEach((us) => {
       const key = us.name.toLowerCase().trim();
       const all = stages.filter((s) => s.name.toLowerCase().trim() === key).map((s) => s.id);
@@ -48,7 +42,6 @@ export default function FluxCRM() {
   const handleDragEnd = (result: DropResult) => {
     const { draggableId, destination } = result;
     if (!destination) return;
-    // destination.droppableId is the canonical stage id (from uniqueStages)
     moveLead(draggableId, destination.droppableId, destination.index);
   };
 
@@ -58,7 +51,13 @@ export default function FluxCRM() {
     setDialogOpen(true);
   };
 
+  const openLeadDetail = (lead: CRMLead) => {
+    setSelectedLead(lead);
+    setDetailOpen(true);
+  };
+
   const openEditLead = (lead: CRMLead) => {
+    setDetailOpen(false);
     setSelectedLead(lead);
     setDefaultStageId(lead.stage_id || '');
     setDialogOpen(true);
@@ -73,7 +72,6 @@ export default function FluxCRM() {
   };
 
   const filteredLeadsByStage = (stageId: string) => {
-    // Get all DB stage IDs that map to this canonical stage column
     const allIds = allIdsForStage.get(stageId) || [stageId];
     const stageLeads = leads
       .filter((l) => l.stage_id && allIds.includes(l.stage_id))
@@ -93,76 +91,83 @@ export default function FluxCRM() {
 
   return (
     <MainLayout>
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col h-full bg-[#0a0a0b]">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 pb-2">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Flux CRM</h1>
-            <p className="text-sm text-muted-foreground">Pipeline de vendas e gestão de leads</p>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 pb-2">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
+                <Sparkles className="h-6 w-6 text-purple-500" />
+            </div>
+            <div>
+                <h1 className="text-2xl font-bold text-white">Flux CRM</h1>
+                <p className="text-xs text-muted-foreground uppercase tracking-widest font-mono">Orquestrado por Salomão</p>
+            </div>
           </div>
-          <Button onClick={() => openNewLead()} className="gap-2">
+          <Button onClick={() => openNewLead()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2">
             <Plus className="h-4 w-4" /> Novo Lead
           </Button>
         </div>
 
         {/* KPIs */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 pb-3">
-          <Card className="p-3 flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 px-6 pb-3 mt-4">
+          <Card className="p-3 bg-black/40 border-white/5 flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center border border-primary/20">
               <Users className="h-4 w-4 text-primary" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Total Leads</p>
-              <p className="text-lg font-bold text-foreground">{leads.length}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Total Leads</p>
+              <p className="text-lg font-bold text-white">{leads.length}</p>
             </div>
           </Card>
-          <Card className="p-3 flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <DollarSign className="h-4 w-4 text-primary" />
+          <Card className="p-3 bg-black/40 border-white/5 flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
+              <DollarSign className="h-4 w-4 text-purple-500" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Pipeline</p>
-              <p className="text-lg font-bold text-foreground">{totalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Pipeline</p>
+              <p className="text-lg font-bold text-white">{totalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
             </div>
           </Card>
-          <Card className="p-3 flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-success/10 flex items-center justify-center">
-              <TrendingUp className="h-4 w-4 text-success" />
+          <Card className="p-3 bg-black/40 border-white/5 flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-green-500/10 flex items-center justify-center border border-green-500/20">
+              <TrendingUp className="h-4 w-4 text-green-500" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Ganhos</p>
-              <p className="text-lg font-bold text-foreground">{wonValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Ganhos</p>
+              <p className="text-lg font-bold text-white">{wonValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
             </div>
           </Card>
-          <Card className="p-3 flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-accent/10 flex items-center justify-center">
-              <Filter className="h-4 w-4 text-accent" />
+          <Card className="p-3 bg-black/40 border-white/5 flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
+              <Filter className="h-4 w-4 text-orange-500" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Etapas</p>
-              <p className="text-lg font-bold text-foreground">{stages.length}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Etapas</p>
+              <p className="text-lg font-bold text-white">{uniqueStages.length}</p>
             </div>
           </Card>
         </div>
 
         {/* Search */}
-        <div className="px-4 pb-3">
+        <div className="px-6 pb-6">
           <div className="relative max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar leads..."
+              placeholder="Buscar leads por nome ou empresa..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
+              className="pl-9 bg-black/40 border-white/10 text-white focus:border-purple-500/50"
             />
           </div>
         </div>
 
         {/* Kanban Board */}
         {loading ? (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">Carregando...</div>
+          <div className="flex-1 flex items-center justify-center text-muted-foreground">
+            <RefreshCw className="h-8 w-8 animate-spin text-purple-500 mb-4" />
+          </div>
         ) : (
-          <div className="flex-1 overflow-x-auto px-4 pb-4">
+          <div className="flex-1 overflow-x-auto px-6 pb-6">
             <DragDropContext onDragEnd={handleDragEnd}>
               <div className="flex gap-4 h-full min-h-0">
                 {uniqueStages.map((stage) => (
@@ -171,7 +176,7 @@ export default function FluxCRM() {
                     stage={stage}
                     leads={filteredLeadsByStage(stage.id)}
                     onAddLead={openNewLead}
-                    onClickLead={openEditLead}
+                    onClickLead={openLeadDetail}
                   />
                 ))}
               </div>
@@ -179,6 +184,14 @@ export default function FluxCRM() {
           </div>
         )}
       </div>
+
+      <LeadDetailModal
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        lead={selectedLead}
+        stages={stages}
+        onEdit={openEditLead}
+      />
 
       <LeadFormDialog
         open={dialogOpen}
@@ -192,3 +205,4 @@ export default function FluxCRM() {
     </MainLayout>
   );
 }
+

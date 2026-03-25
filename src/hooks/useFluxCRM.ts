@@ -119,8 +119,6 @@ export function useFluxCRM() {
     onSuccess: (insertedLead) => {
       toast.success('Lead criado!');
       queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
-      
-      // Webhook trigger logic
       triggerWebhook(insertedLead);
     },
     onError: () => toast.error('Erro ao criar lead'),
@@ -141,6 +139,21 @@ export function useFluxCRM() {
       console.error(err);
       toast.error('Erro ao mover lead');
     }
+  });
+
+  const updateLeadMutation = useMutation({
+    mutationFn: async ({ leadId, data }: { leadId: string, data: Partial<CRMLead> }) => {
+      const { error } = await supabase
+        .from('crm_leads')
+        .update(data as never)
+        .eq('id', leadId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+      toast.success('Lead atualizado!');
+    },
+    onError: () => toast.error('Erro ao atualizar lead'),
   });
 
   const triggerWebhook = async (lead: any) => {
@@ -185,6 +198,8 @@ export function useFluxCRM() {
     leads,
     loading: loadingStages || loadingLeads,
     addLead: addLeadMutation.mutateAsync,
+    updateLead: (leadId: string, data: Partial<CRMLead>) => updateLeadMutation.mutate({ leadId, data }),
+    deleteLead,
     moveLead: (leadId: string, newStageId: string, newPosition: number) => 
       moveLeadMutation.mutate({ leadId, stageId: newStageId, position: newPosition }),
     getLeadsByStage: (stageId: string) =>
