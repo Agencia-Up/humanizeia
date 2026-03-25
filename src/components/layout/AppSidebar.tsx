@@ -31,7 +31,9 @@ import {
   Search,
   Instagram,
   Calendar,
+  CreditCard,
 } from 'lucide-react';
+import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
@@ -88,6 +90,7 @@ const whatsappItems = [
 
 // ⚙️ Sistema
 const systemItems = [
+  { title: 'Meu Plano & Tokens', url: '/meu-plano', icon: CreditCard },
   { title: 'Configurações', url: '/settings', icon: Settings },
 ];
 
@@ -256,6 +259,11 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className={`border-t border-border/50 p-2 ${collapsed ? 'items-center' : ''}`}>
+        {!collapsed && (
+          <div className="px-1 pb-1">
+            <TokenWidgetCompact />
+          </div>
+        )}
         <SidebarMenu>
           <SidebarMenuItem data-tour="dark-mode">
             <SidebarMenuButton tooltip={isDarkMode ? 'Modo Claro' : 'Modo Escuro'} onClick={toggleDarkMode}>

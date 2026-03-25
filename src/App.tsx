@@ -56,6 +56,7 @@ const LinkedInAdsDashboard = lazy(() => import('./pages/LinkedInAdsDashboard'));
 const DaviSocialMedia = lazy(() => import('./pages/DaviSocialMedia'));
 const JoaoEmail = lazy(() => import('./pages/JoaoEmail'));
 const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
+const MeuPlano = lazy(() => import('./pages/MeuPlano'));
 
 const queryClient = new QueryClient();
 
@@ -120,6 +121,7 @@ const App = () => (
             <Route path="/davi" element={<ProtectedRoute><DaviSocialMedia /></ProtectedRoute>} />
             <Route path="/joao" element={<ProtectedRoute><JoaoEmail /></ProtectedRoute>} />
             <Route path="/daniel" element={<ProtectedRoute><DanielEstrategia /></ProtectedRoute>} />
+            <Route path="/meu-plano" element={<ProtectedRoute><MeuPlano /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
