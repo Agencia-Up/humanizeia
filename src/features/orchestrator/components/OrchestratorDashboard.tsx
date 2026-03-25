@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Brain, Target, MessageSquare, ListTodo, Activity, Plus, History, RefreshCw, Zap } from "lucide-react";
+import { Brain, Target, MessageSquare, ListTodo, Activity, Plus, History, RefreshCw, Zap, Sparkles, PenTool, Palette, Users, Send, Layers, Megaphone, Bot } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -292,16 +292,26 @@ const OrchestratorDashboard = () => {
         <TabsContent value="agents">
 
            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              {/* This will eventually list real agents from the database */}
-              {['JOSÉ', 'PAULO', 'MARIA', 'DANIEL'].map(agent => (
-                  <Card key={agent} className="bg-black/40 border-white/5 hover:border-purple-500/20 transition-colors">
+              {[
+                { name: 'SALOMÃO', role: 'Orquestrador', icon: Sparkles },
+                { name: 'JOSÉ', role: 'Tráfego Pago', icon: Target },
+                { name: 'PAULO', role: 'Copywriter', icon: PenTool },
+                { name: 'MARIA', role: 'Design', icon: Palette },
+                { name: 'MARCOS', role: 'Gestão de Leads', icon: Users },
+                { name: 'DAVI', role: 'Social Media', icon: Send },
+                { name: 'LUCAS', role: 'Funil/CRM', icon: Layers },
+                { name: 'JOÃO', role: 'E-mail Marketing', icon: Megaphone },
+                { name: 'PEDRO', role: 'Atendimento', icon: Bot },
+                { name: 'DANIEL', role: 'Estratégia', icon: Brain },
+              ].map(agent => (
+                  <Card key={agent.name} className="bg-black/40 border-white/5 hover:border-purple-500/20 transition-colors">
                       <CardContent className="p-4 flex items-center gap-3">
                           <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">
-                              <Brain className="w-5 h-5 text-purple-400" />
+                              <agent.icon className="w-5 h-5 text-purple-400" />
                           </div>
                           <div>
-                              <p className="text-sm font-bold text-white">Agente {agent}</p>
-                              <p className="text-[10px] text-muted-foreground font-mono">STATUS: PRONTO</p>
+                              <p className="text-sm font-bold text-white">{agent.name}</p>
+                              <p className="text-[10px] text-muted-foreground font-mono">STATUS: ATIVO</p>
                           </div>
                       </CardContent>
                   </Card>
