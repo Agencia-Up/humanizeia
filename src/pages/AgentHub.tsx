@@ -5,21 +5,21 @@ import { motion } from 'framer-motion';
 import {
   Sparkles, Radar, Users, PenTool, Palette, Send,
   Layers, Megaphone, Bot, Brain, BarChart3, GraduationCap,
-  ArrowRight,
+  ArrowRight, Lock
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 
 const agents = [
-  { name: 'Salomão', role: 'Orquestrador', icon: Sparkles, color: '#f59e0b', url: '/salomao', desc: 'Coordena todos os agentes e estratégias' },
-  { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#7c5cfc', url: '/apollo', desc: 'Meta Ads, Google Ads e otimização de campanhas' },
-  { name: 'Marcos', role: 'Leads', icon: Users, color: '#3b82f6', url: '/leads', desc: 'Captação e gestão de leads qualificados' },
-  { name: 'Paulo', role: 'Copywriter', icon: PenTool, color: '#22d3a0', url: '/copywriter', desc: 'Copies persuasivas geradas por IA' },
-  { name: 'Maria', role: 'Design', icon: Palette, color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA' },
-  { name: 'Davi', role: 'Social Media', icon: Send, color: '#60a5fa', url: '/davi', desc: 'Gestão de redes sociais e conteúdo' },
-  { name: 'Lucas', role: 'Funil', icon: Layers, color: '#fb923c', url: '/crm', desc: 'Funis de vendas e CRM inteligente' },
-  { name: 'João', role: 'Email', icon: Megaphone, color: '#a78bfa', url: '/joao', desc: 'Email marketing e automações' },
-  { name: 'Pedro', role: 'Atendimento', icon: Bot, color: '#34d399', url: '/whatsapp/ai-agent', desc: 'WhatsApp com IA humanizada' },
-  { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', desc: 'Planejamento e análise estratégica' },
+  { name: 'Salomão', role: 'Orquestrador', icon: Sparkles, color: '#f59e0b', url: '/salomao', desc: 'Coordena todos os agentes e estratégias', active: true },
+  { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#7c5cfc', url: '/apollo', desc: 'Meta Ads, Google Ads e otimização de campanhas', active: true },
+  { name: 'Marcos', role: 'Leads', icon: Users, color: '#3b82f6', url: '/leads', desc: 'Captação e gestão de leads qualificados', active: true },
+  { name: 'Paulo', role: 'Copywriter', icon: PenTool, color: '#22d3a0', url: '/copywriter', desc: 'Copies persuasivas geradas por IA', active: true },
+  { name: 'Maria', role: 'Design', icon: Palette, color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA', active: true },
+  { name: 'Davi', role: 'Social Media', icon: Send, color: '#60a5fa', url: '/davi', desc: 'Gestão de redes sociais e conteúdo', active: true },
+  { name: 'Lucas', role: 'Funil', icon: Layers, color: '#fb923c', url: '/crm', desc: 'Funis de vendas e CRM inteligente', active: true },
+  { name: 'João', role: 'Email', icon: Megaphone, color: '#a78bfa', url: '/joao', desc: 'Email marketing e automações', active: true },
+  { name: 'Pedro', role: 'Atendimento', icon: Bot, color: '#34d399', url: '/whatsapp/ai-agent', desc: 'WhatsApp com IA humanizada', active: true },
+  { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', desc: 'Planejamento e análise estratégica', active: true },
 ];
 
 const quickLinks = [
@@ -83,10 +83,19 @@ export default function AgentHub() {
                 whileTap={{ scale: 0.97 }}
               >
                 <Card
-                  className="cursor-pointer border-border/30 bg-card/50 backdrop-blur-sm hover:shadow-lg transition-all h-full group"
+                  className={`relative cursor-pointer border-border/30 bg-card/50 backdrop-blur-sm hover:shadow-lg transition-all h-full group ${
+                    !agent.active && 'opacity-60 grayscale-[0.5]'
+                  }`}
                   style={{ '--agent-color': agent.color } as React.CSSProperties}
-                  onClick={() => navigate(agent.url)}
+                  onClick={() => agent.active && navigate(agent.url)}
                 >
+                  {!agent.active && (
+                    <div className="absolute top-2 right-2 z-10">
+                      <div className="bg-black/60 backdrop-blur-md rounded-full p-1 border border-white/10">
+                        <Lock className="h-3 w-3 text-amber-500" />
+                      </div>
+                    </div>
+                  )}
                   <CardContent className="flex flex-col items-center text-center gap-3 p-5">
                     <div
                       className="flex h-14 w-14 items-center justify-center rounded-2xl transition-transform group-hover:scale-110"
@@ -96,7 +105,9 @@ export default function AgentHub() {
                     </div>
                     <div>
                       <p className="font-bold text-sm text-foreground">{agent.name}</p>
-                      <p className="text-xs text-muted-foreground">{agent.role}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {agent.active ? agent.role : 'Em breve'}
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
