@@ -178,6 +178,16 @@ export function useFluxCRM() {
     queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
   };
 
+  const updateLead = async (id: string, updates: Partial<CRMLead>) => {
+    const { error } = await supabase
+      .from('crm_leads')
+      .update(updates as never)
+      .eq('id', id);
+    if (error) { toast.error('Erro ao atualizar lead'); return; }
+    toast.success('Lead atualizado!');
+    queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+  };
+
   const totalValue = leads.reduce((sum, l) => sum + (l.value || 0), 0);
 
   return {
@@ -189,6 +199,8 @@ export function useFluxCRM() {
       moveLeadMutation.mutate({ leadId, stageId: newStageId, position: newPosition }),
     getLeadsByStage: (stageId: string) =>
       leads.filter((l) => l.stage_id === stageId).sort((a, b) => a.position - b.position),
+    updateLead,
+    deleteLead,
     totalValue,
     refetch: refetchLeads,
   };

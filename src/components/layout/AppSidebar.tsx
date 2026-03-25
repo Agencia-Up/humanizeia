@@ -56,21 +56,8 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 
 // 🏠 Dashboard
 const dashboardItems = [
-  { title: 'Painel', url: '/', icon: Home },
-];
-
-// 👑 Agentes IA — Equipe Salomão
-const agentItems = [
-  { title: 'SALOMÃO — Orquestrador', url: '/salomao', icon: Sparkles },
-  { title: 'JOSÉ — Tráfego Pago', url: '/apollo', icon: Radar },
-  { title: 'MARCOS — Leads', url: '/leads', icon: Users },
-  { title: 'PAULO — Copywriter', url: '/copywriter', icon: PenTool },
-  { title: 'MARIA — Design', url: '/creative-studio', icon: Palette },
-  { title: 'DAVI — Social Media', url: '/davi', icon: Send },
-  { title: 'LUCAS — Funil', url: '/funil', icon: Layers },
-  { title: 'JOÃO — Email', url: '/joao', icon: Megaphone },
-  { title: 'PEDRO — Atendimento', url: '/whatsapp/ai-agent', icon: Bot },
-  { title: 'DANIEL — Estratégia', url: '/daniel', icon: Brain },
+  { title: 'Home', url: '/dashboard', icon: Home },
+  { title: 'Métricas', url: '/metrics', icon: BarChart3 },
 ];
 
 // 🤖 Ferramentas IA
@@ -80,38 +67,12 @@ const aiItems = [
   { title: 'Radar de Concorrentes', url: '/competitor-radar', icon: Radar },
 ];
 
-// 📊 Análises
-const analyticsItems = [
-  { title: 'Biblioteca Criativa', url: '/creative-studio?tab=biblioteca', icon: FolderOpen },
-];
-
-// 📋 CRM
-const crmItems = [
-  { title: 'Flux CRM', url: '/crm', icon: Kanban },
-  { title: 'Contatos', url: '/crm/contacts', icon: Contact },
-];
-
-// 📈 Plataformas de Ads
-const platformItems = [
-  { title: 'Google Ads', url: '/google-ads', icon: Search },
-  { title: 'LinkedIn Ads', url: '/linkedin-ads', icon: Linkedin },
-];
-
-// 📱 Social Media
-const socialItems = [
-  { title: 'DAVI — Carrosséis', url: '/davi', icon: Instagram },
-  { title: 'Calendário de Posts', url: '/davi?tab=calendario', icon: Calendar },
-];
 
 // 🔗 Integrações
 const integrationItems = [
   { title: 'Integrações', url: '/integrations', icon: Plug },
 ];
 
-// 🎓 Aprendizado
-const learningItems = [
-  { title: 'Academia IA', url: '/academy', icon: GraduationCap },
-];
 
 // 💬 WhatsApp
 const whatsappItems = [
@@ -249,15 +210,11 @@ export function AppSidebar() {
 
   const groups: NavGroupConfig[] = [
     { label: '🏠 Dashboard', items: dashboardWithBadges, triggerIcon: Home },
-    { label: '👑 Agentes IA', items: agentItems, triggerIcon: Sparkles, dataTour: 'sidebar-agents' },
+    
     { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
-    { label: '📊 Análises', items: analyticsItems, triggerIcon: BarChart3 },
-    { label: '📋 CRM', items: crmItems, triggerIcon: Kanban },
-    { label: '📈 Plataformas', items: platformItems, triggerIcon: BarChart3 },
-    { label: '📱 Social Media', items: socialItems, triggerIcon: Instagram },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
-    { label: '🎓 Aprendizado', items: learningItems, triggerIcon: GraduationCap },
+    
     { label: '⚙️ Sistema', items: systemItems, triggerIcon: Settings },
   ];
 

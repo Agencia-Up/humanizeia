@@ -12,10 +12,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { useSocialMedia, CarouselSlide, SocialPost } from '@/hooks/useSocialMedia';
+import { useCreativeUploads, CreativeUpload } from '@/hooks/useCreativeUploads';
 import {
   Calendar, CheckCircle, ChevronLeft, ChevronRight, Clock, Copy,
-  Eye, Hash, Heart, Layers, Loader2, MessageCircle,
-  RefreshCw, Send, Share2, Sparkles, Trash2, Instagram, Zap,
+  Eye, FolderOpen, Hash, Heart, Image, Layers, Loader2, MessageCircle,
+  RefreshCw, Send, Share2, Sparkles, Star, Trash2, Upload, Instagram, Zap,
 } from 'lucide-react';
 
 // Slide Preview Card
@@ -81,6 +82,10 @@ export default function DaviSocialMedia() {
     setGeneratedCarousel, fetchPosts, generateCarousel, saveDraft, schedulePost, publishNow, deleteDraft,
   } = useSocialMedia();
 
+  const {
+    uploads, isLoading: uploadsLoading, isUploading,
+    uploadFile, deleteUpload, toggleFavorite,
+  } = useCreativeUploads();
   // Generator form state
   const [topic, setTopic] = useState('');
   const [audience, setAudience] = useState('');
@@ -186,12 +191,15 @@ export default function DaviSocialMedia() {
 
         {/* Main Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="gerador" className="gap-1.5">
               <Sparkles className="h-3.5 w-3.5" /> Gerador IA
             </TabsTrigger>
             <TabsTrigger value="posts" className="gap-1.5">
               <Layers className="h-3.5 w-3.5" /> Meus Posts {posts.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{posts.length}</Badge>}
+            </TabsTrigger>
+            <TabsTrigger value="biblioteca" className="gap-1.5">
+              <FolderOpen className="h-3.5 w-3.5" /> Biblioteca {uploads.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{uploads.length}</Badge>}
             </TabsTrigger>
             <TabsTrigger value="calendario" className="gap-1.5">
               <Calendar className="h-3.5 w-3.5" /> Calendário
@@ -496,6 +504,22 @@ export default function DaviSocialMedia() {
             </div>
           </TabsContent>
 
+          {/* ─── BIBLIOTECA TAB ─── */}
+          <TabsContent value="biblioteca" className="mt-5">
+            <CreativeLibrarySection
+              uploads={uploads}
+              isLoading={uploadsLoading}
+              isUploading={isUploading}
+              onUpload={uploadFile}
+              onDelete={deleteUpload}
+              onToggleFavorite={toggleFavorite}
+              onUseInPost={(upload) => {
+                setCaption(prev => prev ? prev + '\n\n' : '' + `📸 ${upload.name}`);
+                setActiveTab('gerador');
+              }}
+            />
+          </TabsContent>
+
           {/* ─── CALENDAR TAB ─── */}
           <TabsContent value="calendario" className="mt-5">
             <ContentCalendar posts={posts} />
@@ -587,5 +611,139 @@ function ContentCalendar({ posts }: { posts: SocialPost[] }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Creative Library Section ──────────────────────────────────────────────
+function CreativeLibrarySection({
+  uploads, isLoading, isUploading, onUpload, onDelete, onToggleFavorite, onUseInPost,
+}: {
+  uploads: CreativeUpload[];
+  isLoading: boolean;
+  isUploading: boolean;
+  onUpload: (file: File, meta: { name?: string; category?: string; tags?: string[] }) => Promise<any>;
+  onDelete: (id: string) => Promise<void>;
+  onToggleFavorite: (id: string) => Promise<void>;
+  onUseInPost: (upload: CreativeUpload) => void;
+}) {
+  const [filter, setFilter] = useState<'all' | 'favorites'>('all');
+  const fileInputRef = useState<HTMLInputElement | null>(null);
+
+  const filtered = filter === 'favorites' ? uploads.filter(u => u.is_favorite) : uploads;
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    for (const file of Array.from(files)) {
+      await onUpload(file, { category: 'social-media' });
+    }
+    e.target.value = '';
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant={filter === 'all' ? 'default' : 'outline'}
+            onClick={() => setFilter('all')}
+          >
+            Todos ({uploads.length})
+          </Button>
+          <Button
+            size="sm"
+            variant={filter === 'favorites' ? 'default' : 'outline'}
+            onClick={() => setFilter('favorites')}
+          >
+            <Star className="h-3 w-3 mr-1" /> Favoritos
+          </Button>
+        </div>
+        <div>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
+            multiple
+            className="hidden"
+            id="biblioteca-upload"
+            onChange={handleFileSelect}
+          />
+          <Button size="sm" asChild disabled={isUploading}>
+            <label htmlFor="biblioteca-upload" className="cursor-pointer">
+              {isUploading ? (
+                <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Enviando...</>
+              ) : (
+                <><Upload className="h-3.5 w-3.5 mr-1.5" /> Upload</>
+              )}
+            </label>
+          </Button>
+        </div>
+      </div>
+
+      {isLoading && uploads.length === 0 && (
+        <div className="py-12 text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-primary" />
+          <p className="text-muted-foreground text-sm">Carregando biblioteca...</p>
+        </div>
+      )}
+
+      {!isLoading && filtered.length === 0 && (
+        <Card className="border-dashed border-2">
+          <CardContent className="py-16 text-center">
+            <Image className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
+            <p className="text-muted-foreground">
+              {filter === 'favorites' ? 'Nenhum favorito ainda' : 'Sua biblioteca está vazia'}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Faça upload de imagens e vídeos para usar nos seus posts
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        {filtered.map(upload => (
+          <Card key={upload.id} className="overflow-hidden group relative">
+            <div className="aspect-square relative bg-muted">
+              {upload.file_type === 'image' ? (
+                <img
+                  src={upload.file_url}
+                  alt={upload.name}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <span className="text-3xl">🎬</span>
+                </div>
+              )}
+              {/* Overlay actions */}
+              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                <Button size="sm" variant="secondary" className="text-xs" onClick={() => onUseInPost(upload)}>
+                  <Send className="h-3 w-3 mr-1" /> Usar no Post
+                </Button>
+                <div className="flex gap-1">
+                  <Button size="icon" variant="ghost" className="h-7 w-7 text-white hover:text-yellow-400" onClick={() => onToggleFavorite(upload.id)}>
+                    <Star className={`h-3.5 w-3.5 ${upload.is_favorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7 text-white hover:text-red-400" onClick={() => onDelete(upload.id)}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <CardContent className="p-2">
+              <p className="text-xs font-medium truncate">{upload.name}</p>
+              <div className="flex items-center justify-between mt-0.5">
+                <span className="text-[10px] text-muted-foreground">
+                  {new Date(upload.created_at).toLocaleDateString('pt-BR')}
+                </span>
+                {upload.is_favorite && <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
   );
 }

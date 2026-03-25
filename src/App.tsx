@@ -10,7 +10,9 @@ import { Loader2 } from "lucide-react";
 // Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
-const Dashboard = lazy(() => import("./pages/Dashboard"));
+const AgentHub = lazy(() => import("./pages/AgentHub"));
+const MetricsDashboard = lazy(() => import("./pages/Dashboard"));
+const Tutorials = lazy(() => import("./pages/Tutorials"));
 const AICopywriter = lazy(() => import("./pages/AICopywriter"));
 const AICreativeStudio = lazy(() => import("./pages/AICreativeStudio"));
 const CampaignOptimizer = lazy(() => import("./pages/CampaignOptimizer"));
@@ -77,7 +79,8 @@ const App = () => (
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/" element={<LandingPage />} />
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute><AgentHub /></ProtectedRoute>} />
+            <Route path="/metrics" element={<ProtectedRoute><MetricsDashboard /></ProtectedRoute>} />
             <Route path="/connect-accounts" element={<ProtectedRoute><ConnectAccounts /></ProtectedRoute>} />
             <Route path="/copywriter" element={<ProtectedRoute><AICopywriter /></ProtectedRoute>} />
             <Route path="/creative-studio" element={<ProtectedRoute><AICreativeStudio /></ProtectedRoute>} />
@@ -92,6 +95,7 @@ const App = () => (
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
             <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
+            <Route path="/tutorials" element={<ProtectedRoute><Tutorials /></ProtectedRoute>} />
             <Route path="/midas" element={<ProtectedRoute><MidasAgent /></ProtectedRoute>} />
             <Route path="/apollo/criar-campanha" element={<ProtectedRoute><CriarCampanha /></ProtectedRoute>} />
             <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
