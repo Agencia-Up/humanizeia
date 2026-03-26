@@ -97,6 +97,7 @@ export default function SalomaoOrchestrator() {
   const [generatedPrompt, setGeneratedPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [aiProvider, setAiProvider] = useState('openai'); // openai | anthropic
   const outputRef = useRef<HTMLDivElement>(null);
 
   const activeCount = AGENTS.filter(a => a.status === 'active').length;
@@ -119,20 +120,28 @@ export default function SalomaoOrchestrator() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Sessão expirada.');
       const res = await supabase.functions.invoke('prompt-generator-api', {
-        body: { action: 'generate_prompt', briefing: buildBriefingText(data) },
+        body: { 
+          action: 'generate_prompt', 
+          briefing: buildBriefingText(data),
+          ai_provider: aiProvider
+        },
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (res.error) throw new Error(res.error.message);
       const result = res.data as { prompt: string; tokens_used: number; demo: boolean };
       setGeneratedPrompt(result.prompt);
       if (result.demo) {
-        toast({ title: 'Modo demo', description: 'Configure ANTHROPIC_API_KEY no Supabase para IA real.' });
+        toast({ title: 'Modo demo', description: 'Configure a API_KEY correspondente no Supabase para IA real.' });
       } else {
         toast({ title: '⚡ Prompt gerado!', description: `${result.tokens_used?.toLocaleString('pt-BR')} tokens usados.` });
       }
       setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      if (err.message.includes('API error') || err.message.includes('não encontrada')) {
+        toast({ title: 'Erro na API da IA', description: err.message, variant: 'destructive' });
+      } else {
+        toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      }
     } finally {
       setGenerating(false);
     }
@@ -151,12 +160,29 @@ export default function SalomaoOrchestrator() {
       <div className="space-y-6 p-6 max-w-6xl mx-auto">
 
         {/* ── Header ────────────────────────────────────────────────── */}
-        <div className="text-center space-y-3 py-4">
+        <div className="text-center space-y-3 py-4 relative">
           <div className="flex items-center justify-center gap-3">
             <Sparkles className="h-8 w-8 text-yellow-400" />
             <h1 className="text-3xl font-bold tracking-tight">SALOMÃO</h1>
             <Sparkles className="h-8 w-8 text-yellow-400" />
           </div>
+          
+          <div className="absolute top-0 right-0 hidden sm:flex items-center gap-2">
+            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 gap-1.5 whitespace-nowrap">
+              <Bot className="h-3 w-3" /> IA Engine
+            </Badge>
+            <Select value={aiProvider} onValueChange={setAiProvider} disabled={generating}>
+              <SelectTrigger className="w-[180px] h-8 text-xs bg-card/60 border-primary/20 focus:ring-primary/50">
+                <SelectValue placeholder="Selecione a IA" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="openai">ChatGPT (GPT-4o)</SelectItem>
+                <SelectItem value="anthropic_sonnet">Claude 3.5 Sonnet</SelectItem>
+                <SelectItem value="anthropic_haiku">Claude 3 Haiku</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           <p className="text-muted-foreground">A Agência de Marketing Digital do Futuro</p>
           <p className="text-sm text-muted-foreground max-w-2xl mx-auto leading-relaxed">
             10 agentes especializados de IA trabalhando em equipe. Cada um é um especialista completo na sua área —

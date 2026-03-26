@@ -143,6 +143,7 @@ export default function GeradorPrompt() {
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
+  const [aiProvider, setAiProvider] = useState('openai'); // openai | anthropic
   const outputRef = useRef<HTMLDivElement>(null);
 
   const filled = REQUIRED_FIELDS.filter(f => data[f]?.trim()).length;
@@ -167,7 +168,11 @@ export default function GeradorPrompt() {
       if (!session) throw new Error('Sessão expirada. Faça login novamente.');
 
       const res = await supabase.functions.invoke('prompt-generator-api', {
-        body: { action: 'generate_prompt', briefing: buildBriefingText(data) },
+        body: { 
+          action: 'generate_prompt', 
+          briefing: buildBriefingText(data),
+          ai_provider: aiProvider
+        },
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
 
@@ -176,13 +181,18 @@ export default function GeradorPrompt() {
       setPrompt(result.prompt);
       setIsDemo(result.demo ?? false);
       if (result.demo) {
-        toast({ title: 'Modo demo ativado', description: 'Configure ANTHROPIC_API_KEY no Supabase para gerar prompts com IA real.' });
+        toast({ title: 'Modo demo ativado', description: 'Configure API_KEY correspondente no Supabase para IA real.' });
       } else {
         toast({ title: 'Prompt gerado!', description: `${result.tokens_used.toLocaleString('pt-BR')} tokens utilizados.` });
       }
       setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch (err: any) {
-      toast({ title: 'Erro ao gerar', description: err.message, variant: 'destructive' });
+      // Add more context if error is related to API Key
+      if (err.message.includes('API error') || err.message.includes('não encontrada')) {
+        toast({ title: 'Erro na API da IA', description: err.message + ' (Verifique as Secrets no Supabase)', variant: 'destructive' });
+      } else {
+        toast({ title: 'Erro ao gerar', description: err.message, variant: 'destructive' });
+      }
     } finally {
       setLoading(false);
     }
@@ -200,7 +210,7 @@ export default function GeradorPrompt() {
     <MainLayout>
       <div className="flex flex-col gap-6 p-6 max-w-6xl mx-auto">
         {/* ── Header ──────────────────────────────────────────────── */}
-        <div className="flex items-start justify-between flex-wrap gap-3">
+        <div className="flex items-start justify-between flex-wrap gap-4">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <Bot className="h-6 w-6 text-primary" />
@@ -210,9 +220,21 @@ export default function GeradorPrompt() {
               Preencha o briefing → IA gera um system prompt completo e pronto para uso
             </p>
           </div>
-          <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 gap-1.5">
-            <Sparkles className="h-3 w-3" /> Claude-Opus
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 gap-1.5 whitespace-nowrap hidden sm:flex">
+              <Sparkles className="h-3 w-3" /> Motor IA
+            </Badge>
+            <Select value={aiProvider} onValueChange={setAiProvider} disabled={loading}>
+              <SelectTrigger className="w-[200px] h-9 text-xs bg-card/60 border-primary/20 focus:ring-primary/50">
+                <SelectValue placeholder="Selecione a IA" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="openai">ChatGPT (GPT-4o)</SelectItem>
+                <SelectItem value="anthropic_sonnet">Claude 3.5 Sonnet</SelectItem>
+                <SelectItem value="anthropic_haiku">Claude 3 Haiku</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {/* ── Progress ─────────────────────────────────────────────── */}
