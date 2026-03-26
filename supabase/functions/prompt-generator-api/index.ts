@@ -94,6 +94,7 @@ serve(async (req) => {
     throw new Error(`Ação desconhecida: ${action}`);
 
   } catch (err: any) {
+    console.error('API Error:', err.message);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
