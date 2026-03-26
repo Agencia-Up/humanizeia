@@ -41,7 +41,8 @@ const OrchestratorDashboard = () => {
     generateTasks, 
     isGenerating,
     runTask,
-    isExecuting 
+    isExecuting,
+    resetOrchestrator
   } = useOrchestrator();
   const { overdue, today } = useFollowups();
   const [activeTab, setActiveTab] = useState('overview');
@@ -90,10 +91,20 @@ const OrchestratorDashboard = () => {
                {isGenerating ? 'Sincronizando...' : 'Sincronizar Inteligência'}
              </Button>
           )}
-          <Button variant="outline" className="border-white/10 text-muted-foreground hover:bg-white/5">
-            <History className="w-4 h-4 mr-2" />
-            Histórico
-          </Button>
+          {(activeTasks.length > 0 || recentExecutions.length > 0) && (
+            <Button 
+              variant="outline" 
+              className="border-red-500/20 text-red-500 hover:bg-red-500/10"
+              onClick={() => {
+                if (confirm('Tem certeza que deseja apagar todo o pipeline e histórico de tarefas deste negócio?')) {
+                  resetOrchestrator();
+                }
+              }}
+            >
+              <History className="w-4 h-4 mr-2" />
+              Resetar Timeline
+            </Button>
+          )}
         </div>
       </div>
 
