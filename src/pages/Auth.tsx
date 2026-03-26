@@ -142,31 +142,22 @@ export default function Auth() {
 
     setIsLoading(true);
 
-    // Usa nossa Edge Function (Resend) para enviar o email bonito com link de recuperação
-    const { data, error } = await supabase.functions.invoke('send-email', {
-      body: {
-        type: 'reset_password',
-        email: forgotEmail,
-        name: forgotName || 'Usuário',
-        redirectTo: `${window.location.origin}/reset-password`,
-      },
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+      redirectTo: `${window.location.origin}/reset-password`,
     });
 
     setIsLoading(false);
 
-    if (error || data?.error) {
-      // Fallback: usa o Supabase padrão
-      await supabase.auth.resetPasswordForEmail(forgotEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
+    if (error) {
       toast({
-        title: '📧 Email enviado!',
-        description: 'Verifique sua caixa de entrada para redefinir sua senha.',
+        title: 'Erro ao enviar email',
+        description: error.message,
+        variant: 'destructive',
       });
     } else {
       toast({
         title: '📧 Email de recuperação enviado!',
-        description: 'Verifique seu email e clique no link para redefinir sua senha.',
+        description: 'Verifique sua caixa de entrada e clique no link para redefinir sua senha.',
       });
     }
 
