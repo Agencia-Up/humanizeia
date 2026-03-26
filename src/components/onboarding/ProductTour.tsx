@@ -510,17 +510,17 @@ export function ProductTour() {
   const [run, setRun] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
 
-  // Auto-start tour on first visit
-  useEffect(() => {
-    const completed = localStorage.getItem(TOUR_STORAGE_KEY);
-    if (!completed) {
-      const timer = setTimeout(() => {
-        setRun(true);
-        setStepIndex(0);
-      }, 1200);
-      return () => clearTimeout(timer);
-    }
-  }, []);
+  // Auto-start tour on first visit — DISABLED
+  // useEffect(() => {
+  //   const completed = localStorage.getItem(TOUR_STORAGE_KEY);
+  //   if (!completed) {
+  //     const timer = setTimeout(() => {
+  //       setRun(true);
+  //       setStepIndex(0);
+  //     }, 1200);
+  //     return () => clearTimeout(timer);
+  //   }
+  // }, []);
 
   // Listen for manual restart from store
   useEffect(() => {
