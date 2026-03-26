@@ -113,3 +113,6 @@ verify_jwt = false
 
 [functions.jose-debug]
 verify_jwt = false
+
+[functions.prompt-generator-api]
+verify_jwt = false
