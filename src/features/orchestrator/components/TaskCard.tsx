@@ -1,12 +1,20 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { OrchestratorTask } from "../types";
-import { Clock, AlertCircle, CheckCircle2, PlayCircle } from "lucide-react";
+import { OrchestratorTask, AgentExecution } from "../types";
+import { Clock, AlertCircle, CheckCircle2, PlayCircle, Eye } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 interface TaskCardProps {
   task: OrchestratorTask;
   onAction?: (task: OrchestratorTask) => void;
+  execution?: AgentExecution;
 }
 
 const statusConfig = {
@@ -23,12 +31,16 @@ const priorityConfig = {
   urgent: 'bg-red-500/10 text-red-500 border-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.2)]',
 };
 
-const TaskCard = ({ task, onAction }: TaskCardProps) => {
+const TaskCard = ({ task, onAction, execution }: TaskCardProps) => {
   const StatusIcon = statusConfig[task.status as keyof typeof statusConfig]?.icon || Clock;
   const statusInfo = statusConfig[task.status as keyof typeof statusConfig];
+  const [isOpen, setIsOpen] = useState(false);
 
-  return (
-    <Card className="bg-black/40 border-white/5 hover:border-purple-500/30 transition-all duration-300 group overflow-hidden">
+  // If there's an execution and it's completed, we make the card clickable
+  const isClickable = task.status === 'completed' && execution;
+
+  const CardContentBlock = (
+    <Card className={`bg-black/40 border-white/5 transition-all duration-300 group overflow-hidden ${isClickable ? 'cursor-pointer hover:border-purple-500/50 hover:bg-black/60 shadow-lg' : 'hover:border-purple-500/30'}`}>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
@@ -39,7 +51,7 @@ const TaskCard = ({ task, onAction }: TaskCardProps) => {
               {task.description}
             </p>
           </div>
-          <Badge variant="outline" className={`text-[10px] uppercase ${priorityConfig[task.priority as keyof typeof priorityConfig]}`}>
+          <Badge variant="outline" className={`shrink-0 text-[10px] uppercase ${priorityConfig[task.priority as keyof typeof priorityConfig]}`}>
             {task.priority}
           </Badge>
         </div>
@@ -50,13 +62,21 @@ const TaskCard = ({ task, onAction }: TaskCardProps) => {
             <span className="text-[10px] text-muted-foreground font-medium">{statusInfo?.label}</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-muted-foreground">
+            {isClickable && (
+              <span className="text-[10px] flex items-center gap-1 text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded">
+                <Eye className="w-3 h-3" /> Ver Resultado
+              </span>
+            )}
+            <span className="text-[10px] text-muted-foreground hidden sm:inline-block">
               {new Date(task.created_at).toLocaleDateString()}
             </span>
             {task.status === 'pending' && (
               <button 
                 className="text-[10px] bg-purple-500 hover:bg-purple-600 text-white px-2 py-0.5 rounded transition-colors"
-                onClick={() => onAction?.(task)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAction?.(task);
+                }}
               >
                 Ativar
               </button>
@@ -66,6 +86,40 @@ const TaskCard = ({ task, onAction }: TaskCardProps) => {
       </CardContent>
     </Card>
   );
+
+  if (isClickable) {
+    return (
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogTrigger asChild>
+          <div className="h-full">
+            {CardContentBlock}
+          </div>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-[600px] border-white/10 bg-zinc-950">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold flex items-center gap-2 text-white">
+              <CheckCircle2 className="w-5 h-5 text-green-500" />
+              Resultado: {task.title}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-4 space-y-4">
+            <div className="rounded-md bg-white/5 p-4 border border-white/5">
+               <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-2">Instrução Original</h4>
+               <p className="text-sm text-zinc-300">{execution?.prompt_input || task.description}</p>
+            </div>
+            <div className="rounded-md bg-purple-900/10 p-4 border border-purple-500/20">
+               <h4 className="text-xs font-semibold uppercase text-purple-400 mb-2">Conteúdo Gerado pela IA</h4>
+               <div className="text-sm text-zinc-100 whitespace-pre-wrap font-mono leading-relaxed max-h-[40vh] overflow-y-auto custom-scrollbar">
+                  {execution?.response_output}
+               </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return CardContentBlock;
 };
 
 export default TaskCard;

@@ -1,8 +1,16 @@
 import React from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Brain, User, Zap, MessageSquare, CheckCircle2, PlayCircle, Loader2 } from 'lucide-react';
+import { Brain, User, Zap, MessageSquare, CheckCircle2, PlayCircle, Loader2, Eye } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { AgentExecution } from '../types';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 interface ExecutionTimelineProps {
   executions: AgentExecution[];
@@ -55,8 +63,32 @@ const ExecutionTimeline = ({ executions, isLoading }: ExecutionTimelineProps) =>
                     </div>
 
                     <div className="space-y-1 p-3 bg-black/40 rounded-lg border border-white/5">
-                      <p className="text-[10px] uppercase font-bold text-green-500/70">Resposta Consolidada</p>
-                      <p className="text-xs text-white leading-relaxed font-mono">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-[10px] uppercase font-bold text-green-500/70">Resposta Consolidada</p>
+                        {exec.response_output && (
+                          <Dialog>
+                            <DialogTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-6 text-[10px] text-purple-400 hover:text-purple-300 hover:bg-purple-900/20 px-2 flex items-center gap-1">
+                                <Eye className="w-3 h-3" /> Ver Completo
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent className="sm:max-w-[600px] border-white/10 bg-zinc-950">
+                              <DialogHeader>
+                                <DialogTitle className="text-lg font-bold flex items-center gap-2 text-white">
+                                  <CheckCircle2 className="w-5 h-5 text-green-500" />
+                                  Relatório do Agente {exec.agent_id || 'SALOMÃO'}
+                                </DialogTitle>
+                              </DialogHeader>
+                              <div className="mt-4 p-4 rounded-md bg-purple-900/10 border border-purple-500/20">
+                                <div className="text-sm text-zinc-100 whitespace-pre-wrap font-mono leading-relaxed max-h-[50vh] overflow-y-auto custom-scrollbar">
+                                  {exec.response_output}
+                                </div>
+                              </div>
+                            </DialogContent>
+                          </Dialog>
+                        )}
+                      </div>
+                      <p className="text-xs text-white leading-relaxed font-mono line-clamp-3">
                         {exec.response_output || 'Aguardando resposta do agente...'}
                       </p>
                     </div>

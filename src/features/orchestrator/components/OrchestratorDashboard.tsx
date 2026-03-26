@@ -268,7 +268,12 @@ const OrchestratorDashboard = () => {
             {activeTasks.length > 0 ? (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     {activeTasks.map(task => (
-                        <TaskCard key={task.id} task={task} onAction={runTask} />
+                        <TaskCard 
+                           key={task.id} 
+                           task={task} 
+                           onAction={runTask} 
+                           execution={recentExecutions.find(e => e.task_id === task.id)}
+                        />
                     ))}
                 </div>
             ) : (
