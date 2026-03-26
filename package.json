@@ -1,7 +1,10 @@
 {
-  "name": "vite_react_shadcn_ts",
+  "name": "logosia-platform",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "LogosIA — Plataforma de Agência Digital Autônoma com IA",
+  "author": "Agencia-Up",
+  "license": "UNLICENSED",
   "type": "module",
   "scripts": {
     "dev": "vite",
