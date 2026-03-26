@@ -8,8 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { Mail, Lock, User, Loader2, ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { Mail, Lock, User, Loader2, ArrowLeft, Eye, EyeOff, Moon, Sun } from 'lucide-react';
 import { LogosIALogo } from '@/components/brand/LogosIALogo';
+import { useAppStore } from '@/store/appStore';
 import { z } from 'zod';
 
 const emailSchema = z.string().email('Email inválido');
@@ -29,6 +30,7 @@ export default function Auth() {
   const [searchParams] = useSearchParams();
   const { signIn, signUp, user } = useAuth();
   const { toast } = useToast();
+  const { isDarkMode, toggleDarkMode } = useAppStore();
 
   // Aba inicial: se vier ?tab=signup abre Cadastro direto
   const initialTab = searchParams.get('tab') === 'signup' ? 'signup' : 'login';
@@ -175,6 +177,13 @@ export default function Auth() {
   if (showForgotPassword) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <button
+          onClick={toggleDarkMode}
+          className="fixed top-4 right-4 p-2 rounded-full bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          title={isDarkMode ? 'Modo claro' : 'Modo escuro'}
+        >
+          {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </button>
         <div className="w-full max-w-md space-y-6">
           <div className="flex flex-col items-center gap-2 text-center">
             <LogosIALogo size="lg" />
@@ -242,6 +251,13 @@ export default function Auth() {
   // ─── TELA PRINCIPAL (LOGIN + CADASTRO) ───────────────────────────────────
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <button
+        onClick={toggleDarkMode}
+        className="fixed top-4 right-4 p-2 rounded-full bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+        title={isDarkMode ? 'Modo claro' : 'Modo escuro'}
+      >
+        {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      </button>
       <div className="w-full max-w-md space-y-6">
         {/* Logo */}
         <div className="flex flex-col items-center gap-2 text-center">

@@ -15,6 +15,8 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { useState } from 'react';
+import { useAppStore } from '@/store/appStore';
+import { Moon, Sun } from 'lucide-react';
 
 /* ── Dados para os gráficos ─────────────────────────────────────────── */
 const radarData = [
@@ -211,6 +213,7 @@ const testimonials = [
 /* ── Componente Principal ───────────────────────────────────────────── */
 export default function LandingPage() {
   const { user, loading } = useAuth();
+  const { isDarkMode, toggleDarkMode } = useAppStore();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   if (!loading && user) return <Navigate to="/dashboard" replace />;
@@ -232,6 +235,15 @@ export default function LandingPage() {
           <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
         </nav>
         <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleDarkMode}
+            className="text-muted-foreground hover:text-foreground"
+            title={isDarkMode ? 'Modo claro' : 'Modo escuro'}
+          >
+            {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
           <Button variant="ghost" asChild className="text-muted-foreground hover:text-foreground">
             <Link to="/auth">Entrar</Link>
           </Button>
