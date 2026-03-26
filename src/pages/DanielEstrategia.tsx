@@ -12,8 +12,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   Brain, BarChart3, Compass, FileText, Lightbulb, Loader2,
-  Sparkles, Target, TrendingUp, Zap, ChevronRight, Shield, Star,
+  Sparkles, Target, TrendingUp, Zap, ChevronRight, Shield, Star, GitBranch,
 } from 'lucide-react';
+import { FunnelFlowchart } from '@/components/daniel/FunnelFlowchart';
 
 const BUSINESS_TYPES = [
   { value: 'ecommerce', label: '🛒 E-commerce' },
@@ -116,10 +117,11 @@ export default function DanielEstrategia() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="estrategia" className="gap-1.5"><Compass className="h-3.5 w-3.5" />Plano Estratégico</TabsTrigger>
             <TabsTrigger value="analise" className="gap-1.5"><BarChart3 className="h-3.5 w-3.5" />Análise de Dados</TabsTrigger>
             <TabsTrigger value="swot" className="gap-1.5"><Target className="h-3.5 w-3.5" />SWOT / OKRs</TabsTrigger>
+            <TabsTrigger value="fluxo" className="gap-1.5"><GitBranch className="h-3.5 w-3.5" />Fluxo de Vendas</TabsTrigger>
           </TabsList>
 
           {/* STRATEGY GENERATOR */}
@@ -304,6 +306,23 @@ export default function DanielEstrategia() {
                 </Button>
               </CardContent>
             </Card>
+          </TabsContent>
+          {/* FUNNEL FLOWCHART */}
+          <TabsContent value="fluxo" className="mt-5">
+            <div className="space-y-4">
+              <Card className="border-purple-500/20 bg-purple-500/5">
+                <CardContent className="p-4">
+                  <h2 className="font-bold text-sm text-purple-300 flex items-center gap-2 mb-1">
+                    <GitBranch className="h-4 w-4" /> Mapa Visual do Funil AIDA
+                  </h2>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Mapa visual completo da jornada do cliente — do primeiro anúncio até a recompra, com cada agente em seu papel dentro da metodologia AIDA.
+                    Use o scroll e os controles para navegar pelo fluxo completo.
+                  </p>
+                </CardContent>
+              </Card>
+              <FunnelFlowchart />
+            </div>
           </TabsContent>
         </Tabs>
       </div>
