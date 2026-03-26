@@ -184,12 +184,41 @@ export const useOrchestrator = () => {
     }
   });
 
+  const clearBriefingMutation = useMutation({
+    mutationFn: async () => {
+      if (!user) return;
+      const { error } = await supabase.from('client_briefings').delete().eq('user_id', user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['client-briefing'] });
+      toast.success("Memória do negócio apagada com sucesso.");
+    }
+  });
+
+  const resetOrchestratorMutation = useMutation({
+    mutationFn: async () => {
+      if (!user) return;
+      // Because Tasks drop will cascade Agent Executions or can be deleted independently
+      await supabase.from('agent_executions').delete().eq('user_id', user.id);
+      const { error } = await supabase.from('orchestrator_tasks').delete().eq('user_id', user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orchestrator-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['agent-executions'] });
+      toast.success("Histórico e Tarefas resetados com sucesso.");
+    }
+  });
+
   return {
     briefing,
     activeTasks,
     recentExecutions,
     generateTasks: generateTasksMutation.mutate,
     runTask: runTaskMutation.mutate,
+    clearBriefing: clearBriefingMutation.mutate,
+    resetOrchestrator: resetOrchestratorMutation.mutate,
     isGenerating: generateTasksMutation.isPending,
     isExecuting: runTaskMutation.isPending,
     isLoading: loadingBriefing || loadingTasks || loadingExecutions,
