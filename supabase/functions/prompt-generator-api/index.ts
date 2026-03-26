@@ -38,9 +38,9 @@ serve(async (req) => {
     const { action, briefing } = body;
 
     if (action === 'generate_prompt') {
-      const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
+      const openAiKey = Deno.env.get('OPENAI_API_KEY');
 
-      if (!anthropicKey) {
+      if (!openAiKey) {
         // Demo fallback
         return new Response(JSON.stringify({
           prompt: buildDemoPrompt(briefing),
@@ -49,32 +49,35 @@ serve(async (req) => {
         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': anthropicKey,
-          'anthropic-version': '2023-06-01',
+          'Authorization': `Bearer ${openAiKey}`,
         },
         body: JSON.stringify({
-          model: 'claude-3-haiku-20240307',
-          max_tokens: 4096,
-          system: SYSTEM_PROMPT,
-          messages: [{
-            role: 'user',
-            content: `Com base neste briefing, crie um SYSTEM PROMPT completo e profissional para um agente de vendas:\n\n${briefing}`,
-          }],
+          model: 'gpt-4o',
+          messages: [
+            {
+              role: 'system',
+              content: SYSTEM_PROMPT,
+            },
+            {
+              role: 'user',
+              content: `Com base neste briefing, crie um SYSTEM PROMPT completo e profissional para um agente de vendas:\n\n${briefing}`,
+            }
+          ],
         }),
       });
 
       if (!response.ok) {
         const errText = await response.text();
-        throw new Error(`Anthropic API error: ${response.status} — ${errText}`);
+        throw new Error(`OpenAI API error: ${response.status} — ${errText}`);
       }
 
       const data = await response.json();
-      const promptText = data.content?.[0]?.text ?? '';
-      const tokensUsed = data.usage?.input_tokens + data.usage?.output_tokens ?? 0;
+      const promptText = data.choices?.[0]?.message?.content ?? '';
+      const tokensUsed = data.usage?.total_tokens ?? 0;
 
       // Save to DB
       await supabase.from('generated_prompts' as any).insert({
