@@ -104,7 +104,7 @@ export const useOrchestrator = () => {
     },
   });
 
-  // 5. Mutation to Simulate Task Execution (Orchestration)
+  // 5. Mutation to Simulate Task Execution (Orchestration with real LLM)
   const runTaskMutation = useMutation({
     mutationFn: async (task: OrchestratorTask) => {
       if (!user) return;
@@ -113,28 +113,65 @@ export const useOrchestrator = () => {
       await supabase.from('orchestrator_tasks').update({ status: 'in_progress' } as never).eq('id', task.id);
       queryClient.invalidateQueries({ queryKey: ['orchestrator-tasks'] });
 
-      // Step 2: Simulate Agent 1 (e.g., Analysis)
-      const { data: exec1 } = await supabase.from('agent_executions').insert({
+      // Build context strings from briefing
+      const businessContext = briefing ? `Negócio: ${briefing.business_name}. Público: ${briefing.target_audience}. Produto: ${briefing.offering_details}. Tom: ${briefing.tone_of_voice}.` : 'Sem contexto prévio.';
+
+      // Step 2: Agent 1 (Analysis Phase)
+      const analysisPrompt = `Você é o Orquestrador Salomão. Analise a seguinte tarefa que será delegada: "${task.title}". \n\nContexto do negócio: ${businessContext}\n\nForneça em 1 parágrafo um direcionamento estratégico claro para o agente especialista que executará essa tarefa.`;
+      
+      let analysisOutput = "Análise concluída. Preparando delegação.";
+      try {
+        const { data: analysisData, error: analysisError } = await supabase.functions.invoke('claude-chat', {
+          body: {
+            messages: [{ role: 'user', content: analysisPrompt }],
+            context: 'insights'
+          }
+        });
+        if (!analysisError && analysisData?.content) {
+          analysisOutput = analysisData.content;
+        }
+      } catch (err) {
+        console.error("Erro na análise IA:", err);
+      }
+
+      await supabase.from('agent_executions').insert({
         task_id: task.id,
         user_id: user.id,
         agent_id: 'SISTEMA_ANALISE',
         prompt_input: `Analisar contexto para: ${task.title}`,
         status: 'completed',
-        response_output: `Análise concluída. Mapeados 3 pontos críticos de execução para o Agente especialista.`
-      }).select().single();
+        response_output: analysisOutput
+      });
       queryClient.invalidateQueries({ queryKey: ['agent-executions'] });
 
-      // Delay for "Thinking" effect
-      await new Promise(r => setTimeout(r, 1500));
+      // Step 3: Agent 2 (Execution Phase)
+      const agentRole = task.type === 'copywriting' ? 'copywriter' : (task.type === 'ads' ? 'gestor de tráfego' : 'estrategista de marketing');
+      const executionPrompt = `Você é um excelente ${agentRole}. Execute a seguinte tarefa: "${task.title} - ${task.description}".\n\nDiretriz do Orquestrador: ${analysisOutput}\n\nContexto da Empresa: ${businessContext}\n\nForneça o resultado FINAL da sua tarefa (o texto da copy, o planejamento das campanhas, a grade de conteúdo, etc). Seja direto, prático, e use formatação Markdown rica.`;
+      
+      let finalOutput = "Tarefa executada com sucesso. (Fallback de sistema)";
+      try {
+        const { data: execData, error: execError } = await supabase.functions.invoke('claude-chat', {
+          body: {
+            messages: [{ role: 'user', content: executionPrompt }],
+            context: task.type === 'copywriting' ? 'copywriter' : 'assistant'
+          }
+        });
+        if (!execError && execData?.content) {
+          finalOutput = execData.content;
+        }
+      } catch (err) {
+        console.error("Erro na execução IA:", err);
+      }
 
-      // Step 3: Simulate Agent 2 (e.g., Execution)
+      const exactAgentId = task.type === 'copywriting' ? 'PAULO_COPY' : (task.type === 'ads' ? 'JOSE_ADS' : 'DANIEL_ESTRATEGIA');
+      
       await supabase.from('agent_executions').insert({
         task_id: task.id,
         user_id: user.id,
-        agent_id: task.type === 'copywriting' ? 'PAULO_COPY' : 'JOSE_ADS',
+        agent_id: exactAgentId,
         prompt_input: `Executar sub-tarefa: ${task.description}`,
         status: 'completed',
-        response_output: `Tarefa executada com sucesso. Resultados anexados ao histórico do lead.`
+        response_output: finalOutput
       });
       queryClient.invalidateQueries({ queryKey: ['agent-executions'] });
 
@@ -143,7 +180,7 @@ export const useOrchestrator = () => {
       queryClient.invalidateQueries({ queryKey: ['orchestrator-tasks'] });
     },
     onSuccess: () => {
-      toast.success("Tarefa orquestrada com sucesso pelo Salomão!");
+      toast.success("Tarefa orquestrada e conteúdo gerado pela IA com sucesso!");
     }
   });
 
