@@ -57,7 +57,7 @@ serve(async (req) => {
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: 'claude-opus-4-5',
+          model: 'claude-3-5-sonnet-20241022',
           max_tokens: 4096,
           system: SYSTEM_PROMPT,
           messages: [{
