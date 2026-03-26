@@ -1,5 +1,7 @@
-import { memo } from 'react';
+import { useState, useCallback, useRef, useEffect, memo } from 'react';
 import ReactFlow, {
+  Node,
+  Edge,
   Background,
   Controls,
   MiniMap,
@@ -8,51 +10,170 @@ import ReactFlow, {
   NodeProps,
   Handle,
   Position,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  Connection,
+  ReactFlowInstance,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
+import { Save, RotateCcw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { NodeConfigDrawer } from './NodeConfigDrawer';
+import { NodePalette } from './NodePalette';
+import { FunnelNodeData, AidaPhase, PHASE_COLORS, AGENT_COLORS, PALETTE_ITEMS } from './flowTypes';
 
-// ─── Custom Node Types ────────────────────────────────────────────────────────
+// ─── Custom Node: EditableNode ────────────────────────────────────────────────
 
-const HubNode = memo(({ data }: NodeProps) => (
-  <div
-    style={{
-      width: 220,
-      background: 'linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%)',
-      border: `2px solid ${data.borderColor || '#f59e0b'}`,
-      borderRadius: 12,
-      padding: '14px 16px',
-      boxShadow: `0 0 18px 2px ${data.glowColor || '#f59e0b55'}`,
-      textAlign: 'center',
+const EditableNode = memo(({ data, selected }: NodeProps<FunnelNodeData>) => {
+  const phaseColor = PHASE_COLORS[data.phase] ?? PHASE_COLORS['hub'];
+  const agentColor = AGENT_COLORS[data.agent] ?? '#6b7280';
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: 200,
+        background: phaseColor.bg,
+        border: `2px solid ${selected ? phaseColor.border : phaseColor.border + 'aa'}`,
+        borderRadius: 12,
+        padding: '12px 14px',
+        boxShadow: selected
+          ? `0 0 24px 4px ${phaseColor.glow}, 0 0 0 2px ${phaseColor.border}`
+          : `0 0 12px 2px ${phaseColor.glow}`,
+        position: 'relative',
+        transform: selected ? 'scale(1.02)' : 'scale(1)',
+        transition: 'box-shadow 0.2s, transform 0.15s, border-color 0.2s',
+        cursor: 'pointer',
+      }}
+    >
+      <Handle type="target"  position={Position.Top}    style={{ background: phaseColor.border }} />
+      <Handle type="source"  position={Position.Bottom} style={{ background: phaseColor.border }} />
+      <Handle type="source"  position={Position.Left}   id="left"  style={{ background: phaseColor.border }} />
+      <Handle type="source"  position={Position.Right}  id="right" style={{ background: phaseColor.border }} />
+
+      {/* Edit hint */}
+      {hovered && (
+        <div style={{
+          position: 'absolute',
+          top: 6,
+          right: 6,
+          background: '#ffffff22',
+          borderRadius: 4,
+          padding: '2px 5px',
+          fontSize: 9,
+          color: '#cbd5e1',
+        }}>
+          ✏️
+        </div>
+      )}
+
+      {/* Emoji + label */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 22, flexShrink: 0 }}>{data.emoji}</span>
+        <span style={{ fontWeight: 700, fontSize: 12, color: '#f8fafc', lineHeight: 1.3 }}>
+          {data.label}
+        </span>
+      </div>
+
+      {/* Role */}
+      <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 6 }}>{data.role}</div>
+
+      {/* Metric badge */}
+      {data.metric && (
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 3,
+          background: `${phaseColor.border}22`,
+          border: `1px solid ${phaseColor.border}44`,
+          borderRadius: 4,
+          padding: '2px 6px',
+          fontSize: 9,
+          color: phaseColor.text,
+          marginBottom: 6,
+        }}>
+          📊 {data.metric}
+        </div>
+      )}
+
+      {/* Agent badge */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+        <span style={{
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          background: agentColor,
+          display: 'inline-block',
+          flexShrink: 0,
+        }} />
+        <span style={{ fontSize: 9, color: agentColor, fontWeight: 600 }}>{data.agent}</span>
+      </div>
+    </div>
+  );
+});
+EditableNode.displayName = 'EditableNode';
+
+// ─── Custom Node: DecisionNode ────────────────────────────────────────────────
+
+const DecisionNode = memo(({ data, selected }: NodeProps<FunnelNodeData>) => {
+  return (
+    <div style={{
+      width: 180,
+      background: 'linear-gradient(135deg, #1c1917, #0c0a09)',
+      border: `2px solid ${selected ? '#f59e0b' : '#d97706aa'}`,
+      borderRadius: 8,
+      padding: '12px 14px',
+      boxShadow: selected
+        ? '0 0 24px 4px #f59e0b44, 0 0 0 2px #f59e0b'
+        : '0 0 14px 2px #d9770633',
       position: 'relative',
-    }}
-  >
-    <Handle type="source" position={Position.Bottom} style={{ background: data.borderColor || '#f59e0b' }} />
-    <Handle type="source" position={Position.Left} id="left" style={{ background: data.borderColor || '#f59e0b' }} />
-    <Handle type="source" position={Position.Right} id="right" style={{ background: data.borderColor || '#f59e0b' }} />
-    <Handle type="target" position={Position.Top} style={{ background: data.borderColor || '#f59e0b' }} />
-    <Handle type="target" position={Position.Left} id="target-left" style={{ top: '70%', background: data.borderColor || '#f59e0b' }} />
-    <div style={{ fontSize: 28, marginBottom: 4 }}>{data.emoji}</div>
-    <div style={{ fontWeight: 700, fontSize: 13, color: '#f8fafc', letterSpacing: 0.5 }}>{data.name}</div>
-    <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{data.role}</div>
-  </div>
-));
-HubNode.displayName = 'HubNode';
+      textAlign: 'center',
+      transform: selected ? 'scale(1.02)' : 'scale(1)',
+      transition: 'box-shadow 0.2s, transform 0.15s',
+      cursor: 'pointer',
+    }}>
+      <Handle type="target"  position={Position.Top}    style={{ background: '#d97706' }} />
+      <Handle type="source"  id="yes" position={Position.Bottom} style={{ left: '30%', background: '#22c55e' }} />
+      <Handle type="source"  id="no"  position={Position.Right}  style={{ background: '#ef4444' }} />
+
+      <div style={{ fontSize: 22, marginBottom: 6 }}>{data.emoji}</div>
+      <div style={{ fontSize: 11, color: '#fcd34d', fontWeight: 600, lineHeight: 1.4 }}>
+        {data.label}
+      </div>
+
+      {/* SIM / NÃO labels */}
+      <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 8 }}>
+        <span style={{ fontSize: 8, color: '#22c55e', fontWeight: 700, marginLeft: '10%' }}>SIM ↓</span>
+      </div>
+      <div style={{ position: 'absolute', right: -24, top: '50%', transform: 'translateY(-50%)', fontSize: 8, color: '#ef4444', fontWeight: 700 }}>
+        NÃO →
+      </div>
+    </div>
+  );
+});
+DecisionNode.displayName = 'DecisionNode';
+
+// ─── Custom Node: StageNode ───────────────────────────────────────────────────
 
 const StageNode = memo(({ data }: NodeProps) => (
-  <div
-    style={{
-      width: 900,
-      background: data.gradient,
-      border: `1.5px solid ${data.borderColor}`,
-      borderRadius: 10,
-      padding: '10px 20px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12,
-      position: 'relative',
-    }}
-  >
-    <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+  <div style={{
+    width: 900,
+    background: data.gradient,
+    border: `1.5px solid ${data.borderColor}`,
+    borderRadius: 10,
+    padding: '10px 20px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    position: 'relative',
+    pointerEvents: 'none',
+  }}>
+    <Handle type="target" position={Position.Top}    style={{ opacity: 0 }} />
     <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
     <div style={{ fontSize: 22 }}>{data.emoji}</div>
     <div>
@@ -63,858 +184,391 @@ const StageNode = memo(({ data }: NodeProps) => (
 ));
 StageNode.displayName = 'StageNode';
 
-const AgentNode = memo(({ data }: NodeProps) => (
-  <div
-    style={{
-      width: 180,
-      background: data.bgGradient,
-      border: `1.5px solid ${data.color}`,
-      borderRadius: 10,
-      padding: '10px 12px',
-      position: 'relative',
-    }}
-  >
-    <Handle type="target" position={Position.Top} style={{ background: data.color }} />
-    <Handle type="source" position={Position.Bottom} style={{ background: data.color }} />
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-      <span style={{ fontSize: 18 }}>{data.emoji}</span>
-      <span style={{ fontWeight: 700, fontSize: 11, color: '#f8fafc' }}>{data.name}</span>
-    </div>
-    <div style={{ fontSize: 9, color: '#94a3b8', marginBottom: 4 }}>{data.role}</div>
-    {data.metric && (
-      <div
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 3,
-          background: `${data.color}22`,
-          border: `1px solid ${data.color}44`,
-          borderRadius: 4,
-          padding: '1px 5px',
-          fontSize: 8,
-          color: data.color,
-          marginBottom: 4,
-        }}
-      >
-        📊 {data.metric}
-      </div>
-    )}
-    {data.description && (
-      <div style={{ fontSize: 9, color: '#cbd5e1', lineHeight: 1.4 }}>{data.description}</div>
-    )}
-  </div>
-));
-AgentNode.displayName = 'AgentNode';
-
-const DecisionNode = memo(({ data }: NodeProps) => (
-  <div
-    style={{
-      width: 170,
-      background: 'linear-gradient(135deg, #1c1917 0%, #0c0a09 100%)',
-      border: '2px solid #d97706',
-      borderRadius: 8,
-      padding: '10px 12px',
-      boxShadow: '0 0 14px 2px #d9770633',
-      position: 'relative',
-      textAlign: 'center',
-    }}
-  >
-    <Handle type="target" position={Position.Top} style={{ background: '#d97706' }} />
-    <Handle
-      type="source"
-      id="yes"
-      position={Position.Bottom}
-      style={{ left: '30%', background: '#22c55e' }}
-    />
-    <Handle
-      type="source"
-      id="no"
-      position={Position.Right}
-      style={{ background: '#ef4444' }}
-    />
-    <div style={{ fontSize: 20, marginBottom: 4 }}>{data.emoji}</div>
-    <div style={{ fontSize: 10, color: '#fcd34d', fontWeight: 600, lineHeight: 1.4 }}>{data.label}</div>
-  </div>
-));
-DecisionNode.displayName = 'DecisionNode';
-
-const RecoveryNode = memo(({ data }: NodeProps) => (
-  <div
-    style={{
-      width: 170,
-      background: 'linear-gradient(135deg, #1f0a0a 0%, #0f0505 100%)',
-      border: '2px dashed #ef4444',
-      borderRadius: 10,
-      padding: '10px 12px',
-      position: 'relative',
-    }}
-  >
-    <Handle type="target" position={Position.Left} style={{ background: '#ef4444' }} />
-    <Handle type="source" id="loop" position={Position.Bottom} style={{ background: '#ef4444' }} />
-    <div style={{ fontSize: 18, marginBottom: 3 }}>{data.emoji}</div>
-    <div style={{ fontWeight: 700, fontSize: 10, color: '#fca5a5', marginBottom: 2 }}>{data.label}</div>
-    {data.description && (
-      <div style={{ fontSize: 8, color: '#94a3b8', lineHeight: 1.4 }}>{data.description}</div>
-    )}
-  </div>
-));
-RecoveryNode.displayName = 'RecoveryNode';
+// ─── nodeTypes — MUST be defined OUTSIDE component ───────────────────────────
 
 const nodeTypes = {
-  hubNode: HubNode,
-  stageNode: StageNode,
-  agentNode: AgentNode,
-  decisionNode: DecisionNode,
-  recoveryNode: RecoveryNode,
+  editable: EditableNode,
+  decision: DecisionNode,
+  stage:    StageNode,
 };
 
-// ─── Agent colors ─────────────────────────────────────────────────────────────
+// ─── Initial nodes ────────────────────────────────────────────────────────────
 
-const C = {
-  jose: { color: '#10b981', bg: 'linear-gradient(135deg, #052e16 0%, #022c22 100%)' },
-  paulo: { color: '#3b82f6', bg: 'linear-gradient(135deg, #0c1a3a 0%, #030d24 100%)' },
-  maria: { color: '#f472b6', bg: 'linear-gradient(135deg, #2d0a1e 0%, #1a0510 100%)' },
-  davi: { color: '#a78bfa', bg: 'linear-gradient(135deg, #1e0a3a 0%, #0f0520 100%)' },
-  joao: { color: '#818cf8', bg: 'linear-gradient(135deg, #0c0c3a 0%, #06062a 100%)' },
-  lucas: { color: '#fb923c', bg: 'linear-gradient(135deg, #2d1500 0%, #1a0a00 100%)' },
-  marcos: { color: '#38bdf8', bg: 'linear-gradient(135deg, #001e2d 0%, #001018 100%)' },
-};
+function getInitialNodes(): Node<any>[] {
+  return [
+    // HUB
+    { id: 'salomao',    type: 'editable', position: { x: 340, y: 0   }, data: { emoji: '👑', label: 'SALOMÃO',  role: 'Orquestrador • Base de Conhecimento', agent: 'SALOMÃO', phase: 'hub', metric: '' } },
+    { id: 'daniel-hub', type: 'editable', position: { x: 340, y: 140 }, data: { emoji: '📊', label: 'DANIEL',   role: 'Estrategista de Vendas',                agent: 'DANIEL',  phase: 'hub', metric: '' } },
 
-// ─── Nodes ────────────────────────────────────────────────────────────────────
+    // STAGE ATENÇÃO
+    { id: 'stage-atencao', type: 'stage', position: { x: 0, y: 300 }, data: { emoji: '🔴', label: 'A — ATENÇÃO', sublabel: 'Topo do Funil • Atração e Impacto', gradient: 'linear-gradient(90deg,#1f0505,#2d0a0a)', borderColor: '#ef4444', textColor: '#fca5a5' } },
 
-const nodes = [
-  // HUB
-  {
-    id: 'salomao',
-    type: 'hubNode',
-    position: { x: 340, y: 0 },
-    data: {
-      emoji: '👑',
-      name: 'SALOMÃO',
-      role: 'Orquestrador • Base de Conhecimento',
-      borderColor: '#f59e0b',
-      glowColor: '#f59e0b55',
-    },
-  },
-  {
-    id: 'daniel-hub',
-    type: 'hubNode',
-    position: { x: 340, y: 140 },
-    data: {
-      emoji: '📊',
-      name: 'DANIEL',
-      role: 'Estrategista de Vendas',
-      borderColor: '#818cf8',
-      glowColor: '#818cf855',
-    },
-  },
+    // Agentes Atenção
+    { id: 'jose-meta',    type: 'editable', position: { x:  90, y: 400 }, data: { emoji: '🎯', label: 'Meta Ads',          role: 'Tráfego Pago',         agent: 'JOSÉ',  phase: 'atencao', metric: 'CTR • ROAS' } },
+    { id: 'jose-google',  type: 'editable', position: { x: 360, y: 400 }, data: { emoji: '🎯', label: 'Google Ads',         role: 'Tráfego Pago',         agent: 'JOSÉ',  phase: 'atencao', metric: 'CPC • Impressões' } },
+    { id: 'davi',         type: 'editable', position: { x: 630, y: 400 }, data: { emoji: '📱', label: 'Social Orgânico',     role: 'Social Media Orgânico', agent: 'DAVI',  phase: 'atencao', metric: 'Alcance • Engaj.' } },
+    { id: 'paulo-hooks',  type: 'editable', position: { x: 180, y: 560 }, data: { emoji: '✍️', label: 'Copywriter',          role: 'Copy',                  agent: 'PAULO', phase: 'atencao', metric: 'Hooks • Headlines' } },
+    { id: 'maria',        type: 'editable', position: { x: 540, y: 560 }, data: { emoji: '🎨', label: 'Design Criativo',     role: 'Design',                agent: 'MARIA', phase: 'atencao', metric: 'Criativos • Banners' } },
 
-  // STAGE ATENÇÃO
-  {
-    id: 'stage-atencao',
-    type: 'stageNode',
-    position: { x: 0, y: 300 },
-    data: {
-      emoji: '🔴',
-      label: 'A — ATENÇÃO',
-      sublabel: 'Topo do Funil • Atração e Impacto',
-      gradient: 'linear-gradient(90deg, #1f0505 0%, #2d0a0a 100%)',
-      borderColor: '#ef4444',
-      textColor: '#fca5a5',
-    },
-  },
+    // Decision 1
+    { id: 'dec-1', type: 'decision', position: { x: 365, y: 710 }, data: { emoji: '👁️', label: 'Visualizou e se interessou?', agent: 'Nenhum', phase: 'decisao', role: 'SIM / NÃO' } },
 
-  // Agents row 1 – ATENÇÃO
-  {
-    id: 'jose-meta',
-    type: 'agentNode',
-    position: { x: 90, y: 400 },
-    data: {
-      emoji: '🎯',
-      name: 'JOSÉ',
-      role: 'Meta Ads',
-      metric: 'CTR • ROAS',
-      description: 'Campanhas de tráfego pago no Facebook/Instagram',
-      color: C.jose.color,
-      bgGradient: C.jose.bg,
-    },
-  },
-  {
-    id: 'jose-google',
-    type: 'agentNode',
-    position: { x: 360, y: 400 },
-    data: {
-      emoji: '🎯',
-      name: 'JOSÉ',
-      role: 'Google Ads',
-      metric: 'CPC • Impressões',
-      description: 'Search, Display e YouTube Ads',
-      color: C.jose.color,
-      bgGradient: C.jose.bg,
-    },
-  },
-  {
-    id: 'davi',
-    type: 'agentNode',
-    position: { x: 630, y: 400 },
-    data: {
-      emoji: '📱',
-      name: 'DAVI',
-      role: 'Social Media Orgânico',
-      metric: 'Alcance • Engaj.',
-      description: 'Conteúdo orgânico para Instagram, TikTok e LinkedIn',
-      color: C.davi.color,
-      bgGradient: C.davi.bg,
-    },
-  },
+    // STAGE INTERESSE
+    { id: 'stage-interesse', type: 'stage', position: { x: 0, y: 820 }, data: { emoji: '🟡', label: 'I — INTERESSE', sublabel: 'Meio do Funil • Engajamento e Consideração', gradient: 'linear-gradient(90deg,#1a1200,#2d1f00)', borderColor: '#eab308', textColor: '#fde047' } },
 
-  // Agents row 2 – ATENÇÃO
-  {
-    id: 'paulo-hooks',
-    type: 'agentNode',
-    position: { x: 180, y: 560 },
-    data: {
-      emoji: '✍️',
-      name: 'PAULO',
-      role: 'Copywriter',
-      metric: 'Hooks • Headlines',
-      description: 'Copy de atração: hooks, headlines e primeiros segundos',
-      color: C.paulo.color,
-      bgGradient: C.paulo.bg,
-    },
-  },
-  {
-    id: 'maria',
-    type: 'agentNode',
-    position: { x: 540, y: 560 },
-    data: {
-      emoji: '🎨',
-      name: 'MARIA',
-      role: 'Design Criativo',
-      metric: 'Criativos • Banners',
-      description: 'Peças visuais para anúncios e posts orgânicos',
-      color: C.maria.color,
-      bgGradient: C.maria.bg,
-    },
-  },
+    // Agentes Interesse
+    { id: 'lucas-lp',  type: 'editable', position: { x: 180, y: 920 }, data: { emoji: '🌐', label: 'Landing Page', role: 'Funil',     agent: 'LUCAS', phase: 'interesse', metric: 'Taxa de Conv. LP' } },
+    { id: 'paulo-lp',  type: 'editable', position: { x: 540, y: 920 }, data: { emoji: '✍️', label: 'Copy da LP',   role: 'Copy',      agent: 'PAULO', phase: 'interesse', metric: 'Conversão • CTA' } },
 
-  // Decision 1
-  {
-    id: 'dec-1',
-    type: 'decisionNode',
-    position: { x: 365, y: 710 },
-    data: { emoji: '👁️', label: 'Visualizou e se interessou?' },
-  },
+    // Decision 2
+    { id: 'dec-2', type: 'decision', position: { x: 365, y: 1080 }, data: { emoji: '🖱️', label: 'Clicou no CTA / Deixou contato?', agent: 'Nenhum', phase: 'decisao', role: 'SIM / NÃO' } },
 
-  // STAGE INTERESSE
-  {
-    id: 'stage-interesse',
-    type: 'stageNode',
-    position: { x: 0, y: 820 },
-    data: {
-      emoji: '🟡',
-      label: 'I — INTERESSE',
-      sublabel: 'Meio do Funil • Engajamento e Consideração',
-      gradient: 'linear-gradient(90deg, #1a1200 0%, #2d1f00 100%)',
-      borderColor: '#eab308',
-      textColor: '#fde047',
-    },
-  },
+    // STAGE DESEJO
+    { id: 'stage-desejo', type: 'stage', position: { x: 0, y: 1190 }, data: { emoji: '🟢', label: 'D — DESEJO', sublabel: 'Meio-Fundo do Funil • Nutrição e Relacionamento', gradient: 'linear-gradient(90deg,#021a0e,#052e16)', borderColor: '#10b981', textColor: '#6ee7b7' } },
 
-  // Agents – INTERESSE
-  {
-    id: 'lucas-lp',
-    type: 'agentNode',
-    position: { x: 180, y: 920 },
-    data: {
-      emoji: '🔀',
-      name: 'LUCAS',
-      role: 'Landing Page',
-      metric: 'Taxa de Conv. LP',
-      description: 'Estrutura, UX e funil da landing page',
-      color: C.lucas.color,
-      bgGradient: C.lucas.bg,
-    },
-  },
-  {
-    id: 'paulo-lp',
-    type: 'agentNode',
-    position: { x: 540, y: 920 },
-    data: {
-      emoji: '✍️',
-      name: 'PAULO',
-      role: 'Copy da LP',
-      metric: 'Conversão • CTA',
-      description: 'Textos persuasivos da landing page',
-      color: C.paulo.color,
-      bgGradient: C.paulo.bg,
-    },
-  },
+    // Agentes Desejo
+    { id: 'marcos-wpp',    type: 'editable', position: { x:  90, y: 1290 }, data: { emoji: '💬', label: 'WhatsApp',       role: 'Leads',        agent: 'MARCOS', phase: 'desejo', metric: 'Taxa de Resposta' } },
+    { id: 'joao-email',    type: 'editable', position: { x: 360, y: 1290 }, data: { emoji: '📧', label: 'Email Marketing', role: 'Nutrição',     agent: 'JOÃO',   phase: 'desejo', metric: 'Open Rate • Cliques' } },
+    { id: 'paulo-nurture', type: 'editable', position: { x: 630, y: 1290 }, data: { emoji: '✍️', label: 'Copy de Nutrição', role: 'Copy',        agent: 'PAULO',  phase: 'desejo', metric: 'Engajamento' } },
 
-  // Decision 2
-  {
-    id: 'dec-2',
-    type: 'decisionNode',
-    position: { x: 365, y: 1080 },
-    data: { emoji: '🖱️', label: 'Clicou no CTA / Deixou contato?' },
-  },
+    // Decision 3
+    { id: 'dec-3', type: 'decision', position: { x: 365, y: 1460 }, data: { emoji: '🔥', label: 'Demonstrou interesse real?', agent: 'Nenhum', phase: 'decisao', role: 'SIM / NÃO' } },
 
-  // STAGE DESEJO
-  {
-    id: 'stage-desejo',
-    type: 'stageNode',
-    position: { x: 0, y: 1190 },
-    data: {
-      emoji: '🟢',
-      label: 'D — DESEJO',
-      sublabel: 'Meio-Fundo do Funil • Nutrição e Relacionamento',
-      gradient: 'linear-gradient(90deg, #021a0e 0%, #052e16 100%)',
-      borderColor: '#10b981',
-      textColor: '#6ee7b7',
-    },
-  },
+    // STAGE AÇÃO
+    { id: 'stage-acao', type: 'stage', position: { x: 0, y: 1570 }, data: { emoji: '🟩', label: 'A — AÇÃO', sublabel: 'Fundo do Funil • Fechamento da Venda', gradient: 'linear-gradient(90deg,#021a05,#052e0e)', borderColor: '#22c55e', textColor: '#86efac' } },
 
-  // Agents – DESEJO
-  {
-    id: 'marcos-wpp',
-    type: 'agentNode',
-    position: { x: 90, y: 1290 },
-    data: {
-      emoji: '💬',
-      name: 'MARCOS',
-      role: 'WhatsApp',
-      metric: 'Taxa de Resposta',
-      description: 'Nutrição e qualificação via WhatsApp',
-      color: C.marcos.color,
-      bgGradient: C.marcos.bg,
-    },
-  },
-  {
-    id: 'joao-email',
-    type: 'agentNode',
-    position: { x: 360, y: 1290 },
-    data: {
-      emoji: '📧',
-      name: 'JOÃO',
-      role: 'Email Marketing',
-      metric: 'Open Rate • Cliques',
-      description: 'Sequências de nutrição por email',
-      color: C.joao.color,
-      bgGradient: C.joao.bg,
-    },
-  },
-  {
-    id: 'paulo-nurture',
-    type: 'agentNode',
-    position: { x: 630, y: 1290 },
-    data: {
-      emoji: '✍️',
-      name: 'PAULO',
-      role: 'Copy de Nutrição',
-      metric: 'Engajamento',
-      description: 'Textos para emails e mensagens de nutrição',
-      color: C.paulo.color,
-      bgGradient: C.paulo.bg,
-    },
-  },
+    // Agentes Ação
+    { id: 'marcos-fecha', type: 'editable', position: { x: 180, y: 1670 }, data: { emoji: '💬', label: 'Fechamento WhatsApp', role: 'Fechamento', agent: 'MARCOS', phase: 'acao', metric: 'Taxa de Fechamento' } },
+    { id: 'paulo-oferta', type: 'editable', position: { x: 540, y: 1670 }, data: { emoji: '✍️', label: 'Copy da Oferta',       role: 'Copy',       agent: 'PAULO',  phase: 'acao', metric: 'Conversão Final' } },
 
-  // Decision 3
-  {
-    id: 'dec-3',
-    type: 'decisionNode',
-    position: { x: 365, y: 1460 },
-    data: { emoji: '🔥', label: 'Demonstrou interesse real?' },
-  },
+    // Decision 4
+    { id: 'dec-4', type: 'decision', position: { x: 365, y: 1840 }, data: { emoji: '💳', label: 'Comprou?', agent: 'Nenhum', phase: 'decisao', role: 'SIM / NÃO' } },
 
-  // STAGE AÇÃO
-  {
-    id: 'stage-acao',
-    type: 'stageNode',
-    position: { x: 0, y: 1570 },
-    data: {
-      emoji: '🟩',
-      label: 'A — AÇÃO',
-      sublabel: 'Fundo do Funil • Fechamento da Venda',
-      gradient: 'linear-gradient(90deg, #021a05 0%, #052e0e 100%)',
-      borderColor: '#22c55e',
-      textColor: '#86efac',
-    },
-  },
+    // STAGE PÓS-VENDA
+    { id: 'stage-posvenda', type: 'stage', position: { x: 0, y: 1950 }, data: { emoji: '🟣', label: 'PÓS-VENDA', sublabel: 'Retenção • Upsell • Fidelização', gradient: 'linear-gradient(90deg,#150a2d,#1e0a3a)', borderColor: '#a78bfa', textColor: '#c4b5fd' } },
 
-  // Agents – AÇÃO
-  {
-    id: 'marcos-fecha',
-    type: 'agentNode',
-    position: { x: 180, y: 1670 },
-    data: {
-      emoji: '💬',
-      name: 'MARCOS',
-      role: 'Fechamento WhatsApp',
-      metric: 'Taxa de Fechamento',
-      description: 'Script de fechamento e objeções via WhatsApp',
-      color: C.marcos.color,
-      bgGradient: C.marcos.bg,
-    },
-  },
-  {
-    id: 'paulo-oferta',
-    type: 'agentNode',
-    position: { x: 540, y: 1670 },
-    data: {
-      emoji: '✍️',
-      name: 'PAULO',
-      role: 'Copy da Oferta Final',
-      metric: 'Conversão Final',
-      description: 'Copy da oferta, bônus e urgência',
-      color: C.paulo.color,
-      bgGradient: C.paulo.bg,
-    },
-  },
+    // Agentes Pós-venda
+    { id: 'joao-ret',     type: 'editable', position: { x:  90, y: 2050 }, data: { emoji: '📧', label: 'Retenção / Onboarding', role: 'Retenção',  agent: 'JOÃO',   phase: 'posVenda', metric: 'Churn Rate' } },
+    { id: 'marcos-upsell',type: 'editable', position: { x: 360, y: 2050 }, data: { emoji: '🚀', label: 'Upsell / Suporte',      role: 'Recompra',  agent: 'MARCOS', phase: 'posVenda', metric: 'LTV • NPS' } },
+    { id: 'daniel-kpis',  type: 'editable', position: { x: 630, y: 2050 }, data: { emoji: '📊', label: 'Análise de KPIs',        role: 'Estratégia', agent: 'DANIEL', phase: 'posVenda', metric: 'ROI • ROAS • LTV' } },
 
-  // Decision 4
-  {
-    id: 'dec-4',
-    type: 'decisionNode',
-    position: { x: 365, y: 1840 },
-    data: { emoji: '💳', label: 'Comprou?' },
-  },
+    // Recovery nodes
+    { id: 'rec-remarketing', type: 'editable', position: { x: 960, y:  700 }, data: { emoji: '🔁', label: 'Remarketing',           role: 'Recovery', agent: 'JOSÉ',  phase: 'recovery', metric: '' } },
+    { id: 'rec-retargeting', type: 'editable', position: { x: 960, y: 1070 }, data: { emoji: '🔁', label: 'Retargeting LP',         role: 'Recovery', agent: 'JOSÉ',  phase: 'recovery', metric: '' } },
+    { id: 'rec-followup',    type: 'editable', position: { x: 960, y: 1450 }, data: { emoji: '🔁', label: 'Follow-up',              role: 'Recovery', agent: 'MARCOS', phase: 'recovery', metric: '' } },
+    { id: 'rec-oferta',      type: 'editable', position: { x: 960, y: 1830 }, data: { emoji: '🔁', label: 'Oferta de Recuperação',  role: 'Recovery', agent: 'PAULO',  phase: 'recovery', metric: '' } },
+  ];
+}
 
-  // STAGE PÓS-VENDA
-  {
-    id: 'stage-posvenda',
-    type: 'stageNode',
-    position: { x: 0, y: 1950 },
-    data: {
-      emoji: '🟣',
-      label: 'PÓS-VENDA',
-      sublabel: 'Retenção • Upsell • Fidelização',
-      gradient: 'linear-gradient(90deg, #150a2d 0%, #1e0a3a 100%)',
-      borderColor: '#a78bfa',
-      textColor: '#c4b5fd',
-    },
-  },
+// ─── Initial edges ────────────────────────────────────────────────────────────
 
-  // Agents – PÓS-VENDA
-  {
-    id: 'joao-ret',
-    type: 'agentNode',
-    position: { x: 90, y: 2050 },
-    data: {
-      emoji: '📧',
-      name: 'JOÃO',
-      role: 'Retenção / Onboarding',
-      metric: 'Churn Rate',
-      description: 'Sequência de onboarding e retenção por email',
-      color: C.joao.color,
-      bgGradient: C.joao.bg,
-    },
-  },
-  {
-    id: 'marcos-upsell',
-    type: 'agentNode',
-    position: { x: 360, y: 2050 },
-    data: {
-      emoji: '💬',
-      name: 'MARCOS',
-      role: 'Upsell / Suporte',
-      metric: 'LTV • NPS',
-      description: 'Upsell, cross-sell e suporte via WhatsApp',
-      color: C.marcos.color,
-      bgGradient: C.marcos.bg,
-    },
-  },
-  {
-    id: 'daniel-kpis',
-    type: 'agentNode',
-    position: { x: 630, y: 2050 },
-    data: {
-      emoji: '📊',
-      name: 'DANIEL',
-      role: 'Análise de KPIs',
-      metric: 'ROI • ROAS • LTV',
-      description: 'Consolida métricas e otimiza estratégia',
-      color: C.joao.color,
-      bgGradient: 'linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%)',
-    },
-  },
+function mk(color: string) {
+  return { type: MarkerType.ArrowClosed, color };
+}
 
-  // Recovery nodes (x=960)
-  {
-    id: 'rec-remarketing',
-    type: 'recoveryNode',
-    position: { x: 960, y: 700 },
-    data: {
-      emoji: '🔁',
-      label: 'Remarketing',
-      description: 'JOSÉ reimpacta • MARIA novos criativos • PAULO novas copies',
-    },
-  },
-  {
-    id: 'rec-retargeting',
-    type: 'recoveryNode',
-    position: { x: 960, y: 1070 },
-    data: {
-      emoji: '🔁',
-      label: 'Retargeting LP',
-      description: 'JOSÉ retargeting • PAULO novo CTA',
-    },
-  },
-  {
-    id: 'rec-followup',
-    type: 'recoveryNode',
-    position: { x: 960, y: 1450 },
-    data: {
-      emoji: '🔁',
-      label: 'Follow-up',
-      description: 'MARCOS WhatsApp • JOÃO Email reativação',
-    },
-  },
-  {
-    id: 'rec-oferta',
-    type: 'recoveryNode',
-    position: { x: 960, y: 1830 },
-    data: {
-      emoji: '🔁',
-      label: 'Oferta de Recuperação',
-      description: 'PAULO oferta alternativa • MARCOS contorno de objeções',
-    },
-  },
-];
+function getInitialEdges(): Edge[] {
+  return [
+    // HUB
+    { id: 'e-sal-dan',  source: 'salomao',    target: 'daniel-hub', animated: true,  style: { stroke: '#f59e0b', strokeWidth: 2 }, markerEnd: mk('#f59e0b'), label: 'Base de conhecimento', labelStyle: { fontSize: 9, fill: '#f59e0b' }, labelBgStyle: { fill: '#0f172a' } },
+    { id: 'e-dan-sal',  source: 'daniel-hub', sourceHandle: 'left', target: 'salomao', animated: true, style: { stroke: '#818cf8', strokeWidth: 2 }, markerEnd: mk('#818cf8'), label: 'Estratégia AIDA', labelStyle: { fontSize: 9, fill: '#818cf8' }, labelBgStyle: { fill: '#0f172a' } },
 
-// ─── Edges ────────────────────────────────────────────────────────────────────
+    // Salomão → stage-atencao
+    { id: 'e-sal-atencao', source: 'salomao', target: 'stage-atencao', style: { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '5 4' }, markerEnd: mk('#f59e0b'), label: 'Distribui tarefas', labelStyle: { fontSize: 9, fill: '#f59e0b' }, labelBgStyle: { fill: '#0f172a' } },
 
-const mk = (color: string) => ({ type: MarkerType.ArrowClosed, color });
+    // stage-atencao → agents
+    { id: 'e-atencao-jose-meta',    source: 'stage-atencao', target: 'jose-meta',   style: { stroke: '#ef4444', strokeWidth: 1.2 }, markerEnd: mk('#ef4444') },
+    { id: 'e-atencao-jose-google',  source: 'stage-atencao', target: 'jose-google', style: { stroke: '#ef4444', strokeWidth: 1.2 }, markerEnd: mk('#ef4444') },
+    { id: 'e-atencao-davi',         source: 'stage-atencao', target: 'davi',        style: { stroke: '#ef4444', strokeWidth: 1.2 }, markerEnd: mk('#ef4444') },
 
-const edges = [
-  // HUB bidirectional
-  {
-    id: 'e-sal-dan',
-    source: 'salomao',
-    target: 'daniel-hub',
-    animated: true,
-    style: { stroke: '#f59e0b', strokeWidth: 2 },
-    markerEnd: mk('#f59e0b'),
-    label: 'Base de conhecimento',
-    labelStyle: { fontSize: 9, fill: '#f59e0b' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-  {
-    id: 'e-dan-sal',
-    source: 'daniel-hub',
-    sourceHandle: 'left',
-    target: 'salomao',
-    targetHandle: 'target-left',
-    animated: true,
-    style: { stroke: '#818cf8', strokeWidth: 2 },
-    markerEnd: mk('#818cf8'),
-    label: 'Estratégia AIDA',
-    labelStyle: { fontSize: 9, fill: '#818cf8' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
+    // agents → paulo/maria
+    { id: 'e-jose-meta-paulo',   source: 'jose-meta',   target: 'paulo-hooks', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    { id: 'e-jose-google-paulo', source: 'jose-google', target: 'paulo-hooks', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    { id: 'e-jose-meta-maria',   source: 'jose-meta',   target: 'maria',       style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    { id: 'e-davi-maria',        source: 'davi',        target: 'maria',       style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
 
-  // SALOMÃO → stage-atencao
-  {
-    id: 'e-sal-atencao',
-    source: 'salomao',
-    target: 'stage-atencao',
-    style: { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '5 4' },
-    markerEnd: mk('#f59e0b'),
-    label: 'Distribui tarefas',
-    labelStyle: { fontSize: 9, fill: '#f59e0b' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
+    // → dec-1
+    { id: 'e-paulo-hooks-dec1', source: 'paulo-hooks', target: 'dec-1', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    { id: 'e-maria-dec1',       source: 'maria',       target: 'dec-1', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
 
-  // stage-atencao → agents
-  { id: 'e-atencao-jose-meta', source: 'stage-atencao', target: 'jose-meta', style: { stroke: '#ef4444', strokeWidth: 1.2 }, markerEnd: mk('#ef4444') },
-  { id: 'e-atencao-jose-google', source: 'stage-atencao', target: 'jose-google', style: { stroke: '#ef4444', strokeWidth: 1.2 }, markerEnd: mk('#ef4444') },
-  { id: 'e-atencao-davi', source: 'stage-atencao', target: 'davi', style: { stroke: '#ef4444', strokeWidth: 1.2 }, markerEnd: mk('#ef4444') },
+    // dec-1 SIM / NÃO
+    { id: 'e-dec1-sim', source: 'dec-1', sourceHandle: 'yes', target: 'stage-interesse', style: { stroke: '#22c55e', strokeWidth: 1.5 }, markerEnd: mk('#22c55e'), label: 'SIM ✅', labelStyle: { fontSize: 9, fill: '#22c55e' }, labelBgStyle: { fill: '#0f172a' } },
+    { id: 'e-dec1-nao', source: 'dec-1', sourceHandle: 'no',  target: 'rec-remarketing', style: { stroke: '#ef4444', strokeWidth: 1.5 }, markerEnd: mk('#ef4444'), label: 'NÃO ❌', labelStyle: { fontSize: 9, fill: '#ef4444' }, labelBgStyle: { fill: '#0f172a' } },
+    { id: 'e-rec-remarketing-loop', source: 'rec-remarketing', sourceHandle: 'left', target: 'jose-meta', style: { stroke: '#ef4444', strokeWidth: 1.2, strokeDasharray: '5 4' }, markerEnd: mk('#ef4444') },
 
-  // agents → paulo-hooks & maria
-  { id: 'e-jose-meta-paulo', source: 'jose-meta', target: 'paulo-hooks', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
-  { id: 'e-jose-google-paulo', source: 'jose-google', target: 'paulo-hooks', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
-  { id: 'e-jose-meta-maria', source: 'jose-meta', target: 'maria', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
-  { id: 'e-davi-maria', source: 'davi', target: 'maria', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    // stage-interesse → agents
+    { id: 'e-interesse-lucas',    source: 'stage-interesse', target: 'lucas-lp', style: { stroke: '#eab308', strokeWidth: 1.2 }, markerEnd: mk('#eab308') },
+    { id: 'e-interesse-paulo-lp', source: 'stage-interesse', target: 'paulo-lp', style: { stroke: '#eab308', strokeWidth: 1.2 }, markerEnd: mk('#eab308') },
 
-  // → decision 1
-  { id: 'e-paulo-hooks-dec1', source: 'paulo-hooks', target: 'dec-1', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
-  { id: 'e-maria-dec1', source: 'maria', target: 'dec-1', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    // agents → dec-2
+    { id: 'e-lucas-dec2',    source: 'lucas-lp', target: 'dec-2', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    { id: 'e-paulo-lp-dec2', source: 'paulo-lp', target: 'dec-2', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
 
-  // dec-1 SIM → stage-interesse
-  {
-    id: 'e-dec1-sim',
-    source: 'dec-1',
-    sourceHandle: 'yes',
-    target: 'stage-interesse',
-    style: { stroke: '#22c55e', strokeWidth: 1.5 },
-    markerEnd: mk('#22c55e'),
-    label: 'SIM ✅',
-    labelStyle: { fontSize: 9, fill: '#22c55e' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-  // dec-1 NÃO → rec-remarketing
-  {
-    id: 'e-dec1-nao',
-    source: 'dec-1',
-    sourceHandle: 'no',
-    target: 'rec-remarketing',
-    style: { stroke: '#ef4444', strokeWidth: 1.5 },
-    markerEnd: mk('#ef4444'),
-    label: 'NÃO ❌',
-    labelStyle: { fontSize: 9, fill: '#ef4444' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-  // rec-remarketing → jose-meta (loop back)
-  {
-    id: 'e-rec-remarketing-loop',
-    source: 'rec-remarketing',
-    sourceHandle: 'loop',
-    target: 'jose-meta',
-    style: { stroke: '#ef4444', strokeWidth: 1.2, strokeDasharray: '5 4' },
-    markerEnd: mk('#ef4444'),
-  },
+    // dec-2 SIM / NÃO
+    { id: 'e-dec2-sim', source: 'dec-2', sourceHandle: 'yes', target: 'stage-desejo',    style: { stroke: '#22c55e', strokeWidth: 1.5 }, markerEnd: mk('#22c55e'), label: 'SIM ✅', labelStyle: { fontSize: 9, fill: '#22c55e' }, labelBgStyle: { fill: '#0f172a' } },
+    { id: 'e-dec2-nao', source: 'dec-2', sourceHandle: 'no',  target: 'rec-retargeting', style: { stroke: '#ef4444', strokeWidth: 1.5 }, markerEnd: mk('#ef4444'), label: 'NÃO ❌', labelStyle: { fontSize: 9, fill: '#ef4444' }, labelBgStyle: { fill: '#0f172a' } },
+    { id: 'e-rec-retargeting-loop', source: 'rec-retargeting', sourceHandle: 'left', target: 'lucas-lp', style: { stroke: '#ef4444', strokeWidth: 1.2, strokeDasharray: '5 4' }, markerEnd: mk('#ef4444') },
 
-  // stage-interesse → agents
-  { id: 'e-interesse-lucas', source: 'stage-interesse', target: 'lucas-lp', style: { stroke: '#eab308', strokeWidth: 1.2 }, markerEnd: mk('#eab308') },
-  { id: 'e-interesse-paulo-lp', source: 'stage-interesse', target: 'paulo-lp', style: { stroke: '#eab308', strokeWidth: 1.2 }, markerEnd: mk('#eab308') },
+    // stage-desejo → agents
+    { id: 'e-desejo-marcos', source: 'stage-desejo', target: 'marcos-wpp',    style: { stroke: '#10b981', strokeWidth: 1.2 }, markerEnd: mk('#10b981') },
+    { id: 'e-desejo-joao',   source: 'stage-desejo', target: 'joao-email',    style: { stroke: '#10b981', strokeWidth: 1.2 }, markerEnd: mk('#10b981') },
+    { id: 'e-desejo-paulo',  source: 'stage-desejo', target: 'paulo-nurture', style: { stroke: '#10b981', strokeWidth: 1.2 }, markerEnd: mk('#10b981') },
 
-  // agents → dec-2
-  { id: 'e-lucas-dec2', source: 'lucas-lp', target: 'dec-2', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
-  { id: 'e-paulo-lp-dec2', source: 'paulo-lp', target: 'dec-2', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    // agents → dec-3
+    { id: 'e-marcos-wpp-dec3',    source: 'marcos-wpp',    target: 'dec-3', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    { id: 'e-joao-email-dec3',    source: 'joao-email',    target: 'dec-3', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    { id: 'e-paulo-nurture-dec3', source: 'paulo-nurture', target: 'dec-3', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
 
-  // dec-2 SIM → stage-desejo
-  {
-    id: 'e-dec2-sim',
-    source: 'dec-2',
-    sourceHandle: 'yes',
-    target: 'stage-desejo',
-    style: { stroke: '#22c55e', strokeWidth: 1.5 },
-    markerEnd: mk('#22c55e'),
-    label: 'SIM ✅',
-    labelStyle: { fontSize: 9, fill: '#22c55e' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-  // dec-2 NÃO → rec-retargeting
-  {
-    id: 'e-dec2-nao',
-    source: 'dec-2',
-    sourceHandle: 'no',
-    target: 'rec-retargeting',
-    style: { stroke: '#ef4444', strokeWidth: 1.5 },
-    markerEnd: mk('#ef4444'),
-    label: 'NÃO ❌',
-    labelStyle: { fontSize: 9, fill: '#ef4444' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-  // rec-retargeting → lucas-lp (loop back)
-  {
-    id: 'e-rec-retargeting-loop',
-    source: 'rec-retargeting',
-    sourceHandle: 'loop',
-    target: 'lucas-lp',
-    style: { stroke: '#ef4444', strokeWidth: 1.2, strokeDasharray: '5 4' },
-    markerEnd: mk('#ef4444'),
-  },
+    // dec-3 SIM / NÃO
+    { id: 'e-dec3-sim', source: 'dec-3', sourceHandle: 'yes', target: 'stage-acao',   style: { stroke: '#22c55e', strokeWidth: 1.5 }, markerEnd: mk('#22c55e'), label: 'SIM ✅', labelStyle: { fontSize: 9, fill: '#22c55e' }, labelBgStyle: { fill: '#0f172a' } },
+    { id: 'e-dec3-nao', source: 'dec-3', sourceHandle: 'no',  target: 'rec-followup', style: { stroke: '#ef4444', strokeWidth: 1.5 }, markerEnd: mk('#ef4444'), label: 'NÃO ❌', labelStyle: { fontSize: 9, fill: '#ef4444' }, labelBgStyle: { fill: '#0f172a' } },
+    { id: 'e-rec-followup-loop', source: 'rec-followup', sourceHandle: 'left', target: 'marcos-wpp', style: { stroke: '#ef4444', strokeWidth: 1.2, strokeDasharray: '5 4' }, markerEnd: mk('#ef4444') },
 
-  // stage-desejo → agents
-  { id: 'e-desejo-marcos', source: 'stage-desejo', target: 'marcos-wpp', style: { stroke: '#10b981', strokeWidth: 1.2 }, markerEnd: mk('#10b981') },
-  { id: 'e-desejo-joao', source: 'stage-desejo', target: 'joao-email', style: { stroke: '#10b981', strokeWidth: 1.2 }, markerEnd: mk('#10b981') },
-  { id: 'e-desejo-paulo', source: 'stage-desejo', target: 'paulo-nurture', style: { stroke: '#10b981', strokeWidth: 1.2 }, markerEnd: mk('#10b981') },
+    // stage-acao → agents
+    { id: 'e-acao-marcos', source: 'stage-acao', target: 'marcos-fecha', style: { stroke: '#22c55e', strokeWidth: 1.2 }, markerEnd: mk('#22c55e') },
+    { id: 'e-acao-paulo',  source: 'stage-acao', target: 'paulo-oferta', style: { stroke: '#22c55e', strokeWidth: 1.2 }, markerEnd: mk('#22c55e') },
 
-  // agents → dec-3
-  { id: 'e-marcos-wpp-dec3', source: 'marcos-wpp', target: 'dec-3', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
-  { id: 'e-joao-email-dec3', source: 'joao-email', target: 'dec-3', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
-  { id: 'e-paulo-nurture-dec3', source: 'paulo-nurture', target: 'dec-3', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    // agents → dec-4
+    { id: 'e-marcos-fecha-dec4', source: 'marcos-fecha', target: 'dec-4', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
+    { id: 'e-paulo-oferta-dec4', source: 'paulo-oferta', target: 'dec-4', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
 
-  // dec-3 SIM → stage-acao
-  {
-    id: 'e-dec3-sim',
-    source: 'dec-3',
-    sourceHandle: 'yes',
-    target: 'stage-acao',
-    style: { stroke: '#22c55e', strokeWidth: 1.5 },
-    markerEnd: mk('#22c55e'),
-    label: 'SIM ✅',
-    labelStyle: { fontSize: 9, fill: '#22c55e' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-  // dec-3 NÃO → rec-followup
-  {
-    id: 'e-dec3-nao',
-    source: 'dec-3',
-    sourceHandle: 'no',
-    target: 'rec-followup',
-    style: { stroke: '#ef4444', strokeWidth: 1.5 },
-    markerEnd: mk('#ef4444'),
-    label: 'NÃO ❌',
-    labelStyle: { fontSize: 9, fill: '#ef4444' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-  // rec-followup → marcos-wpp (loop back)
-  {
-    id: 'e-rec-followup-loop',
-    source: 'rec-followup',
-    sourceHandle: 'loop',
-    target: 'marcos-wpp',
-    style: { stroke: '#ef4444', strokeWidth: 1.2, strokeDasharray: '5 4' },
-    markerEnd: mk('#ef4444'),
-  },
+    // dec-4 SIM / NÃO
+    { id: 'e-dec4-sim', source: 'dec-4', sourceHandle: 'yes', target: 'stage-posvenda', style: { stroke: '#22c55e', strokeWidth: 1.5 }, markerEnd: mk('#22c55e'), label: 'SIM ✅', labelStyle: { fontSize: 9, fill: '#22c55e' }, labelBgStyle: { fill: '#0f172a' } },
+    { id: 'e-dec4-nao', source: 'dec-4', sourceHandle: 'no',  target: 'rec-oferta',     style: { stroke: '#ef4444', strokeWidth: 1.5 }, markerEnd: mk('#ef4444'), label: 'NÃO ❌', labelStyle: { fontSize: 9, fill: '#ef4444' }, labelBgStyle: { fill: '#0f172a' } },
+    { id: 'e-rec-oferta-loop', source: 'rec-oferta', sourceHandle: 'left', target: 'marcos-fecha', style: { stroke: '#ef4444', strokeWidth: 1.2, strokeDasharray: '5 4' }, markerEnd: mk('#ef4444') },
 
-  // stage-acao → agents
-  { id: 'e-acao-marcos', source: 'stage-acao', target: 'marcos-fecha', style: { stroke: '#22c55e', strokeWidth: 1.2 }, markerEnd: mk('#22c55e') },
-  { id: 'e-acao-paulo', source: 'stage-acao', target: 'paulo-oferta', style: { stroke: '#22c55e', strokeWidth: 1.2 }, markerEnd: mk('#22c55e') },
+    // stage-posvenda → agents
+    { id: 'e-posvenda-joao',   source: 'stage-posvenda', target: 'joao-ret',      style: { stroke: '#a78bfa', strokeWidth: 1.2 }, markerEnd: mk('#a78bfa') },
+    { id: 'e-posvenda-marcos', source: 'stage-posvenda', target: 'marcos-upsell', style: { stroke: '#a78bfa', strokeWidth: 1.2 }, markerEnd: mk('#a78bfa') },
+    { id: 'e-posvenda-daniel', source: 'stage-posvenda', target: 'daniel-kpis',   style: { stroke: '#a78bfa', strokeWidth: 1.2 }, markerEnd: mk('#a78bfa') },
 
-  // agents → dec-4
-  { id: 'e-marcos-fecha-dec4', source: 'marcos-fecha', target: 'dec-4', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
-  { id: 'e-paulo-oferta-dec4', source: 'paulo-oferta', target: 'dec-4', style: { stroke: '#6b7280', strokeWidth: 1 }, markerEnd: mk('#6b7280') },
-
-  // dec-4 SIM → stage-posvenda
-  {
-    id: 'e-dec4-sim',
-    source: 'dec-4',
-    sourceHandle: 'yes',
-    target: 'stage-posvenda',
-    style: { stroke: '#22c55e', strokeWidth: 1.5 },
-    markerEnd: mk('#22c55e'),
-    label: 'SIM ✅',
-    labelStyle: { fontSize: 9, fill: '#22c55e' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-  // dec-4 NÃO → rec-oferta
-  {
-    id: 'e-dec4-nao',
-    source: 'dec-4',
-    sourceHandle: 'no',
-    target: 'rec-oferta',
-    style: { stroke: '#ef4444', strokeWidth: 1.5 },
-    markerEnd: mk('#ef4444'),
-    label: 'NÃO ❌',
-    labelStyle: { fontSize: 9, fill: '#ef4444' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-  // rec-oferta → marcos-fecha (loop back)
-  {
-    id: 'e-rec-oferta-loop',
-    source: 'rec-oferta',
-    sourceHandle: 'loop',
-    target: 'marcos-fecha',
-    style: { stroke: '#ef4444', strokeWidth: 1.2, strokeDasharray: '5 4' },
-    markerEnd: mk('#ef4444'),
-  },
-
-  // stage-posvenda → agents
-  { id: 'e-posvenda-joao', source: 'stage-posvenda', target: 'joao-ret', style: { stroke: '#a78bfa', strokeWidth: 1.2 }, markerEnd: mk('#a78bfa') },
-  { id: 'e-posvenda-marcos', source: 'stage-posvenda', target: 'marcos-upsell', style: { stroke: '#a78bfa', strokeWidth: 1.2 }, markerEnd: mk('#a78bfa') },
-  { id: 'e-posvenda-daniel', source: 'stage-posvenda', target: 'daniel-kpis', style: { stroke: '#a78bfa', strokeWidth: 1.2 }, markerEnd: mk('#a78bfa') },
-
-  // DANIEL KPIs → SALOMÃO (feedback loop, dashed indigo)
-  {
-    id: 'e-daniel-kpis-salomao',
-    source: 'daniel-kpis',
-    target: 'salomao',
-    style: { stroke: '#818cf8', strokeWidth: 1.5, strokeDasharray: '6 4' },
-    markerEnd: mk('#818cf8'),
-    label: 'Ajuste de estratégia',
-    labelStyle: { fontSize: 9, fill: '#818cf8' },
-    labelBgStyle: { fill: '#0f172a', rx: 4 },
-  },
-];
-
-// ─── Legend ───────────────────────────────────────────────────────────────────
-
-const LEGEND = [
-  { emoji: '👑', name: 'SALOMÃO', role: 'Orquestrador', color: '#f59e0b' },
-  { emoji: '📊', name: 'DANIEL', role: 'Estrategista', color: '#818cf8' },
-  { emoji: '🎯', name: 'JOSÉ', role: 'Tráfego Pago', color: C.jose.color },
-  { emoji: '✍️', name: 'PAULO', role: 'Copywriter', color: C.paulo.color },
-  { emoji: '🎨', name: 'MARIA', role: 'Design', color: C.maria.color },
-  { emoji: '📱', name: 'DAVI', role: 'Social Orgânico', color: C.davi.color },
-  { emoji: '📧', name: 'JOÃO', role: 'Email Marketing', color: C.joao.color },
-  { emoji: '🔀', name: 'LUCAS', role: 'Funil / LPs', color: C.lucas.color },
-  { emoji: '💬', name: 'MARCOS', role: 'WhatsApp + CRM', color: C.marcos.color },
-];
+    // DANIEL KPIs → SALOMÃO feedback loop
+    { id: 'e-daniel-kpis-salomao', source: 'daniel-kpis', target: 'salomao', style: { stroke: '#818cf8', strokeWidth: 1.5, strokeDasharray: '6 4' }, markerEnd: mk('#818cf8'), label: 'Ajuste de estratégia', labelStyle: { fontSize: 9, fill: '#818cf8' }, labelBgStyle: { fill: '#0f172a' } },
+  ];
+}
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function FunnelFlowchart() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Legend */}
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '6px 14px',
-          padding: '10px 14px',
-          background: '#0f172a',
-          border: '1px solid #1e293b',
-          borderRadius: 10,
-        }}
-      >
-        {LEGEND.map((a) => (
-          <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <div
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                background: a.color,
-                boxShadow: `0 0 6px ${a.color}99`,
-              }}
-            />
-            <span style={{ fontSize: 11, color: '#e2e8f0' }}>
-              {a.emoji} <strong>{a.name}</strong>
-            </span>
-            <span style={{ fontSize: 10, color: '#64748b' }}>— {a.role}</span>
-          </div>
-        ))}
-      </div>
+  const { toast } = useToast();
+  const [nodes, setNodes, onNodesChange] = useNodesState(getInitialNodes());
+  const [edges, setEdges, onEdgesChange] = useEdgesState(getInitialEdges());
+  const [selectedNode, setSelectedNode] = useState<Node<FunnelNodeData> | null>(null);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
-      {/* ReactFlow canvas */}
-      <div
-        style={{
-          width: '100%',
-          height: '75vh',
-          borderRadius: 12,
-          border: '1px solid #1e293b',
-          overflow: 'hidden',
-          background: '#0a0f1e',
-        }}
-      >
+  // Load flow from Supabase on mount
+  useEffect(() => {
+    loadFlow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const saveFlow = async () => {
+    setIsSaving(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Não autenticado');
+      const flow = {
+        user_id: user.id,
+        name: 'Funil AIDA Principal',
+        nodes: nodes.map(n => ({ ...n, data: { ...n.data } })),
+        edges,
+      };
+      const { error } = await (supabase as any)
+        .from('funnel_flows')
+        .upsert(flow, { onConflict: 'user_id' });
+      if (error) throw error;
+      toast({ title: '💾 Fluxograma salvo com sucesso!' });
+    } catch (err: any) {
+      toast({ title: '⚠️ Erro ao salvar', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const loadFlow = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await (supabase as any)
+        .from('funnel_flows')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+      if (error || !data) return;
+      if (data.nodes?.length) setNodes(data.nodes);
+      if (data.edges?.length) setEdges(data.edges);
+    } catch {
+      // Silently fail — use template
+    }
+  };
+
+  const onConnect = useCallback(
+    (params: Connection) => {
+      setEdges(prev =>
+        addEdge(
+          {
+            ...params,
+            animated: false,
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#6b7280' },
+            style: { stroke: '#6b7280', strokeWidth: 2 },
+          },
+          prev,
+        ),
+      );
+    },
+    [setEdges],
+  );
+
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      const raw = event.dataTransfer.getData('application/reactflow-node');
+      if (!raw || !reactFlowInstance || !reactFlowWrapper.current) return;
+      const item = JSON.parse(raw);
+      const rect = reactFlowWrapper.current.getBoundingClientRect();
+      const position = reactFlowInstance.project({
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      });
+      addNodeToCanvas(item, position);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [reactFlowInstance],
+  );
+
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const addNodeToCanvas = (item: typeof PALETTE_ITEMS[0], position: { x: number; y: number }) => {
+    const newNode: Node<FunnelNodeData> = {
+      id: `node-${Date.now()}`,
+      type: item.isDecision ? 'decision' : 'editable',
+      position,
+      data: {
+        label:  item.label,
+        emoji:  item.emoji,
+        role:   item.role,
+        agent:  item.agent,
+        phase:  item.phase,
+        metric: '',
+        url:    '',
+        notes:  '',
+      },
+    };
+    setNodes(prev => [...prev, newNode]);
+  };
+
+  const handleNodeClick = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      if (node.type === 'stage') return; // Stage nodes are not editable
+      setSelectedNode(node as Node<FunnelNodeData>);
+    },
+    [],
+  );
+
+  const handleSaveNode = (nodeId: string, updatedData: Partial<FunnelNodeData>) => {
+    setNodes(prev =>
+      prev.map(n => (n.id === nodeId ? { ...n, data: { ...n.data, ...updatedData } } : n)),
+    );
+    setSelectedNode(null);
+    toast({ title: '✅ Nó atualizado' });
+  };
+
+  const handleDeleteNode = (nodeId: string) => {
+    setNodes(prev => prev.filter(n => n.id !== nodeId));
+    setEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId));
+    setSelectedNode(null);
+    toast({ title: '🗑️ Nó removido', variant: 'destructive' });
+  };
+
+  const handleReset = () => {
+    setNodes(getInitialNodes());
+    setEdges(getInitialEdges());
+    setSelectedNode(null);
+    toast({ title: '🔄 Fluxograma resetado para o template AIDA' });
+  };
+
+  return (
+    <div style={{ display: 'flex', height: '80vh', borderRadius: 12, overflow: 'hidden', border: '1px solid #1e293b' }}>
+      {/* Left palette */}
+      <NodePalette onAddNode={addNodeToCanvas} />
+
+      {/* Canvas area */}
+      <div ref={reactFlowWrapper} style={{ flex: 1, position: 'relative', background: '#030712' }}>
+        {/* Top toolbar */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            background: 'rgba(15, 23, 42, 0.92)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid #1e293b',
+            borderRadius: 12,
+            padding: '8px 14px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          }}
+        >
+          <span style={{ fontSize: 11, color: '#64748b', marginRight: 4 }}>Funil AIDA Interativo</span>
+          <Button size="sm" variant="outline" onClick={saveFlow} disabled={isSaving}
+            style={{ fontSize: 12, height: 30, paddingLeft: 10, paddingRight: 10 }}>
+            <Save className="h-3.5 w-3.5 mr-1" />
+            {isSaving ? 'Salvando...' : 'Salvar'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleReset}
+            style={{ fontSize: 12, height: 30, paddingLeft: 10, paddingRight: 10 }}>
+            <RotateCcw className="h-3.5 w-3.5 mr-1" />
+            Reset
+          </Button>
+        </div>
+
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onInit={setReactFlowInstance}
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+          onNodeClick={handleNodeClick}
           nodeTypes={nodeTypes}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable={true}
           fitView
-          fitViewOptions={{ padding: 0.08, maxZoom: 0.7 }}
-          minZoom={0.1}
+          fitViewOptions={{ padding: 0.05, maxZoom: 0.7 }}
+          minZoom={0.08}
           maxZoom={2}
+          deleteKeyCode="Delete"
+          proOptions={{ hideAttribution: true }}
+          connectionLineStyle={{ stroke: '#6b7280', strokeWidth: 2 }}
         >
-          <Background variant={BackgroundVariant.Dots} color="#374151" gap={20} size={1} />
-          <Controls
-            style={{
-              background: '#1e293b',
-              border: '1px solid #334155',
-              borderRadius: 8,
-            }}
-          />
+          <Background color="#1f2937" gap={20} variant={BackgroundVariant.Dots} />
+          <Controls className="!bg-gray-900 !border-gray-700 !shadow-xl" />
           <MiniMap
-            style={{
-              background: '#0f172a',
-              border: '1px solid #1e293b',
-            }}
             nodeColor={(n) => {
-              if (n.type === 'stageNode') return '#374151';
-              if (n.type === 'recoveryNode') return '#ef4444';
-              if (n.type === 'decisionNode') return '#d97706';
-              if (n.type === 'hubNode') return '#f59e0b';
-              return '#4b5563';
+              if (n.type === 'stage') return '#374151';
+              const phase = n.data?.phase as AidaPhase;
+              return PHASE_COLORS[phase]?.border ?? '#374151';
             }}
+            style={{ background: '#111827', border: '1px solid #374151', borderRadius: 8 }}
           />
         </ReactFlow>
       </div>
+
+      {/* Right config drawer */}
+      <NodeConfigDrawer
+        node={selectedNode}
+        onClose={() => setSelectedNode(null)}
+        onSave={handleSaveNode}
+        onDelete={handleDeleteNode}
+      />
     </div>
   );
 }
