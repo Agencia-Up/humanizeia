@@ -90,7 +90,7 @@ function R2({ children }: { children: React.ReactNode }) {
 export default function SalomaoOrchestrator() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [tab, setTab] = useState<'equipe' | 'gerador'>('equipe');
+  const [tab, setTab] = useState<'equipe' | 'gerador'>('gerador');
 
   /* ── Prompt generator state ── */
   const [data, setData] = useState<BriefingData>(EMPTY_BRIEFING);
