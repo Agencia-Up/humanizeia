@@ -57,6 +57,19 @@ import {
 } from '@/components/ui/sidebar';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 
+// 🤖 Agentes IA
+const agentItems = [
+  { title: 'Salomão — Orquestrador', url: '/salomao', icon: Sparkles },
+  { title: 'Daniel — Estrategista', url: '/daniel', icon: Brain },
+  { title: 'José — Tráfego Pago', url: '/apollo', icon: Radar },
+  { title: 'Paulo — Copywriter', url: '/copywriter', icon: PenTool },
+  { title: 'Maria — Design', url: '/creative-studio', icon: Palette },
+  { title: 'Davi — Social Media', url: '/davi', icon: Instagram },
+  { title: 'João — Email Mkt', url: '/joao', icon: Send },
+  { title: 'Lucas — Funil de Vendas', url: '/lucas', icon: Layers },
+  { title: 'Marcos — Leads & WhatsApp', url: '/leads', icon: Users },
+];
+
 // 🏠 Dashboard
 const dashboardItems = [
   { title: 'Home', url: '/dashboard', icon: Home },
@@ -215,7 +228,7 @@ export function AppSidebar() {
 
   const groups: NavGroupConfig[] = [
     { label: '🏠 Dashboard', items: dashboardWithBadges, triggerIcon: Home },
-    
+    { label: '🤖 Agentes IA', items: agentItems, triggerIcon: Bot, dataTour: 'sidebar-agents' },
     { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
