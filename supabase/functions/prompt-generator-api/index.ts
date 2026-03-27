@@ -42,6 +42,21 @@ serve(async (req) => {
       let promptText = '';
       let tokensUsed = 0;
 
+      // Buscando a Base de Conhecimento dos Agentes para este usuário
+      const { data: knowledgeData } = await supabase
+        .from('agent_knowledge')
+        .select('agent_id, knowledge_text')
+        .eq('user_id', user.id);
+
+      let finalSystemPrompt = SYSTEM_PROMPT;
+      if (knowledgeData && knowledgeData.length > 0) {
+        let knowledgeSection = '\n\n─────────────────────────────────────────────────\n\n## 🧠 BASE DE CONHECIMENTO ESPECÍFICA DESTA AGÊNCIA\n\nVocê deve incorporar as seguintes regras e personalidades individuais na delegação das tarefas para a equipe:\n\n';
+        for (const k of knowledgeData) {
+          knowledgeSection += `- **Agente ${k.agent_id.toUpperCase()}**: ${k.knowledge_text}\n\n`;
+        }
+        finalSystemPrompt += knowledgeSection;
+      }
+
       if (provider === 'openai') {
         const openAiKey = Deno.env.get('OPENAI_API_KEY');
         if (!openAiKey) {
@@ -57,7 +72,7 @@ serve(async (req) => {
           body: JSON.stringify({
             model: 'gpt-4o',
             messages: [
-              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'system', content: finalSystemPrompt },
               { role: 'user', content: `Com base neste briefing, crie um SYSTEM PROMPT completo e profissional para um agente de vendas:\n\n${briefing}` }
             ],
           }),
@@ -89,7 +104,7 @@ serve(async (req) => {
           body: JSON.stringify({
             model: modelId,
             max_tokens: 4096,
-            system: SYSTEM_PROMPT,
+            system: finalSystemPrompt,
             messages: [{
               role: 'user',
               content: `Com base neste briefing, crie um SYSTEM PROMPT completo e profissional para um agente de vendas:\n\n${briefing}`,
