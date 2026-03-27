@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { AgentKnowledgeModal } from '@/features/orchestrator/components/AgentKnowledgeModal';
 import {
   Sparkles, Radar, PenTool, Palette, Send,
   Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
@@ -98,6 +99,7 @@ export default function SalomaoOrchestrator() {
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [aiProvider, setAiProvider] = useState('openai'); // openai | anthropic
+  const [isKnowledgeModalOpen, setIsKnowledgeModalOpen] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
 
   const activeCount = AGENTS.filter(a => a.status === 'active').length;
@@ -181,6 +183,13 @@ export default function SalomaoOrchestrator() {
                 <SelectItem value="anthropic_haiku">Claude 3 Haiku</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="absolute top-0 left-0 hidden sm:flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8 gap-2 border-primary/30 hover:bg-primary/10" onClick={() => setIsKnowledgeModalOpen(true)}>
+              <Brain className="h-4 w-4 text-primary" />
+              Base de Dados dos Agentes
+            </Button>
           </div>
 
           <p className="text-muted-foreground">A Agência de Marketing Digital do Futuro</p>
@@ -553,6 +562,12 @@ export default function SalomaoOrchestrator() {
             </div>
           </div>
         )}
+        
+        <AgentKnowledgeModal 
+          isOpen={isKnowledgeModalOpen} 
+          onOpenChange={setIsKnowledgeModalOpen} 
+          agents={AGENTS} 
+        />
       </div>
     </MainLayout>
   );
