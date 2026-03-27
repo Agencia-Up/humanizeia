@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { OrchestrationPanel } from '@/components/salomao/OrchestrationPanel';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +11,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { AgentKnowledgeModal } from '@/features/orchestrator/components/AgentKnowledgeModal';
 import {
   Sparkles, Radar, PenTool, Palette, Send,
   Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
@@ -91,15 +91,15 @@ function R2({ children }: { children: React.ReactNode }) {
 export default function SalomaoOrchestrator() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [tab, setTab] = useState<'equipe' | 'gerador'>('gerador');
+  const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline'>('gerador');
+  const [activeBriefingId, setActiveBriefingId] = useState<string | null>(null);
+  const [activeClientName, setActiveClientName] = useState('Selecione um cliente');
 
   /* ── Prompt generator state ── */
   const [data, setData] = useState<BriefingData>(EMPTY_BRIEFING);
   const [generatedPrompt, setGeneratedPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [aiProvider, setAiProvider] = useState('openai'); // openai | anthropic
-  const [isKnowledgeModalOpen, setIsKnowledgeModalOpen] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
 
   const activeCount = AGENTS.filter(a => a.status === 'active').length;
@@ -122,28 +122,20 @@ export default function SalomaoOrchestrator() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Sessão expirada.');
       const res = await supabase.functions.invoke('prompt-generator-api', {
-        body: { 
-          action: 'generate_prompt', 
-          briefing: buildBriefingText(data),
-          ai_provider: aiProvider
-        },
+        body: { action: 'generate_prompt', briefing: buildBriefingText(data) },
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (res.error) throw new Error(res.error.message);
       const result = res.data as { prompt: string; tokens_used: number; demo: boolean };
       setGeneratedPrompt(result.prompt);
       if (result.demo) {
-        toast({ title: 'Modo demo', description: 'Configure a API_KEY correspondente no Supabase para IA real.' });
+        toast({ title: 'Modo demo', description: 'Configure ANTHROPIC_API_KEY no Supabase para IA real.' });
       } else {
         toast({ title: '⚡ Prompt gerado!', description: `${result.tokens_used?.toLocaleString('pt-BR')} tokens usados.` });
       }
       setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (err: any) {
-      if (err.message.includes('API error') || err.message.includes('não encontrada')) {
-        toast({ title: 'Erro na API da IA', description: err.message, variant: 'destructive' });
-      } else {
-        toast({ title: 'Erro', description: err.message, variant: 'destructive' });
-      }
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setGenerating(false);
     }
@@ -162,36 +154,12 @@ export default function SalomaoOrchestrator() {
       <div className="space-y-6 p-6 max-w-6xl mx-auto">
 
         {/* ── Header ────────────────────────────────────────────────── */}
-        <div className="text-center space-y-3 py-4 relative">
+        <div className="text-center space-y-3 py-4">
           <div className="flex items-center justify-center gap-3">
             <Sparkles className="h-8 w-8 text-yellow-400" />
             <h1 className="text-3xl font-bold tracking-tight">SALOMÃO</h1>
             <Sparkles className="h-8 w-8 text-yellow-400" />
           </div>
-          
-          <div className="absolute top-0 right-0 hidden sm:flex items-center gap-2">
-            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 gap-1.5 whitespace-nowrap">
-              <Bot className="h-3 w-3" /> IA Engine
-            </Badge>
-            <Select value={aiProvider} onValueChange={setAiProvider} disabled={generating}>
-              <SelectTrigger className="w-[180px] h-8 text-xs bg-card/60 border-primary/20 focus:ring-primary/50">
-                <SelectValue placeholder="Selecione a IA" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="openai">ChatGPT (GPT-4o)</SelectItem>
-                <SelectItem value="anthropic_sonnet">Claude 3.5 Sonnet</SelectItem>
-                <SelectItem value="anthropic_haiku">Claude 3 Haiku</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="absolute top-0 left-0 hidden sm:flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-8 gap-2 border-primary/30 hover:bg-primary/10" onClick={() => setIsKnowledgeModalOpen(true)}>
-              <Brain className="h-4 w-4 text-primary" />
-              Base de Dados dos Agentes
-            </Button>
-          </div>
-
           <p className="text-muted-foreground">A Agência de Marketing Digital do Futuro</p>
           <p className="text-sm text-muted-foreground max-w-2xl mx-auto leading-relaxed">
             10 agentes especializados de IA trabalhando em equipe. Cada um é um especialista completo na sua área —
@@ -212,6 +180,7 @@ export default function SalomaoOrchestrator() {
           {([
             { key: 'equipe', label: '🤖 Equipe de Agentes' },
             { key: 'gerador', label: '⚡ Gerador de Prompt IA' },
+            { key: 'pipeline', label: '🚀 Pipeline' },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -562,12 +531,78 @@ export default function SalomaoOrchestrator() {
             </div>
           </div>
         )}
-        
-        <AgentKnowledgeModal 
-          isOpen={isKnowledgeModalOpen} 
-          onOpenChange={setIsKnowledgeModalOpen} 
-          agents={AGENTS} 
-        />
+
+        {/* ══════════════════════ TAB: PIPELINE ══════════════════════ */}
+        {tab === 'pipeline' && (
+          <div className="space-y-5">
+            {/* Sub-header */}
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 flex items-start gap-3">
+              <Zap className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-sm text-amber-400">Pipeline de Orquestração Real entre Agentes</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Salomão coordena Daniel → Paulo + Maria → Aprovação → José em tempo real, usando o banco de dados como barramento de mensagens.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Left: briefing selector */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-muted-foreground">Selecionar Cliente</h3>
+                <div className="rounded-xl border border-border/50 bg-card/40 p-4 space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Para usar o pipeline real, selecione um briefing salvo ou crie um novo pelo Gerador de Prompt IA.
+                  </p>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-foreground/80">ID do Briefing (manual)</p>
+                    <input
+                      type="text"
+                      placeholder="Cole o UUID do briefing aqui"
+                      className="w-full text-xs px-3 py-2 rounded-lg border border-border/60 bg-background/50 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+                      onChange={(e) => {
+                        const val = e.target.value.trim();
+                        if (val) {
+                          setActiveBriefingId(val);
+                          setActiveClientName('Cliente selecionado');
+                        } else {
+                          setActiveBriefingId(null);
+                          setActiveClientName('Selecione um cliente');
+                        }
+                      }}
+                    />
+                  </div>
+                  {activeBriefingId && (
+                    <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                      <p className="text-[10px] text-emerald-400 font-mono break-all">{activeBriefingId}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Architecture reminder */}
+                <div className="rounded-xl border border-border/40 bg-muted/20 p-4 space-y-2">
+                  <h4 className="text-xs font-semibold text-muted-foreground">Fluxo do Pipeline</h4>
+                  <div className="font-mono text-[10px] text-muted-foreground space-y-1">
+                    <p className="text-yellow-400">👑 Salomão (coordena)</p>
+                    <p className="ml-2">↓</p>
+                    <p className="ml-2 text-cyan-400">🧠 Daniel (estratégia)</p>
+                    <p className="ml-2">↓</p>
+                    <p className="ml-2 text-blue-400">✍️ Paulo + 🎨 Maria (paralelo)</p>
+                    <p className="ml-2">↓</p>
+                    <p className="ml-2 text-amber-400">⏸ Approval Gate</p>
+                    <p className="ml-2">↓</p>
+                    <p className="ml-2 text-emerald-400">🎯 José (campanha)</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: orchestration panel */}
+              <div className="lg:col-span-2">
+                <OrchestrationPanel briefingId={activeBriefingId} clientName={activeClientName} />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </MainLayout>
   );
