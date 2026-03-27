@@ -59,6 +59,7 @@ const JoaoEmail = lazy(() => import('./pages/JoaoEmail'));
 const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
 const MeuPlano = lazy(() => import('./pages/MeuPlano'));
 const GeradorPrompt = lazy(() => import('./pages/GeradorPrompt'));
+const PauloAgente = lazy(() => import('./pages/PauloAgente'));
 
 const queryClient = new QueryClient();
 
@@ -85,7 +86,9 @@ const App = () => (
             <Route path="/dashboard" element={<ProtectedRoute><AgentHub /></ProtectedRoute>} />
             <Route path="/metrics" element={<ProtectedRoute><MetricsDashboard /></ProtectedRoute>} />
             <Route path="/connect-accounts" element={<ProtectedRoute><ConnectAccounts /></ProtectedRoute>} />
-            <Route path="/copywriter" element={<ProtectedRoute><AICopywriter /></ProtectedRoute>} />
+            <Route path="/copywriter" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
+            <Route path="/paulo" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
+            {/* <Route path="/copywriter-old" element={<ProtectedRoute><AICopywriter /></ProtectedRoute>} /> */}
             <Route path="/creative-studio" element={<ProtectedRoute><AICreativeStudio /></ProtectedRoute>} />
             <Route path="/optimizer" element={<ProtectedRoute><CampaignOptimizer /></ProtectedRoute>} />
             <Route path="/budget" element={<ProtectedRoute><BudgetAllocator /></ProtectedRoute>} />
