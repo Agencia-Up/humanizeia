@@ -1,749 +1,837 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Slider } from '@/components/ui/slider';
+import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
-import { useSocialMedia, CarouselSlide, SocialPost } from '@/hooks/useSocialMedia';
-import { useCreativeUploads, CreativeUpload } from '@/hooks/useCreativeUploads';
+import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
+import { useSocialMedia } from '@/hooks/useSocialMedia';
 import {
-  Calendar, CheckCircle, ChevronLeft, ChevronRight, Clock, Copy,
-  Eye, FolderOpen, Hash, Heart, Image, Layers, Loader2, MessageCircle,
-  RefreshCw, Send, Share2, Sparkles, Star, Trash2, Upload, Instagram, Zap,
+  Instagram, Zap, Loader2, Clock, CheckCircle2, XCircle, ChevronRight,
+  Copy, Trash2, FolderOpen, Layers, Send, Link,
 } from 'lucide-react';
 
-// Slide Preview Card
-function SlidePreview({ slide, isActive }: { slide: CarouselSlide; isActive?: boolean }) {
-  const bg = slide.bg_color || '#1A237E';
-  const accent = slide.accent_color || '#DAA520';
+// ─── Types ──────────────────────────────────────────────────────────────────
 
-  return (
-    <div
-      className={`relative rounded-xl overflow-hidden aspect-square flex flex-col justify-between p-4 transition-all ${isActive ? 'ring-2 ring-primary shadow-lg scale-105' : 'opacity-80 hover:opacity-100 hover:scale-102'}`}
-      style={{ background: `linear-gradient(135deg, ${bg} 0%, ${bg}CC 100%)` }}
-    >
-      {/* Accent bar */}
-      <div className="h-0.5 w-12 rounded-full mb-2" style={{ background: accent }} />
+type AgentSwitch = {
+  daniel: boolean;
+  paulo: boolean;
+  maria: boolean;
+  autoSchedule: boolean;
+};
 
-      {/* Order badge */}
-      <div className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold"
-        style={{ background: accent, color: bg }}>
-        {slide.order}
-      </div>
+type AutoModeStep = {
+  id: string;
+  agent: 'daniel' | 'paulo' | 'maria' | 'davi';
+  label: string;
+  status: 'waiting' | 'running' | 'completed' | 'failed' | 'skipped';
+  output?: string;
+};
 
-      {/* Content */}
-      <div className="flex-1 flex flex-col justify-center gap-2">
-        <h3 className="text-white font-bold text-sm leading-tight">{slide.headline}</h3>
-        <p className="text-white/80 text-[11px] leading-snug">{slide.body}</p>
-      </div>
+type ChatMessage = {
+  id: string;
+  role: 'user' | 'davi' | 'system';
+  content: string;
+  timestamp: Date;
+  steps?: AutoModeStep[];
+  contentCard?: GeneratedContent;
+};
 
-      {/* CTA */}
-      {slide.cta && (
-        <div className="mt-2 py-1.5 px-3 rounded-lg text-center text-[11px] font-bold"
-          style={{ background: accent, color: bg }}>
-          {slide.cta}
-        </div>
-      )}
-    </div>
-  );
+type GeneratedContent = {
+  id: string;
+  type: 'carousel' | 'reel_script' | 'post' | 'story';
+  title: string;
+  preview: string;
+  fullContent: string;
+  createdAt: Date;
+  scheduled?: Date;
+  platform: 'instagram' | 'tiktok' | 'linkedin';
+};
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const AGENT_SWITCHES_DEFAULT: AgentSwitch = {
+  daniel: true,
+  paulo: true,
+  maria: false,
+  autoSchedule: false,
+};
+
+const PLATFORMS = [
+  { value: 'instagram', label: 'Instagram', emoji: '📸' },
+  { value: 'tiktok', label: 'TikTok', emoji: '🎵' },
+  { value: 'linkedin', label: 'LinkedIn', emoji: '💼' },
+] as const;
+
+const CONTENT_TYPES = [
+  { value: 'carousel', label: 'Carrossel', emoji: '🎠' },
+  { value: 'reel_script', label: 'Script de Reel', emoji: '🎬' },
+  { value: 'post', label: 'Post Estático', emoji: '🖼️' },
+  { value: 'story', label: 'Story', emoji: '⭕' },
+] as const;
+
+const INSTAGRAM_REGEX = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/;
+
+function getSmartScheduleTime(): Date {
+  const now = new Date();
+  const hour = now.getHours();
+  const next = new Date(now);
+  const bestHours = [9, 12, 15, 18, 20];
+  const nextHour = bestHours.find(h => h > hour) ?? 9;
+  if (nextHour <= hour) next.setDate(next.getDate() + 1);
+  next.setHours(nextHour, 0, 0, 0);
+  return next;
 }
 
-// Post Status Badge
-function StatusBadge({ status }: { status: SocialPost['status'] }) {
-  const map = {
-    draft: { label: 'Rascunho', className: 'bg-muted text-muted-foreground' },
-    scheduled: { label: 'Agendado', className: 'bg-blue-500/20 text-blue-400' },
-    published: { label: 'Publicado', className: 'bg-emerald-500/20 text-emerald-400' },
-    failed: { label: 'Falhou', className: 'bg-red-500/20 text-red-400' },
-  };
-  const { label, className } = map[status];
-  return <Badge className={`text-[10px] ${className}`}>{label}</Badge>;
+function extractHashtags(text: string): string[] {
+  const matches = text.match(/#\w+/g);
+  return matches ? matches.slice(0, 10) : [];
 }
 
-const TONES = [
-  { value: 'profissional', label: '👔 Profissional' },
-  { value: 'descontraido', label: '😊 Descontraído' },
-  { value: 'educativo', label: '📚 Educativo' },
-  { value: 'vendas', label: '💰 Vendas' },
-  { value: 'inspiracional', label: '✨ Inspiracional' },
-  { value: 'urgente', label: '🔥 Urgente' },
-];
+// ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function DaviSocialMedia() {
-  const {
-    loading, generating, posts, generatedCarousel,
-    setGeneratedCarousel, fetchPosts, generateCarousel, saveDraft, schedulePost, publishNow, deleteDraft,
-  } = useSocialMedia();
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const { posts, schedulePost, saveDraft, fetchPosts } = useSocialMedia();
 
-  const {
-    uploads, isLoading: uploadsLoading, isUploading,
-    uploadFile, deleteUpload, toggleFavorite,
-  } = useCreativeUploads();
-  // Generator form state
-  const [topic, setTopic] = useState('');
-  const [audience, setAudience] = useState('');
-  const [tone, setTone] = useState('profissional');
-  const [slideCount, setSlideCount] = useState([7]);
-  const [includeCta, setIncludeCta] = useState(true);
-  const [brandName, setBrandName] = useState('');
-  const [activeSlide, setActiveSlide] = useState(0);
-  const [caption, setCaption] = useState('');
-  const [hashtags, setHashtags] = useState('');
-  const [activeTab, setActiveTab] = useState('gerador');
+  const [messages, setMessages] = useState<ChatMessage[]>([{
+    id: 'welcome',
+    role: 'davi',
+    content: '👋 Oi! Sou o DAVI — sua máquina automática de conteúdo viral. Cole um link do Instagram, me fale um tema ou clique em **Modo Automático** para eu criar tudo sozinho. 🚀',
+    timestamp: new Date(),
+  }]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [switches, setSwitches] = useState<AgentSwitch>(AGENT_SWITCHES_DEFAULT);
+  const [platform, setPlatform] = useState<'instagram' | 'tiktok' | 'linkedin'>('instagram');
+  const [contentType, setContentType] = useState<'carousel' | 'reel_script' | 'post' | 'story'>('carousel');
+  const [library, setLibrary] = useState<GeneratedContent[]>([]);
+  const [autoModeRunning, setAutoModeRunning] = useState(false);
+  const [clientContext, setClientContext] = useState<{ name: string; produto: string; publico: string } | null>(null);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // ─── Load client context ─────────────────────────────────────────────────
+  useEffect(() => {
+    const load = async () => {
+      if (!user) return;
+      try {
+        const { data } = await supabase
+          .from('client_briefings' as any)
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        if (data) {
+          setClientContext({
+            name: (data as any).client_name || (data as any).business_name || 'Cliente',
+            produto: (data as any).product_service || (data as any).produto || '',
+            publico: (data as any).target_audience || (data as any).publico || '',
+          });
+        }
+      } catch {
+        // No client context available
+      }
+    };
+    load();
+  }, [user]);
+
+  // ─── Load posts ──────────────────────────────────────────────────────────
   useEffect(() => {
     fetchPosts();
   }, []);
 
+  // ─── Auto-scroll ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (generatedCarousel) {
-      setCaption(generatedCarousel.caption);
-      setHashtags(generatedCarousel.hashtags.join(', '));
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // ─── Message helpers ─────────────────────────────────────────────────────
+
+  const addDaviMessage = (content: string): string => {
+    const id = Date.now().toString() + Math.random();
+    setMessages(prev => [...prev, { id, role: 'davi', content, timestamp: new Date() }]);
+    return id;
+  };
+
+  const addUserMessage = (content: string) => {
+    const id = Date.now().toString() + Math.random();
+    setMessages(prev => [...prev, { id, role: 'user', content, timestamp: new Date() }]);
+  };
+
+  const addStepsMessage = (steps: AutoModeStep[]): string => {
+    const id = Date.now().toString() + Math.random();
+    setMessages(prev => [...prev, { id, role: 'system', content: '', timestamp: new Date(), steps: [...steps] }]);
+    return id;
+  };
+
+  const updateStep = (msgId: string, stepId: string, status: AutoModeStep['status'], output?: string) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId || !m.steps) return m;
+      return { ...m, steps: m.steps.map(s => s.id === stepId ? { ...s, status, output: output || s.output } : s) };
+    }));
+  };
+
+  const addContentCard = (msgId: string, content: GeneratedContent) => {
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: content } : m));
+  };
+
+  const addToLibrary = (content: GeneratedContent) => {
+    setLibrary(prev => [content, ...prev]);
+  };
+
+  // ─── API Calls ───────────────────────────────────────────────────────────
+
+  const callDanielApi = async (payload: Record<string, unknown>): Promise<any> => {
+    const { data, error } = await supabase.functions.invoke('daniel-strategy-api', { body: payload });
+    if (error) {
+      const fallback = await supabase.functions.invoke('claude-chat', {
+        body: {
+          messages: [{ role: 'user', content: `Como estrategista de marketing digital, ${JSON.stringify(payload).slice(0, 200)}` }],
+          context: 'assistant',
+        },
+      });
+      return fallback.data?.choices?.[0]?.message?.content || null;
     }
-  }, [generatedCarousel]);
+    return data;
+  };
 
-  const handleGenerate = async () => {
-    if (!topic.trim() || !audience.trim()) return;
-    const result = await generateCarousel({
-      topic: topic.trim(),
-      audience: audience.trim(),
-      tone,
-      slide_count: slideCount[0],
-      include_cta: includeCta,
-      brand_name: brandName.trim() || undefined,
+  const callPauloApi = async (prompt: string, sw: AgentSwitch): Promise<string> => {
+    const ctx = clientContext;
+    const contextStr = ctx
+      ? `Cliente: ${ctx.name}\nProduto: ${ctx.produto}\nPúblico: ${ctx.publico}`
+      : 'Contexto: agência de marketing digital';
+
+    const { data, error } = await supabase.functions.invoke('claude-chat', {
+      body: {
+        messages: [{ role: 'user', content: prompt }],
+        context: 'paulo',
+        config: {
+          description: contextStr,
+          platform,
+          tone: 'persuasivo',
+          creativity: 0.85,
+        },
+      },
     });
-    if (result) setActiveSlide(0);
+    if (error) throw new Error(error.message);
+    return data?.choices?.[0]?.message?.content || '';
   };
 
-  const handleSaveDraft = async () => {
-    if (!generatedCarousel) return;
-    await saveDraft({
-      platform: 'instagram',
-      post_type: 'carousel',
-      caption,
-      hashtags: hashtags.split(',').map(h => h.trim()).filter(Boolean),
-      slides: generatedCarousel.slides,
-    });
-    setActiveTab('posts');
+  // ─── Flow: Instagram link ─────────────────────────────────────────────────
+
+  const processInstagramLink = async (url: string, postId: string) => {
+    addDaviMessage(`🔍 Link do Instagram detectado! Vou analisar o estilo e criar algo similar para o cliente ${clientContext?.name || ''}...`);
+
+    const steps: AutoModeStep[] = [
+      { id: '1', agent: 'daniel', label: 'Daniel analisando estilo do post...', status: switches.daniel ? 'running' : 'skipped' },
+      { id: '2', agent: 'paulo', label: 'Paulo criando conteúdo similar...', status: 'waiting' },
+    ];
+
+    const stepMsgId = addStepsMessage(steps);
+
+    try {
+      let danielAnalysis = '';
+
+      if (switches.daniel) {
+        updateStep(stepMsgId, '1', 'running');
+        const danielResult = await callDanielApi({
+          action: 'analyze_reference',
+          reference_url: url,
+          context: `Analise o estilo, tom, estrutura e tipo de conteúdo deste post do Instagram (ID: ${postId}). Extraia: formato, tom de voz, tamanho do texto, uso de emojis, tipo de hook, estrutura narrativa.`,
+        });
+        danielAnalysis = typeof danielResult === 'string'
+          ? danielResult
+          : danielResult?.analysis || JSON.stringify(danielResult || '');
+        updateStep(stepMsgId, '1', 'completed', danielAnalysis.slice(0, 100) || 'Análise concluída');
+      } else {
+        updateStep(stepMsgId, '1', 'skipped');
+      }
+
+      if (switches.paulo) {
+        updateStep(stepMsgId, '2', 'running');
+        const prompt = `Analisei um post do Instagram (${url}). ${danielAnalysis ? `Estilo identificado: "${danielAnalysis.slice(0, 200)}". ` : ''}Com base no estilo, crie um ${contentType === 'carousel' ? 'carrossel de 7 slides' : contentType === 'reel_script' ? 'script de Reel de 30-60s' : 'post'} similar para ${clientContext?.name || 'nosso cliente'}. Produto: ${clientContext?.produto || 'nosso produto'}. Público: ${clientContext?.publico || 'nosso público'}.`;
+        const pauloResult = await callPauloApi(prompt, switches);
+        updateStep(stepMsgId, '2', 'completed', 'Copy criada!');
+
+        const content: GeneratedContent = {
+          id: Date.now().toString(),
+          type: contentType,
+          title: `Inspirado em Instagram — ${new Date().toLocaleDateString('pt-BR')}`,
+          preview: pauloResult.slice(0, 120),
+          fullContent: pauloResult,
+          createdAt: new Date(),
+          platform,
+        };
+
+        addContentCard(stepMsgId, content);
+        addToLibrary(content);
+      } else {
+        updateStep(stepMsgId, '2', 'skipped');
+      }
+    } catch (err: any) {
+      addDaviMessage(`❌ Erro ao processar o link: ${err.message}`);
+    }
   };
 
-  const handleCopyCaption = () => {
-    const full = caption + '\n\n' + hashtags.split(',').map(h => `#${h.trim()}`).join(' ');
-    navigator.clipboard.writeText(full);
+  // ─── Flow: Auto Mode ──────────────────────────────────────────────────────
+
+  const runAutoMode = async () => {
+    if (autoModeRunning) return;
+    setAutoModeRunning(true);
+
+    const steps: AutoModeStep[] = [
+      switches.daniel ? { id: 'daniel', agent: 'daniel' as const, label: '🧠 Daniel pesquisando tendências...', status: 'waiting' as const } : null,
+      switches.paulo  ? { id: 'paulo',  agent: 'paulo'  as const, label: '✍️ Paulo escrevendo roteiro...',    status: 'waiting' as const } : null,
+      switches.maria  ? { id: 'maria',  agent: 'maria'  as const, label: '🎨 Maria criando visual...',        status: 'waiting' as const } : null,
+      switches.autoSchedule ? { id: 'davi', agent: 'davi' as const, label: '📅 DAVI agendando publicação...', status: 'waiting' as const } : null,
+    ].filter(Boolean) as AutoModeStep[];
+
+    addDaviMessage('⚡ Modo Automático iniciado! Acompanhe cada etapa em tempo real:');
+    const stepMsgId = addStepsMessage(steps);
+
+    try {
+      let danielInsights = '';
+      let pauloContent = '';
+
+      // Step 1: Daniel
+      if (switches.daniel) {
+        updateStep(stepMsgId, 'daniel', 'running');
+        const result = await callDanielApi({
+          action: 'generate_strategy',
+          briefing: {
+            business: clientContext?.name || 'Agência',
+            product: clientContext?.produto || 'Serviço',
+            audience: clientContext?.publico || 'Empreendedores',
+            platform,
+            content_type: contentType,
+            goal: 'Criar conteúdo viral para redes sociais com alta taxa de engajamento',
+          },
+        });
+        danielInsights = typeof result === 'string'
+          ? result
+          : result?.strategy || result?.content || 'Tendências identificadas';
+        updateStep(stepMsgId, 'daniel', 'completed', danielInsights.slice(0, 80));
+      }
+
+      // Step 2: Paulo
+      if (switches.paulo) {
+        updateStep(stepMsgId, 'paulo', 'running');
+        const prompt = switches.daniel && danielInsights
+          ? `Com base nesta estratégia do Daniel: "${danielInsights.slice(0, 300)}", crie um ${contentType === 'carousel' ? 'carrossel de 7 slides com headline, body e CTA por slide' : contentType === 'reel_script' ? 'script completo de Reel (30-60 segundos) com hook, desenvolvimento e CTA' : 'post completo com caption e hashtags'} para ${platform} sobre ${clientContext?.produto || 'nosso produto'}. Público: ${clientContext?.publico || 'nosso público'}.`
+          : `Crie um ${contentType} para ${platform} sobre ${clientContext?.produto || 'nosso produto'}. Público: ${clientContext?.publico || 'nosso público'}.`;
+
+        pauloContent = await callPauloApi(prompt, switches);
+        updateStep(stepMsgId, 'paulo', 'completed', 'Roteiro pronto!');
+      }
+
+      // Step 3: Maria
+      if (switches.maria) {
+        updateStep(stepMsgId, 'maria', 'running');
+        await supabase.functions.invoke('generate-creative', {
+          body: {
+            prompt: `Brief para ${contentType} de ${platform}: ${pauloContent.slice(0, 300)}`,
+            style: 'modern_dark',
+            format: contentType === 'carousel' ? '1080x1080' : '1080x1920',
+          },
+        });
+        updateStep(stepMsgId, 'maria', 'completed', 'Arte criada!');
+      }
+
+      // Step 4: DAVI schedules
+      if (switches.autoSchedule && pauloContent) {
+        updateStep(stepMsgId, 'davi', 'running');
+        const scheduleTime = getSmartScheduleTime();
+
+        // Save draft first to get a post ID, then schedule it
+        const draft = await saveDraft({
+          platform: platform === 'tiktok' || platform === 'linkedin' ? 'instagram' : platform,
+          post_type: contentType === 'carousel' ? 'carousel' : contentType === 'reel_script' ? 'reel' : contentType === 'story' ? 'story' : 'single_image',
+          caption: pauloContent.slice(0, 2000),
+          hashtags: extractHashtags(pauloContent),
+        });
+
+        if (draft?.id) {
+          await schedulePost(draft.id, scheduleTime.toISOString());
+        }
+
+        updateStep(stepMsgId, 'davi', 'completed', `Agendado para ${scheduleTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`);
+      }
+
+      // Save to library
+      const content: GeneratedContent = {
+        id: Date.now().toString(),
+        type: contentType,
+        title: `${contentType === 'carousel' ? 'Carrossel' : contentType === 'reel_script' ? 'Script Reel' : 'Post'} — ${new Date().toLocaleDateString('pt-BR')}`,
+        preview: (pauloContent || danielInsights).slice(0, 120),
+        fullContent: pauloContent || danielInsights,
+        createdAt: new Date(),
+        scheduled: switches.autoSchedule ? getSmartScheduleTime() : undefined,
+        platform,
+      };
+      addContentCard(stepMsgId, content);
+      addToLibrary(content);
+
+      addDaviMessage('✅ Modo Automático concluído! O conteúdo foi salvo na Biblioteca.');
+    } catch (err: any) {
+      addDaviMessage(`❌ Erro no Modo Automático: ${err.message}`);
+    } finally {
+      setAutoModeRunning(false);
+    }
   };
 
-  const draftCount = posts.filter(p => p.status === 'draft').length;
-  const scheduledCount = posts.filter(p => p.status === 'scheduled').length;
-  const publishedCount = posts.filter(p => p.status === 'published').length;
+  // ─── Flow: Manual Chat ────────────────────────────────────────────────────
+
+  const runManualChat = async (text: string) => {
+    const prompt = `Crie ${contentType === 'carousel' ? `um carrossel de 7 slides para ${platform}` : contentType === 'reel_script' ? `um script de Reel de 30-60 segundos para ${platform}` : `um post para ${platform}`} sobre: ${text}. Cliente: ${clientContext?.name || 'agência'}. Produto: ${clientContext?.produto || ''}. Público: ${clientContext?.publico || ''}.`;
+
+    const content = await callPauloApi(prompt, switches);
+
+    const generated: GeneratedContent = {
+      id: Date.now().toString(),
+      type: contentType,
+      title: `${contentType} — ${text.slice(0, 30)}`,
+      preview: content.slice(0, 120),
+      fullContent: content,
+      createdAt: new Date(),
+      platform,
+    };
+
+    const msgId = addDaviMessage('✅ Aqui está o conteúdo criado:');
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+    addToLibrary(generated);
+  };
+
+  // ─── Main dispatch ────────────────────────────────────────────────────────
+
+  const detectAndProcess = async (text: string) => {
+    const instagramMatch = text.match(INSTAGRAM_REGEX);
+    if (instagramMatch) {
+      await processInstagramLink(text, instagramMatch[1]);
+    } else if (text.toLowerCase().includes('modo automático') || text === '__auto__') {
+      await runAutoMode();
+    } else {
+      await runManualChat(text);
+    }
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || loading || autoModeRunning) return;
+    const text = input.trim();
+    setInput('');
+    addUserMessage(text);
+    setLoading(true);
+    try {
+      await detectAndProcess(text);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <MainLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-heading font-bold flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-gradient-to-br from-pink-500/20 to-purple-500/20">
-                <Instagram className="h-6 w-6 text-pink-400" />
+      <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
+
+        {/* ── LEFT PANEL ── */}
+        <div className="flex-1 flex flex-col min-w-0">
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border/50 bg-background/95 backdrop-blur-sm shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-pink-500/20 to-purple-600/20 border border-pink-500/30 flex items-center justify-center">
+                <Instagram className="h-5 w-5 text-pink-400" />
               </div>
-              DAVI — Social Media
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Crie carrosséis virais com IA e agende suas publicações Instagram
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="gap-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse" />
-              DAVI Online
-            </Badge>
-          </div>
-        </div>
-
-        {/* Stats Row */}
-        <div className="grid grid-cols-3 gap-4">
-          <Card>
-            <CardContent className="p-4 text-center">
-              <p className="text-2xl font-bold text-muted-foreground">{draftCount}</p>
-              <p className="text-xs text-muted-foreground">Rascunhos</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <p className="text-2xl font-bold text-blue-400">{scheduledCount}</p>
-              <p className="text-xs text-muted-foreground">Agendados</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <p className="text-2xl font-bold text-emerald-400">{publishedCount}</p>
-              <p className="text-xs text-muted-foreground">Publicados</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Main Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="gerador" className="gap-1.5">
-              <Sparkles className="h-3.5 w-3.5" /> Gerador IA
-            </TabsTrigger>
-            <TabsTrigger value="posts" className="gap-1.5">
-              <Layers className="h-3.5 w-3.5" /> Meus Posts {posts.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{posts.length}</Badge>}
-            </TabsTrigger>
-            <TabsTrigger value="biblioteca" className="gap-1.5">
-              <FolderOpen className="h-3.5 w-3.5" /> Biblioteca {uploads.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{uploads.length}</Badge>}
-            </TabsTrigger>
-            <TabsTrigger value="calendario" className="gap-1.5">
-              <Calendar className="h-3.5 w-3.5" /> Calendário
-            </TabsTrigger>
-          </TabsList>
-
-          {/* ─── GENERATOR TAB ─── */}
-          <TabsContent value="gerador" className="space-y-5 mt-5">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* LEFT: Form */}
-              <div className="space-y-4">
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Zap className="h-4 w-4 text-yellow-400" />
-                      Configurar Carrossel
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Tema do carrossel *</Label>
-                      <Input
-                        placeholder="ex: 5 erros no tráfego pago, Como criar copy que vende..."
-                        value={topic}
-                        onChange={e => setTopic(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Público-alvo *</Label>
-                      <Input
-                        placeholder="ex: empreendedores, gestores de tráfego, PMEs..."
-                        value={audience}
-                        onChange={e => setAudience(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Tom de voz</Label>
-                      <Select value={tone} onValueChange={setTone}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {TONES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Número de slides: {slideCount[0]}</Label>
-                      <Slider
-                        min={4} max={12} step={1}
-                        value={slideCount}
-                        onValueChange={setSlideCount}
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Nome da marca (opcional)</Label>
-                      <Input
-                        placeholder="LogosIA, Minha Empresa..."
-                        value={brandName}
-                        onChange={e => setBrandName(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between py-1">
-                      <div>
-                        <Label className="text-xs">Incluir CTA no último slide</Label>
-                        <p className="text-[10px] text-muted-foreground">Call-to-action para converter</p>
-                      </div>
-                      <Switch checked={includeCta} onCheckedChange={setIncludeCta} />
-                    </div>
-
-                    <Button
-                      className="w-full gradient-primary text-primary-foreground"
-                      onClick={handleGenerate}
-                      disabled={generating || !topic.trim() || !audience.trim()}
-                    >
-                      {generating ? (
-                        <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Gerando com IA...</>
-                      ) : (
-                        <><Sparkles className="h-4 w-4 mr-2" />Gerar Carrossel com DAVI</>
-                      )}
-                    </Button>
-                  </CardContent>
-                </Card>
-
-                {/* Caption Editor */}
-                {generatedCarousel && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center justify-between">
-                        <span>Legenda e Hashtags</span>
-                        <Button size="sm" variant="ghost" onClick={handleCopyCaption}>
-                          <Copy className="h-3.5 w-3.5 mr-1" /> Copiar
-                        </Button>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <Textarea
-                        value={caption}
-                        onChange={e => setCaption(e.target.value)}
-                        rows={6}
-                        className="text-xs resize-none"
-                        placeholder="Legenda do post..."
-                      />
-                      <div className="space-y-1">
-                        <Label className="text-xs flex items-center gap-1">
-                          <Hash className="h-3 w-3" /> Hashtags (separadas por vírgula)
-                        </Label>
-                        <Textarea
-                          value={hashtags}
-                          onChange={e => setHashtags(e.target.value)}
-                          rows={2}
-                          className="text-xs resize-none"
-                          placeholder="marketing, empreendedorismo, negócios..."
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <Button className="flex-1" onClick={handleSaveDraft} variant="outline">
-                          Salvar Rascunho
-                        </Button>
-                        <Button className="flex-1 gradient-primary text-primary-foreground" onClick={handleSaveDraft}>
-                          <Send className="h-4 w-4 mr-1" /> Publicar Agora
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-
-              {/* RIGHT: Preview */}
-              <div className="space-y-4">
-                {generatedCarousel ? (
-                  <>
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm flex items-center justify-between">
-                          <span>Preview — {generatedCarousel.slides.length} slides</span>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              size="sm" variant="ghost"
-                              onClick={() => setActiveSlide(Math.max(0, activeSlide - 1))}
-                              disabled={activeSlide === 0}
-                            >
-                              <ChevronLeft className="h-4 w-4" />
-                            </Button>
-                            <span className="text-xs text-muted-foreground">
-                              {activeSlide + 1}/{generatedCarousel.slides.length}
-                            </span>
-                            <Button
-                              size="sm" variant="ghost"
-                              onClick={() => setActiveSlide(Math.min(generatedCarousel.slides.length - 1, activeSlide + 1))}
-                              disabled={activeSlide === generatedCarousel.slides.length - 1}
-                            >
-                              <ChevronRight className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="p-4">
-                        {/* Main preview */}
-                        <div className="max-w-[280px] mx-auto">
-                          <SlidePreview slide={generatedCarousel.slides[activeSlide]} isActive />
-                        </div>
-
-                        {/* Thumbnail strip */}
-                        <div className="flex gap-2 mt-4 overflow-x-auto pb-2">
-                          {generatedCarousel.slides.map((slide, i) => (
-                            <button
-                              key={i}
-                              onClick={() => setActiveSlide(i)}
-                              className="flex-shrink-0 w-16"
-                            >
-                              <SlidePreview slide={slide} isActive={i === activeSlide} />
-                            </button>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {/* Cover headline */}
-                    <Card className="border-primary/20 bg-primary/5">
-                      <CardContent className="p-4">
-                        <p className="text-xs text-muted-foreground mb-1">Headline da Capa</p>
-                        <p className="font-bold text-primary">{generatedCarousel.cover_headline}</p>
-                      </CardContent>
-                    </Card>
-                  </>
-                ) : (
-                  <Card className="border-dashed border-2 border-primary/20">
-                    <CardContent className="py-20 text-center">
-                      <Instagram className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
-                      <p className="text-muted-foreground text-sm">
-                        Preencha o formulário e gere seu carrossel com IA
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        DAVI vai criar slides prontos para o Instagram 🚀
-                      </p>
-                    </CardContent>
-                  </Card>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-lg font-bold text-foreground">DAVI</h1>
+                  <Badge className="bg-pink-500/20 text-pink-400 border-pink-500/30 text-[10px]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse mr-1.5 inline-block" />
+                    Social Media IA
+                  </Badge>
+                </div>
+                {clientContext && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Cliente: <span className="text-pink-400 font-medium">{clientContext.name}</span>
+                  </p>
                 )}
               </div>
             </div>
-          </TabsContent>
 
-          {/* ─── POSTS TAB ─── */}
-          <TabsContent value="posts" className="mt-5">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-sm text-muted-foreground">{posts.length} posts encontrados</p>
-              <Button size="sm" variant="outline" onClick={() => fetchPosts()} disabled={loading}>
-                <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-                Atualizar
+            <div className="flex items-center gap-3 flex-wrap justify-end">
+              {/* Platform selector */}
+              <div className="flex gap-1">
+                {PLATFORMS.map(p => (
+                  <button
+                    key={p.value}
+                    onClick={() => setPlatform(p.value)}
+                    className={`px-2 py-1 rounded-lg text-xs border transition-all ${platform === p.value ? 'bg-pink-500/20 text-pink-400 border-pink-500/40' : 'bg-muted/30 text-muted-foreground border-border/40 hover:border-border'}`}
+                  >
+                    {p.emoji} {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Content type selector */}
+              <div className="flex gap-1">
+                {CONTENT_TYPES.map(ct => (
+                  <button
+                    key={ct.value}
+                    onClick={() => setContentType(ct.value)}
+                    className={`px-2 py-1 rounded-lg text-xs border transition-all ${contentType === ct.value ? 'bg-purple-500/20 text-purple-400 border-purple-500/40' : 'bg-muted/30 text-muted-foreground border-border/40 hover:border-border'}`}
+                  >
+                    {ct.emoji} {ct.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Modo Automático */}
+              <Button
+                onClick={() => { addUserMessage('⚡ Modo Automático'); detectAndProcess('__auto__'); }}
+                disabled={autoModeRunning || loading}
+                className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white font-semibold gap-2 shadow-lg shadow-pink-500/20"
+              >
+                {autoModeRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                Modo Automático
               </Button>
             </div>
+          </div>
 
-            {loading && posts.length === 0 && (
-              <div className="py-12 text-center">
-                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-primary" />
-                <p className="text-muted-foreground text-sm">Carregando posts...</p>
-              </div>
-            )}
+          {/* Agent switches bar */}
+          <div className="flex items-center gap-4 px-6 py-2 border-b border-border/30 bg-muted/5 flex-wrap">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agentes ativos:</span>
+            {([
+              { key: 'daniel', emoji: '🧠', label: 'Daniel', color: 'text-blue-400' },
+              { key: 'paulo', emoji: '✍️', label: 'Paulo', color: 'text-violet-400' },
+              { key: 'maria', emoji: '🎨', label: 'Maria', color: 'text-pink-400' },
+              { key: 'autoSchedule', emoji: '📅', label: 'Auto-Agendar', color: 'text-emerald-400' },
+            ] as const).map(({ key, emoji, label, color }) => (
+              <label key={key} className="flex items-center gap-1.5 cursor-pointer">
+                <Switch
+                  checked={switches[key]}
+                  onCheckedChange={(v) => setSwitches(prev => ({ ...prev, [key]: v }))}
+                  className="scale-75 data-[state=checked]:bg-pink-500"
+                />
+                <span className={`text-xs ${switches[key] ? color : 'text-muted-foreground/50'}`}>
+                  {emoji} {label}
+                </span>
+              </label>
+            ))}
+          </div>
 
-            {!loading && posts.length === 0 && (
-              <Card className="border-dashed border-2">
-                <CardContent className="py-16 text-center">
-                  <Layers className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
-                  <p className="text-muted-foreground">Nenhum post encontrado</p>
-                  <p className="text-xs text-muted-foreground mt-1">Gere seu primeiro carrossel na aba "Gerador IA"</p>
-                  <Button size="sm" className="mt-4 gradient-primary text-primary-foreground" onClick={() => setActiveTab('gerador')}>
-                    <Sparkles className="h-3.5 w-3.5 mr-1.5" /> Gerar carrossel
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
+          {/* Chat Area */}
+          <ScrollArea className="flex-1 px-6 py-4">
+            <div className="space-y-4 max-w-3xl">
+              {messages.map(message => (
+                <div key={message.id}>
+                  {/* User message */}
+                  {message.role === 'user' && (
+                    <div className="flex justify-end">
+                      <div className="max-w-[75%] bg-muted/60 rounded-2xl rounded-tr-sm px-4 py-3 text-sm text-foreground">
+                        {message.content}
+                      </div>
+                    </div>
+                  )}
 
-            <div className="grid gap-3">
-              {posts.map(post => (
-                <Card key={post.id} className="overflow-hidden">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <StatusBadge status={post.status} />
-                          <Badge variant="outline" className="text-[10px]">
-                            {post.post_type === 'carousel' ? `📱 Carrossel (${post.slides?.length || 0} slides)` : '🖼️ Imagem'}
-                          </Badge>
-                          <span className="text-[10px] text-muted-foreground">
-                            {new Date(post.created_at).toLocaleDateString('pt-BR')}
-                          </span>
+                  {/* DAVI message */}
+                  {message.role === 'davi' && (
+                    <div className="flex gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-pink-500/20 border border-pink-500/30 flex items-center justify-center shrink-0 mt-1">
+                        <Instagram className="h-4 w-4 text-pink-400" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="bg-pink-500/5 border border-pink-500/10 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-foreground">
+                          {message.content}
                         </div>
-                        <p className="text-sm line-clamp-2 text-muted-foreground">{post.caption || 'Sem legenda'}</p>
-                        {post.hashtags?.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1.5">
-                            {post.hashtags.slice(0, 4).map(tag => (
-                              <span key={tag} className="text-[10px] text-primary">#{tag}</span>
-                            ))}
-                            {post.hashtags.length > 4 && (
-                              <span className="text-[10px] text-muted-foreground">+{post.hashtags.length - 4}</span>
+                        {/* Content card attached to davi message */}
+                        {message.contentCard && (
+                          <div className="mt-2 bg-gradient-to-br from-pink-500/10 to-purple-500/10 border border-pink-500/20 rounded-xl p-4">
+                            <div className="flex items-start justify-between mb-2">
+                              <div>
+                                <h4 className="text-sm font-semibold text-foreground">{message.contentCard.title}</h4>
+                                <div className="flex gap-1 mt-1">
+                                  <Badge className="text-[9px] py-0 px-1.5 bg-pink-500/20 text-pink-400 border-pink-500/20">{message.contentCard.platform}</Badge>
+                                  <Badge className="text-[9px] py-0 px-1.5 bg-purple-500/20 text-purple-400 border-purple-500/20">{message.contentCard.type}</Badge>
+                                </div>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(message.contentCard!.fullContent);
+                                  toast({ title: '📋 Copiado!' });
+                                }}
+                              >
+                                <Copy className="h-3 w-3" /> Copiar
+                              </Button>
+                            </div>
+                            <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
+                            {message.contentCard.scheduled && (
+                              <p className="text-[10px] text-emerald-400 mt-2">
+                                📅 Agendado para {message.contentCard.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                              </p>
                             )}
                           </div>
                         )}
-                        {post.scheduled_at && post.status === 'scheduled' && (
-                          <div className="flex items-center gap-1 mt-1.5 text-[11px] text-blue-400">
-                            <Clock className="h-3 w-3" />
-                            Agendado: {new Date(post.scheduled_at).toLocaleString('pt-BR')}
-                          </div>
-                        )}
-                        {post.insights && (
-                          <div className="flex items-center gap-4 mt-2 text-[11px] text-muted-foreground">
-                            <span className="flex items-center gap-1"><Eye className="h-3 w-3" />{post.insights.impressions}</span>
-                            <span className="flex items-center gap-1"><Heart className="h-3 w-3" />{post.insights.likes}</span>
-                            <span className="flex items-center gap-1"><MessageCircle className="h-3 w-3" />{post.insights.comments}</span>
-                            <span className="flex items-center gap-1"><Share2 className="h-3 w-3" />{post.insights.shares}</span>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-1.5 shrink-0">
-                        {post.status === 'draft' && (
-                          <>
-                            <Button size="sm" variant="default" className="gradient-primary text-primary-foreground text-xs"
-                              onClick={() => publishNow(post.id)} disabled={loading}>
-                              <Send className="h-3 w-3 mr-1" /> Publicar
-                            </Button>
-                            <Button size="sm" variant="destructive" className="text-xs"
-                              onClick={() => deleteDraft(post.id)}>
-                              <Trash2 className="h-3 w-3 mr-1" /> Excluir
-                            </Button>
-                          </>
-                        )}
-                        {post.status === 'published' && (
-                          <div className="flex items-center gap-1 text-xs text-emerald-400">
-                            <CheckCircle className="h-3.5 w-3.5" /> Publicado
-                          </div>
-                        )}
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
+                  )}
 
-          {/* ─── BIBLIOTECA TAB ─── */}
-          <TabsContent value="biblioteca" className="mt-5">
-            <CreativeLibrarySection
-              uploads={uploads}
-              isLoading={uploadsLoading}
-              isUploading={isUploading}
-              onUpload={uploadFile}
-              onDelete={deleteUpload}
-              onToggleFavorite={toggleFavorite}
-              onUseInPost={(upload) => {
-                setCaption(prev => prev ? prev + '\n\n' : '' + `📸 ${upload.name}`);
-                setActiveTab('gerador');
-              }}
-            />
-          </TabsContent>
+                  {/* System message with steps */}
+                  {message.role === 'system' && message.steps && (
+                    <div className="ml-11 space-y-2">
+                      <div className="bg-background/60 border border-border/50 rounded-xl p-3 space-y-2">
+                        {message.steps.map(step => (
+                          <div key={step.id} className="flex items-center gap-2">
+                            {step.status === 'waiting'   && <Clock        className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+                            {step.status === 'running'   && <Loader2      className="h-3.5 w-3.5 text-blue-400 animate-spin shrink-0" />}
+                            {step.status === 'completed' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
+                            {step.status === 'failed'    && <XCircle      className="h-3.5 w-3.5 text-red-400 shrink-0" />}
+                            {step.status === 'skipped'   && <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />}
+                            <span className={`text-xs ${step.status === 'running' ? 'text-foreground' : step.status === 'completed' ? 'text-emerald-400' : step.status === 'failed' ? 'text-red-400' : 'text-muted-foreground'}`}>
+                              {step.label}
+                            </span>
+                            {step.output && (
+                              <span className="text-[10px] text-muted-foreground ml-auto truncate max-w-[120px]">{step.output}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
 
-          {/* ─── CALENDAR TAB ─── */}
-          <TabsContent value="calendario" className="mt-5">
-            <ContentCalendar posts={posts} />
-          </TabsContent>
-        </Tabs>
-      </div>
-    </MainLayout>
-  );
-}
-
-// ─── Mini Content Calendar ─────────────────────────────────────────────────
-function ContentCalendar({ posts }: { posts: SocialPost[] }) {
-  const today = new Date();
-  const [currentWeek, setCurrentWeek] = useState(0);
-
-  const weekStart = new Date(today);
-  weekStart.setDate(today.getDate() - today.getDay() + currentWeek * 7);
-
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart);
-    d.setDate(weekStart.getDate() + i);
-    return d;
-  });
-
-  const getPostsForDay = (day: Date) =>
-    posts.filter(p => {
-      const date = p.scheduled_at ? new Date(p.scheduled_at) : new Date(p.created_at);
-      return date.toDateString() === day.toDateString();
-    });
-
-  const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Calendar className="h-4 w-4" />
-            Calendário de Conteúdo
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setCurrentWeek(w => w - 1)}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {days[0].toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} –{' '}
-              {days[6].toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })}
-            </span>
-            <Button size="sm" variant="ghost" onClick={() => setCurrentWeek(w => w + 1)}>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-7 gap-2">
-          {days.map((day, i) => {
-            const dayPosts = getPostsForDay(day);
-            const isToday = day.toDateString() === today.toDateString();
-
-            return (
-              <div key={i} className={`min-h-[120px] rounded-xl border p-2 transition-colors ${isToday ? 'border-primary/40 bg-primary/5' : 'border-border/50'}`}>
-                <div className="flex flex-col items-center mb-2">
-                  <span className="text-[10px] text-muted-foreground">{DAY_LABELS[day.getDay()]}</span>
-                  <span className={`text-sm font-bold ${isToday ? 'text-primary' : ''}`}>
-                    {day.getDate()}
-                  </span>
-                </div>
-                <div className="space-y-1">
-                  {dayPosts.map(post => (
-                    <div key={post.id} className={`text-[9px] rounded px-1 py-0.5 truncate ${post.status === 'scheduled' ? 'bg-blue-500/20 text-blue-400' : post.status === 'published' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-muted text-muted-foreground'}`}>
-                      📱 {post.slides?.length || '?'}s
+                      {/* Generated content card */}
+                      {message.contentCard && (
+                        <div className="bg-gradient-to-br from-pink-500/10 to-purple-500/10 border border-pink-500/20 rounded-xl p-4">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <h4 className="text-sm font-semibold text-foreground">{message.contentCard.title}</h4>
+                              <div className="flex gap-1 mt-1">
+                                <Badge className="text-[9px] py-0 px-1.5 bg-pink-500/20 text-pink-400 border-pink-500/20">{message.contentCard.platform}</Badge>
+                                <Badge className="text-[9px] py-0 px-1.5 bg-purple-500/20 text-purple-400 border-purple-500/20">{message.contentCard.type}</Badge>
+                              </div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                              onClick={() => {
+                                navigator.clipboard.writeText(message.contentCard!.fullContent);
+                                toast({ title: '📋 Copiado!' });
+                              }}
+                            >
+                              <Copy className="h-3 w-3" /> Copiar
+                            </Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
+                          {message.contentCard.scheduled && (
+                            <p className="text-[10px] text-emerald-400 mt-2">
+                              📅 Agendado para {message.contentCard.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  ))}
-                  {dayPosts.length === 0 && (
-                    <div className="text-[10px] text-muted-foreground/40 text-center mt-2">—</div>
                   )}
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              ))}
 
-        {/* Legend */}
-        <div className="flex items-center gap-4 mt-4 text-[10px] text-muted-foreground">
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-blue-500/40" />Agendado</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-emerald-500/40" />Publicado</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-muted" />Rascunho</span>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Creative Library Section ──────────────────────────────────────────────
-function CreativeLibrarySection({
-  uploads, isLoading, isUploading, onUpload, onDelete, onToggleFavorite, onUseInPost,
-}: {
-  uploads: CreativeUpload[];
-  isLoading: boolean;
-  isUploading: boolean;
-  onUpload: (file: File, meta: { name?: string; category?: string; tags?: string[] }) => Promise<any>;
-  onDelete: (id: string) => Promise<void>;
-  onToggleFavorite: (id: string) => Promise<void>;
-  onUseInPost: (upload: CreativeUpload) => void;
-}) {
-  const [filter, setFilter] = useState<'all' | 'favorites'>('all');
-  const fileInputRef = useState<HTMLInputElement | null>(null);
-
-  const filtered = filter === 'favorites' ? uploads.filter(u => u.is_favorite) : uploads;
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    for (const file of Array.from(files)) {
-      await onUpload(file, { category: 'social-media' });
-    }
-    e.target.value = '';
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant={filter === 'all' ? 'default' : 'outline'}
-            onClick={() => setFilter('all')}
-          >
-            Todos ({uploads.length})
-          </Button>
-          <Button
-            size="sm"
-            variant={filter === 'favorites' ? 'default' : 'outline'}
-            onClick={() => setFilter('favorites')}
-          >
-            <Star className="h-3 w-3 mr-1" /> Favoritos
-          </Button>
-        </div>
-        <div>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
-            multiple
-            className="hidden"
-            id="biblioteca-upload"
-            onChange={handleFileSelect}
-          />
-          <Button size="sm" asChild disabled={isUploading}>
-            <label htmlFor="biblioteca-upload" className="cursor-pointer">
-              {isUploading ? (
-                <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Enviando...</>
-              ) : (
-                <><Upload className="h-3.5 w-3.5 mr-1.5" /> Upload</>
-              )}
-            </label>
-          </Button>
-        </div>
-      </div>
-
-      {isLoading && uploads.length === 0 && (
-        <div className="py-12 text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-primary" />
-          <p className="text-muted-foreground text-sm">Carregando biblioteca...</p>
-        </div>
-      )}
-
-      {!isLoading && filtered.length === 0 && (
-        <Card className="border-dashed border-2">
-          <CardContent className="py-16 text-center">
-            <Image className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
-            <p className="text-muted-foreground">
-              {filter === 'favorites' ? 'Nenhum favorito ainda' : 'Sua biblioteca está vazia'}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Faça upload de imagens e vídeos para usar nos seus posts
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-        {filtered.map(upload => (
-          <Card key={upload.id} className="overflow-hidden group relative">
-            <div className="aspect-square relative bg-muted">
-              {upload.file_type === 'image' ? (
-                <img
-                  src={upload.file_url}
-                  alt={upload.name}
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <span className="text-3xl">🎬</span>
+              {loading && (
+                <div className="flex gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-pink-500/20 border border-pink-500/30 flex items-center justify-center shrink-0 mt-1">
+                    <Instagram className="h-4 w-4 text-pink-400" />
+                  </div>
+                  <div className="bg-pink-500/5 border border-pink-500/10 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-muted-foreground flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-pink-400" />
+                    DAVI está criando...
+                  </div>
                 </div>
               )}
-              {/* Overlay actions */}
-              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
-                <Button size="sm" variant="secondary" className="text-xs" onClick={() => onUseInPost(upload)}>
-                  <Send className="h-3 w-3 mr-1" /> Usar no Post
-                </Button>
-                <div className="flex gap-1">
-                  <Button size="icon" variant="ghost" className="h-7 w-7 text-white hover:text-yellow-400" onClick={() => onToggleFavorite(upload.id)}>
-                    <Star className={`h-3.5 w-3.5 ${upload.is_favorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
-                  </Button>
-                  <Button size="icon" variant="ghost" className="h-7 w-7 text-white hover:text-red-400" onClick={() => onDelete(upload.id)}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
+
+              <div ref={scrollRef} />
             </div>
-            <CardContent className="p-2">
-              <p className="text-xs font-medium truncate">{upload.name}</p>
-              <div className="flex items-center justify-between mt-0.5">
-                <span className="text-[10px] text-muted-foreground">
-                  {new Date(upload.created_at).toLocaleDateString('pt-BR')}
-                </span>
-                {upload.is_favorite && <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />}
+          </ScrollArea>
+
+          {/* Mini Calendar strip */}
+          <div className="px-6 py-2 border-t border-border/30 bg-background/50 shrink-0">
+            <div className="flex items-center gap-1 overflow-x-auto pb-1">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider shrink-0 mr-2">Calendário:</span>
+              {Array.from({ length: 7 }, (_, i) => {
+                const d = new Date();
+                d.setDate(d.getDate() + i);
+                const hasPost = posts.some(
+                  p => p.status === 'scheduled' && new Date(p.scheduled_at || '').toDateString() === d.toDateString()
+                );
+                return (
+                  <div
+                    key={i}
+                    className={`shrink-0 flex flex-col items-center px-2.5 py-1.5 rounded-lg cursor-pointer border transition-all ${hasPost ? 'bg-pink-500/20 border-pink-500/40' : 'bg-muted/30 border-border/40 hover:border-border'}`}
+                  >
+                    <span className="text-[9px] text-muted-foreground">{d.toLocaleDateString('pt-BR', { weekday: 'short' }).toUpperCase()}</span>
+                    <span className={`text-sm font-bold ${hasPost ? 'text-pink-400' : 'text-foreground'}`}>{d.getDate()}</span>
+                    {hasPost && <div className="w-1 h-1 rounded-full bg-pink-400 mt-0.5" />}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Input area */}
+          <div className="px-4 pb-4 pt-2 border-t border-border/40 shrink-0">
+            {/* Quick actions */}
+            <div className="flex gap-1.5 mb-2 overflow-x-auto pb-1">
+              {[
+                { emoji: '🎠', label: 'Criar Carrossel', action: 'Crie um carrossel viral de 7 slides' },
+                { emoji: '🎬', label: 'Script de Reel', action: 'Escreva um script de Reel de 30 segundos com hook forte' },
+                { emoji: '📊', label: 'Post de Autoridade', action: 'Crie um post educativo que demonstre autoridade no nicho' },
+                { emoji: '🔥', label: 'Post Viral', action: 'Crie um post com alto potencial de viralização e compartilhamento' },
+                { emoji: '💬', label: 'Story Interativo', action: 'Crie uma sequência de 3 Stories interativos com perguntas' },
+              ].map(qa => (
+                <button
+                  key={qa.label}
+                  onClick={() => { setInput(qa.action); inputRef.current?.focus(); }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-muted/40 hover:bg-muted/70 border border-border/40 hover:border-pink-500/40 text-[11px] text-muted-foreground hover:text-foreground transition-all whitespace-nowrap"
+                >
+                  {qa.emoji} {qa.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Main input */}
+            <div className="relative flex items-end gap-2 bg-muted/30 border border-border/50 rounded-2xl p-2 focus-within:border-pink-500/50 transition-colors">
+              {/* File/link upload button */}
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="p-2 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                title="Anexar arquivo"
+              >
+                <Link className="h-4 w-4" />
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                accept="image/*,video/*,audio/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setInput(prev => prev + ` [arquivo: ${file.name}]`);
+                }}
+              />
+
+              <Textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder="Cole um link do Instagram, descreva o conteúdo ou peça qualquer coisa... (Enter para enviar)"
+                className="flex-1 min-h-[44px] max-h-[100px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-sm py-2 px-1"
+                rows={1}
+              />
+
+              <Button
+                onClick={handleSend}
+                disabled={!input.trim() || loading || autoModeRunning}
+                size="icon"
+                className="h-9 w-9 shrink-0 rounded-xl bg-gradient-to-br from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white disabled:opacity-40"
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground/50 mt-1.5 text-center">
+              Cole links do Instagram para análise automática de estilo · Shift+Enter para nova linha
+            </p>
+          </div>
+        </div>
+
+        {/* ── RIGHT PANEL (library) ── */}
+        <div className="w-72 border-l border-border/50 flex flex-col bg-muted/5 shrink-0">
+          <div className="px-4 py-3 border-b border-border/40 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FolderOpen className="h-4 w-4 text-pink-400" />
+              <span className="text-sm font-semibold">Biblioteca</span>
+            </div>
+            <Badge variant="outline" className="text-[10px]">{library.length} peças</Badge>
+          </div>
+
+          <ScrollArea className="flex-1">
+            <div className="p-3 space-y-2">
+              {library.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Layers className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-xs">Conteúdos gerados aparecem aqui</p>
+                </div>
+              )}
+              {library.map(item => (
+                <div
+                  key={item.id}
+                  className="bg-background/60 border border-border/50 rounded-xl p-3 group hover:border-pink-500/30 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-1 mb-1.5">
+                    <div className="flex gap-1 flex-wrap">
+                      <Badge className="text-[9px] py-0 px-1.5 bg-pink-500/15 text-pink-400 border-pink-500/20">{item.platform}</Badge>
+                      <Badge className="text-[9px] py-0 px-1.5 bg-muted/50 text-muted-foreground border-border/30">{item.type}</Badge>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive/70 hover:text-destructive"
+                      onClick={() => setLibrary(prev => prev.filter(l => l.id !== item.id))}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground line-clamp-3 mb-2">{item.preview}</p>
+                  {item.scheduled && (
+                    <p className="text-[10px] text-emerald-400 mb-1.5">
+                      📅 {item.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                    </p>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                    onClick={() => navigator.clipboard.writeText(item.fullContent).then(() => toast({ title: '📋 Copiado!' }))}
+                  >
+                    <Copy className="h-3 w-3" /> Copiar Conteúdo
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            {/* Scheduled posts section */}
+            {posts.filter(p => p.status === 'scheduled').length > 0 && (
+              <div className="px-3 pb-3">
+                <Separator className="my-2" />
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
+                  Agendados ({posts.filter(p => p.status === 'scheduled').length})
+                </p>
+                {posts.filter(p => p.status === 'scheduled').slice(0, 3).map(post => (
+                  <div key={post.id} className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-2 mb-1.5">
+                    <p className="text-xs text-foreground line-clamp-2">{(post.caption || '').slice(0, 60)}...</p>
+                    <p className="text-[10px] text-blue-400 mt-1">
+                      📅 {new Date(post.scheduled_at || '').toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                    </p>
+                  </div>
+                ))}
               </div>
-            </CardContent>
-          </Card>
-        ))}
+            )}
+          </ScrollArea>
+        </div>
+
       </div>
-    </div>
+    </MainLayout>
   );
 }
