@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { OrchestrationPanel } from '@/components/salomao/OrchestrationPanel';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -90,7 +91,9 @@ function R2({ children }: { children: React.ReactNode }) {
 export default function SalomaoOrchestrator() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [tab, setTab] = useState<'equipe' | 'gerador'>('gerador');
+  const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline'>('gerador');
+  const [activeBriefingId, setActiveBriefingId] = useState<string | null>(null);
+  const [activeClientName, setActiveClientName] = useState('Selecione um cliente');
 
   /* ── Prompt generator state ── */
   const [data, setData] = useState<BriefingData>(EMPTY_BRIEFING);
@@ -177,6 +180,7 @@ export default function SalomaoOrchestrator() {
           {([
             { key: 'equipe', label: '🤖 Equipe de Agentes' },
             { key: 'gerador', label: '⚡ Gerador de Prompt IA' },
+            { key: 'pipeline', label: '🚀 Pipeline' },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -523,6 +527,78 @@ export default function SalomaoOrchestrator() {
                     <li>🔗 <strong>PEDRO (SDR):</strong> Configure diretamente no agente de atendimento</li>
                   </ul>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════ TAB: PIPELINE ══════════════════════ */}
+        {tab === 'pipeline' && (
+          <div className="space-y-5">
+            {/* Sub-header */}
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 flex items-start gap-3">
+              <Zap className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-sm text-amber-400">Pipeline de Orquestração Real entre Agentes</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Salomão coordena Daniel → Paulo + Maria → Aprovação → José em tempo real, usando o banco de dados como barramento de mensagens.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Left: briefing selector */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-muted-foreground">Selecionar Cliente</h3>
+                <div className="rounded-xl border border-border/50 bg-card/40 p-4 space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Para usar o pipeline real, selecione um briefing salvo ou crie um novo pelo Gerador de Prompt IA.
+                  </p>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-foreground/80">ID do Briefing (manual)</p>
+                    <input
+                      type="text"
+                      placeholder="Cole o UUID do briefing aqui"
+                      className="w-full text-xs px-3 py-2 rounded-lg border border-border/60 bg-background/50 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+                      onChange={(e) => {
+                        const val = e.target.value.trim();
+                        if (val) {
+                          setActiveBriefingId(val);
+                          setActiveClientName('Cliente selecionado');
+                        } else {
+                          setActiveBriefingId(null);
+                          setActiveClientName('Selecione um cliente');
+                        }
+                      }}
+                    />
+                  </div>
+                  {activeBriefingId && (
+                    <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                      <p className="text-[10px] text-emerald-400 font-mono break-all">{activeBriefingId}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Architecture reminder */}
+                <div className="rounded-xl border border-border/40 bg-muted/20 p-4 space-y-2">
+                  <h4 className="text-xs font-semibold text-muted-foreground">Fluxo do Pipeline</h4>
+                  <div className="font-mono text-[10px] text-muted-foreground space-y-1">
+                    <p className="text-yellow-400">👑 Salomão (coordena)</p>
+                    <p className="ml-2">↓</p>
+                    <p className="ml-2 text-cyan-400">🧠 Daniel (estratégia)</p>
+                    <p className="ml-2">↓</p>
+                    <p className="ml-2 text-blue-400">✍️ Paulo + 🎨 Maria (paralelo)</p>
+                    <p className="ml-2">↓</p>
+                    <p className="ml-2 text-amber-400">⏸ Approval Gate</p>
+                    <p className="ml-2">↓</p>
+                    <p className="ml-2 text-emerald-400">🎯 José (campanha)</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: orchestration panel */}
+              <div className="lg:col-span-2">
+                <OrchestrationPanel briefingId={activeBriefingId} clientName={activeClientName} />
               </div>
             </div>
           </div>
