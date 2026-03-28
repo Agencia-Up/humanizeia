@@ -356,8 +356,8 @@ MENSAGEM: sua mensagem aqui`;
         } catch (_) { /* ignore parse errors */ }
       }
 
-      const assistantMsg = msgMatch?.[1]?.trim()
-        ?? content.replace(/FIELDS_JSON:[\s\S]*?END_JSON/g, '').trim()
+      const assistantMsg = (msgMatch?.[1]?.trim()
+        ?? content.replace(/FIELDS_JSON:[\s\S]*?END_JSON/g, '').trim())
         || 'Entendido! Campos atualizados.';
 
       setChatMessages([...newMessages, { role: 'assistant', content: assistantMsg }]);
