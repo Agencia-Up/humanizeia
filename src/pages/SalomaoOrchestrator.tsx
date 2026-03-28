@@ -180,7 +180,7 @@ export default function SalomaoOrchestrator() {
           {([
             { key: 'equipe', label: '🤖 Equipe de Agentes' },
             { key: 'gerador', label: '⚡ Gerador de Prompt IA' },
-            { key: 'pipeline', label: '🚀 Pipeline' },
+            { key: 'pipeline', label: '🚀 Fluxo Organizado de Etapas' },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -539,7 +539,7 @@ export default function SalomaoOrchestrator() {
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 flex items-start gap-3">
               <Zap className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold text-sm text-amber-400">Pipeline de Orquestração Real entre Agentes</p>
+                <p className="font-semibold text-sm text-amber-400">Fluxo Organizado de Etapas entre Agentes</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Salomão coordena Daniel → Paulo + Maria → Aprovação → José em tempo real, usando o banco de dados como barramento de mensagens.
                 </p>
@@ -581,7 +581,7 @@ export default function SalomaoOrchestrator() {
 
                 {/* Architecture reminder */}
                 <div className="rounded-xl border border-border/40 bg-muted/20 p-4 space-y-2">
-                  <h4 className="text-xs font-semibold text-muted-foreground">Fluxo do Pipeline</h4>
+                  <h4 className="text-xs font-semibold text-muted-foreground">Fluxo Organizado de Etapas</h4>
                   <div className="font-mono text-[10px] text-muted-foreground space-y-1">
                     <p className="text-yellow-400">👑 Salomão (coordena)</p>
                     <p className="ml-2">↓</p>

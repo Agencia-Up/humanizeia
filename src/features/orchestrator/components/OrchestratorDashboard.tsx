@@ -272,7 +272,7 @@ const OrchestratorDashboard = () => {
         <TabsContent value="tasks">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-white">Pipeline de Tarefas Master</h3>
+                <h3 className="text-lg font-semibold text-white">Fluxo Organizado de Etapas Master</h3>
                 <Badge className="bg-purple-500/10 text-purple-400 border-purple-500/20">{activeTasks.length} tarefas</Badge>
             </div>
             

@@ -90,7 +90,7 @@ export function OrchestrationPanel({ briefingId, clientName }: OrchestrationPane
           <div className="flex items-center justify-between">
             <CardTitle className="text-base flex items-center gap-2">
               <Zap className="h-4 w-4 text-amber-400" />
-              Pipeline de Campanha
+              Fluxo Organizado de Etapas
             </CardTitle>
             {state.taskId && (
               <Button variant="ghost" size="sm" onClick={refreshStatus} className="h-7 text-xs gap-1.5 text-muted-foreground">
@@ -131,7 +131,7 @@ export function OrchestrationPanel({ briefingId, clientName }: OrchestrationPane
               className="w-full bg-amber-500 hover:bg-amber-600 text-black font-semibold gap-2"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              Iniciar Pipeline Completo
+              Iniciar Fluxo Organizado de Etapas
             </Button>
           )}
 
@@ -196,11 +196,11 @@ export function OrchestrationPanel({ briefingId, clientName }: OrchestrationPane
           {isCompleted && (
             <div className="space-y-3">
               <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center">
-                <p className="text-emerald-400 font-semibold text-sm">🎉 Pipeline concluído com sucesso!</p>
+                <p className="text-emerald-400 font-semibold text-sm">🎉 Fluxo organizado de etapas concluído com sucesso!</p>
                 <p className="text-xs text-muted-foreground mt-1">Todos os agentes executaram. Campanha pronta para veiculação.</p>
               </div>
               <Button onClick={reset} variant="outline" className="w-full gap-2" size="sm">
-                <RefreshCw className="h-4 w-4" /> Novo Pipeline
+                <RefreshCw className="h-4 w-4" /> Novo Fluxo de Etapas
               </Button>
             </div>
           )}
