@@ -27,14 +27,13 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-    const token = authHeader.replace('Bearer ', '');
 
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     });
 
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
+    const { data: claimsData, error: claimsError } = await supabase.auth.getUser();
+    if (claimsError || !claimsData?.user) {
       console.error('Auth error:', claimsError?.message);
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
@@ -42,7 +41,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const userId = claimsData.claims.sub as string;
+    const userId = claimsData.user.id;
     console.log('WhatsApp report request from user:', userId);
 
     // Fetch user's WhatsApp config using service role to read api_key
