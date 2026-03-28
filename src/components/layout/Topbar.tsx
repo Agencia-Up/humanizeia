@@ -24,7 +24,7 @@ export function Topbar() {
   };
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-border/50 bg-background/80 px-4 backdrop-blur-lg lg:px-6">
+    <header className="shrink-0 sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b border-border/50 bg-background/95 px-4 backdrop-blur-xl lg:px-6 shadow-sm">
       <div className="flex items-center gap-4">
         <SidebarTrigger className="lg:hidden"><Menu className="h-5 w-5" /></SidebarTrigger>
         <div className="relative hidden md:block">
