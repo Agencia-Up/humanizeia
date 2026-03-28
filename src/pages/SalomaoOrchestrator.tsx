@@ -16,6 +16,7 @@ import {
   Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
   FileCode2, Zap, Copy, Check, Loader2, ChevronRight,
   ShoppingBag, Target, MessageSquare, Shield, TrendingUp,
+  Globe, Share2,
 } from 'lucide-react';
 
 /* ── Agent definitions ──────────────────────────────────────────────── */
@@ -39,6 +40,7 @@ interface BriefingData {
   produto: string; preco: string; beneficios: string; mecanismo: string; garantia: string; prazoResultado: string;
   ondeVende: string; canais: string; funil: string; objetivo: string;
   tom: string; girias: string; humor: string; referencia: string;
+  redesSociais: string; paletaCores: string; identidadeVisual: string; site: string;
   resultados: string; autoridade: string; depoimento: string;
   devesFazer: string; naoFazer: string; cta: string; nomeAgente: string;
 }
@@ -48,6 +50,7 @@ const EMPTY_BRIEFING: BriefingData = {
   produto: '', preco: '', beneficios: '', mecanismo: '', garantia: '', prazoResultado: '',
   ondeVende: '', canais: '', funil: '', objetivo: '',
   tom: '', girias: 'não usar gírias', humor: 'sem humor', referencia: '',
+  redesSociais: '', paletaCores: '', identidadeVisual: '', site: '',
   resultados: '', autoridade: '', depoimento: '',
   devesFazer: '', naoFazer: '', cta: '', nomeAgente: '',
 };
@@ -58,7 +61,7 @@ const REQUIRED_FIELDS: (keyof BriefingData)[] = [
   'ondeVende', 'canais', 'objetivo', 'tom', 'devesFazer', 'naoFazer', 'cta',
 ];
 function buildBriefingText(d: BriefingData) {
-  return `NEGÓCIO: ${d.vendeProduto}\nProblema resolve: ${d.problemaResolve}\nTransformação: ${d.transformacao}\nDiferencial único: ${d.diferencial}\n\nCLIENTE IDEAL:\nPerfil: ${d.perfilCliente}\nDor principal: ${d.dor}\nMaior desejo: ${d.desejo}\nObjeções: ${d.objecoes}\nGatilho de compra: ${d.triggerCompra}\n\nOFERTA:\nProduto: ${d.produto} | Preço: ${d.preco}\nBenefícios: ${d.beneficios}\nMecanismo único: ${d.mecanismo}\nGarantia/bônus: ${d.garantia} | Prazo resultado: ${d.prazoResultado}\n\nAQUISIÇÃO:\nCanal de venda: ${d.ondeVende}\nCanais de tráfego: ${d.canais}\nFunil atual: ${d.funil}\nObjetivo do agente: ${d.objetivo}\n\nCOMUNICAÇÃO:\nTom de voz: ${d.tom}\nGírias: ${d.girias} | Humor: ${d.humor}\nReferência de estilo: ${d.referencia || 'não especificada'}\n\nAUTORIDADE:\nResultados: ${d.resultados}\nAutoridade/tempo: ${d.autoridade}\nDepoimento: ${d.depoimento}\n\nREGRAS:\nDeve fazer: ${d.devesFazer}\nNÃO pode fazer: ${d.naoFazer}\nCTA principal: ${d.cta}\nNome do agente: ${d.nomeAgente || 'não especificado'}`.trim();
+  return `NEGÓCIO: ${d.vendeProduto}\nProblema resolve: ${d.problemaResolve}\nTransformação: ${d.transformacao}\nDiferencial único: ${d.diferencial}\n\nCLIENTE IDEAL:\nPerfil: ${d.perfilCliente}\nDor principal: ${d.dor}\nMaior desejo: ${d.desejo}\nObjeções: ${d.objecoes}\nGatilho de compra: ${d.triggerCompra}\n\nOFERTA:\nProduto: ${d.produto} | Preço: ${d.preco}\nBenefícios: ${d.beneficios}\nMecanismo único: ${d.mecanismo}\nGarantia/bônus: ${d.garantia} | Prazo resultado: ${d.prazoResultado}\n\nAQUISIÇÃO:\nCanal de venda: ${d.ondeVende}\nCanais de tráfego: ${d.canais}\nFunil atual: ${d.funil}\nObjetivo do agente: ${d.objetivo}\n\nCOMUNICAÇÃO:\nTom de voz: ${d.tom}\nGírias: ${d.girias} | Humor: ${d.humor}\nReferência de estilo: ${d.referencia || 'não especificada'}\n\nIDENTIDADE DE MARCA:\nRedes sociais: ${d.redesSociais || 'não informado'}\nPaleta de cores: ${d.paletaCores || 'não informado'}\nIdentidade visual: ${d.identidadeVisual || 'não informado'}\nSite: ${d.site || 'não informado'}\n\nAUTORIDADE:\nResultados: ${d.resultados}\nAutoridade/tempo: ${d.autoridade}\nDepoimento: ${d.depoimento}\n\nREGRAS:\nDeve fazer: ${d.devesFazer}\nNÃO pode fazer: ${d.naoFazer}\nCTA principal: ${d.cta}\nNome do agente: ${d.nomeAgente || 'não especificado'}`.trim();
 }
 
 /* ── Small helpers ───────────────────────────────────────────────────── */
@@ -429,7 +432,24 @@ export default function SalomaoOrchestrator() {
                   </F>
                 </SectionCard>
 
-                <SectionCard num={6} icon={Megaphone} title="Provas & Autoridade">
+                <SectionCard num={6} icon={Palette} title="Identidade Visual & Marca">
+                  <F label="Redes sociais" hint="Perfis ativos onde o negócio tem presença">
+                    <Input value={data.redesSociais} onChange={set('redesSociais')} placeholder="Ex: @empresa no Instagram, LinkedIn /empresa, TikTok @empresa" />
+                  </F>
+                  <R2>
+                    <F label="Paleta de cores" hint="Cores principais da marca (hex ou nome)">
+                      <Input value={data.paletaCores} onChange={set('paletaCores')} placeholder="Ex: #1A1A2E (azul-escuro), #FFD700 (dourado)" />
+                    </F>
+                    <F label="Site (caso tenha)">
+                      <Input value={data.site} onChange={set('site')} placeholder="Ex: www.empresa.com.br" />
+                    </F>
+                  </R2>
+                  <F label="Identidade visual" hint="Descreva o estilo visual da marca">
+                    <Textarea value={data.identidadeVisual} onChange={set('identidadeVisual')} placeholder="Ex: Minimalista, tons escuros com dourado, tipografia sans-serif, estética premium/luxo. Logo com símbolo geométrico." className="min-h-[70px]" />
+                  </F>
+                </SectionCard>
+
+                <SectionCard num={7} icon={Megaphone} title="Provas & Autoridade">
                   <F label="Resultados / números">
                     <Textarea value={data.resultados} onChange={set('resultados')} placeholder="Ex: +500 alunos, média 3x ROI em 30 dias, R$2M em vendas" className="min-h-[60px]" />
                   </F>
@@ -441,7 +461,7 @@ export default function SalomaoOrchestrator() {
                   </F>
                 </SectionCard>
 
-                <SectionCard num={7} icon={Shield} title="Regras do Agente">
+                <SectionCard num={8} icon={Shield} title="Regras do Agente">
                   <F label="O que o agente DEVE fazer?">
                     <Textarea value={data.devesFazer} onChange={set('devesFazer')} placeholder="Ex: Identificar perfil, apresentar oferta naturalmente, contornar objeções, guiar para CTA" className="min-h-[70px]" />
                   </F>
