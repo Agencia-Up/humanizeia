@@ -205,6 +205,21 @@ const FUNNEL_TEMPLATES: FunnelTemplate[] = [
       { id: 'client', name: 'Cliente Fiel', emoji: '🏆', agents: [{ name: 'MARCOS', color: 'bg-purple-500' }], conversionRate: 100, description: 'LTV maximizado' },
     ],
   },
+  {
+    id: 'aida_basic',
+    emoji: '🎯',
+    title: 'Funil AIDA Completo',
+    description: 'Modelo estratégico com cada agente responsável por uma etapa da jornada — Atenção, Interesse, Desejo e Ação',
+    stages: ['Atenção (DAVI)', 'Interesse (LUCAS)', 'Desejo (JOÃO)', 'Ação (MARCOS)', 'Pós-Venda (DANIEL)'],
+    conversion: '3–8%',
+    stages_data: [
+      { id: 'atencao',   name: 'Atenção',   emoji: '👀', agents: [{ name: 'DAVI',   color: 'bg-sky-500' }],     conversionRate: 100, description: 'Conteúdo social que gera atenção' },
+      { id: 'interesse', name: 'Interesse', emoji: '🖥️', agents: [{ name: 'LUCAS',  color: 'bg-orange-500' }, { name: 'PAULO', color: 'bg-yellow-500' }], conversionRate: 30, description: 'Landing page que converte visitantes em leads' },
+      { id: 'desejo',    name: 'Desejo',    emoji: '📧', agents: [{ name: 'JOÃO',   color: 'bg-emerald-500' }], conversionRate: 55, description: 'Sequência de email que aquece o lead' },
+      { id: 'acao',      name: 'Ação',      emoji: '💳', agents: [{ name: 'MARCOS', color: 'bg-purple-500' }],  conversionRate: 15, description: 'Checkout e captura de conversão' },
+      { id: 'posvenda',  name: 'Pós-Venda', emoji: '📊', agents: [{ name: 'DANIEL', color: 'bg-blue-500' }],   conversionRate: 90, description: 'Análise de KPI e estratégia de retenção' },
+    ],
+  },
 ];
 
 // ─── Performance data for metrics tab ────────────────────────────────────────
