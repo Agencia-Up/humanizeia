@@ -28,6 +28,11 @@ serve(async (req) => {
       return await generateEmail(body, corsHeaders);
     }
 
+    if (action === 'send_campaign') {
+      return await sendCampaign(body, user, supabase, corsHeaders);
+    }
+
+
     throw new Error(`Ação desconhecida: ${action}`);
 
   } catch (err: any) {
@@ -139,4 +144,78 @@ ${sender}
 
 ${ps ? `P.S. Essa é uma oportunidade única. Quem agir agora vai sair na frente. Clique no botão acima e comece hoje mesmo.` : ''}`.trim(),
   };
+}
+
+// ─── SEND CAMPAIGN ──────────────────────────────────────────────────────────
+async function sendCampaign(body: any, user: any, supabase: any, cors: Record<string, string>) {
+  const { to_email, to_name = '', subject, body_text, cta_url = '', cta_label = 'Saiba mais' } = body;
+
+  if (!to_email || !subject || !body_text) {
+    return new Response(JSON.stringify({ error: 'to_email, subject e body_text são obrigatórios.' }), {
+      status: 400, headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Busca credenciais Resend salvas pelo usuário em platform_integrations
+  const { data: integration } = await supabase
+    .from('platform_integrations')
+    .select('metadata, api_key_encrypted')
+    .eq('user_id', user.id)
+    .eq('platform', 'resend')
+    .eq('is_active', true)
+    .maybeSingle();
+
+  // Fallback para RESEND_API_KEY global da plataforma
+  const resendKey = integration?.api_key_encrypted || Deno.env.get('RESEND_API_KEY');
+  const fromEmail = integration?.metadata?.from_email || 'LogosIA <onboarding@resend.dev>';
+  const fromName = integration?.metadata?.from_email
+    ? `João — ${integration.metadata.from_email}`
+    : 'João — LogosIA';
+
+  if (!resendKey) {
+    return new Response(JSON.stringify({
+      error: 'Resend não configurado. Vá em Integrações → Outras Integrações → Resend e adicione sua API Key.',
+    }), { status: 400, headers: { ...cors, 'Content-Type': 'application/json' } });
+  }
+
+  // Monta HTML simples mas bonito
+  const ctaBlock = cta_url
+    ? `<div style="text-align:center;margin:28px 0;">
+        <a href="${cta_url}" style="display:inline-block;padding:14px 36px;background:#14b89a;color:#fff;font-weight:700;font-size:15px;text-decoration:none;border-radius:10px;">${cta_label}</a>
+       </div>`
+    : '';
+
+  const htmlBody = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"></head>
+<body style="background:#071620;font-family:Inter,sans-serif;color:#e8f5f2;padding:32px 16px;">
+  <div style="max-width:600px;margin:0 auto;background:#101f2c;border:1px solid #1a3040;border-radius:16px;padding:40px;">
+    <div style="height:4px;background:linear-gradient(90deg,#14b89a,#2bbdab);border-radius:4px;margin-bottom:32px;"></div>
+    ${to_name ? `<p style="color:#7db5a8;font-size:15px;margin-bottom:20px;">Olá, <strong style="color:#e8f5f2;">${to_name}</strong>!</p>` : ''}
+    <div style="white-space:pre-line;color:#e8f5f2;font-size:15px;line-height:1.75;">${body_text.replace(/\n/g, '<br>')}</div>
+    ${ctaBlock}
+    <hr style="border:none;border-top:1px solid #1a3040;margin:28px 0;">
+    <p style="color:#7db5a8;font-size:12px;text-align:center;">Enviado por ${fromName}</p>
+  </div>
+</body></html>`;
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: fromEmail,
+      to: [to_email],
+      subject,
+      html: htmlBody,
+    }),
+  });
+
+  const result = await res.json();
+  if (!res.ok) {
+    return new Response(JSON.stringify({ error: 'Erro ao enviar via Resend.', details: result }), {
+      status: res.status, headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify({ success: true, email_id: result.id }), {
+    headers: { ...cors, 'Content-Type': 'application/json' },
+  });
 }
