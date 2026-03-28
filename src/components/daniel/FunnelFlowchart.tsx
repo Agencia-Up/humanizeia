@@ -137,10 +137,12 @@ const EditableNode = memo(({ data, selected }: NodeProps<FunnelNodeData>) => {
         cursor: 'pointer',
       }}
     >
-      <Handle type="target"  position={Position.Top}    style={{ background: phaseColor.border }} />
-      <Handle type="source"  position={Position.Bottom} style={{ background: phaseColor.border }} />
-      <Handle type="source"  position={Position.Left}   id="left"  style={{ background: phaseColor.border }} />
-      <Handle type="source"  position={Position.Right}  id="right" style={{ background: phaseColor.border }} />
+      {/* Handles para layout vertical (top/bottom) */}
+      <Handle type="target" position={Position.Top}    style={{ background: phaseColor.border }} />
+      <Handle type="source" position={Position.Bottom} style={{ background: phaseColor.border }} />
+      {/* Handles para layout horizontal (left/right) */}
+      <Handle type="target" position={Position.Left}   id="left"  style={{ background: phaseColor.border }} />
+      <Handle type="source" position={Position.Right}  id="right" style={{ background: phaseColor.border }} />
 
       {/* Edit hint */}
       {hovered && (
@@ -807,7 +809,7 @@ export function FunnelFlowchart() {
           onNodeClick={handleNodeClick}
           nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={{ padding: 0.05, maxZoom: 0.7 }}
+          fitViewOptions={{ padding: 0.15, maxZoom: 0.8 }}
           minZoom={0.08}
           maxZoom={2}
           deleteKeyCode="Delete"
