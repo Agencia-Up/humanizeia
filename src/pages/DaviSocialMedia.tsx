@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -220,6 +221,20 @@ export default function DaviSocialMedia() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // ─── Instagram connection check ─────────────────────────────────────────
+  const { data: igAccount } = useQuery({
+    queryKey: ['ig-publisher-davi', user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('social-media-api', {
+        body: { action: 'get_ig_account' },
+      });
+      if (error) return null;
+      return data as { connected: boolean; ig_account_id?: string; username?: string } | null;
+    },
+    enabled: !!user,
+    staleTime: 30000,
+  });
+
   // ─── Load client context ─────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
@@ -295,6 +310,49 @@ export default function DaviSocialMedia() {
       if (m.id !== msgId || !m.contentCard) return m;
       return { ...m, contentCard: { ...m.contentCard, templateId } };
     }));
+  };
+
+  const handlePublishNow = async (content: GeneratedContent) => {
+    if (!igAccount?.connected) {
+      toast({ title: '⚠️ Instagram não conectado', description: 'Vá em Integrações e conecte o Instagram Business para publicar.', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Sessão expirada');
+
+      const { data: post, error: saveError } = await supabase
+        .from('social_posts' as any)
+        .insert({
+          user_id: user?.id,
+          caption: content.fullContent || content.preview,
+          hashtags: [],
+          post_type: content.type === 'carousel' ? 'carousel' : 'single',
+          platform: content.platform,
+          status: 'draft',
+          content_data: { slides: content.slides, title: content.title },
+        } as any)
+        .select('id')
+        .single();
+
+      if (saveError || !post) throw new Error('Erro ao salvar post');
+
+      toast({ title: '📤 Publicando...', description: 'Enviando para o Instagram...' });
+
+      const { data: publishResult, error: publishError } = await supabase.functions.invoke('social-media-api', {
+        body: { action: 'publish_post', post_id: (post as any).id },
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+
+      if (publishError || publishResult?.error) {
+        throw new Error(publishResult?.error || publishError?.message || 'Erro ao publicar');
+      }
+
+      toast({ title: '✅ Publicado no Instagram!', description: `Post "${content.title}" publicado com sucesso.` });
+    } catch (err: any) {
+      toast({ title: 'Erro ao publicar', description: err.message, variant: 'destructive' });
+    }
   };
 
   // ─── API Calls ───────────────────────────────────────────────────────────
@@ -702,6 +760,26 @@ export default function DaviSocialMedia() {
             ))}
           </div>
 
+          {/* Instagram connection status */}
+          {igAccount !== undefined && (
+            <div className={`mx-6 my-2 rounded-lg border px-3 py-2 flex items-center justify-between gap-2 text-xs ${
+              igAccount?.connected
+                ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400'
+                : 'border-amber-500/20 bg-amber-500/5 text-amber-400'
+            }`}>
+              <div className="flex items-center gap-2">
+                <Instagram className="h-3.5 w-3.5 shrink-0" />
+                {igAccount?.connected
+                  ? `Instagram conectado${igAccount.username ? ` (@${igAccount.username})` : ''} — Davi pode publicar automaticamente`
+                  : 'Instagram não conectado — conecte em Integrações para publicar'
+                }
+              </div>
+              {!igAccount?.connected && (
+                <a href="/integrations" className="text-amber-400 underline shrink-0">Conectar</a>
+              )}
+            </div>
+          )}
+
           {/* Chat Area */}
           <ScrollArea className="flex-1 px-6 py-4">
             <div className="space-y-4 max-w-3xl">
@@ -764,6 +842,17 @@ export default function DaviSocialMedia() {
                                 📅 Agendado para {message.contentCard.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
                               </p>
                             )}
+                            <div className="mt-3">
+                              <Button
+                                size="sm"
+                                className={`text-xs w-full ${igAccount?.connected ? 'gradient-primary text-primary-foreground' : 'opacity-50 cursor-not-allowed'}`}
+                                onClick={() => message.contentCard && handlePublishNow(message.contentCard)}
+                                title={igAccount?.connected ? 'Publicar agora no Instagram' : 'Conecte o Instagram primeiro'}
+                              >
+                                <Send className="h-3 w-3 mr-1" />
+                                {igAccount?.connected ? 'Publicar no Instagram' : 'Instagram desconectado'}
+                              </Button>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -829,6 +918,17 @@ export default function DaviSocialMedia() {
                               📅 Agendado para {message.contentCard.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
                             </p>
                           )}
+                          <div className="mt-3">
+                            <Button
+                              size="sm"
+                              className={`text-xs w-full ${igAccount?.connected ? 'gradient-primary text-primary-foreground' : 'opacity-50 cursor-not-allowed'}`}
+                              onClick={() => message.contentCard && handlePublishNow(message.contentCard)}
+                              title={igAccount?.connected ? 'Publicar agora no Instagram' : 'Conecte o Instagram primeiro'}
+                            >
+                              <Send className="h-3 w-3 mr-1" />
+                              {igAccount?.connected ? 'Publicar no Instagram' : 'Instagram desconectado'}
+                            </Button>
+                          </div>
                         </div>
                       )}
                     </div>
