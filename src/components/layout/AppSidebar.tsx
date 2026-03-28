@@ -3,7 +3,6 @@ import {
   Brain,
   PenTool,
   Palette,
-  Layers,
   FolderOpen,
   BarChart3,
   Plug,
@@ -61,12 +60,10 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 const agentItems = [
   { title: 'Salomão — Orquestrador', url: '/salomao', icon: Sparkles },
   { title: 'Daniel — Estrategista', url: '/daniel', icon: Brain },
-  { title: 'José — Tráfego Pago', url: '/apollo', icon: Radar },
   { title: 'Paulo — Copywriter', url: '/copywriter', icon: PenTool },
   { title: 'Maria — Design', url: '/creative-studio', icon: Palette },
   { title: 'Davi — Social Media', url: '/davi', icon: Instagram },
   { title: 'João — Email Mkt', url: '/joao', icon: Send },
-  { title: 'Lucas — Funil de Vendas', url: '/lucas', icon: Layers },
   { title: 'Marcos — Leads & WhatsApp', url: '/leads', icon: Users },
 ];
 

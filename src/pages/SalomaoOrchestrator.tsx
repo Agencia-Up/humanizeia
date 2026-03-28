@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { OrchestrationPanel } from '@/components/salomao/OrchestrationPanel';
+import { FunnelFlowchart } from '@/components/daniel/FunnelFlowchart';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,7 +23,7 @@ import {
 /* ── Agent definitions ──────────────────────────────────────────────── */
 const AGENTS = [
   { id: 'salomao', name: 'SALOMÃO', role: 'Orquestrador', icon: Sparkles, description: 'Coordena todos os agentes. Recebe o briefing do cliente e distribui tarefas.', status: 'active', color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20', url: '/salomao' },
-  { id: 'jose', name: 'JOSÉ', role: 'Tráfego Pago', icon: Radar, description: 'Gerencia Meta Ads, Google Ads e TikTok com autonomia total. Analisa, otimiza, pausa e escala campanhas.', status: 'active', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', url: '/apollo' },
+  { id: 'jose', name: 'JOSÉ', role: 'Tráfego Pago', icon: Radar, description: 'Gerencia Meta Ads, Google Ads e TikTok com autonomia total. Analisa, otimiza, pausa e escala campanhas.', status: 'coming', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', url: null },
   { id: 'paulo', name: 'PAULO', role: 'Copywriter', icon: PenTool, description: 'Escreve headlines, body copy, CTAs, scripts de vídeo e sequências de email que convertem.', status: 'active', color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20', url: '/copywriter' },
   { id: 'maria', name: 'MARIA', role: 'Designer', icon: Palette, description: 'Cria imagens, banners e criativos com IA. Remove fundo, redimensiona e gera variações.', status: 'active', color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20', url: '/creative-studio' },
   { id: 'daniel', name: 'DANIEL', role: 'Estrategista', icon: Brain, description: 'Analisa mercado, concorrentes e posicionamento. Define personas, ângulos e plano de 90 dias.', status: 'active', color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20', url: '/daniel' },
@@ -94,7 +95,7 @@ function R2({ children }: { children: React.ReactNode }) {
 export default function SalomaoOrchestrator() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline'>('gerador');
+  const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline' | 'fluxo'>('gerador');
   const [activeBriefingId, setActiveBriefingId] = useState<string | null>(null);
   const [activeClientName, setActiveClientName] = useState('Selecione um cliente');
 
@@ -184,6 +185,7 @@ export default function SalomaoOrchestrator() {
             { key: 'equipe', label: '🤖 Equipe de Agentes' },
             { key: 'gerador', label: '⚡ Gerador de Prompt IA' },
             { key: 'pipeline', label: '🚀 Fluxo Organizado de Etapas' },
+            { key: 'fluxo', label: '🗺️ Fluxo de Vendas' },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -268,7 +270,6 @@ export default function SalomaoOrchestrator() {
                       { color: 'text-purple-400', name: '├── MARIA', role: 'Design' },
                       { color: 'text-cyan-400', name: '├── DANIEL', role: 'Estratégia' },
                       { color: 'text-pink-400', name: '├── DAVI', role: 'Social Media' },
-                      { color: 'text-orange-400', name: '├── LUCAS', role: 'Funil' },
                       { color: 'text-indigo-400', name: '├── JOÃO', role: 'Email' },
                       { color: 'text-teal-400', name: '├── MARCOS', role: 'Leads' },
                       { color: 'text-teal-400', name: '└── PEDRO', role: 'Atendimento' },
@@ -627,7 +628,7 @@ export default function SalomaoOrchestrator() {
                   <div className="flex items-center gap-1 overflow-x-auto pb-1">
                     {[
                       { stage: 'ATENÇÃO',   agent: 'DAVI',   action: 'Conteúdo Social', emoji: '👀', color: 'border-sky-500/40 bg-sky-500/10 text-sky-400' },
-                      { stage: 'INTERESSE', agent: 'LUCAS',  action: 'Landing Page',    emoji: '🖥️', color: 'border-orange-500/40 bg-orange-500/10 text-orange-400' },
+                      { stage: 'INTERESSE', agent: 'DANIEL', action: 'Landing Page',    emoji: '🖥️', color: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-400' },
                       { stage: 'DESEJO',    agent: 'JOÃO',   action: 'Email Sequence',  emoji: '📧', color: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' },
                       { stage: 'AÇÃO',      agent: 'MARCOS', action: 'Checkout',        emoji: '💳', color: 'border-purple-500/40 bg-purple-500/10 text-purple-400' },
                       { stage: 'PÓS-VENDA', agent: 'DANIEL', action: 'Análise KPI',    emoji: '📊', color: 'border-blue-500/40 bg-blue-500/10 text-blue-400' },
@@ -649,6 +650,23 @@ export default function SalomaoOrchestrator() {
                 <OrchestrationPanel briefingId={activeBriefingId} clientName={activeClientName} />
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ══════════════════════ TAB: FLUXO DE VENDAS ══════════════════════ */}
+        {tab === 'fluxo' && (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 flex items-start gap-3">
+              <Sparkles className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-sm text-amber-400">Fluxo Visual do Funil de Vendas</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Mapa interativo da jornada do cliente — do primeiro anúncio até a recompra, com cada agente em seu papel dentro da metodologia AIDA.
+                  Escolha um modelo de funil, personalize e salve. Clique nos nós para editar.
+                </p>
+              </div>
+            </div>
+            <FunnelFlowchart />
           </div>
         )}
       </div>
