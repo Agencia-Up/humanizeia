@@ -184,25 +184,47 @@ async function publishPost(supabase: any, userId: string, postId: string, cors: 
 
   if (postError || !post) throw new Error('Post não encontrado');
 
-  // Get Meta/Instagram token
-  const { data: account } = await supabase
-    .from('ad_accounts')
+  // Try instagram_publisher connection first (Davi's dedicated connection)
+  let account: any = null;
+  const { data: igAccount } = await supabase
+    .from('connected_accounts' as any)
     .select('*')
     .eq('user_id', userId)
-    .eq('platform', 'meta')
-    .eq('is_active', true)
+    .eq('platform', 'instagram_publisher')
     .maybeSingle();
+
+  if (igAccount) {
+    account = {
+      access_token: igAccount.access_token,
+      extra_data: { ig_account_id: igAccount.account_id },
+    };
+  } else {
+    // Fallback to Meta Ads account (backwards compatibility)
+    const { data: metaAccount } = await supabase
+      .from('ad_accounts')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('platform', 'meta')
+      .eq('is_active', true)
+      .maybeSingle();
+    if (metaAccount) {
+      account = {
+        access_token: metaAccount.access_token_encrypted || metaAccount.access_token,
+        extra_data: metaAccount.extra_data,
+      };
+    }
+  }
 
   if (!account) {
     return new Response(JSON.stringify({
-      error: 'Conta Meta não conectada. Conecte em Configurações > Contas Conectadas.',
+      error: 'Conta Instagram não conectada. Conecte em Configurações > Integrações.',
     }), { headers: { ...cors, 'Content-Type': 'application/json' } });
   }
 
   const igAccountId = account.extra_data?.ig_account_id;
   if (!igAccountId) {
     return new Response(JSON.stringify({
-      error: 'Conta Instagram não encontrada. Verifique se sua conta Meta tem um Instagram Business conectado.',
+      error: 'Conta Instagram não encontrada. Verifique se sua conta está conectada como Instagram Business.',
     }), { headers: { ...cors, 'Content-Type': 'application/json' } });
   }
 
@@ -311,7 +333,7 @@ async function getPostInsights(supabase: any, userId: string, postId: string, co
 
   const { data: account } = await supabase
     .from('ad_accounts')
-    .select('access_token')
+    .select('access_token_encrypted, access_token')
     .eq('user_id', userId)
     .eq('platform', 'meta')
     .eq('is_active', true)
@@ -319,9 +341,10 @@ async function getPostInsights(supabase: any, userId: string, postId: string, co
 
   if (!account) throw new Error('Conta Meta não conectada');
 
+  const accessToken = account.access_token_encrypted || account.access_token;
   const metrics = 'impressions,reach,likes_count,comments_count,saved,shares';
   const res = await fetch(
-    `${IG_API}/${post.ig_media_id}/insights?metric=${metrics}&access_token=${account.access_token}`
+    `${IG_API}/${post.ig_media_id}/insights?metric=${metrics}&access_token=${accessToken}`
   );
   const data = await res.json();
 
@@ -355,22 +378,41 @@ async function getPostInsights(supabase: any, userId: string, postId: string, co
 
 // ─── Get Instagram Account ─────────────────────────────────────────────────
 async function getIgAccount(supabase: any, userId: string, cors: Record<string, string>) {
-  const { data: account } = await supabase
+  // Check for dedicated Instagram Publisher connection
+  const { data: igAccount } = await supabase
+    .from('connected_accounts' as any)
+    .select('account_id, extra_data')
+    .eq('user_id', userId)
+    .eq('platform', 'instagram_publisher')
+    .maybeSingle();
+
+  if (igAccount) {
+    return new Response(JSON.stringify({
+      connected: true,
+      ig_account_id: igAccount.account_id,
+      username: igAccount.extra_data?.username,
+      source: 'instagram_publisher',
+    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+  }
+
+  // Fallback: check Meta Ads account for ig_account_id
+  const { data: metaAccount } = await supabase
     .from('ad_accounts')
-    .select('access_token, extra_data')
+    .select('extra_data')
     .eq('user_id', userId)
     .eq('platform', 'meta')
     .eq('is_active', true)
     .maybeSingle();
 
-  if (!account) {
-    return new Response(JSON.stringify({ connected: false }), {
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
+  if (metaAccount?.extra_data?.ig_account_id) {
+    return new Response(JSON.stringify({
+      connected: true,
+      ig_account_id: metaAccount.extra_data.ig_account_id,
+      source: 'meta_ads',
+    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
   }
 
-  return new Response(JSON.stringify({
-    connected: true,
-    ig_account_id: account.extra_data?.ig_account_id,
-  }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+  return new Response(JSON.stringify({ connected: false }), {
+    headers: { ...cors, 'Content-Type': 'application/json' },
+  });
 }

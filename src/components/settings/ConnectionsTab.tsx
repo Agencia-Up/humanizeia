@@ -59,6 +59,23 @@ function TikTokIcon() {
   return <Music2 className="h-6 w-6" />;
 }
 
+function InstagramIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="url(#ig-gradient)">
+      <defs>
+        <linearGradient id="ig-gradient" x1="0%" y1="100%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#f09433" />
+          <stop offset="25%" stopColor="#e6683c" />
+          <stop offset="50%" stopColor="#dc2743" />
+          <stop offset="75%" stopColor="#cc2366" />
+          <stop offset="100%" stopColor="#bc1888" />
+        </linearGradient>
+      </defs>
+      <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+    </svg>
+  );
+}
+
 const PLATFORMS: PlatformDef[] = [
   {
     id: 'meta',
@@ -75,6 +92,22 @@ const PLATFORMS: PlatformDef[] = [
       { title: 'Pronto!', description: 'Suas campanhas e métricas serão importadas automaticamente.' },
     ],
     warning: 'Você precisa ser administrador da conta de anúncios no Facebook.',
+  },
+  {
+    id: 'instagram_publisher',
+    name: 'Instagram Business',
+    icon: <InstagramIcon />,
+    iconBg: 'bg-pink-500/15',
+    description: 'Publicar posts, reels e carrosséis no Instagram',
+    status: 'available' as const,
+    steps: [
+      { title: 'Clique em "Conectar"', description: 'Você será redirecionado para o Facebook.' },
+      { title: 'Faça login no Facebook', description: 'Use a conta pessoal que gerencia a Página.' },
+      { title: 'Autorize o acesso', description: 'Permita a publicação no Instagram Business.' },
+      { title: 'Página conectada ao Instagram', description: 'Sua Página do Facebook precisa estar vinculada a uma conta Instagram Business.' },
+      { title: 'Pronto!', description: 'Davi pode publicar automaticamente no seu Instagram.' },
+    ],
+    warning: 'Sua conta Instagram precisa ser do tipo Business ou Creator e estar conectada a uma Página do Facebook.',
   },
   {
     id: 'google_ads',
@@ -172,6 +205,22 @@ export function ConnectionsTab() {
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [tiktokLoading, setTiktokLoading] = useState(false);
   const [linkedinLoading, setLinkedinLoading] = useState(false);
+  const [igLoading, setIgLoading] = useState(false);
+
+  // Instagram Publisher connected account
+  const { data: igPublisherAccount, refetch: refetchIg } = useQuery({
+    queryKey: ['ig-publisher', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('connected_accounts' as any)
+        .select('*')
+        .eq('platform', 'instagram_publisher')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      return data as { account_name: string; extra_data: any } | null;
+    },
+    enabled: !!user,
+  });
 
   // LinkedIn connected account
   const { data: linkedinAccount, refetch: refetchLinkedIn } = useQuery({
@@ -215,6 +264,8 @@ export function ConnectionsTab() {
         return tiktokAccounts.length > 0 ? 'connected' : tiktokLoading ? 'connecting' : 'disconnected';
       case 'linkedin':
         return linkedinAccount ? 'connected' : linkedinLoading ? 'connecting' : 'disconnected';
+      case 'instagram_publisher':
+        return igPublisherAccount ? 'connected' : igLoading ? 'connecting' : 'disconnected';
       default:
         return 'disconnected';
     }
@@ -230,6 +281,10 @@ export function ConnectionsTab() {
         return tiktokAccounts[0]?.account_name ?? null;
       case 'linkedin':
         return linkedinAccount?.account_name ?? null;
+      case 'instagram_publisher':
+        return igPublisherAccount?.extra_data?.username
+          ? `@${igPublisherAccount.extra_data.username}`
+          : igPublisherAccount?.account_name ?? null;
       default:
         return null;
     }
@@ -310,6 +365,47 @@ export function ConnectionsTab() {
         }
         break;
       }
+      case 'instagram_publisher': {
+        setIgLoading(true);
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) throw new Error('Sessão expirada');
+          const { data, error } = await supabase.functions.invoke('instagram-publish-oauth', {
+            body: { action: 'authorize' },
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+          if (error) throw error;
+          if (data?.auth_url) {
+            const popup = window.open(data.auth_url, 'ig_publish_oauth', 'width=600,height=700,left=200,top=100');
+            const handler = (event: MessageEvent) => {
+              if (event.data?.type === 'IG_PUBLISH_AUTH_SUCCESS') {
+                popup?.close();
+                toast.success(`Instagram @${event.data.username} conectado!`);
+                refetchIg();
+                setIgLoading(false);
+                window.removeEventListener('message', handler);
+              } else if (event.data?.type === 'IG_PUBLISH_AUTH_ERROR') {
+                popup?.close();
+                toast.error(event.data.error || 'Erro ao conectar Instagram');
+                setIgLoading(false);
+                window.removeEventListener('message', handler);
+              }
+            };
+            window.addEventListener('message', handler);
+            const timer = setInterval(() => {
+              if (popup?.closed) {
+                clearInterval(timer);
+                setIgLoading(false);
+                window.removeEventListener('message', handler);
+              }
+            }, 1000);
+          }
+        } catch (err: any) {
+          toast.error(err.message || 'Erro ao conectar Instagram');
+          setIgLoading(false);
+        }
+        break;
+      }
       default:
         toast.info('Esta integração estará disponível em breve!');
     }
@@ -340,6 +436,18 @@ export function ConnectionsTab() {
         refetchLinkedIn();
         toast.success('LinkedIn Ads desconectado');
         break;
+      case 'instagram_publisher': {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          await supabase.functions.invoke('instagram-publish-oauth', {
+            body: { action: 'disconnect' },
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+        }
+        refetchIg();
+        toast.success('Instagram Business desconectado');
+        break;
+      }
     }
   };
 
