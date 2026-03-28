@@ -17,7 +17,7 @@ import {
   Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
   FileCode2, Zap, Copy, Check, Loader2, ChevronRight,
   ShoppingBag, Target, MessageSquare, Shield, TrendingUp,
-  Globe, Share2,
+  Globe, Share2, Database,
 } from 'lucide-react';
 
 /* ── Agent definitions ──────────────────────────────────────────────── */
@@ -174,43 +174,34 @@ export default function SalomaoOrchestrator() {
             <Sparkles className="h-8 w-8 text-yellow-400" />
           </div>
 
-          {/* CRITICAL: IA Engine Selector - DO NOT REMOVE */}
-          <div className="absolute top-0 right-0 hidden sm:flex items-center gap-2">
-            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 gap-1.5 whitespace-nowrap">
-              <Bot className="h-3 w-3" /> IA Engine
-            </Badge>
-            <Select value={aiProvider} onValueChange={setAiProvider} disabled={generating}>
-              <SelectTrigger className="w-[180px] h-8 text-xs bg-card/60 border-primary/20 focus:ring-primary/50">
-                <SelectValue placeholder="Selecione a IA" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="openai">ChatGPT (GPT-4o)</SelectItem>
-                <SelectItem value="anthropic_sonnet">Claude 3.5 Sonnet</SelectItem>
-                <SelectItem value="anthropic_haiku">Claude 3 Haiku</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* CRITICAL: Agent Knowledge Base Button - DO NOT REMOVE */}
-          <div className="absolute top-0 left-0 hidden sm:flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-8 gap-2 border-primary/30 hover:bg-primary/10" onClick={() => setIsKnowledgeModalOpen(true)}>
-              <Brain className="h-4 w-4 text-primary" />
-              Base de Dados dos Agentes
-            </Button>
-          </div>
-
           <p className="text-muted-foreground">A Agência de Marketing Digital do Futuro</p>
           <p className="text-sm text-muted-foreground max-w-2xl mx-auto leading-relaxed">
             10 agentes especializados de IA trabalhando em equipe. Cada um é um especialista completo na sua área —
             juntos formam a primeira agência 100% autônoma do Brasil.
           </p>
-          <div className="flex items-center justify-center gap-3 pt-1 flex-wrap">
+
+          <div className="flex items-center justify-center gap-3 pt-4 flex-wrap">
             <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-1">
               <CheckCircle className="h-3.5 w-3.5 mr-1.5" />{activeCount} agentes ativos
             </Badge>
             <Badge variant="outline" className="text-muted-foreground px-3 py-1">
               {AGENTS.length - activeCount} em desenvolvimento
             </Badge>
+            
+            {/* CRITICAL: IA Engine Selector - Restyled for better layout */}
+            <div className="flex items-center gap-2 ml-2 pl-4 border-l border-border/30">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">IA Engine:</span>
+              <Select value={aiProvider} onValueChange={setAiProvider} disabled={generating}>
+                <SelectTrigger className="w-[140px] h-7 text-[10px] bg-card/40 border-primary/20 focus:ring-primary/50">
+                  <SelectValue placeholder="IA" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="openai">GPT-4o</SelectItem>
+                  <SelectItem value="anthropic_sonnet">Claude 3.5</SelectItem>
+                  <SelectItem value="anthropic_haiku">Claude Haiku</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
 
@@ -229,6 +220,16 @@ export default function SalomaoOrchestrator() {
               {t.label}
             </button>
           ))}
+          
+          <div className="w-px bg-border/40 mx-1 self-stretch my-1" />
+          
+          <button
+            onClick={() => setIsKnowledgeModalOpen(true)}
+            className="px-5 py-2.5 rounded-lg text-sm font-semibold transition-all text-primary hover:bg-primary/10 flex items-center gap-2"
+          >
+            <Database className="h-4 w-4" />
+            Base de Dados dos Agentes
+          </button>
         </div>
 
         {/* ══════════════════════ TAB: EQUIPE ══════════════════════ */}
