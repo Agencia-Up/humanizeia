@@ -32,6 +32,7 @@ import {
   Calendar,
   CreditCard,
   FileCode2,
+  Layers,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -64,6 +65,7 @@ const agentItems = [
   { title: 'Maria — Design', url: '/creative-studio', icon: Palette },
   { title: 'Davi — Social Media', url: '/davi', icon: Instagram },
   { title: 'João — Email Mkt', url: '/joao', icon: Send },
+  { title: 'José — Tráfego Pago', url: '/jose', icon: Radar },
   { title: 'Marcos — Leads & WhatsApp', url: '/leads', icon: Users },
 ];
 

@@ -142,7 +142,7 @@ const PLATFORMS: PlatformDef[] = [
     icon: <Briefcase className="h-6 w-6" />,
     iconBg: 'bg-blue-700/15 text-blue-700',
     description: 'Anúncios B2B para profissionais e empresas',
-    status: 'coming_soon',
+    status: 'available',
     steps: [
       { title: 'Clique em "Conectar"', description: 'Você será redirecionado para o LinkedIn.' },
       { title: 'Faça login na sua conta', description: 'Use seu perfil pessoal ou conta de administrador.' },
@@ -171,6 +171,22 @@ export function ConnectionsTab() {
   const google = useGoogleAdsConnection();
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [tiktokLoading, setTiktokLoading] = useState(false);
+  const [linkedinLoading, setLinkedinLoading] = useState(false);
+
+  // LinkedIn connected account
+  const { data: linkedinAccount, refetch: refetchLinkedIn } = useQuery({
+    queryKey: ['linkedin-account', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('connected_accounts' as any)
+        .select('*')
+        .eq('platform', 'linkedin')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      return data as { account_name: string; account_id: string } | null;
+    },
+    enabled: !!user,
+  });
 
   // TikTok accounts
   const { data: tiktokAccounts = [] } = useQuery({
@@ -197,6 +213,8 @@ export function ConnectionsTab() {
         return google.connectedAccount ? 'connected' : google.isConnecting ? 'connecting' : 'disconnected';
       case 'tiktok':
         return tiktokAccounts.length > 0 ? 'connected' : tiktokLoading ? 'connecting' : 'disconnected';
+      case 'linkedin':
+        return linkedinAccount ? 'connected' : linkedinLoading ? 'connecting' : 'disconnected';
       default:
         return 'disconnected';
     }
@@ -210,6 +228,8 @@ export function ConnectionsTab() {
         return google.connectedAccount?.account_name ?? null;
       case 'tiktok':
         return tiktokAccounts[0]?.account_name ?? null;
+      case 'linkedin':
+        return linkedinAccount?.account_name ?? null;
       default:
         return null;
     }
@@ -248,6 +268,48 @@ export function ConnectionsTab() {
           setTiktokLoading(false);
         }
         break;
+      case 'linkedin': {
+        setLinkedinLoading(true);
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) throw new Error('Sessão expirada');
+          const { data, error } = await supabase.functions.invoke('linkedin-ads-oauth', {
+            body: { action: 'authorize', user_id: session.user.id },
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+          if (error) throw error;
+          if (data?.auth_url) {
+            const popup = window.open(data.auth_url, 'linkedin_oauth', 'width=600,height=700,left=200,top=100');
+            const handler = (event: MessageEvent) => {
+              if (event.data?.type === 'LINKEDIN_AUTH_SUCCESS') {
+                popup?.close();
+                toast.success(`LinkedIn Ads conectado: ${event.data.accountName}`);
+                refetchLinkedIn();
+                setLinkedinLoading(false);
+                window.removeEventListener('message', handler);
+              } else if (event.data?.type === 'LINKEDIN_AUTH_ERROR') {
+                popup?.close();
+                toast.error(event.data.error || 'Erro ao conectar LinkedIn');
+                setLinkedinLoading(false);
+                window.removeEventListener('message', handler);
+              }
+            };
+            window.addEventListener('message', handler);
+            // Fallback: stop loading if popup closes without postMessage
+            const timer = setInterval(() => {
+              if (popup?.closed) {
+                clearInterval(timer);
+                setLinkedinLoading(false);
+                window.removeEventListener('message', handler);
+              }
+            }, 1000);
+          }
+        } catch (err: any) {
+          toast.error(err.message || 'Erro ao conectar LinkedIn');
+          setLinkedinLoading(false);
+        }
+        break;
+      }
       default:
         toast.info('Esta integração estará disponível em breve!');
     }
@@ -268,6 +330,15 @@ export function ConnectionsTab() {
           .eq('platform', 'tiktok')
           .eq('user_id', user?.id);
         toast.success('TikTok Ads desconectado');
+        break;
+      case 'linkedin':
+        await supabase
+          .from('connected_accounts' as any)
+          .update({ expires_at: new Date(0).toISOString() } as any)
+          .eq('platform', 'linkedin')
+          .eq('user_id', user?.id);
+        refetchLinkedIn();
+        toast.success('LinkedIn Ads desconectado');
         break;
     }
   };

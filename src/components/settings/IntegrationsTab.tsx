@@ -76,6 +76,29 @@ const INTEGRATIONS: IntegrationConfig[] = [
       { key: 'secret', label: 'Secret (opcional)', placeholder: 'Chave secreta...', type: 'password' },
     ],
   },
+  {
+    id: 'apify',
+    name: 'Apify',
+    icon: '🕷️',
+    description: 'Web scraping para análise de concorrentes, leads e dados de redes sociais',
+    fields: [
+      { key: 'api_token', label: 'API Token', placeholder: 'apify_api_xxxxxxxx...', type: 'password' },
+    ],
+    helpUrl: 'https://console.apify.com/account/integrations',
+    helpText: 'Encontre em: console.apify.com → Account → Integrations → API tokens. Usado por Daniel (análise de concorrentes) e Davi (dados sociais).',
+  },
+  {
+    id: 'resend',
+    name: 'Resend (Email)',
+    icon: '📧',
+    description: 'Envio transacional de emails para campanhas do João',
+    fields: [
+      { key: 'api_key', label: 'API Key', placeholder: 're_xxxxxxxx...', type: 'password' },
+      { key: 'from_email', label: 'Email de Envio', placeholder: 'noreply@seudominio.com' },
+    ],
+    helpUrl: 'https://resend.com/api-keys',
+    helpText: 'Crie em: resend.com → API Keys → Create API Key. Domínio precisa ser verificado.',
+  },
 ];
 
 interface SavedIntegration {

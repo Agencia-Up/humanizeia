@@ -57,6 +57,7 @@ const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
 const MeuPlano = lazy(() => import('./pages/MeuPlano'));
 const GeradorPrompt = lazy(() => import('./pages/GeradorPrompt'));
 const PauloAgente = lazy(() => import('./pages/PauloAgente'));
+const JoseTrafego = lazy(() => import('./pages/JoseTrafego'));
 
 const queryClient = new QueryClient();
 
@@ -122,6 +123,7 @@ const App = () => (
               <Route path="/daniel" element={<ProtectedRoute><DanielEstrategia /></ProtectedRoute>} />
               <Route path="/meu-plano" element={<ProtectedRoute><MeuPlano /></ProtectedRoute>} />
               <Route path="/gerador-prompt" element={<ProtectedRoute><GeradorPrompt /></ProtectedRoute>} />
+              <Route path="/jose" element={<ProtectedRoute><JoseTrafego /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
