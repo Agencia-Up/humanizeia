@@ -44,6 +44,8 @@ interface ClientContext {
   publico: string;
   oferta: string;
   diferencial: string;
+  // Daniel's strategy — loaded from latest orchestrator_tasks execution
+  danielStrategy?: string;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -128,7 +130,8 @@ export default function PauloAgente() {
   const loadClientContext = async () => {
     if (!user) return;
     try {
-      const { data } = await supabase
+      // 1. Load briefing from Salomão (base knowledge)
+      const { data: briefingData } = await supabase
         .from('client_briefings' as any)
         .select('*')
         .eq('user_id', user.id)
@@ -136,13 +139,40 @@ export default function PauloAgente() {
         .limit(1)
         .single();
 
-      if (data) {
+      // 2. Load latest Daniel strategy from orchestrator_tasks (invisible context enrichment)
+      let danielStrategy: string | undefined;
+      try {
+        const { data: taskData } = await supabase
+          .from('orchestrator_tasks' as any)
+          .select('context, result, stage, updated_at')
+          .eq('user_id', user.id)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (taskData) {
+          const ctx = (taskData as any).context || {};
+          const result = (taskData as any).result || {};
+          // Extract Daniel's output from either context or result
+          const rawDaniel = ctx.daniel_output || result.daniel;
+          if (rawDaniel) {
+            danielStrategy = typeof rawDaniel === 'string'
+              ? rawDaniel.slice(0, 600)
+              : JSON.stringify(rawDaniel).slice(0, 600);
+          }
+        }
+      } catch {
+        // No orchestrator task yet — fine, just skip
+      }
+
+      if (briefingData) {
         setClientContext({
-          clientName: (data as any).client_name || (data as any).business_name || 'Cliente',
-          produto: (data as any).product_service || (data as any).produto || '',
-          publico: (data as any).target_audience || (data as any).publico || '',
-          oferta: (data as any).main_offer || (data as any).oferta || '',
-          diferencial: (data as any).differentiators || (data as any).diferencial || '',
+          clientName: (briefingData as any).client_name || (briefingData as any).business_name || 'Cliente',
+          produto: (briefingData as any).product_service || (briefingData as any).produto || '',
+          publico: (briefingData as any).target_audience || (briefingData as any).publico || '',
+          oferta: (briefingData as any).main_offer || (briefingData as any).oferta || '',
+          diferencial: (briefingData as any).differentiators || (briefingData as any).diferencial || '',
+          danielStrategy,
         });
         setIsDemo(false);
       } else {
@@ -178,6 +208,7 @@ Produto/Serviço: ${ctx.produto}
 Público-alvo: ${ctx.publico}
 Oferta principal: ${ctx.oferta}
 Diferencial: ${ctx.diferencial}
+${ctx.danielStrategy ? `\nEstratégia do Daniel (pipeline Salomão): ${ctx.danielStrategy}` : ''}
 ${reference ? `\nReferência para analisar: ${reference}` : ''}`;
 
       const systemWithContext = `Contexto do cliente (vindo do Salomão):
@@ -279,6 +310,11 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
                   {isDemo && (
                     <Badge variant="outline" className="text-[9px] py-0 px-1 border-yellow-500/40 text-yellow-500">
                       Demo
+                    </Badge>
+                  )}
+                  {clientContext.danielStrategy && !isDemo && (
+                    <Badge variant="outline" className="text-[9px] py-0 px-1 border-blue-500/40 text-blue-400">
+                      + Daniel
                     </Badge>
                   )}
                 </div>
