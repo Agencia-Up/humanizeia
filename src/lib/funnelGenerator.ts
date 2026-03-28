@@ -188,7 +188,7 @@ export function generateFunnel(
         agent: step.agent as AgentName,
         phase: meta.phase,
       } satisfies FunnelNodeData,
-      position: { x: 300, y: index * 180 }, // layout vertical, 180px entre nós
+      position: { x: index * 260, y: 150 }, // layout horizontal, 260px entre nós
     };
   });
 
@@ -201,7 +201,10 @@ export function generateFunnel(
         id: `e-${nodes[i - 1].id}-${node.id}`,
         source: nodes[i - 1].id,
         target: node.id,
+        sourceHandle: 'right',   // sai pela direita do nó anterior
+        targetHandle: 'left',    // entra pela esquerda do próximo
         animated: false,
+        type: 'smoothstep',
         markerEnd: { type: MarkerType.ArrowClosed, color },
         style: { stroke: color, strokeWidth: 2 },
       } satisfies Edge;
