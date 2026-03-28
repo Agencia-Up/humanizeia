@@ -28,7 +28,8 @@ export function ActivityCenter() {
       'salomao': '/salomao',
     };
     if (routes[task.agent_id]) {
-      navigate(routes[task.agent_id]);
+      const extraParams = task.task_type === 'generate_image' ? `?tab=generate&taskId=${task.id}` : '';
+      navigate(`${routes[task.agent_id]}${extraParams}`);
     }
   };
 
