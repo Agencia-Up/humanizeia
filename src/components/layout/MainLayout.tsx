@@ -35,7 +35,15 @@ export function MainLayout({ children }: MainLayoutProps) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => navigate(-1)}
+                  onClick={() => {
+                    // Se há histórico de navegação na sessão, volta; senão vai pro dashboard
+                    const canGoBack = (window.history.state?.idx ?? 0) > 0;
+                    if (canGoBack) {
+                      navigate(-1);
+                    } else {
+                      navigate('/dashboard');
+                    }
+                  }}
                   className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 px-2 rounded-lg transition-colors group"
                 >
                   <ChevronLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
