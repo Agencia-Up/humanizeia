@@ -127,7 +127,7 @@ async function researchTrends(body: any, user: any, supabase: any, cors: Record<
     .eq('is_active', true)
     .maybeSingle();
 
-  const apifyToken = apifyIntegration?.api_key_encrypted;
+  const apifyToken = apifyIntegration?.api_key_encrypted || Deno.env.get('APIFY_API_KEY');
 
   let scrapedData: Record<string, any[]> = {};
 
