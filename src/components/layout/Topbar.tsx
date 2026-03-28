@@ -11,13 +11,12 @@ import { Badge } from '@/components/ui/badge';
 import { useAppStore } from '@/store/appStore';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAuth } from '@/hooks/useAuth';
-import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
+import { ActivityCenter } from './ActivityCenter';
 
 export function Topbar() {
   const navigate = useNavigate();
   const { isDarkMode, toggleDarkMode, user } = useAppStore();
-  const { signOut, user: authUser } = useAuth();
-  const { notifications, unreadCount, markAsRead, markAllAsRead } = useCampaignNotifications();
+  const { signOut } = useAuth();
 
   const handleSignOut = async () => {
     await signOut();
@@ -43,47 +42,7 @@ export function Topbar() {
           {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative text-muted-foreground hover:text-foreground">
-              <Bell className="h-5 w-5" />
-              {unreadCount > 0 && (
-                <Badge className="absolute -right-1 -top-1 h-5 w-5 rounded-full p-0 text-xs gradient-primary border-0">{unreadCount}</Badge>
-              )}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuLabel className="flex items-center justify-between">
-              Notificações
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs">{unreadCount} novas</Badge>
-                {unreadCount > 0 && (
-                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-muted-foreground" onClick={markAllAsRead}>
-                    <CheckCheck className="mr-1 h-3 w-3" />
-                    Ler todas
-                  </Button>
-                )}
-              </div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {notifications?.length ? notifications.slice(0, 10).map((n: any) => (
-              <DropdownMenuItem 
-                key={n.id} 
-                className="flex flex-col items-start gap-1 p-3 cursor-pointer"
-                onClick={() => !n.is_read && markAsRead(n.id)}
-              >
-                <div className="flex items-center gap-2">
-                  {!n.is_read && <div className="h-2 w-2 rounded-full bg-primary" />}
-                  <span className="font-medium">{n.title}</span>
-                </div>
-                <span className="text-sm text-muted-foreground">{n.message}</span>
-                <span className="text-xs text-muted-foreground">{formatTimeAgo(new Date(n.created_at))}</span>
-              </DropdownMenuItem>
-            )) : (
-              <DropdownMenuItem className="text-center text-muted-foreground py-4">Nenhuma notificação</DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ActivityCenter />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

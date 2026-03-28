@@ -37,7 +37,9 @@ import {
   FolderOpen,
   Loader2,
   Wand2,
+  Globe, Share2, Database,
 } from 'lucide-react';
+import { useAgentTasks } from '@/contexts/AgentTasksContext';
 import { SwipeFileTab } from '@/components/copywriter/SwipeFileTab';
 import { MariaBriefingTab, type ApplyConfig } from '@/components/creative-studio/MariaBriefingTab';
 import { SavedImagesTab } from '@/components/creative-studio/SavedImagesTab';
@@ -167,6 +169,7 @@ const tabConfig = [
 export default function AICreativeStudio() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const { createTask } = useAgentTasks();
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = usePersistedState('cs-active-tab', 'maria');
   const [removeBgImage, setRemoveBgImage] = useState<{ url: string; name: string } | null>(null);
@@ -234,6 +237,26 @@ export default function AICreativeStudio() {
         throw new Error('Você precisa estar logado para gerar criativos.');
       }
 
+      // 1. Create task for background tracking
+      const taskId = await createTask('maria', 'generate_image', {
+        prompt,
+        format,
+        style: customStyle || style,
+        variations
+      });
+
+      // Get image provider from settings
+      let imageProvider = 'lovable';
+      try {
+        const savedSettings = localStorage.getItem('logosia-ai-settings');
+        if (savedSettings) {
+          const parsed = JSON.parse(savedSettings);
+          imageProvider = parsed.imageProvider || 'lovable';
+        }
+      } catch (e) {
+        console.error('Error reading AI settings:', e);
+      }
+
       const response = await fetch(GENERATE_URL, {
         method: 'POST',
         headers: {
@@ -253,14 +276,27 @@ export default function AICreativeStudio() {
           styleIntensity: styleIntensity[0],
           variations,
           referenceImage: referenceImage || undefined,
+          task_id: taskId,
+          imageProvider
         }),
       });
 
       if (response.status === 429) {
+        // Update task to failed
+        await (supabase.from('agent_tasks' as any) as any).update({ 
+          status: 'failed', 
+          error: 'Limite de requisições atingido. Aguarde um momento.' 
+        }).eq('id', taskId);
+        
         toast({ title: 'Limite de requisições', description: 'Aguarde um momento e tente novamente.', variant: 'destructive' });
         return;
       }
       if (response.status === 402) {
+        await (supabase.from('agent_tasks' as any) as any).update({ 
+          status: 'failed', 
+          error: 'Créditos insuficientes.' 
+        }).eq('id', taskId);
+
         toast({ title: 'Créditos insuficientes', description: 'Adicione créditos para continuar gerando imagens.', variant: 'destructive' });
         return;
       }
@@ -268,16 +304,34 @@ export default function AICreativeStudio() {
       const data = await response.json();
 
       if (!response.ok) {
+        // Update task to failed
+        await (supabase.from('agent_tasks' as any) as any).update({ 
+          status: 'failed', 
+          error: data.error || 'Erro ao gerar imagens' 
+        }).eq('id', taskId);
+        
         throw new Error(data.error || 'Erro ao gerar imagens');
       }
 
       if (data.images && data.images.length > 0) {
         setResults(data.images);
+        
+        // Update task to completed
+        await (supabase.from('agent_tasks' as any) as any).update({ 
+          status: 'completed', 
+          result: { images: data.images } 
+        }).eq('id', taskId);
+
         toast({
           title: '🎨 Criativos gerados!',
           description: `${data.images.length} imagem(ns) criada(s) com sucesso.`,
         });
       } else {
+        await (supabase.from('agent_tasks' as any) as any).update({ 
+          status: 'failed', 
+          error: 'Nenhuma imagem gerada' 
+        }).eq('id', taskId);
+
         toast({ title: 'Nenhuma imagem gerada', description: 'Tente novamente com outra descrição.', variant: 'destructive' });
       }
     } catch (err) {
