@@ -392,16 +392,28 @@ export function FunnelFlowchart() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
+
       const { data, error } = await (supabase as any)
         .from('funnel_flows')
         .select('*')
         .eq('user_id', user.id)
         .single();
-      if (error || !data) return;
-      if (data.nodes?.length) setNodes(data.nodes);
-      if (data.edges?.length) setEdges(data.edges);
+
+      if (!error && data?.nodes?.length) {
+        // Fluxo salvo encontrado — restaura do banco
+        setNodes(data.nodes);
+        setEdges(data.edges ?? []);
+      } else {
+        // Sem fluxo salvo — carrega o Funil AIDA como ponto de partida
+        const funnel = generateFunnel('aida_basic', user.id);
+        setNodes(funnel.nodes);
+        setEdges(funnel.edges);
+      }
     } catch {
-      // Silently fail — use template
+      // Fallback silencioso — usa o template padrão sem autenticação
+      const funnel = generateFunnel('aida_basic', 'demo');
+      setNodes(funnel.nodes);
+      setEdges(funnel.edges);
     }
   };
 
