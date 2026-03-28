@@ -19,10 +19,94 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Save, RotateCcw, FolderOpen } from 'lucide-react';
+import { Save, RotateCcw, Maximize2, Minimize2, BookOpen, X, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { generateFunnel, adaptFunnelToClient, recommendFunnel } from '@/lib/funnelGenerator';
 import { funnelLibrary } from '@/lib/funnelLibrary';
+
+// ─── Guia explicativo de cada funil ──────────────────────────────────────────
+const FUNNEL_GUIDES: Record<string, {
+  icon: string; title: string; badge: string; when: string; result: string;
+  steps: { agent: string; color: string; role: string; why: string }[];
+}> = {
+  aida_basic: {
+    icon: '🎯', title: 'Funil AIDA Clássico', badge: 'Qualquer negócio',
+    when: 'Ponto de partida universal. Use quando não sabe por onde começar ou quer validar a metodologia antes de customizar.',
+    result: 'Jornada completa do cliente com cada agente especializado em uma etapa da metodologia AIDA.',
+    steps: [
+      { agent: 'DAVI',   color: '#a78bfa', role: 'Atenção',   why: 'Cria conteúdo viral nas redes para atrair audiência orgânica sem custo por clique.' },
+      { agent: 'LUCAS',  color: '#fb923c', role: 'Interesse',  why: 'Landing page que converte o visitante em lead qualificado.' },
+      { agent: 'JOÃO',   color: '#818cf8', role: 'Desejo',     why: 'Sequência de emails que aquece o lead e constrói desejo.' },
+      { agent: 'MARCOS', color: '#38bdf8', role: 'Ação',       why: 'Fecha a venda via WhatsApp e gerencia o processo de checkout.' },
+      { agent: 'DANIEL', color: '#818cf8', role: 'Pós-Venda',  why: 'Analisa os KPIs do ciclo e ajusta a estratégia para o próximo.' },
+    ],
+  },
+  tripwire: {
+    icon: '⚡', title: 'Funil Tripwire', badge: 'Até R$ 99',
+    when: 'Produto de entrada de baixo custo (R$ 7–97). Ideal quando a maior barreira é a primeira compra.',
+    result: 'Alta taxa de conversão. Transforma visitante em comprador com mínima fricção. LTV cresce via upsell.',
+    steps: [
+      { agent: 'JOSÉ',   color: '#10b981', role: 'Tráfego Pago',  why: 'Volume alto com Meta/Google Ads para audiências frias.' },
+      { agent: 'PAULO',  color: '#3b82f6', role: 'VSL / Copy',    why: 'Copy persuasiva que vende a solução sem enrolação.' },
+      { agent: 'LUCAS',  color: '#fb923c', role: 'Checkout',      why: 'Checkout simples com bump de oferta integrado.' },
+      { agent: 'PAULO',  color: '#3b82f6', role: 'Upsell',        why: 'Oferta complementar imediatamente após a compra.' },
+      { agent: 'JOÃO',   color: '#818cf8', role: 'Nutrição',      why: 'Sequência pós-compra que aumenta LTV e prepara próxima oferta.' },
+      { agent: 'DANIEL', color: '#818cf8', role: 'KPIs',          why: 'Mede CPA, ROAS e LTV para otimizar o ciclo completo.' },
+    ],
+  },
+  lead_magnet: {
+    icon: '🧲', title: 'Funil Lead Magnet', badge: 'R$ 100–999',
+    when: 'Ticket médio com necessidade de construir confiança antes de vender. O ímã captura email em troca de valor.',
+    result: 'Lista de emails qualificada + conversão escalável sem depender exclusivamente de tráfego pago.',
+    steps: [
+      { agent: 'DAVI',   color: '#a78bfa', role: 'Conteúdo Social', why: 'Atrai o ICP com conteúdo orgânico sem custo por clique.' },
+      { agent: 'LUCAS',  color: '#fb923c', role: 'Página Captura',  why: 'Converte visitante em lead com oferta do material gratuito.' },
+      { agent: 'JOÃO',   color: '#818cf8', role: 'Nutrição Email',  why: '5–7 emails que entregam valor antes de fazer a oferta.' },
+      { agent: 'PAULO',  color: '#3b82f6', role: 'VSL / Copy',      why: 'Vídeo ou copy que converte o lead já aquecido.' },
+      { agent: 'MARCOS', color: '#38bdf8', role: 'Checkout / WA',   why: 'Finaliza a venda e abre canal direto com o comprador.' },
+      { agent: 'DANIEL', color: '#818cf8', role: 'KPIs',            why: 'Otimiza taxa de abertura, CTR de email e CAC.' },
+    ],
+  },
+  webinar: {
+    icon: '🎥', title: 'Funil de Webinário', badge: 'Acima de R$ 1.000',
+    when: 'Alto ticket (mentorias, cursos premium, serviços). O webinário constrói autoridade antes de fazer a oferta.',
+    result: 'Menor volume, maior ticket. Fechamento consultivo via WhatsApp pós-evento amplifica conversão.',
+    steps: [
+      { agent: 'JOSÉ',   color: '#10b981', role: 'Tráfego Pago',    why: 'Tráfego direcionado para inscrição no webinário.' },
+      { agent: 'LUCAS',  color: '#fb923c', role: 'Inscrição',       why: 'Captura email e reserva vaga antecipando o valor.' },
+      { agent: 'JOÃO',   color: '#818cf8', role: 'Aquecimento',     why: 'Sequência pré-webinário que aumenta show-up rate.' },
+      { agent: 'PAULO',  color: '#3b82f6', role: 'Pitch / VSL',     why: 'Roteiro do webinário com oferta irresistível no final.' },
+      { agent: 'MARCOS', color: '#38bdf8', role: 'WA Consultivo',   why: 'Qualifica e fecha leads quentes via WhatsApp pós-evento.' },
+      { agent: 'LUCAS',  color: '#fb923c', role: 'Checkout',        why: 'Página de pagamento com parcelamento e garantia.' },
+      { agent: 'DANIEL', color: '#818cf8', role: 'KPIs',            why: 'Mede show-up rate, conversão no pitch e CAC.' },
+    ],
+  },
+  lancamento: {
+    icon: '🚀', title: 'Funil de Lançamento', badge: 'Infoprodutos',
+    when: 'Para infoprodutos com janela de vendas. Gera expectativa → evento → escassez → vendas concentradas.',
+    result: 'Pico de vendas em 7 dias com alto engajamento. Ideal para cursos, mentorias e masterminds.',
+    steps: [
+      { agent: 'JOSÉ',   color: '#10b981', role: 'Tráfego',     why: 'Alimenta a lista com leads qualificados antes do lançamento.' },
+      { agent: 'LUCAS',  color: '#fb923c', role: 'Captura',     why: 'Coleta emails dos interessados na lista de espera.' },
+      { agent: 'JOÃO',   color: '#818cf8', role: 'CPL / Email', why: '3–4 emails de conteúdo que educam e criam desejo.' },
+      { agent: 'PAULO',  color: '#3b82f6', role: 'VSL / Copy',  why: 'Copy do carrinho com todos os gatilhos de conversão.' },
+      { agent: 'LUCAS',  color: '#fb923c', role: 'Checkout',    why: 'Carrinho aberto com contador de escassez por tempo limitado.' },
+      { agent: 'MARCOS', color: '#38bdf8', role: 'Pós-Venda',   why: 'Onboarding dos compradores e redução de chargeback.' },
+    ],
+  },
+  whatsapp_leads: {
+    icon: '💬', title: 'Funil WhatsApp Leads', badge: 'Serviços locais',
+    when: 'Quando o WhatsApp é o principal canal de vendas. Ideal para serviços locais, consultorias e imóveis.',
+    result: 'Alta taxa de resposta e conversação direta. Fechamento mais rápido por canal quente e pessoal.',
+    steps: [
+      { agent: 'JOSÉ',   color: '#10b981', role: 'Tráfego',         why: 'Anúncio com CTA direto para WhatsApp (Click to Chat).' },
+      { agent: 'LUCAS',  color: '#fb923c', role: 'Landing Page',    why: 'Página de pré-venda que aquece antes do contato.' },
+      { agent: 'MARCOS', color: '#38bdf8', role: 'Qualificação WA', why: 'Agente IA qualifica automaticamente via WhatsApp.' },
+      { agent: 'MARCOS', color: '#38bdf8', role: 'Checkout',        why: 'Envia link de pagamento diretamente no WhatsApp.' },
+      { agent: 'DANIEL', color: '#818cf8', role: 'KPIs',            why: 'Mede CPL, taxa de resposta e conversão no WhatsApp.' },
+    ],
+  },
+};
 import { NodeConfigDrawer } from './NodeConfigDrawer';
 import { NodePalette } from './NodePalette';
 import { FunnelNodeData, AidaPhase, PHASE_COLORS, AGENT_COLORS, PALETTE_ITEMS } from './flowTypes';
@@ -357,6 +441,9 @@ export function FunnelFlowchart() {
   const [selectedNode, setSelectedNode] = useState<Node<FunnelNodeData> | null>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
+  const [activeGuide, setActiveGuide] = useState<string>('aida_basic');
   const [recommendation, setRecommendation] = useState<{ funnelId: string; name: string; badge: string; reason: string } | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
@@ -573,15 +660,37 @@ export function FunnelFlowchart() {
       } catch { /* sem briefing — usa funil base */ }
     }
 
-    const funnel = generateFunnel(funnelId, clientId);
-    setNodes(funnel.nodes);
-    setEdges(funnel.edges);
+    // FIX: passa baseFunnel diretamente para preservar a adaptação ao cliente
+    const generated = generateFunnel(baseFunnel, clientId);
+    setNodes(generated.nodes);
+    setEdges(generated.edges);
     setSelectedNode(null);
-    toast({ title: `📥 "${baseFunnel.name}" carregado!`, description: `${funnel.nodes.length} etapas com contexto do cliente aplicado.` });
+    setActiveGuide(funnelId);
+
+    // Auto-save para que o próximo loadFlow() não restaure o funil anterior
+    if (user) {
+      try {
+        await (supabase as any).from('funnel_flows').upsert({
+          user_id: user.id,
+          nodes: generated.nodes,
+          edges: generated.edges,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+      } catch { /* falha silenciosa — não bloqueia o usuário */ }
+    }
+
+    toast({ title: `📥 "${baseFunnel.name}" carregado!`, description: `${generated.nodes.length} etapas — funil salvo automaticamente.` });
   };
 
+  const guide = FUNNEL_GUIDES[activeGuide];
+
   return (
-    <div style={{ display: 'flex', height: '80vh', borderRadius: 12, overflow: 'hidden', border: '1px solid #1e293b' }}>
+    <div style={{
+      display: 'flex', height: isFullscreen ? '100vh' : '80vh',
+      borderRadius: isFullscreen ? 0 : 12,
+      overflow: 'hidden', border: '1px solid #1e293b',
+      ...(isFullscreen ? { position: 'fixed', inset: 0, zIndex: 9999 } : {}),
+    }}>
       {/* Left palette */}
       <NodePalette onAddNode={addNodeToCanvas} />
 
@@ -606,7 +715,7 @@ export function FunnelFlowchart() {
             boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
           }}
         >
-          <span style={{ fontSize: 11, color: '#64748b', marginRight: 4 }}>Funil AIDA Interativo</span>
+          <span style={{ fontSize: 11, color: '#64748b', marginRight: 4 }}>Fluxo de Vendas</span>
 
           {/* Carregar template de funil */}
           <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -642,6 +751,21 @@ export function FunnelFlowchart() {
             style={{ fontSize: 12, height: 30, paddingLeft: 10, paddingRight: 10 }}>
             <RotateCcw className="h-3.5 w-3.5 mr-1" />
             Reset
+          </Button>
+
+          {/* Guia */}
+          <Button size="sm" variant={showGuide ? 'secondary' : 'ghost'} onClick={() => setShowGuide(v => !v)}
+            style={{ fontSize: 12, height: 30, paddingLeft: 10, paddingRight: 10 }}
+            title="Guia dos funis">
+            <BookOpen className="h-3.5 w-3.5 mr-1" />
+            Guia
+          </Button>
+
+          {/* Fullscreen */}
+          <Button size="sm" variant="ghost" onClick={() => setIsFullscreen(v => !v)}
+            style={{ fontSize: 12, height: 30, paddingLeft: 8, paddingRight: 8 }}
+            title={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}>
+            {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </Button>
         </div>
 
@@ -710,6 +834,101 @@ export function FunnelFlowchart() {
         onSave={handleSaveNode}
         onDelete={handleDeleteNode}
       />
+
+      {/* ── Guia de Funis — painel lateral direito ── */}
+      {showGuide && (
+        <div style={{
+          width: 320, background: '#0f172a', borderLeft: '1px solid #1e293b',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0,
+        }}>
+          {/* Header */}
+          <div style={{ padding: '12px 14px', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#f1f5f9' }}>📚 Guia de Funis</span>
+            <button onClick={() => setShowGuide(false)} style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>✕</button>
+          </div>
+
+          {/* Seletor de funil */}
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e293b', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {funnelLibrary.map(f => (
+              <button
+                key={f.id}
+                onClick={() => setActiveGuide(f.id)}
+                style={{
+                  fontSize: 10, padding: '3px 8px', borderRadius: 20, cursor: 'pointer', border: '1px solid',
+                  background: activeGuide === f.id ? '#1e3a5f' : 'transparent',
+                  borderColor: activeGuide === f.id ? '#3b82f6' : '#334155',
+                  color: activeGuide === f.id ? '#93c5fd' : '#64748b',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {FUNNEL_GUIDES[f.id]?.icon ?? '📋'} {f.name}
+              </button>
+            ))}
+          </div>
+
+          {/* Conteúdo do guia */}
+          {guide && (
+            <div style={{ flex: 1, overflowY: 'auto', padding: '14px' }}>
+              {/* Título + badge */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 20, marginBottom: 4 }}>{guide.icon}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9', marginBottom: 4 }}>{guide.title}</div>
+                <span style={{ fontSize: 10, background: '#1e3a5f', border: '1px solid #3b82f6', color: '#93c5fd', padding: '2px 8px', borderRadius: 20 }}>
+                  {guide.badge}
+                </span>
+              </div>
+
+              {/* Quando usar */}
+              <div style={{ marginBottom: 12, background: '#0d1f38', border: '1px solid #1e3a5f', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 10, color: '#64748b', fontWeight: 700, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Quando usar</div>
+                <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.6 }}>{guide.when}</div>
+              </div>
+
+              {/* Resultado esperado */}
+              <div style={{ marginBottom: 14, background: '#052e16', border: '1px solid #166534', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 10, color: '#4ade80', fontWeight: 700, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Resultado esperado</div>
+                <div style={{ fontSize: 11, color: '#86efac', lineHeight: 1.6 }}>{guide.result}</div>
+              </div>
+
+              {/* Agentes e etapas */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, color: '#64748b', fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Agentes & Etapas</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {guide.steps.map((step, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                      {/* Número */}
+                      <div style={{
+                        width: 20, height: 20, borderRadius: '50%', background: '#1e293b',
+                        border: `1px solid ${step.color}`, display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', fontSize: 9, color: step.color, flexShrink: 0, marginTop: 1,
+                      }}>{i + 1}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: step.color }}>{step.agent}</span>
+                          <span style={{ fontSize: 9, color: '#475569', background: '#1e293b', padding: '1px 6px', borderRadius: 10 }}>{step.role}</span>
+                        </div>
+                        <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.5 }}>{step.why}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Botão de aplicar */}
+              <button
+                onClick={() => { loadFromTemplate(activeGuide); setShowGuide(false); }}
+                style={{
+                  width: '100%', marginTop: 8, padding: '10px 0', borderRadius: 8, border: '1px solid #3b82f6',
+                  background: 'linear-gradient(135deg,#1d4ed8,#2563eb)', color: '#fff',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                Aplicar este funil no canvas <ChevronRight style={{ width: 14, height: 14 }} />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
