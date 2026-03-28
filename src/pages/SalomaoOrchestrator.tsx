@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { AgentKnowledgeModal } from '@/features/orchestrator/components/AgentKnowledgeModal';
+import { AgentKnowledgeBase } from '@/features/orchestrator/components/AgentKnowledgeBase';
 import {
   Sparkles, Radar, PenTool, Palette, Send,
   Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
@@ -95,7 +95,7 @@ function R2({ children }: { children: React.ReactNode }) {
 export default function SalomaoOrchestrator() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline'>('gerador');
+  const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline' | 'knowledge'>('gerador');
   const [activeBriefingId, setActiveBriefingId] = useState<string | null>(null);
   const [activeClientName, setActiveClientName] = useState('Selecione um cliente');
 
@@ -107,7 +107,7 @@ export default function SalomaoOrchestrator() {
   
   /* CRITICAL: DO NOT REMOVE - Agent Knowledge Base & IA Engine Selector */
   const [aiProvider, setAiProvider] = useState('openai'); 
-  const [isKnowledgeModalOpen, setIsKnowledgeModalOpen] = useState(false);
+  // Modal state removed, now using TAB
   
   const outputRef = useRef<HTMLDivElement>(null);
 
@@ -211,6 +211,7 @@ export default function SalomaoOrchestrator() {
             { key: 'equipe', label: '🤖 Equipe de Agentes' },
             { key: 'gerador', label: '⚡ Gerador de Prompt IA' },
             { key: 'pipeline', label: '🚀 Fluxo Organizado de Etapas' },
+            { key: 'knowledge', label: '🧠 Base de Dados dos Agentes' },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -220,16 +221,6 @@ export default function SalomaoOrchestrator() {
               {t.label}
             </button>
           ))}
-          
-          <div className="w-px bg-border/40 mx-1 self-stretch my-1" />
-          
-          <button
-            onClick={() => setIsKnowledgeModalOpen(true)}
-            className="px-5 py-2.5 rounded-lg text-sm font-semibold transition-all text-primary hover:bg-primary/10 flex items-center gap-2"
-          >
-            <Database className="h-4 w-4" />
-            Base de Dados dos Agentes
-          </button>
         </div>
 
         {/* ══════════════════════ TAB: EQUIPE ══════════════════════ */}
@@ -689,12 +680,14 @@ export default function SalomaoOrchestrator() {
           </div>
         )}
 
-        {/* CRITICAL: Agent Knowledge Modal - DO NOT REMOVE */}
-        <AgentKnowledgeModal 
-          isOpen={isKnowledgeModalOpen} 
-          onOpenChange={setIsKnowledgeModalOpen} 
-          agents={AGENTS} 
-        />
+        {/* ══════════════════════ TAB: KNOWLEDGE ══════════════════════ */}
+        {tab === 'knowledge' && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+            <AgentKnowledgeBase agents={AGENTS} />
+          </div>
+        )}
+
+        {/* CRITICAL: Agent Knowledge Modal - REMOVED, now using TAB */}
       </div>
     </MainLayout>
   );
