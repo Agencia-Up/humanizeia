@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { OrchestrationPanel } from '@/components/salomao/OrchestrationPanel';
 import { BriefingSmartUpload } from '@/components/salomao/BriefingSmartUpload';
+import { AgentKnowledgeBase } from '@/features/orchestrator/components/AgentKnowledgeBase';
 import { FunnelFlowchart } from '@/components/daniel/FunnelFlowchart';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -18,7 +19,7 @@ import {
   Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
   FileCode2, Zap, Copy, Check, Loader2, ChevronRight,
   ShoppingBag, Target, MessageSquare, Shield, TrendingUp,
-  Globe, Share2,
+  Globe, Share2, BrainCircuit, Bot as BotIcon,
 } from 'lucide-react';
 
 /* ── Agent definitions ──────────────────────────────────────────────── */
@@ -96,9 +97,10 @@ function R2({ children }: { children: React.ReactNode }) {
 export default function SalomaoOrchestrator() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline' | 'fluxo'>('gerador');
+  const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline' | 'fluxo' | 'conhecimento'>('gerador');
   const [activeBriefingId, setActiveBriefingId] = useState<string | null>(null);
   const [activeClientName, setActiveClientName] = useState('Selecione um cliente');
+  const [aiProvider, setAiProvider] = useState('openai'); // openai | anthropic_sonnet | anthropic_haiku
 
   /* ── Prompt generator state ── */
   const [data, setData] = useState<BriefingData>(EMPTY_BRIEFING);
@@ -127,7 +129,11 @@ export default function SalomaoOrchestrator() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Sessão expirada.');
       const res = await supabase.functions.invoke('prompt-generator-api', {
-        body: { action: 'generate_prompt', briefing: buildBriefingText(data) },
+        body: { 
+          action: 'generate_prompt', 
+          briefing: buildBriefingText(data),
+          ai_provider: aiProvider 
+        },
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (res.error) throw new Error(res.error.message);
@@ -185,6 +191,7 @@ export default function SalomaoOrchestrator() {
           {([
             { key: 'equipe', label: '🤖 Equipe de Agentes' },
             { key: 'gerador', label: '⚡ Gerador de Prompt IA' },
+            { key: 'conhecimento', label: '🧠 Base de Dados' },
             { key: 'pipeline', label: '🚀 Fluxo Organizado de Etapas' },
             { key: 'fluxo', label: '🗺️ Fluxo de Vendas' },
           ] as const).map(t => (
@@ -296,6 +303,21 @@ export default function SalomaoOrchestrator() {
               <div>
                 <p className="font-semibold text-sm text-yellow-400">Gerador de Prompt para Agente de Vendas</p>
                 <p className="text-xs text-muted-foreground mt-0.5">Preencha o briefing do negócio e o SALOMÃO gera um System Prompt completo, pronto para colar no WhatsApp, ChatGPT, Claude ou qualquer automação.</p>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/30 gap-1.5 whitespace-nowrap hidden sm:flex h-7">
+                  <Sparkles className="h-3 w-3" /> Motor IA
+                </Badge>
+                <Select value={aiProvider} onValueChange={setAiProvider} disabled={generating}>
+                  <SelectTrigger className="w-[180px] h-9 text-[11px] bg-background/50 border-yellow-500/20 focus:ring-yellow-500/50">
+                    <SelectValue placeholder="Selecione a IA" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="openai">ChatGPT (GPT-4o)</SelectItem>
+                    <SelectItem value="anthropic_sonnet">Claude 3.5 Sonnet</SelectItem>
+                    <SelectItem value="anthropic_haiku">Claude 3 Haiku</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -646,6 +668,22 @@ export default function SalomaoOrchestrator() {
               </div>
             </div>
             <FunnelFlowchart />
+          </div>
+        )}
+
+        {/* ══════════════════════ TAB: CONHECIMENTO ══════════════════════ */}
+        {tab === 'conhecimento' && (
+          <div className="space-y-4 animate-in fade-in duration-500">
+            <div className="rounded-xl border border-primary/20 bg-primary/5 px-5 py-4 flex items-start gap-3">
+              <BrainCircuit className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-sm text-primary">Base de Conhecimento e Treinamento Especializado</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Personalize o que cada agente sabe. Informações aqui alimentam a "memória de longo prazo" dos agentes, tornando-os especialistas no seu nicho específico.
+                </p>
+              </div>
+            </div>
+            <AgentKnowledgeBase agents={AGENTS} />
           </div>
         )}
       </div>
