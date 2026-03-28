@@ -180,7 +180,7 @@ const faqs = [
   },
   {
     q: 'Como funciona a mentoria da Comunidade Viver de IA?',
-    a: 'Nossa equipe de 60 especialistas é treinada e certificada pela Comunidade Viver de IA, referência nacional em IA aplicada. No plano Enterprise, você tem sessões diretas com consultores da comunidade.',
+    a: 'Nossos 9 agentes de IA são desenvolvidos e calibrados pela equipe da Logos IA, com base nas melhores práticas de marketing digital. No plano Enterprise, você tem suporte direto com nossa equipe de especialistas.',
   },
   {
     q: 'Existe contrato de fidelidade?',
@@ -273,7 +273,7 @@ export default function LandingPage() {
         </h1>
 
         <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mb-4">
-          Performance superior ao G4 Educação com apenas 60 especialistas em IA. Gerencie tráfego, copy, social media, e-mail e estratégia — tudo em um só lugar, a uma fração do custo de uma agência tradicional.
+          9 Agentes de IA especializados entregam mais resultado do que uma agência inteira de marketing. Tráfego pago, copy, social media, e-mail, funil e CRM — tudo integrado, trabalhando por você 24 horas por dia, 7 dias por semana.
         </p>
 
         <p className="text-sm text-muted-foreground mb-10 flex items-center gap-2">
@@ -399,7 +399,7 @@ export default function LandingPage() {
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-yellow-500/30 text-yellow-400">Análise Comparativa</Badge>
             <h2 className="text-3xl md:text-4xl font-bold mb-4">Logos IA vs. Mercado</h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto">Nossa equipe enxuta de 60 especialistas supera players com equipes muito maiores. Veja os dados.</p>
+            <p className="text-muted-foreground max-w-2xl mx-auto">9 agentes de IA especializados superam agências inteiras com dezenas de funcionários. Veja a comparação.</p>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">

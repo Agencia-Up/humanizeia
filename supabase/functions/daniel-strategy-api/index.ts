@@ -112,101 +112,75 @@ Inclua 3 seções: diagnóstico, execução e escala. Seja específico, prático
 }
 
 async function researchTrends(body: any, _user: any, _supabase: any, cors: Record<string, string>) {
+  // IMPORTANT: all responses use status 200 so Supabase SDK puts data in `data` not `error`
+  // Errors are returned as { error: "message" } with status 200
+  const ok = (payload: unknown) =>
+    new Response(JSON.stringify(payload), { status: 200, headers: { ...cors, 'Content-Type': 'application/json' } });
+
   const { niche, platforms = ['instagram', 'tiktok', 'google'] } = body;
-  if (!niche?.trim()) {
-    return new Response(JSON.stringify({ error: 'Nicho é obrigatório' }), {
-      status: 400,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
-  }
+  if (!niche?.trim()) return ok({ error: 'Nicho é obrigatório' });
 
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!anthropicKey) {
-    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY não configurada no servidor' }), {
-      status: 500,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
-  }
+  if (!anthropicKey) return ok({ error: 'ANTHROPIC_API_KEY não está configurada nas secrets do servidor' });
 
-  const platformsList = Array.isArray(platforms) ? platforms.join(', ') : 'instagram, tiktok, google';
+  const platformsList = Array.isArray(platforms) && platforms.length > 0
+    ? platforms.join(', ')
+    : 'instagram, tiktok, google';
   const now = new Date().toISOString();
 
   const prompt = `Você é DANIEL, estrategista de conteúdo digital especialista em marketing brasileiro.
-Analise tendências digitais para o nicho: "${niche.trim()}"
-Plataformas: ${platformsList}
-Data da análise: ${now}
+Analise tendências para o nicho: "${niche.trim()}"
+Plataformas foco: ${platformsList}
 
-Retorne APENAS este JSON (sem markdown, sem texto extra):
-{
-  "niche": "${niche.trim()}",
-  "research_date": "${now}",
-  "data_source": "ai_analysis",
-  "trending_topics": [
-    {"topic": "...", "why_trending": "...", "engagement_potential": "alto", "best_format": "carrossel", "best_platform": "instagram"},
-    {"topic": "...", "why_trending": "...", "engagement_potential": "médio", "best_format": "reel", "best_platform": "tiktok"},
-    {"topic": "...", "why_trending": "...", "engagement_potential": "alto", "best_format": "post", "best_platform": "instagram"},
-    {"topic": "...", "why_trending": "...", "engagement_potential": "médio", "best_format": "story", "best_platform": "instagram"},
-    {"topic": "...", "why_trending": "...", "engagement_potential": "alto", "best_format": "carrossel", "best_platform": "instagram"}
-  ],
-  "content_briefs": [
-    {"id": 1, "title": "...", "hook": "...", "format": "carrossel", "platform": "instagram", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "alto", "reason": "..."},
-    {"id": 2, "title": "...", "hook": "...", "format": "reel", "platform": "tiktok", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "alto", "reason": "..."},
-    {"id": 3, "title": "...", "hook": "...", "format": "carrossel", "platform": "instagram", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "médio", "reason": "..."},
-    {"id": 4, "title": "...", "hook": "...", "format": "reel", "platform": "instagram", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "alto", "reason": "..."},
-    {"id": 5, "title": "...", "hook": "...", "format": "post", "platform": "instagram", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "médio", "reason": "..."},
-    {"id": 6, "title": "...", "hook": "...", "format": "carrossel", "platform": "tiktok", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "alto", "reason": "..."}
-  ],
-  "viral_formats": [
-    {"format": "...", "description": "...", "example": "..."},
-    {"format": "...", "description": "...", "example": "..."},
-    {"format": "...", "description": "...", "example": "..."}
-  ],
-  "competitor_insights": "...",
-  "recommendation": "..."
-}
+Retorne APENAS JSON válido sem markdown:
+{"niche":"${niche.trim()}","research_date":"${now}","data_source":"ai_analysis","trending_topics":[{"topic":"tema 1","why_trending":"motivo","engagement_potential":"alto","best_format":"carrossel","best_platform":"instagram"},{"topic":"tema 2","why_trending":"motivo","engagement_potential":"médio","best_format":"reel","best_platform":"tiktok"},{"topic":"tema 3","why_trending":"motivo","engagement_potential":"alto","best_format":"post","best_platform":"instagram"},{"topic":"tema 4","why_trending":"motivo","engagement_potential":"médio","best_format":"story","best_platform":"instagram"},{"topic":"tema 5","why_trending":"motivo","engagement_potential":"alto","best_format":"carrossel","best_platform":"instagram"}],"content_briefs":[{"id":1,"title":"título","hook":"hook em até 15 palavras","format":"carrossel","platform":"instagram","slides_or_points":["slide 1","slide 2","slide 3","slide 4","slide 5"],"cta":"chamada para ação","hashtags":["tag1","tag2","tag3","tag4","tag5"],"estimated_reach":"alto","reason":"motivo"},{"id":2,"title":"título","hook":"hook","format":"reel","platform":"tiktok","slides_or_points":["ponto 1","ponto 2","ponto 3","ponto 4","ponto 5"],"cta":"cta","hashtags":["tag1","tag2","tag3","tag4","tag5"],"estimated_reach":"alto","reason":"motivo"},{"id":3,"title":"título","hook":"hook","format":"carrossel","platform":"instagram","slides_or_points":["s1","s2","s3","s4","s5"],"cta":"cta","hashtags":["t1","t2","t3","t4","t5"],"estimated_reach":"médio","reason":"motivo"},{"id":4,"title":"título","hook":"hook","format":"reel","platform":"instagram","slides_or_points":["p1","p2","p3","p4","p5"],"cta":"cta","hashtags":["t1","t2","t3","t4","t5"],"estimated_reach":"alto","reason":"motivo"},{"id":5,"title":"título","hook":"hook","format":"post","platform":"instagram","slides_or_points":["i1","i2","i3","i4","i5"],"cta":"cta","hashtags":["t1","t2","t3","t4","t5"],"estimated_reach":"médio","reason":"motivo"},{"id":6,"title":"título","hook":"hook","format":"carrossel","platform":"tiktok","slides_or_points":["a1","a2","a3","a4","a5"],"cta":"cta","hashtags":["t1","t2","t3","t4","t5"],"estimated_reach":"alto","reason":"motivo"}],"viral_formats":[{"format":"formato 1","description":"como fazer","example":"exemplo no nicho"},{"format":"formato 2","description":"como fazer","example":"exemplo no nicho"},{"format":"formato 3","description":"como fazer","example":"exemplo no nicho"}],"competitor_insights":"o que concorrentes estão fazendo no nicho","recommendation":"recomendação estratégica principal"}
 
-Preencha todos os "..." com conteúdo real e específico para o nicho "${niche.trim()}". Seja concreto e prático.`;
+Substitua todos os placeholders por conteúdo real e específico para o nicho "${niche.trim()}".`;
 
-  const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': anthropicKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 3000,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-
-  if (!aiRes.ok) {
-    const errText = await aiRes.text().catch(() => String(aiRes.status));
-    return new Response(JSON.stringify({ error: `Erro Claude API: ${aiRes.status} — ${errText}` }), {
-      status: 502,
-      headers: { ...cors, 'Content-Type': 'application/json' },
+  let aiRes: Response;
+  try {
+    aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 3000,
+        messages: [{ role: 'user', content: prompt }],
+      }),
     });
+  } catch (fetchErr: any) {
+    return ok({ error: `Falha de rede ao chamar Claude: ${fetchErr.message}` });
   }
 
-  const aiData = await aiRes.json();
+  if (!aiRes.ok) {
+    const errText = await aiRes.text().catch(() => '');
+    return ok({ error: `Claude API retornou ${aiRes.status}: ${errText.slice(0, 200)}` });
+  }
+
+  let aiData: any;
+  try {
+    aiData = await aiRes.json();
+  } catch {
+    return ok({ error: 'Falha ao parsear resposta da Claude API' });
+  }
+
   const rawText: string = aiData?.content?.[0]?.text ?? '';
+  if (!rawText) return ok({ error: 'Claude retornou resposta vazia' });
 
   let research: Record<string, unknown>;
   try {
     const match = rawText.match(/\{[\s\S]*\}/);
     research = JSON.parse(match ? match[0] : rawText);
   } catch {
-    return new Response(JSON.stringify({ error: 'IA retornou formato inválido. Tente novamente.' }), {
-      status: 502,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
+    // Return the raw text so we can debug
+    return ok({ error: `Claude não retornou JSON válido. Resposta: ${rawText.slice(0, 300)}` });
   }
 
-  return new Response(JSON.stringify({ research, scraped: false }), {
-    status: 200,
-    headers: { ...cors, 'Content-Type': 'application/json' },
-  });
+  return ok({ research, scraped: false });
 }
 
 async function generateSwot(body: any, cors: Record<string, string>) {

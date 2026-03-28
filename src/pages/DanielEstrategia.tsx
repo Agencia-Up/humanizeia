@@ -337,7 +337,13 @@ export default function DanielEstrategia() {
         body: { action: 'research_trends', niche: researchNiche, platforms: researchPlatforms },
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
-      if (error) throw new Error(error.message);
+      if (error) {
+        // Extract real error message from response body if available
+        const realMsg = (error as any)?.context?.error
+          || (error as any)?.context?.message
+          || error.message;
+        throw new Error(realMsg);
+      }
       if (data?.error) throw new Error(data.error);
       setResearchResult(data.research);
       toast({ title: '🔍 Pesquisa concluída!', description: `${data.research?.content_briefs?.length || 0} pautas geradas para "${researchNiche}".` });
