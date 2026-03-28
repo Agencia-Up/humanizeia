@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Loader2 } from "lucide-react";
+import { AgentTasksProvider } from "@/contexts/AgentTasksContext";
 
 // Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
@@ -24,7 +25,6 @@ const CreativeLibrary = lazy(() => import("./pages/CreativeLibrary"));
 const Reports = lazy(() => import("./pages/Reports"));
 const AIAcademy = lazy(() => import("./pages/AIAcademy"));
 const Settings = lazy(() => import("./pages/Settings"));
-const MidasAgent = lazy(() => import("./pages/MidasAgent"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
 const ConnectAccounts = lazy(() => import("./pages/ConnectAccounts"));
 const UnifiedPixel = lazy(() => import("./pages/UnifiedPixel"));
@@ -39,15 +39,12 @@ const WhatsAppInbox = lazy(() => import("./pages/WhatsAppInbox"));
 const WhatsAppAnalytics = lazy(() => import("./pages/WhatsAppAnalytics"));
 const WhatsAppAutomations = lazy(() => import("./pages/WhatsAppAutomations"));
 const WhatsAppInstances = lazy(() => import("./pages/WhatsAppInstances"));
-const CriarCampanha = lazy(() => import("./pages/CriarCampanha"));
 const WhatsAppAIAgent = lazy(() => import("./pages/WhatsAppAIAgent"));
 const MetaPixels = lazy(() => import("./pages/MetaPixels"));
 const MetaAudiences = lazy(() => import("./pages/MetaAudiences"));
 const WhatsAppCAPI = lazy(() => import("./pages/WhatsAppCAPI"));
-const ApolloDashboard = lazy(() => import("./pages/ApolloDashboard"));
 const SalomaoOrchestrator = lazy(() => import("./pages/SalomaoOrchestrator"));
 const FluxCRM = lazy(() => import("./pages/FluxCRM"));
-const LucasFunil = lazy(() => import('./pages/LucasFunil'));
 const CRMContacts = lazy(() => import("./pages/CRMContacts"));
 const CreativeIntelligence = lazy(() => import("./pages/CreativeIntelligence"));
 const CompetitorRadar = lazy(() => import("./pages/CompetitorRadar"));
@@ -60,8 +57,6 @@ const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
 const MeuPlano = lazy(() => import('./pages/MeuPlano'));
 const GeradorPrompt = lazy(() => import('./pages/GeradorPrompt'));
 const PauloAgente = lazy(() => import('./pages/PauloAgente'));
-
-import { AgentTasksProvider } from "@/contexts/AgentTasksContext";
 
 const queryClient = new QueryClient();
 
@@ -104,8 +99,6 @@ const App = () => (
               <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
               <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
               <Route path="/tutorials" element={<ProtectedRoute><Tutorials /></ProtectedRoute>} />
-              <Route path="/midas" element={<ProtectedRoute><MidasAgent /></ProtectedRoute>} />
-              <Route path="/apollo/criar-campanha" element={<ProtectedRoute><CriarCampanha /></ProtectedRoute>} />
               <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
               <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />
               <Route path="/whatsapp/broadcast" element={<ProtectedRoute><WhatsAppBroadcast /></ProtectedRoute>} />
@@ -116,10 +109,8 @@ const App = () => (
               <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
               <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
               <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
-              <Route path="/apollo" element={<ProtectedRoute><ApolloDashboard /></ProtectedRoute>} />
               <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
               <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
-              <Route path="/lucas" element={<ProtectedRoute><LucasFunil /></ProtectedRoute>} />
               <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
               <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
               <Route path="/competitor-radar" element={<ProtectedRoute><CompetitorRadar /></ProtectedRoute>} />
