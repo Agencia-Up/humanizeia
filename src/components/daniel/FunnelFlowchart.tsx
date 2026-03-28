@@ -19,8 +19,10 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Save, RotateCcw } from 'lucide-react';
+import { Save, RotateCcw, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { generateFunnel } from '@/lib/funnelGenerator';
+import { funnelLibrary } from '@/lib/funnelLibrary';
 import { NodeConfigDrawer } from './NodeConfigDrawer';
 import { NodePalette } from './NodePalette';
 import { FunnelNodeData, AidaPhase, PHASE_COLORS, AGENT_COLORS, PALETTE_ITEMS } from './flowTypes';
@@ -491,6 +493,25 @@ export function FunnelFlowchart() {
     toast({ title: '🔄 Fluxograma resetado para o template AIDA' });
   };
 
+  /**
+   * loadFromTemplate — carrega qualquer funil da funnelLibrary para o canvas.
+   * Usa generateFunnel() para converter os steps em Node<FunnelNodeData>[] + Edge[].
+   */
+  const loadFromTemplate = async (funnelId: string) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const clientId = user?.id ?? 'demo';
+    const { nodes: templateNodes, edges: templateEdges } = generateFunnel(funnelId, clientId);
+    if (!templateNodes.length) {
+      toast({ title: '⚠️ Funil não encontrado', variant: 'destructive' });
+      return;
+    }
+    setNodes(templateNodes);
+    setEdges(templateEdges);
+    setSelectedNode(null);
+    const funnel = funnelLibrary.find(f => f.id === funnelId);
+    toast({ title: `📥 Template "${funnel?.name}" carregado!`, description: `${templateNodes.length} etapas adicionadas ao canvas.` });
+  };
+
   return (
     <div style={{ display: 'flex', height: '80vh', borderRadius: 12, overflow: 'hidden', border: '1px solid #1e293b' }}>
       {/* Left palette */}
@@ -518,6 +539,32 @@ export function FunnelFlowchart() {
           }}
         >
           <span style={{ fontSize: 11, color: '#64748b', marginRight: 4 }}>Funil AIDA Interativo</span>
+
+          {/* Carregar template de funil */}
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <select
+              onChange={e => { if (e.target.value) { loadFromTemplate(e.target.value); e.target.value = ''; } }}
+              defaultValue=""
+              style={{
+                fontSize: 11,
+                height: 30,
+                paddingLeft: 8,
+                paddingRight: 8,
+                background: '#1e293b',
+                border: '1px solid #334155',
+                borderRadius: 6,
+                color: '#94a3b8',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              <option value="" disabled>📥 Carregar Funil</option>
+              {funnelLibrary.map(f => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+          </div>
+
           <Button size="sm" variant="outline" onClick={saveFlow} disabled={isSaving}
             style={{ fontSize: 12, height: 30, paddingLeft: 10, paddingRight: 10 }}>
             <Save className="h-3.5 w-3.5 mr-1" />
