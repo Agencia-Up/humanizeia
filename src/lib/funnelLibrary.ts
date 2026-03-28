@@ -10,6 +10,24 @@ export interface FunnelStep {
   stage: string;
   agent: AgentName;
   action: string;
+  // input é opcional na definição base — preenchido por adaptFunnelToClient()
+  input?: Record<string, string>;
+}
+
+/** Dados do cliente vindos do client_briefings (Salomão) */
+export interface ClientData {
+  nicho: string;
+  oferta: string;
+  publico?: string;
+  diferencial?: string;
+  tom?: string;
+  produto?: string;
+  preco?: string;
+  cta?: string;
+  site?: string;
+  redesSociais?: string;
+  paletaCores?: string;
+  identidadeVisual?: string;
 }
 
 export interface FunnelDefinition {

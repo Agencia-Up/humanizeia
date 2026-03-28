@@ -21,7 +21,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Save, RotateCcw, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { generateFunnel } from '@/lib/funnelGenerator';
+import { generateFunnel, adaptFunnelToClient } from '@/lib/funnelGenerator';
 import { funnelLibrary } from '@/lib/funnelLibrary';
 import { NodeConfigDrawer } from './NodeConfigDrawer';
 import { NodePalette } from './NodePalette';
@@ -512,16 +512,46 @@ export function FunnelFlowchart() {
   const loadFromTemplate = async (funnelId: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     const clientId = user?.id ?? 'demo';
-    const { nodes: templateNodes, edges: templateEdges } = generateFunnel(funnelId, clientId);
-    if (!templateNodes.length) {
-      toast({ title: '⚠️ Funil não encontrado', variant: 'destructive' });
-      return;
+
+    // Tenta buscar dados do cliente para contextualizar o funil
+    let baseFunnel = funnelLibrary.find(f => f.id === funnelId);
+    if (!baseFunnel) { toast({ title: '⚠️ Funil não encontrado', variant: 'destructive' }); return; }
+
+    if (user) {
+      try {
+        const { data: briefing } = await (supabase as any)
+          .from('client_briefings')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (briefing) {
+          // adaptFunnelToClient injeta nicho, oferta e todos os campos do cliente
+          baseFunnel = adaptFunnelToClient(baseFunnel, {
+            nicho:            briefing.business_name  ?? briefing.client_name ?? 'Não informado',
+            oferta:           briefing.main_offer     ?? briefing.oferta      ?? 'Não informado',
+            publico:          briefing.target_audience ?? briefing.publico,
+            diferencial:      briefing.differentiators ?? briefing.diferencial,
+            tom:              briefing.communication_tone ?? briefing.tom,
+            produto:          briefing.product_service ?? briefing.produto,
+            preco:            briefing.price ?? briefing.preco,
+            cta:              briefing.cta,
+            site:             briefing.site,
+            redesSociais:     briefing.redesSociais,
+            paletaCores:      briefing.paletaCores,
+            identidadeVisual: briefing.identidadeVisual,
+          });
+        }
+      } catch { /* sem briefing — usa funil base */ }
     }
-    setNodes(templateNodes);
-    setEdges(templateEdges);
+
+    const funnel = generateFunnel(funnelId, clientId);
+    setNodes(funnel.nodes);
+    setEdges(funnel.edges);
     setSelectedNode(null);
-    const funnel = funnelLibrary.find(f => f.id === funnelId);
-    toast({ title: `📥 Template "${funnel?.name}" carregado!`, description: `${templateNodes.length} etapas adicionadas ao canvas.` });
+    toast({ title: `📥 "${baseFunnel.name}" carregado!`, description: `${funnel.nodes.length} etapas com contexto do cliente aplicado.` });
   };
 
   return (

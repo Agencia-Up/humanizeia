@@ -13,7 +13,7 @@ import type { Node, Edge } from 'reactflow';
 import { MarkerType } from 'reactflow';
 import type { FunnelNodeData, AidaPhase, AgentName } from '@/components/daniel/flowTypes';
 import { PHASE_COLORS } from '@/components/daniel/flowTypes';
-import { funnelLibrary } from './funnelLibrary';
+import { funnelLibrary, type FunnelDefinition, type FunnelStep, type ClientData } from './funnelLibrary';
 
 // ─── Stage → AidaPhase + visual ──────────────────────────────────────────────
 
@@ -44,6 +44,68 @@ const ACTION_ROLES: Record<string, string> = {
   whatsapp_qualificacao:  'Qualificação WhatsApp',
   pos_venda:              'Pós-Venda / Retenção',
 };
+
+// ─── adaptFunnelToClient ─────────────────────────────────────────────────────
+
+/**
+ * adaptFunnelToClient
+ * Injeta os dados do cliente (nicho, oferta, público...) em cada step do funil.
+ * Cada agente recebe um `input` contextualizado para executar sua tarefa.
+ *
+ * Uso:
+ *   const adapted = adaptFunnelToClient(funnel, clientData);
+ *   // adapted.steps[0].input.nicho === 'Fitness'
+ *   // adapted.steps[0].input.oferta === 'Programa 90 dias'
+ *
+ * @param funnel      Definição do funil (da funnelLibrary ou gerado)
+ * @param clientData  Dados do cliente vindos do client_briefings (Salomão)
+ * @returns           Nova definição do funil com input preenchido por step
+ */
+export function adaptFunnelToClient(
+  funnel: FunnelDefinition,
+  clientData: ClientData,
+): FunnelDefinition {
+  // Campos comuns injetados em TODOS os steps
+  const baseInput: Record<string, string> = {
+    nicho:            clientData.nicho,
+    oferta:           clientData.oferta,
+    ...(clientData.publico        && { publico:        clientData.publico }),
+    ...(clientData.diferencial    && { diferencial:    clientData.diferencial }),
+    ...(clientData.tom            && { tom:            clientData.tom }),
+    ...(clientData.produto        && { produto:        clientData.produto }),
+    ...(clientData.preco          && { preco:          clientData.preco }),
+    ...(clientData.cta            && { cta:            clientData.cta }),
+    ...(clientData.site           && { site:           clientData.site }),
+    ...(clientData.redesSociais   && { redesSociais:   clientData.redesSociais }),
+    ...(clientData.paletaCores    && { paletaCores:    clientData.paletaCores }),
+    ...(clientData.identidadeVisual && { identidadeVisual: clientData.identidadeVisual }),
+  };
+
+  // Campos extras específicos por agente/action
+  const STEP_EXTRA_INPUT: Record<string, Record<string, string>> = {
+    criar_conteudo_social: { plataforma: clientData.redesSociais ?? 'Instagram', formato: 'carrossel' },
+    criar_landing_page:    { estilo: clientData.identidadeVisual ?? 'moderno', cores: clientData.paletaCores ?? '' },
+    sequencia_email:       { tom: clientData.tom ?? 'persuasivo', etapas: '5' },
+    checkout:              { preco: clientData.preco ?? '', cta: clientData.cta ?? 'Comprar agora' },
+    analise_kpi:           { periodo: '30 dias', metricas: 'CPL, CAC, ROAS, LTV' },
+    trafego_pago:          { nicho: clientData.nicho, oferta: clientData.oferta },
+    whatsapp_qualificacao: { nicho: clientData.nicho, produto: clientData.produto ?? '' },
+    vsl_copy:              { tom: clientData.tom ?? 'persuasivo', oferta: clientData.oferta },
+    pagina_captura:        { estilo: clientData.identidadeVisual ?? 'moderno' },
+    pos_venda:             { produto: clientData.produto ?? '', oferta: clientData.oferta },
+  };
+
+  const adaptedSteps: FunnelStep[] = funnel.steps.map(step => ({
+    ...step,
+    input: {
+      ...baseInput,                              // contexto base do cliente
+      ...(step.input ?? {}),                     // input original do step (se houver)
+      ...(STEP_EXTRA_INPUT[step.action] ?? {}),  // extras específicos da action
+    },
+  }));
+
+  return { ...funnel, steps: adaptedSteps };
+}
 
 // ─── Main function ────────────────────────────────────────────────────────────
 
