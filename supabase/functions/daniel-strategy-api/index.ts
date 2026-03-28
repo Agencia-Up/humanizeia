@@ -111,193 +111,63 @@ Inclua 3 seções: diagnóstico, execução e escala. Seja específico, prático
   });
 }
 
-async function researchTrends(body: any, user: any, supabase: any, cors: Record<string, string>) {
-  const { niche, platforms = ['instagram', 'tiktok', 'google'], language = 'pt-BR' } = body;
-  if (!niche) throw new Error('Nicho é obrigatório');
+async function researchTrends(body: any, _user: any, _supabase: any, cors: Record<string, string>) {
+  const { niche, platforms = ['instagram', 'tiktok', 'google'] } = body;
+  if (!niche?.trim()) {
+    return new Response(JSON.stringify({ error: 'Nicho é obrigatório' }), {
+      status: 400,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
 
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!anthropicKey) throw new Error('ANTHROPIC_API_KEY não configurada');
-
-  // Get Apify key from platform_integrations (stored as JSON string) or global secret
-  const { data: apifyIntegration } = await supabase
-    .from('platform_integrations')
-    .select('api_key_encrypted, is_active')
-    .eq('user_id', user.id)
-    .eq('platform', 'apify')
-    .eq('is_active', true)
-    .maybeSingle();
-
-  // api_key_encrypted is stored as JSON.stringify({api_token: "..."}) by test-integration
-  let apifyToken: string | null = null;
-  if (apifyIntegration?.api_key_encrypted) {
-    try {
-      const parsed = JSON.parse(apifyIntegration.api_key_encrypted);
-      apifyToken = parsed?.api_token || null;
-    } catch {
-      apifyToken = apifyIntegration.api_key_encrypted; // fallback: raw string
-    }
-  }
-  if (!apifyToken) {
-    apifyToken = Deno.env.get('APIFY_API_KEY') || null;
+  if (!anthropicKey) {
+    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY não configurada no servidor' }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
   }
 
-  const scrapedData: Record<string, any[]> = {};
+  const platformsList = Array.isArray(platforms) ? platforms.join(', ') : 'instagram, tiktok, google';
+  const now = new Date().toISOString();
 
-  // Run all Apify scrapers in PARALLEL (not sequential) with 10s timeout each
-  // to avoid hitting Supabase's 60s edge function limit
-  if (apifyToken) {
-    const apifyBase = 'https://api.apify.com/v2/acts';
-    const APIFY_TIMEOUT = 10; // seconds — keep total time well under 60s
+  const prompt = `Você é DANIEL, estrategista de conteúdo digital especialista em marketing brasileiro.
+Analise tendências digitais para o nicho: "${niche.trim()}"
+Plataformas: ${platformsList}
+Data da análise: ${now}
 
-    const scrapers: Promise<void>[] = [];
-
-    if (platforms.includes('instagram')) {
-      scrapers.push(
-        fetch(
-          `${apifyBase}/apify~instagram-hashtag-scraper/run-sync-get-dataset-items?token=${apifyToken}&timeout=${APIFY_TIMEOUT}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              hashtags: [niche.replace(/\s+/g, ''), `${niche.replace(/\s+/g, '')}brasil`],
-              resultsLimit: 6,
-            }),
-          }
-        )
-          .then(r => r.ok ? r.json() : [])
-          .then((data: any[]) => {
-            scrapedData.instagram = (data || []).slice(0, 6).map((p: any) => ({
-              caption: p.caption?.slice(0, 200),
-              likesCount: p.likesCount,
-              commentsCount: p.commentsCount,
-              type: p.type,
-              hashtags: p.hashtags?.slice(0, 8),
-            }));
-          })
-          .catch(() => { /* silently ignore */ })
-      );
-    }
-
-    if (platforms.includes('tiktok')) {
-      scrapers.push(
-        fetch(
-          `${apifyBase}/clockworks~tiktok-scraper/run-sync-get-dataset-items?token=${apifyToken}&timeout=${APIFY_TIMEOUT}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              searchSection: niche,
-              maxItems: 6,
-              shouldDownloadCovers: false,
-              shouldDownloadVideos: false,
-            }),
-          }
-        )
-          .then(r => r.ok ? r.json() : [])
-          .then((data: any[]) => {
-            scrapedData.tiktok = (data || []).slice(0, 6).map((v: any) => ({
-              text: v.text?.slice(0, 200),
-              diggCount: v.diggCount,
-              shareCount: v.shareCount,
-              playCount: v.playCount,
-              hashtags: v.hashtags?.slice(0, 6),
-            }));
-          })
-          .catch(() => { /* silently ignore */ })
-      );
-    }
-
-    if (platforms.includes('google')) {
-      scrapers.push(
-        fetch(
-          `${apifyBase}/apify~google-search-scraper/run-sync-get-dataset-items?token=${apifyToken}&timeout=${APIFY_TIMEOUT}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              queries: `${niche} tendencias 2025\n${niche} estrategias marketing`,
-              maxPagesPerQuery: 1,
-              resultsPerPage: 5,
-              languageCode: 'pt',
-              countryCode: 'br',
-            }),
-          }
-        )
-          .then(r => r.ok ? r.json() : [])
-          .then((data: any[]) => {
-            scrapedData.google = (data || []).slice(0, 8).map((r: any) => ({
-              title: r.title,
-              description: r.description?.slice(0, 200),
-              url: r.url,
-            }));
-          })
-          .catch(() => { /* silently ignore */ })
-      );
-    }
-
-    // Wait for ALL scrapers in parallel — max APIFY_TIMEOUT seconds total
-    await Promise.allSettled(scrapers);
-  }
-
-  // Build context for Claude analysis
-  const hasRealData = Object.values(scrapedData).some(d => d.length > 0);
-
-  const dataContext = hasRealData
-    ? `Dados reais coletados via scraping:\n${JSON.stringify(scrapedData, null, 2)}`
-    : `(Sem dados de scraping disponíveis — use seu conhecimento especializado sobre tendências digitais no Brasil em 2025)`;
-
-  const systemPrompt = `Você é DANIEL, estrategista de conteúdo digital especialista em marketing brasileiro.
-Analisa dados de redes sociais e cria pautas de conteúdo baseadas em tendências reais.
-Retorne APENAS JSON válido, sem markdown, sem texto antes ou depois do JSON.`;
-
-  const userPrompt = `Analise tendências digitais para o nicho: "${niche}"
-Idioma: ${language}
-Plataformas alvo: ${platforms.join(', ')}
-
-${dataContext}
-
-Crie um relatório de tendências com 6 pautas de conteúdo. Retorne este JSON exato:
+Retorne APENAS este JSON (sem markdown, sem texto extra):
 {
-  "niche": "${niche}",
-  "research_date": "${new Date().toISOString()}",
-  "data_source": "${hasRealData ? 'apify_scraping' : 'ai_analysis'}",
+  "niche": "${niche.trim()}",
+  "research_date": "${now}",
+  "data_source": "ai_analysis",
   "trending_topics": [
-    {
-      "topic": "tema trending",
-      "why_trending": "por que está em alta agora",
-      "engagement_potential": "alto",
-      "best_format": "carrossel",
-      "best_platform": "instagram"
-    }
+    {"topic": "...", "why_trending": "...", "engagement_potential": "alto", "best_format": "carrossel", "best_platform": "instagram"},
+    {"topic": "...", "why_trending": "...", "engagement_potential": "médio", "best_format": "reel", "best_platform": "tiktok"},
+    {"topic": "...", "why_trending": "...", "engagement_potential": "alto", "best_format": "post", "best_platform": "instagram"},
+    {"topic": "...", "why_trending": "...", "engagement_potential": "médio", "best_format": "story", "best_platform": "instagram"},
+    {"topic": "...", "why_trending": "...", "engagement_potential": "alto", "best_format": "carrossel", "best_platform": "instagram"}
   ],
   "content_briefs": [
-    {
-      "id": 1,
-      "title": "título da pauta",
-      "hook": "frase de abertura para fisgar atenção em até 15 palavras",
-      "format": "carrossel",
-      "platform": "instagram",
-      "slides_or_points": ["slide 1", "slide 2", "slide 3", "slide 4", "slide 5"],
-      "cta": "chamada para ação final",
-      "hashtags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-      "estimated_reach": "alto",
-      "reason": "por que esse conteúdo vai performar bem agora"
-    }
+    {"id": 1, "title": "...", "hook": "...", "format": "carrossel", "platform": "instagram", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "alto", "reason": "..."},
+    {"id": 2, "title": "...", "hook": "...", "format": "reel", "platform": "tiktok", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "alto", "reason": "..."},
+    {"id": 3, "title": "...", "hook": "...", "format": "carrossel", "platform": "instagram", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "médio", "reason": "..."},
+    {"id": 4, "title": "...", "hook": "...", "format": "reel", "platform": "instagram", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "alto", "reason": "..."},
+    {"id": 5, "title": "...", "hook": "...", "format": "post", "platform": "instagram", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "médio", "reason": "..."},
+    {"id": 6, "title": "...", "hook": "...", "format": "carrossel", "platform": "tiktok", "slides_or_points": ["...", "...", "...", "...", "..."], "cta": "...", "hashtags": ["...", "...", "...", "...", "..."], "estimated_reach": "alto", "reason": "..."}
   ],
   "viral_formats": [
-    {
-      "format": "nome do formato viral",
-      "description": "como executar o formato",
-      "example": "exemplo concreto aplicado ao nicho"
-    }
+    {"format": "...", "description": "...", "example": "..."},
+    {"format": "...", "description": "...", "example": "..."},
+    {"format": "...", "description": "...", "example": "..."}
   ],
-  "competitor_insights": "resumo de 2-3 linhas sobre o que concorrentes do nicho estão fazendo",
-  "recommendation": "recomendação estratégica principal para o nicho agora"
+  "competitor_insights": "...",
+  "recommendation": "..."
 }
 
-Gere exatamente: 6 content_briefs variados (mix de formatos e plataformas), 5 trending_topics e 3 viral_formats.`;
+Preencha todos os "..." com conteúdo real e específico para o nicho "${niche.trim()}". Seja concreto e prático.`;
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'x-api-key': anthropicKey,
@@ -306,28 +176,35 @@ Gere exatamente: 6 content_briefs variados (mix de formatos e plataformas), 5 tr
     },
     body: JSON.stringify({
       model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 4000,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
+      max_tokens: 3000,
+      messages: [{ role: 'user', content: prompt }],
     }),
   });
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => res.statusText);
-    throw new Error(`Claude API erro ${res.status}: ${errText}`);
+  if (!aiRes.ok) {
+    const errText = await aiRes.text().catch(() => String(aiRes.status));
+    return new Response(JSON.stringify({ error: `Erro Claude API: ${aiRes.status} — ${errText}` }), {
+      status: 502,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
   }
-  const aiData = await res.json();
-  const rawContent = aiData.content?.[0]?.text || '{}';
 
-  let research;
+  const aiData = await aiRes.json();
+  const rawText: string = aiData?.content?.[0]?.text ?? '';
+
+  let research: Record<string, unknown>;
   try {
-    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-    research = JSON.parse(jsonMatch ? jsonMatch[0] : rawContent);
+    const match = rawText.match(/\{[\s\S]*\}/);
+    research = JSON.parse(match ? match[0] : rawText);
   } catch {
-    throw new Error('Resposta da IA inválida — tente novamente');
+    return new Response(JSON.stringify({ error: 'IA retornou formato inválido. Tente novamente.' }), {
+      status: 502,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
   }
 
-  return new Response(JSON.stringify({ research, scraped: hasRealData }), {
+  return new Response(JSON.stringify({ research, scraped: false }), {
+    status: 200,
     headers: { ...cors, 'Content-Type': 'application/json' },
   });
 }
