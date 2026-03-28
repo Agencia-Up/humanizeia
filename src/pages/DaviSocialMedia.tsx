@@ -9,10 +9,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { useSocialMedia } from '@/hooks/useSocialMedia';
+import { useSocialMedia, CarouselSlide } from '@/hooks/useSocialMedia';
 import {
   Instagram, Zap, Loader2, Clock, CheckCircle2, XCircle, ChevronRight,
-  Copy, Trash2, FolderOpen, Layers, Send, Link,
+  Copy, Trash2, FolderOpen, Layers, Send, Link, ChevronLeft, Palette,
 } from 'lucide-react';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -47,6 +47,8 @@ type GeneratedContent = {
   title: string;
   preview: string;
   fullContent: string;
+  slides?: CarouselSlide[];
+  templateId?: string;
   createdAt: Date;
   scheduled?: Date;
   platform: 'instagram' | 'tiktok' | 'linkedin';
@@ -76,6 +78,105 @@ const CONTENT_TYPES = [
 
 const INSTAGRAM_REGEX = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/;
 
+const CAROUSEL_TEMPLATES = [
+  { id: 'dark_pro',  name: 'Dark Pro', bg: '#0D0D0D', accent: '#7C3AED', text: '#FFFFFF', sub: '#A1A1AA' },
+  { id: 'gold',      name: 'Gold',     bg: '#1A1000', accent: '#DAA520', text: '#FFFFFF', sub: '#B8860B' },
+  { id: 'ocean',     name: 'Ocean',    bg: '#0C1445', accent: '#00B4D8', text: '#FFFFFF', sub: '#90E0EF' },
+  { id: 'forest',    name: 'Forest',   bg: '#0D1F0D', accent: '#22C55E', text: '#FFFFFF', sub: '#86EFAC' },
+  { id: 'sunset',    name: 'Sunset',   bg: '#1F0D0D', accent: '#F97316', text: '#FFFFFF', sub: '#FED7AA' },
+  { id: 'royal',     name: 'Royal',    bg: '#1A0D1F', accent: '#EC4899', text: '#FFFFFF', sub: '#F9A8D4' },
+  { id: 'minimal',   name: 'Minimal',  bg: '#FFFFFF', accent: '#18181B', text: '#18181B', sub: '#71717A' },
+  { id: 'rose',      name: 'Rose',     bg: '#1F0D15', accent: '#F43F5E', text: '#FFFFFF', sub: '#FDA4AF' },
+] as const;
+
+type TemplateId = typeof CAROUSEL_TEMPLATES[number]['id'];
+
+// ─── Carousel Viewer ─────────────────────────────────────────────────────────
+
+interface CarouselViewerProps {
+  slides: CarouselSlide[];
+  templateId: TemplateId;
+  onTemplateChange: (id: TemplateId) => void;
+}
+
+function CarouselViewer({ slides, templateId, onTemplateChange }: CarouselViewerProps) {
+  const [current, setCurrent] = useState(0);
+  const tpl = CAROUSEL_TEMPLATES.find(t => t.id === templateId) ?? CAROUSEL_TEMPLATES[0];
+  const slide = slides[current];
+  if (!slide) return null;
+
+  return (
+    <div className="mt-3 space-y-2">
+      {/* Slide display */}
+      <div
+        className="relative rounded-xl overflow-hidden mx-auto"
+        style={{ backgroundColor: tpl.bg, width: 280, height: 280 }}
+      >
+        {/* Top accent bar */}
+        <div className="absolute top-0 left-0 w-full h-[3px]" style={{ backgroundColor: tpl.accent }} />
+        {/* Slide counter */}
+        <div className="absolute top-3 right-3 text-[10px] font-mono px-1.5 py-0.5 rounded"
+          style={{ backgroundColor: tpl.accent + '33', color: tpl.accent }}>
+          {current + 1}/{slides.length}
+        </div>
+        {/* Content */}
+        <div className="flex flex-col justify-center h-full px-6 py-10 gap-3">
+          <h3 className="text-base font-bold leading-tight" style={{ color: tpl.text }}>
+            {slide.headline}
+          </h3>
+          <p className="text-xs leading-relaxed" style={{ color: tpl.sub }}>
+            {slide.body}
+          </p>
+          {slide.cta && (
+            <span className="self-start mt-1 px-3 py-1 rounded-lg text-[11px] font-semibold"
+              style={{ backgroundColor: tpl.accent, color: tpl.bg }}>
+              {slide.cta}
+            </span>
+          )}
+        </div>
+        {/* Left arrow */}
+        {current > 0 && (
+          <button onClick={() => setCurrent(p => p - 1)}
+            className="absolute left-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: tpl.accent + '55' }}>
+            <ChevronLeft className="h-4 w-4" style={{ color: tpl.text }} />
+          </button>
+        )}
+        {/* Right arrow */}
+        {current < slides.length - 1 && (
+          <button onClick={() => setCurrent(p => p + 1)}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: tpl.accent + '55' }}>
+            <ChevronRight className="h-4 w-4" style={{ color: tpl.text }} />
+          </button>
+        )}
+      </div>
+
+      {/* Dot indicators */}
+      <div className="flex justify-center gap-1.5">
+        {slides.map((_, i) => (
+          <button key={i} onClick={() => setCurrent(i)}
+            className={`h-1.5 rounded-full transition-all duration-200 ${i === current ? 'w-4 bg-pink-400' : 'w-1.5 bg-border hover:bg-muted-foreground'}`}
+          />
+        ))}
+      </div>
+
+      {/* Template picker */}
+      <div className="flex items-center gap-2 justify-center">
+        <Palette className="h-3 w-3 text-muted-foreground shrink-0" />
+        <div className="flex gap-1.5">
+          {CAROUSEL_TEMPLATES.map(t => (
+            <button key={t.id} onClick={() => onTemplateChange(t.id as TemplateId)} title={t.name}
+              className={`w-5 h-5 rounded-full border-2 transition-all duration-150 ${t.id === templateId ? 'scale-125 border-white shadow-lg' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-110'}`}
+              style={{ backgroundColor: t.accent }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function getSmartScheduleTime(): Date {
   const now = new Date();
   const hour = now.getHours();
@@ -97,7 +198,7 @@ function extractHashtags(text: string): string[] {
 export default function DaviSocialMedia() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const { posts, schedulePost, saveDraft, fetchPosts } = useSocialMedia();
+  const { posts, schedulePost, saveDraft, fetchPosts, generateCarousel } = useSocialMedia();
 
   const [messages, setMessages] = useState<ChatMessage[]>([{
     id: 'welcome',
@@ -112,6 +213,7 @@ export default function DaviSocialMedia() {
   const [contentType, setContentType] = useState<'carousel' | 'reel_script' | 'post' | 'story'>('carousel');
   const [library, setLibrary] = useState<GeneratedContent[]>([]);
   const [autoModeRunning, setAutoModeRunning] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('dark_pro');
   const [clientContext, setClientContext] = useState<{ name: string; produto: string; publico: string } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -186,6 +288,13 @@ export default function DaviSocialMedia() {
 
   const addToLibrary = (content: GeneratedContent) => {
     setLibrary(prev => [content, ...prev]);
+  };
+
+  const updateContentCardTemplate = (msgId: string, templateId: TemplateId) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId || !m.contentCard) return m;
+      return { ...m, contentCard: { ...m.contentCard, templateId } };
+    }));
   };
 
   // ─── API Calls ───────────────────────────────────────────────────────────
@@ -322,15 +431,48 @@ export default function DaviSocialMedia() {
         updateStep(stepMsgId, 'daniel', 'completed', danielInsights.slice(0, 80));
       }
 
-      // Step 2: Paulo
+      // Step 2: Paulo (or carousel generator)
       if (switches.paulo) {
         updateStep(stepMsgId, 'paulo', 'running');
-        const prompt = switches.daniel && danielInsights
-          ? `Com base nesta estratégia do Daniel: "${danielInsights.slice(0, 300)}", crie um ${contentType === 'carousel' ? 'carrossel de 7 slides com headline, body e CTA por slide' : contentType === 'reel_script' ? 'script completo de Reel (30-60 segundos) com hook, desenvolvimento e CTA' : 'post completo com caption e hashtags'} para ${platform} sobre ${clientContext?.produto || 'nosso produto'}. Público: ${clientContext?.publico || 'nosso público'}.`
-          : `Crie um ${contentType} para ${platform} sobre ${clientContext?.produto || 'nosso produto'}. Público: ${clientContext?.publico || 'nosso público'}.`;
 
-        pauloContent = await callPauloApi(prompt, switches);
-        updateStep(stepMsgId, 'paulo', 'completed', 'Roteiro pronto!');
+        if (contentType === 'carousel') {
+          const topic = danielInsights
+            ? danielInsights.slice(0, 200)
+            : clientContext?.produto || 'marketing digital';
+          const carousel = await generateCarousel({
+            topic,
+            audience: clientContext?.publico || 'empreendedores',
+            tone: 'persuasivo',
+            slide_count: 7,
+            include_cta: true,
+            brand_name: clientContext?.name,
+          });
+          if (carousel) {
+            pauloContent = carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.join(' ') : '');
+            // Attach slides to the content to be saved
+            const autoCarouselContent: GeneratedContent = {
+              id: Date.now().toString(),
+              type: 'carousel',
+              title: `Carrossel Auto — ${new Date().toLocaleDateString('pt-BR')}`,
+              preview: carousel.cover_headline || carousel.slides[0]?.headline || topic.slice(0, 80),
+              fullContent: pauloContent,
+              slides: carousel.slides,
+              templateId: selectedTemplate,
+              createdAt: new Date(),
+              scheduled: switches.autoSchedule ? getSmartScheduleTime() : undefined,
+              platform,
+            };
+            addContentCard(stepMsgId, autoCarouselContent);
+            addToLibrary(autoCarouselContent);
+          }
+          updateStep(stepMsgId, 'paulo', 'completed', `${carousel?.slides.length || 0} slides criados!`);
+        } else {
+          const prompt = switches.daniel && danielInsights
+            ? `Com base nesta estratégia do Daniel: "${danielInsights.slice(0, 300)}", crie um ${contentType === 'reel_script' ? 'script completo de Reel (30-60 segundos) com hook, desenvolvimento e CTA' : 'post completo com caption e hashtags'} para ${platform} sobre ${clientContext?.produto || 'nosso produto'}. Público: ${clientContext?.publico || 'nosso público'}.`
+            : `Crie um ${contentType} para ${platform} sobre ${clientContext?.produto || 'nosso produto'}. Público: ${clientContext?.publico || 'nosso público'}.`;
+          pauloContent = await callPauloApi(prompt, switches);
+          updateStep(stepMsgId, 'paulo', 'completed', 'Roteiro pronto!');
+        }
       }
 
       // Step 3: Maria
@@ -366,19 +508,21 @@ export default function DaviSocialMedia() {
         updateStep(stepMsgId, 'davi', 'completed', `Agendado para ${scheduleTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`);
       }
 
-      // Save to library
-      const content: GeneratedContent = {
-        id: Date.now().toString(),
-        type: contentType,
-        title: `${contentType === 'carousel' ? 'Carrossel' : contentType === 'reel_script' ? 'Script Reel' : 'Post'} — ${new Date().toLocaleDateString('pt-BR')}`,
-        preview: (pauloContent || danielInsights).slice(0, 120),
-        fullContent: pauloContent || danielInsights,
-        createdAt: new Date(),
-        scheduled: switches.autoSchedule ? getSmartScheduleTime() : undefined,
-        platform,
-      };
-      addContentCard(stepMsgId, content);
-      addToLibrary(content);
+      // Save to library (only for non-carousel — carousel is handled in Step 2)
+      if (contentType !== 'carousel') {
+        const content: GeneratedContent = {
+          id: Date.now().toString(),
+          type: contentType,
+          title: `${contentType === 'reel_script' ? 'Script Reel' : 'Post'} — ${new Date().toLocaleDateString('pt-BR')}`,
+          preview: (pauloContent || danielInsights).slice(0, 120),
+          fullContent: pauloContent || danielInsights,
+          createdAt: new Date(),
+          scheduled: switches.autoSchedule ? getSmartScheduleTime() : undefined,
+          platform,
+        };
+        addContentCard(stepMsgId, content);
+        addToLibrary(content);
+      }
 
       addDaviMessage('✅ Modo Automático concluído! O conteúdo foi salvo na Biblioteca.');
     } catch (err: any) {
@@ -391,23 +535,53 @@ export default function DaviSocialMedia() {
   // ─── Flow: Manual Chat ────────────────────────────────────────────────────
 
   const runManualChat = async (text: string) => {
-    const prompt = `Crie ${contentType === 'carousel' ? `um carrossel de 7 slides para ${platform}` : contentType === 'reel_script' ? `um script de Reel de 30-60 segundos para ${platform}` : `um post para ${platform}`} sobre: ${text}. Cliente: ${clientContext?.name || 'agência'}. Produto: ${clientContext?.produto || ''}. Público: ${clientContext?.publico || ''}.`;
+    if (contentType === 'carousel') {
+      // Use structured carousel generator
+      addDaviMessage('🎠 Gerando carrossel visual com slides estruturados...');
+      const carousel = await generateCarousel({
+        topic: text,
+        audience: clientContext?.publico || 'empreendedores digitais',
+        tone: 'persuasivo',
+        slide_count: 7,
+        include_cta: true,
+        brand_name: clientContext?.name,
+      });
 
-    const content = await callPauloApi(prompt, switches);
+      if (!carousel) return;
 
-    const generated: GeneratedContent = {
-      id: Date.now().toString(),
-      type: contentType,
-      title: `${contentType} — ${text.slice(0, 30)}`,
-      preview: content.slice(0, 120),
-      fullContent: content,
-      createdAt: new Date(),
-      platform,
-    };
+      const generated: GeneratedContent = {
+        id: Date.now().toString(),
+        type: 'carousel',
+        title: `Carrossel — ${text.slice(0, 30)}`,
+        preview: carousel.cover_headline || carousel.slides[0]?.headline || text,
+        fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.join(' ') : ''),
+        slides: carousel.slides,
+        templateId: selectedTemplate,
+        createdAt: new Date(),
+        platform,
+      };
 
-    const msgId = addDaviMessage('✅ Aqui está o conteúdo criado:');
-    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
-    addToLibrary(generated);
+      const msgId = addDaviMessage(`✅ Carrossel criado com ${carousel.slides.length} slides! Use as setas para navegar e escolha um tema visual:`);
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+      addToLibrary(generated);
+    } else {
+      const prompt = `Crie ${contentType === 'reel_script' ? `um script de Reel de 30-60 segundos para ${platform}` : `um post para ${platform}`} sobre: ${text}. Cliente: ${clientContext?.name || 'agência'}. Produto: ${clientContext?.produto || ''}. Público: ${clientContext?.publico || ''}.`;
+      const content = await callPauloApi(prompt, switches);
+
+      const generated: GeneratedContent = {
+        id: Date.now().toString(),
+        type: contentType,
+        title: `${contentType} — ${text.slice(0, 30)}`,
+        preview: content.slice(0, 120),
+        fullContent: content,
+        createdAt: new Date(),
+        platform,
+      };
+
+      const msgId = addDaviMessage('✅ Aqui está o conteúdo criado:');
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+      addToLibrary(generated);
+    }
   };
 
   // ─── Main dispatch ────────────────────────────────────────────────────────
@@ -575,7 +749,16 @@ export default function DaviSocialMedia() {
                                 <Copy className="h-3 w-3" /> Copiar
                               </Button>
                             </div>
-                            <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
+                            {/* Carousel visual viewer */}
+                            {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
+                              <CarouselViewer
+                                slides={message.contentCard.slides}
+                                templateId={(message.contentCard.templateId as TemplateId) ?? 'dark_pro'}
+                                onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
+                              />
+                            ) : (
+                              <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
+                            )}
                             {message.contentCard.scheduled && (
                               <p className="text-[10px] text-emerald-400 mt-2">
                                 📅 Agendado para {message.contentCard.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
@@ -631,7 +814,16 @@ export default function DaviSocialMedia() {
                               <Copy className="h-3 w-3" /> Copiar
                             </Button>
                           </div>
-                          <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
+                          {/* Carousel visual viewer */}
+                          {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
+                            <CarouselViewer
+                              slides={message.contentCard.slides}
+                              templateId={(message.contentCard.templateId as TemplateId) ?? 'dark_pro'}
+                              onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
+                            />
+                          ) : (
+                            <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
+                          )}
                           {message.contentCard.scheduled && (
                             <p className="text-[10px] text-emerald-400 mt-2">
                               📅 Agendado para {message.contentCard.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
