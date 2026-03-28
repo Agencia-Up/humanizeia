@@ -205,18 +205,29 @@ export default function AICreativeStudio() {
   const [creativeInsights, setCreativeInsights] = useState<CreativeInsight[]>([]);
   const [isAnalyzingScore, setIsAnalyzingScore] = useState(false);
 
-  // Recupera a última vez que a Maria gerou uma imagem caso a tela tenha sido recarregada ou aberta pela notificação
+  // Recupera a imagem clicada da notificação ou a última gerada caso a tela seja recarregada
   useEffect(() => {
-    if (results.length === 0 && !isGenerating && recentTasks.length > 0) {
+    const taskIdParam = searchParams.get('taskId');
+
+    if (taskIdParam && recentTasks.length > 0) {
+      const specificTask = recentTasks.find(t => t.id === taskIdParam && t.status === 'completed');
+      if (specificTask?.result?.images?.length > 0) {
+        setResults(specificTask.result.images);
+        if (specificTask.payload?.prompt) setPrompt(specificTask.payload.prompt);
+        if (specificTask.payload?.format) setFormat(specificTask.payload.format);
+        // Remove da URL para não recarregar no F5
+        searchParams.delete('taskId');
+        window.history.replaceState({}, '', `?${searchParams.toString()}`);
+      }
+    } else if (results.length === 0 && !isGenerating && recentTasks.length > 0) {
       const lastMariaTask = recentTasks.find(t => t.agent_id === 'maria' && t.task_type === 'generate_image' && t.status === 'completed');
       if (lastMariaTask?.result?.images?.length > 0) {
         setResults(lastMariaTask.result.images);
-        // Também restaura o prompt e formato que foram usados
         if (lastMariaTask.payload?.prompt) setPrompt(lastMariaTask.payload.prompt);
         if (lastMariaTask.payload?.format) setFormat(lastMariaTask.payload.format);
       }
     }
-  }, [recentTasks, isGenerating, results.length]);
+  }, [recentTasks, isGenerating, results.length, searchParams]);
   const refImageInputRef = useRef<HTMLInputElement>(null);
 
   const handleReferenceImageSelect = (file: File) => {
