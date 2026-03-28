@@ -356,8 +356,8 @@ MENSAGEM: sua mensagem aqui`;
         } catch (_) { /* ignore parse errors */ }
       }
 
-      const assistantMsg = msgMatch?.[1]?.trim()
-        ?? content.replace(/FIELDS_JSON:[\s\S]*?END_JSON/g, '').trim()
+      const assistantMsg = (msgMatch?.[1]?.trim()
+        ?? content.replace(/FIELDS_JSON:[\s\S]*?END_JSON/g, '').trim())
         || 'Entendido! Campos atualizados.';
 
       setChatMessages([...newMessages, { role: 'assistant', content: assistantMsg }]);
@@ -391,10 +391,11 @@ MENSAGEM: sua mensagem aqui`;
 
       if (error) throw new Error(error.message);
 
-      setSavedId(data.id);
+      const savedData = data as any;
+      setSavedId(savedData.id);
       setPhase('done');
-      onBriefingSaved(data.id, extracted.business_name ?? 'Cliente');
-      toast({ title: '✅ Briefing salvo!', description: `ID: ${data.id.slice(0, 8)}... Pronto para o pipeline!` });
+      onBriefingSaved(savedData.id, extracted.business_name ?? 'Cliente');
+      toast({ title: '✅ Briefing salvo!', description: `ID: ${savedData.id.slice(0, 8)}... Pronto para o pipeline!` });
     } catch (err: any) {
       toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
       setPhase('reviewing');
@@ -421,7 +422,7 @@ MENSAGEM: sua mensagem aqui`;
   }
 
   // REVIEWING state
-  if (phase === 'reviewing' && extracted) {
+  if ((phase === 'reviewing' || phase === 'saving') && extracted) {
     const missing = getMissingFields(extracted);
     const filled = getFilledCount(extracted);
     const total = Object.keys(FIELD_LABELS).length;
