@@ -85,6 +85,42 @@ export function useCampaignNotifications() {
     }
   }, [toast, createNotification]);
 
+  // Subscribe to realtime notifications
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('public_notifications_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const newNotif = payload.new as CampaignNotification;
+          
+          // Show toast for new notification
+          const variant = newNotif.type === 'alert' ? 'destructive' : 'default';
+          toast({
+            title: newNotif.type === 'info' ? `✨ ${newNotif.title}` : `⚠️ ${newNotif.title}`,
+            description: newNotif.message,
+            variant,
+          });
+
+          // Invalidate query to refresh list
+          queryClient.invalidateQueries({ queryKey: ['notifications', user.id] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, toast, queryClient]);
+
   // Mark as read
   const markAsRead = useCallback(async (notificationId: string) => {
     if (!user) return;

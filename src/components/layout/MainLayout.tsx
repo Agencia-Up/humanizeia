@@ -7,6 +7,7 @@ import { ProductTour } from '@/components/onboarding/ProductTour';
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft } from 'lucide-react';
+import { Topbar } from './Topbar';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -24,11 +25,15 @@ export function MainLayout({ children }: MainLayoutProps) {
 
   return (
     <SidebarProvider defaultOpen={sidebarOpen} open={sidebarOpen} onOpenChange={setSidebarOpen}>
-      <div className="flex h-screen w-full overflow-hidden">
+      <div className="flex h-screen w-full overflow-hidden bg-background">
         <AppSidebar />
-        <SidebarInset className="flex flex-1 flex-col overflow-hidden">
+        <SidebarInset className="flex flex-1 flex-col overflow-hidden relative">
+          {/* Debug bar to check if layout is updating */}
+          <div className="h-0.5 w-full bg-primary/20 absolute top-0 z-50 pointer-events-none" />
+          
+          <Topbar />
+          
           <div className="flex-1 flex flex-col overflow-auto p-4 lg:p-6">
-
             {/* Botão Voltar — aparece em todas as páginas exceto no Dashboard */}
             {showBackButton && (
               <div className="mb-3 -mt-1">
@@ -36,7 +41,6 @@ export function MainLayout({ children }: MainLayoutProps) {
                   variant="ghost"
                   size="sm"
                   onClick={() => {
-                    // Se há histórico de navegação na sessão, volta; senão vai pro dashboard
                     const canGoBack = (window.history.state?.idx ?? 0) > 0;
                     if (canGoBack) {
                       navigate(-1);
@@ -52,7 +56,9 @@ export function MainLayout({ children }: MainLayoutProps) {
               </div>
             )}
 
-            {children}
+            <main className="flex-1">
+              {children}
+            </main>
 
             <footer className="mt-auto pt-6 pb-3 border-t border-border/40 text-center text-xs text-muted-foreground flex items-center justify-center gap-3 flex-wrap">
               <span>© {new Date().getFullYear()} LogosIA</span>
