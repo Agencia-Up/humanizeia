@@ -18,23 +18,21 @@ Deno.serve(async (req) => {
       });
     }
 
-    const token = authHeader.replace('Bearer ', '');
-
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
+    const { data: claimsData, error: claimsError } = await supabase.auth.getUser();
+    if (claimsError || !claimsData?.user) {
       console.error('[Shopify] Auth error:', claimsError?.message);
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
-    const userId = claimsData.claims.sub;
+    const userId = claimsData.user.id;
     const body = await req.json();
     const action = body.action;
 

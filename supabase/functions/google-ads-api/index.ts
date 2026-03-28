@@ -19,10 +19,9 @@ async function getAuthenticatedUser(req: Request) {
     { global: { headers: { Authorization: authHeader } } }
   );
 
-  const token = authHeader.replace("Bearer ", "");
-  const { data, error } = await supabase.auth.getClaims(token);
-  if (error || !data?.claims) return null;
-  return data.claims.sub as string;
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data?.user) return null;
+  return data.user.id;
 }
 
 async function getAccessToken(clientId: string, clientSecret: string, refreshToken: string) {

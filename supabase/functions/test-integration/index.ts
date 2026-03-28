@@ -17,9 +17,9 @@ async function getAuthenticatedUser(req: Request) {
   );
 
   const token = authHeader.replace("Bearer ", "");
-  const { data, error } = await supabase.auth.getClaims(token);
-  if (error || !data?.claims) return null;
-  return data.claims.sub as string;
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data?.user) return null;
+  return data.user.id;
 }
 
 async function testGA4(credentials: { measurement_id: string; api_secret: string }) {

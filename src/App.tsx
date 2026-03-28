@@ -14,7 +14,6 @@ const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const AgentHub = lazy(() => import("./pages/AgentHub"));
 const MetricsDashboard = lazy(() => import("./pages/Dashboard"));
 const Tutorials = lazy(() => import("./pages/Tutorials"));
-const AICopywriter = lazy(() => import("./pages/AICopywriter"));
 const AICreativeStudio = lazy(() => import("./pages/AICreativeStudio"));
 const CampaignOptimizer = lazy(() => import("./pages/CampaignOptimizer"));
 const BudgetAllocator = lazy(() => import("./pages/BudgetAllocator"));
