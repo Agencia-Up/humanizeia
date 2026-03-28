@@ -97,6 +97,10 @@ Todos os agentes operam sobre a metodologia **AIDA**:
   - Gera system prompts completos via IA (7 seções: Negócio, ICP, Oferta, Funil, Comunicação, Provas, Regras)
   - Orquestra o dashboard de execução (`BusinessBriefing`, `OrchestratorDashboard`, `ExecutionTimeline`)
 - **Abas:** Equipe de Agentes | ⚡ Gerador de Prompt IA
+- **Recursos Críticos (NUNCA REMOVER):**
+  - **Base de Conhecimento Dinâmica:** Modal para treinamento individual de cada agente (tabela `agent_knowledge`).
+  - **Seletor de IA Engine:** Permite escolher entre OpenAI e Anthropic para a geração de prompts.
+  - **Integração Backend:** O campo `ai_provider` é obrigatório na chamada da Edge Function `prompt-generator-api` para que ela concatene o conhecimento dos agentes.
 
 ---
 
@@ -757,6 +761,8 @@ VITE_SUPABASE_PUBLISHABLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 5. Apontar para o projeto Supabase antigo (`qrxsiixufdiemwwyhxvd`)
 6. Usar `stream: true` na chamada do Paulo (usa `stream: false`)
 7. Alterar o `TOUR_STORAGE_KEY` ou reativar o auto-start do `ProductTour`
+8. **REMOVER** os botões de "Base de Dados dos Agentes" ou "IA Engine" no SalomaoOrchestrator.tsx
+9. **REMOVER** o parâmetro `ai_provider` da chamada da Edge Function `prompt-generator-api` no frontend.
 
 ### ✅ SEMPRE FAZER
 1. Lazy import todas as novas páginas em `App.tsx`

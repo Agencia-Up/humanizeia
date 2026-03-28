@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { AgentKnowledgeModal } from '@/features/orchestrator/components/AgentKnowledgeModal';
 import {
   Sparkles, Radar, PenTool, Palette, Send,
   Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
@@ -103,6 +104,11 @@ export default function SalomaoOrchestrator() {
   const [generatedPrompt, setGeneratedPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  
+  /* CRITICAL: DO NOT REMOVE - Agent Knowledge Base & IA Engine Selector */
+  const [aiProvider, setAiProvider] = useState('openai'); 
+  const [isKnowledgeModalOpen, setIsKnowledgeModalOpen] = useState(false);
+  
   const outputRef = useRef<HTMLDivElement>(null);
 
   const activeCount = AGENTS.filter(a => a.status === 'active').length;
@@ -125,7 +131,11 @@ export default function SalomaoOrchestrator() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Sessão expirada.');
       const res = await supabase.functions.invoke('prompt-generator-api', {
-        body: { action: 'generate_prompt', briefing: buildBriefingText(data) },
+        body: { 
+          action: 'generate_prompt', 
+          briefing: buildBriefingText(data),
+          ai_provider: aiProvider // CRITICAL: REQUIRED FOR KNOWLEDGE BASE
+        },
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (res.error) throw new Error(res.error.message);
@@ -163,6 +173,32 @@ export default function SalomaoOrchestrator() {
             <h1 className="text-3xl font-bold tracking-tight">SALOMÃO</h1>
             <Sparkles className="h-8 w-8 text-yellow-400" />
           </div>
+
+          {/* CRITICAL: IA Engine Selector - DO NOT REMOVE */}
+          <div className="absolute top-0 right-0 hidden sm:flex items-center gap-2">
+            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 gap-1.5 whitespace-nowrap">
+              <Bot className="h-3 w-3" /> IA Engine
+            </Badge>
+            <Select value={aiProvider} onValueChange={setAiProvider} disabled={generating}>
+              <SelectTrigger className="w-[180px] h-8 text-xs bg-card/60 border-primary/20 focus:ring-primary/50">
+                <SelectValue placeholder="Selecione a IA" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="openai">ChatGPT (GPT-4o)</SelectItem>
+                <SelectItem value="anthropic_sonnet">Claude 3.5 Sonnet</SelectItem>
+                <SelectItem value="anthropic_haiku">Claude 3 Haiku</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* CRITICAL: Agent Knowledge Base Button - DO NOT REMOVE */}
+          <div className="absolute top-0 left-0 hidden sm:flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8 gap-2 border-primary/30 hover:bg-primary/10" onClick={() => setIsKnowledgeModalOpen(true)}>
+              <Brain className="h-4 w-4 text-primary" />
+              Base de Dados dos Agentes
+            </Button>
+          </div>
+
           <p className="text-muted-foreground">A Agência de Marketing Digital do Futuro</p>
           <p className="text-sm text-muted-foreground max-w-2xl mx-auto leading-relaxed">
             10 agentes especializados de IA trabalhando em equipe. Cada um é um especialista completo na sua área —
@@ -623,6 +659,13 @@ export default function SalomaoOrchestrator() {
             </div>
           </div>
         )}
+
+        {/* CRITICAL: Agent Knowledge Modal - DO NOT REMOVE */}
+        <AgentKnowledgeModal 
+          isOpen={isKnowledgeModalOpen} 
+          onOpenChange={setIsKnowledgeModalOpen} 
+          agents={AGENTS} 
+        />
       </div>
     </MainLayout>
   );
