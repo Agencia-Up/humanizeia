@@ -214,8 +214,6 @@ export function useFluxCRM() {
       moveLeadMutation.mutate({ leadId, stageId: newStageId, position: newPosition }),
     getLeadsByStage: (stageId: string) =>
       leads.filter((l) => l.stage_id === stageId).sort((a, b) => a.position - b.position),
-    updateLead,
-    deleteLead,
     totalValue,
     refetch: refetchLeads,
   };
