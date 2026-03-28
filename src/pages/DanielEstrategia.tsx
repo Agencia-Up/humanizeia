@@ -14,7 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   Brain, BarChart3, Compass, Lightbulb, Loader2,
   Sparkles, Target, TrendingUp, TrendingDown, Zap, ChevronRight, Shield, Star,
-  Layers, Users, ArrowRight, Save, ExternalLink, Copy, CheckCheck,
+  Layers, Users, ArrowRight, Save, ExternalLink, Copy, CheckCheck, Search,
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -256,6 +256,13 @@ export default function DanielEstrategia() {
   const [garantia, setGarantia] = useState('');
   const [cta, setCta] = useState('');
 
+  // ── Research state ──
+  const [researchNiche, setResearchNiche] = useState('');
+  const [researchPlatforms, setResearchPlatforms] = useState<string[]>(['instagram', 'tiktok', 'google']);
+  const [researchLoading, setResearchLoading] = useState(false);
+  const [researchResult, setResearchResult] = useState<any>(null);
+  const [researchError, setResearchError] = useState('');
+
   const handleGenerateCopy = async () => {
     if (!produto.trim() || !publico.trim()) {
       toast({ title: 'Campos obrigatórios', description: 'Preencha Produto e Público-alvo.', variant: 'destructive' });
@@ -315,6 +322,37 @@ export default function DanielEstrategia() {
     }
   };
 
+  const handleResearch = async () => {
+    if (!researchNiche.trim()) {
+      toast({ title: 'Informe o nicho', description: 'Digite o nicho do seu cliente antes de pesquisar.', variant: 'destructive' });
+      return;
+    }
+    setResearchLoading(true);
+    setResearchResult(null);
+    setResearchError('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Sessão expirada');
+      const { data, error } = await supabase.functions.invoke('daniel-strategy-api', {
+        body: { action: 'research_trends', niche: researchNiche, platforms: researchPlatforms },
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
+      setResearchResult(data.research);
+      toast({ title: '🔍 Pesquisa concluída!', description: `${data.research?.content_briefs?.length || 0} pautas geradas para "${researchNiche}".` });
+    } catch (err: any) {
+      setResearchError(err.message);
+      toast({ title: 'Erro na pesquisa', description: err.message, variant: 'destructive' });
+    } finally {
+      setResearchLoading(false);
+    }
+  };
+
+  const togglePlatform = (p: string) => {
+    setResearchPlatforms(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -338,7 +376,7 @@ export default function DanielEstrategia() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-7 text-xs">
+          <TabsList className="grid w-full grid-cols-8 text-xs">
             <TabsTrigger value="estrategia" className="gap-1 text-xs"><Compass className="h-3 w-3" />Estratégia</TabsTrigger>
             <TabsTrigger value="analise" className="gap-1 text-xs"><BarChart3 className="h-3 w-3" />Análise</TabsTrigger>
             <TabsTrigger value="swot" className="gap-1 text-xs"><Target className="h-3 w-3" />SWOT</TabsTrigger>
@@ -346,6 +384,7 @@ export default function DanielEstrategia() {
             <TabsTrigger value="modelos" className="gap-1 text-xs">📋 Modelos</TabsTrigger>
             <TabsTrigger value="copy" className="gap-1 text-xs">✍️ Copy LP</TabsTrigger>
             <TabsTrigger value="metricas" className="gap-1 text-xs"><TrendingUp className="h-3 w-3" />Métricas</TabsTrigger>
+            <TabsTrigger value="pesquisa" className="text-[10px]">🔍 Pesquisa</TabsTrigger>
           </TabsList>
 
           {/* STRATEGY GENERATOR */}
@@ -796,6 +835,202 @@ export default function DanielEstrategia() {
               </div>
             </div>
           </TabsContent>
+
+        {/* ── PESQUISA DE TENDÊNCIAS ── */}
+        <TabsContent value="pesquisa" className="space-y-5 mt-4">
+          {/* Header */}
+          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-5 py-4 flex items-start gap-3">
+            <Search className="h-5 w-5 text-cyan-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-sm text-cyan-400">Pesquisa de Tendências com IA</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Daniel analisa o que está viral no nicho do seu cliente — Instagram, TikTok e Google — e gera pautas prontas para o Davi publicar.
+                {' '}<span className="text-cyan-400/70">Configure o Apify em Integrações para dados reais.</span>
+              </p>
+            </div>
+          </div>
+
+          {/* Input form */}
+          <div className="rounded-xl border border-border/50 bg-card/40 p-5 space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Nicho do cliente</label>
+              <input
+                type="text"
+                value={researchNiche}
+                onChange={e => setResearchNiche(e.target.value)}
+                placeholder="Ex: emagrecimento, marketing digital, moda feminina..."
+                className="w-full text-sm px-3 py-2.5 rounded-lg border border-border/60 bg-background/50 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cyan-500/40"
+                onKeyDown={e => e.key === 'Enter' && handleResearch()}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Plataformas</label>
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  { id: 'instagram', label: '📸 Instagram' },
+                  { id: 'tiktok', label: '🎵 TikTok' },
+                  { id: 'google', label: '🔍 Google' },
+                ].map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => togglePlatform(p.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      researchPlatforms.includes(p.id)
+                        ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-400'
+                        : 'border-border/50 text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <Button
+              onClick={handleResearch}
+              disabled={researchLoading || !researchNiche.trim()}
+              className="w-full gradient-primary text-primary-foreground"
+            >
+              {researchLoading ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Pesquisando tendências...</>
+              ) : (
+                <><Search className="h-4 w-4 mr-2" />Pesquisar Tendências Agora</>
+              )}
+            </Button>
+
+            {researchError && (
+              <p className="text-xs text-destructive">{researchError}</p>
+            )}
+          </div>
+
+          {/* Results */}
+          {researchResult && (
+            <div className="space-y-4">
+              {/* Source badge */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-muted-foreground">Fonte dos dados:</span>
+                <Badge className={researchResult.data_source === 'apify_scraping'
+                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[10px]'
+                  : 'bg-amber-500/20 text-amber-400 border-amber-500/30 text-[10px]'
+                }>
+                  {researchResult.data_source === 'apify_scraping' ? '✅ Dados reais (Apify)' : '🤖 Análise IA (sem Apify)'}
+                </Badge>
+              </div>
+
+              {/* Recommendation */}
+              {researchResult.recommendation && (
+                <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+                  <p className="text-xs font-semibold text-cyan-400 mb-1">💡 Recomendação estratégica</p>
+                  <p className="text-sm text-foreground">{researchResult.recommendation}</p>
+                </div>
+              )}
+
+              {/* Trending topics */}
+              {researchResult.trending_topics?.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">🔥 Tópicos em alta</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {researchResult.trending_topics.map((t: any, i: number) => (
+                      <div key={i} className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-medium text-foreground leading-snug">{t.topic}</p>
+                          <Badge variant="outline" className={`text-[9px] shrink-0 ${
+                            t.engagement_potential === 'alto' ? 'border-emerald-500/40 text-emerald-400' :
+                            t.engagement_potential === 'médio' ? 'border-amber-500/40 text-amber-400' :
+                            'border-muted/40 text-muted-foreground'
+                          }`}>{t.engagement_potential}</Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">{t.why_trending}</p>
+                        <div className="flex gap-1.5">
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-muted/30 text-muted-foreground">{t.best_format}</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-muted/30 text-muted-foreground">{t.best_platform}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Content briefs */}
+              {researchResult.content_briefs?.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">📋 Pautas prontas ({researchResult.content_briefs.length})</h3>
+                  <div className="space-y-3">
+                    {researchResult.content_briefs.map((brief: any) => (
+                      <div key={brief.id} className="rounded-xl border border-border/50 bg-card/40 p-4 space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="font-semibold text-sm text-foreground">{brief.title}</p>
+                            <div className="flex gap-1.5 mt-1">
+                              <Badge variant="outline" className="text-[9px]">{brief.format}</Badge>
+                              <Badge variant="outline" className="text-[9px]">{brief.platform}</Badge>
+                              <Badge variant="outline" className={`text-[9px] ${
+                                brief.estimated_reach === 'alto' ? 'text-emerald-400 border-emerald-500/30' : 'text-muted-foreground'
+                              }`}>🎯 {brief.estimated_reach}</Badge>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-[10px] h-7 px-2 shrink-0"
+                            onClick={() => {
+                              navigator.clipboard.writeText(
+                                `Título: ${brief.title}\nHook: ${brief.hook}\nPontos: ${brief.slides_or_points?.join(' | ')}\nCTA: ${brief.cta}\nHashtags: ${brief.hashtags?.map((h: string) => '#' + h).join(' ')}`
+                              );
+                              toast({ title: 'Pauta copiada!', description: 'Cole no Paulo ou Davi.' });
+                            }}
+                          >
+                            <Copy className="h-3 w-3 mr-1" />Copiar
+                          </Button>
+                        </div>
+
+                        <div className="rounded-lg bg-cyan-500/5 border border-cyan-500/20 px-3 py-2">
+                          <p className="text-[11px] text-cyan-300 font-medium">Hook: "{brief.hook}"</p>
+                        </div>
+
+                        {brief.slides_or_points?.length > 0 && (
+                          <div className="space-y-1">
+                            {brief.slides_or_points.map((point: string, j: number) => (
+                              <div key={j} className="flex items-start gap-2 text-xs text-muted-foreground">
+                                <span className="shrink-0 font-mono text-cyan-400">{j + 1}.</span>
+                                <span>{point}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap gap-1">
+                          {brief.hashtags?.map((tag: string, j: number) => (
+                            <span key={j} className="text-[10px] text-cyan-400/70">#{tag}</span>
+                          ))}
+                        </div>
+
+                        <p className="text-[10px] text-muted-foreground italic">💡 {brief.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Viral formats */}
+              {researchResult.viral_formats?.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">⚡ Formatos virais no nicho</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {researchResult.viral_formats.map((f: any, i: number) => (
+                      <div key={i} className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-1.5">
+                        <p className="text-sm font-semibold text-foreground">{f.format}</p>
+                        <p className="text-[11px] text-muted-foreground">{f.description}</p>
+                        <p className="text-[11px] text-cyan-400/80 italic">Ex: {f.example}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </TabsContent>
         </Tabs>
       </div>
     </MainLayout>
