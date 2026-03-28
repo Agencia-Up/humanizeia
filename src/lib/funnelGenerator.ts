@@ -161,10 +161,12 @@ export function recommendFunnel(client: ClientProfile): {
  * @returns          { nodes, edges } prontos para React Flow
  */
 export function generateFunnel(
-  funnelId: string,
+  funnelIdOrDef: string | FunnelDefinition,
   clientId: string,
 ): { nodes: Node<FunnelNodeData>[]; edges: Edge[] } {
-  const funnel = funnelLibrary.find(f => f.id === funnelId);
+  const funnel = typeof funnelIdOrDef === 'string'
+    ? funnelLibrary.find(f => f.id === funnelIdOrDef)
+    : funnelIdOrDef;
   if (!funnel) return { nodes: [], edges: [] };
 
   // ── Nodes ─────────────────────────────────────────────────────────────────
