@@ -169,7 +169,7 @@ const tabConfig = [
 export default function AICreativeStudio() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const { createTask } = useAgentTasks();
+  const { createTask, recentTasks } = useAgentTasks();
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = usePersistedState('cs-active-tab', 'maria');
   const [removeBgImage, setRemoveBgImage] = useState<{ url: string; name: string } | null>(null);
@@ -181,6 +181,7 @@ export default function AICreativeStudio() {
       setActiveTab(tabParam);
     }
   }, [searchParams]);
+
 
   const [format, setFormat] = useState('feed-1x1');
   const [style, setStyle] = useState('photorealistic');
@@ -203,6 +204,19 @@ export default function AICreativeStudio() {
   const [creativeScore, setCreativeScore] = useState<number | null>(null);
   const [creativeInsights, setCreativeInsights] = useState<CreativeInsight[]>([]);
   const [isAnalyzingScore, setIsAnalyzingScore] = useState(false);
+
+  // Recupera a última vez que a Maria gerou uma imagem caso a tela tenha sido recarregada ou aberta pela notificação
+  useEffect(() => {
+    if (results.length === 0 && !isGenerating && recentTasks.length > 0) {
+      const lastMariaTask = recentTasks.find(t => t.agent_id === 'maria' && t.task_type === 'generate_image' && t.status === 'completed');
+      if (lastMariaTask?.result?.images?.length > 0) {
+        setResults(lastMariaTask.result.images);
+        // Também restaura o prompt e formato que foram usados
+        if (lastMariaTask.payload?.prompt) setPrompt(lastMariaTask.payload.prompt);
+        if (lastMariaTask.payload?.format) setFormat(lastMariaTask.payload.format);
+      }
+    }
+  }, [recentTasks, isGenerating, results.length]);
   const refImageInputRef = useRef<HTMLInputElement>(null);
 
   const handleReferenceImageSelect = (file: File) => {
