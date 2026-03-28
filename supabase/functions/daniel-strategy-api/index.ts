@@ -118,7 +118,7 @@ async function researchTrends(body: any, user: any, supabase: any, cors: Record<
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!anthropicKey) throw new Error('ANTHROPIC_API_KEY não configurada');
 
-  // Get Apify key from platform_integrations (optional)
+  // Get Apify key from platform_integrations (stored as JSON string) or global secret
   const { data: apifyIntegration } = await supabase
     .from('platform_integrations')
     .select('api_key_encrypted, is_active')
@@ -127,97 +127,116 @@ async function researchTrends(body: any, user: any, supabase: any, cors: Record<
     .eq('is_active', true)
     .maybeSingle();
 
-  const apifyToken = apifyIntegration?.api_key_encrypted || Deno.env.get('APIFY_API_KEY');
+  // api_key_encrypted is stored as JSON.stringify({api_token: "..."}) by test-integration
+  let apifyToken: string | null = null;
+  if (apifyIntegration?.api_key_encrypted) {
+    try {
+      const parsed = JSON.parse(apifyIntegration.api_key_encrypted);
+      apifyToken = parsed?.api_token || null;
+    } catch {
+      apifyToken = apifyIntegration.api_key_encrypted; // fallback: raw string
+    }
+  }
+  if (!apifyToken) {
+    apifyToken = Deno.env.get('APIFY_API_KEY') || null;
+  }
 
-  let scrapedData: Record<string, any[]> = {};
+  const scrapedData: Record<string, any[]> = {};
 
-  // If Apify is configured, scrape real data
+  // Run all Apify scrapers in PARALLEL (not sequential) with 10s timeout each
+  // to avoid hitting Supabase's 60s edge function limit
   if (apifyToken) {
     const apifyBase = 'https://api.apify.com/v2/acts';
+    const APIFY_TIMEOUT = 10; // seconds — keep total time well under 60s
 
-    // Instagram hashtag scraping
+    const scrapers: Promise<void>[] = [];
+
     if (platforms.includes('instagram')) {
-      try {
-        const igRes = await fetch(
-          `${apifyBase}/apify~instagram-hashtag-scraper/run-sync-get-dataset-items?token=${apifyToken}&timeout=25`,
+      scrapers.push(
+        fetch(
+          `${apifyBase}/apify~instagram-hashtag-scraper/run-sync-get-dataset-items?token=${apifyToken}&timeout=${APIFY_TIMEOUT}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               hashtags: [niche.replace(/\s+/g, ''), `${niche.replace(/\s+/g, '')}brasil`],
-              resultsLimit: 8,
+              resultsLimit: 6,
             }),
           }
-        );
-        if (igRes.ok) {
-          const igData = await igRes.json();
-          scrapedData.instagram = (igData || []).slice(0, 8).map((p: any) => ({
-            caption: p.caption?.slice(0, 200),
-            likesCount: p.likesCount,
-            commentsCount: p.commentsCount,
-            type: p.type,
-            hashtags: p.hashtags?.slice(0, 10),
-          }));
-        }
-      } catch { /* ignore scraping errors */ }
+        )
+          .then(r => r.ok ? r.json() : [])
+          .then((data: any[]) => {
+            scrapedData.instagram = (data || []).slice(0, 6).map((p: any) => ({
+              caption: p.caption?.slice(0, 200),
+              likesCount: p.likesCount,
+              commentsCount: p.commentsCount,
+              type: p.type,
+              hashtags: p.hashtags?.slice(0, 8),
+            }));
+          })
+          .catch(() => { /* silently ignore */ })
+      );
     }
 
-    // TikTok trend scraping
     if (platforms.includes('tiktok')) {
-      try {
-        const ttRes = await fetch(
-          `${apifyBase}/clockworks~tiktok-scraper/run-sync-get-dataset-items?token=${apifyToken}&timeout=25`,
+      scrapers.push(
+        fetch(
+          `${apifyBase}/clockworks~tiktok-scraper/run-sync-get-dataset-items?token=${apifyToken}&timeout=${APIFY_TIMEOUT}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              searchSection: `${niche}`,
-              maxItems: 8,
+              searchSection: niche,
+              maxItems: 6,
               shouldDownloadCovers: false,
               shouldDownloadVideos: false,
             }),
           }
-        );
-        if (ttRes.ok) {
-          const ttData = await ttRes.json();
-          scrapedData.tiktok = (ttData || []).slice(0, 8).map((v: any) => ({
-            text: v.text?.slice(0, 200),
-            diggCount: v.diggCount,
-            shareCount: v.shareCount,
-            playCount: v.playCount,
-            hashtags: v.hashtags?.slice(0, 8),
-          }));
-        }
-      } catch { /* ignore */ }
+        )
+          .then(r => r.ok ? r.json() : [])
+          .then((data: any[]) => {
+            scrapedData.tiktok = (data || []).slice(0, 6).map((v: any) => ({
+              text: v.text?.slice(0, 200),
+              diggCount: v.diggCount,
+              shareCount: v.shareCount,
+              playCount: v.playCount,
+              hashtags: v.hashtags?.slice(0, 6),
+            }));
+          })
+          .catch(() => { /* silently ignore */ })
+      );
     }
 
-    // Google search scraping
     if (platforms.includes('google')) {
-      try {
-        const ggRes = await fetch(
-          `${apifyBase}/apify~google-search-scraper/run-sync-get-dataset-items?token=${apifyToken}&timeout=25`,
+      scrapers.push(
+        fetch(
+          `${apifyBase}/apify~google-search-scraper/run-sync-get-dataset-items?token=${apifyToken}&timeout=${APIFY_TIMEOUT}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              queries: `${niche} tendencias 2025\n${niche} estrategias`,
+              queries: `${niche} tendencias 2025\n${niche} estrategias marketing`,
               maxPagesPerQuery: 1,
               resultsPerPage: 5,
               languageCode: 'pt',
               countryCode: 'br',
             }),
           }
-        );
-        if (ggRes.ok) {
-          const ggData = await ggRes.json();
-          scrapedData.google = (ggData || []).slice(0, 10).map((r: any) => ({
-            title: r.title,
-            description: r.description?.slice(0, 200),
-            url: r.url,
-          }));
-        }
-      } catch { /* ignore */ }
+        )
+          .then(r => r.ok ? r.json() : [])
+          .then((data: any[]) => {
+            scrapedData.google = (data || []).slice(0, 8).map((r: any) => ({
+              title: r.title,
+              description: r.description?.slice(0, 200),
+              url: r.url,
+            }));
+          })
+          .catch(() => { /* silently ignore */ })
+      );
     }
+
+    // Wait for ALL scrapers in parallel — max APIFY_TIMEOUT seconds total
+    await Promise.allSettled(scrapers);
   }
 
   // Build context for Claude analysis
@@ -225,11 +244,11 @@ async function researchTrends(body: any, user: any, supabase: any, cors: Record<
 
   const dataContext = hasRealData
     ? `Dados reais coletados via scraping:\n${JSON.stringify(scrapedData, null, 2)}`
-    : `(Sem dados de scraping disponíveis — use seu conhecimento sobre tendências digitais no Brasil em 2025)`;
+    : `(Sem dados de scraping disponíveis — use seu conhecimento especializado sobre tendências digitais no Brasil em 2025)`;
 
   const systemPrompt = `Você é DANIEL, estrategista de conteúdo digital especialista em marketing brasileiro.
 Analisa dados de redes sociais e cria pautas de conteúdo baseadas em tendências reais.
-Retorne APENAS JSON válido, sem markdown.`;
+Retorne APENAS JSON válido, sem markdown, sem texto antes ou depois do JSON.`;
 
   const userPrompt = `Analise tendências digitais para o nicho: "${niche}"
 Idioma: ${language}
@@ -237,7 +256,7 @@ Plataformas alvo: ${platforms.join(', ')}
 
 ${dataContext}
 
-Crie um relatório de tendências com 6 pautas de conteúdo. Retorne este JSON:
+Crie um relatório de tendências com 6 pautas de conteúdo. Retorne este JSON exato:
 {
   "niche": "${niche}",
   "research_date": "${new Date().toISOString()}",
@@ -246,37 +265,37 @@ Crie um relatório de tendências com 6 pautas de conteúdo. Retorne este JSON:
     {
       "topic": "tema trending",
       "why_trending": "por que está em alta agora",
-      "engagement_potential": "alto|médio|baixo",
-      "best_format": "carrossel|reel|story|post",
-      "best_platform": "instagram|tiktok|linkedin"
+      "engagement_potential": "alto",
+      "best_format": "carrossel",
+      "best_platform": "instagram"
     }
   ],
   "content_briefs": [
     {
       "id": 1,
       "title": "título da pauta",
-      "hook": "frase de abertura para fisgar atenção (max 15 palavras)",
-      "format": "carrossel|reel|story|post",
-      "platform": "instagram|tiktok|linkedin",
-      "slides_or_points": ["ponto 1", "ponto 2", "ponto 3", "ponto 4", "ponto 5"],
+      "hook": "frase de abertura para fisgar atenção em até 15 palavras",
+      "format": "carrossel",
+      "platform": "instagram",
+      "slides_or_points": ["slide 1", "slide 2", "slide 3", "slide 4", "slide 5"],
       "cta": "chamada para ação final",
       "hashtags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-      "estimated_reach": "alto|médio|baixo",
+      "estimated_reach": "alto",
       "reason": "por que esse conteúdo vai performar bem agora"
     }
   ],
   "viral_formats": [
     {
       "format": "nome do formato viral",
-      "description": "como fazer",
-      "example": "exemplo aplicado ao nicho"
+      "description": "como executar o formato",
+      "example": "exemplo concreto aplicado ao nicho"
     }
   ],
-  "competitor_insights": "resumo de 2-3 linhas sobre o que concorrentes estão fazendo",
+  "competitor_insights": "resumo de 2-3 linhas sobre o que concorrentes do nicho estão fazendo",
   "recommendation": "recomendação estratégica principal para o nicho agora"
 }
 
-Gere 6 content_briefs variados (mix de formatos), 5 trending_topics e 3 viral_formats.`;
+Gere exatamente: 6 content_briefs variados (mix de formatos e plataformas), 5 trending_topics e 3 viral_formats.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -288,11 +307,15 @@ Gere 6 content_briefs variados (mix de formatos), 5 trending_topics e 3 viral_fo
     body: JSON.stringify({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 4000,
-      messages: [{ role: 'user', content: `${systemPrompt}\n\n${userPrompt}` }],
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
     }),
   });
 
-  if (!res.ok) throw new Error(`Claude API: ${res.status}`);
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText);
+    throw new Error(`Claude API erro ${res.status}: ${errText}`);
+  }
   const aiData = await res.json();
   const rawContent = aiData.content?.[0]?.text || '{}';
 
@@ -301,7 +324,7 @@ Gere 6 content_briefs variados (mix de formatos), 5 trending_topics e 3 viral_fo
     const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
     research = JSON.parse(jsonMatch ? jsonMatch[0] : rawContent);
   } catch {
-    throw new Error('Resposta da IA inválida');
+    throw new Error('Resposta da IA inválida — tente novamente');
   }
 
   return new Response(JSON.stringify({ research, scraped: hasRealData }), {
