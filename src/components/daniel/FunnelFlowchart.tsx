@@ -21,7 +21,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Save, RotateCcw, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { generateFunnel, adaptFunnelToClient } from '@/lib/funnelGenerator';
+import { generateFunnel, adaptFunnelToClient, recommendFunnel } from '@/lib/funnelGenerator';
 import { funnelLibrary } from '@/lib/funnelLibrary';
 import { NodeConfigDrawer } from './NodeConfigDrawer';
 import { NodePalette } from './NodePalette';
@@ -357,6 +357,7 @@ export function FunnelFlowchart() {
   const [selectedNode, setSelectedNode] = useState<Node<FunnelNodeData> | null>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [recommendation, setRecommendation] = useState<{ funnelId: string; name: string; badge: string; reason: string } | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   // Load flow from Supabase on mount
@@ -398,6 +399,31 @@ export function FunnelFlowchart() {
         .select('*')
         .eq('user_id', user.id)
         .single();
+
+      // Busca briefing para gerar recomendação de funil baseada no ticket
+      try {
+        const { data: briefing } = await (supabase as any)
+          .from('client_briefings')
+          .select('price, preco')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (briefing) {
+          const rawPrice = briefing.price ?? briefing.preco ?? '0';
+          const ticket = parseFloat(String(rawPrice).replace(/[^0-9,.]/g, '').replace(',', '.')) || 0;
+          if (ticket > 0) {
+            const rec = recommendFunnel({ ticket });
+            setRecommendation({
+              funnelId: rec.funnel.id,
+              name: rec.funnel.name,
+              badge: rec.funnel.badge ?? '',
+              reason: rec.reason,
+            });
+          }
+        }
+      } catch { /* sem briefing — sem recomendação */ }
 
       if (!error && data?.nodes?.length) {
         // Fluxo salvo encontrado — restaura do banco
@@ -618,6 +644,32 @@ export function FunnelFlowchart() {
             Reset
           </Button>
         </div>
+
+        {/* ── Banner de recomendação de funil por ticket ── */}
+        {recommendation && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2
+                          bg-blue-500/10 border border-blue-500/30 rounded-xl px-4 py-2 shadow-lg max-w-lg">
+            <span className="text-blue-400 text-base">💡</span>
+            <div className="flex-1 min-w-0">
+              <span className="text-[11px] text-blue-400 font-semibold">
+                Recomendado para este cliente:&nbsp;
+                <button
+                  onClick={() => loadFromTemplate(recommendation.funnelId)}
+                  className="underline hover:text-blue-300 transition-colors"
+                >
+                  {recommendation.name}
+                </button>
+                {recommendation.badge && (
+                  <span className="ml-1.5 text-[9px] bg-blue-500/20 border border-blue-500/30 px-1.5 py-0.5 rounded-full">
+                    {recommendation.badge}
+                  </span>
+                )}
+              </span>
+              <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{recommendation.reason}</p>
+            </div>
+            <button onClick={() => setRecommendation(null)} className="text-muted-foreground hover:text-foreground text-xs shrink-0">✕</button>
+          </div>
+        )}
 
         <ReactFlow
           nodes={nodes}
