@@ -618,6 +618,34 @@ export default function SalomaoOrchestrator() {
 
               {/* Right: orchestration panel */}
               <div className="lg:col-span-2">
+                {/* Funil AIDA — Mapa de Agentes */}
+                <div className="rounded-xl border border-border/50 bg-card/40 p-4 mb-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm font-semibold text-foreground">Funil AIDA — Mapa de Responsabilidades</span>
+                    <Badge variant="outline" className="text-[10px]">5 etapas</Badge>
+                  </div>
+                  <div className="flex items-center gap-1 overflow-x-auto pb-1">
+                    {[
+                      { stage: 'ATENÇÃO',   agent: 'DAVI',   action: 'Conteúdo Social', emoji: '👀', color: 'border-sky-500/40 bg-sky-500/10 text-sky-400' },
+                      { stage: 'INTERESSE', agent: 'LUCAS',  action: 'Landing Page',    emoji: '🖥️', color: 'border-orange-500/40 bg-orange-500/10 text-orange-400' },
+                      { stage: 'DESEJO',    agent: 'JOÃO',   action: 'Email Sequence',  emoji: '📧', color: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' },
+                      { stage: 'AÇÃO',      agent: 'MARCOS', action: 'Checkout',        emoji: '💳', color: 'border-purple-500/40 bg-purple-500/10 text-purple-400' },
+                      { stage: 'PÓS-VENDA', agent: 'DANIEL', action: 'Análise KPI',    emoji: '📊', color: 'border-blue-500/40 bg-blue-500/10 text-blue-400' },
+                    ].map((step, i, arr) => (
+                      <div key={step.stage} className="flex items-center gap-1 shrink-0">
+                        <div className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg border ${step.color} min-w-[90px]`}>
+                          <span className="text-lg">{step.emoji}</span>
+                          <span className="text-[9px] font-bold uppercase tracking-wider opacity-70">{step.stage}</span>
+                          <span className="text-[11px] font-semibold">{step.agent}</span>
+                          <span className="text-[9px] opacity-60">{step.action}</span>
+                        </div>
+                        {i < arr.length - 1 && (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground/40 shrink-0" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
                 <OrchestrationPanel briefingId={activeBriefingId} clientName={activeClientName} />
               </div>
             </div>
