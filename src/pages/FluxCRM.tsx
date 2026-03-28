@@ -124,7 +124,7 @@ export default function FluxCRM() {
               <DollarSign className="h-4 w-4 text-purple-500" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Pipeline</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Fluxo de Etapas</p>
               <p className="text-lg font-bold text-white">{totalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
             </div>
           </Card>
