@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { OrchestrationPanel } from '@/components/salomao/OrchestrationPanel';
+import { BriefingSmartUpload } from '@/components/salomao/BriefingSmartUpload';
 import { FunnelFlowchart } from '@/components/daniel/FunnelFlowchart';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -568,37 +569,15 @@ export default function SalomaoOrchestrator() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Left: briefing selector */}
+              {/* Left: smart briefing upload */}
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground">Selecionar Cliente</h3>
-                <div className="rounded-xl border border-border/50 bg-card/40 p-4 space-y-3">
-                  <p className="text-xs text-muted-foreground">
-                    Para usar o pipeline real, selecione um briefing salvo ou crie um novo pelo Gerador de Prompt IA.
-                  </p>
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-foreground/80">ID do Briefing (manual)</p>
-                    <input
-                      type="text"
-                      placeholder="Cole o UUID do briefing aqui"
-                      className="w-full text-xs px-3 py-2 rounded-lg border border-border/60 bg-background/50 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/40"
-                      onChange={(e) => {
-                        const val = e.target.value.trim();
-                        if (val) {
-                          setActiveBriefingId(val);
-                          setActiveClientName('Cliente selecionado');
-                        } else {
-                          setActiveBriefingId(null);
-                          setActiveClientName('Selecione um cliente');
-                        }
-                      }}
-                    />
-                  </div>
-                  {activeBriefingId && (
-                    <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                      <p className="text-[10px] text-emerald-400 font-mono break-all">{activeBriefingId}</p>
-                    </div>
-                  )}
-                </div>
+                <h3 className="text-sm font-semibold text-muted-foreground">Criar / Selecionar Briefing</h3>
+                <BriefingSmartUpload
+                  onBriefingSaved={(id, name) => {
+                    setActiveBriefingId(id);
+                    setActiveClientName(name);
+                  }}
+                />
 
                 {/* Architecture reminder */}
                 <div className="rounded-xl border border-border/40 bg-muted/20 p-4 space-y-2">
