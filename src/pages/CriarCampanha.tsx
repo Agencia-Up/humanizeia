@@ -120,7 +120,24 @@ const CriarCampanha = () => {
   return (
     <div className="min-h-screen bg-background py-8">
       <div className="max-w-2xl mx-auto px-4">
-        
+
+        {/* Botão Voltar */}
+        <div className="mb-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const canGoBack = (window.history.state?.idx ?? 0) > 0;
+              if (canGoBack) navigate(-1);
+              else navigate('/dashboard');
+            }}
+            className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 px-2 rounded-lg transition-colors group"
+          >
+            <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
+            Voltar
+          </Button>
+        </div>
+
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-foreground mb-2">Criar Nova Campanha</h1>
           <p className="text-muted-foreground">Preencha as informações e a IA criará sua estratégia</p>

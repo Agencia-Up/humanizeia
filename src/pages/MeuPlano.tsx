@@ -6,7 +6,7 @@ import { Progress } from '@/components/ui/progress';
 import {
   Zap, TrendingUp, CheckCircle2, XCircle, CreditCard, AlertTriangle,
   RefreshCcw, ArrowUpRight, Star, Clock, BarChart3, Sparkles, Info,
-  Bot, PenTool, Instagram, Mail, Brain, Target,
+  Bot, PenTool, Instagram, Mail, Brain, Target, ChevronLeft,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -123,6 +123,23 @@ export default function MeuPlano() {
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-5xl mx-auto">
+      {/* Botão Voltar */}
+      <div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            const canGoBack = (window.history.state?.idx ?? 0) > 0;
+            if (canGoBack) navigate(-1);
+            else navigate('/dashboard');
+          }}
+          className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 px-2 rounded-lg transition-colors group"
+        >
+          <ChevronLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
+          Voltar
+        </Button>
+      </div>
+
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>

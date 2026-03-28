@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Sparkles, ArrowLeft, ArrowRight, ShieldCheck, ChevronRight,
+  Sparkles, ArrowLeft, ArrowRight, ShieldCheck, ChevronRight, ChevronLeft,
   Zap, BarChart3, Target, Lightbulb, Lock, Eye, TrendingUp, CheckCircle,
   Key, ChevronDown, ChevronUp, AlertTriangle
 } from 'lucide-react';
@@ -168,6 +168,23 @@ export default function ConnectAccounts() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-xl space-y-6">
+        {/* Botão Voltar */}
+        <div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const canGoBack = (window.history.state?.idx ?? 0) > 0;
+              if (canGoBack) navigate(-1);
+              else navigate('/dashboard');
+            }}
+            className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 px-2 rounded-lg transition-colors group"
+          >
+            <ChevronLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
+            Voltar
+          </Button>
+        </div>
+
         {/* Logo */}
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
