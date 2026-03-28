@@ -13,7 +13,7 @@ import type { Node, Edge } from 'reactflow';
 import { MarkerType } from 'reactflow';
 import type { FunnelNodeData, AidaPhase, AgentName } from '@/components/daniel/flowTypes';
 import { PHASE_COLORS } from '@/components/daniel/flowTypes';
-import { funnelLibrary, type FunnelDefinition, type FunnelStep, type ClientData } from './funnelLibrary';
+import { funnelLibrary, type FunnelDefinition, type FunnelStep, type ClientData, type ClientProfile } from './funnelLibrary';
 
 // ─── Stage → AidaPhase + visual ──────────────────────────────────────────────
 
@@ -24,10 +24,14 @@ const STAGE_META: Record<string, { phase: AidaPhase; emoji: string; label: strin
   ACAO:      { phase: 'acao',      emoji: '💳', label: 'Ação'      },
   POS_VENDA: { phase: 'posVenda',  emoji: '📊', label: 'Pós-Venda' },
   // Extras para funis customizados
-  TRAFEGO:   { phase: 'atencao',   emoji: '📡', label: 'Tráfego'   },
-  CAPTURA:   { phase: 'interesse', emoji: '📩', label: 'Captura'   },
-  NUTRICAO:  { phase: 'desejo',    emoji: '💌', label: 'Nutrição'  },
-  UPSELL:    { phase: 'posVenda',  emoji: '🚀', label: 'Upsell'    },
+  TRAFEGO:   { phase: 'atencao',   emoji: '📡', label: 'Tráfego'    },
+  CAPTURA:   { phase: 'interesse', emoji: '📩', label: 'Captura'    },
+  NUTRICAO:  { phase: 'desejo',    emoji: '💌', label: 'Nutrição'   },
+  UPSELL:    { phase: 'posVenda',  emoji: '🚀', label: 'Upsell'     },
+  // Tripwire / Webinar extras
+  INSCRICAO: { phase: 'interesse', emoji: '📋', label: 'Inscrição'  },
+  WEBINAR:   { phase: 'desejo',    emoji: '🎥', label: 'Webinário'  },
+  TRIPWIRE:  { phase: 'acao',      emoji: '⚡', label: 'Tripwire'   },
 };
 
 // ─── Action → role label ──────────────────────────────────────────────────────
@@ -105,6 +109,47 @@ export function adaptFunnelToClient(
   }));
 
   return { ...funnel, steps: adaptedSteps };
+}
+
+// ─── recommendFunnel ─────────────────────────────────────────────────────────
+
+/**
+ * recommendFunnel
+ * Recomenda o funil ideal baseado no ticket do cliente.
+ *
+ * Regras:
+ *   ticket < 100   → "tripwire"    (produto de entrada, conversão rápida)
+ *   ticket > 1000  → "webinar"     (alto valor, fechamento consultivo)
+ *   else           → "lead_magnet" (médio ticket, nutrição por email)
+ *
+ * Uso:
+ *   const rec = recommendFunnel({ ticket: 497 });
+ *   // rec.id === 'lead_magnet'
+ *   // rec.reason === 'Ticket médio (R$ 100–999): ímã de leads + nutrição por email converte melhor.'
+ *
+ * @param client  Perfil do cliente com ticket em R$
+ * @returns       { funnel: FunnelDefinition; reason: string }
+ */
+export function recommendFunnel(client: ClientProfile): {
+  funnel: FunnelDefinition;
+  reason: string;
+} {
+  let funnelId: string;
+  let reason: string;
+
+  if (client.ticket < 100) {
+    funnelId = 'tripwire';
+    reason = `Ticket baixo (até R$ 99): o tripwire quebra a barreira de compra rapidamente, transformando visitante em comprador com mínima fricção.`;
+  } else if (client.ticket > 1000) {
+    funnelId = 'webinar';
+    reason = `Ticket alto (acima de R$ 1.000): o webinário aquece o lead, constrói autoridade e viabiliza o fechamento consultivo via WhatsApp.`;
+  } else {
+    funnelId = 'lead_magnet';
+    reason = `Ticket médio (R$ 100–999): o ímã de leads captura email, a sequência de nutrição cria desejo e a oferta converte com menos resistência.`;
+  }
+
+  const funnel = funnelLibrary.find(f => f.id === funnelId) ?? funnelLibrary[0];
+  return { funnel, reason };
 }
 
 // ─── Main function ────────────────────────────────────────────────────────────
