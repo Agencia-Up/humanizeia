@@ -36,8 +36,10 @@ import {
   ShieldCheck,
   FolderOpen,
   Loader2,
+  Wand2,
 } from 'lucide-react';
 import { SwipeFileTab } from '@/components/copywriter/SwipeFileTab';
+import { MariaBriefingTab, type ApplyConfig } from '@/components/creative-studio/MariaBriefingTab';
 import { SavedImagesTab } from '@/components/creative-studio/SavedImagesTab';
 import { RemoveBackgroundTab } from '@/components/creative-studio/RemoveBackgroundTab';
 import { ImageEditorTab } from '@/components/creative-studio/ImageEditorTab';
@@ -153,6 +155,7 @@ interface GeneratedImage {
 const GENERATE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-creative`;
 
 const tabConfig = [
+  { value: 'maria', label: '🤖 Maria IA', icon: Wand2 },
   { value: 'generate', label: 'Gerar', icon: ImagePlus },
   { value: 'edit', label: 'Editar', icon: Layers },
   { value: 'remove-bg', label: 'Remover Fundo', icon: Eraser },
@@ -165,7 +168,7 @@ export default function AICreativeStudio() {
   const { toast } = useToast();
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = usePersistedState('cs-active-tab', 'generate');
+  const [activeTab, setActiveTab] = usePersistedState('cs-active-tab', 'maria');
   const [removeBgImage, setRemoveBgImage] = useState<{ url: string; name: string } | null>(null);
 
   // Honor ?tab= query parameter from sidebar navigation
@@ -373,6 +376,19 @@ export default function AICreativeStudio() {
     toast({ title: `✅ Template "${template.name}" aplicado!`, description: 'Edite os campos se quiser e clique em Gerar.' });
   };
 
+  // ─── Apply from Maria IA tab ───────────────────────────────────────────────
+  const handleApplyFromMaria = (config: ApplyConfig) => {
+    setPrompt(config.prompt);
+    setStyle(config.style);
+    setCustomStyle('');
+    setFormat(config.format);
+    if (config.colors && config.colors.length > 0) setColors(config.colors);
+    if (config.headline) setHeadline(config.headline);
+    if (config.ctaText) { setCtaText(config.ctaText); setIncludeCTA(true); }
+    // Switch to generate tab
+    setActiveTab('generate');
+  };
+
   const handleGenerateCopy = (image: GeneratedImage) => {
     const copyPrompt = encodeURIComponent(image.description || prompt);
     window.location.href = `/copywriter?prompt=${copyPrompt}`;
@@ -449,6 +465,14 @@ export default function AICreativeStudio() {
 
   const renderTabContent = () => (
     <>
+      {/* ── Maria IA Tab ── */}
+      <TabsContent value="maria" className="mt-0 space-y-6">
+        <MariaBriefingTab
+          currentFormat={format}
+          onApplyPrompt={handleApplyFromMaria}
+        />
+      </TabsContent>
+
       <TabsContent value="generate" className="mt-0 space-y-6">
         <div className="grid gap-6 lg:grid-cols-5">
           {/* Form Column */}
