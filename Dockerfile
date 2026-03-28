@@ -22,7 +22,7 @@ ENV VITE_SUPABASE_PROJECT_ID=$VITE_SUPABASE_PROJECT_ID
 ENV VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY
 
 # Compila o site para a pasta dist/
-RUN npm run build
+RUN npm run build:prod
 
 # Estágio 2: Produção (Servidor Web Nginx super rápido e leve)
 FROM nginx:alpine

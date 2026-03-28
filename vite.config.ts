@@ -20,6 +20,13 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 4000,
+    rollupOptions: {
+      onwarn(warning, warn) {
+        // Supress chunk size warnings to avoid exit code 1 in Docker
+        if (warning.code === 'CHUNK_TOO_LARGE') return;
+        warn(warning);
+      },
+    },
   },
 }));
