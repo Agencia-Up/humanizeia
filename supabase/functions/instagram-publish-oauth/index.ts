@@ -192,36 +192,22 @@ function htmlClose(type: string, username: string | null, error: string | null) 
     : `{type:'${type}',error:'${(error ?? '').replace(/'/g, "\\'")}'}`;
 
   const html = `<!DOCTYPE html>
-<html lang="pt-BR">
+<html>
 <head>
   <meta charset="utf-8">
-  <title>Conectando ao Instagram...</title>
-  <style>
-    body { margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; }
-    .loader { border: 3px solid rgba(255,255,255,0.1); border-left-color: #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; margin-right: 12px; }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-  </style>
+  <title>Conectando...</title>
 </head>
-<body>
-  <div style="display: flex; align-items: center;">
-    <div class="loader"></div>
-    <p>Autenticado com sucesso! Fechando janela...</p>
-  </div>
+<body style="background:#0f172a; color:#fff; display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif;">
+  <p>Autenticado! Pode fechar esta janela caso ela não feche sozinha.</p>
   <script>
-    try {
-      if (window.opener) {
-        window.opener.postMessage(${payload}, '*');
-      }
-    } catch(e) {
-      console.error(e);
-    }
-    setTimeout(() => window.close(), 1000);
+    try { window.opener.postMessage(${payload}, '*'); } catch(e) {}
+    setTimeout(() => window.close(), 800);
   </script>
 </body>
 </html>`;
 
-  const headers = new Headers(corsHeaders);
-  headers.set('Content-Type', 'text/html; charset=utf-8');
-
-  return new Response(html, { headers });
+  return new Response(html, {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
 }
