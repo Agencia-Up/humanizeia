@@ -325,16 +325,19 @@ export function ConnectionsTab() {
         break;
       case 'linkedin': {
         setLinkedinLoading(true);
+        // Abre popup ANTES do await para não ser bloqueado pelo browser
+        const linkedinPopup = window.open('about:blank', 'linkedin_oauth', 'width=600,height=700,left=200,top=100');
         try {
           const { data: { session } } = await supabase.auth.getSession();
-          if (!session) throw new Error('Sessão expirada');
+          if (!session) { linkedinPopup?.close(); throw new Error('Sessão expirada'); }
           const { data, error } = await supabase.functions.invoke('linkedin-ads-oauth', {
             body: { action: 'authorize', user_id: session.user.id },
             headers: { Authorization: `Bearer ${session.access_token}` },
           });
-          if (error) throw error;
+          if (error) { linkedinPopup?.close(); throw error; }
           if (data?.auth_url) {
-            const popup = window.open(data.auth_url, 'linkedin_oauth', 'width=600,height=700,left=200,top=100');
+            if (linkedinPopup) linkedinPopup.location.href = data.auth_url;
+            const popup = linkedinPopup;
             const handler = (event: MessageEvent) => {
               if (event.data?.type === 'LINKEDIN_AUTH_SUCCESS') {
                 popup?.close();
@@ -358,8 +361,13 @@ export function ConnectionsTab() {
                 window.removeEventListener('message', handler);
               }
             }, 1000);
+          } else {
+            linkedinPopup?.close();
+            toast.error('URL de autenticação LinkedIn não retornada');
+            setLinkedinLoading(false);
           }
         } catch (err: any) {
+          linkedinPopup?.close();
           toast.error(err.message || 'Erro ao conectar LinkedIn');
           setLinkedinLoading(false);
         }
@@ -367,16 +375,19 @@ export function ConnectionsTab() {
       }
       case 'instagram_publisher': {
         setIgLoading(true);
+        // Abre popup ANTES do await para não ser bloqueado pelo browser
+        const igPopup = window.open('about:blank', 'ig_publish_oauth', 'width=600,height=700,left=200,top=100');
         try {
           const { data: { session } } = await supabase.auth.getSession();
-          if (!session) throw new Error('Sessão expirada');
+          if (!session) { igPopup?.close(); throw new Error('Sessão expirada'); }
           const { data, error } = await supabase.functions.invoke('instagram-publish-oauth', {
             body: { action: 'authorize' },
             headers: { Authorization: `Bearer ${session.access_token}` },
           });
-          if (error) throw error;
+          if (error) { igPopup?.close(); throw error; }
           if (data?.auth_url) {
-            const popup = window.open(data.auth_url, 'ig_publish_oauth', 'width=600,height=700,left=200,top=100');
+            if (igPopup) igPopup.location.href = data.auth_url;
+            const popup = igPopup;
             const handler = (event: MessageEvent) => {
               if (event.data?.type === 'IG_PUBLISH_AUTH_SUCCESS') {
                 popup?.close();
@@ -399,8 +410,13 @@ export function ConnectionsTab() {
                 window.removeEventListener('message', handler);
               }
             }, 1000);
+          } else {
+            igPopup?.close();
+            toast.error('URL de autenticação não retornada pela função');
+            setIgLoading(false);
           }
         } catch (err: any) {
+          igPopup?.close();
           toast.error(err.message || 'Erro ao conectar Instagram');
           setIgLoading(false);
         }
