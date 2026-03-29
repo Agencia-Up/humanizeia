@@ -176,7 +176,7 @@ export function MidasDataForm({ open, onOpenChange, onSubmit }: MidasDataFormPro
             Alimentar Brain Trust
           </SheetTitle>
           <SheetDescription>
-            Preencha os dados de performance para análise da Sala de Guerra Apollo.
+            Preencha os dados de performance para análise com José.
           </SheetDescription>
         </SheetHeader>
 
@@ -382,7 +382,7 @@ export function MidasDataForm({ open, onOpenChange, onSubmit }: MidasDataFormPro
             className="w-full bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700"
           >
             <Send className="h-4 w-4 mr-2" />
-            Enviar para Apollo
+            Enviar para José
           </Button>
         </div>
       </SheetContent>

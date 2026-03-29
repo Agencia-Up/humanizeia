@@ -26,7 +26,7 @@ interface QuickAction {
 
 const AGENT_LABELS: Record<string, { name: string; icon: React.ReactNode; color: string }> = {
   assistant: { name: 'LogosIA', icon: <Sparkles className="h-3 w-3" />, color: 'text-blue-400' },
-  midas: { name: 'Apollo', icon: <Brain className="h-3 w-3" />, color: 'text-amber-400' },
+  midas: { name: 'José', icon: <Brain className="h-3 w-3" />, color: 'text-orange-400' },
   copywriter: { name: 'Copywriter', icon: <PenTool className="h-3 w-3" />, color: 'text-emerald-400' },
   optimizer: { name: 'Otimizador', icon: <Target className="h-3 w-3" />, color: 'text-red-400' },
   insights: { name: 'Insights', icon: <BarChart3 className="h-3 w-3" />, color: 'text-purple-400' },
@@ -57,7 +57,7 @@ function detectContext(message: string): string {
   if (/\b(relatório|report|resumo|overview|dashboard|comparar|tendência|evolução|histórico|semana|mês|ontem|hoje|performance|resultado)\b/.test(msg)) return 'insights';
 
   // Apollo/MIDAS deep analysis
-  if (/\b(apollo|midas|sala.*guerra|brain.*trust|estratég|plano|escala|crescer|meta|kpi|roas|cpa|ctr|cpc|cpm|benchmark|funil)\b/.test(msg)) return 'midas';
+  if (/\b(josé|jose|sala.*guerra|brain.*trust|estratég|plano|escala|crescer|meta|kpi|roas|cpa|ctr|cpc|cpm|benchmark|funil)\b/.test(msg)) return 'midas';
 
   // Default: general assistant
   return 'assistant';
@@ -69,7 +69,7 @@ export function AIAssistantButton() {
     {
       id: '1',
       role: 'assistant',
-      content: 'Olá! Sou a **LogosIA**, sua central de inteligência para tráfego pago.\n\nPosso te ajudar com:\n• 📊 Relatórios e análises em tempo real\n• 🎯 Diagnóstico e otimização de campanhas\n• ✍️ Criação de copies e criativos\n• 🧠 Estratégias avançadas com Apollo\n• ⚡ Ações automáticas nos seus anúncios\n\nPergunte qualquer coisa ou use os atalhos abaixo!',
+      content: 'Olá! Sou a **LogosIA**, sua central de inteligência para tráfego pago.\n\nPosso te ajudar com:\n• 📊 Relatórios e análises em tempo real\n• 🎯 Diagnóstico e otimização de campanhas\n• ✍️ Criação de copies e criativos\n• 🧠 Estratégias avançadas com José\n• ⚡ Ações automáticas nos seus anúncios\n\nPergunte qualquer coisa ou use os atalhos abaixo!',
       timestamp: new Date(),
       context: 'assistant',
       agentName: 'LogosIA',
