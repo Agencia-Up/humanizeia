@@ -16,6 +16,9 @@ import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AILog, AILogEntry } from '@/components/apollo/AILog';
 import { GoldenRulesTab } from '@/components/apollo/GoldenRulesTab';
+import CampanhaCreator from '@/components/jose/CampanhaCreator';
+import PublicosManager from '@/components/jose/PublicosManager';
+import AbTestManager from '@/components/jose/AbTestManager';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import {
   useApolloAgent, useApolloHistory, useApolloCronConfig,
@@ -843,7 +846,7 @@ export default function JoseTrafego() {
         )}
 
         {/* ── Main tabs ── */}
-        {(session || snapshots.length > 0) && (
+        {(session || snapshots.length > 0 || accountId) && (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="flex-wrap h-auto gap-1">
               {session && <TabsTrigger value="campaigns" className="gap-1 text-xs"><Radar className="h-3 w-3" />Campanhas <Badge variant="secondary" className="text-[10px] h-4 px-1">{session.campaigns.length}</Badge></TabsTrigger>}
@@ -855,6 +858,9 @@ export default function JoseTrafego() {
               <TabsTrigger value="seasonal" className="gap-1 text-xs"><Sun className="h-3 w-3" />Sazonalidade</TabsTrigger>
               <TabsTrigger value="golden-rules" className="gap-1 text-xs"><Shield className="h-3 w-3" />Regras de Ouro</TabsTrigger>
               <TabsTrigger value="schedule" className="gap-1 text-xs"><Settings className="h-3 w-3" />Agendamento</TabsTrigger>
+              <TabsTrigger value="criar" className="gap-1 text-xs">🚀 Criar Campanha</TabsTrigger>
+              <TabsTrigger value="publicos" className="gap-1 text-xs">🎯 Públicos</TabsTrigger>
+              <TabsTrigger value="abtests" className="gap-1 text-xs">🧪 Testes A/B</TabsTrigger>
             </TabsList>
 
             {/* Campaigns */}
@@ -1216,6 +1222,21 @@ export default function JoseTrafego() {
               <div className="max-w-md mx-auto">
                 <CronSettings />
               </div>
+            </TabsContent>
+
+            {/* Criar Campanha */}
+            <TabsContent value="criar" className="mt-4">
+              <CampanhaCreator connectedAccount={connectedAccount} />
+            </TabsContent>
+
+            {/* Públicos */}
+            <TabsContent value="publicos" className="mt-4">
+              <PublicosManager connectedAccount={connectedAccount} />
+            </TabsContent>
+
+            {/* Testes A/B */}
+            <TabsContent value="abtests" className="mt-4">
+              <AbTestManager connectedAccount={connectedAccount} />
             </TabsContent>
           </Tabs>
         )}
