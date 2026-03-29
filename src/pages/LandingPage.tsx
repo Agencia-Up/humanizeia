@@ -312,6 +312,236 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── COMPARATIVO: R$57K vs R$2.497 ─────────────────────────── */}
+      <section id="solucao" className="px-6 py-20 bg-card/20">
+        <div className="max-w-5xl mx-auto">
+
+          {/* Headline principal */}
+          <div className="text-center mb-14">
+            <Badge variant="outline" className="mb-5 border-yellow-500/40 text-yellow-400 text-sm px-4 py-1">
+              PARE E PENSE POR 30 SEGUNDOS
+            </Badge>
+            <h2 className="text-3xl md:text-5xl font-bold leading-tight mb-4">
+              Você está pagando{' '}
+              <span className="text-red-400">R$50.000/mês</span>{' '}
+              por uma equipe de marketing...
+            </h2>
+            <p className="text-xl md:text-2xl text-muted-foreground">
+              ou{' '}
+              <span className="text-green-400 font-bold">R$2.497</span>
+              {' '}por resultados superiores?
+            </p>
+            <p className="text-muted-foreground mt-4 max-w-2xl mx-auto text-sm">
+              A diferença entre contratar 8 pessoas (com todos os problemas que isso traz)
+              e ter uma operação de marketing 100% automatizada rodando 24/7.
+            </p>
+          </div>
+
+          {/* Cards de comparação */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-16">
+
+            {/* OPÇÃO 1 — Modelo Tradicional */}
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-7">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center">
+                  <XCircle className="h-4 w-4 text-red-400" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest">Opção 1</p>
+                  <h3 className="font-bold text-red-400">O Modelo Tradicional</h3>
+                </div>
+              </div>
+              <div className="space-y-2.5 mb-6">
+                {[
+                  ['Gestor de tráfego', 'R$ 8.000/mês'],
+                  ['Copywriter', 'R$ 6.000/mês'],
+                  ['Estrategista', 'R$ 10.000/mês'],
+                  ['SDR', 'R$ 4.000/mês'],
+                  ['Social Media', 'R$ 4.000/mês'],
+                  ['Designer', 'R$ 5.000/mês'],
+                  ['Especialista em funil', 'R$ 8.000/mês'],
+                  ['Gerente geral', 'R$ 12.000/mês'],
+                ].map(([role, price]) => (
+                  <div key={role} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">{role}</span>
+                    <span className="font-medium text-red-300">{price}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-red-500/20 pt-4 mb-5">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-sm">TOTAL</span>
+                  <span className="text-2xl font-bold text-red-400">R$ 57.000/mês</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  + encargos, férias, 13º, treinamentos, rotatividade...
+                </p>
+              </div>
+              <div className="space-y-2">
+                {[
+                  'Gestão de 8 pessoas diferentes',
+                  'Falhas de comunicação entre equipes',
+                  'Erros humanos custosos',
+                  'Trabalho apenas em horário comercial',
+                  'Resultados imprevisíveis',
+                  'Dependência total de pessoas',
+                ].map((prob) => (
+                  <div key={prob} className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <XCircle className="h-3 w-3 text-red-400 shrink-0" />
+                    {prob}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* OPÇÃO 2 — Logos IA */}
+            <div className="rounded-2xl border border-green-500/40 bg-green-500/5 p-7 relative overflow-hidden">
+              <div className="absolute top-4 right-4">
+                <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">ESCOLHA INTELIGENTE</Badge>
+              </div>
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center">
+                  <Bot className="h-4 w-4 text-green-400" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest">Opção 2</p>
+                  <h3 className="font-bold text-green-400">Logos IA — Agência Autônoma</h3>
+                </div>
+              </div>
+              <div className="space-y-2.5 mb-6">
+                {[
+                  ['Todas as 8 funções por IA', '24/7'],
+                  ['Zero falhas de comunicação', '✓'],
+                  ['Operação ininterrupta', '24h/dia'],
+                  ['Processos 100% padronizados', '✓'],
+                  ['Velocidade 10× superior', '✓'],
+                  ['Resultados previsíveis e escaláveis', '✓'],
+                  ['Zero gestão de pessoas', '✓'],
+                  ['9 agentes especializados', 'inclusos'],
+                ].map(([benefit, val]) => (
+                  <div key={benefit} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">{benefit}</span>
+                    <span className="font-medium text-green-300">{val}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-green-500/20 pt-4">
+                <p className="text-xs text-muted-foreground mb-1">Taxa de implementação: R$ 10.000 (uma vez)</p>
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-sm">MENSALIDADE</span>
+                  <span className="text-2xl font-bold text-green-400">R$ 2.497/mês</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Contraste brutal */}
+          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-8 text-center mb-16">
+            <p className="text-muted-foreground text-sm uppercase tracking-widest mb-3">Você leu certo</p>
+            <div className="flex items-center justify-center gap-6 flex-wrap mb-4">
+              <div className="text-center">
+                <p className="text-4xl md:text-5xl font-black text-red-400 line-through opacity-60">R$ 57.000</p>
+                <p className="text-xs text-muted-foreground mt-1">Modelo tradicional / mês</p>
+              </div>
+              <div className="text-3xl font-bold text-muted-foreground">vs</div>
+              <div className="text-center">
+                <p className="text-4xl md:text-5xl font-black text-green-400">R$ 2.497</p>
+                <p className="text-xs text-muted-foreground mt-1">Logos IA / mês</p>
+              </div>
+            </div>
+            <p className="text-muted-foreground text-sm max-w-xl mx-auto">
+              <span className="text-yellow-400 font-semibold">Enquanto uma pessoa trabalha 8h/dia,</span> nossa IA trabalha 24h.
+              Enquanto uma equipe comete erros, nossa IA executa com precisão matemática.
+              Enquanto você gasta meses treinando pessoas, nossa IA já sabe tudo.
+            </p>
+          </div>
+
+          {/* A matemática brutal — 12 meses */}
+          <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/5 p-8 mb-16">
+            <h3 className="text-xl font-bold text-center mb-8 text-yellow-400">
+              A Matemática é Brutal — Em 12 Meses:
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
+              <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-5">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Modelo Tradicional</p>
+                <p className="text-3xl font-black text-red-400">R$ 684.000</p>
+                <p className="text-xs text-muted-foreground mt-1">por ano</p>
+              </div>
+              <div className="flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-4xl font-black text-green-400">R$ 644.036</p>
+                  <p className="text-sm text-green-400 font-semibold mt-1">de economia no 1º ano</p>
+                </div>
+              </div>
+              <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-5">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Logos IA</p>
+                <p className="text-3xl font-black text-green-400">R$ 39.964</p>
+                <p className="text-xs text-muted-foreground mt-1">por ano</p>
+              </div>
+            </div>
+            <div className="mt-6 text-center">
+              <p className="text-sm text-muted-foreground mb-3">Com essa economia, você pode:</p>
+              <div className="flex flex-wrap gap-3 justify-center">
+                {['Contratar mais vendedores', 'Investir em estoque', 'Expandir para novos mercados', 'R$ 644k a mais no caixa'].map(item => (
+                  <span key={item} className="text-xs bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 px-3 py-1.5 rounded-full">
+                    ✓ {item}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Nossa entrega completa */}
+          <div className="text-center mb-10">
+            <Badge variant="outline" className="mb-4 border-primary/30 text-primary">Nossa Entrega Completa</Badge>
+            <h3 className="text-2xl md:text-3xl font-bold mb-2">Tudo rodando simultaneamente, 24/7, sem parar.</h3>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-16">
+            {[
+              { icon: '🎯', title: 'Tráfego Pago', desc: 'Google, Meta e LinkedIn' },
+              { icon: '✍️', title: 'Copywriting IA', desc: 'Anúncios, emails e LPs' },
+              { icon: '📊', title: 'Estratégia', desc: 'Baseada em dados reais' },
+              { icon: '📞', title: 'SDR Automatizado', desc: 'Prospecção sem parar' },
+              { icon: '📱', title: 'Social Media', desc: 'Gestão completa de redes' },
+              { icon: '🎨', title: 'Design de Criativos', desc: 'Materiais e artes' },
+              { icon: '🔄', title: 'Funis de Venda', desc: 'Construção e otimização' },
+              { icon: '📈', title: 'CRM de Leads', desc: 'Gestão e nutrição' },
+            ].map((item) => (
+              <div key={item.title} className="rounded-xl border border-border/40 bg-card/40 p-4 text-center hover:border-primary/30 transition-colors">
+                <p className="text-2xl mb-2">{item.icon}</p>
+                <p className="font-semibold text-sm">{item.title}</p>
+                <p className="text-xs text-muted-foreground mt-1">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Urgência final */}
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center mb-10">
+            <p className="text-lg font-bold mb-3">Aqui está a verdade:</p>
+            <p className="text-muted-foreground mb-4 max-w-xl mx-auto">
+              Daqui 2 anos, toda empresa que não migrou para IA vai estar pagando{' '}
+              <span className="text-red-400 font-semibold">20× mais caro</span> por marketing.
+              Os espertos estão entrando agora. Os atrasados vão pagar o preço depois.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Daqui 2 anos, toda empresa que não migrou para IA vai estar pagando 20x mais caro por marketing.
+            </p>
+          </div>
+
+          {/* CTA principal */}
+          <div className="text-center">
+            <Button asChild size="lg" className="bg-green-600 hover:bg-green-700 text-white px-10 text-lg gap-3 py-6 rounded-2xl font-bold shadow-lg shadow-green-900/30">
+              <Link to="/auth?tab=signup">
+                QUERO ECONOMIZAR R$50.000/MÊS COM IA <ArrowRight className="h-5 w-5" />
+              </Link>
+            </Button>
+            <p className="text-xs text-muted-foreground mt-3">
+              Sem contrato · Cancele quando quiser · Setup em menos de 24h
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* ── O PROBLEMA ─────────────────────────────────────────────── */}
       <section className="px-6 py-20 bg-card/30">
         <div className="max-w-5xl mx-auto">
@@ -341,7 +571,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── A SOLUÇÃO ──────────────────────────────────────────────── */}
-      <section id="solucao" className="px-6 py-20">
+      <section id="diferenciais" className="px-6 py-20">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-primary/30 text-primary">A Solução</Badge>
