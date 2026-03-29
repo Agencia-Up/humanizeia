@@ -232,85 +232,135 @@ async function publishPost(supabase: any, userId: string, postId: string, cors: 
   const caption = post.caption + (post.hashtags?.length ? '\n\n' + post.hashtags.map((h: string) => `#${h}`).join(' ') : '');
 
   try {
-    if (post.post_type === 'carousel' && post.media_urls?.length > 1) {
-      // Carousel publish flow
+    const isVideo = (url: string) => /\.(mp4|mov)$/i.test(url) || url.includes('/video/') || post.post_type === 'reel';
+    
+    let containerId: string | null = null;
+    let containerPayload: any = { access_token: accessToken };
+
+    const mediaUrls = post.media_urls || [];
+    if (!mediaUrls.length) throw new Error('Nenhuma mídia encontrada no post');
+
+    // 1. DESCUBRE O TIPO DE POST E MONTA O PAYLOAD DO CONTAINER
+    if (post.post_type === 'carousel' || mediaUrls.length > 1) {
+      // CARROSSEL: Cria um container filho para cada mídia
       const childIds = await Promise.all(
-        post.media_urls.map(async (url: string) => {
+        mediaUrls.map(async (url: string) => {
+          const type = isVideo(url) ? 'video_url' : 'image_url';
           const r = await fetch(`${IG_API}/${igAccountId}/media`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              image_url: url,
+              [type]: url,
               is_carousel_item: true,
+              media_type: isVideo(url) ? 'VIDEO' : 'IMAGE',
               access_token: accessToken,
             }),
           });
           const d = await r.json();
+          if (d.error) throw new Error(`Erro filho carrossel: ${d.error.message}`);
           return d.id;
         })
       );
 
-      const containerRes = await fetch(`${IG_API}/${igAccountId}/media`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          media_type: 'CAROUSEL',
-          caption,
-          children: childIds.join(','),
-          access_token: accessToken,
-        }),
-      });
-      const container = await containerRes.json();
-      if (!container.id) throw new Error(`Erro ao criar container: ${JSON.stringify(container)}`);
+      containerPayload = {
+        ...containerPayload,
+        media_type: 'CAROUSEL',
+        caption,
+        children: childIds.join(','),
+      };
 
-      // Publish
-      await new Promise(r => setTimeout(r, 2000));
-      const pubRes = await fetch(`${IG_API}/${igAccountId}/media_publish`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ creation_id: container.id, access_token: accessToken }),
-      });
-      const pub = await pubRes.json();
+    } else if (post.post_type === 'reel') {
+      // REEL
+      containerPayload = {
+        ...containerPayload,
+        media_type: 'REELS',
+        video_url: mediaUrls[0],
+        caption,
+        share_to_feed: true,
+      };
 
-      await supabase.from('social_posts').update({
-        status: 'published',
-        published_at: new Date().toISOString(),
-        ig_media_id: pub.id,
-      }).eq('id', postId);
+    } else if (post.post_type === 'story') {
+      // STORY
+      const url = mediaUrls[0];
+      containerPayload = {
+        ...containerPayload,
+        media_type: 'STORIES',
+        [isVideo(url) ? 'video_url' : 'image_url']: url,
+      };
 
     } else {
-      // Single image
-      const url = post.media_urls?.[0];
-      if (!url) throw new Error('Nenhuma mídia encontrada no post');
-
-      const mediaRes = await fetch(`${IG_API}/${igAccountId}/media`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_url: url, caption, access_token: accessToken }),
-      });
-      const media = await mediaRes.json();
-      if (!media.id) throw new Error(`Erro ao criar mídia: ${JSON.stringify(media)}`);
-
-      await new Promise(r => setTimeout(r, 2000));
-      const pubRes = await fetch(`${IG_API}/${igAccountId}/media_publish`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ creation_id: media.id, access_token: accessToken }),
-      });
-      const pub = await pubRes.json();
-
-      await supabase.from('social_posts').update({
-        status: 'published',
-        published_at: new Date().toISOString(),
-        ig_media_id: pub.id,
-      }).eq('id', postId);
+      // FEED NORMAL (IMAGEM OU VIDEO)
+      const url = mediaUrls[0];
+      if (isVideo(url)) {
+        containerPayload = {
+          ...containerPayload,
+          media_type: 'VIDEO',
+          video_url: url,
+          caption
+        };
+      } else {
+        containerPayload = {
+          ...containerPayload,
+          image_url: url,
+          caption
+        };
+      }
     }
 
-    return new Response(JSON.stringify({ success: true }), {
+    // 2. CRIA O CONTAINER PRINCIPAL
+    const containerRes = await fetch(`${IG_API}/${igAccountId}/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(containerPayload),
+    });
+    
+    const container = await containerRes.json();
+    if (container.error || !container.id) throw new Error(`Erro ao criar container: ${container.error?.message || JSON.stringify(container)}`);
+    containerId = container.id;
+
+    // 3. POLLING DO STATUS (CRUCIAL PARA VÍDEOS E CARROSSÉIS)
+    // O Instagram precisa processar o Container (principalmente se tiver vídeo/reel) antes de publicá-lo
+    let isFinished = false;
+    for (let attempts = 0; attempts < 30; attempts++) {
+      await new Promise(r => setTimeout(r, 2000)); // Espera 2s entre checks
+
+      const statusRes = await fetch(`${IG_API}/${containerId}?fields=status_code&access_token=${accessToken}`);
+      const statusData = await statusRes.json();
+      
+      const code = statusData.status_code;
+      if (code === 'FINISHED' || code === 'PUBLISHED') {
+        isFinished = true; break;
+      } else if (code === 'ERROR' || code === 'EXPIRED') {
+        throw new Error(`Instagram rejeitou a mídia. Formato/Tamanho inválido? Status: ${code}`);
+      }
+      // Se for IN_PROGRESS, continua perguntando...
+    }
+
+    if (!isFinished) throw new Error('Timeout: O Instagram demorou muito para processar a mídia.');
+
+    // 4. PUBLICAÇÃO FINAL
+    const pubRes = await fetch(`${IG_API}/${igAccountId}/media_publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ creation_id: containerId, access_token: accessToken }),
+    });
+    
+    const pub = await pubRes.json();
+    if (pub.error || !pub.id) throw new Error(`Erro na Publicação Final: ${pub.error?.message || JSON.stringify(pub)}`);
+
+    // Atualiza BD com Sucesso
+    await supabase.from('social_posts').update({
+      status: 'published',
+      published_at: new Date().toISOString(),
+      ig_media_id: pub.id,
+    }).eq('id', postId);
+
+    return new Response(JSON.stringify({ success: true, ig_media_id: pub.id }), {
       headers: { ...cors, 'Content-Type': 'application/json' },
     });
 
   } catch (err: any) {
+    // Atualiza BD com Falha
     await supabase.from('social_posts').update({ status: 'failed' }).eq('id', postId);
     throw err;
   }
