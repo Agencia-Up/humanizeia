@@ -74,14 +74,20 @@ export default function Auth() {
     }
 
     setIsLoading(true);
-    const { error } = await signIn(loginEmail, loginPassword);
-    setIsLoading(false);
+    try {
+      const { error } = await signIn(loginEmail, loginPassword);
 
-    if (error) {
-      let msg = 'Não foi possível fazer login.';
-      if (error.message.includes('Invalid login credentials')) msg = 'Email ou senha incorretos.';
-      else if (error.message.includes('Email not confirmed')) msg = 'Confirme seu email antes de fazer login.';
-      toast({ title: 'Erro no login', description: msg, variant: 'destructive' });
+      if (error) {
+        let msg = 'Não foi possível fazer login.';
+        if (error.message.includes('Invalid login credentials')) msg = 'Email ou senha incorretos.';
+        else if (error.message.includes('Email not confirmed')) msg = 'Confirme seu email antes de fazer login.';
+        toast({ title: 'Erro no login', description: error.message || msg, variant: 'destructive' });
+      }
+    } catch (err: any) {
+      console.error("Erro crítico no Login:", err);
+      toast({ title: 'Erro Crítico de Conexão', description: err.message || 'Falha ao comunicar com o servidor. Verifique o console.', variant: 'destructive' });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -105,28 +111,34 @@ export default function Auth() {
     }
 
     setIsLoading(true);
-    const { error } = await signUp(signupEmail, signupPassword, signupName);
-    setIsLoading(false);
+    try {
+      const { error } = await signUp(signupEmail, signupPassword, signupName);
 
-    if (error) {
-      let msg = 'Não foi possível criar sua conta.';
-      if (error.message.includes('already registered') || error.message.includes('already been registered')) {
-        msg = 'Este email já está cadastrado. Tente fazer login.';
+      if (error) {
+        let msg = 'Não foi possível criar sua conta.';
+        if (error.message.includes('already registered') || error.message.includes('already been registered')) {
+          msg = 'Este email já está cadastrado. Tente fazer login.';
+        }
+        toast({ title: 'Erro no cadastro', description: error.message || msg, variant: 'destructive' });
+      } else {
+        // Envia email de boas-vindas via Resend
+        await sendEmail({
+          type: 'welcome',
+          email: signupEmail,
+          name: signupName || 'Usuário',
+          redirectTo: window.location.origin,
+        });
+
+        toast({
+          title: '🎉 Conta criada com sucesso!',
+          description: 'Verifique seu email para confirmar o cadastro.',
+        });
       }
-      toast({ title: 'Erro no cadastro', description: msg, variant: 'destructive' });
-    } else {
-      // Envia email de boas-vindas via Resend
-      await sendEmail({
-        type: 'welcome',
-        email: signupEmail,
-        name: signupName || 'Usuário',
-        redirectTo: window.location.origin,
-      });
-
-      toast({
-        title: '🎉 Conta criada com sucesso!',
-        description: 'Verifique seu email para confirmar o cadastro.',
-      });
+    } catch (err: any) {
+      console.error("Erro crítico no Cadastro:", err);
+      toast({ title: 'Erro Crítico de Conexão', description: err.message || 'Falha ao comunicar com o servidor. Verifique o console.', variant: 'destructive' });
+    } finally {
+      setIsLoading(false);
     }
   };
 
