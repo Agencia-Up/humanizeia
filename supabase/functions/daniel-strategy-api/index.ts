@@ -30,7 +30,7 @@ serve(async (req) => {
     }
 
     if (action === 'research_trends') {
-      return await researchTrends(body, user, supabase, corsHeaders);
+      return await researchTrends(body, corsHeaders);
     }
 
     if (action === 'generate_swot') {
@@ -51,39 +51,72 @@ serve(async (req) => {
 });
 
 async function generateStrategy(body: any, cors: Record<string, string>) {
+  const errorRes = (msg: string, status = 400) => 
+    new Response(JSON.stringify({ error: msg }), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
+
   const {
     business_name, business_type, strategy_type, current_situation,
     main_challenge, budget, timeframe_months = 6,
   } = body;
 
-  const openaiKey = Deno.env.get('OPENAI_API_KEY');
-  if (!openaiKey) throw new Error('OpenAI não configurado');
+  const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
+  if (!anthropicKey) return errorRes('ANTHROPIC_API_KEY não configurada no Supabase', 500);
 
-  const systemPrompt = `Você é DANIEL, consultor estratégico de negócios de alto nível. Especialista em marketing digital e crescimento. Retorne APENAS JSON.`;
+  const prompt = `Você é DANIEL, consultor estratégico de negócios de alto nível. Especialista em marketing digital e crescimento.
 
-  const userPrompt = `Crie um plano estratégico para: ${business_name} (${business_type}). Desafio: ${main_challenge}. Retorne JSON com title, executive_summary, sections, key_metrics, timeline e risk_factors.`;
+Crie um plano estratégico para:
+Empresa: ${business_name}
+Tipo: ${business_type}
+Estratégia: ${strategy_type}
+Situação Atual: ${current_situation || 'Não informada'}
+Desafio: ${main_challenge}
+Orçamento: ${budget || 'Não informado'}
+Prazo: ${timeframe_months} meses
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
-    }),
-  });
+Retorne APENAS o JSON puro, sem markdown, contendo:
+{
+  "title": "título do plano estratégico",
+  "executive_summary": "resumo executivo",
+  "sections": [{"icon": "emoji", "title": "título da seção", "content": "conteúdo detalhado com marcadores/bullet points"}],
+  "key_metrics": ["kpi 1", "kpi 2", "kpi 3", "kpi 4", "kpi 5"],
+  "timeline": "${timeframe_months} meses",
+  "risk_factors": ["risco 1", "risco 2", "risco 3", "risco 4"]
+}`;
 
-  if (!res.ok) throw new Error(`OpenAI Error: ${res.status}`);
-  const data = await res.json();
-  const rawContent = data.choices?.[0]?.message?.content || '{}';
-  
-  return new Response(JSON.stringify({ strategy: JSON.parse(rawContent) }), {
-    headers: { ...cors, 'Content-Type': 'application/json' },
-  });
+  try {
+    const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text();
+      return errorRes(`Claude API Error ${aiRes.status}: ${errText.slice(0, 150)}`, 502);
+    }
+
+    const aiData = await aiRes.json();
+    const rawText = aiData?.content?.[0]?.text ?? '';
+    const match = rawText.match(/\{[\s\S]*\}/);
+    const strategy = JSON.parse(match ? match[0] : rawText);
+
+    return new Response(JSON.stringify({ strategy }), {
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err: any) {
+    return errorRes(`Erro processando estratégia: ${err.message}`, 500);
+  }
 }
 
-async function researchTrends(body: any, _user: any, _supabase: any, cors: Record<string, string>) {
+async function researchTrends(body: any, cors: Record<string, string>) {
   const { niche, platforms = ['instagram', 'tiktok', 'google'] } = body;
   
   const errorRes = (msg: string, status = 400) => 
@@ -135,20 +168,49 @@ async function researchTrends(body: any, _user: any, _supabase: any, cors: Recor
 }
 
 async function generateSwot(body: any, cors: Record<string, string>) {
+  const errorRes = (msg: string, status = 400) => 
+    new Response(JSON.stringify({ error: msg }), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
+
   const { business_name, business_type, context } = body;
-  const openaiKey = Deno.env.get('OPENAI_API_KEY');
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: `SWOT para ${business_name}. Retorne JSON: {"forcas":[], "fraquezas":[], "oportunidades":[], "ameacas":[]}` }],
-      response_format: { type: 'json_object' },
-    }),
-  });
-  const data = await res.json();
-  const rawContent = data.choices?.[0]?.message?.content || '{}';
-  return new Response(JSON.stringify({ swot: JSON.parse(rawContent) }), {
-    headers: { ...cors, 'Content-Type': 'application/json' },
-  });
+  
+  const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
+  if (!anthropicKey) return errorRes('ANTHROPIC_API_KEY não configurada no Supabase', 500);
+
+  const prompt = `Crie uma análise SWOT para o negócio: ${business_name} (${business_type}). 
+Contexto: ${context || 'empresa de médio porte'}.
+
+Retorne APENAS o JSON puro, sem markdown:
+{"forcas":["f1","f2","f3","f4","f5"], "fraquezas":["..."], "oportunidades":["..."], "ameacas":["..."]}`;
+
+  try {
+    const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 1500,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text();
+      return errorRes(`Claude API Error ${aiRes.status}: ${errText.slice(0, 150)}`, 502);
+    }
+
+    const aiData = await aiRes.json();
+    const rawText = aiData?.content?.[0]?.text ?? '';
+    const match = rawText.match(/\{[\s\S]*\}/);
+    const swot = JSON.parse(match ? match[0] : rawText);
+
+    return new Response(JSON.stringify({ swot }), {
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err: any) {
+    return errorRes(`Erro processando SWOT: ${err.message}`, 500);
+  }
 }
