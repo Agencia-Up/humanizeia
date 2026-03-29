@@ -198,6 +198,46 @@ Deno.serve(async (req) => {
       return await handleRegisterAssetPerformance(admin, user.id, body, corsHeaders);
     }
 
+    // ── Create campaign ──
+    if (bodyAction === "create_campaign") {
+      return await handleCreateCampaign(admin, user.id, body, corsHeaders);
+    }
+
+    // ── Get audience insights ──
+    if (bodyAction === "get_audience_insights") {
+      return await handleGetAudienceInsights(admin, user.id, body, corsHeaders);
+    }
+
+    // ── Create custom audience ──
+    if (bodyAction === "create_custom_audience") {
+      return await handleCreateCustomAudience(admin, user.id, body, corsHeaders);
+    }
+
+    // ── List audiences ──
+    if (bodyAction === "list_audiences") {
+      return await handleListAudiences(admin, user.id, body, corsHeaders);
+    }
+
+    // ── A/B test setup ──
+    if (bodyAction === "ab_test_setup") {
+      return await handleAbTestSetup(admin, user.id, body, corsHeaders);
+    }
+
+    // ── Get A/B results ──
+    if (bodyAction === "get_ab_results") {
+      return await handleGetAbResults(admin, user.id, body, corsHeaders);
+    }
+
+    // ── Get creative performance ──
+    if (bodyAction === "get_creative_performance") {
+      return await handleGetCreativePerformance(admin, user.id, body, corsHeaders);
+    }
+
+    // ── Swap creative ──
+    if (bodyAction === "swap_creative") {
+      return await handleSwapCreative(admin, user.id, body, corsHeaders);
+    }
+
     // ────────────────────────────────────────────────────────────
     // MAIN ANALYSIS FLOW
     // ────────────────────────────────────────────────────────────
@@ -2425,4 +2465,444 @@ async function handleRegisterAssetPerformance(admin: any, userId: string, body: 
 
   return new Response(JSON.stringify({ success: true }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW HANDLERS: Campaign Creation, Audiences, A/B Testing, Creative Performance
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getMetaTokenForUser(admin: any, userId: string, targetAccountId?: string): Promise<{ accessToken: string; accountId: string; currency: string } | null> {
+  let query = admin
+    .from("ad_accounts")
+    .select("account_id, access_token_encrypted, currency")
+    .eq("user_id", userId)
+    .eq("platform", "meta")
+    .eq("is_active", true);
+
+  if (targetAccountId) query = query.eq("account_id", targetAccountId);
+
+  const { data } = await query.order("created_at").limit(1).single();
+
+  if (data?.access_token_encrypted && data?.account_id) {
+    return {
+      accessToken: data.access_token_encrypted,
+      accountId: data.account_id,
+      currency: data.currency || "BRL",
+    };
+  }
+
+  const secretToken = Deno.env.get("META_ACCESS_TOKEN");
+  const secretAcctId = Deno.env.get("META_AD_ACCOUNT_ID");
+  if (secretToken && secretAcctId) {
+    return { accessToken: secretToken, accountId: secretAcctId, currency: "BRL" };
+  }
+
+  return null;
+}
+
+async function handleCreateCampaign(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { targetAccountId, name, objective, daily_budget, targeting, ad_set_name } = body;
+
+  const meta = await getMetaTokenForUser(admin, userId, targetAccountId);
+  if (!meta) {
+    return new Response(JSON.stringify({ error: "Meta Ads account not connected" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const normalizedAccountId = meta.accountId.startsWith("act_") ? meta.accountId : `act_${meta.accountId}`;
+
+  // 1. Create campaign
+  const campaignRes = await fetch(`${META_GRAPH_URL}/${normalizedAccountId}/campaigns`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: name || "Nova Campanha JOSÉ",
+      objective: objective || "CONVERSIONS",
+      status: "PAUSED",
+      special_ad_categories: [],
+      access_token: meta.accessToken,
+    }),
+  });
+
+  const campaignData = await campaignRes.json();
+  if (campaignData.error) {
+    return new Response(JSON.stringify({ error: campaignData.error.message, meta_error: campaignData.error }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const campaignId = campaignData.id;
+
+  // 2. Determine optimization goal based on objective
+  const optimizationGoalMap: Record<string, string> = {
+    CONVERSIONS: "OFFSITE_CONVERSIONS",
+    TRAFFIC: "LINK_CLICKS",
+    REACH: "REACH",
+    LEAD_GENERATION: "LEAD_GENERATION",
+    BRAND_AWARENESS: "BRAND_AWARENESS",
+    VIDEO_VIEWS: "THRUPLAY",
+  };
+  const optimizationGoal = optimizationGoalMap[objective] || "LINK_CLICKS";
+
+  // 3. Build targeting spec
+  const targetingSpec: any = {
+    geo_locations: { countries: ["BR"] },
+    age_min: targeting?.age_min || 18,
+    age_max: targeting?.age_max || 65,
+  };
+
+  if (targeting?.states?.length > 0) {
+    targetingSpec.geo_locations = {
+      regions: targeting.states.map((s: string) => ({ key: s })),
+      country_groups: [],
+    };
+  }
+
+  if (targeting?.genders?.length > 0) targetingSpec.genders = targeting.genders;
+  if (targeting?.interests?.length > 0) {
+    targetingSpec.interests = targeting.interests.map((i: string) => ({ name: i }));
+  }
+  if (targeting?.custom_audiences?.length > 0) {
+    targetingSpec.custom_audiences = targeting.custom_audiences.map((id: string) => ({ id }));
+  }
+
+  // 4. Create ad set
+  const dailyBudgetCents = Math.round((daily_budget || 50) * 100);
+  const now = new Date();
+  now.setMinutes(0, 0, 0);
+  const startTime = now.toISOString();
+
+  const adsetRes = await fetch(`${META_GRAPH_URL}/${normalizedAccountId}/adsets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: ad_set_name || `${name} — Conjunto`,
+      campaign_id: campaignId,
+      daily_budget: dailyBudgetCents,
+      billing_event: "IMPRESSIONS",
+      optimization_goal: optimizationGoal,
+      bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+      targeting: targetingSpec,
+      status: "PAUSED",
+      start_time: startTime,
+      access_token: meta.accessToken,
+    }),
+  });
+
+  const adsetData = await adsetRes.json();
+  if (adsetData.error) {
+    return new Response(JSON.stringify({ error: adsetData.error.message, campaign_id: campaignId, meta_error: adsetData.error }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  return new Response(JSON.stringify({
+    campaign_id: campaignId,
+    adset_id: adsetData.id,
+    status: "created",
+    meta_ads_url: `https://business.facebook.com/adsmanager/manage/campaigns?act=${meta.accountId.replace("act_", "")}`,
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+async function handleGetAudienceInsights(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { targetAccountId, targeting_spec } = body;
+
+  const meta = await getMetaTokenForUser(admin, userId, targetAccountId);
+  if (!meta) {
+    return new Response(JSON.stringify({ error: "Meta Ads account not connected" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const normalizedAccountId = meta.accountId.startsWith("act_") ? meta.accountId : `act_${meta.accountId}`;
+
+  const reachRes = await fetch(`${META_GRAPH_URL}/${normalizedAccountId}/reachestimate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      targeting_spec: targeting_spec || { geo_locations: { countries: ["BR"] }, age_min: 18, age_max: 65 },
+      access_token: meta.accessToken,
+    }),
+  });
+
+  const reachData = await reachRes.json();
+  if (reachData.error) {
+    return new Response(JSON.stringify({ error: reachData.error.message, fallback: { users_lower_bound: 5000000, users_upper_bound: 15000000, estimate_ready: false } }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  return new Response(JSON.stringify({
+    users_lower_bound: reachData.users_lower_bound,
+    users_upper_bound: reachData.users_upper_bound,
+    estimate_ready: reachData.estimate_ready,
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+async function handleCreateCustomAudience(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { targetAccountId, name, description } = body;
+
+  const meta = await getMetaTokenForUser(admin, userId, targetAccountId);
+  if (!meta) {
+    return new Response(JSON.stringify({ error: "Meta Ads account not connected" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const normalizedAccountId = meta.accountId.startsWith("act_") ? meta.accountId : `act_${meta.accountId}`;
+
+  const res = await fetch(`${META_GRAPH_URL}/${normalizedAccountId}/customaudiences`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: name || "Público Personalizado",
+      subtype: "CUSTOM",
+      description: description || "",
+      customer_file_source: "USER_PROVIDED_ONLY",
+      access_token: meta.accessToken,
+    }),
+  });
+
+  const data = await res.json();
+  if (data.error) {
+    return new Response(JSON.stringify({ error: data.error.message }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  return new Response(JSON.stringify({ id: data.id, name: name }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+async function handleListAudiences(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { targetAccountId } = body;
+
+  const meta = await getMetaTokenForUser(admin, userId, targetAccountId);
+  if (!meta) {
+    return new Response(JSON.stringify({ audiences: [], error: "Meta Ads account not connected" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const normalizedAccountId = meta.accountId.startsWith("act_") ? meta.accountId : `act_${meta.accountId}`;
+
+  const url = new URL(`${META_GRAPH_URL}/${normalizedAccountId}/customaudiences`);
+  url.searchParams.set("fields", "id,name,subtype,approximate_count,delivery_status,data_source");
+  url.searchParams.set("limit", "50");
+  url.searchParams.set("access_token", meta.accessToken);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+
+  if (data.error) {
+    return new Response(JSON.stringify({ audiences: [], error: data.error.message }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  return new Response(JSON.stringify({ audiences: data.data || [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+async function handleAbTestSetup(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { targetAccountId, test_name, source_adset_id, metric, duration_days } = body;
+
+  const meta = await getMetaTokenForUser(admin, userId, targetAccountId);
+  if (!meta) {
+    return new Response(JSON.stringify({ error: "Meta Ads account not connected" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  // Get source ad set details
+  const url = new URL(`${META_GRAPH_URL}/${source_adset_id}`);
+  url.searchParams.set("fields", "id,name,campaign_id,daily_budget,billing_event,optimization_goal,targeting,status,bid_strategy");
+  url.searchParams.set("access_token", meta.accessToken);
+
+  const sourceRes = await fetch(url.toString());
+  const sourceAdset = await sourceRes.json();
+
+  if (sourceAdset.error) {
+    return new Response(JSON.stringify({ error: sourceAdset.error.message }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const normalizedAccountId = meta.accountId.startsWith("act_") ? meta.accountId : `act_${meta.accountId}`;
+
+  // Clone the ad set as variant B
+  const variantRes = await fetch(`${META_GRAPH_URL}/${normalizedAccountId}/adsets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: `${sourceAdset.name}_variant_B`,
+      campaign_id: sourceAdset.campaign_id,
+      daily_budget: sourceAdset.daily_budget,
+      billing_event: sourceAdset.billing_event || "IMPRESSIONS",
+      optimization_goal: sourceAdset.optimization_goal || "LINK_CLICKS",
+      bid_strategy: sourceAdset.bid_strategy || "LOWEST_COST_WITHOUT_CAP",
+      targeting: sourceAdset.targeting || { geo_locations: { countries: ["BR"] } },
+      status: "PAUSED",
+      start_time: new Date().toISOString(),
+      access_token: meta.accessToken,
+    }),
+  });
+
+  const variantData = await variantRes.json();
+  if (variantData.error) {
+    return new Response(JSON.stringify({ error: variantData.error.message }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const startDate = new Date().toISOString();
+  const endDate = new Date(Date.now() + (duration_days || 14) * 24 * 60 * 60 * 1000).toISOString();
+
+  // Save test to Supabase
+  const { data: testRecord } = await admin.from("apollo_ab_tests" as any).insert({
+    user_id: userId,
+    test_name: test_name || `Teste A/B — ${new Date().toLocaleDateString("pt-BR")}`,
+    control_adset_id: source_adset_id,
+    variant_adset_id: variantData.id,
+    metric: metric || "CTR",
+    start_date: startDate,
+    end_date: endDate,
+    status: "running",
+    account_id: meta.accountId,
+  }).select().single();
+
+  return new Response(JSON.stringify({
+    test_id: testRecord?.id,
+    control_adset_id: source_adset_id,
+    variant_adset_id: variantData.id,
+    start_date: startDate,
+    end_date: endDate,
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+async function handleGetAbResults(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { targetAccountId, test_id } = body;
+
+  const meta = await getMetaTokenForUser(admin, userId, targetAccountId);
+  if (!meta) {
+    return new Response(JSON.stringify({ error: "Meta Ads account not connected" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  // Load test from Supabase
+  let testQuery = admin.from("apollo_ab_tests" as any).select("*").eq("user_id", userId);
+  if (test_id) testQuery = testQuery.eq("id", test_id);
+  const { data: tests } = await testQuery.order("created_at", { ascending: false }).limit(20);
+
+  if (!tests || tests.length === 0) {
+    return new Response(JSON.stringify({ tests: [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  // Fetch metrics for each test
+  const results = await Promise.all(tests.map(async (test: any) => {
+    const fetchMetrics = async (adsetId: string) => {
+      const insightsUrl = new URL(`${META_GRAPH_URL}/${adsetId}/insights`);
+      insightsUrl.searchParams.set("fields", "spend,clicks,impressions,actions,ctr,cpc,cpm,reach");
+      insightsUrl.searchParams.set("date_preset", "last_14d");
+      insightsUrl.searchParams.set("access_token", meta.accessToken);
+
+      const res = await fetch(insightsUrl.toString());
+      const data = await res.json();
+      const d = data.data?.[0] || {};
+      const conversions = (d.actions || []).find((a: any) => a.action_type === "offsite_conversion.fb_pixel_purchase")?.value || 0;
+      const spend = parseFloat(d.spend || "0");
+      const roas = spend > 0 ? (parseFloat(conversions) * 100) / spend : 0;
+
+      return {
+        spend: spend,
+        clicks: parseInt(d.clicks || "0"),
+        impressions: parseInt(d.impressions || "0"),
+        ctr: parseFloat(d.ctr || "0"),
+        cpc: parseFloat(d.cpc || "0"),
+        conversions: parseInt(conversions),
+        roas: roas,
+      };
+    };
+
+    const [controlMetrics, variantMetrics] = await Promise.all([
+      fetchMetrics(test.control_adset_id),
+      fetchMetrics(test.variant_adset_id),
+    ]);
+
+    const metric = test.metric || "CTR";
+    const metricKey = metric.toLowerCase();
+    const controlVal = (controlMetrics as any)[metricKey] || 0;
+    const variantVal = (variantMetrics as any)[metricKey] || 0;
+
+    const lowerIsBetter = ["cpa", "cpc"].includes(metricKey);
+    const winner = lowerIsBetter
+      ? (controlVal <= variantVal ? "control" : "variant")
+      : (controlVal >= variantVal ? "control" : "variant");
+
+    const diff = Math.abs(controlVal - variantVal);
+    const base = Math.max(controlVal, variantVal, 0.001);
+    const confidence = Math.min(95, Math.round((diff / base) * 200));
+
+    return {
+      ...test,
+      control_metrics: controlMetrics,
+      variant_metrics: variantMetrics,
+      winner,
+      confidence,
+    };
+  }));
+
+  return new Response(JSON.stringify({ tests: results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+async function handleGetCreativePerformance(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { targetAccountId } = body;
+
+  const meta = await getMetaTokenForUser(admin, userId, targetAccountId);
+  if (!meta) {
+    return new Response(JSON.stringify({ creatives: [], error: "Meta Ads account not connected" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const normalizedAccountId = meta.accountId.startsWith("act_") ? meta.accountId : `act_${meta.accountId}`;
+
+  const url = new URL(`${META_GRAPH_URL}/${normalizedAccountId}/ads`);
+  url.searchParams.set("fields", "id,name,creative{id,name,thumbnail_url},insights{spend,clicks,impressions,actions,ctr,cpc}");
+  url.searchParams.set("limit", "50");
+  url.searchParams.set("date_preset", "last_30d");
+  url.searchParams.set("access_token", meta.accessToken);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+
+  if (data.error) {
+    return new Response(JSON.stringify({ creatives: [], error: data.error.message }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const creatives = (data.data || []).map((ad: any) => {
+    const insights = ad.insights?.data?.[0] || {};
+    const spend = parseFloat(insights.spend || "0");
+    const conversions = parseInt((insights.actions || []).find((a: any) => a.action_type?.includes("purchase"))?.value || "0");
+    const roas = spend > 0 && conversions > 0 ? (conversions * 100) / spend : 0;
+
+    return {
+      id: ad.id,
+      name: ad.name,
+      creative_id: ad.creative?.id,
+      thumbnail_url: ad.creative?.thumbnail_url,
+      spend,
+      clicks: parseInt(insights.clicks || "0"),
+      impressions: parseInt(insights.impressions || "0"),
+      ctr: parseFloat(insights.ctr || "0"),
+      cpc: parseFloat(insights.cpc || "0"),
+      conversions,
+      roas,
+      conversion_rate: parseInt(insights.clicks || "0") > 0
+        ? (conversions / parseInt(insights.clicks)) * 100
+        : 0,
+    };
+  });
+
+  // Sort by CTR descending
+  creatives.sort((a: any, b: any) => b.ctr - a.ctr);
+
+  return new Response(JSON.stringify({ creatives }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+async function handleSwapCreative(admin: any, userId: string, body: any, corsHeaders: any) {
+  const { targetAccountId, ad_id, new_creative_id } = body;
+
+  const meta = await getMetaTokenForUser(admin, userId, targetAccountId);
+  if (!meta) {
+    return new Response(JSON.stringify({ error: "Meta Ads account not connected" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const res = await fetch(`${META_GRAPH_URL}/${ad_id}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      creative: { creative_id: new_creative_id },
+      access_token: meta.accessToken,
+    }),
+  });
+
+  const data = await res.json();
+  if (data.error) {
+    return new Response(JSON.stringify({ error: data.error.message }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  return new Response(JSON.stringify({ success: true, ad_id }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
