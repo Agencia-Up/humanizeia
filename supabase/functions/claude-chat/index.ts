@@ -466,7 +466,7 @@ Deno.serve(async (req) => {
 
     // ─── PROVIDER 1: Anthropic Claude (Primary) ───
     if (ANTHROPIC_API_KEY) {
-      console.log('Using Anthropic Claude (claude-sonnet-4-20250514) as primary provider...');
+      console.log('Using Anthropic Claude (claude-3-5-sonnet-20241022) as primary provider...');
 
       const anthropicMessages = messages.map((msg: Message) => ({
         role: msg.role,
@@ -482,7 +482,7 @@ Deno.serve(async (req) => {
             'anthropic-version': '2023-06-01',
           },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-3-5-sonnet-20241022',
             max_tokens: 4096,
             system: systemPrompt,
             messages: anthropicMessages,
@@ -616,7 +616,7 @@ Deno.serve(async (req) => {
           console.log(`Lovable AI returned ${response.status}, falling back to direct Gemini API...`);
           await response.text();
 
-          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
           const geminiBody = {
             contents: aiMessages.map(m => ({
               role: m.role === 'system' ? 'user' : m.role === 'assistant' ? 'model' : 'user',

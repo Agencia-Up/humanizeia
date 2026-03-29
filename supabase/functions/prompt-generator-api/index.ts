@@ -93,7 +93,7 @@ serve(async (req) => {
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
-        const modelId = provider === 'anthropic_sonnet' ? 'claude-3-5-sonnet-20240620' : 'claude-3-haiku-20240307';
+        const modelId = provider === 'anthropic_sonnet' ? 'claude-3-5-sonnet-20241022' : 'claude-3-haiku-20240307';
         const response = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
