@@ -6,6 +6,11 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Utils para garantir que o cliente Supabase Frontend leia o JSON do erro
+// O Supabase SDK oculta o corpo se retornarmos 400/500, dando o erro genérico "non-2xx status code".
+const sendOkResponse = (payload: any) => 
+  new Response(JSON.stringify(payload), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -16,51 +21,42 @@ serve(async (req) => {
     );
 
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) throw new Error('Não autorizado');
+    if (!authHeader) return sendOkResponse({ error: 'Não autorizado' });
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (error || !user) throw new Error('Token inválido');
+    if (error || !user) return sendOkResponse({ error: 'Token inválido' });
 
     const body = await req.json();
     const { action } = body;
     console.log(`Action: ${action} iniciada pelo usuário ${user.id}`);
 
     if (action === 'generate_strategy') {
-      return await generateStrategy(body, corsHeaders);
+      return await generateStrategy(body);
     }
 
     if (action === 'research_trends') {
-      return await researchTrends(body, corsHeaders);
+      return await researchTrends(body);
     }
 
     if (action === 'generate_swot') {
-      return await generateSwot(body, corsHeaders);
+      return await generateSwot(body);
     }
 
-    return new Response(JSON.stringify({ error: `Ação desconhecida: ${action}` }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return sendOkResponse({ error: `Ação desconhecida: ${action}` });
   } catch (err: any) {
     console.error("Erro Crítico na Edge Function:", err.message);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return sendOkResponse({ error: err.message });
   }
 });
 
-async function generateStrategy(body: any, cors: Record<string, string>) {
-  const errorRes = (msg: string, status = 400) => 
-    new Response(JSON.stringify({ error: msg }), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
-
+async function generateStrategy(body: any) {
   const {
     business_name, business_type, strategy_type, current_situation,
     main_challenge, budget, timeframe_months = 6,
   } = body;
 
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!anthropicKey) return errorRes('ANTHROPIC_API_KEY não configurada no Supabase', 500);
+  if (!anthropicKey) return sendOkResponse({ error: 'ANTHROPIC_API_KEY não configurada no Supabase. Configure-a no painel.' });
 
   const prompt = `Você é DANIEL, consultor estratégico de negócios de alto nível. Especialista em marketing digital e crescimento.
 
@@ -100,7 +96,7 @@ Retorne APENAS o JSON puro, sem markdown, contendo:
 
     if (!aiRes.ok) {
       const errText = await aiRes.text();
-      return errorRes(`Claude API Error ${aiRes.status}: ${errText.slice(0, 150)}`, 502);
+      return sendOkResponse({ error: `Falha na API Claude: ${errText.slice(0, 150)}` });
     }
 
     const aiData = await aiRes.json();
@@ -108,30 +104,25 @@ Retorne APENAS o JSON puro, sem markdown, contendo:
     const match = rawText.match(/\{[\s\S]*\}/);
     const strategy = JSON.parse(match ? match[0] : rawText);
 
-    return new Response(JSON.stringify({ strategy }), {
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
+    return sendOkResponse({ strategy });
   } catch (err: any) {
-    return errorRes(`Erro processando estratégia: ${err.message}`, 500);
+    return sendOkResponse({ error: `Erro processando a estratégia: ${err.message}` });
   }
 }
 
-async function researchTrends(body: any, cors: Record<string, string>) {
+async function researchTrends(body: any) {
   const { niche, platforms = ['instagram', 'tiktok', 'google'] } = body;
   
-  const errorRes = (msg: string, status = 400) => 
-    new Response(JSON.stringify({ error: msg }), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
-
-  if (!niche?.trim()) return errorRes('Nicho é obrigatório');
+  if (!niche?.trim()) return sendOkResponse({ error: 'O Nicho do cliente é obrigatório para realizar a pesquisa.' });
 
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!anthropicKey) return errorRes('ANTHROPIC_API_KEY não configurada no Supabase', 500);
+  if (!anthropicKey) return sendOkResponse({ error: 'ANTHROPIC_API_KEY não configurada no Supabase Secrets.' });
 
   const platformsList = Array.isArray(platforms) ? platforms.join(', ') : 'instagram, tiktok, google';
   const now = new Date().toISOString();
 
   const prompt = `Você é DANIEL, estrategista de tendências. Analise o nicho: "${niche.trim()}". Foco em: ${platformsList}. 
-  Retorne APENAS o JSON puro, sem markdown:
+  Retorne APENAS o JSON puro, sem formatação markdown ou textos antes/depois:
   {"niche":"${niche.trim()}","research_date":"${now}","data_source":"ai_analysis","trending_topics":[{"topic":"tema","why_trending":"motivo","engagement_potential":"alto","best_format":"carrossel","best_platform":"instagram"}],"content_briefs":[{"id":1,"title":"titulo","hook":"gancho","format":"carrossel","platform":"instagram","slides_or_points":["p1","p2","p3","p4","p5"],"cta":"chamada","hashtags":["t1","t2"],"estimated_reach":"alto","reason":"pq"}],"viral_formats":[{"format":"f1","description":"como","example":"ex"}],"competitor_insights":"insights","recommendation":"recomendação"}`;
 
   try {
@@ -151,30 +142,29 @@ async function researchTrends(body: any, cors: Record<string, string>) {
 
     if (!aiRes.ok) {
       const errText = await aiRes.text();
-      return errorRes(`Claude API Error ${aiRes.status}: ${errText.slice(0, 150)}`, 502);
+      return sendOkResponse({ error: `Falha na comunicação com o provedor de IA (Claude): ${errText.slice(0, 150)}` });
     }
 
     const aiData = await aiRes.json();
     const rawText = aiData?.content?.[0]?.text ?? '';
     const match = rawText.match(/\{[\s\S]*\}/);
-    const research = JSON.parse(match ? match[0] : rawText);
+    
+    if (!match) {
+      return sendOkResponse({ error: `A IA não retornou um formato válido. Resposta: ${rawText.slice(0, 100)}` });
+    }
 
-    return new Response(JSON.stringify({ research, scraped: false }), {
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
+    const research = JSON.parse(match[0]);
+    return sendOkResponse({ research, scraped: false });
   } catch (err: any) {
-    return errorRes(`Erro processando pesquisa: ${err.message}`, 500);
+    return sendOkResponse({ error: `Falha ao construir pesquisa: ${err.message}` });
   }
 }
 
-async function generateSwot(body: any, cors: Record<string, string>) {
-  const errorRes = (msg: string, status = 400) => 
-    new Response(JSON.stringify({ error: msg }), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
-
+async function generateSwot(body: any) {
   const { business_name, business_type, context } = body;
   
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!anthropicKey) return errorRes('ANTHROPIC_API_KEY não configurada no Supabase', 500);
+  if (!anthropicKey) return sendOkResponse({ error: 'ANTHROPIC_API_KEY falhou (Verifique as Secrets no Painel)' });
 
   const prompt = `Crie uma análise SWOT para o negócio: ${business_name} (${business_type}). 
 Contexto: ${context || 'empresa de médio porte'}.
@@ -199,7 +189,7 @@ Retorne APENAS o JSON puro, sem markdown:
 
     if (!aiRes.ok) {
       const errText = await aiRes.text();
-      return errorRes(`Claude API Error ${aiRes.status}: ${errText.slice(0, 150)}`, 502);
+      return sendOkResponse({ error: `Falha no modelo Claude: ${errText.slice(0, 150)}` });
     }
 
     const aiData = await aiRes.json();
@@ -207,10 +197,8 @@ Retorne APENAS o JSON puro, sem markdown:
     const match = rawText.match(/\{[\s\S]*\}/);
     const swot = JSON.parse(match ? match[0] : rawText);
 
-    return new Response(JSON.stringify({ swot }), {
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
+    return sendOkResponse({ swot });
   } catch (err: any) {
-    return errorRes(`Erro processando SWOT: ${err.message}`, 500);
+    return sendOkResponse({ error: `Falha ao processar análise SWOT: ${err.message}` });
   }
 }
