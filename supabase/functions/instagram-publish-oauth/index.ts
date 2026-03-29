@@ -111,10 +111,9 @@ serve(async (req) => {
 
       const state  = btoa(JSON.stringify({ userId: user.id, ts: Date.now() }));
       const scopes = [
-        'instagram_basic',
-        'instagram_content_publish',
-        'instagram_manage_insights',
-        'instagram_manage_comments',
+        'instagram_business_basic',
+        'instagram_business_content_publish',
+        'instagram_business_manage_comments',
       ].join(',');
 
       const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${IG_APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scopes}&response_type=code&state=${state}`;
