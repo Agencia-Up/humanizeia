@@ -88,7 +88,7 @@ Retorne APENAS o JSON puro, sem markdown, contendo:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-3-5-sonnet-20240620',
         max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -134,7 +134,7 @@ async function researchTrends(body: any) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-3-5-sonnet-20240620',
         max_tokens: 3000,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -181,7 +181,7 @@ Retorne APENAS o JSON puro, sem markdown:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-3-5-sonnet-20240620',
         max_tokens: 1500,
         messages: [{ role: 'user', content: prompt }],
       }),
