@@ -23,7 +23,7 @@ export function ActivityCenter() {
     const routes: Record<string, string> = {
       'maria': '/creative-studio',
       'paulo': '/copywriter',
-      'jose': '/apollo',
+      'jose': '/jose',
       'daniel': '/daniel',
       'salomao': '/salomao',
     };

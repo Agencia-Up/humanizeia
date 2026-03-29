@@ -135,7 +135,7 @@ export function AISettingsTab() {
           <div className="space-y-3">
             <Label className="flex items-center gap-2">
               <Info className="h-4 w-4 text-muted-foreground" />
-              Provedor para Análises (Midas / Insights)
+              Provedor para Análises (José / Insights)
             </Label>
             <Select
               value={settings.analysisProvider}

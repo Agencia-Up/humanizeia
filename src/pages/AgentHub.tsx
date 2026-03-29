@@ -11,7 +11,7 @@ import { Card, CardContent } from '@/components/ui/card';
 
 const agents = [
   { name: 'Salomão', role: 'Orquestrador', icon: Sparkles, color: '#f59e0b', url: '/salomao', desc: 'Coordena todos os agentes e estratégias', active: true },
-  { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#7c5cfc', url: '/apollo', desc: 'Meta Ads, Google Ads e otimização de campanhas', active: true },
+  { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#f97316', url: '/jose', desc: 'Meta Ads, Google Ads e otimização de campanhas', active: true },
   { name: 'Marcos', role: 'Leads', icon: Users, color: '#3b82f6', url: '/leads', desc: 'Captação e gestão de leads qualificados', active: true },
   { name: 'Paulo', role: 'Copywriter', icon: PenTool, color: '#22d3a0', url: '/copywriter', desc: 'Copies persuasivas geradas por IA', active: true },
   { name: 'Maria', role: 'Design', icon: Palette, color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA', active: true },
