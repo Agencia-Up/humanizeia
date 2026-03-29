@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { useNavigate } from 'react-router-dom';
 
 export interface AgentTask {
   id: string;
@@ -27,6 +28,7 @@ const AgentTasksContext = createContext<AgentTasksContextType | undefined>(undef
 export function AgentTasksProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [activeTasks, setActiveTasks] = useState<AgentTask[]>([]);
   const [recentTasks, setRecentTasks] = useState<AgentTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -95,11 +97,18 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
 
             // Show notifications for completion/failure
             if (updatedTask.status === 'completed') {
+              const url = getAgentUrl(updatedTask.agent_id);
+              
               toast({
                 title: `✨ Tarefa Concluída!`,
-                description: `${getAgentName(updatedTask.agent_id)} terminou o que estava fazendo.`,
+                description: `${getAgentName(updatedTask.agent_id)} terminou o que estava fazendo. Clique para ver.`,
                 variant: 'default',
-              });
+                onClick: () => {
+                  if (url) {
+                    navigate(`${url}?taskId=${updatedTask.id}`);
+                  }
+                }
+              } as any);
             } else if (updatedTask.status === 'failed') {
               toast({
                 title: `⚠️ Erro no Agente`,
@@ -115,7 +124,7 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, toast]);
+  }, [user, toast, navigate]);
 
   const createTask = async (agentId: string, taskType: string, payload: any) => {
     if (!user) throw new Error('User not authenticated');
@@ -161,3 +170,15 @@ function getAgentName(id: string) {
   };
   return names[id] || id.toUpperCase();
 }
+
+function getAgentUrl(id: string) {
+  const urls: Record<string, string> = {
+    'maria': '/creative-studio',
+    'paulo': '/copywriter',
+    'jose': '/jose',
+    'daniel': '/daniel',
+    'salomao': '/salomao',
+  };
+  return urls[id] || null;
+}
+

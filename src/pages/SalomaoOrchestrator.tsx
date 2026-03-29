@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { OrchestrationPanel } from '@/components/salomao/OrchestrationPanel';
 import { BriefingSmartUpload } from '@/components/salomao/BriefingSmartUpload';
 import { AgentKnowledgeBase } from '@/features/orchestrator/components/AgentKnowledgeBase';
@@ -21,6 +21,8 @@ import {
   ShoppingBag, Target, MessageSquare, Shield, TrendingUp,
   Globe, Share2, BrainCircuit, Bot as BotIcon,
 } from 'lucide-react';
+import { useAgentTasks } from '@/contexts/AgentTasksContext';
+import { useAgentChat } from '@/contexts/AgentChatContext';
 
 /* ── Agent definitions ──────────────────────────────────────────────── */
 const AGENTS = [
@@ -32,7 +34,7 @@ const AGENTS = [
   { id: 'davi', name: 'DAVI', role: 'Social Media', icon: Send, description: 'Cria calendário editorial, escreve legendas e publica automaticamente no melhor horário.', status: 'active', color: 'text-pink-400', bg: 'bg-pink-500/10 border-pink-500/20', url: '/davi' },
   { id: 'lucas', name: 'LUCAS', role: 'Gestor de Funil', icon: Layers, description: 'Mapeia e otimiza toda a jornada do cliente: anúncio → landing page → checkout → retenção.', status: 'coming', color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20', url: null },
   { id: 'joao', name: 'JOÃO', role: 'Email Marketing', icon: Megaphone, description: 'Cria sequências de nutrição, segmenta listas e envia campanhas no timing certo.', status: 'active', color: 'text-indigo-400', bg: 'bg-indigo-500/10 border-indigo-500/20', url: '/joao' },
-  { id: 'marcos', name: 'MARCOS', role: 'Gestor de Leads', icon: Users, description: 'Gerencia leads, funil de vendas e conversões. Mini-CRM integrado com WhatsApp.', status: 'active', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-500/20', url: '/leads' },
+  { id: 'marcos', name: 'MARCOS', role: 'Gestor de Leads', icon: Users, description: 'Gerencia leads, funil de vendas e conversões. Mini-CRM integrado com WhatsApp.', status: 'active', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-400/20', url: '/leads' },
   { id: 'pedro', name: 'PEDRO', role: 'SDR & Atendimento', icon: Bot, description: 'Qualifica leads, agenda reuniões e responde clientes 24/7 via WhatsApp com inteligência humana.', status: 'active', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-500/20', url: '/whatsapp/ai-agent' },
 ];
 
@@ -97,6 +99,8 @@ function R2({ children }: { children: React.ReactNode }) {
 export default function SalomaoOrchestrator() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { createTask } = useAgentTasks();
+  const { getHistory, saveMessage, clearHistory } = useAgentChat();
   const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline' | 'fluxo' | 'conhecimento'>('gerador');
   const [activeBriefingId, setActiveBriefingId] = useState<string | null>(null);
   const [activeClientName, setActiveClientName] = useState('Selecione um cliente');
@@ -108,6 +112,18 @@ export default function SalomaoOrchestrator() {
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
+
+  // Carregar histórico ao montar
+  useEffect(() => {
+    const loadHistory = async () => {
+      const history = await getHistory('salomao');
+      const lastAssistantMessage = [...history].reverse().find(m => m.role === 'assistant' && m.metadata?.type === 'generated_prompt');
+      if (lastAssistantMessage) {
+        setGeneratedPrompt(lastAssistantMessage.content);
+      }
+    };
+    loadHistory();
+  }, [getHistory]);
 
   const activeCount = AGENTS.filter(a => a.status === 'active').length;
   const filled = REQUIRED_FIELDS.filter(f => data[f]?.trim()).length;
@@ -126,29 +142,49 @@ export default function SalomaoOrchestrator() {
     setGenerating(true);
     setGeneratedPrompt('');
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Sessão expirada.');
-      const res = await supabase.functions.invoke('prompt-generator-api', {
+      const taskId = await createTask('salomao', 'generate_prompt', { 
+        briefing: buildBriefingText(data),
+        ai_provider: aiProvider 
+      });
+
+      const { data: res, error } = await supabase.functions.invoke('prompt-generator-api', {
         body: { 
           action: 'generate_prompt', 
           briefing: buildBriefingText(data),
-          ai_provider: aiProvider 
-        },
-        headers: { Authorization: `Bearer ${session.access_token}` },
+          ai_provider: aiProvider,
+          task_id: taskId
+        }
       });
-      if (res.error) throw new Error(res.error.message);
-      const result = res.data as { prompt: string; tokens_used: number; demo: boolean };
-      setGeneratedPrompt(result.prompt);
-      if (result.demo) {
-        toast({ title: 'Modo demo', description: 'Configure ANTHROPIC_API_KEY no Supabase para IA real.' });
-      } else {
-        toast({ title: '⚡ Prompt gerado!', description: `${result.tokens_used?.toLocaleString('pt-BR')} tokens usados.` });
+
+      if (error) throw error;
+      
+      if (res?.prompt) {
+        setGeneratedPrompt(res.prompt);
+        await saveMessage('salomao', 'user', `Gerar prompt completo para: ${data.vendeProduto}`);
+        await saveMessage('salomao', 'assistant', res.prompt, { type: 'generated_prompt' });
       }
+
+      if (res?.demo) {
+        toast({ title: 'Modo demo', description: 'Configure OpenAI API Key no Supabase para IA real.' });
+      } else {
+        toast({ title: '⚡ Prompt gerado!', description: 'O resultado foi salvo no seu histórico.' });
+      }
+      
       setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    try {
+      await clearHistory('salomao');
+      setGeneratedPrompt('');
+      toast({ title: 'Histórico limpo', description: 'Todas as gerações anteriores do Salomão foram removidas.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao limpar', description: err.message, variant: 'destructive' });
     }
   };
 
@@ -301,8 +337,17 @@ export default function SalomaoOrchestrator() {
             <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-5 py-4 flex items-start gap-3">
               <FileCode2 className="h-5 w-5 text-yellow-400 shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold text-sm text-yellow-400">Gerador de Prompt para Agente de Vendas</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Preencha o briefing do negócio e o SALOMÃO gera um System Prompt completo, pronto para colar no WhatsApp, ChatGPT, Claude ou qualquer automação.</p>
+                <div className="flex items-center justify-between w-full">
+                  <div>
+                    <p className="font-semibold text-sm text-yellow-400">Gerador de Prompt para Agente de Vendas</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Preencha o briefing do negócio e o SALOMÃO gera um System Prompt completo, pronto para colar no WhatsApp, ChatGPT, Claude ou qualquer automação.</p>
+                  </div>
+                  {generatedPrompt && (
+                    <Button variant="ghost" size="sm" onClick={handleClearHistory} className="text-muted-foreground hover:text-destructive gap-2">
+                       Limpar Histórico
+                    </Button>
+                  )}
+                </div>
               </div>
               <div className="ml-auto flex items-center gap-2">
                 <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/30 gap-1.5 whitespace-nowrap hidden sm:flex h-7">
@@ -344,7 +389,7 @@ export default function SalomaoOrchestrator() {
 
                 <SectionCard num={1} icon={ShoppingBag} title="Negócio & Posicionamento">
                   <F label="O que você vende?" hint="Ex: Curso online de tráfego pago para iniciantes">
-                    <Input value={data.vendeProduto} onChange={set('vendeProduto')} placeholder="Descreva seu produto ou serviço" />
+                    <Input value={data.vendeProduto} onChange={set('vendeProduto')} placeholder="Descreva seu product ou serviço" />
                   </F>
                   <F label="Qual problema resolve?">
                     <Textarea value={data.problemaResolve} onChange={set('problemaResolve')} placeholder="Ex: Pessoas que tentam anunciar no Meta Ads mas perdem dinheiro sem retorno" className="min-h-[70px]" />

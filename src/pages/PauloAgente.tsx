@@ -3,7 +3,7 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
@@ -14,6 +14,9 @@ import {
   Link, X,
   Instagram, Mail, Phone,
 } from 'lucide-react';
+
+import { useAgentTasks } from '@/contexts/AgentTasksContext';
+import { useAgentChat } from '@/contexts/AgentChatContext';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -94,14 +97,10 @@ const QUICK_ACTIONS = [
 export default function PauloAgente() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { createTask } = useAgentTasks();
+  const { getHistory, saveMessage, clearHistory } = useAgentChat();
 
-  const [messages, setMessages] = useState<ChatMessage[]>([{
-    id: 'welcome',
-    role: 'assistant',
-    content: '👋 Oi! Sou o Paulo — já tenho o contexto do cliente carregado via Salomão.\n\nPode me pedir qualquer copy: anúncio, email, WhatsApp, SMS, headline, variações... Só me fala o que precisa e já entrego estruturado.\n\nUse os atalhos rápidos abaixo ou me escreva diretamente. 🎯',
-    timestamp: new Date(),
-  }]);
-
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [style, setStyle] = useState<StyleType>('persuasivo');
@@ -126,6 +125,44 @@ export default function PauloAgente() {
   useEffect(() => {
     loadClientContext();
   }, [user]);
+
+  // Carregar histórico ao montar
+  useEffect(() => {
+    const loadHistory = async () => {
+      const history = await getHistory('paulo');
+      if (history.length > 0) {
+        setMessages(history.map(m => ({
+          id: m.id,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          timestamp: new Date(m.created_at || Date.now()),
+        })));
+      } else {
+        setMessages([{
+          id: 'welcome',
+          role: 'assistant',
+          content: '👋 Oi! Sou o Paulo — já tenho o contexto do cliente carregado via Salomão.\n\nPode me pedir qualquer copy: anúncio, email, WhatsApp, SMS, headline, variações... Só me fala o que precisa e já entrego estruturado.\n\nUse os atalhos rápidos abaixo ou me escreva diretamente. 🎯',
+          timestamp: new Date(),
+        }]);
+      }
+    };
+    loadHistory();
+  }, [getHistory, clearHistory]);
+
+  const handleClearHistory = async () => {
+    try {
+      await clearHistory('paulo');
+      setMessages([{
+        id: 'welcome',
+        role: 'assistant',
+        content: 'Histórico limpo! Como posso te ajudar agora? 🎯',
+        timestamp: new Date(),
+      }]);
+      toast({ title: 'Histórico limpo' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao limpar', description: err.message, variant: 'destructive' });
+    }
+  };
 
   const loadClientContext = async () => {
     if (!user) return;
@@ -188,10 +225,11 @@ export default function PauloAgente() {
   const handleSend = async () => {
     if (!input.trim() || loading) return;
 
+    const userMsgContent = input.trim();
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
-      content: input.trim(),
+      content: userMsgContent,
       timestamp: new Date(),
     };
 
@@ -201,6 +239,9 @@ export default function PauloAgente() {
     setLoading(true);
 
     try {
+      // 1. Salvar mensagem do usuário no histórico persistente
+      await saveMessage('paulo', 'user', userMsgContent);
+
       const ctx = clientContext || DEMO_CLIENT;
       const contextStr = `
 Cliente: ${ctx.clientName}
@@ -218,6 +259,15 @@ Estilo atual: ${STYLES.find(s => s.value === style)?.label}
 Intensidade atual: ${INTENSITY_LABELS[intensity].label} — ${INTENSITY_LABELS[intensity].desc}
 Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
 
+      // 2. Criar tarefa em segundo plano
+      const taskId = await createTask('paulo', 'generate_copy', {
+        input: userMsgContent,
+        platform,
+        style,
+        intensity,
+        context: ctx
+      });
+
       const apiMessages = newMessages.map(m => ({ role: m.role, content: m.content }));
 
       const { data, error } = await supabase.functions.invoke('claude-chat', {
@@ -225,6 +275,7 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
           messages: apiMessages,
           context: 'paulo',
           stream: false,
+          task_id: taskId, // Passar task_id para a Edge Function
           config: {
             product: ctx.produto,
             description: systemWithContext,
@@ -239,6 +290,9 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
       if (error) throw new Error(error.message);
 
       const content = data?.choices?.[0]?.message?.content || 'Erro ao gerar copy. Tente novamente.';
+
+      // 3. Salvar resposta do assistente no histórico persistente
+      await saveMessage('paulo', 'assistant', content);
 
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -326,13 +380,22 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
             <Button
               variant="ghost"
               size="sm"
+              onClick={handleClearHistory}
+              className="text-muted-foreground hover:text-destructive gap-1.5 text-xs h-8"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Limpar
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setShowReference(!showReference)}
-              className={`gap-1.5 text-xs ${showReference ? 'text-violet-400 bg-violet-500/10' : 'text-muted-foreground'}`}
+              className={`gap-1.5 text-xs h-8 ${showReference ? 'text-violet-400 bg-violet-500/10' : 'text-muted-foreground'}`}
             >
               <Link className="h-3.5 w-3.5" />
               Referência
             </Button>
-            <Badge variant="outline" className="text-xs">
+            <Badge variant="outline" className="text-xs h-8">
               {messages.filter(m => m.role === 'assistant').length} copies
             </Badge>
           </div>
@@ -440,8 +503,8 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
 
             {/* ── Quick actions ─────────────────────────────────────────── */}
             <div className="px-4 py-2 border-t border-border/30 shrink-0">
-              <ScrollArea orientation="horizontal">
-                <div className="flex gap-2 pb-1">
+              <ScrollArea className="w-full">
+                <div className="flex gap-2 pb-2">
                   {QUICK_ACTIONS.map(action => (
                     <button
                       key={action.id}
@@ -453,6 +516,7 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
                     </button>
                   ))}
                 </div>
+                <ScrollBar orientation="horizontal" />
               </ScrollArea>
             </div>
 

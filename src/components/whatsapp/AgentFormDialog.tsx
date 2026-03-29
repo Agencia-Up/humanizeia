@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target } from 'lucide-react';
 
 interface Instance {
   id: string;
@@ -47,6 +47,8 @@ interface AIAgent {
   address?: string;
   human_whatsapp?: string;
   n8n_webhook_url?: string;
+  sdr_goal?: string;
+  qualification_questions?: string[];
 }
 
 interface AgentFormDialogProps {
@@ -125,6 +127,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [address, setAddress] = useState('');
   const [humanWhatsapp, setHumanWhatsapp] = useState('');
   const [n8nWebhookUrl, setN8nWebhookUrl] = useState('');
+  const [sdrGoal, setSdrGoal] = useState('');
+  const [qualificationStr, setQualificationStr] = useState('');
 
   useEffect(() => {
     if (agent) {
@@ -146,6 +150,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       setAddress(agent.address || '');
       setHumanWhatsapp(agent.human_whatsapp || '');
       setN8nWebhookUrl(agent.n8n_webhook_url || '');
+      setSdrGoal(agent.sdr_goal || '');
+      setQualificationStr((agent.qualification_questions || []).join('\n'));
     } else {
       setName('Agente IA');
       setAgentType('generic');
@@ -165,6 +171,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       setAddress('');
       setHumanWhatsapp('');
       setN8nWebhookUrl('');
+      setSdrGoal('');
+      setQualificationStr('');
     }
   }, [agent, open]);
 
@@ -201,6 +209,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
     address,
     human_whatsapp: humanWhatsapp,
     n8n_webhook_url: n8nWebhookUrl,
+    sdr_goal: sdrGoal,
+    qualification_questions: qualificationStr.split('\n').map(q => q.trim()).filter(Boolean),
     updated_at: new Date().toISOString(),
   });
 
@@ -295,10 +305,13 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
               <TabsTrigger value="general" className="flex-1 gap-1.5">
                 <Brain className="h-3.5 w-3.5" /> Geral
               </TabsTrigger>
-              <TabsTrigger value="business" className="flex-1 gap-1.5">
+              <TabsTrigger value="business" className="flex-1 gap-1.5 hidden sm:flex">
                 <Building2 className="h-3.5 w-3.5" /> Empresa
               </TabsTrigger>
-              <TabsTrigger value="settings" className="flex-1 gap-1.5">
+              <TabsTrigger value="sdr" className="flex-1 gap-1.5">
+                <Target className="h-3.5 w-3.5" /> Funil SDR
+              </TabsTrigger>
+              <TabsTrigger value="settings" className="flex-1 gap-1.5 hidden sm:flex">
                 <Settings2 className="h-3.5 w-3.5" /> Modelo
               </TabsTrigger>
               <TabsTrigger value="integrations" className="flex-1 gap-1.5">
@@ -452,6 +465,40 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                   <p className="text-xs text-muted-foreground">
                     Número para onde o agente encaminha quando precisa de um humano.
                   </p>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* ── Tab: SDR Funnel ── */}
+            <TabsContent value="sdr" className="space-y-5 mt-0">
+              <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-4">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Target className="h-4 w-4 text-primary" />
+                  Qualificação do Lead (Cérebro do Agente)
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Instrua a inteligência do agente sobre o que ele deve fazer e quais perguntas precisa fazer ao cliente para considerá-lo qualificado. Essa lógica roda 100% autônoma via IA (sem depender do n8n).
+                </p>
+
+                <div className="space-y-2 pt-2">
+                  <Label>Objetivo Final (SDR Goal)</Label>
+                  <Input 
+                    value={sdrGoal} 
+                    onChange={e => setSdrGoal(e.target.value)} 
+                    placeholder="Ex: Agendar reunião, Enviar link de pagamento com o nome do cliente..." 
+                  />
+                  <p className="text-[10px] text-muted-foreground w-full">O objetivo que a IA deve cumprir silenciosamente na conversa.</p>
+                </div>
+
+                <div className="space-y-2 pt-2">
+                  <Label>Perguntas Obrigatórias para Qualificação</Label>
+                  <Textarea
+                    value={qualificationStr}
+                    onChange={e => setQualificationStr(e.target.value)}
+                    placeholder="Ex:&#10;Qual a dor principal do cliente?&#10;Vende produto físico ou digital?&#10;Já tem CRM atualmente?"
+                    className="min-h-[120px]"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Insira uma pergunta por linha. O Agente não avançará para o fechamento até obter as respostas dessas perguntas listadas.</p>
                 </div>
               </div>
             </TabsContent>

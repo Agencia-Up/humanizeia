@@ -40,6 +40,7 @@ import {
   Globe, Share2, Database,
 } from 'lucide-react';
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
+import { useAgentChat } from '@/contexts/AgentChatContext';
 import { SwipeFileTab } from '@/components/copywriter/SwipeFileTab';
 import { MariaBriefingTab, type ApplyConfig } from '@/components/creative-studio/MariaBriefingTab';
 import { SavedImagesTab } from '@/components/creative-studio/SavedImagesTab';
@@ -170,9 +171,29 @@ export default function AICreativeStudio() {
   const { toast } = useToast();
   const { user } = useAuth();
   const { createTask, recentTasks } = useAgentTasks();
+  const { getHistory, saveMessage, clearHistory } = useAgentChat();
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = usePersistedState('cs-active-tab', 'maria');
   const [removeBgImage, setRemoveBgImage] = useState<{ url: string; name: string } | null>(null);
+  const [previousGenerations, setPreviousGenerations] = useState<GeneratedImage[]>([]);
+
+  // Carregar histórico de gerações (miniaturas) ao montar
+  useEffect(() => {
+    const loadHistory = async () => {
+      const history = await getHistory('maria');
+      const allImages: GeneratedImage[] = [];
+      
+      // Filtrar mensagens do assistente que contêm imagens no metadata
+      history.forEach(m => {
+        if (m.role === 'assistant' && m.metadata?.images) {
+          allImages.push(...(m.metadata.images as GeneratedImage[]));
+        }
+      });
+      
+      setPreviousGenerations(allImages);
+    };
+    loadHistory();
+  }, [getHistory]);
 
   // Honor ?tab= query parameter from sidebar navigation
   useEffect(() => {
@@ -341,6 +362,16 @@ export default function AICreativeStudio() {
       if (data.images && data.images.length > 0) {
         setResults(data.images);
         
+        // 2. Salvar no histórico de chat para persistência (Miniaturas)
+        await saveMessage('maria', 'user', `Gerar imagem: ${prompt}`);
+        await saveMessage('maria', 'assistant', `Geradas ${data.images.length} variações.`, { 
+          images: data.images,
+          type: 'image_generation'
+        });
+
+        // Atualizar lista de miniaturas localmente
+        setPreviousGenerations(prev => [...data.images, ...prev]);
+
         // Update task to completed
         await (supabase.from('agent_tasks' as any) as any).update({ 
           status: 'completed', 
@@ -368,6 +399,16 @@ export default function AICreativeStudio() {
       });
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleClearImages = async () => {
+    try {
+      await clearHistory('maria');
+      setPreviousGenerations([]);
+      toast({ title: 'Histórico de imagens limpo.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao limpar', description: err.message, variant: 'destructive' });
     }
   };
 
@@ -910,6 +951,50 @@ export default function AICreativeStudio() {
               </AnimatePresence>
             </CardContent>
           </Card>
+
+          {/* Previous Generations (Miniatures) */}
+          {previousGenerations.length > 0 && (
+            <Card className="border-border/50 bg-card/50 backdrop-blur-sm lg:col-span-full">
+              <CardHeader className="flex flex-row items-center justify-between py-3">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-primary" />
+                  <CardTitle className="text-sm font-semibold uppercase tracking-wider">Gerações Anteriores</CardTitle>
+                  <Badge variant="outline" className="text-[10px]">{previousGenerations.length}</Badge>
+                </div>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={handleClearImages}
+                  className="h-8 text-xs text-muted-foreground hover:text-destructive gap-1.5"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Limpar Histórico
+                </Button>
+              </CardHeader>
+              <CardContent className="pb-6">
+                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-3">
+                  {previousGenerations.map((img, i) => (
+                    <motion.div
+                      key={i}
+                      whileHover={{ scale: 1.05 }}
+                      className="aspect-square relative rounded-md overflow-hidden border border-border/40 cursor-pointer group shadow-sm bg-muted/20"
+                      onClick={() => setLightboxImage(img.imageUrl)}
+                    >
+                      <img 
+                        src={img.imageUrl} 
+                        alt="Miniatura" 
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <Maximize2 className="h-3 w-3 text-white" />
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </TabsContent>
 

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,10 +11,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
+import { useAgentTasks } from '@/contexts/AgentTasksContext';
+import { useAgentChat } from '@/contexts/AgentChatContext';
 import {
   Brain, BarChart3, Compass, Lightbulb, Loader2,
   Sparkles, Target, TrendingUp, TrendingDown, Zap, ChevronRight, Shield, Star,
-  Layers, Users, ArrowRight, Save, ExternalLink, Copy, CheckCheck, Search,
+  Layers, Users, ArrowRight, Save, ExternalLink, Copy, CheckCheck, Search, Trash2,
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -213,10 +216,50 @@ interface GeneratedStrategy {
 }
 
 export default function DanielEstrategia() {
+  const { user } = useAuth();
   const { toast } = useToast();
+  const { createTask } = useAgentTasks();
+  const { getHistory, saveMessage, clearHistory } = useAgentChat();
   const [generating, setGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState('estrategia');
   const [strategy, setStrategy] = useState<GeneratedStrategy | null>(null);
+
+  // Carregar histórico ao montar
+  useEffect(() => {
+    const loadHistory = async () => {
+      const history = await getHistory('daniel');
+      // Tentar encontrar a última estratégia gerada
+      const lastStrategy = [...history].reverse().find(m => m.role === 'assistant' && m.metadata?.type === 'business_strategy');
+      if (lastStrategy && lastStrategy.metadata?.strategy) {
+        setStrategy(lastStrategy.metadata.strategy as any);
+      }
+      
+      // Tentar encontrar o último copy de LP
+      const lastCopy = [...history].reverse().find(m => m.role === 'assistant' && m.metadata?.type === 'lp_copy');
+      if (lastCopy && lastCopy.metadata?.copy) {
+        setCopyResult(lastCopy.metadata.copy as any);
+      }
+
+      // Tentar encontrar a última pesquisa
+      const lastResearch = [...history].reverse().find(m => m.role === 'assistant' && m.metadata?.type === 'niche_research');
+      if (lastResearch && lastResearch.metadata?.research) {
+        setResearchResult(lastResearch.metadata.research as any);
+      }
+    };
+    loadHistory();
+  }, [getHistory]);
+
+  const handleClearHistory = async () => {
+    try {
+      await clearHistory('daniel');
+      setStrategy(null);
+      setCopyResult(null);
+      setResearchResult(null);
+      toast({ title: 'Histórico da estratégia limpo.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao limpar', description: err.message, variant: 'destructive' });
+    }
+  };
 
   // Form — Strategy
   const [businessName, setBusinessName] = useState('');
@@ -271,13 +314,26 @@ export default function DanielEstrategia() {
     setGeneratingCopy(true);
     setCopyResult(null);
     try {
+      const briefing = { produto: produto.trim(), publico: publico.trim(), dor: dor.trim(), beneficios: beneficios.trim(), provas: provas.trim(), oferta: oferta.trim(), garantia: garantia.trim(), cta: cta.trim() };
+      
+      // Salvar request no histórico
+      await saveMessage('daniel', 'user', `Gerar Copy de LP para: ${produto}`);
+
       const { data, error } = await supabase.functions.invoke('lucas-funnel-api', {
-        body: { action: 'generate_lp_copy', briefing: { produto: produto.trim(), publico: publico.trim(), dor: dor.trim(), beneficios: beneficios.trim(), provas: provas.trim(), oferta: oferta.trim(), garantia: garantia.trim(), cta: cta.trim() } },
+        body: { action: 'generate_lp_copy', briefing },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
+      
       setCopyResult(data.copy);
       setIsDemoMode(data.demo === true);
+
+      // Salvar resultado no histórico
+      await saveMessage('daniel', 'assistant', `Copy gerado para ${produto}.`, { 
+        type: 'lp_copy',
+        copy: data.copy 
+      });
+
     } catch (err: any) {
       toast({ title: 'Erro ao gerar copy', description: err.message || 'Tente novamente.', variant: 'destructive' });
     } finally {
@@ -298,6 +354,17 @@ export default function DanielEstrategia() {
     if (!businessName.trim() || !mainChallenge.trim()) return;
     setGenerating(true);
     try {
+      // 1. Salvar request no histórico
+      await saveMessage('daniel', 'user', `Análise estratégica para: ${businessName}`);
+
+      // 2. Criar tarefa em segundo plano
+      const taskId = await createTask('daniel', 'generate_strategy', {
+        business_name: businessName.trim(),
+        business_type: businessType,
+        strategy_type: strategyType,
+        main_challenge: mainChallenge.trim()
+      });
+
       const { data, error } = await supabase.functions.invoke('daniel-strategy-api', {
         body: {
           action: 'generate_strategy',
@@ -308,14 +375,31 @@ export default function DanielEstrategia() {
           main_challenge: mainChallenge.trim(),
           budget: budget.trim(),
           timeframe_months: parseInt(timeframe),
+          task_id: taskId,
         },
       });
+
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
+      
       setStrategy(data.strategy);
+
+      // 3. Salvar resultado no histórico
+      await saveMessage('daniel', 'assistant', `Estratégia para ${businessName} gerada com sucesso.`, { 
+        type: 'business_strategy',
+        strategy: data.strategy 
+      });
+
     } catch (err: any) {
       // Demo mode fallback
-      setStrategy(buildDemoStrategy(businessName, strategyType, mainChallenge, parseInt(timeframe)));
+      const demoStrategy = buildDemoStrategy(businessName, strategyType, mainChallenge, parseInt(timeframe));
+      setStrategy(demoStrategy);
+      
+      await saveMessage('daniel', 'assistant', `Gerada estratégia demonstrativa para ${businessName}.`, { 
+        type: 'business_strategy',
+        strategy: demoStrategy 
+      });
+
       toast({ title: 'Modo demo', description: 'Mostrando estratégia demonstrativa. Configure a API para análise completa.' });
     } finally {
       setGenerating(false);
@@ -331,44 +415,28 @@ export default function DanielEstrategia() {
     setResearchResult(null);
     setResearchError('');
     try {
-      const platformsList = researchPlatforms.length > 0 ? researchPlatforms.join(', ') : 'instagram, tiktok, google';
-      const now = new Date().toISOString();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Sessão expirada');
+      
+      // 1. Salvar request no histórico
+      await saveMessage('daniel', 'user', `Pesquisar nicho: ${researchNiche}`);
 
-      const prompt = `Você é DANIEL, estrategista de conteúdo digital especialista em marketing brasileiro.
-Analise tendências para o nicho: "${researchNiche.trim()}"
-Plataformas foco: ${platformsList}
-Data: ${now}
+      const { data, error } = await supabase.functions.invoke('daniel-strategy-api', {
+        body: { action: 'research_trends', niche: researchNiche, platforms: researchPlatforms },
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
+      
+      setResearchResult(data.research);
 
-Retorne APENAS JSON válido sem markdown, sem explicações, sem blocos de código. Apenas o JSON puro:
-{"niche":"${researchNiche.trim()}","research_date":"${now}","data_source":"ai_analysis","trending_topics":[{"topic":"","why_trending":"","engagement_potential":"alto","best_format":"carrossel","best_platform":"instagram"},{"topic":"","why_trending":"","engagement_potential":"médio","best_format":"reel","best_platform":"tiktok"},{"topic":"","why_trending":"","engagement_potential":"alto","best_format":"post","best_platform":"instagram"},{"topic":"","why_trending":"","engagement_potential":"médio","best_format":"story","best_platform":"instagram"},{"topic":"","why_trending":"","engagement_potential":"alto","best_format":"carrossel","best_platform":"instagram"}],"content_briefs":[{"id":1,"title":"","hook":"","format":"carrossel","platform":"instagram","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"alto","reason":""},{"id":2,"title":"","hook":"","format":"reel","platform":"tiktok","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"alto","reason":""},{"id":3,"title":"","hook":"","format":"carrossel","platform":"instagram","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"médio","reason":""},{"id":4,"title":"","hook":"","format":"reel","platform":"instagram","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"alto","reason":""},{"id":5,"title":"","hook":"","format":"post","platform":"instagram","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"médio","reason":""},{"id":6,"title":"","hook":"","format":"carrossel","platform":"tiktok","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"alto","reason":""}],"viral_formats":[{"format":"","description":"","example":""},{"format":"","description":"","example":""},{"format":"","description":"","example":""}],"competitor_insights":"","recommendation":""}
-
-Preencha TODOS os campos com conteúdo real, específico e atual para o nicho "${researchNiche.trim()}". Retorne apenas o JSON.`;
-
-      const { data, error } = await supabase.functions.invoke('claude-chat', {
-        body: {
-          messages: [{ role: 'user', content: prompt }],
-          context: 'assistant',
-          config: {
-            description: 'DANIEL — estrategista de tendências de marketing digital. Retorna apenas JSON válido.',
-          },
-        },
+      // 2. Salvar resultado no histórico
+      await saveMessage('daniel', 'assistant', `Resultados da pesquisa para ${researchNiche}.`, { 
+        type: 'niche_research',
+        research: data.research 
       });
 
-      if (error) throw new Error(error.message);
-
-      const rawText: string = data?.choices?.[0]?.message?.content
-        ?? data?.content
-        ?? data?.message
-        ?? '';
-
-      if (!rawText) throw new Error('Nenhuma resposta do assistente');
-
-      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('Resposta não contém JSON válido');
-
-      const research = JSON.parse(jsonMatch[0]);
-      setResearchResult(research);
-      toast({ title: '🔍 Pesquisa concluída!', description: `${research?.content_briefs?.length || 0} pautas geradas para "${researchNiche}".` });
+      toast({ title: '🔍 Pesquisa concluída!', description: `${data.research?.content_briefs?.length || 0} pautas geradas para "${researchNiche}".` });
     } catch (err: any) {
       setResearchError(err.message);
       toast({ title: 'Erro na pesquisa', description: err.message, variant: 'destructive' });
@@ -397,10 +465,21 @@ Preencha TODOS os campos com conteúdo real, específico e atual para o nicho "$
               Planejamento estratégico e análise de negócios com IA
             </p>
           </div>
-          <Badge variant="outline" className="gap-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-            DANIEL Online
-          </Badge>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearHistory}
+              className="text-muted-foreground hover:text-destructive gap-1.5 text-xs h-8"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Limpar Histórico
+            </Button>
+            <Badge variant="outline" className="gap-1 h-8">
+              <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+              DANIEL Online
+            </Badge>
+          </div>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>

@@ -13,6 +13,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { useAgentTasks } from '@/contexts/AgentTasksContext';
+import { useAgentChat } from '@/contexts/AgentChatContext';
 import {
   AtSign, BarChart3, CheckCircle, Clock, Copy, Eye, Loader2,
   Mail, MousePointerClick, Plus, RefreshCw, Send, Sparkles, Trash2, Users, Zap,
@@ -51,10 +53,39 @@ interface EmailDraft {
 export default function JoaoEmail() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { createTask } = useAgentTasks();
+  const { getHistory, saveMessage, clearHistory } = useAgentChat();
   const [activeTab, setActiveTab] = useState('gerador');
   const [generating, setGenerating] = useState(false);
   const [loading, setLoading] = useState(false);
   const [drafts, setDrafts] = useState<EmailDraft[]>([]);
+
+  // Generated email
+  const [generated, setGenerated] = useState<{ subject: string; preview: string; body: string } | null>(null);
+
+  useEffect(() => { fetchDrafts(); }, [user]);
+
+  // Carregar histórico ao montar (último email gerado)
+  useEffect(() => {
+    const loadHistory = async () => {
+      const history = await getHistory('joao');
+      const lastEmail = [...history].reverse().find(m => m.role === 'assistant' && m.metadata?.type === 'email_generation');
+      if (lastEmail && lastEmail.metadata?.email) {
+        setGenerated(lastEmail.metadata.email as any);
+      }
+    };
+    loadHistory();
+  }, [getHistory]);
+
+  const handleClearHistory = async () => {
+    try {
+      await clearHistory('joao');
+      setGenerated(null);
+      toast({ title: 'Histórico do João limpo.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao limpar', description: err.message, variant: 'destructive' });
+    }
+  };
 
   // Form state
   const [topic, setTopic] = useState('');
@@ -64,11 +95,6 @@ export default function JoaoEmail() {
   const [senderName, setSenderName] = useState('');
   const [includePS, setIncludePS] = useState(true);
   const [includeEmoji, setIncludeEmoji] = useState(true);
-
-  // Generated email
-  const [generated, setGenerated] = useState<{ subject: string; preview: string; body: string } | null>(null);
-
-  useEffect(() => { fetchDrafts(); }, []);
 
   const fetchDrafts = async () => {
     if (!user) return;
@@ -87,6 +113,16 @@ export default function JoaoEmail() {
     if (!topic.trim()) return;
     setGenerating(true);
     try {
+      // 1. Salvar request no histórico
+      await saveMessage('joao', 'user', `Gerar email: ${topic}`);
+
+      // 2. Criar tarefa em segundo plano
+      const taskId = await createTask('joao', 'generate_email', {
+        topic: topic.trim(),
+        goal,
+        tone
+      });
+
       const { data, error } = await supabase.functions.invoke('joao-email-api', {
         body: {
           action: 'generate_email',
@@ -97,11 +133,20 @@ export default function JoaoEmail() {
           sender_name: senderName.trim() || 'Nossa Equipe',
           include_ps: includePS,
           include_emoji: includeEmoji,
+          task_id: taskId
         },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
+      
       setGenerated(data.email);
+
+      // 3. Salvar resultado no histórico
+      await saveMessage('joao', 'assistant', `Email sobre "${topic}" gerado com sucesso.`, { 
+        type: 'email_generation',
+        email: data.email 
+      });
+
     } catch (err: any) {
       toast({ title: 'Erro ao gerar email', description: err.message, variant: 'destructive' });
     } finally {
@@ -149,10 +194,21 @@ export default function JoaoEmail() {
               Crie emails persuasivos com IA e gerencie suas campanhas
             </p>
           </div>
-          <Badge variant="outline" className="gap-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-            JOÃO Online
-          </Badge>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearHistory}
+              className="text-muted-foreground hover:text-destructive gap-1.5 text-xs h-8"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Limpar Histórico
+            </Button>
+            <Badge variant="outline" className="gap-1 h-8">
+              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              JOÃO Online
+            </Badge>
+          </div>
         </div>
 
         {/* Stats */}
