@@ -119,3 +119,39 @@ verify_jwt = false
 
 [functions.prompt-generator-api]
 verify_jwt = false
+
+[functions.daniel-strategy-api]
+verify_jwt = false
+
+[functions.joao-email-api]
+verify_jwt = false
+
+[functions.linkedin-ads-api]
+verify_jwt = false
+
+[functions.linkedin-ads-oauth]
+verify_jwt = false
+
+[functions.lucas-funnel-api]
+verify_jwt = false
+
+[functions.orchestrate-campaign]
+verify_jwt = false
+
+[functions.send-email]
+verify_jwt = false
+
+[functions.social-media-api]
+verify_jwt = false
+
+[functions.uazapi-webhook]
+verify_jwt = false
+
+[functions.verify-instance-status]
+verify_jwt = false
+
+[functions.wa-capi-process-queue]
+verify_jwt = false
+
+[functions.crm-capture]
+verify_jwt = false
