@@ -3,6 +3,9 @@ project_id = "seyljsqmhlopkcauhlor"
 [functions.academy-ai]
 verify_jwt = false
 
+[functions.instagram-publish-oauth]
+verify_jwt = false
+
 [functions.apply-theme]
 verify_jwt = false
 
