@@ -377,26 +377,40 @@ export function ConnectionsTab() {
         setIgLoading(true);
         // Abre popup ANTES do await para não ser bloqueado pelo browser
         const igPopup = window.open('about:blank', 'ig_publish_oauth', 'width=600,height=700,left=200,top=100');
+        // Verifica se popup foi bloqueado imediatamente
+        if (!igPopup || igPopup.closed) {
+          toast.error('Popup bloqueado pelo navegador. Clique no ícone 🔒 na barra de endereços, permita popups para este site e tente novamente.');
+          setIgLoading(false);
+          break;
+        }
         try {
           const { data: { session } } = await supabase.auth.getSession();
-          if (!session) { igPopup?.close(); throw new Error('Sessão expirada'); }
+          if (!session) { igPopup.close(); throw new Error('Sessão expirada. Faça login novamente.'); }
           const { data, error } = await supabase.functions.invoke('instagram-publish-oauth', {
             body: { action: 'authorize' },
             headers: { Authorization: `Bearer ${session.access_token}` },
           });
-          if (error) { igPopup?.close(); throw error; }
+          // Extrai mensagem real do erro (FunctionsHttpError tem context com body real)
+          if (error) {
+            igPopup.close();
+            const realMsg = (error as any)?.context?.error || (error as any)?.message || 'Erro ao conectar Instagram';
+            throw new Error(realMsg);
+          }
+          if (data?.error) {
+            igPopup.close();
+            throw new Error(data.error);
+          }
           if (data?.auth_url) {
-            if (igPopup) igPopup.location.href = data.auth_url;
-            const popup = igPopup;
+            igPopup.location.href = data.auth_url;
             const handler = (event: MessageEvent) => {
               if (event.data?.type === 'IG_PUBLISH_AUTH_SUCCESS') {
-                popup?.close();
+                igPopup.close();
                 toast.success(`Instagram @${event.data.username} conectado!`);
                 refetchIg();
                 setIgLoading(false);
                 window.removeEventListener('message', handler);
               } else if (event.data?.type === 'IG_PUBLISH_AUTH_ERROR') {
-                popup?.close();
+                igPopup.close();
                 toast.error(event.data.error || 'Erro ao conectar Instagram');
                 setIgLoading(false);
                 window.removeEventListener('message', handler);
@@ -404,15 +418,15 @@ export function ConnectionsTab() {
             };
             window.addEventListener('message', handler);
             const timer = setInterval(() => {
-              if (popup?.closed) {
+              if (igPopup.closed) {
                 clearInterval(timer);
                 setIgLoading(false);
                 window.removeEventListener('message', handler);
               }
             }, 1000);
           } else {
-            igPopup?.close();
-            toast.error('URL de autenticação não retornada pela função');
+            igPopup.close();
+            toast.error('URL de autenticação não retornada. Verifique as configurações do Facebook App.');
             setIgLoading(false);
           }
         } catch (err: any) {
