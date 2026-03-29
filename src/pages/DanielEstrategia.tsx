@@ -331,22 +331,44 @@ export default function DanielEstrategia() {
     setResearchResult(null);
     setResearchError('');
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Sessão expirada');
-      const { data, error } = await supabase.functions.invoke('daniel-strategy-api', {
-        body: { action: 'research_trends', niche: researchNiche, platforms: researchPlatforms },
-        headers: { Authorization: `Bearer ${session.access_token}` },
+      const platformsList = researchPlatforms.length > 0 ? researchPlatforms.join(', ') : 'instagram, tiktok, google';
+      const now = new Date().toISOString();
+
+      const prompt = `Você é DANIEL, estrategista de conteúdo digital especialista em marketing brasileiro.
+Analise tendências para o nicho: "${researchNiche.trim()}"
+Plataformas foco: ${platformsList}
+Data: ${now}
+
+Retorne APENAS JSON válido sem markdown, sem explicações, sem blocos de código. Apenas o JSON puro:
+{"niche":"${researchNiche.trim()}","research_date":"${now}","data_source":"ai_analysis","trending_topics":[{"topic":"","why_trending":"","engagement_potential":"alto","best_format":"carrossel","best_platform":"instagram"},{"topic":"","why_trending":"","engagement_potential":"médio","best_format":"reel","best_platform":"tiktok"},{"topic":"","why_trending":"","engagement_potential":"alto","best_format":"post","best_platform":"instagram"},{"topic":"","why_trending":"","engagement_potential":"médio","best_format":"story","best_platform":"instagram"},{"topic":"","why_trending":"","engagement_potential":"alto","best_format":"carrossel","best_platform":"instagram"}],"content_briefs":[{"id":1,"title":"","hook":"","format":"carrossel","platform":"instagram","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"alto","reason":""},{"id":2,"title":"","hook":"","format":"reel","platform":"tiktok","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"alto","reason":""},{"id":3,"title":"","hook":"","format":"carrossel","platform":"instagram","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"médio","reason":""},{"id":4,"title":"","hook":"","format":"reel","platform":"instagram","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"alto","reason":""},{"id":5,"title":"","hook":"","format":"post","platform":"instagram","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"médio","reason":""},{"id":6,"title":"","hook":"","format":"carrossel","platform":"tiktok","slides_or_points":["","","","",""],"cta":"","hashtags":["","","","",""],"estimated_reach":"alto","reason":""}],"viral_formats":[{"format":"","description":"","example":""},{"format":"","description":"","example":""},{"format":"","description":"","example":""}],"competitor_insights":"","recommendation":""}
+
+Preencha TODOS os campos com conteúdo real, específico e atual para o nicho "${researchNiche.trim()}". Retorne apenas o JSON.`;
+
+      const { data, error } = await supabase.functions.invoke('claude-chat', {
+        body: {
+          messages: [{ role: 'user', content: prompt }],
+          context: 'assistant',
+          config: {
+            description: 'DANIEL — estrategista de tendências de marketing digital. Retorna apenas JSON válido.',
+          },
+        },
       });
-      if (error) {
-        // Extract real error message from response body if available
-        const realMsg = (error as any)?.context?.error
-          || (error as any)?.context?.message
-          || error.message;
-        throw new Error(realMsg);
-      }
-      if (data?.error) throw new Error(data.error);
-      setResearchResult(data.research);
-      toast({ title: '🔍 Pesquisa concluída!', description: `${data.research?.content_briefs?.length || 0} pautas geradas para "${researchNiche}".` });
+
+      if (error) throw new Error(error.message);
+
+      const rawText: string = data?.choices?.[0]?.message?.content
+        ?? data?.content
+        ?? data?.message
+        ?? '';
+
+      if (!rawText) throw new Error('Nenhuma resposta do assistente');
+
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('Resposta não contém JSON válido');
+
+      const research = JSON.parse(jsonMatch[0]);
+      setResearchResult(research);
+      toast({ title: '🔍 Pesquisa concluída!', description: `${research?.content_briefs?.length || 0} pautas geradas para "${researchNiche}".` });
     } catch (err: any) {
       setResearchError(err.message);
       toast({ title: 'Erro na pesquisa', description: err.message, variant: 'destructive' });
