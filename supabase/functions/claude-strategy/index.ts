@@ -30,7 +30,7 @@ interface CampaignContext {
   };
 }
 
-const model = 'claude-sonnet-4-20250514';
+const model = 'claude-3-5-sonnet-20241022';
 
 function getSystemPrompt(): string {
   return `Você é o **Agente Apollo 2.0**, o sistema nervoso central de inteligência estratégica para tráfego pago da LogosIA. Você não é um simples gestor — é um ESTRATEGISTA que monitora, diagnostica e otimiza TODA a jornada do lead.
