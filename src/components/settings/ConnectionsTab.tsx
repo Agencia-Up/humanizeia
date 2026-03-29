@@ -332,7 +332,6 @@ export function ConnectionsTab() {
           if (!session) { linkedinPopup?.close(); throw new Error('Sessão expirada'); }
           const { data, error } = await supabase.functions.invoke('linkedin-ads-oauth', {
             body: { action: 'authorize', user_id: session.user.id },
-            headers: { Authorization: `Bearer ${session.access_token}` },
           });
           if (error) {
             linkedinPopup?.close();
@@ -396,7 +395,6 @@ export function ConnectionsTab() {
           if (!session) { igPopup.close(); throw new Error('Sessão expirada. Faça login novamente.'); }
           const { data, error } = await supabase.functions.invoke('instagram-publish-oauth', {
             body: { action: 'authorize' },
-            headers: { Authorization: `Bearer ${session.access_token}` },
           });
           // Extrai mensagem real do erro (context é Response, precisa de .json())
           if (error) {
