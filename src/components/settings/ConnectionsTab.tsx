@@ -334,7 +334,15 @@ export function ConnectionsTab() {
             body: { action: 'authorize', user_id: session.user.id },
             headers: { Authorization: `Bearer ${session.access_token}` },
           });
-          if (error) { linkedinPopup?.close(); throw error; }
+          if (error) {
+            linkedinPopup?.close();
+            let realMsg = 'Erro ao conectar LinkedIn';
+            try {
+              const errBody = await (error as any).context?.json?.();
+              realMsg = errBody?.error || errBody?.message || error.message || realMsg;
+            } catch (_) { realMsg = error.message || realMsg; }
+            throw new Error(realMsg);
+          }
           if (data?.auth_url) {
             if (linkedinPopup) linkedinPopup.location.href = data.auth_url;
             const popup = linkedinPopup;
@@ -390,10 +398,16 @@ export function ConnectionsTab() {
             body: { action: 'authorize' },
             headers: { Authorization: `Bearer ${session.access_token}` },
           });
-          // Extrai mensagem real do erro (FunctionsHttpError tem context com body real)
+          // Extrai mensagem real do erro (context é Response, precisa de .json())
           if (error) {
             igPopup.close();
-            const realMsg = (error as any)?.context?.error || (error as any)?.message || 'Erro ao conectar Instagram';
+            let realMsg = 'Erro ao conectar Instagram';
+            try {
+              const errBody = await (error as any).context?.json?.();
+              realMsg = errBody?.error || errBody?.message || error.message || realMsg;
+            } catch (_) {
+              realMsg = error.message || realMsg;
+            }
             throw new Error(realMsg);
           }
           if (data?.error) {
