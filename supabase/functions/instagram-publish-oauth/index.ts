@@ -6,11 +6,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const IG_APP_ID     = Deno.env.get('INSTAGRAM_APP_ID') ?? '';
-const IG_APP_SECRET = Deno.env.get('INSTAGRAM_APP_SECRET') ?? '';
-const SUPABASE_URL  = Deno.env.get('SUPABASE_URL') ?? '';
-// URI fixo para garantir que authorization e token exchange sejam 100% idênticos
-const REDIRECT_URI  = 'https://seyljsqmhlopkcauhlor.supabase.co/functions/v1/instagram-publish-oauth';
+// Usa o app Facebook (META) que já funciona com meta-oauth
+const META_APP_ID     = Deno.env.get('META_APP_ID') ?? '';
+const META_APP_SECRET = Deno.env.get('META_APP_SECRET') ?? '';
+const SUPABASE_URL    = Deno.env.get('SUPABASE_URL') ?? '';
+const REDIRECT_URI    = 'https://seyljsqmhlopkcauhlor.supabase.co/functions/v1/instagram-publish-oauth';
+const GRAPH           = 'https://graph.facebook.com/v21.0';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -23,8 +24,8 @@ serve(async (req) => {
   try {
     const url = new URL(req.url);
 
-    // ── CALLBACK do Instagram (GET com ?code=...) ─────────────────────────────
-    if (req.method === 'GET' && url.searchParams.get('code')) {
+    // ── CALLBACK do Facebook OAuth (GET ?code=...) ─────────────────────────────
+    if (req.method === 'GET' && url.searchParams.has('code')) {
       const code      = url.searchParams.get('code')!;
       const stateRaw  = url.searchParams.get('state') ?? '';
       const errorCode = url.searchParams.get('error');
@@ -37,64 +38,75 @@ serve(async (req) => {
       let userId = '';
       try { userId = JSON.parse(atob(stateRaw)).userId; } catch (_) {}
 
-      // 1. Troca code por short-lived token
-      const tokenForm = new URLSearchParams({
-        client_id:     IG_APP_ID,
-        client_secret: IG_APP_SECRET,
-        grant_type:    'authorization_code',
-        redirect_uri:  REDIRECT_URI,
-        code,
-      });
+      // 1. Troca code por short-lived token (Facebook Graph)
+      const tokenRes  = await fetch(
+        `${GRAPH}/oauth/access_token?client_id=${META_APP_ID}&client_secret=${META_APP_SECRET}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&code=${encodeURIComponent(code)}`
+      );
+      const tokenData = await tokenRes.json();
 
-      const shortRes  = await fetch('https://api.instagram.com/oauth/access_token', {
-        method: 'POST',
-        body: tokenForm,
-      });
-      const shortData = await shortRes.json();
-
-      if (shortData.error_type || !shortData.access_token) {
-        return htmlClose('IG_PUBLISH_AUTH_ERROR', null, shortData.error_message ?? 'Erro ao trocar código');
+      if (tokenData.error || !tokenData.access_token) {
+        const msg = tokenData.error?.message ?? 'Erro ao trocar código';
+        return htmlClose('IG_PUBLISH_AUTH_ERROR', null, msg);
       }
 
-      const shortToken = shortData.access_token;
-      const igUserId   = shortData.user_id;
+      const shortToken = tokenData.access_token;
 
       // 2. Troca por long-lived token (60 dias)
       const longRes  = await fetch(
-        `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${IG_APP_SECRET}&access_token=${shortToken}`
+        `${GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${META_APP_ID}&client_secret=${META_APP_SECRET}&fb_exchange_token=${encodeURIComponent(shortToken)}`
       );
       const longData = await longRes.json();
-      const token    = longData.access_token || shortToken;
+      const token     = longData.access_token ?? shortToken;
       const expiresIn = longData.expires_in ?? 5184000;
 
-      // 3. Busca dados do perfil
-      const profileRes = await fetch(
-        `https://graph.instagram.com/me?fields=id,username,account_type,profile_picture_url&access_token=${token}`
+      // 3. Busca conta Instagram vinculada às páginas do Facebook
+      const pagesRes  = await fetch(
+        `${GRAPH}/me/accounts?fields=id,name,instagram_business_account%7Bid,username,name,profile_picture_url%7D&access_token=${token}`
       );
-      const profile  = await profileRes.json();
-      const username = profile.username ?? 'instagram';
+      const pagesData = await pagesRes.json();
+
+      let igUserId = '';
+      let username  = '';
+      let picUrl    = '';
+
+      for (const page of (pagesData.data ?? [])) {
+        const iga = page.instagram_business_account;
+        if (iga?.id) {
+          igUserId = iga.id;
+          username  = iga.username ?? iga.name ?? 'instagram';
+          picUrl    = iga.profile_picture_url ?? '';
+          break;
+        }
+      }
+
+      // Fallback: usa dados do próprio usuário Facebook
+      if (!igUserId) {
+        const meRes  = await fetch(`${GRAPH}/me?fields=id,name&access_token=${token}`);
+        const meData = await meRes.json();
+        igUserId = meData.id   ?? '';
+        username  = meData.name ?? 'instagram';
+      }
 
       // 4. Salva no Supabase
       if (userId) {
         await supabase.from('connected_accounts' as any).upsert({
-          user_id:   userId,
-          platform:  'instagram_publisher',
-          account_id: String(igUserId),
-          account_name: username,
+          user_id:                userId,
+          platform:               'instagram_publisher',
+          account_id:             igUserId,
+          account_name:           username,
           access_token_encrypted: token,
           extra_data: {
-            ig_user_id: String(igUserId),
+            ig_user_id:          igUserId,
             username,
-            account_type: profile.account_type,
-            profile_picture_url: profile.profile_picture_url,
-            expires_in: expiresIn,
-            connected_at: new Date().toISOString(),
+            profile_picture_url: picUrl,
+            expires_in:          expiresIn,
+            connected_at:        new Date().toISOString(),
           },
           connected_at: new Date().toISOString(),
         }, { onConflict: 'user_id,platform' });
       }
 
-      return htmlClose('IG_PUBLISH_AUTH_SUCCESS', username, null);
+      return htmlClose('IG_PUBLISH_AUTH_SUCCESS', username || 'instagram', null);
     }
 
     // ── AÇÕES VIA POST (chamadas do frontend) ──────────────────────────────────
@@ -108,16 +120,17 @@ serve(async (req) => {
 
     // ── authorize ─────────────────────────────────────────────────────────────
     if (action === 'authorize') {
-      if (!IG_APP_ID) throw new Error('INSTAGRAM_APP_ID não configurado. Contate o suporte.');
+      if (!META_APP_ID) throw new Error('META_APP_ID não configurado.');
 
       const state  = btoa(JSON.stringify({ userId: user.id, ts: Date.now() }));
       const scopes = [
-        'instagram_business_basic',
-        'instagram_business_content_publish',
-        'instagram_business_manage_comments',
+        'instagram_basic',
+        'instagram_content_publish',
+        'pages_show_list',
+        'pages_read_engagement',
       ].join(',');
 
-      const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${IG_APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scopes}&response_type=code&state=${state}`;
+      const authUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scopes}&response_type=code&state=${state}`;
 
       return new Response(JSON.stringify({ auth_url: authUrl }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -148,7 +161,7 @@ serve(async (req) => {
       const oldToken = (acct as any).access_token_encrypted;
 
       const refreshRes  = await fetch(
-        `https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${oldToken}`
+        `${GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${META_APP_ID}&client_secret=${META_APP_SECRET}&fb_exchange_token=${encodeURIComponent(oldToken)}`
       );
       const refreshData = await refreshRes.json();
       if (!refreshData.access_token) throw new Error('Erro ao renovar token');
@@ -173,7 +186,6 @@ serve(async (req) => {
   }
 });
 
-// Fecha o popup enviando postMessage para o frontend
 function htmlClose(type: string, username: string | null, error: string | null) {
   const payload = username
     ? `{type:'${type}',username:'${username}'}`
