@@ -9,7 +9,8 @@ const corsHeaders = {
 const IG_APP_ID     = Deno.env.get('INSTAGRAM_APP_ID') ?? '';
 const IG_APP_SECRET = Deno.env.get('INSTAGRAM_APP_SECRET') ?? '';
 const SUPABASE_URL  = Deno.env.get('SUPABASE_URL') ?? '';
-const REDIRECT_URI  = `${SUPABASE_URL}/functions/v1/instagram-publish-oauth`;
+// URI fixo para garantir que authorization e token exchange sejam 100% idênticos
+const REDIRECT_URI  = 'https://seyljsqmhlopkcauhlor.supabase.co/functions/v1/instagram-publish-oauth';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
