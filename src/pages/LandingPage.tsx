@@ -273,7 +273,7 @@ export default function LandingPage() {
         </h1>
 
         <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mb-4">
-          9 Agentes de IA especializados entregam mais resultado do que uma agência inteira de marketing. Tráfego pago, copy, social media, e-mail, funil e CRM — tudo integrado, trabalhando por você 24 horas por dia, 7 dias por semana.
+          9 Agentes de IA trabalhando juntos superam o desempenho de uma agência de marketing inteira — com tráfego pago, copy, social media, e-mail, funil e CRM operando de forma autônoma, 24 horas por dia, 7 dias por semana.
         </p>
 
         <p className="text-sm text-muted-foreground mb-10 flex items-center gap-2">
@@ -299,9 +299,9 @@ export default function LandingPage() {
         {/* Métricas em destaque */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-3xl w-full">
           {[
+            { value: '9', label: 'Agentes de IA ativos' },
             { value: '24/7', label: 'Operação ininterrupta' },
-            { value: '60+', label: 'Especialistas em IA' },
-            { value: '6', label: 'Agentes autônomos' },
+            { value: '10×', label: 'Mais rápido que agência' },
             { value: '3×', label: 'Mais barato que agências' },
           ].map((m) => (
             <div key={m.label} className="rounded-xl border border-border/50 bg-card/40 p-4 backdrop-blur-sm">
