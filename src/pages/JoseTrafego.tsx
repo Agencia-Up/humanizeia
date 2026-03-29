@@ -385,7 +385,7 @@ function CronSettings() {
       <CardContent className="space-y-5">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium">Auto-piloto diário — JOSÉ Governador</p>
+            <p className="text-sm font-medium">Auto-piloto diário — JOSÉ</p>
             <p className="text-xs text-muted-foreground">JOSÉ analisa suas campanhas automaticamente todos os dias</p>
           </div>
           <Switch checked={enabled} onCheckedChange={setEnabled} />
@@ -539,9 +539,9 @@ export default function JoseTrafego() {
       const now = new Date();
       const campaignCount = session?.campaigns?.length || 0;
       const initial: AILogEntry[] = [
-        { id: 'start', type: 'analyzing', message: `Iniciando análise JOSÉ Governador — Nível 6...`, timestamp: new Date(now.getTime()) },
+        { id: 'start', type: 'analyzing', message: `Iniciando análise JOSÉ analisando suas campanhas...`, timestamp: new Date(now.getTime()) },
         { id: 'fetch', type: 'analyzing', message: `Conectando à Meta API e coletando dados de ${campaignCount || 'todas as'} campanhas...`, timestamp: new Date(now.getTime() + 500) },
-        { id: 'dimensions', type: 'analyzing', message: 'Processando 8 dimensões: WoW · Fadiga Criativa · Pacing · Portfólio · Sazonalidade · Anomalias · Aprendizado · IA', timestamp: new Date(now.getTime() + 1200) },
+        { id: 'dimensions', type: 'analyzing', message: 'Analisando campanhas: Performance · Criativos · Públicos · Orçamento · Conversões · IA', timestamp: new Date(now.getTime() + 1200) },
         { id: 'health', type: 'analyzing', message: 'Calculando health scores individuais e score geral do portfólio...', timestamp: new Date(now.getTime() + 2000) },
       ];
       setAiLogEntries(initial);
@@ -678,11 +678,13 @@ export default function JoseTrafego() {
             <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
               <Radar className="h-6 w-6 text-primary" />
               JOSÉ
-              <span className="text-base font-light text-muted-foreground tracking-wide">Governador</span>
-              <Badge className="text-xs bg-emerald-500/20 text-emerald-400 border-emerald-500/30 font-semibold">Nível 6</Badge>
+              <Badge className="text-xs bg-orange-500/20 text-orange-400 border-orange-500/30 font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse inline-block mr-1" />
+                Agente Online
+              </Badge>
             </h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              Gestor de Tráfego Autônomo · WoW · Fadiga Criativa · Pacing · Portfólio · Sazonalidade · Aprendizado
+              Gestor de Tráfego Pago · Meta Ads · Google Ads · Otimização Autônoma 24/7
             </p>
           </div>
 
@@ -817,10 +819,10 @@ export default function JoseTrafego() {
             <div className="relative"><Brain className="h-12 w-12 text-primary animate-pulse" /><Loader2 className="h-5 w-5 text-primary animate-spin absolute -bottom-1 -right-1" /></div>
             <div className="text-center">
               <p className="font-semibold">
-                {isLoadingSession ? 'Carregando última análise...' : 'JOSÉ Governador analisando — 8 dimensões de inteligência'}
+                {isLoadingSession ? 'Carregando última análise...' : 'JOSÉ analisando suas campanhas...'}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
-                {isLoadingSession ? 'Recuperando dados salvos' : 'Meta API · WoW · Fadiga Criativa · Pacing · Portfólio · Sazonalidade · IA'}
+                {isLoadingSession ? 'Recuperando dados salvos' : 'Meta API · Google Ads · IA Autônoma'}
               </p>
             </div>
           </CardContent></Card>
@@ -829,7 +831,7 @@ export default function JoseTrafego() {
         {!session && !isAnalyzing && !isLoadingSession && accountId && (
           <Card className="border-dashed"><CardContent className="flex flex-col items-center py-14 gap-4">
             <Brain className="h-12 w-12 text-muted-foreground/40" />
-            <div className="text-center"><p className="font-semibold text-muted-foreground">JOSÉ Governador — Pronto para Operar</p><p className="text-xs text-muted-foreground mt-1">Nível 6 · WoW · Fadiga Criativa · Pacing · Portfólio · Sazonalidade · Aprendizado</p></div>
+            <div className="text-center"><p className="font-semibold text-muted-foreground">JOSÉ — Pronto para Operar</p><p className="text-xs text-muted-foreground mt-1">Gestor de Tráfego Pago · Meta Ads · Google Ads · 24/7</p></div>
             <div className="flex gap-2">
               <Button onClick={handleAnalyze} className="gap-2"><Brain className="h-4 w-4" />Iniciar Análise</Button>
               <Button variant="outline" size="sm" onClick={handleDiagnose} disabled={isDiagnosing} className="gap-2 text-xs">
@@ -937,7 +939,7 @@ export default function JoseTrafego() {
                     }
                     {session.trend_context && (
                       <div className="rounded-lg border border-border bg-card/50 p-4">
-                        <p className="text-xs font-semibold mb-2 flex items-center gap-1"><Activity className="h-3 w-3" />Contexto Histórico — JOSÉ Governador</p>
+                        <p className="text-xs font-semibold mb-2 flex items-center gap-1"><Activity className="h-3 w-3" />Contexto Histórico — JOSÉ</p>
                         <pre className="text-xs text-muted-foreground whitespace-pre-wrap">{session.trend_context}</pre>
                       </div>
                     )}
@@ -953,7 +955,7 @@ export default function JoseTrafego() {
                   {/* Portfolio Intelligence from Level 6 */}
                   {(session as any).portfolio_context && (
                     <Card className="border-primary/20 bg-primary/5">
-                      <CardHeader><CardTitle className="text-base flex items-center gap-2"><PieChart className="h-4 w-4 text-primary" />Inteligência de Portfólio — JOSÉ Nível 6</CardTitle></CardHeader>
+                      <CardHeader><CardTitle className="text-base flex items-center gap-2"><PieChart className="h-4 w-4 text-primary" />Portfólio de Campanhas — JOSÉ</CardTitle></CardHeader>
                       <CardContent>
                         <div className="space-y-2">
                           {((session as any).portfolio_context as string).split('\n').filter(Boolean).map((line: string, i: number) => (
@@ -1246,7 +1248,7 @@ export default function JoseTrafego() {
           <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
             <Zap className="h-4 w-4 text-emerald-400 flex-shrink-0" />
             <p className="text-sm text-emerald-400">
-              🤖 JOSÉ Governador executou <strong>{session.execution_log.length}</strong> ação(ões) no auto-piloto.
+              🤖 JOSÉ executou <strong>{session.execution_log.length}</strong> ação(ões) no auto-piloto.
             </p>
           </div>
         )}
