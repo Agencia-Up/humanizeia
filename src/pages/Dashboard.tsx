@@ -187,7 +187,7 @@ export default function Dashboard() {
           className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1.5">
             <h1 className="text-3xl font-bold lg:text-4xl tracking-tight">
-              Olá, <span className="gradient-text">{firstName}</span>! 👋
+              Oi, <span className="gradient-text">{firstName}</span>! 👋
             </h1>
             <p className="flex items-center gap-2 text-sm text-muted-foreground/80">
               <Sparkles className="h-4 w-4 text-primary" />

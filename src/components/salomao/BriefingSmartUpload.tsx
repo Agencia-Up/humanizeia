@@ -90,49 +90,46 @@ interface Props {
 
 // ── Template text ─────────────────────────────────────────────────────────────
 
-const TEMPLATE_TEXT = `═══════════════════════════════════════════════════════
-  MODELO DE BRIEFING — LOGOS IA PLATFORM
-  Preencha todos os campos e suba este arquivo no Salomão
-═══════════════════════════════════════════════════════
+const TEMPLATE_TEXT = `# MODELO DE BRIEFING — LOGOS IA PLATFORM
+Preencha todos os campos e suba este arquivo no Salomão
 
-1. NEGÓCIO & MARCA
-   Nome do Negócio / Marca:
-   Produto ou Serviço:
-   Diferencial Único (por que é melhor?):
-   Site:
-   Redes Sociais:
+## 1. NEGÓCIO & MARCA
+*   **Nome do Negócio / Marca:** [Nome da Empresa]
+*   **Produto ou Serviço Principal:** [O que você vende]
+*   **Diferencial Único:** [Qual o principal atrativo?]
+*   **Site:** [URL do Site/E-commerce]
+*   **Redes Sociais:** [Links para Instagram, Facebook, etc.]
 
-2. IDENTIDADE VISUAL
-   Paleta de Cores (hex ou nomes):
-   Identidade Visual (estilo, referências):
+## 2. IDENTIDADE VISUAL
+*   **Paleta de Cores:** [Ex: #000000, #FFFFFF]
+*   **Identidade Visual:** [Minimalista, Luxuoso, Moderno, etc.]
 
-3. CLIENTE IDEAL (ICP)
-   Público-Alvo (idade, perfil, cargo):
-   Dor Principal (problema que mais sofre):
-   Maior Desejo (resultado que quer alcançar):
-   Principais Objeções (por que não compra):
+## 3. CLIENTE IDEAL (ICP)
+*   **Público-Alvo:** [Quem é seu cliente ideal?]
+*   **Dor Principal:** [Qual problema você resolve?]
+*   **Maior Desejo:** [O que seu cliente mais quer?]
+*   **Principais Objeções:** [Por que as pessoas hesitam em comprar?]
 
-4. OFERTA & PREÇO
-   Oferta Principal:
-   Preço / Investimento:
-   Garantia ou Bônus:
+## 4. OFERTA & PREÇO
+*   **Oferta Principal:** [Qual sua oferta irresistível?]
+*   **Preço / Investimento:** [Faixa de preço]
+*   **Garantia ou Bônus:** [O que o cliente ganha a mais?]
 
-5. AQUISIÇÃO & COMUNICAÇÃO
-   Canais de Aquisição (Meta, Google, orgânico...):
-   Tom de Voz (direto, empático, técnico, etc.):
-   Objetivo Principal (gerar lead, fechar venda, etc.):
-   CTA Principal (link ou ação desejada):
+## 5. AQUISIÇÃO & COMUNICAÇÃO
+*   **Canais de Aquisição:** [Meta, Google, SEO, E-mail, etc.]
+*   **Tom de Voz:** [Inspirador, Direto, Amigável, etc.]
+*   **Objetivo Principal:** [Vender, Gerar Leads, Engajamento, etc.]
+*   **CTA Principal:** [Compre Agora, Saiba Mais, etc.]
 
-6. AUTORIDADE & PROVAS
-   Resultados obtidos / Números / Cases:
+## 6. AUTORIDADE & PROVAS
+*   **Resultados / Cases:** [Depoimentos, números, prêmios]
 
-7. REGRAS DO AGENTE
-   O que o agente DEVE fazer:
-   O que o agente NÃO pode fazer:
+## 7. REGRAS DO AGENTE
+*   **O que o Agente DEVE fazer:** [Diretrizes de ação]
+*   **O que o Agente NÃO pode fazer:** [Restrições]
 
-═══════════════════════════════════════════════════════
-  Salve este arquivo como .txt e suba no Salomão
-═══════════════════════════════════════════════════════
+---
+Salve este arquivo como .txt ou .md e suba no Salomão
 `;
 
 // ── Main Component ────────────────────────────────────────────────────────────

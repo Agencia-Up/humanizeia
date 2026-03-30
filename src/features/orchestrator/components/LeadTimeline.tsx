@@ -16,23 +16,23 @@ const LeadTimeline = ({ leadId }: LeadTimelineProps) => {
     queryFn: async () => {
       // 1. Fetch Tasks
       const { data: tasks } = await supabase
-        .from('orchestrator_tasks')
+        .from('orchestrator_tasks' as any)
         .select('*')
         .eq('lead_id', leadId)
         .order('created_at', { ascending: false });
 
       // 2. Fetch Followups
       const { data: followups } = await supabase
-        .from('followup_queue')
+        .from('followup_queue' as any)
         .select('*')
         .eq('lead_id', leadId)
         .order('scheduled_for', { ascending: false });
 
       // Combine and sort
-      const combined = [
-        ...(tasks || []).map(t => ({ ...t, eventType: 'task' })),
-        ...(followups || []).map(f => ({ ...f, eventType: 'followup', created_at: f.scheduled_for })),
-      ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const combined: any[] = [
+        ...(tasks || []).map((t: any) => ({ ...t, eventType: 'task' })),
+        ...(followups || []).map((f: any) => ({ ...f, eventType: 'followup', created_at: f.scheduled_for })),
+      ].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
       return combined;
     }

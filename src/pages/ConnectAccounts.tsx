@@ -215,7 +215,7 @@ export default function ConnectAccounts() {
                     <div className="text-center space-y-3">
                       <div className="mx-auto text-6xl">👋</div>
                       <h2 className="text-2xl font-bold text-foreground">
-                        Olá! Vamos começar?
+                        Oi! Vamos começar?
                       </h2>
                       <p className="text-muted-foreground text-sm leading-relaxed max-w-sm mx-auto">
                         Configure sua conta em <strong>3 passos simples</strong> e deixe nossa inteligência artificial trabalhar para você.

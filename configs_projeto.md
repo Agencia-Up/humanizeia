@@ -72,6 +72,8 @@ Ao assumir este projeto:
 2. **Respeite o Design System**: Use as cores do LogosIA (Azul profundo `#1A237E` e Ouro `#DAA520`) definidas em `index.css`.
 3. **Não remova o React Query**: O site é pesado e depende de cache para não cair em "loop" de carregamento.
 4. **Deploy:** Se o site der 404 em produção mas estiver OK local, force um "Rebuild" no Easypanel.
+5. **Supabase:** Qualquer alteração no banco de dados (migrations) deve ser enviada para o usuário subir manualmente.
+
 
 ---
 

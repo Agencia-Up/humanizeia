@@ -209,7 +209,7 @@ export function generateFunnel(
         style: { stroke: color, strokeWidth: 2 },
       } satisfies Edge;
     })
-    .filter((e): e is Edge => e !== null);
+    .filter((e): e is typeof e & Edge => e !== null);
 
   return { nodes, edges };
 }

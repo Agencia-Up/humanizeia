@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { motion } from 'framer-motion';
@@ -28,9 +29,15 @@ const quickLinks = [
 ];
 
 export default function AgentHub() {
-  const { user } = useAuth();
+  const { user, profile, loading } = useAuth();
   const navigate = useNavigate();
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
+
+  useEffect(() => {
+    if (!loading && profile && !profile.quiz_completed) {
+      navigate('/niche-quiz');
+    }
+  }, [loading, profile, navigate]);
 
   return (
     <MainLayout>
@@ -38,7 +45,7 @@ export default function AgentHub() {
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="text-center space-y-2">
           <h1 className="text-3xl font-bold tracking-tight lg:text-4xl">
-            Olá, <span className="gradient-text">{firstName}</span>! 👋
+            Oi, <span className="gradient-text">{firstName}</span>! 👋
           </h1>
           <p className="text-muted-foreground">Escolha um agente para começar ou acesse o dashboard de métricas.</p>
         </motion.div>

@@ -11,7 +11,7 @@ const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 // antigo), o Supabase a carrega na memória e envia como JWT inválido para as
 // Edge Functions, causando "Invalid JWT". Limpamos aqui para que o createClient()
 // comece com slate limpo.
-const CURRENT_PROJECT_REF = 'seyljsqmhlopkcauhlor';
+const CURRENT_PROJECT_REF = 'qrxsiixufdiemwwyhxvd';
 try {
   const staleKeys: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
