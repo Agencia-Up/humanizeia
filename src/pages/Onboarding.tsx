@@ -105,7 +105,9 @@ export default function Onboarding() {
       }
 
       toast({ title: '🎉 Empresa criada!', description: 'Sua organização foi criada com sucesso.' });
-      navigate('/niche-quiz', { replace: true });
+      // Hard redirect — força reload completo de todos os hooks e contexts
+      // Isso garante que ProtectedRoute lê o organization_id atualizado do banco
+      window.location.replace('/niche-quiz');
 
     } catch (err: any) {
       toast({ title: 'Erro ao criar empresa', description: err.message, variant: 'destructive' });
@@ -123,7 +125,8 @@ export default function Onboarding() {
       toast({ title: 'Erro ao aceitar convite', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: '✅ Convite aceito!', description: 'Você agora faz parte da organização.' });
-      navigate('/niche-quiz', { replace: true });
+      window.location.replace('/niche-quiz');
+
     }
   };
 
