@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useOrganization } from '@/hooks/useOrganization';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,15 +41,76 @@ export default function Onboarding() {
     }
 
     setIsLoading(true);
-    const { error } = await createOrganization(orgName.trim());
-    setIsLoading(false);
 
-    if (error) {
-      toast({ title: 'Erro ao criar empresa', description: error.message, variant: 'destructive' });
-    } else {
+    try {
+      let orgId: string | null = null;
+
+      // Try RPC first
+      const { data: rpcData, error: rpcError } = await (supabase as any).rpc('create_organization_with_owner', {
+        org_name: orgName.trim(),
+      });
+
+      if (!rpcError && rpcData) {
+        // RPC worked — get org id from profile
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('organization_id')
+          .eq('id', user.id)
+          .single();
+        orgId = profile?.organization_id ?? null;
+      }
+
+      // If RPC failed or didn't set organization_id, create manually
+      if (!orgId) {
+        const slug = orgName.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+
+        const { data: newOrg, error: orgError } = await supabase
+          .from('organizations' as any)
+          .insert({ name: orgName.trim(), slug, created_by: user.id })
+          .select('id')
+          .single();
+
+        if (orgError) throw orgError;
+        orgId = (newOrg as any).id;
+
+        // Add as owner member
+        await supabase.from('organization_members' as any).insert({
+          organization_id: orgId,
+          user_id: user.id,
+          role: 'owner',
+        });
+
+        // Update profile
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ organization_id: orgId })
+          .eq('id', user.id);
+
+        if (profileError) throw profileError;
+      }
+
+      // Verify organization_id is now set before navigating
+      let retries = 0;
+      while (retries < 5) {
+        const { data: check } = await supabase
+          .from('profiles')
+          .select('organization_id')
+          .eq('id', user.id)
+          .single();
+
+        if (check?.organization_id) break;
+        await new Promise(resolve => setTimeout(resolve, 400));
+        retries++;
+      }
+
       toast({ title: '🎉 Empresa criada!', description: 'Sua organização foi criada com sucesso.' });
       navigate('/niche-quiz', { replace: true });
 
+    } catch (err: any) {
+      toast({ title: 'Erro ao criar empresa', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -64,6 +126,7 @@ export default function Onboarding() {
       navigate('/niche-quiz', { replace: true });
     }
   };
+
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
