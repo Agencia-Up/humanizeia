@@ -42,8 +42,18 @@ serve(async (req) => {
       }
 
       // Função helper para voltar ao app mostrando erro
-      const redirectError = (msg: string) => 
-        Response.redirect(`${origin}/integrations?ig_error=true&msg=${encodeURIComponent(msg)}`, 302);
+      const redirectError = (msg: string) => {
+        const errUrl = `${origin}/integrations?ig_error=true&msg=${encodeURIComponent(msg)}`;
+        const html = `<!DOCTYPE html><html><body><script>
+          if (window.opener) {
+            window.opener.postMessage({ type: 'IG_PUBLISH_AUTH_ERROR', error: '${msg.replace(/'/g, "\\'")}' }, '*');
+            setTimeout(() => window.close(), 500);
+          } else {
+            window.location.href = '${errUrl}';
+          }
+        </script></body></html>`;
+        return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      };
 
       if (errorCode) {
         const desc = url.searchParams.get('error_description') ?? errorCode;
@@ -142,8 +152,17 @@ serve(async (req) => {
         }
       }
 
-      // RETORNO SUAVE PARA O FRONTEND REACT (! Bypass de Deno HTML Proxy bug !)
-      return Response.redirect(`${origin}/integrations?ig_success=true&username=${encodeURIComponent(username || 'instagram')}`, 302);
+      // RETORNO HÍBRIDO PARA O FRONTEND (Suposta versão do App do usuário roda em POPUP ou REDIRECT)
+      const successUrl = `${origin}/integrations?ig_success=true&username=${encodeURIComponent(username || 'instagram')}`;
+      const successHtml = `<!DOCTYPE html><html><body><script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'IG_PUBLISH_AUTH_SUCCESS', username: '${(username || 'instagram').replace(/'/g, "\\'")}' }, '*');
+          setTimeout(() => window.close(), 500);
+        } else {
+          window.location.href = '${successUrl}';
+        }
+      </script></body></html>`;
+      return new Response(successHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     }
 
     // ── AÇÕES VIA POST (chamadas do frontend) ──────────────────────────────────
