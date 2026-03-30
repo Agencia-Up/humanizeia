@@ -176,7 +176,7 @@ export const useOrchestrator = () => {
       queryClient.invalidateQueries({ queryKey: ['agent-executions'] });
 
       // Step 4: Complete Master Task
-      await supabase.from('orchestrator_tasks').update({ status: 'completed' } as never).eq('id', task.id);
+      await supabase.from('orchestrator_tasks' as any).update({ status: 'completed' } as never).eq('id', task.id);
       queryClient.invalidateQueries({ queryKey: ['orchestrator-tasks'] });
     },
     onSuccess: () => {
