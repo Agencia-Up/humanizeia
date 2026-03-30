@@ -579,12 +579,12 @@ export default function LandingPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {[
-              { icon: Zap, title: 'Operação 24/7', desc: 'Nunca para. Seus anúncios são otimizados enquanto você dorme.', color: 'text-primary', bg: 'bg-primary/10' },
-              { icon: Shield, title: 'Zero erros humanos', desc: 'Algoritmos precisos eliminam inconsistências e variações de performance.', color: 'text-blue-400', bg: 'bg-blue-500/10' },
-              { icon: Rocket, title: 'Escalabilidade ilimitada', desc: 'Atende 1 ou 1.000 campanhas com a mesma qualidade e velocidade.', color: 'text-purple-400', bg: 'bg-purple-500/10' },
-              { icon: BarChart3, title: 'ROI claro e mensurável', desc: 'Dashboard unificado com ROAS, CPA, CPL e todas as métricas que importam.', color: 'text-green-400', bg: 'bg-green-500/10' },
-              { icon: Brain, title: 'IA adaptativa', desc: 'Aprende com seus dados e melhora continuamente as estratégias.', color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
-              { icon: Award, title: 'Metodologia de elite', desc: 'Certificada e mentorada pela Comunidade Viver de IA — referência nacional.', color: 'text-orange-400', bg: 'bg-orange-500/10' },
+              { icon: Zap, title: 'Operação 24/7 Ininterrupta', desc: 'Seus anúncios são otimizados e seu conteúdo é publicado enquanto você dorme.', color: 'text-primary', bg: 'bg-primary/10' },
+              { icon: Shield, title: 'Zero Erros Humanos', desc: 'Algoritmos avançados eliminam inconsistências e garantem performance máxima.', color: 'text-blue-400', bg: 'bg-blue-500/10' },
+              { icon: Rocket, title: 'Escalabilidade Ilimitada', desc: 'Atende a 1 ou 1.000 campanhas com a mesma qualidade e velocidade, sem aumentar sua equipe.', color: 'text-purple-400', bg: 'bg-purple-500/10' },
+              { icon: BarChart3, title: 'ROI Claro e Mensurável', desc: 'Dashboard unificado com todas as métricas que importam: ROAS, CPA, CPL, e muito mais.', color: 'text-green-400', bg: 'bg-green-500/10' },
+              { icon: Brain, title: 'IA Adaptativa', desc: 'Aprende continuamente com seus dados, refinando estratégias e superando a concorrência.', color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
+              { icon: Award, title: 'Metodologia de Elite', desc: 'Validada e mentorada pela renomada Comunidade Viver de IA.', color: 'text-orange-400', bg: 'bg-orange-500/10' },
             ].map((f) => (
               <div key={f.title} className="rounded-xl border border-border/50 bg-card/50 p-5 hover:border-primary/30 transition-colors">
                 <div className={`inline-flex p-2.5 rounded-lg ${f.bg} mb-3`}>
