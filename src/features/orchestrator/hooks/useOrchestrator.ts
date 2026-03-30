@@ -165,7 +165,7 @@ export const useOrchestrator = () => {
 
       const exactAgentId = task.type === 'copywriting' ? 'PAULO_COPY' : (task.type === 'ads' ? 'JOSE_ADS' : 'DANIEL_ESTRATEGIA');
       
-      await supabase.from('agent_executions').insert({
+      await supabase.from('agent_executions' as any).insert({
         task_id: task.id,
         user_id: user.id,
         agent_id: exactAgentId,
