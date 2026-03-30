@@ -200,8 +200,8 @@ export const useOrchestrator = () => {
     mutationFn: async () => {
       if (!user) return;
       // Because Tasks drop will cascade Agent Executions or can be deleted independently
-      await supabase.from('agent_executions').delete().eq('user_id', user.id);
-      const { error } = await supabase.from('orchestrator_tasks').delete().eq('user_id', user.id);
+      await supabase.from('agent_executions' as any).delete().eq('user_id', user.id);
+      const { error } = await supabase.from('orchestrator_tasks' as any).delete().eq('user_id', user.id);
       if (error) throw error;
     },
     onSuccess: () => {

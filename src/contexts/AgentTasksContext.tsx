@@ -130,7 +130,7 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
     if (!user) throw new Error('User not authenticated');
 
     const { data, error } = await supabase
-      .from('agent_tasks')
+      .from('agent_tasks' as any)
       .insert({
         user_id: user.id,
         agent_id: agentId,

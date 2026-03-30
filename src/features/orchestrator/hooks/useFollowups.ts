@@ -43,7 +43,7 @@ export const useFollowups = () => {
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string, status: string }) => {
       const { error } = await supabase
-        .from('followup_queue')
+        .from('followup_queue' as any)
         .update({ status } as never)
         .eq('id', id);
       if (error) throw error;

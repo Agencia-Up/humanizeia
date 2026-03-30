@@ -258,7 +258,7 @@ export function ConnectionsTab() {
         .eq('platform', 'linkedin')
         .eq('user_id', user?.id)
         .maybeSingle();
-      return data as { account_name: string; account_id: string } | null;
+      return data as unknown as { account_name: string; account_id: string } | null;
     },
     enabled: !!user,
   });

@@ -29,10 +29,10 @@ const LeadTimeline = ({ leadId }: LeadTimelineProps) => {
         .order('scheduled_for', { ascending: false });
 
       // Combine and sort
-      const combined = [
-        ...(tasks || []).map(t => ({ ...t, eventType: 'task' })),
-        ...(followups || []).map(f => ({ ...f, eventType: 'followup', created_at: f.scheduled_for })),
-      ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const combined: any[] = [
+        ...(tasks || []).map((t: any) => ({ ...t, eventType: 'task' })),
+        ...(followups || []).map((f: any) => ({ ...f, eventType: 'followup', created_at: f.scheduled_for })),
+      ].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
       return combined;
     }
