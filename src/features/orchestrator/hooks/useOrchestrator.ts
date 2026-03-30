@@ -55,7 +55,7 @@ export const useOrchestrator = () => {
         .limit(10);
 
       if (error) throw error;
-      return data as AgentExecution[];
+      return data as unknown as AgentExecution[];
     },
     enabled: !!user,
   });

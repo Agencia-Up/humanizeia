@@ -142,7 +142,7 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
       .single();
 
     if (error) throw error;
-    return data.id;
+    return (data as any).id;
   };
 
   return (
