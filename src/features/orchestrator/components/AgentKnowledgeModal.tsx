@@ -54,7 +54,7 @@ export function AgentKnowledgeModal({ isOpen, onOpenChange, agents }: AgentKnowl
       if (!user) throw new Error('Usuário não autenticado');
 
       const { data, error } = await supabase
-        .from('agent_knowledge')
+        .from('agent_knowledge' as any)
         .select('knowledge_text')
         .eq('user_id', user.id)
         .eq('agent_id', agent.id)
