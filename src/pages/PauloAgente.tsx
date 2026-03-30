@@ -279,7 +279,7 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
           messages: apiMessages,
           context: 'paulo',
           stream: false,
-          task_id: taskId, // Passar task_id para a Edge Function
+          task_id: taskId,
           config: {
             product: ctx.produto,
             description: systemWithContext,
@@ -291,9 +291,17 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
         },
       });
 
-      if (error) throw new Error(error.message);
+      console.log('Paulo API response:', { data, error });
 
-      const content = data?.choices?.[0]?.message?.content || 'Erro ao gerar copy. Tente novamente.';
+      if (error) {
+        throw new Error(error.message || 'Erro desconhecido da Edge Function claude-chat');
+      }
+
+      if (!data || !data.choices || !data.choices[0] || !data.choices[0].message) {
+        throw new Error(`Resposta inválida: ${JSON.stringify(data).slice(0, 100)}`);
+      }
+
+      const content = data.choices[0].message.content || 'Erro inexperado: Mensagem vazia recebida do Paulo. Tente novamente.';
 
       // 3. Salvar resposta do assistente no histórico persistente
       await saveMessage('paulo', 'assistant', content);
@@ -307,7 +315,15 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
 
       setMessages(prev => [...prev, assistantMessage]);
     } catch (err: any) {
-      toast({ title: 'Erro ao chamar Paulo', description: err.message, variant: 'destructive' });
+      const errorMessageText = `🚨 **Erro de conexão ou geração:**\n${err?.message || JSON.stringify(err)}\n\nTente enviar novamente.`;
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: errorMessageText,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+      toast({ title: 'Falha na IA do Paulo', description: 'Ocorreu um erro no servidor.', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
