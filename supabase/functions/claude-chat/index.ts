@@ -418,10 +418,11 @@ Deno.serve(async (req) => {
       });
     }
 
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
     const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
 
-    if (!ANTHROPIC_API_KEY && !LOVABLE_API_KEY) {
+    if (!OPENAI_API_KEY && !ANTHROPIC_API_KEY && !LOVABLE_API_KEY) {
       console.error('No AI API key configured');
       return new Response(
         JSON.stringify({ error: 'Nenhuma chave de IA configurada.' }),
@@ -464,9 +465,64 @@ Deno.serve(async (req) => {
     const creativityLevel = config?.creativity ?? 5;
     const temperature = 0.3 + (creativityLevel - 1) * (0.9 / 9);
 
-    // ─── PROVIDER 1: Anthropic Claude (Primary) ───
+    // ─── PROVIDER 1: OpenAI (Primary) ───
+    if (OPENAI_API_KEY) {
+      console.log('Using OpenAI (gpt-4o) as primary provider...');
+
+      const openaiMessages = [
+        { role: 'system', content: systemPrompt },
+        ...messages.map((msg: Message) => ({ role: msg.role, content: msg.content }))
+      ];
+
+      try {
+        const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o',
+            messages: openaiMessages,
+            stream: !!stream,
+            temperature: parseFloat(temperature.toFixed(2)),
+          }),
+        });
+
+        if (openaiResponse.ok) {
+          if (stream) {
+            return new Response(openaiResponse.body, {
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+              },
+            });
+          } else {
+            const data = await openaiResponse.json();
+            const compatResponse = {
+              choices: [{ message: { role: 'assistant', content: data.choices?.[0]?.message?.content || '' } }],
+              _provider: 'openai',
+            };
+            return new Response(JSON.stringify(compatResponse), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        } else {
+          const errText = await openaiResponse.text();
+          console.error('OpenAI API error:', openaiResponse.status, errText);
+          // Fall through to Anthropic fallback
+        }
+      } catch (err) {
+        console.error('OpenAI request failed:', err);
+        // Fall through
+      }
+    }
+
+    // ─── PROVIDER 2: Anthropic Claude (Fallback 1) ───
     if (ANTHROPIC_API_KEY) {
-      console.log('Using Anthropic Claude (claude-3-5-sonnet-20241022) as primary provider...');
+      console.log('Using Anthropic Claude (claude-3-5-sonnet-20241022) as fallback provider...');
 
       const anthropicMessages = messages.map((msg: Message) => ({
         role: msg.role,
