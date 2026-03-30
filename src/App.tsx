@@ -84,6 +84,7 @@ const App = () => (
                   <Route path="/terms" element={<TermsOfService />} />
                   <Route path="/onboarding" element={<Onboarding />} />
                   <Route path="/niche-quiz" element={<ProtectedRoute><NicheQuiz /></ProtectedRoute>} />
+                  <Route path="/briefing/:nicho" element={<ProtectedRoute><BriefingDetails /></ProtectedRoute>} />
                   <Route path="/" element={<LandingPage />} />
 
                   <Route path="/dashboard" element={<ProtectedRoute><AgentHub /></ProtectedRoute>} />
