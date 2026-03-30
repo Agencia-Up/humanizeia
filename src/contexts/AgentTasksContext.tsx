@@ -47,7 +47,7 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
 
       if (error) throw error;
       
-      const tasks = data as AgentTask[];
+      const tasks = (data as unknown) as AgentTask[];
       setActiveTasks(tasks.filter(t => t.status === 'processing'));
       setRecentTasks(tasks);
     } catch (err) {
