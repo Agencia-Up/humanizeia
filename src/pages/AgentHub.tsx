@@ -28,9 +28,15 @@ const quickLinks = [
 ];
 
 export default function AgentHub() {
-  const { user } = useAuth();
+  const { user, profile, loading } = useAuth();
   const navigate = useNavigate();
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
+
+  useEffect(() => {
+    if (!loading && profile && !profile.quiz_completed) {
+      navigate('/niche-quiz');
+    }
+  }, [loading, profile, navigate]);
 
   return (
     <MainLayout>
