@@ -37,7 +37,7 @@ export const useOrchestrator = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return data as OrchestratorTask[];
+      return data as unknown as OrchestratorTask[];
     },
     enabled: !!user,
   });
