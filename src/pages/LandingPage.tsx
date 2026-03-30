@@ -265,15 +265,15 @@ export default function LandingPage() {
         </div>
 
         <h1 className="text-4xl md:text-6xl font-bold max-w-4xl leading-tight mb-6">
-          Sua{' '}
+          Transforme Seu Marketing: Sua{' '}
           <span className="bg-gradient-to-r from-[#5C6BC0] to-[#DAA520] bg-clip-text text-transparent">
-            Agência Digital Autônoma
+            Agência de IA Autônoma
           </span>
-          {' '}operando 24/7
+          {' '}que Multiplica Seus Resultados 24/7
         </h1>
 
         <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mb-4">
-          9 Agentes de IA trabalhando juntos superam o desempenho de uma agência de marketing inteira — com tráfego pago, copy, social media, e-mail, funil e CRM operando de forma autônoma, 24 horas por dia, 7 dias por semana.
+          Cansado de agências caras e ineficientes? A LogosIA é a revolução que você precisa: 9 Agentes de IA especializados trabalhando em perfeita sincronia para escalar seu negócio, reduzir custos e gerar resultados previsíveis, sem falhas humanas ou gestão de equipe.
         </p>
 
         <p className="text-sm text-muted-foreground mb-10 flex items-center gap-2">
@@ -322,19 +322,17 @@ export default function LandingPage() {
               PARE E PENSE POR 30 SEGUNDOS
             </Badge>
             <h2 className="text-3xl md:text-5xl font-bold leading-tight mb-4">
-              Você está pagando{' '}
-              <span className="text-red-400">R$50.000/mês</span>{' '}
-              por uma equipe de marketing...
+              O Custo Oculto da Agência Tradicional:{' '}
+              <span className="text-red-400">Tempo, Dinheiro e Frustração</span>
             </h2>
-            <p className="text-xl md:text-2xl text-muted-foreground">
-              ou{' '}
-              <span className="text-green-400 font-bold">R$2.497</span>
-              {' '}por resultados superiores?
+            <p className="text-lg md:text-xl text-muted-foreground max-w-3xl mx-auto mt-6">
+              Você está pagando uma fortuna por uma equipe de marketing que opera em horário comercial, com falhas de comunicação, erros humanos e resultados inconsistentes. A gestão de múltiplos profissionais consome seu tempo e energia, desviando o foco do que realmente importa: o crescimento do seu negócio. Enquanto você lida com encargos, férias e a alta rotatividade, seus concorrentes avançam com soluções mais ágeis e eficientes.
             </p>
-            <p className="text-muted-foreground mt-4 max-w-2xl mx-auto text-sm">
-              A diferença entre contratar 8 pessoas (com todos os problemas que isso traz)
-              e ter uma operação de marketing 100% automatizada rodando 24/7.
-            </p>
+            <div className="mt-8 p-6 bg-red-500/10 border border-red-500/20 rounded-2xl max-w-3xl mx-auto">
+              <p className="text-xl font-bold text-red-400">
+                Pare e Pense: Você continuará pagando R$5.000 a R$15.000/mês por uma operação limitada, ou investirá em uma solução que entrega resultados superiores por uma fração do custo?
+              </p>
+            </div>
           </div>
 
           {/* Cards de comparação */}
@@ -371,7 +369,7 @@ export default function LandingPage() {
               <div className="border-t border-red-500/20 pt-4 mb-5">
                 <div className="flex justify-between items-center">
                   <span className="font-bold text-sm">TOTAL</span>
-                  <span className="text-2xl font-bold text-red-400">R$ 57.000/mês</span>
+                  <span className="text-2xl font-bold text-red-400">R$ 15.000/mês</span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
                   + encargos, férias, 13º, treinamentos, rotatividade...
@@ -440,7 +438,7 @@ export default function LandingPage() {
             <p className="text-muted-foreground text-sm uppercase tracking-widest mb-3">Você leu certo</p>
             <div className="flex items-center justify-center gap-6 flex-wrap mb-4">
               <div className="text-center">
-                <p className="text-4xl md:text-5xl font-black text-red-400 line-through opacity-60">R$ 57.000</p>
+                <p className="text-4xl md:text-5xl font-black text-red-400 line-through opacity-60">R$ 15.000</p>
                 <p className="text-xs text-muted-foreground mt-1">Modelo tradicional / mês</p>
               </div>
               <div className="text-3xl font-bold text-muted-foreground">vs</div>
@@ -464,12 +462,12 @@ export default function LandingPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
               <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-5">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Modelo Tradicional</p>
-                <p className="text-3xl font-black text-red-400">R$ 684.000</p>
+                <p className="text-3xl font-black text-red-400">R$ 180.000</p>
                 <p className="text-xs text-muted-foreground mt-1">por ano</p>
               </div>
               <div className="flex items-center justify-center">
                 <div className="text-center">
-                  <p className="text-4xl font-black text-green-400">R$ 644.036</p>
+                  <p className="text-4xl font-black text-green-400">R$ 140.036</p>
                   <p className="text-sm text-green-400 font-semibold mt-1">de economia no 1º ano</p>
                 </div>
               </div>
@@ -532,7 +530,7 @@ export default function LandingPage() {
           <div className="text-center">
             <Button asChild size="lg" className="bg-green-600 hover:bg-green-700 text-white px-10 text-lg gap-3 py-6 rounded-2xl font-bold shadow-lg shadow-green-900/30">
               <Link to="/auth?tab=signup">
-                QUERO ECONOMIZAR R$50.000/MÊS COM IA <ArrowRight className="h-5 w-5" />
+                QUERO MULTIPLICAR MEUS RESULTADOS E ECONOMIZAR ATÉ R$5.000 a R$15.000/MÊS COM IA <ArrowRight className="h-5 w-5" />
               </Link>
             </Button>
             <p className="text-xs text-muted-foreground mt-3">
@@ -575,18 +573,18 @@ export default function LandingPage() {
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-primary/30 text-primary">A Solução</Badge>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Logos IA — A Agência que nunca dorme</h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto">Seis agentes de IA trabalhando em sincronia, 24 horas por dia, 7 dias por semana. Sem falhas humanas. Sem custos de equipe. Com resultado mensurável.</p>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">LogosIA: A Inteligência Artificial que Nunca Dorme para o Seu Marketing</h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">Imagine ter uma equipe de marketing de elite, trabalhando 24 horas por dia, 7 dias por semana, sem salário, sem férias e sem reuniões. A LogosIA é essa realidade. Nossos 9 agentes de IA especializados operam com precisão matemática, otimizando suas campanhas, criando conteúdo de alta conversão e gerenciando seus leads de forma autônoma.</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {[
-              { icon: Zap, title: 'Operação 24/7', desc: 'Nunca para. Seus anúncios são otimizados enquanto você dorme.', color: 'text-primary', bg: 'bg-primary/10' },
-              { icon: Shield, title: 'Zero erros humanos', desc: 'Algoritmos precisos eliminam inconsistências e variações de performance.', color: 'text-blue-400', bg: 'bg-blue-500/10' },
-              { icon: Rocket, title: 'Escalabilidade ilimitada', desc: 'Atende 1 ou 1.000 campanhas com a mesma qualidade e velocidade.', color: 'text-purple-400', bg: 'bg-purple-500/10' },
-              { icon: BarChart3, title: 'ROI claro e mensurável', desc: 'Dashboard unificado com ROAS, CPA, CPL e todas as métricas que importam.', color: 'text-green-400', bg: 'bg-green-500/10' },
-              { icon: Brain, title: 'IA adaptativa', desc: 'Aprende com seus dados e melhora continuamente as estratégias.', color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
-              { icon: Award, title: 'Metodologia de elite', desc: 'Certificada e mentorada pela Comunidade Viver de IA — referência nacional.', color: 'text-orange-400', bg: 'bg-orange-500/10' },
+              { icon: Zap, title: 'Operação 24/7 Ininterrupta', desc: 'Seus anúncios são otimizados e seu conteúdo é publicado enquanto você dorme.', color: 'text-primary', bg: 'bg-primary/10' },
+              { icon: Shield, title: 'Zero Erros Humanos', desc: 'Algoritmos avançados eliminam inconsistências e garantem performance máxima.', color: 'text-blue-400', bg: 'bg-blue-500/10' },
+              { icon: Rocket, title: 'Escalabilidade Ilimitada', desc: 'Atende a 1 ou 1.000 campanhas com a mesma qualidade e velocidade, sem aumentar sua equipe.', color: 'text-purple-400', bg: 'bg-purple-500/10' },
+              { icon: BarChart3, title: 'ROI Claro e Mensurável', desc: 'Dashboard unificado com todas as métricas que importam: ROAS, CPA, CPL, e muito mais.', color: 'text-green-400', bg: 'bg-green-500/10' },
+              { icon: Brain, title: 'IA Adaptativa', desc: 'Aprende continuamente com seus dados, refinando estratégias e superando a concorrência.', color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
+              { icon: Award, title: 'Metodologia de Elite', desc: 'Validada e mentorada pela renomada Comunidade Viver de IA.', color: 'text-orange-400', bg: 'bg-orange-500/10' },
             ].map((f) => (
               <div key={f.title} className="rounded-xl border border-border/50 bg-card/50 p-5 hover:border-primary/30 transition-colors">
                 <div className={`inline-flex p-2.5 rounded-lg ${f.bg} mb-3`}>
