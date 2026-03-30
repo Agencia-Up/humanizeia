@@ -217,7 +217,7 @@ export function ConnectionsTab() {
         .eq('platform', 'instagram_publisher')
         .eq('user_id', user?.id)
         .maybeSingle();
-      return data as { account_name: string; extra_data: any } | null;
+      return data as unknown as { account_name: string; extra_data: any } | null;
     },
     enabled: !!user,
   });
