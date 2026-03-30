@@ -573,8 +573,8 @@ export default function LandingPage() {
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-primary/30 text-primary">A Solução</Badge>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Logos IA — A Agência que nunca dorme</h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto">Seis agentes de IA trabalhando em sincronia, 24 horas por dia, 7 dias por semana. Sem falhas humanas. Sem custos de equipe. Com resultado mensurável.</p>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">LogosIA: A Inteligência Artificial que Nunca Dorme para o Seu Marketing</h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">Imagine ter uma equipe de marketing de elite, trabalhando 24 horas por dia, 7 dias por semana, sem salário, sem férias e sem reuniões. A LogosIA é essa realidade. Nossos 9 agentes de IA especializados operam com precisão matemática, otimizando suas campanhas, criando conteúdo de alta conversão e gerenciando seus leads de forma autônoma.</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
