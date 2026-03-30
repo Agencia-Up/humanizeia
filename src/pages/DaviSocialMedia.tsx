@@ -876,16 +876,6 @@ ${pautasStr}`;
 
               <Button
                 variant="outline"
-                onClick={handleImportDanielResearch}
-                disabled={autoModeRunning || loading}
-                className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30 gap-2 font-semibold text-xs"
-              >
-                <Brain className="h-3.5 w-3.5" />
-                Importar Daniel
-              </Button>
-
-              <Button
-                variant="outline"
                 onClick={handleImportPaulo}
                 disabled={autoModeRunning || loading}
                 className="bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border-violet-500/30 gap-2 font-semibold text-xs"
