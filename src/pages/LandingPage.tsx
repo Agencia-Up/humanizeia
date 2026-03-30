@@ -438,7 +438,7 @@ export default function LandingPage() {
             <p className="text-muted-foreground text-sm uppercase tracking-widest mb-3">Você leu certo</p>
             <div className="flex items-center justify-center gap-6 flex-wrap mb-4">
               <div className="text-center">
-                <p className="text-4xl md:text-5xl font-black text-red-400 line-through opacity-60">R$ 57.000</p>
+                <p className="text-4xl md:text-5xl font-black text-red-400 line-through opacity-60">R$ 15.000</p>
                 <p className="text-xs text-muted-foreground mt-1">Modelo tradicional / mês</p>
               </div>
               <div className="text-3xl font-bold text-muted-foreground">vs</div>
