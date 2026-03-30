@@ -14,7 +14,7 @@ Este briefing é projetado para negócios do setor automotivo, como agências de
 *   **Identidade Visual (estilo, referências):** (Ex: Luxuoso, esportivo, familiar, moderno, tradicional. Anexar logo e guia de marca se houver.)
 
 ## 3. CLIENTE IDEAL (ICP)
-*   **Público-Target:** (Ex: Homens/Mulheres, 30-55 anos, renda familiar > R$ 8.000, casados com filhos, buscam segurança e conforto; Jovens, 20-35 anos, buscam primeiro carro, esportividade, tecnologia.)
+*   **Público-Alvo:** (Ex: Homens/Mulheres, 30-55 anos, renda familiar > R$ 8.000, casados com filhos, buscam segurança e conforto; Jovens, 20-35 anos, buscam primeiro carro, esportividade, tecnologia.)
 *   **Dor Principal:** (Ex: Medo de comprar carro usado com problemas, dificuldade em conseguir financiamento, falta de tempo para pesquisar, preocupação com manutenção cara.)
 *   **Maior Desejo:** (Ex: Conquistar o carro dos sonhos, ter segurança para a família, status, economia de combustível, carro sem preocupações.)
 *   **Principais Objeções:** (Ex: Preço alto, juros do financiamento, desconfiança da procedência, valorização do usado na troca.)
