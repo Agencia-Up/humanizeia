@@ -38,7 +38,7 @@ export function AgentChatProvider({ children }: { children: React.ReactNode }) {
       return [];
     }
     
-    return (data || []) as ChatMessage[];
+    return (data || []) as unknown as ChatMessage[];
   }, [user]);
 
   const saveMessage = async (agentId: string, role: 'user' | 'assistant', content: string, metadata: any = {}) => {
