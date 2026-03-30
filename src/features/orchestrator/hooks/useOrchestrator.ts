@@ -187,7 +187,7 @@ export const useOrchestrator = () => {
   const clearBriefingMutation = useMutation({
     mutationFn: async () => {
       if (!user) return;
-      const { error } = await supabase.from('client_briefings').delete().eq('user_id', user.id);
+      const { error } = await supabase.from('client_briefings' as any).delete().eq('user_id', user.id);
       if (error) throw error;
     },
     onSuccess: () => {
