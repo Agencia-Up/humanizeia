@@ -14,7 +14,7 @@ export const useOrchestrator = () => {
     queryFn: async () => {
       if (!user) return null;
       const { data, error } = await supabase
-        .from('client_briefings')
+        .from('client_briefings' as any)
         .select('*')
         .eq('user_id', user.id)
         .maybeSingle();
