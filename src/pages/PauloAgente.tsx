@@ -13,6 +13,7 @@ import {
   PenTool, Target, MessageSquare,
   Link, X,
   Instagram, Mail, Phone,
+  Brain
 } from 'lucide-react';
 
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
@@ -340,6 +341,49 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
     setLibrary(prev => prev.filter(item => item.id !== id));
   };
 
+  const handleImportDanielResearch = async () => {
+    try {
+      setLoading(true);
+      const history = await getHistory('daniel');
+      const lastResearchMsg = [...history].reverse().find(m => m.metadata?.type === 'niche_research' && m.metadata?.research);
+      
+      if (lastResearchMsg && lastResearchMsg.metadata?.research) {
+        const research = lastResearchMsg.metadata.research;
+        
+        let pautasStr = '';
+        if (research.content_briefs && research.content_briefs.length > 0) {
+          pautasStr = research.content_briefs.map((b: any, i: number) => {
+            const hook = b.hook ? `Gancho: ${b.hook}\n` : '';
+            const slides = b.slides_or_points ? `Estrutura do Carrossel:\n- ${b.slides_or_points.join('\n- ')}` : '';
+            return `Pauta ${i + 1}: ${b.title}\n${hook}${slides}`;
+          }).join('\n\n');
+        } else {
+          pautasStr = "Nenhuma pauta específica encontrada. Analise as tendências brutas.";
+        }
+
+        const prompt = `Acabei de importar as pesquisas de tendência do Daniel para o nicho "${research.niche}".\n\nBaseado nas pautas do Daniel abaixo, monte os roteiros completos de carrosséis e posts para mim:\n\n${pautasStr}`;
+        
+        setInput(prompt);
+        // Opcional: já focar no input ou já dar enviar
+        if (inputRef.current) {
+          inputRef.current.focus();
+        }
+        
+        toast({ title: 'Pesquisa do Daniel importada!', description: 'As pautas foram carregadas. Revise e envie para o Paulo gerar as copys finais.' });
+      } else {
+        toast({ 
+          title: 'Nenhuma pesquisa encontrada', 
+          description: 'Acesse o agente DANIEL e gere a Busca de Tendências (Pesquisa) primeiro para importar depois!', 
+          variant: 'destructive' 
+        });
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <MainLayout>
       <div className="flex flex-col h-full">
@@ -504,7 +548,18 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
             {/* ── Quick actions ─────────────────────────────────────────── */}
             <div className="px-4 py-2 border-t border-border/30 shrink-0">
               <ScrollArea className="w-full">
-                <div className="flex gap-2 pb-2">
+                <div className="flex gap-2 pb-2 items-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleImportDanielResearch}
+                    disabled={loading}
+                    className="flex shrink-0 items-center gap-1.5 h-8 px-3 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-[11px] font-medium transition-colors"
+                  >
+                    <Brain className="h-3.5 w-3.5" />
+                    Importar Busca do Daniel
+                  </Button>
+                  <Separator orientation="vertical" className="h-5 mx-1 opacity-50" />
                   {QUICK_ACTIONS.map(action => (
                     <button
                       key={action.id}
