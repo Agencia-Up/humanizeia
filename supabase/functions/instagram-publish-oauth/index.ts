@@ -6,7 +6,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Usa o app Facebook (META) que já funciona com meta-oauth
 const META_APP_ID     = Deno.env.get('META_APP_ID') ?? '';
 const META_APP_SECRET = Deno.env.get('META_APP_SECRET') ?? '';
 const SUPABASE_URL    = Deno.env.get('SUPABASE_URL') ?? '';
@@ -30,15 +29,25 @@ serve(async (req) => {
       const stateRaw  = url.searchParams.get('state') ?? '';
       const errorCode = url.searchParams.get('error');
 
+      let userId = '';
+      let origin = 'https://logosiabrasil.com'; // Domínio Oficial Atualizado
+      
+      try { 
+        const parsedState = JSON.parse(atob(stateRaw));
+        userId = parsedState.userId; 
+        if (parsedState.origin) origin = parsedState.origin;
+      } catch (_) {}
+
+      // Função helper para voltar ao app mostrando erro
+      const redirectError = (msg: string) => 
+        Response.redirect(`${origin}/integrations?ig_error=true&msg=${encodeURIComponent(msg)}`, 302);
+
       if (errorCode) {
         const desc = url.searchParams.get('error_description') ?? errorCode;
-        return htmlClose('IG_PUBLISH_AUTH_ERROR', null, desc);
+        return redirectError(desc);
       }
 
-      let userId = '';
-      try { userId = JSON.parse(atob(stateRaw)).userId; } catch (_) {}
-
-      // 1. Troca code por short-lived token (Facebook Graph)
+      // 1. Troca code por short-lived token
       const tokenRes  = await fetch(
         `${GRAPH}/oauth/access_token?client_id=${META_APP_ID}&client_secret=${META_APP_SECRET}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&code=${encodeURIComponent(code)}`
       );
@@ -46,7 +55,7 @@ serve(async (req) => {
 
       if (tokenData.error || !tokenData.access_token) {
         const msg = tokenData.error?.message ?? 'Erro ao trocar código';
-        return htmlClose('IG_PUBLISH_AUTH_ERROR', null, msg);
+        return redirectError(msg);
       }
 
       const shortToken = tokenData.access_token;
@@ -106,7 +115,8 @@ serve(async (req) => {
         }, { onConflict: 'user_id,platform' });
       }
 
-      return htmlClose('IG_PUBLISH_AUTH_SUCCESS', username || 'instagram', null);
+      // RETORNO SUAVE PARA O FRONTEND REACT (! Bypass de Deno HTML Proxy bug !)
+      return Response.redirect(`${origin}/integrations?ig_success=true&username=${encodeURIComponent(username || 'instagram')}`, 302);
     }
 
     // ── AÇÕES VIA POST (chamadas do frontend) ──────────────────────────────────
@@ -122,7 +132,10 @@ serve(async (req) => {
     if (action === 'authorize') {
       if (!META_APP_ID) throw new Error('META_APP_ID não configurado. Adicione no Supabase Secrets.');
 
-      const state  = btoa(JSON.stringify({ userId: user.id, ts: Date.now() }));
+      // Importante: Salvamos a origin do React App no STATE para re-roteamento
+      const origin = body.origin || 'https://logosiabrasil.com';
+      const state  = btoa(JSON.stringify({ userId: user.id, ts: Date.now(), origin }));
+      
       const scopes = [
         'instagram_basic',
         'instagram_content_publish',
@@ -185,29 +198,3 @@ serve(async (req) => {
     });
   }
 });
-
-function htmlClose(type: string, username: string | null, error: string | null) {
-  const payload = username
-    ? `{type:'${type}',username:'${username}'}`
-    : `{type:'${type}',error:'${(error ?? '').replace(/'/g, "\\'")}'}`;
-
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Conectando...</title>
-</head>
-<body style="background:#0f172a; color:#fff; display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif;">
-  <p>Autenticado! Pode fechar esta janela caso ela não feche sozinha.</p>
-  <script>
-    try { window.opener.postMessage(${payload}, '*'); } catch(e) {}
-    setTimeout(() => window.close(), 800);
-  </script>
-</body>
-</html>`;
-
-  return new Response(html, {
-    status: 200,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}

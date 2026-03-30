@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -206,6 +206,20 @@ export function ConnectionsTab() {
   const [tiktokLoading, setTiktokLoading] = useState(false);
   const [linkedinLoading, setLinkedinLoading] = useState(false);
   const [igLoading, setIgLoading] = useState(false);
+
+  // useEffect para interceptar o redirecionamento de sucesso do popup
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('ig_success') === 'true') {
+        const username = params.get('username') || 'instagram';
+        if (window.opener) {
+          window.opener.postMessage({ type: 'IG_PUBLISH_AUTH_SUCCESS', username }, '*');
+        }
+        setTimeout(() => window.close(), 500);
+      }
+    } catch(e) { console.warn(e); }
+  }, []);
 
   // Instagram Publisher connected account
   const { data: igPublisherAccount, refetch: refetchIg } = useQuery({
