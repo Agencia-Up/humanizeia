@@ -170,7 +170,7 @@ export default function NicheQuiz() {
               Quiz de Qualificação de Nicho
             </h1>
             <p className="max-w-md text-muted-foreground">
-              Olá! Para que a LogosIA possa otimizar sua estratégia de marketing com a máxima precisão, precisamos entender um pouco mais sobre o seu negócio.
+              Oi! Para que a LogosIA possa otimizar sua estratégia de marketing com a máxima precisão, precisamos entender um pouco mais sobre o seu negócio.
             </p>
           </div>
         </div>
