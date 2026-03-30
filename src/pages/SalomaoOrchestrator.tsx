@@ -638,7 +638,7 @@ export default function SalomaoOrchestrator() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Left: smart briefing upload */}
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground">Criar / Selecionar Briefing</h3>
+                <h3 className="text-sm font-semibold text-muted-foreground">Quais nichos focamos para criação do briefing?</h3>
                 <BriefingSmartUpload
                   onBriefingSaved={(id, name) => {
                     setActiveBriefingId(id);
