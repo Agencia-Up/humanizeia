@@ -101,7 +101,7 @@ serve(async (req) => {
 
       // 4. Salva no Supabase
       if (userId) {
-        await supabase.from('connected_accounts' as any).upsert({
+        const { error: upsertError } = await supabase.from('connected_accounts' as any).upsert({
           user_id:                userId,
           platform:               'instagram_publisher',
           account_id:             igUserId,
@@ -116,6 +116,30 @@ serve(async (req) => {
           },
           connected_at: new Date().toISOString(),
         }, { onConflict: 'user_id,platform' });
+
+        if (upsertError) {
+          console.error("ERRO GRAVE NO DB UPSERT:", upsertError);
+          // Se der erro no BD (tipo falta de constraint unqiue onConflict), usar fallback de check e update manually
+          const { data: exist } = await supabase.from('connected_accounts' as any)
+            .select('id').eq('user_id', userId).eq('platform', 'instagram_publisher').maybeSingle();
+          
+          if (exist) {
+            const { error: updateErr } = await supabase.from('connected_accounts' as any).update({
+              account_id: igUserId, account_name: username, access_token_encrypted: token,
+              extra_data: { ig_user_id: igUserId, username, profile_picture_url: picUrl, expires_in: expiresIn, connected_at: new Date().toISOString() },
+              connected_at: new Date().toISOString()
+            }).eq('id', exist.id);
+            if (updateErr) return redirectError('Falha DB Update: ' + updateErr.message);
+          } else {
+            const { error: insertErr } = await supabase.from('connected_accounts' as any).insert({
+              user_id: userId, platform: 'instagram_publisher',
+              account_id: igUserId, account_name: username, access_token_encrypted: token,
+              extra_data: { ig_user_id: igUserId, username, profile_picture_url: picUrl, expires_in: expiresIn, connected_at: new Date().toISOString() },
+              connected_at: new Date().toISOString()
+            });
+            if (insertErr) return redirectError('Falha DB Insert: ' + insertErr.message);
+          }
+        }
       }
 
       // RETORNO SUAVE PARA O FRONTEND REACT (! Bypass de Deno HTML Proxy bug !)
