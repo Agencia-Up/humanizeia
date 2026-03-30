@@ -9,9 +9,8 @@ interface ProtectedRouteProps {
   skipQuizCheck?: boolean;
 }
 
-// Paths that bypass the org check (user is creating org or doing quiz)
-const ORG_EXEMPT_PATHS = ['/niche-quiz', '/briefing', '/onboarding', '/auth'];
-
+// Paths that bypass the organization check
+const ORG_EXEMPT_PATHS  = ['/niche-quiz', '/briefing', '/onboarding', '/auth'];
 // Paths that bypass the quiz-completed check
 const QUIZ_EXEMPT_PATHS = ['/niche-quiz', '/briefing', '/onboarding', '/auth'];
 
@@ -29,14 +28,14 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
       return;
     }
 
-    // If this route is exempt from both checks, skip the DB round-trip
+    // Paths exempt from BOTH checks → go straight in, no DB call needed
     if (isOrgExempt && isQuizExempt) {
       setProfileState('ok');
       return;
     }
 
-    // Safety timeout: never show spinner forever
-    const timeout = setTimeout(() => setProfileState('ok'), 4000);
+    // Reset to loading on each path/user change so spinner shows correctly
+    setProfileState('loading');
 
     supabase
       .from('profiles')
@@ -44,23 +43,24 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
       .eq('id', user.id)
       .single()
       .then(({ data, error }) => {
-        clearTimeout(timeout);
         if (error || !data) {
-          // On query error, let the user through rather than looping
-          setProfileState('ok');
+          // Query failed – redirect to onboarding as safest fallback (no looping to quiz)
+          setProfileState('no_org');
           return;
         }
-        if (!data.organization_id && !isOrgExempt) {
+
+        const hasOrg   = !!data.organization_id;
+        const doneQuiz = !!data.quiz_completed;
+
+        if (!hasOrg && !isOrgExempt) {
           setProfileState('no_org');
-        } else if (!data.quiz_completed && !isQuizExempt) {
+        } else if (!doneQuiz && !isQuizExempt) {
           setProfileState('no_quiz');
         } else {
           setProfileState('ok');
         }
       });
-
-    return () => clearTimeout(timeout);
-  }, [user, location.pathname]);
+  }, [user?.id, location.pathname]);
 
   if (loading || (user && profileState === 'loading')) {
     return (
