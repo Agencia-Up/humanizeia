@@ -223,8 +223,8 @@ export default function PauloAgente() {
     }
   };
 
-  const processMessageRequest = async (displayContent: string, actualPrompt: string) => {
-    if (loading) return;
+  const processMessageRequest = async (displayContent: string, actualPrompt: string, bypassLoadingCheck = false) => {
+    if (loading && !bypassLoadingCheck) return;
 
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
@@ -374,9 +374,8 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
         
         toast({ title: 'Pesquisa do Daniel importada!', description: 'Iniciando criação das copies...' });
         
-        // Remove loading antes de chamar processMessageRequest para não dar conflito state
-        setLoading(false); 
-        await processMessageRequest(displayPrompt, actualPrompt);
+        // Passamos bypassLoadingCheck como true
+        await processMessageRequest(displayPrompt, actualPrompt, true);
         
       } else {
         toast({ 
