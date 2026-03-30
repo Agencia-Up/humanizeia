@@ -134,7 +134,7 @@ export const useOrchestrator = () => {
         console.error("Erro na análise IA:", err);
       }
 
-      await supabase.from('agent_executions').insert({
+      await supabase.from('agent_executions' as any).insert({
         task_id: task.id,
         user_id: user.id,
         agent_id: 'SISTEMA_ANALISE',
