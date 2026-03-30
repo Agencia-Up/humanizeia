@@ -91,7 +91,7 @@ Retorne APENAS o JSON puro, sem markdown:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20240620',
+        model: 'claude-3-opus-20240229',
         max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -191,7 +191,7 @@ Retorne EXATAMENTE este JSON puro, sem marcadores ou markdown:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20240620',
+        model: 'claude-3-opus-20240229',
         max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }],
       }),
