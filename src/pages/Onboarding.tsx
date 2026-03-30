@@ -61,7 +61,7 @@ export default function Onboarding() {
       toast({ title: 'Erro ao aceitar convite', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: '✅ Convite aceito!', description: 'Você agora faz parte da organização.' });
-      navigate('/dashboard', { replace: true });
+      navigate('/niche-quiz', { replace: true });
     }
   };
 
