@@ -20,7 +20,7 @@ export const useOrchestrator = () => {
         .maybeSingle();
 
       if (error) throw error;
-      return data as ClientBriefing;
+      return data as unknown as ClientBriefing;
     },
     enabled: !!user,
   });
