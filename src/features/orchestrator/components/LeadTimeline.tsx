@@ -16,7 +16,7 @@ const LeadTimeline = ({ leadId }: LeadTimelineProps) => {
     queryFn: async () => {
       // 1. Fetch Tasks
       const { data: tasks } = await supabase
-        .from('orchestrator_tasks')
+        .from('orchestrator_tasks' as any)
         .select('*')
         .eq('lead_id', leadId)
         .order('created_at', { ascending: false });
