@@ -227,6 +227,7 @@ export default function NicheQuiz() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showLoading, setShowLoading] = useState(false);
 
+
   const progress = ((currentStep + 1) / questions.length) * 100;
   const currentQuestion = questions[currentStep];
   const selectedOption = currentQuestion.options.find(o => o.id === answers[currentQuestion.id]);
@@ -324,9 +325,10 @@ export default function NicheQuiz() {
         } catch { /* tabela pode não existir ainda */ }
       }
 
-      // 6. Aguarda animação e redireciona
+      // 6. Aguarda animação e redireciona — navigate() mantém a sessão ativa
       await new Promise(resolve => setTimeout(resolve, 5200));
-      window.location.replace('/salomao');
+      navigate('/salomao', { replace: true });
+
 
     } catch (err: any) {
       setShowLoading(false);
