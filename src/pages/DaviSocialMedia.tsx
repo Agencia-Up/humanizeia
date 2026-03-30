@@ -225,14 +225,36 @@ export default function DaviSocialMedia() {
   const { data: igAccount } = useQuery({
     queryKey: ['ig-publisher-davi', user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('social-media-api', {
-        body: { action: 'get_ig_account' },
-      });
-      if (error) return null;
-      return data as { connected: boolean; ig_account_id?: string; username?: string } | null;
+      // Prioridade: conexao dedicada "instagram_publisher"
+      const { data } = await supabase
+        .from('connected_accounts' as any)
+        .select('*')
+        .eq('platform', 'instagram_publisher')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+
+      if (data) {
+        const d = data as any;
+        return { connected: true, ig_account_id: d.account_id, username: d.account_name };
+      }
+
+      // Fallback: antiga conexao via Meta Ads
+      const { data: meta } = await supabase
+        .from('ad_accounts' as any)
+        .select('extra_data')
+        .eq('platform', 'meta')
+        .eq('user_id', user?.id)
+        .eq('is_active', true)
+        .maybeSingle();
+        
+      const m = meta as any;
+      if (m?.extra_data?.ig_account_id) {
+         return { connected: true, ig_account_id: m.extra_data.ig_account_id, username: 'meta' };
+      }
+
+      return { connected: false };
     },
     enabled: !!user,
-    staleTime: 30000,
   });
 
   // ─── Load client context ─────────────────────────────────────────────────
