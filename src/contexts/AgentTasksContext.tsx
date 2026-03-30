@@ -39,7 +39,7 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
     setIsLoading(true);
     try {
       const { data, error } = await supabase
-        .from('agent_tasks')
+        .from('agent_tasks' as any)
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
@@ -47,7 +47,7 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
 
       if (error) throw error;
       
-      const tasks = data as AgentTask[];
+      const tasks = (data as unknown) as AgentTask[];
       setActiveTasks(tasks.filter(t => t.status === 'processing'));
       setRecentTasks(tasks);
     } catch (err) {
@@ -130,7 +130,7 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
     if (!user) throw new Error('User not authenticated');
 
     const { data, error } = await supabase
-      .from('agent_tasks')
+      .from('agent_tasks' as any)
       .insert({
         user_id: user.id,
         agent_id: agentId,
@@ -142,7 +142,7 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
       .single();
 
     if (error) throw error;
-    return data.id;
+    return (data as any).id;
   };
 
   return (

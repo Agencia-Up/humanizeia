@@ -54,7 +54,7 @@ export function AgentKnowledgeModal({ isOpen, onOpenChange, agents }: AgentKnowl
       if (!user) throw new Error('Usuário não autenticado');
 
       const { data, error } = await supabase
-        .from('agent_knowledge')
+        .from('agent_knowledge' as any)
         .select('knowledge_text')
         .eq('user_id', user.id)
         .eq('agent_id', agent.id)
@@ -65,7 +65,7 @@ export function AgentKnowledgeModal({ isOpen, onOpenChange, agents }: AgentKnowl
       }
 
       if (data) {
-        setKnowledgeText(data.knowledge_text);
+        setKnowledgeText((data as any).knowledge_text);
       }
     } catch (err: any) {
       toast({ title: 'Erro ao carregar', description: err.message, variant: 'destructive' });
@@ -82,7 +82,7 @@ export function AgentKnowledgeModal({ isOpen, onOpenChange, agents }: AgentKnowl
       if (!user) throw new Error('Usuário não autenticado');
 
       const { error } = await supabase
-        .from('agent_knowledge')
+        .from('agent_knowledge' as any)
         .upsert({
           user_id: user.id,
           agent_id: selectedAgent.id,

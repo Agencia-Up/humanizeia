@@ -14,13 +14,13 @@ export const useOrchestrator = () => {
     queryFn: async () => {
       if (!user) return null;
       const { data, error } = await supabase
-        .from('client_briefings')
+        .from('client_briefings' as any)
         .select('*')
         .eq('user_id', user.id)
         .maybeSingle();
 
       if (error) throw error;
-      return data as ClientBriefing;
+      return data as unknown as ClientBriefing;
     },
     enabled: !!user,
   });
@@ -31,13 +31,13 @@ export const useOrchestrator = () => {
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
-        .from('orchestrator_tasks')
+        .from('orchestrator_tasks' as any)
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return data as OrchestratorTask[];
+      return data as unknown as OrchestratorTask[];
     },
     enabled: !!user,
   });
@@ -48,14 +48,14 @@ export const useOrchestrator = () => {
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
-        .from('agent_executions')
+        .from('agent_executions' as any)
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(10);
 
       if (error) throw error;
-      return data as AgentExecution[];
+      return data as unknown as AgentExecution[];
     },
     enabled: !!user,
   });
@@ -91,7 +91,7 @@ export const useOrchestrator = () => {
       ];
 
       const { data, error } = await supabase
-        .from('orchestrator_tasks')
+        .from('orchestrator_tasks' as any)
         .insert(suggestedTasks)
         .select();
 
@@ -110,7 +110,7 @@ export const useOrchestrator = () => {
       if (!user) return;
 
       // Step 1: Set task to In Progress
-      await supabase.from('orchestrator_tasks').update({ status: 'in_progress' } as never).eq('id', task.id);
+      await supabase.from('orchestrator_tasks' as any).update({ status: 'in_progress' } as never).eq('id', task.id);
       queryClient.invalidateQueries({ queryKey: ['orchestrator-tasks'] });
 
       // Build context strings from briefing
@@ -134,7 +134,7 @@ export const useOrchestrator = () => {
         console.error("Erro na análise IA:", err);
       }
 
-      await supabase.from('agent_executions').insert({
+      await supabase.from('agent_executions' as any).insert({
         task_id: task.id,
         user_id: user.id,
         agent_id: 'SISTEMA_ANALISE',
@@ -165,7 +165,7 @@ export const useOrchestrator = () => {
 
       const exactAgentId = task.type === 'copywriting' ? 'PAULO_COPY' : (task.type === 'ads' ? 'JOSE_ADS' : 'DANIEL_ESTRATEGIA');
       
-      await supabase.from('agent_executions').insert({
+      await supabase.from('agent_executions' as any).insert({
         task_id: task.id,
         user_id: user.id,
         agent_id: exactAgentId,
@@ -176,7 +176,7 @@ export const useOrchestrator = () => {
       queryClient.invalidateQueries({ queryKey: ['agent-executions'] });
 
       // Step 4: Complete Master Task
-      await supabase.from('orchestrator_tasks').update({ status: 'completed' } as never).eq('id', task.id);
+      await supabase.from('orchestrator_tasks' as any).update({ status: 'completed' } as never).eq('id', task.id);
       queryClient.invalidateQueries({ queryKey: ['orchestrator-tasks'] });
     },
     onSuccess: () => {
@@ -187,7 +187,7 @@ export const useOrchestrator = () => {
   const clearBriefingMutation = useMutation({
     mutationFn: async () => {
       if (!user) return;
-      const { error } = await supabase.from('client_briefings').delete().eq('user_id', user.id);
+      const { error } = await supabase.from('client_briefings' as any).delete().eq('user_id', user.id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -200,8 +200,8 @@ export const useOrchestrator = () => {
     mutationFn: async () => {
       if (!user) return;
       // Because Tasks drop will cascade Agent Executions or can be deleted independently
-      await supabase.from('agent_executions').delete().eq('user_id', user.id);
-      const { error } = await supabase.from('orchestrator_tasks').delete().eq('user_id', user.id);
+      await supabase.from('agent_executions' as any).delete().eq('user_id', user.id);
+      const { error } = await supabase.from('orchestrator_tasks' as any).delete().eq('user_id', user.id);
       if (error) throw error;
     },
     onSuccess: () => {
