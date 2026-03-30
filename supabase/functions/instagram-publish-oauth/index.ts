@@ -123,8 +123,7 @@ serve(async (req) => {
             profile_picture_url: picUrl,
             expires_in:          expiresIn,
             connected_at:        new Date().toISOString(),
-          },
-          connected_at: new Date().toISOString(),
+          }
         }, { onConflict: 'user_id,platform' });
 
         if (upsertError) {
@@ -136,16 +135,14 @@ serve(async (req) => {
           if (exist) {
             const { error: updateErr } = await supabase.from('connected_accounts' as any).update({
               account_id: igUserId, account_name: username, access_token: token,
-              extra_data: { ig_user_id: igUserId, username, profile_picture_url: picUrl, expires_in: expiresIn, connected_at: new Date().toISOString() },
-              connected_at: new Date().toISOString()
+              extra_data: { ig_user_id: igUserId, username, profile_picture_url: picUrl, expires_in: expiresIn, connected_at: new Date().toISOString() }
             }).eq('id', exist.id);
             if (updateErr) return redirectError('Falha DB Update: ' + updateErr.message);
           } else {
             const { error: insertErr } = await supabase.from('connected_accounts' as any).insert({
               user_id: userId, platform: 'instagram_publisher',
               account_id: igUserId, account_name: username, access_token: token,
-              extra_data: { ig_user_id: igUserId, username, profile_picture_url: picUrl, expires_in: expiresIn, connected_at: new Date().toISOString() },
-              connected_at: new Date().toISOString()
+              extra_data: { ig_user_id: igUserId, username, profile_picture_url: picUrl, expires_in: expiresIn, connected_at: new Date().toISOString() }
             });
             if (insertErr) return redirectError('Falha DB Insert: ' + insertErr.message);
           }
@@ -226,7 +223,7 @@ serve(async (req) => {
       if (!refreshData.access_token) throw new Error('Erro ao renovar token');
 
       await supabase.from('connected_accounts' as any)
-        .update({ access_token: refreshData.access_token, connected_at: new Date().toISOString() })
+        .update({ access_token: refreshData.access_token })
         .eq('user_id', user.id)
         .eq('platform', 'instagram_publisher');
 
