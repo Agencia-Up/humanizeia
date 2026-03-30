@@ -44,13 +44,14 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
       .single()
       .then(({ data, error }) => {
         if (error || !data) {
-          // Query failed – redirect to onboarding as safest fallback (no looping to quiz)
           setProfileState('no_org');
           return;
         }
 
         const hasOrg   = !!data.organization_id;
-        const doneQuiz = !!data.quiz_completed;
+        // Verifica tanto o banco quanto o localStorage (fallback para quando a coluna não existe ainda)
+        const doneQuiz = !!(data as any).quiz_completed
+          || localStorage.getItem(`quiz_completed_${user.id}`) === 'true';
 
         if (!hasOrg && !isOrgExempt) {
           setProfileState('no_org');
@@ -60,6 +61,7 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
           setProfileState('ok');
         }
       });
+
   }, [user?.id, location.pathname]);
 
   if (loading || (user && profileState === 'loading')) {

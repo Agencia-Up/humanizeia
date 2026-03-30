@@ -13,26 +13,24 @@ import {
   Brain, Zap, Target, Cpu, BarChart3
 } from 'lucide-react';
 
-// ──────────────────────────────────────────────────────────────
-// Original quiz questions (kept exactly as originally defined)
-// ──────────────────────────────────────────────────────────────
+// ─── Quiz Questions ───────────────────────────────────────────────────────────
 
 const questions = [
   {
     id: 1,
     question: 'Quais nichos focamos para criação do briefing?',
     options: [
-      { id: 'automotivo',             label: 'Automotivo (Concessionárias, Lojas de Carros, Oficinas)',                            emoji: '🚗' },
-      { id: 'saude_bem_estar',        label: 'Saúde e Bem-Estar (Clínicas, Consultórios, Spas, Academias)',                         emoji: '💊' },
-      { id: 'varejo_ecommerce',       label: 'Varejo e E-commerce (Moda, Acessórios, Produtos Físicos)',                            emoji: '🛍️' },
-      { id: 'educacao_conhecimento',  label: 'Educação e Conhecimento (Cursos Online, Infoprodutos, Consultorias)',                  emoji: '🎓' },
-      { id: 'alimentacao_bebidas',    label: 'Alimentação e Bebidas (Restaurantes, Bares, Cafeterias)',                             emoji: '🍽️' },
-      { id: 'imobiliario',            label: 'Imobiliário (Imobiliárias, Corretores, Construtoras)',                                emoji: '🏠' },
-      { id: 'servicos_b2b',           label: 'Serviços Profissionais B2B (Consultoria, Agências, TI)',                             emoji: '💼' },
-      { id: 'pet',                    label: 'Pet (Pet Shops, Clínicas Veterinárias, Serviços para Animais)',                       emoji: '🐾' },
-      { id: 'financas_investimentos', label: 'Finanças e Investimentos (Bancos, Seguradoras, Consultores Financeiros)',             emoji: '💰' },
-      { id: 'tecnologia_saas',        label: 'Tecnologia e Software (SaaS, Apps, Startups)',                                       emoji: '💻' },
-      { id: 'outro',                  label: 'Outro (Por favor, especifique brevemente)',                                          emoji: '✨', hasInput: true },
+      { id: 'automotivo',             label: 'Automotivo (Concessionárias, Lojas de Carros, Oficinas)',                   emoji: '🚗' },
+      { id: 'saude_bem_estar',        label: 'Saúde e Bem-Estar (Clínicas, Consultórios, Spas, Academias)',                emoji: '💊' },
+      { id: 'varejo_ecommerce',       label: 'Varejo e E-commerce (Moda, Acessórios, Produtos Físicos)',                   emoji: '🛍️' },
+      { id: 'educacao_conhecimento',  label: 'Educação e Conhecimento (Cursos Online, Infoprodutos, Consultorias)',         emoji: '🎓' },
+      { id: 'alimentacao_bebidas',    label: 'Alimentação e Bebidas (Restaurantes, Bares, Cafeterias)',                    emoji: '🍽️' },
+      { id: 'imobiliario',            label: 'Imobiliário (Imobiliárias, Corretores, Construtoras)',                       emoji: '🏠' },
+      { id: 'servicos_b2b',           label: 'Serviços Profissionais B2B (Consultoria, Agências, TI)',                    emoji: '💼' },
+      { id: 'pet',                    label: 'Pet (Pet Shops, Clínicas Veterinárias, Serviços para Animais)',              emoji: '🐾' },
+      { id: 'financas_investimentos', label: 'Finanças e Investimentos (Bancos, Seguradoras, Consultores Financeiros)',    emoji: '💰' },
+      { id: 'tecnologia_saas',        label: 'Tecnologia e Software (SaaS, Apps, Startups)',                              emoji: '💻' },
+      { id: 'outro',                  label: 'Outro (Por favor, especifique brevemente)',                                  emoji: '✨', hasInput: true },
     ],
   },
   {
@@ -40,7 +38,7 @@ const questions = [
     question: 'Qual é o principal produto ou serviço que você oferece?',
     options: [
       { id: 'a', label: 'Venda de veículos (novos/usados), serviços automotivos',                                         emoji: '🚘' },
-      { id: 'b', label: 'Tratamentos estéticos, serviços de beleza, consultas médicas/odontológicas, planos de academia',  emoji: '✨' },
+      { id: 'b', label: 'Tratamentos estéticos, serviços de beleza, consultas médicas/odontológicas, planos de academia', emoji: '✨' },
       { id: 'c', label: 'Roupas, joias, acessórios, produtos de moda',                                                   emoji: '👗' },
       { id: 'd', label: 'Cursos digitais, e-books, mentorias, softwares',                                                 emoji: '📚' },
       { id: 'e', label: 'Refeições, bebidas, experiências gastronômicas',                                                 emoji: '🍴' },
@@ -56,28 +54,24 @@ const questions = [
     id: 3,
     question: 'Qual é o seu principal objetivo de marketing no momento?',
     options: [
-      { id: 'a', label: 'Gerar leads qualificados para vendas (ex: test drive, consulta, visita)',  emoji: '🎯' },
-      { id: 'b', label: 'Aumentar o reconhecimento da marca e engajamento nas redes sociais',        emoji: '📣' },
-      { id: 'c', label: 'Impulsionar vendas diretas (e-commerce, reservas)',                        emoji: '💳' },
-      { id: 'd', label: 'Lançar um novo produto/serviço ou expandir para um novo mercado',           emoji: '🚀' },
-      { id: 'e', label: 'Fidelizar clientes e aumentar o valor de vida útil (LTV)',                 emoji: '🔄' },
+      { id: 'a', label: 'Gerar leads qualificados para vendas (ex: test drive, consulta, visita)', emoji: '🎯' },
+      { id: 'b', label: 'Aumentar o reconhecimento da marca e engajamento nas redes sociais',       emoji: '📣' },
+      { id: 'c', label: 'Impulsionar vendas diretas (e-commerce, reservas)',                       emoji: '💳' },
+      { id: 'd', label: 'Lançar um novo produto/serviço ou expandir para um novo mercado',          emoji: '🚀' },
+      { id: 'e', label: 'Fidelizar clientes e aumentar o valor de vida útil (LTV)',                emoji: '🔄' },
     ],
   },
   {
     id: 4,
     question: 'Você já possui uma conta de Instagram Business ou Criador vinculada a uma Página do Facebook?',
     options: [
-      { id: 'a', label: 'Sim, já está configurada e vinculada.',              emoji: '✅' },
-      { id: 'b', label: 'Não, mas tenho uma conta pessoal e quero migrar.',   emoji: '🔄' },
-      { id: 'c', label: 'Não, e preciso de ajuda para configurar.',           emoji: '⚙️' },
-      { id: 'd', label: 'Não tenho Instagram.',                               emoji: '❌' },
+      { id: 'a', label: 'Sim, já está configurada e vinculada.',             emoji: '✅' },
+      { id: 'b', label: 'Não, mas tenho uma conta pessoal e quero migrar.',  emoji: '🔄' },
+      { id: 'c', label: 'Não, e preciso de ajuda para configurar.',          emoji: '⚙️' },
+      { id: 'd', label: 'Não tenho Instagram.',                              emoji: '❌' },
     ],
   },
 ];
-
-// ──────────────────────────────────────────────────────────────
-// Niche label map
-// ──────────────────────────────────────────────────────────────
 
 const NICHE_LABELS: Record<string, string> = {
   automotivo: 'Automotivo',
@@ -93,17 +87,15 @@ const NICHE_LABELS: Record<string, string> = {
   outro: 'Personalizado',
 };
 
-// ──────────────────────────────────────────────────────────────
-// Loading Screen
-// ──────────────────────────────────────────────────────────────
+// ─── Loading Screen ───────────────────────────────────────────────────────────
 
 const LOADING_STEPS = [
-  { icon: Brain,    label: 'Analisando seu nicho de mercado...',            color: 'text-blue-400'   },
-  { icon: Cpu,      label: 'Carregando base de conhecimento estratégico...', color: 'text-purple-400' },
-  { icon: Zap,      label: 'Agente de briefing está trabalhando...',        color: 'text-yellow-400' },
-  { icon: Target,   label: 'Personalizando perguntas para o seu nicho...',  color: 'text-pink-400'   },
-  { icon: BarChart3,label: 'Montando sua estratégia exclusiva...',          color: 'text-cyan-400'   },
-  { icon: CheckCircle2, label: 'Pronto! Direcionando para o Salomão...',   color: 'text-emerald-400' },
+  { icon: Brain,        label: 'Analisando seu nicho de mercado...',            color: 'text-blue-400'   },
+  { icon: Cpu,          label: 'Carregando base de conhecimento estratégico...', color: 'text-purple-400' },
+  { icon: Zap,          label: 'Agente de briefing está trabalhando...',        color: 'text-yellow-400' },
+  { icon: Target,       label: 'Personalizando perguntas para o seu nicho...',  color: 'text-pink-400'   },
+  { icon: BarChart3,    label: 'Montando sua estratégia exclusiva...',          color: 'text-cyan-400'   },
+  { icon: CheckCircle2, label: 'Pronto! Direcionando para o Salomão...',        color: 'text-emerald-400' },
 ];
 
 function LoadingScreen({ niche }: { niche: string }) {
@@ -136,12 +128,11 @@ function LoadingScreen({ niche }: { niche: string }) {
       {/* Orbit rings */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div className="w-[480px] h-[480px] rounded-full border border-purple-500/10 animate-spin" style={{ animationDuration: '22s' }} />
-        <div className="absolute w-[330px] h-[330px] rounded-full border border-blue-500/10 animate-spin"   style={{ animationDuration: '16s', animationDirection: 'reverse' }} />
-        <div className="absolute w-[190px] h-[190px] rounded-full border border-pink-500/10  animate-spin"  style={{ animationDuration: '10s' }} />
+        <div className="absolute w-[330px] h-[330px] rounded-full border border-blue-500/10 animate-spin" style={{ animationDuration: '16s', animationDirection: 'reverse' }} />
+        <div className="absolute w-[190px] h-[190px] rounded-full border border-pink-500/10 animate-spin" style={{ animationDuration: '10s' }} />
       </div>
 
       <div className="relative z-10 flex flex-col items-center gap-8 px-6 text-center max-w-md w-full">
-
         {/* Icon */}
         <div className="relative">
           <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-600/20 to-blue-600/20 border border-purple-500/30 flex items-center justify-center backdrop-blur-sm shadow-2xl shadow-purple-500/20">
@@ -224,9 +215,7 @@ function LoadingScreen({ niche }: { niche: string }) {
   );
 }
 
-// ──────────────────────────────────────────────────────────────
-// Main Component
-// ──────────────────────────────────────────────────────────────
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function NicheQuiz() {
   const navigate = useNavigate();
@@ -267,119 +256,82 @@ export default function NicheQuiz() {
     setIsSubmitting(true);
     setShowLoading(true);
 
+    // ── Salvar no localStorage imediatamente (fallback garantido) ──
+    localStorage.setItem(`quiz_completed_${user.id}`, 'true');
+    localStorage.setItem(`quiz_niche_${user.id}`, identifiedNiche);
+
     try {
-      // 1. Save quiz responses
-      const respostasCompletas = { answers, otherInputs };
+      // 1. Tenta salvar no banco (ignora se tabela não existe)
+      try {
+        await supabase.from('user_quiz_responses' as any).insert({
+          user_id: user.id,
+          nicho_identificado: identifiedNiche,
+          respostas_completas: { answers, otherInputs },
+        });
+      } catch { /* tabela pode não existir ainda */ }
 
-      const { data: existing } = await supabase
-        .from('user_quiz_responses' as any)
-        .select('id')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1);
+      // 2. Tenta marcar quiz_completed no perfil (ignora se coluna não existe)
+      try {
+        await supabase.from('profiles').update({ quiz_completed: true } as any).eq('id', user.id);
+      } catch { /* coluna pode não existir ainda */ }
 
-      const existingId = (existing as any)?.[0]?.id;
-      const upsert = {
-        user_id: user.id,
-        nicho_identificado: identifiedNiche,
-        respostas_completas: respostasCompletas,
-        updated_at: new Date().toISOString(),
-      };
-
-      if (existingId) {
-        await supabase.from('user_quiz_responses' as any).update(upsert).eq('id', existingId);
-      } else {
-        await supabase.from('user_quiz_responses' as any).insert(upsert);
-      }
-
-      // 2. Fetch niche briefing template
+      // 3. Busca template do nicho
       let templateContent = '';
       try {
         const resp = await fetch(`/briefings/briefing_nicho_${identifiedNiche}.md`);
         if (resp.ok) templateContent = await resp.text();
-      } catch { /* template não encontrado, ok */ }
+      } catch { /* arquivo não encontrado */ }
 
-      // 3. Call AI agent to generate the briefing based on niche template + quiz answers
-      const quizSummary = `
-Nicho: ${NICHE_LABELS[identifiedNiche] || identifiedNiche}
-Produto/Serviço: ${questions[1].options.find(o => o.id === answers[2])?.label || answers[2] || 'Não informado'}
-Objetivo de Marketing: ${questions[2].options.find(o => o.id === answers[3])?.label || answers[3] || 'Não informado'}
-Presença Digital: ${questions[3].options.find(o => o.id === answers[4])?.label || answers[4] || 'Não informado'}
-${otherInputs[1] ? `Nicho personalizado: ${otherInputs[1]}` : ''}
-      `.trim();
-
-      const systemPromptForBriefing = `Você é o Agente de Briefing do Salomão, especialista em criar briefings estratégicos personalizados para marketing digital brasileiro.
-
-Com base nas respostas do quiz e no template do nicho abaixo, gere um BRIEFING ESTRATÉGICO COMPLETO e PRÉ-PREENCHIDO para este negócio, seguindo EXATAMENTE a estrutura do template.
-
-REGRAS:
-- Preencha cada campo com respostas estratégicas e específicas para o nicho identificado
-- Use o contexto do quiz para personalizar cada resposta
-- Seja específico e orientado a resultados
-- Escreva em português brasileiro
-- O briefing gerado será usado diretamente pelos agentes de IA (Paulo, Daniel, Davi, José)
-
-RESPOSTAS DO QUIZ:
-${quizSummary}
-
-TEMPLATE DO NICHO (base para gerar o briefing):
-${templateContent || `Nicho: ${NICHE_LABELS[identifiedNiche] || identifiedNiche}\nGere um briefing estratégico completo com seções: Negócio & Marca, Identidade Visual, Cliente Ideal (ICP), Oferta & Preço, Aquisição & Comunicação, Autoridade & Provas, Regras do Agente Salomão.`}`;
+      // 4. Gera briefing via IA (ignora se edge function falhar)
+      const quizSummary = [
+        `Nicho: ${NICHE_LABELS[identifiedNiche] || identifiedNiche}`,
+        `Produto/Serviço: ${questions[1].options.find(o => o.id === answers[2])?.label || 'Não informado'}`,
+        `Objetivo: ${questions[2].options.find(o => o.id === answers[3])?.label || 'Não informado'}`,
+        `Presença Digital: ${questions[3].options.find(o => o.id === answers[4])?.label || 'Não informado'}`,
+        otherInputs[1] ? `Detalhe: ${otherInputs[1]}` : '',
+      ].filter(Boolean).join('\n');
 
       let generatedBriefing = '';
       try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData?.session?.access_token;
-
-        if (token) {
-          const res = await supabase.functions.invoke('claude-chat', {
-            body: {
-              context: 'assistant',
-              stream: false,
-              messages: [
-                {
-                  role: 'user',
-                  content: systemPromptForBriefing,
-                },
-              ],
-            },
-          });
-
-          const content = res.data?.choices?.[0]?.message?.content;
-          if (content) generatedBriefing = content;
-        }
-      } catch (aiErr) {
-        console.warn('AI briefing generation failed, using template:', aiErr);
-      }
-
-      // Fallback: use template if AI failed
-      if (!generatedBriefing && templateContent) {
-        generatedBriefing = `# Briefing Gerado — ${NICHE_LABELS[identifiedNiche] || identifiedNiche}\n\n${templateContent}`;
-      }
-
-      // 4. Save generated briefing to Salomão's agent_chat_history so it loads automatically
-      if (generatedBriefing) {
-        await supabase.from('agent_chat_history' as any).insert({
-          user_id: user.id,
-          agent_id: 'salomao',
-          role: 'assistant',
-          content: generatedBriefing,
-          metadata: { type: 'generated_prompt', source: 'quiz', niche: identifiedNiche },
+        const res = await supabase.functions.invoke('claude-chat', {
+          body: {
+            context: 'assistant',
+            stream: false,
+            messages: [{
+              role: 'user',
+              content: `Você é o Agente de Briefing do Salomão.\n\nCom base nas respostas do quiz e no template, gere um BRIEFING ESTRATÉGICO COMPLETO e PRÉ-PREENCHIDO.\n\nQUIZ:\n${quizSummary}\n\nTEMPLATE:\n${templateContent || `Nicho: ${NICHE_LABELS[identifiedNiche]}\nGere briefing com: Negócio & Marca, Cliente Ideal, Oferta, Aquisição, Comunicação, Autoridade, Regras do Agente.`}\n\nGere o briefing completo em português brasileiro.`,
+            }],
+          },
         });
+        const content = res.data?.choices?.[0]?.message?.content || res.data?.content;
+        if (content) generatedBriefing = content;
+      } catch { /* edge function pode falhar */ }
+
+      if (!generatedBriefing && templateContent) {
+        generatedBriefing = `# Briefing — ${NICHE_LABELS[identifiedNiche] || identifiedNiche}\n\n${templateContent}`;
       }
 
-      // 5. Mark quiz as completed
-      await supabase.from('profiles').update({ quiz_completed: true }).eq('id', user.id);
+      // 5. Salva briefing no histórico do Salomão (ignora se tabela não existe)
+      if (generatedBriefing) {
+        try {
+          await supabase.from('agent_chat_history' as any).insert({
+            user_id: user.id,
+            agent_id: 'salomao',
+            role: 'assistant',
+            content: generatedBriefing,
+            metadata: { type: 'generated_prompt', source: 'quiz', niche: identifiedNiche },
+          });
+        } catch { /* tabela pode não existir ainda */ }
+      }
 
-      // 6. Wait for loading animation minimum (steps take ~5.1s)
+      // 6. Aguarda animação e redireciona
       await new Promise(resolve => setTimeout(resolve, 5200));
-
-      // 7. Navigate to Salomão — the generated briefing will auto-load
-      navigate('/salomao', { replace: true });
+      window.location.replace('/salomao');
 
     } catch (err: any) {
       setShowLoading(false);
       setIsSubmitting(false);
-      toast({ title: 'Erro ao salvar', description: err.message || 'Tente novamente.', variant: 'destructive' });
+      toast({ title: 'Erro inesperado', description: err.message || 'Tente novamente.', variant: 'destructive' });
     }
   };
 
@@ -387,7 +339,6 @@ ${templateContent || `Nicho: ${NICHE_LABELS[identifiedNiche] || identifiedNiche}
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4 sm:p-8 relative overflow-hidden">
-      {/* Subtle gradient top */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[700px] h-[350px] bg-gradient-to-b from-primary/6 to-transparent rounded-full blur-3xl pointer-events-none" />
 
       <div className="relative z-10 w-full max-w-2xl space-y-8">
@@ -398,9 +349,7 @@ ${templateContent || `Nicho: ${NICHE_LABELS[identifiedNiche] || identifiedNiche}
             <Sparkles className="h-8 w-8 text-primary" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-3xl font-bold tracking-tight">
-              Quiz de Qualificação de Nicho
-            </h1>
+            <h1 className="text-3xl font-bold tracking-tight">Quiz de Qualificação de Nicho</h1>
             <p className="max-w-md text-muted-foreground leading-relaxed">
               Oi! Para que a LogosIA possa otimizar sua estratégia de marketing com a máxima precisão,
               precisamos entender um pouco mais sobre o seu negócio.
@@ -426,14 +375,12 @@ ${templateContent || `Nicho: ${NICHE_LABELS[identifiedNiche] || identifiedNiche}
 
         {/* Question card */}
         <div className="rounded-2xl border border-border/50 bg-card/80 backdrop-blur-sm shadow-xl overflow-hidden">
-          {/* Question title */}
           <div className="px-6 pt-6 pb-4 border-b border-border/30">
             <h2 className="text-xl font-bold leading-tight">
               {currentQuestion.id}. {currentQuestion.question}
             </h2>
           </div>
 
-          {/* Options */}
           <div className="p-6">
             <RadioGroup
               value={answers[currentQuestion.id]}
@@ -452,11 +399,7 @@ ${templateContent || `Nicho: ${NICHE_LABELS[identifiedNiche] || identifiedNiche}
                           : 'border-border/40 bg-background/50 hover:border-border hover:bg-muted/30'
                       }`}
                     >
-                      <RadioGroupItem
-                        value={option.id}
-                        id={`q${currentQuestion.id}-${option.id}`}
-                        className="shrink-0"
-                      />
+                      <RadioGroupItem value={option.id} id={`q${currentQuestion.id}-${option.id}`} className="shrink-0" />
                       <span className="text-lg shrink-0">{(option as any).emoji || '•'}</span>
                       <span className={`flex-1 text-sm font-medium ${isSelected ? 'text-primary' : 'text-foreground'}`}>
                         {option.label}
@@ -479,7 +422,6 @@ ${templateContent || `Nicho: ${NICHE_LABELS[identifiedNiche] || identifiedNiche}
             </RadioGroup>
           </div>
 
-          {/* Navigation */}
           <div className="px-6 pb-6 flex items-center justify-between gap-4">
             <Button
               variant="ghost"
@@ -495,11 +437,10 @@ ${templateContent || `Nicho: ${NICHE_LABELS[identifiedNiche] || identifiedNiche}
               disabled={isSubmitting || !answers[currentQuestion.id]}
               className="gap-2 min-w-[140px] bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white font-semibold shadow-lg shadow-primary/20"
             >
-              {currentStep === questions.length - 1 ? (
-                <><Sparkles className="h-4 w-4" /> Concluir</>
-              ) : (
-                <>Próxima <ArrowRight className="h-4 w-4" /></>
-              )}
+              {currentStep === questions.length - 1
+                ? <><Sparkles className="h-4 w-4" /> Concluir</>
+                : <>Próxima <ArrowRight className="h-4 w-4" /></>
+              }
             </Button>
           </div>
         </div>
