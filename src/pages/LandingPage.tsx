@@ -369,7 +369,7 @@ export default function LandingPage() {
               <div className="border-t border-red-500/20 pt-4 mb-5">
                 <div className="flex justify-between items-center">
                   <span className="font-bold text-sm">TOTAL</span>
-                  <span className="text-2xl font-bold text-red-400">R$ 57.000/mês</span>
+                  <span className="text-2xl font-bold text-red-400">R$ 15.000/mês</span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
                   + encargos, férias, 13º, treinamentos, rotatividade...
