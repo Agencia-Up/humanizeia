@@ -26,7 +26,7 @@ export function AgentChatProvider({ children }: { children: React.ReactNode }) {
     if (!user) return [];
     
     const { data, error } = await supabase
-      .from('agent_chat_history')
+      .from('agent_chat_history' as any)
       .select('*')
       .eq('user_id', user.id)
       .eq('agent_id', agentId)
