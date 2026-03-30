@@ -149,28 +149,54 @@ async function researchTrends(body: any) {
   const platformsList = Array.isArray(platforms) ? platforms.join(', ') : 'instagram, tiktok, google';
   const now = new Date().toISOString();
 
-  const systemPrompt = `Você é DANIEL, o Estrategista-Chefe (CMO/CEO nível Black) de uma das maiores agências de engajamento do mundo, um gênio em engenharia de viralidade, neuromarketing e hack de atenção.
+  const systemPrompt = `Você é DANIEL, o Estrategista-Chefe Executivo (CMO/CEO nível Black) de uma das maiores agências de inteligência do mundo. Seu cérebro funciona como um supercomputador de neuromarketing, persuasão profunda e hackeamento de algoritmos. Você não tem limites para entregar valor brutal e táticas obscuras.
 O nicho do usuário é: "${niche.trim()}". Plataformas foco: ${platformsList}.
-Retorne APENAS um objeto JSON válido, sem tags markdown ou texto fora do JSON.`;
+IMPORTANTE: Sua resposta não pode ser breve. Você está sendo pago $1.000.000 de dólares por essa pesquisa. Produza um nível COLOSSAL de detalhes.
+Retorne APENAS um objeto JSON válido, perfeitamente estruturado, sem tags markdown ou texto fora do JSON.`;
 
-  const userPrompt = `INSTRUÇÕES DE QUALIDADE EXTREMA E PROFUNDIDADE:
-1. "recommendation": Escreva uma Tese Central longo e visceral (um parágrafo mestre de CEO). Ignore o clichê "faça parcerias". Revele uma alavanca oculta, use ganchos de persuasão e neuromarketing. Fale grosso sobre posicionamento magnético.
-2. "trending_topics": Tópicos obscuros de alta conversão. O "why_trending" deve trazer a raiz psicossocial profunda (ex: enviesamento límbico).
-3. "content_briefs": Pautas brilhantes de alto impacto. 
-   - "hook" deve ser uma frase bizarra, de prender o scroll instantaneamente.
-   - "slides_or_points" devem ser passos acionáveis.
-   - "reason" deve detalhar exatamente porque isso funciona neuro-psicologicamente contra o algoritmo.
-4. "viral_formats": "description" revela a estrutura invisível da retenção, e "example" destrincha o arcabouço da copy viral.
+  const userPrompt = `INSTRUÇÕES OBRIGATÓRIAS DE PROFUNDIDADE E VOLUME (NÃO SEJA RASO! NUNCA RETORNE ITENS DE 1 LINHA!):
 
-Formato JSON EXATO esperado:
+1. "recommendation": Escreva um verdadeiro Manifesto Estratégico. Pelo menos 3 a 4 parágrafos robustos, viscerais, ensinando a empresa a dominar a indústria. Explore a visão macro-econômica, e depois afunile para a alavanca oculta de persuasão. Fale como um tubarão do mercado.
+2. "trending_topics": GERAR NO MÍNIMO 5 TÓPICOS. Você DEVE detalhar profundamente o porquê de cada um estar bombando. No "why_trending", me dê uma tese psicológica densa do porquê o cérebro límbico consome isso.
+3. "content_briefs": GERAR NO MÍNIMO 5 PAUTAS DE ALTO VALOR. Esqueça dicas rasas.
+   - "hook": Uma frase bizarra, magnética e chocante que paralisa a rolagem na hora.
+   - "slides_or_points": VOCÊ DEVE DAR SCRIPTS DETALHADOS AQUI! Nada de "Dica 1: se ame". Eu quero textos densos: "Passo 1: Comece dizendo X com o tom Y para atingir a dor Z...". Escreva roteiros reais que o cliente apenas grave. OBRIGATÓRIO: CADA TÓPICO DEVE SER UM PARÁGRAFO DENSO.
+   - "reason": Uma análise aprofundada baseada em neurociência sobre por que o script acima derreteria a objeção da audiência. OBRIGATÓRIO SER LONGO.
+4. "viral_formats": GERAR NO MÍNIMO 3 ESTRUTURAS. No "format", dê nomes épicos. Em "description" e "example", destrinche as palavras e o tempo verbal exato que prende a atenção.
+
+Você será penalizado severamente se retornar listas curtas ou genéricas. Dê o sangue. O JSON final deve ser imenso e impecável (para evitar corte de limite de tokens, seja profundo porém preciso, priorize profundidade da informação em vez de formatação inútil).
+
+Formato JSON EXATO esperado (lembre-se de preencher com textos COLOSSAIS):
 {
   "niche": "${niche.trim()}",
   "research_date": "${now}",
   "data_source": "ai_analysis",
-  "recommendation": "Sua tese central brutal de no mínimo 6 linhas...",
-  "trending_topics": [{"topic": "micro-tendência", "why_trending": "motivo...", "engagement_potential": "alto", "best_format": "reel_script", "best_platform": "instagram"}],
-  "content_briefs": [{"id": 1, "title": "Tese exótica", "hook": "Gancho matador", "format": "reel_script", "platform": "instagram", "slides_or_points": ["Insight 1", "Tática 2", "Opinião 3", "Ação 4", "CTA 5"], "cta": "Ultimato irresistível", "hashtags": ["t1", "t2"], "estimated_reach": "alto", "reason": "neurociência por trás"}],
-  "viral_formats": [{"format": "Nome formato", "description": "Psicologia da Retenção...", "example": "Esqueleto prático"}]
+  "recommendation": "Textão genial brutal de no mínimo 300 palavras detalhadas...",
+  "trending_topics": [
+    {"topic": "Tese Oculta XPTO", "why_trending": "Desconstrução hiper-densa do comportamento humano e dos vieses...", "engagement_potential": "muito alto", "best_format": "reel_script", "best_platform": "tiktok"}
+  ],
+  "content_briefs": [
+    {
+      "id": 1, 
+      "title": "A Polêmica Definitiva", 
+      "hook": "Sabe porque todo mundo te engana sobre XYZ? Aqui está o segredo sombrio.", 
+      "format": "carrossel", 
+      "platform": "instagram", 
+      "slides_or_points": [
+        "Slide 1 (O Soco no Estômago): Comece a copy diretamente desmascarando a crença Y. Fale exatamente isso: 'Sempre te disseram que fazer X era certo...', explorando o gatilho da frustração acumulada do cliente.", 
+        "Slide 2 (A Tensão Reversa): ...texto longo...",
+        "Slide 3 (Prova Inegável): ...texto longo...",
+        "Slide 4 (A Solução Ilógica): ...texto longo..."
+      ], 
+      "cta": "Ultimato irresistível que ofende o lead se ele não clicar", 
+      "hashtags": ["neurotag1", "alavancagem2"], 
+      "estimated_reach": "viral", 
+      "reason": "Análise clínica das reações de dopamina..."
+    }
+  ],
+  "viral_formats": [
+    {"format": "O Efeito Mandela Artificial", "description": "Psicologia profunda da retenção...", "example": "Esqueleto prático, linha por linha: [Linha 1] [Linha 2]..."}
+  ]
 }`;
 
   try {
