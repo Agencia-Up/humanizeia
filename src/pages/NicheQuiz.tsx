@@ -13,7 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 const questions = [
   {
     id: 1,
-    question: "Qual é o principal setor de atuação do seu negócio?",
+    question: "Quais nichos focamos para criação do briefing?",
     options: [
       { id: 'automotivo', label: "Automotivo (Concessionárias, Lojas de Carros, Oficinas)" },
       { id: 'saude_bem_estar', label: "Saúde e Bem-Estar (Clínicas, Consultórios, Spas, Academias)" },
