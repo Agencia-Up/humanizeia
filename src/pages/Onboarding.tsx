@@ -47,7 +47,8 @@ export default function Onboarding() {
       toast({ title: 'Erro ao criar empresa', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: '🎉 Empresa criada!', description: 'Sua organização foi criada com sucesso.' });
-      navigate('/dashboard', { replace: true });
+      navigate('/niche-quiz', { replace: true });
+
     }
   };
 
