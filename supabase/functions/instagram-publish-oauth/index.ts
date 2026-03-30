@@ -52,7 +52,10 @@ serve(async (req) => {
             window.location.href = '${errUrl}';
           }
         </script></body></html>`;
-        return new Response(html, { headers: { ...corsHeaders, 'Content-Type': 'text/html; charset=utf-8' } });
+        
+        const htmlHeaders = new Headers(corsHeaders);
+        htmlHeaders.set('Content-Type', 'text/html; charset=utf-8');
+        return new Response(html, { headers: htmlHeaders });
       };
 
       if (errorCode) {
@@ -151,15 +154,24 @@ serve(async (req) => {
 
       // RETORNO HÍBRIDO PARA O FRONTEND (Suposta versão do App do usuário roda em POPUP ou REDIRECT)
       const successUrl = `${origin}/integrations?ig_success=true&username=${encodeURIComponent(username || 'instagram')}`;
-      const successHtml = `<!DOCTYPE html><html><body><script>
-        if (window.opener) {
-          window.opener.postMessage({ type: 'IG_PUBLISH_AUTH_SUCCESS', username: '${(username || 'instagram').replace(/'/g, "\\'")}' }, '*');
-          setTimeout(() => window.close(), 500);
-        } else {
+      const successHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
+      <script>
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage({ type: 'IG_PUBLISH_AUTH_SUCCESS', username: '${(username || 'instagram').replace(/'/g, "\\'")}' }, '*');
+            setTimeout(() => window.close(), 500);
+          } else {
+            window.location.href = '${successUrl}';
+          }
+        } catch (e) {
           window.location.href = '${successUrl}';
         }
-      </script></body></html>`;
-      return new Response(successHtml, { headers: { ...corsHeaders, 'Content-Type': 'text/html; charset=utf-8' } });
+      </script>
+      </body></html>`;
+      
+      const resHeaders = new Headers(corsHeaders);
+      resHeaders.set('Content-Type', 'text/html; charset=utf-8');
+      return new Response(successHtml, { headers: resHeaders });
     }
 
     // ── AÇÕES VIA POST (chamadas do frontend) ──────────────────────────────────
