@@ -75,9 +75,12 @@ O que você espera alcançar nos próximos 3 meses?
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Não autenticado");
 
-      // Save the briefing to the database or send to Salomão
-      // For now, we'll just simulate success and update the profile
-      
+      // Update profile to mark quiz as completed (if not already)
+      await supabase
+        .from('profiles')
+        .update({ quiz_completed: true })
+        .eq('id', session.user.id);
+
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       toast({
