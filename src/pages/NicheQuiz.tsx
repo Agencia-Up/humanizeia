@@ -148,7 +148,7 @@ export default function NicheQuiz() {
 
       if (fetchError) throw fetchError;
 
-      const existingResponses = (existingResponsesData ?? []) as Array<{ id: string }>;
+      const existingResponses = (existingResponsesData ?? []) as unknown as Array<{ id: string }>;
       const latestResponseId = existingResponses?.[0]?.id;
 
       const { error } = latestResponseId
