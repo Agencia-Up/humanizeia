@@ -110,7 +110,7 @@ export const useOrchestrator = () => {
       if (!user) return;
 
       // Step 1: Set task to In Progress
-      await supabase.from('orchestrator_tasks').update({ status: 'in_progress' } as never).eq('id', task.id);
+      await supabase.from('orchestrator_tasks' as any).update({ status: 'in_progress' } as never).eq('id', task.id);
       queryClient.invalidateQueries({ queryKey: ['orchestrator-tasks'] });
 
       // Build context strings from briefing
