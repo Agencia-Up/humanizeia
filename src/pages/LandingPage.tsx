@@ -467,7 +467,7 @@ export default function LandingPage() {
               </div>
               <div className="flex items-center justify-center">
                 <div className="text-center">
-                  <p className="text-4xl font-black text-green-400">R$ 644.036</p>
+                  <p className="text-4xl font-black text-green-400">R$ 140.036</p>
                   <p className="text-sm text-green-400 font-semibold mt-1">de economia no 1º ano</p>
                 </div>
               </div>
