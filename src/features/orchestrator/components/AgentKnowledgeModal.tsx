@@ -65,7 +65,7 @@ export function AgentKnowledgeModal({ isOpen, onOpenChange, agents }: AgentKnowl
       }
 
       if (data) {
-        setKnowledgeText(data.knowledge_text);
+        setKnowledgeText((data as any).knowledge_text);
       }
     } catch (err: any) {
       toast({ title: 'Erro ao carregar', description: err.message, variant: 'destructive' });
