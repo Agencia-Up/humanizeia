@@ -52,7 +52,7 @@ serve(async (req) => {
             window.location.href = '${errUrl}';
           }
         </script></body></html>`;
-        return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        return new Response(html, { headers: { ...corsHeaders, 'Content-Type': 'text/html; charset=utf-8' } });
       };
 
       if (errorCode) {
@@ -116,7 +116,7 @@ serve(async (req) => {
           platform:               'instagram_publisher',
           account_id:             igUserId,
           account_name:           username,
-          access_token_encrypted: token,
+          access_token:           token,
           extra_data: {
             ig_user_id:          igUserId,
             username,
@@ -135,7 +135,7 @@ serve(async (req) => {
           
           if (exist) {
             const { error: updateErr } = await supabase.from('connected_accounts' as any).update({
-              account_id: igUserId, account_name: username, access_token_encrypted: token,
+              account_id: igUserId, account_name: username, access_token: token,
               extra_data: { ig_user_id: igUserId, username, profile_picture_url: picUrl, expires_in: expiresIn, connected_at: new Date().toISOString() },
               connected_at: new Date().toISOString()
             }).eq('id', exist.id);
@@ -143,7 +143,7 @@ serve(async (req) => {
           } else {
             const { error: insertErr } = await supabase.from('connected_accounts' as any).insert({
               user_id: userId, platform: 'instagram_publisher',
-              account_id: igUserId, account_name: username, access_token_encrypted: token,
+              account_id: igUserId, account_name: username, access_token: token,
               extra_data: { ig_user_id: igUserId, username, profile_picture_url: picUrl, expires_in: expiresIn, connected_at: new Date().toISOString() },
               connected_at: new Date().toISOString()
             });
@@ -162,7 +162,7 @@ serve(async (req) => {
           window.location.href = '${successUrl}';
         }
       </script></body></html>`;
-      return new Response(successHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      return new Response(successHtml, { headers: { ...corsHeaders, 'Content-Type': 'text/html; charset=utf-8' } });
     }
 
     // ── AÇÕES VIA POST (chamadas do frontend) ──────────────────────────────────
@@ -211,13 +211,13 @@ serve(async (req) => {
     // ── refresh_token ─────────────────────────────────────────────────────────
     if (action === 'refresh_token') {
       const { data: acct } = await supabase.from('connected_accounts' as any)
-        .select('access_token_encrypted')
+        .select('access_token')
         .eq('user_id', user.id)
         .eq('platform', 'instagram_publisher')
         .single();
 
       if (!acct) throw new Error('Conta Instagram não conectada');
-      const oldToken = (acct as any).access_token_encrypted;
+      const oldToken = (acct as any).access_token;
 
       const refreshRes  = await fetch(
         `${GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${META_APP_ID}&client_secret=${META_APP_SECRET}&fb_exchange_token=${encodeURIComponent(oldToken)}`
@@ -226,7 +226,7 @@ serve(async (req) => {
       if (!refreshData.access_token) throw new Error('Erro ao renovar token');
 
       await supabase.from('connected_accounts' as any)
-        .update({ access_token_encrypted: refreshData.access_token, connected_at: new Date().toISOString() })
+        .update({ access_token: refreshData.access_token, connected_at: new Date().toISOString() })
         .eq('user_id', user.id)
         .eq('platform', 'instagram_publisher');
 
