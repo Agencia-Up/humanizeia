@@ -45,7 +45,7 @@ export function AgentChatProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
 
     const { error } = await supabase
-      .from('agent_chat_history')
+      .from('agent_chat_history' as any)
       .insert({
         user_id: user.id,
         agent_id: agentId,
