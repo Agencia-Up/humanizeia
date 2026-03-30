@@ -69,7 +69,7 @@ export function AIAssistantButton() {
     {
       id: '1',
       role: 'assistant',
-      content: 'Olá! Sou a **LogosIA**, sua central de inteligência para tráfego pago.\n\nPosso te ajudar com:\n• 📊 Relatórios e análises em tempo real\n• 🎯 Diagnóstico e otimização de campanhas\n• ✍️ Criação de copies e criativos\n• 🧠 Estratégias avançadas com José\n• ⚡ Ações automáticas nos seus anúncios\n\nPergunte qualquer coisa ou use os atalhos abaixo!',
+      content: 'Oi! Sou a **LogosIA**, sua central de inteligência para tráfego pago.\n\nPosso te ajudar com:\n• 📊 Relatórios e análises em tempo real\n• 🎯 Diagnóstico e otimização de campanhas\n• ✍️ Criação de copies e criativos\n• 🧠 Estratégias avançadas com José\n• ⚡ Ações automáticas nos seus anúncios\n\nPergunte qualquer coisa ou use os atalhos abaixo!',
       timestamp: new Date(),
       context: 'assistant',
       agentName: 'LogosIA',
