@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,21 +8,24 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Sparkles, ArrowRight, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 const questions = [
   {
     id: 1,
     question: "Qual é o principal setor de atuação do seu negócio?",
     options: [
-      { id: 'a', label: "Automotivo (Concessionárias, Lojas de Carros, Oficinas)" },
-      { id: 'b', label: "Saúde e Bem-Estar (Clínicas, Consultórios, Spas, Academias)" },
-      { id: 'c', label: "Varejo e E-commerce (Moda, Acessórios, Produtos Físicos)" },
-      { id: 'd', label: "Educação e Conhecimento (Cursos Online, Infoprodutos, Consultorias)" },
-      { id: 'e', label: "Alimentação e Bebidas (Restaurantes, Bares, Cafeterias)" },
-      { id: 'f', label: "Imobiliário (Imobiliárias, Corretores, Construtoras)" },
-      { id: 'g', label: "Serviços Profissionais B2B (Consultoria, Agências, TI)" },
-      { id: 'h', label: "Pet (Pet Shops, Clínicas Veterinárias, Serviços para Animais)" },
-      { id: 'i', label: "Outro (Por favor, especifique brevemente)", hasInput: true }
+      { id: 'automotivo', label: "Automotivo (Concessionárias, Lojas de Carros, Oficinas)" },
+      { id: 'saude_bem_estar', label: "Saúde e Bem-Estar (Clínicas, Consultórios, Spas, Academias)" },
+      { id: 'varejo_ecommerce', label: "Varejo e E-commerce (Moda, Acessórios, Produtos Físicos)" },
+      { id: 'educacao_conhecimento', label: "Educação e Conhecimento (Cursos Online, Infoprodutos, Consultorias)" },
+      { id: 'alimentacao_bebidas', label: "Alimentação e Bebidas (Restaurantes, Bares, Cafeterias)" },
+      { id: 'imobiliario', label: "Imobiliário (Imobiliárias, Corretores, Construtoras)" },
+      { id: 'servicos_b2b', label: "Serviços Profissionais B2B (Consultoria, Agências, TI)" },
+      { id: 'pet', label: "Pet (Pet Shops, Clínicas Veterinárias, Serviços para Animais)" },
+      { id: 'financas_investimentos', label: "Finanças e Investimentos (Bancos, Seguradoras, Consultores Financeiros)" },
+      { id: 'tecnologia_saas', label: "Tecnologia e Software (SaaS, Apps, Startups)" },
+      { id: 'outro', label: "Outro (Por favor, especifique brevemente)", hasInput: true }
     ]
   },
   {
@@ -37,7 +40,9 @@ const questions = [
       { id: 'f', label: "Venda/aluguel de imóveis, consultoria imobiliária" },
       { id: 'g', label: "Consultoria estratégica, serviços de TI, soluções empresariais" },
       { id: 'h', label: "Produtos para pets, serviços veterinários, banho e tosa" },
-      { id: 'i', label: "Outro (Por favor, especifique brevemente)", hasInput: true }
+      { id: 'i', label: "Investimentos, seguros, consultoria financeira" },
+      { id: 'j', label: "Softwares, aplicativos, serviços de tecnologia" },
+      { id: 'k', label: "Outro (Por favor, especifique brevemente)", hasInput: true }
     ]
   },
   {
@@ -70,6 +75,19 @@ export default function NicheQuiz() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [otherInputs, setOtherInputs] = useState<Record<number, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const getSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        setUserId(session.user.id);
+      } else {
+        navigate('/auth');
+      }
+    };
+    getSession();
+  }, [navigate]);
 
   const progress = ((currentStep + 1) / questions.length) * 100;
   const currentQuestion = questions[currentStep];
@@ -98,16 +116,46 @@ export default function NicheQuiz() {
   };
 
   const handleSubmit = async () => {
+    if (!userId) return;
+    
     setIsSubmitting(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    const identifiedNiche = answers[1]; // The first question identifies the niche
     
-    toast({
-      title: "Respostas enviadas!",
-      description: "Obrigado por responder ao quiz. Estamos personalizando sua experiência.",
-    });
-    
-    navigate('/dashboard');
+    try {
+      const { error } = await supabase
+        .from('user_quiz_responses')
+        .insert({
+          user_id: userId,
+          nicho_identificado: identifiedNiche,
+          respostas_completas: {
+            answers,
+            otherInputs
+          }
+        });
+
+      if (error) throw error;
+
+      // Update profile
+      await supabase
+        .from('profiles')
+        .update({ quiz_completed: true })
+        .eq('id', userId);
+
+      toast({
+        title: "Respostas enviadas!",
+        description: "Obrigado por responder ao quiz. Estamos personalizando sua experiência.",
+      });
+      
+      navigate(`/briefing/${identifiedNiche}`);
+    } catch (error: any) {
+      toast({
+        title: "Erro ao salvar",
+        description: error.message || "Ocorreu um erro ao salvar suas respostas.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

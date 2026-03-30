@@ -2750,6 +2750,7 @@ export type Database = {
           onboarding_completed: boolean | null
           organization_id: string | null
           preferred_language: string | null
+          quiz_completed: boolean | null
           timezone: string | null
           updated_at: string | null
         }
@@ -2765,6 +2766,7 @@ export type Database = {
           onboarding_completed?: boolean | null
           organization_id?: string | null
           preferred_language?: string | null
+          quiz_completed?: boolean | null
           timezone?: string | null
           updated_at?: string | null
         }
@@ -2780,6 +2782,7 @@ export type Database = {
           onboarding_completed?: boolean | null
           organization_id?: string | null
           preferred_language?: string | null
+          quiz_completed?: boolean | null
           timezone?: string | null
           updated_at?: string | null
         }
@@ -3124,6 +3127,33 @@ export type Database = {
           source?: string
           tags?: string[] | null
           title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_quiz_responses: {
+        Row: {
+          created_at: string
+          id: string
+          nicho_identificado: string
+          respostas_completas: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          nicho_identificado: string
+          respostas_completas: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          nicho_identificado?: string
+          respostas_completas?: Json
           updated_at?: string
           user_id?: string
         }

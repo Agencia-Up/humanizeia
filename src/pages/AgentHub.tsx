@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { motion } from 'framer-motion';
@@ -28,9 +29,15 @@ const quickLinks = [
 ];
 
 export default function AgentHub() {
-  const { user } = useAuth();
+  const { user, profile, loading } = useAuth();
   const navigate = useNavigate();
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
+
+  useEffect(() => {
+    if (!loading && profile && !profile.quiz_completed) {
+      navigate('/niche-quiz');
+    }
+  }, [loading, profile, navigate]);
 
   return (
     <MainLayout>

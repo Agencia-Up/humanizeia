@@ -59,6 +59,7 @@ const GeradorPrompt = lazy(() => import('./pages/GeradorPrompt'));
 const PauloAgente = lazy(() => import('./pages/PauloAgente'));
 const JoseTrafego = lazy(() => import('./pages/JoseTrafego'));
 const NicheQuiz = lazy(() => import("./pages/NicheQuiz"));
+const BriefingDetails = lazy(() => import("./pages/BriefingDetails"));
 
 
 const queryClient = new QueryClient();
@@ -83,6 +84,7 @@ const App = () => (
                   <Route path="/terms" element={<TermsOfService />} />
                   <Route path="/onboarding" element={<Onboarding />} />
                   <Route path="/niche-quiz" element={<ProtectedRoute><NicheQuiz /></ProtectedRoute>} />
+                  <Route path="/briefing/:nicho" element={<ProtectedRoute><BriefingDetails /></ProtectedRoute>} />
                   <Route path="/" element={<LandingPage />} />
 
                   <Route path="/dashboard" element={<ProtectedRoute><AgentHub /></ProtectedRoute>} />
