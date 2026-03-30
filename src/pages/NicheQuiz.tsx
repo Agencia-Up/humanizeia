@@ -139,7 +139,7 @@ export default function NicheQuiz() {
         otherInputs,
       };
 
-      const { data: existingResponses, error: fetchError } = await supabase
+      const { data: existingResponsesData, error: fetchError } = await supabase
         .from('user_quiz_responses' as any)
         .select('id')
         .eq('user_id', user.id)
@@ -148,6 +148,7 @@ export default function NicheQuiz() {
 
       if (fetchError) throw fetchError;
 
+      const existingResponses = (existingResponsesData ?? []) as Array<{ id: string }>;
       const latestResponseId = existingResponses?.[0]?.id;
 
       const { error } = latestResponseId
