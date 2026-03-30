@@ -1,73 +1,230 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Input } from '@/components/ui/input';
-import { Progress } from '@/components/ui/progress';
-import { Sparkles, ArrowRight, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { ArrowRight, ArrowLeft, Sparkles, CheckCircle2, Brain, Zap, Target, TrendingUp, Users } from 'lucide-react';
+
+// ─── Questions ───────────────────────────────────────────────────────────────
 
 const questions = [
   {
     id: 1,
-    question: "Quais nichos focamos para criação do briefing?",
+    question: 'Qual é o nicho do seu negócio?',
+    subtitle: 'Isso nos ajuda a personalizar todo o briefing e as estratégias dos agentes.',
+    icon: Target,
     options: [
-      { id: 'automotivo', label: "Automotivo (Concessionárias, Lojas de Carros, Oficinas)" },
-      { id: 'saude_bem_estar', label: "Saúde e Bem-Estar (Clínicas, Consultórios, Spas, Academias)" },
-      { id: 'varejo_ecommerce', label: "Varejo e E-commerce (Moda, Acessórios, Produtos Físicos)" },
-      { id: 'educacao_conhecimento', label: "Educação e Conhecimento (Cursos Online, Infoprodutos, Consultorias)" },
-      { id: 'alimentacao_bebidas', label: "Alimentação e Bebidas (Restaurantes, Bares, Cafeterias)" },
-      { id: 'imobiliario', label: "Imobiliário (Imobiliárias, Corretores, Construtoras)" },
-      { id: 'servicos_b2b', label: "Serviços Profissionais B2B (Consultoria, Agências, TI)" },
-      { id: 'pet', label: "Pet (Pet Shops, Clínicas Veterinárias, Serviços para Animais)" },
-      { id: 'financas_investimentos', label: "Finanças e Investimentos (Bancos, Seguradoras, Consultores Financeiros)" },
-      { id: 'tecnologia_saas', label: "Tecnologia e Software (SaaS, Apps, Startups)" },
-      { id: 'outro', label: "Outro (Por favor, especifique brevemente)", hasInput: true }
-    ]
+      { id: 'automotivo', label: 'Automotivo', desc: 'Concessionárias, Lojas de Carros, Oficinas', emoji: '🚗' },
+      { id: 'saude_bem_estar', label: 'Saúde e Bem-Estar', desc: 'Clínicas, Consultórios, Spas, Academias', emoji: '💊' },
+      { id: 'varejo_ecommerce', label: 'Varejo e E-commerce', desc: 'Moda, Acessórios, Produtos Físicos', emoji: '🛍️' },
+      { id: 'educacao_conhecimento', label: 'Educação e Conhecimento', desc: 'Cursos Online, Infoprodutos, Consultorias', emoji: '🎓' },
+      { id: 'alimentacao_bebidas', label: 'Alimentação e Bebidas', desc: 'Restaurantes, Bares, Cafeterias', emoji: '🍽️' },
+      { id: 'imobiliario', label: 'Imobiliário', desc: 'Imobiliárias, Corretores, Construtoras', emoji: '🏠' },
+      { id: 'servicos_b2b', label: 'Serviços B2B', desc: 'Consultoria, Agências, TI Empresarial', emoji: '💼' },
+      { id: 'pet', label: 'Pet', desc: 'Pet Shops, Clínicas Veterinárias, Banho e Tosa', emoji: '🐾' },
+      { id: 'financas_investimentos', label: 'Finanças e Investimentos', desc: 'Seguradoras, Consultores, Bancos', emoji: '💰' },
+      { id: 'tecnologia_saas', label: 'Tecnologia e SaaS', desc: 'Software, Apps, Startups', emoji: '💻' },
+      { id: 'outro', label: 'Outro', desc: 'Especifique abaixo', emoji: '✨', hasInput: true },
+    ],
   },
   {
     id: 2,
-    question: "Qual é o principal produto ou serviço que você oferece?",
+    question: 'Qual é o seu principal objetivo de marketing?',
+    subtitle: 'Os agentes irão priorizar sua estratégia com base nessa resposta.',
+    icon: TrendingUp,
     options: [
-      { id: 'a', label: "Venda de veículos (novos/usados), serviços automotivos" },
-      { id: 'b', label: "Tratamentos estéticos, serviços de beleza, consultas médicas/odontológicas, planos de academia" },
-      { id: 'c', label: "Roupas, joias, acessórios, produtos de moda" },
-      { id: 'd', label: "Cursos digitais, e-books, mentorias, softwares" },
-      { id: 'e', label: "Refeições, bebidas, experiências gastronômicas" },
-      { id: 'f', label: "Venda/aluguel de imóveis, consultoria imobiliária" },
-      { id: 'g', label: "Consultoria estratégica, serviços de TI, soluções empresariais" },
-      { id: 'h', label: "Produtos para pets, serviços veterinários, banho e tosa" },
-      { id: 'i', label: "Investimentos, seguros, consultoria financeira" },
-      { id: 'j', label: "Softwares, aplicativos, serviços de tecnologia" },
-      { id: 'k', label: "Outro (Por favor, especifique brevemente)", hasInput: true }
-    ]
+      { id: 'gerar_leads', label: 'Gerar Leads Qualificados', desc: 'Test drive, consulta, visita, orçamento', emoji: '🎯' },
+      { id: 'vendas_diretas', label: 'Aumentar Vendas Diretas', desc: 'E-commerce, reservas, conversão direta', emoji: '💳' },
+      { id: 'reconhecimento', label: 'Reconhecimento de Marca', desc: 'Engajamento e awareness nas redes sociais', emoji: '📣' },
+      { id: 'lancamento', label: 'Lançar Produto ou Serviço', desc: 'Expansão para novo mercado ou produto', emoji: '🚀' },
+      { id: 'fidelizacao', label: 'Fidelizar Clientes', desc: 'Aumentar LTV e retenção', emoji: '🔄' },
+    ],
   },
   {
     id: 3,
-    question: "Qual é o seu principal objetivo de marketing no momento?",
+    question: 'Qual é o tamanho do seu negócio?',
+    subtitle: 'Vamos calibrar as estratégias para a sua realidade atual.',
+    icon: Users,
     options: [
-      { id: 'a', label: "Gerar leads qualificados para vendas (ex: test drive, consulta, visita)" },
-      { id: 'b', label: "Aumentar o reconhecimento da marca e engajamento nas redes sociais" },
-      { id: 'c', label: "Impulsionar vendas diretas (e-commerce, reservas)" },
-      { id: 'd', label: "Lançar um novo produto/serviço ou expandir para um novo mercado" },
-      { id: 'e', label: "Fidelizar clientes e aumentar o valor de vida útil (LTV)" }
-    ]
+      { id: 'solopreneur', label: 'Empreendedor Solo', desc: 'Só eu, sem equipe', emoji: '👤' },
+      { id: 'micro', label: 'Micro Empresa', desc: '2 a 9 funcionários', emoji: '🏪' },
+      { id: 'pequena', label: 'Pequena Empresa', desc: '10 a 49 funcionários', emoji: '🏢' },
+      { id: 'media', label: 'Média Empresa', desc: '50+ funcionários', emoji: '🏗️' },
+      { id: 'agencia', label: 'Agência de Marketing', desc: 'Gerencio clientes de terceiros', emoji: '💡' },
+    ],
   },
   {
     id: 4,
-    question: "Você já possui uma conta de Instagram Business ou Criador vinculada a uma Página do Facebook?",
+    question: 'Qual é o seu nível de experiência com marketing digital?',
+    subtitle: 'Os agentes adaptam a linguagem e nível de detalhe com base nisso.',
+    icon: Brain,
     options: [
-      { id: 'a', label: "Sim, já está configurada e vinculada." },
-      { id: 'b', label: "Não, mas tenho uma conta pessoal e quero migrar." },
-      { id: 'c', label: "Não, e preciso de ajuda para configurar." },
-      { id: 'd', label: "Não tenho Instagram." }
-    ]
-  }
+      { id: 'iniciante', label: 'Iniciante', desc: 'Estou começando agora, pouca experiência', emoji: '🌱' },
+      { id: 'intermediario', label: 'Intermediário', desc: 'Já fiz campanhas, tenho alguma experiência', emoji: '📈' },
+      { id: 'avancado', label: 'Avançado', desc: 'Gestão de campanhas no dia a dia', emoji: '⚡' },
+      { id: 'especialista', label: 'Especialista', desc: 'Profissional de marketing ou gestor de tráfego', emoji: '🏆' },
+    ],
+  },
 ];
+
+// ─── Loading Screen Component ─────────────────────────────────────────────────
+
+const LOADING_STEPS = [
+  { icon: Brain, label: 'Analisando seu perfil de nicho...', color: 'text-blue-400' },
+  { icon: Zap, label: 'Calibrando os agentes de IA...', color: 'text-yellow-400' },
+  { icon: Target, label: 'Personalizando o briefing estratégico...', color: 'text-purple-400' },
+  { icon: Sparkles, label: 'Montando sua estratégia exclusiva...', color: 'text-pink-400' },
+  { icon: CheckCircle2, label: 'Tudo pronto! Redirecionando...', color: 'text-emerald-400' },
+];
+
+function LoadingScreen() {
+  const [step, setStep] = useState(0);
+  const [subStep, setSubStep] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStep(prev => {
+        if (prev < LOADING_STEPS.length - 1) return prev + 1;
+        clearInterval(interval);
+        return prev;
+      });
+    }, 900);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSubStep(prev => (prev + 1) % 3);
+    }, 400);
+    return () => clearInterval(interval);
+  }, []);
+
+  const dots = '.'.repeat(subStep + 1);
+
+  return (
+    <div className="fixed inset-0 bg-background flex items-center justify-center z-50 overflow-hidden">
+      {/* Animated background */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-pink-500/5 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '0.5s' }} />
+      </div>
+
+      {/* Orbital rings */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="w-[500px] h-[500px] rounded-full border border-purple-500/10 animate-spin" style={{ animationDuration: '20s' }} />
+        <div className="absolute w-[350px] h-[350px] rounded-full border border-blue-500/10 animate-spin" style={{ animationDuration: '15s', animationDirection: 'reverse' }} />
+        <div className="absolute w-[200px] h-[200px] rounded-full border border-pink-500/10 animate-spin" style={{ animationDuration: '10s' }} />
+      </div>
+
+      <div className="relative z-10 flex flex-col items-center gap-10 px-8 text-center max-w-lg">
+        {/* Central icon */}
+        <div className="relative">
+          <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-purple-600/20 to-blue-600/20 border border-purple-500/30 flex items-center justify-center backdrop-blur-sm shadow-2xl shadow-purple-500/20">
+            <Sparkles className="h-12 w-12 text-purple-400 animate-pulse" />
+          </div>
+          {/* Orbiting dots */}
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="absolute w-3 h-3 rounded-full bg-gradient-to-r from-purple-400 to-blue-400"
+              style={{
+                top: '50%',
+                left: '50%',
+                transform: `rotate(${i * 120}deg) translateX(52px) translateY(-50%)`,
+                animation: `spin ${3 + i * 0.5}s linear infinite`,
+                boxShadow: '0 0 8px rgba(168, 85, 247, 0.6)',
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Main text */}
+        <div className="space-y-3">
+          <h2 className="text-2xl font-bold text-foreground">
+            Trabalhando para turbinar
+            <br />
+            <span className="bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
+              a sua estratégia{dots}
+            </span>
+          </h2>
+          <p className="text-muted-foreground text-sm">
+            Nossa equipe de IA está personalizando todos os agentes com base no seu perfil de negócio.
+          </p>
+        </div>
+
+        {/* Steps */}
+        <div className="w-full space-y-3">
+          {LOADING_STEPS.map((s, i) => {
+            const Icon = s.icon;
+            const isActive = i === step;
+            const isDone = i < step;
+
+            return (
+              <div
+                key={i}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all duration-500 ${
+                  isActive
+                    ? 'border-purple-500/40 bg-purple-500/10 scale-[1.02]'
+                    : isDone
+                    ? 'border-emerald-500/20 bg-emerald-500/5'
+                    : 'border-border/30 bg-muted/5 opacity-40'
+                }`}
+              >
+                <div className={`shrink-0 ${isActive ? s.color : isDone ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                  {isDone ? (
+                    <CheckCircle2 className="h-4 w-4" />
+                  ) : (
+                    <Icon className={`h-4 w-4 ${isActive ? 'animate-pulse' : ''}`} />
+                  )}
+                </div>
+                <span className={`text-sm text-left ${isActive ? 'text-foreground font-medium' : isDone ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                  {s.label}
+                </span>
+                {isActive && (
+                  <div className="ml-auto flex gap-1">
+                    {[0, 1, 2].map((d) => (
+                      <div
+                        key={d}
+                        className="w-1.5 h-1.5 rounded-full bg-purple-400"
+                        style={{ animation: `bounce 0.6s ease-in-out ${d * 0.15}s infinite` }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Progress bar */}
+        <div className="w-full space-y-2">
+          <Progress
+            value={((step + 1) / LOADING_STEPS.length) * 100}
+            className="h-1.5 bg-muted/30"
+          />
+          <p className="text-xs text-muted-foreground">
+            {Math.round(((step + 1) / LOADING_STEPS.length) * 100)}% concluído
+          </p>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-4px); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function NicheQuiz() {
   const navigate = useNavigate();
@@ -77,31 +234,22 @@ export default function NicheQuiz() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [otherInputs, setOtherInputs] = useState<Record<number, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showLoading, setShowLoading] = useState(false);
 
   const progress = ((currentStep + 1) / questions.length) * 100;
   const currentQuestion = questions[currentStep];
-
-  const selectedOption = currentQuestion.options.find((option) => option.id === answers[currentQuestion.id]);
+  const selectedOption = currentQuestion.options.find(o => o.id === answers[currentQuestion.id]);
+  const Icon = currentQuestion.icon;
 
   const handleNext = () => {
     if (!answers[currentQuestion.id]) {
-      toast({
-        title: "Seleção obrigatória",
-        description: "Por favor, selecione uma opção para continuar.",
-        variant: "destructive"
-      });
+      toast({ title: 'Selecione uma opção', description: 'Por favor, escolha uma resposta para continuar.', variant: 'destructive' });
       return;
     }
-
     if (selectedOption?.hasInput && !otherInputs[currentQuestion.id]?.trim()) {
-      toast({
-        title: "Campo obrigatório",
-        description: "Por favor, especifique a opção escolhida para continuar.",
-        variant: "destructive"
-      });
+      toast({ title: 'Campo obrigatório', description: 'Por favor, especifique sua resposta.', variant: 'destructive' });
       return;
     }
-
     if (currentStep < questions.length - 1) {
       setCurrentStep(prev => prev + 1);
     } else {
@@ -109,194 +257,212 @@ export default function NicheQuiz() {
     }
   };
 
-  const handleBack = () => {
-    if (currentStep > 0) {
-      setCurrentStep(prev => prev - 1);
-    }
-  };
-
   const handleSubmit = async () => {
     if (!user) {
-      toast({
-        title: "Sessão expirada",
-        description: "Faça login novamente para concluir o quiz.",
-        variant: "destructive"
-      });
       navigate('/auth');
       return;
     }
-    
-    setIsSubmitting(true);
+
     const identifiedNiche = answers[1];
-    
+    if (!identifiedNiche) {
+      toast({ title: 'Erro', description: 'Nicho não identificado.', variant: 'destructive' });
+      return;
+    }
+
+    setIsSubmitting(true);
+    setShowLoading(true);
+
     try {
-      if (!identifiedNiche) {
-        throw new Error('Não foi possível identificar o nicho selecionado.');
-      }
+      const respostasCompletas = { answers, otherInputs };
 
-      const respostasCompletas = {
-        answers,
-        otherInputs,
-      };
-
-      const { data: existingResponsesData, error: fetchError } = await supabase
+      // Check if already has a response
+      const { data: existing } = await supabase
         .from('user_quiz_responses' as any)
         .select('id')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(1);
 
-      if (fetchError) throw fetchError;
+      const existingId = (existing as any)?.[0]?.id;
 
-      const existingResponses = (existingResponsesData ?? []) as unknown as Array<{ id: string }>;
-      const latestResponseId = existingResponses?.[0]?.id;
+      const upsertPayload = {
+        user_id: user.id,
+        nicho_identificado: identifiedNiche,
+        respostas_completas: respostasCompletas,
+        updated_at: new Date().toISOString(),
+      };
 
-      const { error } = latestResponseId
-        ? await supabase
-            .from('user_quiz_responses' as any)
-            .update({
-              nicho_identificado: identifiedNiche,
-              respostas_completas: respostasCompletas,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', latestResponseId)
-        : await supabase
-            .from('user_quiz_responses' as any)
-            .insert({
-              user_id: user.id,
-              nicho_identificado: identifiedNiche,
-              respostas_completas: respostasCompletas,
-            });
-
-      if (error) throw error;
-
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({ quiz_completed: true })
-        .eq('id', user.id);
-
-      if (profileError) {
-        console.error('Erro ao marcar quiz como concluído:', profileError);
+      if (existingId) {
+        await supabase.from('user_quiz_responses' as any).update(upsertPayload).eq('id', existingId);
+      } else {
+        await supabase.from('user_quiz_responses' as any).insert(upsertPayload);
       }
 
-      toast({
-        title: "Respostas enviadas!",
-        description: "Obrigado por responder ao quiz. Estamos personalizando sua experiência.",
-      });
-      
+      // Mark quiz as completed
+      await supabase.from('profiles').update({ quiz_completed: true }).eq('id', user.id);
+
+      // Wait for the loading animation to complete (at least 4.5s)
+      await new Promise(resolve => setTimeout(resolve, 4800));
+
       navigate(`/briefing/${identifiedNiche}`, { replace: true });
-    } catch (error: any) {
-      toast({
-        title: "Erro ao salvar",
-        description: error.message || "Ocorreu um erro ao salvar suas respostas.",
-        variant: "destructive"
-      });
-    } finally {
+    } catch (err: any) {
+      setShowLoading(false);
       setIsSubmitting(false);
+      toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
     }
   };
 
+  if (showLoading) return <LoadingScreen />;
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4 sm:p-8">
-      <div className="w-full max-w-2xl space-y-8">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <Sparkles className="h-8 w-8" />
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 sm:p-8 relative overflow-hidden">
+      {/* Background glow */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-gradient-to-b from-primary/8 to-transparent rounded-full blur-3xl pointer-events-none" />
+
+      <div className="relative z-10 w-full max-w-2xl space-y-8">
+
+        {/* Header */}
+        <div className="text-center space-y-4">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-purple-600/20 border border-primary/30 shadow-lg shadow-primary/10">
+            <Sparkles className="h-8 w-8 text-primary" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-3xl font-bold tracking-tight text-foreground">
-              Quiz de Qualificação de Nicho
+            <h1 className="text-3xl font-bold tracking-tight">
+              Vamos personalizar sua <span className="bg-gradient-to-r from-primary to-purple-400 bg-clip-text text-transparent">experiência</span>
             </h1>
-            <p className="max-w-md text-muted-foreground">
-              Oi! Para que a LogosIA possa otimizar sua estratégia de marketing com a máxima precisão, precisamos entender um pouco mais sobre o seu negócio.
+            <p className="text-muted-foreground text-sm max-w-md mx-auto leading-relaxed">
+              Responda 4 perguntas rápidas para que nossos agentes de IA trabalhem com máxima precisão para o seu negócio.
             </p>
           </div>
         </div>
 
-        <div className="space-y-4">
-          <div className="flex items-center justify-between text-sm font-medium">
-            <span className="text-muted-foreground">Pergunta {currentStep + 1} de {questions.length}</span>
-            <span className="text-primary">{Math.round(progress)}% completo</span>
+        {/* Progress */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground font-medium">
+              Pergunta <span className="text-foreground font-bold">{currentStep + 1}</span> de {questions.length}
+            </span>
+            <span className="text-primary font-bold">{Math.round(progress)}% concluído</span>
           </div>
-          <Progress value={progress} className="h-2" />
+          <div className="relative h-2 bg-muted/40 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-primary to-purple-500 rounded-full transition-all duration-500 ease-out"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          {/* Step dots */}
+          <div className="flex justify-center gap-2 pt-1">
+            {questions.map((_, i) => (
+              <div
+                key={i}
+                className={`rounded-full transition-all duration-300 ${
+                  i < currentStep ? 'w-6 h-1.5 bg-primary' : i === currentStep ? 'w-4 h-1.5 bg-primary' : 'w-1.5 h-1.5 bg-muted-foreground/30'
+                }`}
+              />
+            ))}
+          </div>
         </div>
 
-        <Card className="border-border/50 bg-card/80 backdrop-blur-sm shadow-xl">
-          <CardHeader>
-            <CardTitle className="text-xl leading-tight">
-              {currentQuestion.id}. {currentQuestion.question}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
+        {/* Question card */}
+        <div className="rounded-2xl border border-border/50 bg-card/80 backdrop-blur-sm shadow-xl overflow-hidden">
+          {/* Question header */}
+          <div className="px-6 pt-6 pb-4 border-b border-border/30 bg-gradient-to-r from-primary/5 to-transparent">
+            <div className="flex items-start gap-3">
+              <div className="shrink-0 w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center mt-0.5">
+                <Icon className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-foreground leading-tight">
+                  {currentQuestion.question}
+                </h2>
+                <p className="text-sm text-muted-foreground mt-1">{currentQuestion.subtitle}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Options */}
+          <div className="p-6">
             <RadioGroup
               value={answers[currentQuestion.id]}
               onValueChange={(val) => setAnswers(prev => ({ ...prev, [currentQuestion.id]: val }))}
-              className="space-y-3"
+              className="space-y-2"
             >
-              {currentQuestion.options.map((option) => (
-                <div key={option.id} className="flex flex-col gap-2">
-                  <Label
-                    htmlFor={`q${currentQuestion.id}-${option.id}`}
-                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-all hover:bg-accent/50 ${
-                      answers[currentQuestion.id] === option.id
-                        ? "border-primary bg-primary/5 ring-1 ring-primary"
-                        : "border-border/50 bg-background/50"
-                    }`}
-                  >
-                    <RadioGroupItem
-                      value={option.id}
-                      id={`q${currentQuestion.id}-${option.id}`}
-                      className="mt-1"
-                    />
-                    <span className="flex-1 font-medium">{option.label}</span>
-                  </Label>
-                  
-                  {option.hasInput && answers[currentQuestion.id] === option.id && (
-                    <Input
-                      placeholder="Especifique aqui..."
-                      value={otherInputs[currentQuestion.id] || ''}
-                      onChange={(e) => setOtherInputs(prev => ({ ...prev, [currentQuestion.id]: e.target.value }))}
-                      className="ml-9 w-[calc(100%-2.25rem)]"
-                      autoFocus
-                    />
-                  )}
-                </div>
-              ))}
+              {currentQuestion.options.map((option) => {
+                const isSelected = answers[currentQuestion.id] === option.id;
+                return (
+                  <div key={option.id} className="flex flex-col gap-2">
+                    <Label
+                      htmlFor={`q${currentQuestion.id}-${option.id}`}
+                      className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3.5 transition-all duration-200 ${
+                        isSelected
+                          ? 'border-primary bg-primary/8 ring-1 ring-primary shadow-sm shadow-primary/10'
+                          : 'border-border/40 bg-background/50 hover:border-border hover:bg-muted/30'
+                      }`}
+                    >
+                      <RadioGroupItem
+                        value={option.id}
+                        id={`q${currentQuestion.id}-${option.id}`}
+                        className="shrink-0"
+                      />
+                      <span className="text-xl shrink-0">{option.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className={`text-sm font-semibold ${isSelected ? 'text-primary' : 'text-foreground'}`}>
+                          {option.label}
+                        </span>
+                        <p className="text-xs text-muted-foreground mt-0.5">{option.desc}</p>
+                      </div>
+                      {isSelected && (
+                        <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+                      )}
+                    </Label>
+                    {option.hasInput && isSelected && (
+                      <Input
+                        placeholder="Descreva seu nicho brevemente..."
+                        value={otherInputs[currentQuestion.id] || ''}
+                        onChange={(e) => setOtherInputs(prev => ({ ...prev, [currentQuestion.id]: e.target.value }))}
+                        className="ml-4 focus-visible:ring-primary/50"
+                        autoFocus
+                      />
+                    )}
+                  </div>
+                );
+              })}
             </RadioGroup>
+          </div>
 
-            <div className="flex items-center justify-between pt-4 gap-4">
-              <Button
-                variant="ghost"
-                onClick={handleBack}
-                disabled={currentStep === 0 || isSubmitting}
-                className="gap-2"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Anterior
-              </Button>
-              <Button
-                onClick={handleNext}
-                disabled={isSubmitting}
-                className="min-w-[120px] gap-2 gradient-primary"
-              >
-                {currentStep === questions.length - 1 ? (
-                  <>
-                    Finalizar
-                    <CheckCircle2 className="h-4 w-4" />
-                  </>
-                ) : (
-                  <>
-                    Próxima
-                    <ArrowRight className="h-4 w-4" />
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+          {/* Navigation */}
+          <div className="px-6 pb-6 flex items-center justify-between gap-4">
+            <Button
+              variant="ghost"
+              onClick={() => setCurrentStep(prev => prev - 1)}
+              disabled={currentStep === 0 || isSubmitting}
+              className="gap-2 text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Anterior
+            </Button>
+            <Button
+              onClick={handleNext}
+              disabled={isSubmitting || !answers[currentQuestion.id]}
+              className="gap-2 bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white font-semibold shadow-lg shadow-primary/20 min-w-[140px]"
+            >
+              {currentStep === questions.length - 1 ? (
+                <>
+                  <Sparkles className="h-4 w-4" />
+                  Concluir Quiz
+                </>
+              ) : (
+                <>
+                  Próxima
+                  <ArrowRight className="h-4 w-4" />
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
 
-        <p className="text-center text-xs text-muted-foreground px-4">
-          Suas respostas nos ajudarão a direcionar você para o briefing mais adequado e a personalizar a atuação dos nossos Agentes de IA.
+        <p className="text-center text-xs text-muted-foreground">
+          🔒 Suas respostas são confidenciais e usadas apenas para personalizar seus agentes de IA.
         </p>
       </div>
     </div>
