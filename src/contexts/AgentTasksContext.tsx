@@ -39,7 +39,7 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
     setIsLoading(true);
     try {
       const { data, error } = await supabase
-        .from('agent_tasks')
+        .from('agent_tasks' as any)
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
