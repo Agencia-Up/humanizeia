@@ -149,22 +149,37 @@ export default function SalomaoOrchestrator() {
       setNiche(storedNiche);
       
       setIsLoadingTemplate(true);
-      let content = '';
       try {
-        if (storedNiche) {
-          const resp = await fetch(`/briefings/briefing_nicho_${storedNiche}.md`);
-          if (resp.ok) content = await resp.text();
-        }
+        // 1. Busca o template base para servir de contexto para a IA
+        let baseContent = '';
+        const baseResp = await fetch('/docs/prompt_brieffing.md');
+        if (baseResp.ok) baseContent = await baseResp.text();
 
-        if (!content) {
-          const resp = await fetch('/docs/prompt_brieffing.md');
-          if (resp.ok) content = await resp.text();
-        }
+        // 2. Invoca o Agente de Montagem (Edge Function) para criar as perguntas dinâmicas
+        const { data: aiResponse, error } = await supabase.functions.invoke('prompt-generator-api', {
+          body: { 
+            action: 'build_questionnaire', 
+            niche: storedNiche || 'Geral',
+            base_template: baseContent,
+            ai_provider: aiProvider
+          }
+        });
 
-        if (content) {
-          const parsed = parseBriefingTemplate(content);
-          setSections(parsed);
+        if (error) throw error;
+
+        if (aiResponse && aiResponse.sections) {
+          const parsedSections: BriefingSection[] = aiResponse.sections;
+          setSections(parsedSections);
           
+          const initialData: Record<string, string> = {};
+          parsedSections.forEach(s => s.fields.forEach(f => {
+            initialData[f.key] = '';
+          }));
+          setData(initialData);
+        } else {
+          // Fallback para o parsing estático se a IA falhar
+          const parsed = parseBriefingTemplate(baseContent);
+          setSections(parsed);
           const initialData: Record<string, string> = {};
           parsed.forEach(s => s.fields.forEach(f => {
             initialData[f.key] = '';
@@ -172,14 +187,15 @@ export default function SalomaoOrchestrator() {
           setData(initialData);
         }
       } catch (err) {
-        console.error('Falha ao carregar template:', err);
+        console.error('Falha ao carregar briefing dinâmico:', err);
+        toast({ title: 'Aviso', description: 'Usando template padrão. O Agente de Briefing pode estar offline.', variant: 'destructive' });
       } finally {
         setIsLoadingTemplate(false);
       }
     };
 
     loadData();
-  }, []);
+  }, [aiProvider]); // Recarrega se o provedor de IA mudar
 
   useEffect(() => {
     const loadHistory = async () => {
