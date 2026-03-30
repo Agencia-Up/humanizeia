@@ -23,7 +23,7 @@ const LeadTimeline = ({ leadId }: LeadTimelineProps) => {
 
       // 2. Fetch Followups
       const { data: followups } = await supabase
-        .from('followup_queue')
+        .from('followup_queue' as any)
         .select('*')
         .eq('lead_id', leadId)
         .order('scheduled_for', { ascending: false });
