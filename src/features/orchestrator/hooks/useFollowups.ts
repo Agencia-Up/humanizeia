@@ -22,7 +22,7 @@ export const useFollowups = () => {
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
-        .from('followup_queue')
+        .from('followup_queue' as any)
         .select(`
           *,
           crm_leads (
