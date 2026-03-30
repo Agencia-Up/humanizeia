@@ -91,7 +91,7 @@ export const useOrchestrator = () => {
       ];
 
       const { data, error } = await supabase
-        .from('orchestrator_tasks')
+        .from('orchestrator_tasks' as any)
         .insert(suggestedTasks)
         .select();
 
