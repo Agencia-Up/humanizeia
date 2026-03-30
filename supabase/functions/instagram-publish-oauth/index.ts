@@ -33,10 +33,13 @@ serve(async (req) => {
       let origin = 'https://logosiabrasil.com'; // Domínio Oficial Atualizado
       
       try { 
-        const parsedState = JSON.parse(atob(stateRaw));
+        const fixedState = stateRaw.replace(/ /g, '+');
+        const parsedState = JSON.parse(atob(fixedState));
         userId = parsedState.userId; 
         if (parsedState.origin) origin = parsedState.origin;
-      } catch (_) {}
+      } catch (err) {
+        console.error("Falha ao abrir state:", err);
+      }
 
       // Função helper para voltar ao app mostrando erro
       const redirectError = (msg: string) => 
