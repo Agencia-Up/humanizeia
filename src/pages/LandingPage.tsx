@@ -530,7 +530,7 @@ export default function LandingPage() {
           <div className="text-center">
             <Button asChild size="lg" className="bg-green-600 hover:bg-green-700 text-white px-10 text-lg gap-3 py-6 rounded-2xl font-bold shadow-lg shadow-green-900/30">
               <Link to="/auth?tab=signup">
-                QUERO ECONOMIZAR R$50.000/MÊS COM IA <ArrowRight className="h-5 w-5" />
+                QUERO MULTIPLICAR MEUS RESULTADOS E ECONOMIZAR ATÉ R$5.000 a R$15.000/MÊS COM IA <ArrowRight className="h-5 w-5" />
               </Link>
             </Button>
             <p className="text-xs text-muted-foreground mt-3">
