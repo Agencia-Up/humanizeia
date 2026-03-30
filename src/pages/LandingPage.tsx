@@ -462,7 +462,7 @@ export default function LandingPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
               <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-5">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Modelo Tradicional</p>
-                <p className="text-3xl font-black text-red-400">R$ 684.000</p>
+                <p className="text-3xl font-black text-red-400">R$ 180.000</p>
                 <p className="text-xs text-muted-foreground mt-1">por ano</p>
               </div>
               <div className="flex items-center justify-center">
