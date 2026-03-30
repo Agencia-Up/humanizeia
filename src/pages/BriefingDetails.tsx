@@ -32,11 +32,7 @@ export default function BriefingDetails() {
   useEffect(() => {
     const fetchBriefing = async () => {
       try {
-        // In a real app, this might be an API call to /api/briefing/:nicho
-        // For now, we'll import it or fetch it from a public folder if we were using one.
-        // Since we created the files in src/data/briefings, we can try to fetch them or use a mapping.
-        
-        const response = await fetch(`/src/data/briefings/briefing_nicho_${nicho}.md`);
+        const response = await fetch(`/briefings/briefing_nicho_${nicho}.md`);
         if (response.ok) {
           const text = await response.text();
           setContent(text);
@@ -75,12 +71,13 @@ O que você espera alcançar nos próximos 3 meses?
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Não autenticado");
 
-      // Update profile to mark quiz as completed (if not already)
+      // Update profile to mark quiz as completed
       await supabase
         .from('profiles')
         .update({ quiz_completed: true })
         .eq('id', session.user.id);
 
+      // Simulate sending to Salomão
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       toast({
