@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Sparkles, ArrowRight, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 
 const questions = [
@@ -71,32 +72,31 @@ const questions = [
 export default function NicheQuiz() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [otherInputs, setOtherInputs] = useState<Record<number, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [userId, setUserId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        setUserId(session.user.id);
-      } else {
-        navigate('/auth');
-      }
-    };
-    getSession();
-  }, [navigate]);
 
   const progress = ((currentStep + 1) / questions.length) * 100;
   const currentQuestion = questions[currentStep];
+
+  const selectedOption = currentQuestion.options.find((option) => option.id === answers[currentQuestion.id]);
 
   const handleNext = () => {
     if (!answers[currentQuestion.id]) {
       toast({
         title: "Seleção obrigatória",
         description: "Por favor, selecione uma opção para continuar.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (selectedOption?.hasInput && !otherInputs[currentQuestion.id]?.trim()) {
+      toast({
+        title: "Campo obrigatório",
+        description: "Por favor, especifique a opção escolhida para continuar.",
         variant: "destructive"
       });
       return;
@@ -116,37 +116,75 @@ export default function NicheQuiz() {
   };
 
   const handleSubmit = async () => {
-    if (!userId) return;
+    if (!user) {
+      toast({
+        title: "Sessão expirada",
+        description: "Faça login novamente para concluir o quiz.",
+        variant: "destructive"
+      });
+      navigate('/auth');
+      return;
+    }
     
     setIsSubmitting(true);
-    const identifiedNiche = answers[1]; // The first question identifies the niche
+    const identifiedNiche = answers[1];
     
     try {
-      const { error } = await supabase
+      if (!identifiedNiche) {
+        throw new Error('Não foi possível identificar o nicho selecionado.');
+      }
+
+      const respostasCompletas = {
+        answers,
+        otherInputs,
+      };
+
+      const { data: existingResponsesData, error: fetchError } = await supabase
         .from('user_quiz_responses' as any)
-        .insert({
-          user_id: userId,
-          nicho_identificado: identifiedNiche,
-          respostas_completas: {
-            answers,
-            otherInputs
-          }
-        });
+        .select('id')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (fetchError) throw fetchError;
+
+      const existingResponses = (existingResponsesData ?? []) as unknown as Array<{ id: string }>;
+      const latestResponseId = existingResponses?.[0]?.id;
+
+      const { error } = latestResponseId
+        ? await supabase
+            .from('user_quiz_responses' as any)
+            .update({
+              nicho_identificado: identifiedNiche,
+              respostas_completas: respostasCompletas,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', latestResponseId)
+        : await supabase
+            .from('user_quiz_responses' as any)
+            .insert({
+              user_id: user.id,
+              nicho_identificado: identifiedNiche,
+              respostas_completas: respostasCompletas,
+            });
 
       if (error) throw error;
 
-      // Update profile
-      await supabase
+      const { error: profileError } = await supabase
         .from('profiles')
         .update({ quiz_completed: true })
-        .eq('id', userId);
+        .eq('id', user.id);
+
+      if (profileError) {
+        console.error('Erro ao marcar quiz como concluído:', profileError);
+      }
 
       toast({
         title: "Respostas enviadas!",
         description: "Obrigado por responder ao quiz. Estamos personalizando sua experiência.",
       });
       
-      navigate(`/briefing/${identifiedNiche}`);
+      navigate(`/briefing/${identifiedNiche}`, { replace: true });
     } catch (error: any) {
       toast({
         title: "Erro ao salvar",
