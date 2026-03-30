@@ -265,15 +265,15 @@ export default function LandingPage() {
         </div>
 
         <h1 className="text-4xl md:text-6xl font-bold max-w-4xl leading-tight mb-6">
-          Sua{' '}
+          Transforme Seu Marketing: Sua{' '}
           <span className="bg-gradient-to-r from-[#5C6BC0] to-[#DAA520] bg-clip-text text-transparent">
-            Agência Digital Autônoma
+            Agência de IA Autônoma
           </span>
-          {' '}operando 24/7
+          {' '}que Multiplica Seus Resultados 24/7
         </h1>
 
         <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mb-4">
-          9 Agentes de IA trabalhando juntos superam o desempenho de uma agência de marketing inteira — com tráfego pago, copy, social media, e-mail, funil e CRM operando de forma autônoma, 24 horas por dia, 7 dias por semana.
+          Cansado de agências caras e ineficientes? A LogosIA é a revolução que você precisa: 9 Agentes de IA especializados trabalhando em perfeita sincronia para escalar seu negócio, reduzir custos e gerar resultados previsíveis, sem falhas humanas ou gestão de equipe.
         </p>
 
         <p className="text-sm text-muted-foreground mb-10 flex items-center gap-2">
