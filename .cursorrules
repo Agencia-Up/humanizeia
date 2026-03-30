@@ -6,9 +6,10 @@
    
 2. **Deploy**: O deploy é feito no Easypanel e SOMENTE o usuário pode fazer. Após o commit/push, sempre AVISAR expressamente o usuário: *"Código enviado para o GitHub. Pode fazer o deploy no Easypanel."*
 
-3. **Supabase / Permissões**: 
-   - A IA (Antigravity/Agent) **NÃO TEM ACESSO** ao ambiente do Supabase (Banco de dados de produção/painel SQL).
-   - CASO haja qualquer alteração em triggers, policies, SQL, banco de dados ou funções edge que precisam de implantação via interface ou banco direto, a IA **DEVE GERAR O CÓDIGO/SQL** e enviar no chat com a instrução: *"Cole este código no seu banco do Supabase"*. Não tente rodar comandos administrativos do Supabase CLI que requerem login não configurado.
+3. **Supabase / Edge Functions / Bancos de Dados**: 
+   - A IA (Antigravity/Agent) **NÃO TEM ACESSO** ao ambiente do Supabase. O usuário edita o Supabase **DIRETAMENTE NO NAVEGADOR** (Dashboard via web).
+   - CASO haja qualquer alteração em triggers, policies, tabelas SQL ou **EDGE FUNCTIONS**, a IA **DEVE GERAR O CÓDIGO COMPLETO** e enviar no chat com a instrução: *"Copie este código e cole no seu Supabase Dashboard na Edge Function [nome-da-funcao]"* ou *"Rode no SQL Editor do seu Supabase"*.
+   - Não instrua o usuário a rodar `supabase functions deploy` no seu terminal. Sempre entregue o código final para ser colado no navegador.
 
 4. **Regras Específicas dos Agentes**:
    - **Paulo**: É STRICTAMENTE o copywriter. Ele escreve os textos para os posts, anúncios, e emails. NÃO cria os carrosséis.
