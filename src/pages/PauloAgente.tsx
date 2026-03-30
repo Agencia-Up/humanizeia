@@ -223,14 +223,13 @@ export default function PauloAgente() {
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || loading) return;
+  const processMessageRequest = async (displayContent: string, actualPrompt: string) => {
+    if (loading) return;
 
-    const userMsgContent = input.trim();
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
-      content: userMsgContent,
+      content: displayContent,
       timestamp: new Date(),
     };
 
@@ -240,8 +239,8 @@ export default function PauloAgente() {
     setLoading(true);
 
     try {
-      // 1. Salvar mensagem do usuário no histórico persistente
-      await saveMessage('paulo', 'user', userMsgContent);
+      // 1. Salvar mensagem visual do usuário no histórico persistente
+      await saveMessage('paulo', 'user', displayContent);
 
       const ctx = clientContext || DEMO_CLIENT;
       const contextStr = `
@@ -262,14 +261,18 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
 
       // 2. Criar tarefa em segundo plano
       const taskId = await createTask('paulo', 'generate_copy', {
-        input: userMsgContent,
+        input: actualPrompt,
         platform,
         style,
         intensity,
         context: ctx
       });
 
-      const apiMessages = newMessages.map(m => ({ role: m.role, content: m.content }));
+      // Substitui o displayContent pelo actualPrompt para a API do Claude visualizar a instrução completa
+      const apiMessages = newMessages.map(m => ({ 
+        role: m.role, 
+        content: m.id === userMessage.id ? actualPrompt : m.content 
+      }));
 
       const { data, error } = await supabase.functions.invoke('claude-chat', {
         body: {
@@ -308,6 +311,11 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || loading) return;
+    await processMessageRequest(input.trim(), input.trim());
   };
 
   const handleQuickAction = (action: typeof QUICK_ACTIONS[0]) => {
@@ -361,25 +369,25 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
           pautasStr = "Nenhuma pauta específica encontrada. Analise as tendências brutas.";
         }
 
-        const prompt = `Acabei de importar as pesquisas de tendência do Daniel para o nicho "${research.niche}".\n\nBaseado nas pautas do Daniel abaixo, monte os roteiros completos de carrosséis e posts para mim:\n\n${pautasStr}`;
+        const actualPrompt = `Acabei de importar as pesquisas de tendência do Daniel para o nicho "${research.niche}".\n\nBaseado nas pautas do Daniel abaixo, crie as copies completas para redes sociais e anúncios, focando nas dores, desejos e objeções do público:\n\n${pautasStr}`;
+        const displayPrompt = `🎯 Importando pesquisas e pautas do Daniel sobre "${research.niche}"...\nPor favor, crie as copies baseadas nessas tendências.`;
         
-        setInput(prompt);
-        // Opcional: já focar no input ou já dar enviar
-        if (inputRef.current) {
-          inputRef.current.focus();
-        }
+        toast({ title: 'Pesquisa do Daniel importada!', description: 'Iniciando criação das copies...' });
         
-        toast({ title: 'Pesquisa do Daniel importada!', description: 'As pautas foram carregadas. Revise e envie para o Paulo gerar as copys finais.' });
+        // Remove loading antes de chamar processMessageRequest para não dar conflito state
+        setLoading(false); 
+        await processMessageRequest(displayPrompt, actualPrompt);
+        
       } else {
         toast({ 
           title: 'Nenhuma pesquisa encontrada', 
           description: 'Acesse o agente DANIEL e gere a Busca de Tendências (Pesquisa) primeiro para importar depois!', 
           variant: 'destructive' 
         });
+        setLoading(false);
       }
     } catch (err: any) {
       toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
-    } finally {
       setLoading(false);
     }
   };

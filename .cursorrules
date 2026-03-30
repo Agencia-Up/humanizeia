@@ -1,0 +1,16 @@
+# REGRAS DO PROJETO - LER SEMPRE ANTES DE QUALQUER AÇÃO
+
+1. **Repositório GitHub**: TODAS as alterações finalizadas no código DEVERÃO ser comitadas no GitHub.
+   - Use o commiter: `dev-douglas`. (Exemplo: `git commit -m "feat: [descrição]" --author="dev-douglas <douglas@example.com>"`)
+   - Sempre aplique as alterações localmente e então faça o push.
+   
+2. **Deploy**: O deploy é feito no Easypanel e SOMENTE o usuário pode fazer. Após o commit/push, sempre AVISAR expressamente o usuário: *"Código enviado para o GitHub. Pode fazer o deploy no Easypanel."*
+
+3. **Supabase / Permissões**: 
+   - A IA (Antigravity/Agent) **NÃO TEM ACESSO** ao ambiente do Supabase (Banco de dados de produção/painel SQL).
+   - CASO haja qualquer alteração em triggers, policies, SQL, banco de dados ou funções edge que precisam de implantação via interface ou banco direto, a IA **DEVE GERAR O CÓDIGO/SQL** e enviar no chat com a instrução: *"Cole este código no seu banco do Supabase"*. Não tente rodar comandos administrativos do Supabase CLI que requerem login não configurado.
+
+4. **Regras Específicas dos Agentes**:
+   - **Paulo**: É STRICTAMENTE o copywriter. Ele escreve os textos para os posts, anúncios, e emails. NÃO cria os carrosséis.
+   - **Davi**: É o encarregado de montar os roteiros e estruturas de design de carrosséis e posts gráficos reais.
+   - **Daniel**: Faz a busca e mineração de inteligência e tendências.
