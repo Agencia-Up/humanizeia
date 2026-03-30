@@ -123,7 +123,7 @@ export default function NicheQuiz() {
     
     try {
       const { error } = await supabase
-        .from('user_quiz_responses')
+        .from('user_quiz_responses' as any)
         .insert({
           user_id: userId,
           nicho_identificado: identifiedNiche,
