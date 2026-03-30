@@ -8,7 +8,7 @@ import { Loader2, ArrowRight, CheckCircle, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 const nicheNames: Record<string, string> = {
-  automotivo: "Automotivo",
+  automotivo: "Automotivo (Agências de Carro / Concessionárias)",
   saude_bem_estar: "Saúde e Bem-Estar",
   varejo_ecommerce: "Varejo e E-commerce",
   educacao_conhecimento: "Educação e Conhecimento",
