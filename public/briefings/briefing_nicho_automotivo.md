@@ -1,5 +1,3 @@
-# Briefing para Nicho: Automotivo (Agências de Carro / Concessionárias)
-
 Este briefing é projetado para negócios do setor automotivo, como agências de carro, concessionárias e oficinas. As informações coletadas alimentarão o Agente Salomão para otimizar suas estratégias de marketing digital.
 
 ## 1. NEGÓCIO & MARCA
