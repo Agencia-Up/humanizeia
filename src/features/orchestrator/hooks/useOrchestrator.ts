@@ -48,7 +48,7 @@ export const useOrchestrator = () => {
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
-        .from('agent_executions')
+        .from('agent_executions' as any)
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
