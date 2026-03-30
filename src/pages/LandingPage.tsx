@@ -322,19 +322,17 @@ export default function LandingPage() {
               PARE E PENSE POR 30 SEGUNDOS
             </Badge>
             <h2 className="text-3xl md:text-5xl font-bold leading-tight mb-4">
-              Você está pagando{' '}
-              <span className="text-red-400">R$50.000/mês</span>{' '}
-              por uma equipe de marketing...
+              O Custo Oculto da Agência Tradicional:{' '}
+              <span className="text-red-400">Tempo, Dinheiro e Frustração</span>
             </h2>
-            <p className="text-xl md:text-2xl text-muted-foreground">
-              ou{' '}
-              <span className="text-green-400 font-bold">R$2.497</span>
-              {' '}por resultados superiores?
+            <p className="text-lg md:text-xl text-muted-foreground max-w-3xl mx-auto mt-6">
+              Você está pagando uma fortuna por uma equipe de marketing que opera em horário comercial, com falhas de comunicação, erros humanos e resultados inconsistentes. A gestão de múltiplos profissionais consome seu tempo e energia, desviando o foco do que realmente importa: o crescimento do seu negócio. Enquanto você lida com encargos, férias e a alta rotatividade, seus concorrentes avançam com soluções mais ágeis e eficientes.
             </p>
-            <p className="text-muted-foreground mt-4 max-w-2xl mx-auto text-sm">
-              A diferença entre contratar 8 pessoas (com todos os problemas que isso traz)
-              e ter uma operação de marketing 100% automatizada rodando 24/7.
-            </p>
+            <div className="mt-8 p-6 bg-red-500/10 border border-red-500/20 rounded-2xl max-w-3xl mx-auto">
+              <p className="text-xl font-bold text-red-400">
+                Pare e Pense: Você continuará pagando R$5.000 a R$15.000/mês por uma operação limitada, ou investirá em uma solução que entrega resultados superiores por uma fração do custo?
+              </p>
+            </div>
           </div>
 
           {/* Cards de comparação */}
