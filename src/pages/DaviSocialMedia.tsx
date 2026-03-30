@@ -11,10 +11,13 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useSocialMedia, CarouselSlide } from '@/hooks/useSocialMedia';
+import { useAgentChat } from '@/contexts/AgentChatContext';
 import {
   Instagram, Zap, Loader2, Clock, CheckCircle2, XCircle, ChevronRight,
   Copy, Trash2, FolderOpen, Layers, Send, Link, ChevronLeft, Palette,
+  Brain, AlertTriangle, PenTool
 } from 'lucide-react';
+import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -200,6 +203,7 @@ export default function DaviSocialMedia() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { posts, schedulePost, saveDraft, fetchPosts, generateCarousel } = useSocialMedia();
+  const { getHistory } = useAgentChat();
 
   const [messages, setMessages] = useState<ChatMessage[]>([{
     id: 'welcome',
@@ -216,6 +220,7 @@ export default function DaviSocialMedia() {
   const [autoModeRunning, setAutoModeRunning] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('dark_pro');
   const [clientContext, setClientContext] = useState<{ name: string; produto: string; publico: string } | null>(null);
+  const [briefingAlerta, setBriefingAlerta] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -275,6 +280,9 @@ export default function DaviSocialMedia() {
             produto: (data as any).product_service || (data as any).produto || '',
             publico: (data as any).target_audience || (data as any).publico || '',
           });
+          setBriefingAlerta(false);
+        } else {
+          setBriefingAlerta(true);
         }
       } catch {
         // No client context available
@@ -475,6 +483,18 @@ export default function DaviSocialMedia() {
 
   const runAutoMode = async () => {
     if (autoModeRunning) return;
+
+    // ── Verificação de briefing ──────────────────────
+    if (!clientContext || !clientContext.produto) {
+      setBriefingAlerta(true);
+      toast({
+        title: '⚠️ Briefing não preenchido',
+        description: 'Vá ao Salomão e preencha o briefing do cliente antes de rodar o Fluxo Automático.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setAutoModeRunning(true);
 
     const steps: AutoModeStep[] = [
@@ -505,10 +525,17 @@ export default function DaviSocialMedia() {
             goal: 'Criar conteúdo viral para redes sociais com alta taxa de engajamento',
           },
         });
+        // ── Fix: garantir que danielInsights é sempre string ──
         danielInsights = typeof result === 'string'
           ? result
-          : result?.strategy || result?.content || 'Tendências identificadas';
-        updateStep(stepMsgId, 'daniel', 'completed', danielInsights.slice(0, 80));
+          : typeof result?.strategy === 'string'
+            ? result.strategy
+            : typeof result?.content === 'string'
+              ? result.content
+              : result?.strategy || result?.content
+                ? JSON.stringify(result?.strategy || result?.content)
+                : 'Tendências identificadas';
+        updateStep(stepMsgId, 'daniel', 'completed', String(danielInsights).slice(0, 80));
       }
 
       // Step 2: Paulo (or carousel generator)
@@ -664,6 +691,105 @@ export default function DaviSocialMedia() {
     }
   };
 
+  const handleImportDanielResearch = async () => {
+    try {
+      setLoading(true);
+      const history = await getHistory('daniel');
+      const lastResearchMsg = [...history].reverse().find(m => m.metadata?.type === 'niche_research' && m.metadata?.research);
+      
+      if (lastResearchMsg && lastResearchMsg.metadata?.research) {
+        const research = lastResearchMsg.metadata.research;
+        
+        let pautasStr = '';
+        if (research.content_briefs && research.content_briefs.length > 0) {
+          pautasStr = research.content_briefs.map((b: any, i: number) => {
+            const hook = b.hook ? `Gancho: ${b.hook}\n` : '';
+            const slides = b.slides_or_points ? `Estrutura do Carrossel:\n- ${b.slides_or_points.join('\n- ')}` : '';
+            return `Pauta ${i + 1}: ${b.title}\n${hook}${slides}`;
+          }).join('\n\n');
+        } else {
+          pautasStr = "Nenhuma pauta específica encontrada. Analise as tendências brutas.";
+        }
+
+        const actualPrompt = `Acabei de importar as pesquisas de tendência do Daniel para o nicho "${research.niche}".
+
+Com base nas pautas do Daniel abaixo, crie opções de conteúdo de social media divididas obrigatoriamente por blocos de tipo: [TIPO: POST_ESTATICO], [TIPO: CARROSSEL] e [TIPO: REEL].
+
+Foque nas dores, desejos e objeções do público identificados na pesquisa:
+
+${pautasStr}`;
+        const displayPrompt = `🎯 Importando pesquisas do Daniel sobre "${research.niche}"...\nGerando posts, carrosséis e reels estratégicos.`;
+        
+        addUserMessage(displayPrompt);
+        toast({ title: 'Pesquisa do Daniel importada!', description: 'Davi está processando os blocos de conteúdo...' });
+        
+        // Simular o envio do prompt estruturado
+        const content = await callPauloApi(actualPrompt, switches);
+        
+        const generated: GeneratedContent = {
+          id: Date.now().toString(),
+          type: contentType, // Default visual do tipo selecionado no momento
+          title: `Estratégia Daniel — ${research.niche}`,
+          preview: content.slice(0, 120),
+          fullContent: content,
+          createdAt: new Date(),
+          platform,
+        };
+
+        const msgId = addDaviMessage('✅ Pesquisa processada! Aqui estão as sugestões divididas por blocos:');
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+        addToLibrary(generated);
+        
+      } else {
+        toast({ 
+          title: 'Nenhuma pesquisa encontrada', 
+          description: 'Gere a Busca de Tendências no DANIEL primeiro!', 
+          variant: 'destructive' 
+        });
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImportPaulo = async () => {
+    try {
+      setLoading(true);
+      const history = await getHistory('paulo');
+      // Pega as últimas mensagens do assistente Paulo (excluir boas-vindas)
+      const pauloMsgs = history.filter(m => m.role === 'assistant' && m.content.length > 50);
+      if (pauloMsgs.length === 0) {
+        toast({
+          title: 'Nenhuma copy encontrada',
+          description: 'Acesse o Paulo e gere algumas copies antes de importar aqui!',
+          variant: 'destructive',
+        });
+        return;
+      }
+      // Pegar a última geração do Paulo
+      const lastPaulo = pauloMsgs[pauloMsgs.length - 1];
+      const generated: GeneratedContent = {
+        id: Date.now().toString(),
+        type: contentType,
+        title: `Importado do Paulo — ${new Date().toLocaleDateString('pt-BR')}`,
+        preview: lastPaulo.content.slice(0, 120),
+        fullContent: lastPaulo.content,
+        createdAt: new Date(),
+        platform,
+      };
+      const msgId = addDaviMessage('✅ Copy do Paulo importada! Aqui está o conteúdo gerado:');
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+      addToLibrary(generated);
+      toast({ title: '✅ Copy do Paulo importada!', description: 'Conteúdo adicionado à sua biblioteca.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ─── Main dispatch ────────────────────────────────────────────────────────
 
   const detectAndProcess = async (text: string) => {
@@ -748,9 +874,36 @@ export default function DaviSocialMedia() {
                 ))}
               </div>
 
-              {/* Modo Automático */}
               <Button
-                onClick={() => { addUserMessage('⚡ Modo Automático'); detectAndProcess('__auto__'); }}
+                variant="outline"
+                onClick={handleImportDanielResearch}
+                disabled={autoModeRunning || loading}
+                className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30 gap-2 font-semibold text-xs"
+              >
+                <Brain className="h-3.5 w-3.5" />
+                Importar Daniel
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={handleImportPaulo}
+                disabled={autoModeRunning || loading}
+                className="bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border-violet-500/30 gap-2 font-semibold text-xs"
+              >
+                <PenTool className="h-3.5 w-3.5" />
+                Importar Paulo
+              </Button>
+
+              <Button
+                onClick={() => {
+                  if (!clientContext?.produto) {
+                    setBriefingAlerta(true);
+                    toast({ title: '⚠️ Briefing não preenchido', description: 'Preencha o briefing no Salomão antes de rodar o Fluxo Automático.', variant: 'destructive' });
+                    return;
+                  }
+                  addUserMessage('⚡ Modo Automático');
+                  detectAndProcess('__auto__');
+                }}
                 disabled={autoModeRunning || loading}
                 className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white font-semibold gap-2 shadow-lg shadow-pink-500/20"
               >
@@ -781,6 +934,17 @@ export default function DaviSocialMedia() {
               </label>
             ))}
           </div>
+
+          {/* Alerta de briefing não preenchido */}
+          {briefingAlerta && (
+            <div className="mx-6 my-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-center gap-3 text-sm text-red-400">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-semibold">Briefing não preenchido!</p>
+                <p className="text-xs text-red-400/80">Para usar o Fluxo Automático, <a href="/salomao" className="underline font-medium">acesse o Salomão</a> e preencha o briefing do cliente.</p>
+              </div>
+            </div>
+          )}
 
           {/* Instagram connection status */}
           {igAccount !== undefined && (
@@ -824,7 +988,7 @@ export default function DaviSocialMedia() {
                       </div>
                       <div className="flex-1">
                         <div className="bg-pink-500/5 border border-pink-500/10 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-foreground">
-                          {message.content}
+                          <MarkdownRenderer content={message.content} />
                         </div>
                         {/* Content card attached to davi message */}
                         {message.contentCard && (

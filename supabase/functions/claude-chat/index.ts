@@ -117,7 +117,9 @@ Você recebe parâmetros de ESTILO e INTENSIDADE que moldam cada copy:
 - Forte (3) → impacta, pressiona, fecha
 
 ## FORMATO OBRIGATÓRIO DE SAÍDA
-Sempre estruture a copy assim — com separadores visuais:
+Sempre estruture a copy em blocos claros por tipo de conteúdo, usando separadores visuais:
+
+### [TIPO: CARROSSEL / REEL / POST_ESTATICO / STORY]
 
 ---
 🎯 **HEADLINE**
@@ -132,7 +134,7 @@ Sempre estruture a copy assim — com separadores visuais:
 ⚡ **POR QUE FUNCIONA:** [1 linha explicando o gatilho principal usado]
 ---
 
-Para variações, repita a estrutura numerando: **VARIAÇÃO 1**, **VARIAÇÃO 2**, etc.
+Para gerações múltiplas ou importações de pesquisa, voce DEVE rotular cada bloco com seu TIPO correspondente para que o Davi possa processar individualmente.
 
 ## ANÁLISE DE REFERÊNCIAS
 Quando o usuário enviar uma URL, texto de referência ou print, você deve:

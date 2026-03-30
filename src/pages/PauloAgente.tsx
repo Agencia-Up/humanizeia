@@ -18,6 +18,7 @@ import {
 
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
 import { useAgentChat } from '@/contexts/AgentChatContext';
+import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -385,8 +386,14 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
           pautasStr = "Nenhuma pauta específica encontrada. Analise as tendências brutas.";
         }
 
-        const actualPrompt = `Acabei de importar as pesquisas de tendência do Daniel para o nicho "${research.niche}".\n\nBaseado nas pautas do Daniel abaixo, crie as copies completas para redes sociais e anúncios, focando nas dores, desejos e objeções do público:\n\n${pautasStr}`;
-        const displayPrompt = `🎯 Importando pesquisas e pautas do Daniel sobre "${research.niche}"...\nPor favor, crie as copies baseadas nessas tendências.`;
+        const actualPrompt = `Acabei de importar as pesquisas de tendência do Daniel para o nicho "${research.niche}".
+
+Com base nas pautas do Daniel abaixo, crie opções de copies divididas obrigatoriamente por blocos de tipo: [TIPO: POST_ESTATICO], [TIPO: CARROSSEL] e [TIPO: REEL].
+
+Foque nas dores, desejos e objeções do público identificados na pesquisa:
+
+${pautasStr}`;
+        const displayPrompt = `🎯 Importando pesquisas e pautas do Daniel sobre "${research.niche}"...\nGerando opções estruturadas para Posts, Carrosséis e Reels.`;
         
         toast({ title: 'Pesquisa do Daniel importada!', description: 'Iniciando criação das copies...' });
         
@@ -513,8 +520,8 @@ Plataforma atual: ${PLATFORMS.find(p => p.value === platform)?.label}`;
                           <PenTool className="h-4 w-4 text-violet-400" />
                         </div>
                         <div className="flex-1">
-                          <div className="bg-violet-500/5 border border-violet-500/10 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-foreground whitespace-pre-wrap">
-                            {message.content}
+                          <div className="bg-violet-500/5 border border-violet-500/10 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-foreground">
+                            <MarkdownRenderer content={message.content} />
                           </div>
                           <div className="flex items-center gap-2 mt-2">
                             <Button
