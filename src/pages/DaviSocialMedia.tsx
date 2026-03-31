@@ -694,6 +694,82 @@ ${pautasStr}`;
   const handleImportPaulo = async () => {
     try {
       setLoading(true);
+
+      // ── 1. Try paulo_carousels table (Paulo 2.0 structured data) ────────
+      const { data: pauloCarousels, error: pcError } = await supabase
+        .from('paulo_carousels' as any)
+        .select('*')
+        .eq('user_id', user?.id)
+        .eq('status', 'ready_for_davi')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (!pcError && pauloCarousels && pauloCarousels.length > 0) {
+        const typeLabel = CAROUSEL_TYPES.find(t => t.value === carouselType)?.label || carouselType;
+        addDaviMessage(`🎨 Paulo preparou **${pauloCarousels.length} carrossel(is)** prontos! Construindo o visual de cada um agora:`);
+
+        for (let i = 0; i < pauloCarousels.length; i++) {
+          const pauloCarousel = pauloCarousels[i] as any;
+          const progressMsgId = addDaviMessage(`🎨 Construindo visual do Carrossel ${i + 1}/${pauloCarousels.length}: "${pauloCarousel.title}"...`);
+
+          // Build a rich topic from the Paulo structured data
+          const slides = pauloCarousel.slides || [];
+          const coverSlide = slides.find((s: any) => s.type === 'cover') || slides[0];
+          const topic = `${pauloCarousel.title}. Ângulo: ${pauloCarousel.angle}. Cover: "${coverSlide?.headline || pauloCarousel.title}"`;
+          const paulCopy = slides.map((s: any) => `Slide ${s.slide_number}: ${s.headline}${s.subtext ? ' — ' + s.subtext : ''}`).join('\n');
+
+          const carousel = await generateCarouselV2({
+            topic,
+            audience: clientContext?.publico || 'empreendedores digitais',
+            tone: 'persuasivo e direto',
+            slide_count: Math.min(Math.max(slides.length, 4), 8),
+            include_cta: true,
+            brand_name: clientContext?.name,
+            carousel_type: carouselType,
+            paul_copy: paulCopy,
+          });
+
+          if (!carousel) {
+            setMessages(prev => prev.map(m => m.id === progressMsgId ? { ...m, content: `❌ Falha ao gerar o visual do Carrossel ${i + 1}.` } : m));
+            continue;
+          }
+
+          const generated: GeneratedContent = {
+            id: Date.now().toString() + i,
+            type: 'carousel',
+            title: `${pauloCarousel.title} — ${typeLabel}`,
+            preview: carousel.cover_headline || carousel.slides[0]?.headline || topic.slice(0, 80),
+            fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
+            slides: carousel.slides,
+            templateId: selectedTemplate,
+            createdAt: new Date(),
+            platform,
+          };
+
+          setMessages(prev => prev.map(m => m.id === progressMsgId ? {
+            ...m,
+            content: `✅ Carrossel ${i + 1}/${pauloCarousels.length} pronto! Navegue com as setas e escolha o template:`,
+            contentCard: generated
+          } : m));
+
+          addToLibrary(generated);
+
+          // Mark as in_production in paulo_carousels
+          await supabase
+            .from('paulo_carousels' as any)
+            .update({ status: 'in_production' })
+            .eq('id', pauloCarousel.id);
+
+          if (i < pauloCarousels.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
+        }
+
+        setLoading(false);
+        return;
+      }
+
+      // ── 2. Fallback: old chat history approach (Paulo 1.0 compatibility) ─
       const history = await getHistory('paulo');
       // Pega as últimas mensagens do assistente Paulo (excluir boas-vindas)
       const pauloMsgs = history.filter(m => m.role === 'assistant' && m.content.length > 50);
@@ -738,9 +814,12 @@ ${pautasStr}`;
            carouselTexts = carouselTexts.slice(0, 3);
         }
 
-        addDaviMessage(`🔄 Importando copy do Paulo. Encontramos **${carouselTexts.length} ideia(s)** de Carrossel. Construindo as páginas visuais (isso pode levar uns segundos)...`);
+        addDaviMessage(`🔄 Importando copy do Paulo. Encontramos **${carouselTexts.length} ideia(s)** de Carrossel. Vou construir o visual de cada um para você agora:`);
         
         for (let i = 0; i < carouselTexts.length; i++) {
+          // Mensagem de progresso específica para este item
+          const progressMsgId = addDaviMessage(`🎨 Criando visual do Carrossel ${i + 1}/${carouselTexts.length}...`);
+          
           const copyText = carouselTexts[i];
           const carousel = await generateCarouselV2({
             topic: `Carrossel ${i + 1} baseado na copy do Paulo`,
@@ -753,7 +832,11 @@ ${pautasStr}`;
             paul_copy: copyText,
           });
 
-          if (!carousel) continue;
+          // Se falhar um, avisa e continua para o próximo
+          if (!carousel) {
+             setMessages(prev => prev.map(m => m.id === progressMsgId ? { ...m, content: `❌ Falha ao gerar o visual do Carrossel ${i + 1}.` } : m));
+             continue;
+          }
 
           const generated: GeneratedContent = {
             id: Date.now().toString() + i,
@@ -767,9 +850,19 @@ ${pautasStr}`;
             platform,
           };
 
-          const msgId = addDaviMessage(`✅ Carrossel ${i + 1} criado! Navegue com as setas e escolha o template:`);
-          setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+          // Atualiza a mensagem de progresso para a mensagem final com o card
+          setMessages(prev => prev.map(m => m.id === progressMsgId ? { 
+            ...m, 
+            content: `✅ Carrossel ${i + 1}/${carouselTexts.length} pronto! Navegue com as setas e escolha o template:`,
+            contentCard: generated 
+          } : m));
+          
           addToLibrary(generated);
+
+          // Pequeno delay para não sobrecarregar e dar tempo do usuário ver
+          if (i < carouselTexts.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
         }
       } else {
         const generated: GeneratedContent = {
