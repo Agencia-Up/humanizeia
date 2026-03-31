@@ -828,80 +828,53 @@ ${pautasStr}`;
         {/* ── LEFT PANEL ── */}
         <div className="flex-1 flex flex-col min-w-0">
 
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-border/50 bg-background/95 backdrop-blur-sm shrink-0">
-            <div className="flex items-center gap-4">
-              <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-pink-500/20 to-purple-600/20 border border-pink-500/30 flex items-center justify-center">
-                <Instagram className="h-5 w-5 text-pink-400" />
+          {/* Header Premium Clean */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border/20 bg-background/60 backdrop-blur-xl shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-[14px] bg-gradient-to-br from-pink-500/10 to-purple-600/10 border border-pink-500/20 flex items-center justify-center shadow-inner">
+                <Instagram className="h-5 w-5 text-pink-500" />
               </div>
-              <div>
+              <div className="flex flex-col">
                 <div className="flex items-center gap-2">
-                  <h1 className="text-lg font-bold text-foreground">DAVI</h1>
-                  <Badge className="bg-pink-500/20 text-pink-400 border-pink-500/30 text-[10px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse mr-1.5 inline-block" />
-                    Social Media IA
-                  </Badge>
+                  <h1 className="text-[17px] font-black text-foreground tracking-tight">DAVI</h1>
+                  <span className="text-[9px] uppercase font-bold tracking-widest text-pink-500/80 bg-pink-500/10 px-2 py-0.5 rounded-full whitespace-nowrap border border-pink-500/20">
+                    Social Media
+                  </span>
                 </div>
                 {clientContext && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Cliente: <span className="text-pink-400 font-medium">{clientContext.name}</span>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 font-medium">
+                    Briefing: <span className="text-pink-400 font-bold">{clientContext.name}</span>
                   </p>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center gap-3 flex-wrap justify-end">
-              {/* Platform selector */}
-              <div className="flex gap-1">
-                {PLATFORMS.map(p => (
-                  <button
-                    key={p.value}
-                    onClick={() => setPlatform(p.value)}
-                    className={`px-2 py-1 rounded-lg text-xs border transition-all ${platform === p.value ? 'bg-pink-500/20 text-pink-400 border-pink-500/40' : 'bg-muted/30 text-muted-foreground border-border/40 hover:border-border'}`}
-                  >
-                    {p.emoji} {p.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Content type selector */}
-              <div className="flex gap-1">
-                {CONTENT_TYPES.map(ct => (
-                  <button
-                    key={ct.value}
-                    onClick={() => setContentType(ct.value)}
-                    className={`px-2 py-1 rounded-lg text-xs border transition-all ${contentType === ct.value ? 'bg-purple-500/20 text-purple-400 border-purple-500/40' : 'bg-muted/30 text-muted-foreground border-border/40 hover:border-border'}`}
-                  >
-                    {ct.emoji} {ct.label}
-                  </button>
-                ))}
-              </div>
-
+            <div className="flex items-center gap-3">
               <Button
                 variant="outline"
                 onClick={handleImportPaulo}
                 disabled={autoModeRunning || loading}
-                className="bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border-violet-500/30 gap-2 font-semibold text-xs"
+                className="h-9 px-4 bg-violet-500/5 hover:bg-violet-500/10 text-violet-400 border-violet-500/20 font-semibold text-xs rounded-full transition-all"
               >
-                <PenTool className="h-3.5 w-3.5" />
-                Importar Paulo
+                <PenTool className="h-3.5 w-3.5 mr-2" />
+                Importar do Paulo
               </Button>
 
               <Button
                 onClick={() => {
                   if (!clientContext?.produto) {
                     setBriefingAlerta(true);
-                    toast({ title: '⚠️ Briefing não preenchido', description: 'Preencha o briefing no Salomão antes de rodar o Fluxo Automático.', variant: 'destructive' });
+                    toast({ title: '⚠️ Briefing não preenchido', description: 'Preencha o briefing no Salomão.', variant: 'destructive' });
                     return;
                   }
                   addUserMessage('⚡ Modo Automático');
                   detectAndProcess('__auto__');
                 }}
                 disabled={autoModeRunning || loading}
-                className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white font-semibold gap-2 shadow-lg shadow-pink-500/20"
+                className="h-9 px-5 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-bold text-xs rounded-full shadow-md shadow-pink-500/20 transition-all transform hover:scale-105"
               >
-                {autoModeRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-                Modo Automático
+                {autoModeRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Zap className="h-3.5 w-3.5 mr-1.5 fill-white" />}
+                Auto-Piloto
               </Button>
             </div>
           </div>

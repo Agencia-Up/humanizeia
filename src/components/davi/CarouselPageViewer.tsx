@@ -125,6 +125,8 @@ function HighlightHeadline({ text, accentWord, color }: { text: string; accentWo
   );
 }
 
+const POLLINATIONS_CACHE = new Map<string, string>();
+
 // ── Single Slide Page ─────────────────────────────────────────────────────────
 function SlidePageInner({ slide, tpl, brandName, total }: {
   slide: CarouselSlide;
@@ -138,7 +140,10 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
   // Motor Fotográfico Pollinations.ai (Free/No-Key)
   const visualPrompt = encodeURIComponent(`${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`);
   const seed = (slide.headline?.length || 10) * slide.order * 42;
-  const bgImageUrl = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
+  const bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
+  
+  // Resgata o link local direto da CPU/Memória (ObjectURL) que o Preloader fritou!
+  const bgImageUrl = POLLINATIONS_CACHE.get(bgImageUrlRaw) || bgImageUrlRaw;
 
   // Para fundos fotográficos, forçamos o texto para branco puro para brilhar sob a máscara escura
   const textColor = '#ffffff';
@@ -382,27 +387,39 @@ export function CarouselPageViewer({
       const seed = (slide.headline?.length || 10) * slide.order * 42;
       const bgImageUrl = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
 
-      const img = new Image();
-      img.onload = () => {
-        if (isCancelled) return;
+      if (POLLINATIONS_CACHE.has(bgImageUrl)) {
         completed++;
         setLoadedCount(completed);
         if (completed === total) {
           clearTimeout(fallbackTimeout);
           setLoadingImages(false);
         }
-      };
-      img.onerror = () => {
-        // Se der erro em alguma, conta como completed pra não travar o loader pra sempre
-        if (isCancelled) return;
-        completed++;
-        setLoadedCount(completed);
-        if (completed === total) {
-          clearTimeout(fallbackTimeout);
-          setLoadingImages(false);
-        }
-      };
-      img.src = bgImageUrl; // Trigger the download!
+        return;
+      }
+
+      fetch(bgImageUrl, { cache: 'force-cache' })
+        .then(res => res.blob())
+        .then(blob => {
+           if (isCancelled) return;
+           const objUrl = URL.createObjectURL(blob);
+           POLLINATIONS_CACHE.set(bgImageUrl, objUrl);
+           
+           completed++;
+           setLoadedCount(completed);
+           if (completed === total) {
+             clearTimeout(fallbackTimeout);
+             setLoadingImages(false);
+           }
+        })
+        .catch(() => {
+           if (isCancelled) return;
+           completed++;
+           setLoadedCount(completed);
+           if (completed === total) {
+             clearTimeout(fallbackTimeout);
+             setLoadingImages(false);
+           }
+        });
     });
 
     return () => {
