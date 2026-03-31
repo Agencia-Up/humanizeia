@@ -134,7 +134,18 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta   = slide.type === 'cta'   || slide.order === total;
   const isLight  = tpl.id === 'clean_light';
-  const layout = slide.layout || 'left';
+  
+  // Garantia Rítmica de Layouts: Força a variação caso a IA envie tudo 'left' (evitar engessamento percebido)
+  let layout = slide.layout || 'left';
+  if ((layout as string) === 'left' || (layout as string) === 'default') {
+    if (isCover) layout = 'centered';
+    else if (isCta) layout = 'centered';
+    else {
+      // Cria um ritmo alternado: Left, Minimal, Left, Centered...
+      const cadence: Array<'left' | 'minimal' | 'centered'> = ['minimal', 'left', 'centered', 'left'];
+      layout = cadence[(slide.order - 1) % cadence.length];
+    }
+  }
 
   const renderLayoutContent = () => {
     switch (layout) {
