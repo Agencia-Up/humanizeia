@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import html2canvas from 'html2canvas';
 import { ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
 import { CarouselSlide } from '@/hooks/useSocialMedia';
@@ -352,7 +352,7 @@ interface CarouselPageViewerProps {
   caption?: string;
 }
 
-export function CarouselPageViewer({
+function CarouselPageViewerInner({
   slides, templateId, onTemplateChange, brandName = 'Minha Marca', caption
 }: CarouselPageViewerProps) {
   const [current, setCurrent] = useState(0);
@@ -602,5 +602,58 @@ export function CarouselPageViewer({
         {exporting ? 'Exportando...' : `Baixar Slide ${slide.order}`}
       </Button>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OVERRIDE: Error Boundary para capturar crashes do React por alucinação da IA
+// ─────────────────────────────────────────────────────────────────────────────
+class CarouselErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null; info: ErrorInfo | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null, info: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Carousel Rendering Crash:", error, info);
+    this.setState({ error, info });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center p-6 gap-3 min-h-[400px] w-full bg-red-950/40 border border-red-500/50 rounded-xl text-center shadow-2xl backdrop-blur-md">
+          <div className="text-4xl mb-2 drop-shadow-[0_0_15px_rgba(239,68,68,0.8)]">🚨</div>
+          <h3 className="text-red-400 font-bold text-lg tracking-tight uppercase">Radar Anti-Crash Detectou Alucinação</h3>
+          <p className="text-red-300 text-xs max-w-sm mb-2 font-medium">
+            O Davi tentou desenhar o Carrossel, mas a IA do Paulo gerou um código com estrutura de JSON inválida na resposta visual (em vez de texto). O renderizador explodiria causando a Tela Preta, mas a barreira de contenção segurou o impacto!
+          </p>
+          <div className="bg-black/60 p-4 rounded-lg w-full text-left border border-red-500/30 text-[11px] text-red-100 font-mono shadow-inner overflow-hidden">
+             <strong className="text-red-400 block mb-1 text-[10px] uppercase tracking-wider">Erro Culpado Fatal:</strong>
+             {this.state.error?.toString()}
+          </div>
+          <div className="bg-black/40 p-3 rounded-lg w-full text-left border border-red-500/20 text-[9px] text-red-200/50 font-mono max-h-[80px] overflow-y-auto mt-1">
+             <strong className="text-red-500/50 block mb-1 uppercase">Stack Trace:</strong>
+             {this.state.info?.componentStack?.trim()}
+          </div>
+          <p className="text-xs text-white mt-4 font-bold bg-red-600/20 px-4 py-2 rounded-full border border-red-500/30">
+            Mande um Print dessa Caixinha Vermelha Inteira para o engenheiro rastrear!
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function CarouselPageViewer(props: CarouselPageViewerProps) {
+  return (
+    <CarouselErrorBoundary>
+      <CarouselPageViewerInner {...props} />
+    </CarouselErrorBoundary>
   );
 }
