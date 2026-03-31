@@ -28,6 +28,14 @@ export interface CarouselSlide {
   bg_color?: string;
   accent_color?: string;
   image_prompt?: string;
+  // V2 rich fields
+  type?: 'cover' | 'content' | 'list' | 'quote' | 'cta';
+  sub_headline?: string;
+  bullets?: string[] | null;
+  visual_cue?: string;
+  layout?: 'centered' | 'left' | 'split' | 'minimal' | 'full_bleed';
+  accent_word?: string;
+  image_url?: string;
 }
 
 export interface PostInsights {
@@ -47,6 +55,23 @@ export interface GeneratedCarousel {
   caption: string;
   hashtags: string[];
   cover_headline: string;
+  carousel_type?: string;
+  hook_promise?: string;
+}
+
+export interface CarouselIdea {
+  title: string;
+  hook: string;
+  type: string;
+  viral_score: number;
+  why: string;
+}
+
+export interface TrendsBrief {
+  niche: string;
+  carousel_ideas: CarouselIdea[];
+  raw_topics: { title: string; summary: string; source: string }[];
+  generated_at: string;
 }
 
 export function useSocialMedia() {
@@ -208,6 +233,51 @@ export function useSocialMedia() {
     }
   }, [user, toast, fetchPosts]);
 
+  // ─── Generate Carousel V2 (Rich Page-Based) ──────────────────────────────
+  const generateCarouselV2 = useCallback(async (params: {
+    topic: string;
+    audience: string;
+    tone: string;
+    slide_count: number;
+    include_cta: boolean;
+    brand_name?: string;
+    carousel_type?: string;
+    paul_copy?: string;
+    trend_context?: string;
+  }) => {
+    if (!user) return null;
+    setGenerating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('social-media-api', {
+        body: { action: 'generate_carousel_v2', ...params },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      setGeneratedCarousel(data.carousel);
+      return data.carousel as GeneratedCarousel;
+    } catch (err: any) {
+      toast({ title: 'Erro ao gerar carrossel', description: err.message, variant: 'destructive' });
+      return null;
+    } finally {
+      setGenerating(false);
+    }
+  }, [user, toast]);
+
+  // ─── Fetch Trends Brief ───────────────────────────────────────────────────
+  const fetchTrendsBrief = useCallback(async (niche: string): Promise<TrendsBrief | null> => {
+    if (!user) return null;
+    try {
+      const { data, error } = await supabase.functions.invoke('social-media-api', {
+        body: { action: 'fetch_trends_brief', niche, limit: 8 },
+      });
+      if (error) throw error;
+      return data as TrendsBrief;
+    } catch (err: any) {
+      toast({ title: 'Erro ao buscar tendências', description: err.message, variant: 'destructive' });
+      return null;
+    }
+  }, [user, toast]);
+
   return {
     loading,
     generating,
@@ -216,6 +286,8 @@ export function useSocialMedia() {
     setGeneratedCarousel,
     fetchPosts,
     generateCarousel,
+    generateCarouselV2,
+    fetchTrendsBrief,
     saveDraft,
     schedulePost,
     publishNow,

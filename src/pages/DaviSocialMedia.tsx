@@ -10,12 +10,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { useSocialMedia, CarouselSlide } from '@/hooks/useSocialMedia';
+import { useSocialMedia } from '@/hooks/useSocialMedia';
 import { useAgentChat } from '@/contexts/AgentChatContext';
+import { CarouselPageViewer, TemplateId, CAROUSEL_TEMPLATES } from '@/components/davi/CarouselPageViewer';
 import {
   Instagram, Zap, Loader2, Clock, CheckCircle2, XCircle, ChevronRight,
-  Copy, Trash2, FolderOpen, Layers, Send, Link, ChevronLeft, Palette,
-  Brain, AlertTriangle, PenTool
+  Copy, Trash2, FolderOpen, Layers, Send, Link, Palette,
+  Brain, AlertTriangle, PenTool, TrendingUp, BookOpen, MessageSquare, AlertCircle, Footprints, Flame
 } from 'lucide-react';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 
@@ -51,7 +52,7 @@ type GeneratedContent = {
   title: string;
   preview: string;
   fullContent: string;
-  slides?: CarouselSlide[];
+  slides?: import('@/hooks/useSocialMedia').CarouselSlide[];
   templateId?: string;
   createdAt: Date;
   scheduled?: Date;
@@ -82,104 +83,19 @@ const CONTENT_TYPES = [
 
 const INSTAGRAM_REGEX = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/;
 
-const CAROUSEL_TEMPLATES = [
-  { id: 'dark_pro',  name: 'Dark Pro', bg: '#0D0D0D', accent: '#7C3AED', text: '#FFFFFF', sub: '#A1A1AA' },
-  { id: 'gold',      name: 'Gold',     bg: '#1A1000', accent: '#DAA520', text: '#FFFFFF', sub: '#B8860B' },
-  { id: 'ocean',     name: 'Ocean',    bg: '#0C1445', accent: '#00B4D8', text: '#FFFFFF', sub: '#90E0EF' },
-  { id: 'forest',    name: 'Forest',   bg: '#0D1F0D', accent: '#22C55E', text: '#FFFFFF', sub: '#86EFAC' },
-  { id: 'sunset',    name: 'Sunset',   bg: '#1F0D0D', accent: '#F97316', text: '#FFFFFF', sub: '#FED7AA' },
-  { id: 'royal',     name: 'Royal',    bg: '#1A0D1F', accent: '#EC4899', text: '#FFFFFF', sub: '#F9A8D4' },
-  { id: 'minimal',   name: 'Minimal',  bg: '#FFFFFF', accent: '#18181B', text: '#18181B', sub: '#71717A' },
-  { id: 'rose',      name: 'Rose',     bg: '#1F0D15', accent: '#F43F5E', text: '#FFFFFF', sub: '#FDA4AF' },
+// Carousel type options for the V2 generator
+const CAROUSEL_TYPES = [
+  { value: 'educacional',  label: 'Educacional',    emoji: '📚', icon: BookOpen },
+  { value: 'lista',        label: 'Lista',          emoji: '📋', icon: Layers },
+  { value: 'storytelling', label: 'Storytelling',   emoji: '📖', icon: MessageSquare },
+  { value: 'mitos',        label: 'Mitos & Verdades',emoji: '🔍', icon: AlertCircle },
+  { value: 'passoapasso',  label: 'Passo a Passo',  emoji: '👣', icon: Footprints },
+  { value: 'polemica',     label: 'Polêmico',       emoji: '🔥', icon: Flame },
 ] as const;
 
-type TemplateId = typeof CAROUSEL_TEMPLATES[number]['id'];
+type CarouselTypeValue = typeof CAROUSEL_TYPES[number]['value'];
 
-// ─── Carousel Viewer ─────────────────────────────────────────────────────────
-
-interface CarouselViewerProps {
-  slides: CarouselSlide[];
-  templateId: TemplateId;
-  onTemplateChange: (id: TemplateId) => void;
-}
-
-function CarouselViewer({ slides, templateId, onTemplateChange }: CarouselViewerProps) {
-  const [current, setCurrent] = useState(0);
-  const tpl = CAROUSEL_TEMPLATES.find(t => t.id === templateId) ?? CAROUSEL_TEMPLATES[0];
-  const slide = slides[current];
-  if (!slide) return null;
-
-  return (
-    <div className="mt-3 space-y-2">
-      {/* Slide display */}
-      <div
-        className="relative rounded-xl overflow-hidden mx-auto"
-        style={{ backgroundColor: tpl.bg, width: 280, height: 280 }}
-      >
-        {/* Top accent bar */}
-        <div className="absolute top-0 left-0 w-full h-[3px]" style={{ backgroundColor: tpl.accent }} />
-        {/* Slide counter */}
-        <div className="absolute top-3 right-3 text-[10px] font-mono px-1.5 py-0.5 rounded"
-          style={{ backgroundColor: tpl.accent + '33', color: tpl.accent }}>
-          {current + 1}/{slides.length}
-        </div>
-        {/* Content */}
-        <div className="flex flex-col justify-center h-full px-6 py-10 gap-3">
-          <h3 className="text-base font-bold leading-tight" style={{ color: tpl.text }}>
-            {slide.headline}
-          </h3>
-          <p className="text-xs leading-relaxed" style={{ color: tpl.sub }}>
-            {slide.body}
-          </p>
-          {slide.cta && (
-            <span className="self-start mt-1 px-3 py-1 rounded-lg text-[11px] font-semibold"
-              style={{ backgroundColor: tpl.accent, color: tpl.bg }}>
-              {slide.cta}
-            </span>
-          )}
-        </div>
-        {/* Left arrow */}
-        {current > 0 && (
-          <button onClick={() => setCurrent(p => p - 1)}
-            className="absolute left-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: tpl.accent + '55' }}>
-            <ChevronLeft className="h-4 w-4" style={{ color: tpl.text }} />
-          </button>
-        )}
-        {/* Right arrow */}
-        {current < slides.length - 1 && (
-          <button onClick={() => setCurrent(p => p + 1)}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: tpl.accent + '55' }}>
-            <ChevronRight className="h-4 w-4" style={{ color: tpl.text }} />
-          </button>
-        )}
-      </div>
-
-      {/* Dot indicators */}
-      <div className="flex justify-center gap-1.5">
-        {slides.map((_, i) => (
-          <button key={i} onClick={() => setCurrent(i)}
-            className={`h-1.5 rounded-full transition-all duration-200 ${i === current ? 'w-4 bg-pink-400' : 'w-1.5 bg-border hover:bg-muted-foreground'}`}
-          />
-        ))}
-      </div>
-
-      {/* Template picker */}
-      <div className="flex items-center gap-2 justify-center">
-        <Palette className="h-3 w-3 text-muted-foreground shrink-0" />
-        <div className="flex gap-1.5">
-          {CAROUSEL_TEMPLATES.map(t => (
-            <button key={t.id} onClick={() => onTemplateChange(t.id as TemplateId)} title={t.name}
-              className={`w-5 h-5 rounded-full border-2 transition-all duration-150 ${t.id === templateId ? 'scale-125 border-white shadow-lg' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-110'}`}
-              style={{ backgroundColor: t.accent }}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+// CarouselViewer is now CarouselPageViewer from @/components/davi/CarouselPageViewer
 
 function getSmartScheduleTime(): Date {
   const now = new Date();
@@ -202,7 +118,7 @@ function extractHashtags(text: string): string[] {
 export default function DaviSocialMedia() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const { posts, schedulePost, saveDraft, fetchPosts, generateCarousel } = useSocialMedia();
+  const { posts, schedulePost, saveDraft, fetchPosts, generateCarousel, generateCarouselV2 } = useSocialMedia();
   const { getHistory } = useAgentChat();
 
   const [messages, setMessages] = useState<ChatMessage[]>([{
@@ -219,6 +135,7 @@ export default function DaviSocialMedia() {
   const [library, setLibrary] = useState<GeneratedContent[]>([]);
   const [autoModeRunning, setAutoModeRunning] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('dark_pro');
+  const [carouselType, setCarouselType] = useState<CarouselTypeValue>('educacional');
   const [clientContext, setClientContext] = useState<{ name: string; produto: string; publico: string } | null>(null);
   const [briefingAlerta, setBriefingAlerta] = useState(false);
 
@@ -643,15 +560,16 @@ export default function DaviSocialMedia() {
 
   const runManualChat = async (text: string) => {
     if (contentType === 'carousel') {
-      // Use structured carousel generator
-      addDaviMessage('🎠 Gerando carrossel visual com slides estruturados...');
-      const carousel = await generateCarousel({
+      const typeLabel = CAROUSEL_TYPES.find(t => t.value === carouselType)?.label || carouselType;
+      addDaviMessage(`🎨 Construindo carrossel **${typeLabel}** com páginas visuais reais...`);
+      const carousel = await generateCarouselV2({
         topic: text,
         audience: clientContext?.publico || 'empreendedores digitais',
-        tone: 'persuasivo',
-        slide_count: 7,
+        tone: 'persuasivo e direto',
+        slide_count: 8,
         include_cta: true,
         brand_name: clientContext?.name,
+        carousel_type: carouselType,
       });
 
       if (!carousel) return;
@@ -659,16 +577,16 @@ export default function DaviSocialMedia() {
       const generated: GeneratedContent = {
         id: Date.now().toString(),
         type: 'carousel',
-        title: `Carrossel — ${text.slice(0, 30)}`,
+        title: `${typeLabel} — ${text.slice(0, 30)}`,
         preview: carousel.cover_headline || carousel.slides[0]?.headline || text,
-        fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.join(' ') : ''),
+        fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
         slides: carousel.slides,
         templateId: selectedTemplate,
         createdAt: new Date(),
         platform,
       };
 
-      const msgId = addDaviMessage(`✅ Carrossel criado com ${carousel.slides.length} slides! Use as setas para navegar e escolha um tema visual:`);
+      const msgId = addDaviMessage(`✅ ${carousel.slides.length} slides criados como páginas visuais! Navegue com as setas e escolha o template:`);
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
       addToLibrary(generated);
     } else {
@@ -1003,12 +921,13 @@ ${pautasStr}`;
                                 <Copy className="h-3 w-3" /> Copiar
                               </Button>
                             </div>
-                            {/* Carousel visual viewer */}
+                            {/* Carousel visual viewer - V2 page-based */}
                             {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
-                              <CarouselViewer
+                              <CarouselPageViewer
                                 slides={message.contentCard.slides}
                                 templateId={(message.contentCard.templateId as TemplateId) ?? 'dark_pro'}
                                 onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
+                                brandName={clientContext?.name || 'Minha Marca'}
                               />
                             ) : (
                               <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
@@ -1079,12 +998,13 @@ ${pautasStr}`;
                               <Copy className="h-3 w-3" /> Copiar
                             </Button>
                           </div>
-                          {/* Carousel visual viewer */}
+                          {/* Carousel visual viewer - V2 page-based */}
                           {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
-                            <CarouselViewer
+                            <CarouselPageViewer
                               slides={message.contentCard.slides}
                               templateId={(message.contentCard.templateId as TemplateId) ?? 'dark_pro'}
                               onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
+                              brandName={clientContext?.name || 'Minha Marca'}
                             />
                           ) : (
                             <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
@@ -1154,10 +1074,30 @@ ${pautasStr}`;
 
           {/* Input area */}
           <div className="px-4 pb-4 pt-2 border-t border-border/40 shrink-0">
+            {/* Carousel type selector — only shown when carousel is selected */}
+            {contentType === 'carousel' && (
+              <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+                <span className="text-[9px] text-muted-foreground uppercase tracking-wider shrink-0">Tipo:</span>
+                {CAROUSEL_TYPES.map(ct => (
+                  <button
+                    key={ct.value}
+                    onClick={() => setCarouselType(ct.value)}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] transition-all whitespace-nowrap shrink-0 ${
+                      carouselType === ct.value
+                        ? 'bg-pink-500/20 text-pink-400 border-pink-500/40 font-semibold'
+                        : 'bg-muted/30 text-muted-foreground border-border/40 hover:border-pink-500/30'
+                    }`}
+                  >
+                    {ct.emoji} {ct.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Quick actions */}
             <div className="flex gap-1.5 mb-2 overflow-x-auto pb-1">
               {[
-                { emoji: '🎠', label: 'Criar Carrossel', action: 'Crie um carrossel viral de 7 slides' },
+                { emoji: '🎠', label: 'Criar Carrossel', action: 'Crie um carrossel viral de 8 slides sobre meu produto' },
                 { emoji: '🎬', label: 'Script de Reel', action: 'Escreva um script de Reel de 30 segundos com hook forte' },
                 { emoji: '📊', label: 'Post de Autoridade', action: 'Crie um post educativo que demonstre autoridade no nicho' },
                 { emoji: '🔥', label: 'Post Viral', action: 'Crie um post com alto potencial de viralização e compartilhamento' },
