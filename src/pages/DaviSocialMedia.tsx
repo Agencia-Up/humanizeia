@@ -139,7 +139,18 @@ export default function DaviSocialMedia() {
   const [switches, setSwitches] = useState<AgentSwitch>(AGENT_SWITCHES_DEFAULT);
   const [platform, setPlatform] = useState<'instagram' | 'tiktok' | 'linkedin'>('instagram');
   const [contentType, setContentType] = useState<'carousel' | 'reel_script' | 'post' | 'story'>('carousel');
-  const [library, setLibrary] = useState<GeneratedContent[]>([]);
+  const [library, setLibrary] = useState<GeneratedContent[]>(() => {
+    try {
+      const saved = localStorage.getItem('daviLibrary');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('daviLibrary', JSON.stringify(library));
+  }, [library]);
   const [autoModeRunning, setAutoModeRunning] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('dark_pro');
   const [carouselType, setCarouselType] = useState<CarouselTypeValue>('educacional');
@@ -1124,95 +1135,68 @@ ${pautasStr}`;
 
 
 
-          {/* Input area */}
-          <div className="px-4 pb-4 pt-2 border-t border-border/40 shrink-0">
-            {/* Carousel type selector — only shown when carousel is selected */}
-            {contentType === 'carousel' && (
-              <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
-                <span className="text-[9px] text-muted-foreground uppercase tracking-wider shrink-0">Tipo:</span>
-                {CAROUSEL_TYPES.map(ct => (
-                  <button
-                    key={ct.value}
-                    onClick={() => setCarouselType(ct.value)}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] transition-all whitespace-nowrap shrink-0 ${
-                      carouselType === ct.value
-                        ? 'bg-pink-500/20 text-pink-400 border-pink-500/40 font-semibold'
-                        : 'bg-muted/30 text-muted-foreground border-border/40 hover:border-pink-500/30'
-                    }`}
+          {/* Input Area Premium */}
+          <div className="p-4 bg-background shrink-0 border-t border-border/20">
+            <div className="max-w-3xl mx-auto flex flex-col gap-2 relative">
+              
+              <div className="relative flex flex-col bg-muted/20 border border-border/50 rounded-[24px] p-2 focus-within:border-pink-500/50 focus-within:ring-1 focus-within:ring-pink-500/20 transition-all shadow-sm">
+                
+                <Textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  placeholder="Cole ideias do Paulo, links do Instagram ou peça carrosséis..."
+                  className="w-full min-h-[50px] max-h-[150px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-sm px-3 pt-3 pb-1"
+                  rows={1}
+                />
+
+                <div className="flex items-center justify-between pt-2 px-1">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => fileRef.current?.click()} className="p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted/50" title="Anexar referência">
+                      <Link className="h-4 w-4" />
+                    </button>
+                    
+                    {/* Carousel Type Selector Integrado */}
+                    {contentType === 'carousel' && (
+                      <div className="hidden sm:flex bg-muted/40 rounded-full p-1 border border-border/40">
+                        {CAROUSEL_TYPES.map(ct => (
+                          <button
+                            key={ct.value}
+                            onClick={() => setCarouselType(ct.value)}
+                            className={`px-3 py-1 rounded-full text-[11px] transition-all whitespace-nowrap ${
+                              carouselType === ct.value 
+                                ? 'bg-background text-pink-500 shadow-sm font-bold' 
+                                : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            {ct.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <Button
+                    onClick={handleSend}
+                    disabled={!input.trim() || loading || autoModeRunning}
+                    size="icon"
+                    className="h-9 w-9 rounded-full bg-pink-600 hover:bg-pink-700 text-white shadow-md disabled:opacity-40 transition-transform hover:scale-105"
                   >
-                    {ct.emoji} {ct.label}
-                  </button>
-                ))}
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 ml-0.5" />}
+                  </Button>
+                </div>
               </div>
-            )}
-
-            {/* Quick actions */}
-            <div className="flex gap-1.5 mb-2 overflow-x-auto pb-1">
-              {[
-                { emoji: '🎠', label: 'Criar Carrossel', action: 'Crie um carrossel viral de 8 slides sobre meu produto' },
-                { emoji: '🎬', label: 'Script de Reel', action: 'Escreva um script de Reel de 30 segundos com hook forte' },
-                { emoji: '📊', label: 'Post de Autoridade', action: 'Crie um post educativo que demonstre autoridade no nicho' },
-                { emoji: '🔥', label: 'Post Viral', action: 'Crie um post com alto potencial de viralização e compartilhamento' },
-                { emoji: '💬', label: 'Story Interativo', action: 'Crie uma sequência de 3 Stories interativos com perguntas' },
-              ].map(qa => (
-                <button
-                  key={qa.label}
-                  onClick={() => { setInput(qa.action); inputRef.current?.focus(); }}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-muted/40 hover:bg-muted/70 border border-border/40 hover:border-pink-500/40 text-[11px] text-muted-foreground hover:text-foreground transition-all whitespace-nowrap"
-                >
-                  {qa.emoji} {qa.label}
-                </button>
-              ))}
+              
+              <p className="text-[10px] text-muted-foreground/40 text-center font-medium">
+                Davi analisará o briefing e contexto automaticamente. Use Shift+Enter para quebrar linha.
+              </p>
             </div>
-
-            {/* Main input */}
-            <div className="relative flex items-end gap-2 bg-muted/30 border border-border/50 rounded-2xl p-2 focus-within:border-pink-500/50 transition-colors">
-              {/* File/link upload button */}
-              <button
-                onClick={() => fileRef.current?.click()}
-                className="p-2 text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                title="Anexar arquivo"
-              >
-                <Link className="h-4 w-4" />
-              </button>
-              <input
-                ref={fileRef}
-                type="file"
-                className="hidden"
-                accept="image/*,video/*,audio/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) setInput(prev => prev + ` [arquivo: ${file.name}]`);
-                }}
-              />
-
-              <Textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                placeholder="Cole um link do Instagram, descreva o conteúdo ou peça qualquer coisa... (Enter para enviar)"
-                className="flex-1 min-h-[44px] max-h-[100px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-sm py-2 px-1"
-                rows={1}
-              />
-
-              <Button
-                onClick={handleSend}
-                disabled={!input.trim() || loading || autoModeRunning}
-                size="icon"
-                className="h-9 w-9 shrink-0 rounded-xl bg-gradient-to-br from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white disabled:opacity-40"
-              >
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </Button>
-            </div>
-            <p className="text-[10px] text-muted-foreground/50 mt-1.5 text-center">
-              Cole links do Instagram para análise automática de estilo · Shift+Enter para nova linha
-            </p>
           </div>
         </div>
 
@@ -1256,7 +1240,7 @@ ${pautasStr}`;
                   <p className="text-xs text-muted-foreground line-clamp-3 mb-2">{item.preview}</p>
                   {item.scheduled && (
                     <p className="text-[10px] text-emerald-400 mb-1.5">
-                      📅 {item.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                      📅 {new Date(item.scheduled).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
                     </p>
                   )}
                   {item.slides && item.slides.length > 0 ? (

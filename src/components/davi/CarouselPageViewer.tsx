@@ -108,6 +108,7 @@ export type TemplateId = typeof CAROUSEL_TEMPLATES[number]['id'];
 
 // ── Accent word highlight ─────────────────────────────────────────────────────
 function HighlightHeadline({ text, accentWord, color }: { text: string; accentWord?: string; color: string }) {
+  if (!text) return null;
   if (!accentWord || !text.toLowerCase().includes(accentWord.toLowerCase())) {
     return <span>{text}</span>;
   }
@@ -135,8 +136,8 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
   const isCta   = slide.type === 'cta'   || slide.order === total;
   
   // Motor Fotográfico Pollinations.ai (Free/No-Key)
-  const visualPrompt = encodeURIComponent(`${slide.visual_cue || slide.headline}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`);
-  const seed = (slide.headline.length || 10) * slide.order * 42;
+  const visualPrompt = encodeURIComponent(`${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`);
+  const seed = (slide.headline?.length || 10) * slide.order * 42;
   const bgImageUrl = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
 
   // Para fundos fotográficos, forçamos o texto para branco puro para brilhar sob a máscara escura
@@ -377,8 +378,8 @@ export function CarouselPageViewer({
     }, 30000);
 
     slides.forEach((slide) => {
-      const visualPrompt = encodeURIComponent(`${slide.visual_cue || slide.headline}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`);
-      const seed = (slide.headline.length || 10) * slide.order * 42;
+      const visualPrompt = encodeURIComponent(`${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`);
+      const seed = (slide.headline?.length || 10) * slide.order * 42;
       const bgImageUrl = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
 
       const img = new Image();
@@ -428,7 +429,7 @@ export function CarouselPageViewer({
          <div className="w-56 h-1.5 bg-muted/30 rounded-full overflow-hidden mt-2">
             <div 
                className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-300"
-               style={{ width: `${Math.max(5, (loadedCount / slides.length) * 100)}%` }}
+               style={{ width: `${Math.max(5, (loadedCount / (slides?.length || 1)) * 100)}%` }}
             />
          </div>
       </div>
