@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import html2canvas from 'html2canvas';
 import { ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
 import { CarouselSlide } from '@/hooks/useSocialMedia';
@@ -351,8 +351,90 @@ export function CarouselPageViewer({
 }: CarouselPageViewerProps) {
   const [current, setCurrent] = useState(0);
   const [exporting, setExporting] = useState(false);
+  const [loadingImages, setLoadingImages] = useState(true);
+  const [loadedCount, setLoadedCount] = useState(0);
+
   const slideRef = useRef<HTMLDivElement>(null);
   const tpl = CAROUSEL_TEMPLATES.find(t => t.id === templateId) ?? CAROUSEL_TEMPLATES[0];
+
+  useEffect(() => {
+    let completed = 0;
+    let isCancelled = false;
+    const total = slides.length;
+
+    if (!total) {
+      setLoadingImages(false);
+      return;
+    }
+
+    // Reseta states quando muda o carrossel inteiro
+    setLoadingImages(true);
+    setLoadedCount(0);
+
+    // Timeout de segurança: Se a IA travar ou a net ficar lenta, libera a tela de qualquer jeito após 30 segundos
+    const fallbackTimeout = setTimeout(() => {
+      if (!isCancelled) setLoadingImages(false);
+    }, 30000);
+
+    slides.forEach((slide) => {
+      const visualPrompt = encodeURIComponent(`${slide.visual_cue || slide.headline}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`);
+      const seed = (slide.headline.length || 10) * slide.order * 42;
+      const bgImageUrl = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
+
+      const img = new Image();
+      img.onload = () => {
+        if (isCancelled) return;
+        completed++;
+        setLoadedCount(completed);
+        if (completed === total) {
+          clearTimeout(fallbackTimeout);
+          setLoadingImages(false);
+        }
+      };
+      img.onerror = () => {
+        // Se der erro em alguma, conta como completed pra não travar o loader pra sempre
+        if (isCancelled) return;
+        completed++;
+        setLoadedCount(completed);
+        if (completed === total) {
+          clearTimeout(fallbackTimeout);
+          setLoadingImages(false);
+        }
+      };
+      img.src = bgImageUrl; // Trigger the download!
+    });
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(fallbackTimeout);
+    };
+  }, [slides]);
+
+  if (loadingImages) {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 gap-6 min-h-[400px] w-full">
+         <div className="relative w-16 h-16 flex items-center justify-center">
+            <div className="absolute inset-0 rounded-full border-t-2 border-l-2 border-pink-500 animate-spin" />
+            <div className="absolute inset-2 rounded-full border-b-2 border-r-2 border-purple-500 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.2s' }} />
+         </div>
+         <div className="flex flex-col items-center gap-2 text-center">
+           <h3 className="text-lg font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
+             Revelando Fotografias IA...
+           </h3>
+           <p className="text-sm text-muted-foreground w-[260px]">
+              Produzindo fundos cinemáticos para cada um dos slides ({loadedCount}/{slides.length})...
+           </p>
+         </div>
+         <div className="w-56 h-1.5 bg-muted/30 rounded-full overflow-hidden mt-2">
+            <div 
+               className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-300"
+               style={{ width: `${Math.max(5, (loadedCount / slides.length) * 100)}%` }}
+            />
+         </div>
+      </div>
+    );
+  }
+
   const slide = slides[current];
   if (!slide) return null;
 
