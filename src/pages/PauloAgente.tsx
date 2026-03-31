@@ -9,8 +9,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Brain, Layers, ChevronDown, ChevronUp, Send, Trash2,
-  RefreshCw, Copy, CheckCircle2, Zap, Sparkles, ArrowRight,
-  PenTool, Image, LayoutGrid, RotateCcw, Eye, EyeOff, Clock
+  RefreshCw, Copy, CheckCircle2, Zap, ArrowRight,
+  Image, LayoutGrid, RotateCcw, Eye, EyeOff, Clock
 } from 'lucide-react';
 import { useAgentChat } from '@/contexts/AgentChatContext';
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
