@@ -698,35 +698,67 @@ ${pautasStr}`;
 
       if (contentType === 'carousel') {
         const typeLabel = CAROUSEL_TYPES.find(t => t.value === carouselType)?.label || carouselType;
-        addDaviMessage(`🔄 Importando copy do Paulo e construindo carrossel **${typeLabel}** com páginas visuais reais...`);
-        const carousel = await generateCarouselV2({
-          topic: "Carrossel baseado na copy do Paulo",
-          audience: clientContext?.publico || 'empreendedores digitais',
-          tone: 'persuasivo e direto',
-          slide_count: 8,
-          include_cta: true,
-          brand_name: clientContext?.name,
-          carousel_type: carouselType,
-          paul_copy: lastPaulo.content,
-        });
+        
+        // 1. Separar múltiplos carrosséis
+        let rawBlocks = lastPaulo.content.match(/\[TIPO: CARROSSEL\]([\s\S]*?)(?=\[TIPO:|$)/gi);
+        let carouselTexts: string[] = [];
 
-        if (!carousel) return;
+        if (rawBlocks) {
+          rawBlocks.forEach(block => {
+            // Dividir internamente se houver "Pauta X:", "Ideia X:" ou "Opção X:" dentro do mesmo bloco
+            const splits = block.split(/(?=Pauta \d|Ideia \d|Opção \d|\*\*(?:Pauta|Ideia|Opção) \d)/i);
+            if (splits.length > 1) {
+              splits.forEach(s => {
+                if (s.replace(/\[TIPO: CARROSSEL\]/g, '').trim().length > 30) {
+                  carouselTexts.push(s);
+                }
+              });
+            } else {
+              carouselTexts.push(block);
+            }
+          });
+        } else {
+          carouselTexts = [lastPaulo.content];
+        }
 
-        const generated: GeneratedContent = {
-          id: Date.now().toString(),
-          type: 'carousel',
-          title: `Copy Paulo — ${typeLabel}`,
-          preview: carousel.cover_headline || carousel.slides[0]?.headline || "Carrossel baseado na Copy",
-          fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
-          slides: carousel.slides,
-          templateId: selectedTemplate,
-          createdAt: new Date(),
-          platform,
-        };
+        // Limite de segurança: no máximo 3 carrosséis por vez para não estourar tempo da Edge Function
+        if (carouselTexts.length > 3) {
+           carouselTexts = carouselTexts.slice(0, 3);
+        }
 
-        const msgId = addDaviMessage(`✅ ${carousel.slides.length} slides criados a partir da copy do Paulo! Navegue com as setas e escolha o template:`);
-        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
-        addToLibrary(generated);
+        addDaviMessage(`🔄 Importando copy do Paulo. Encontramos **${carouselTexts.length} ideia(s)** de Carrossel. Construindo as páginas visuais (isso pode levar uns segundos)...`);
+        
+        for (let i = 0; i < carouselTexts.length; i++) {
+          const copyText = carouselTexts[i];
+          const carousel = await generateCarouselV2({
+            topic: `Carrossel ${i + 1} baseado na copy do Paulo`,
+            audience: clientContext?.publico || 'empreendedores digitais',
+            tone: 'persuasivo e direto',
+            slide_count: 8,
+            include_cta: true,
+            brand_name: clientContext?.name,
+            carousel_type: carouselType,
+            paul_copy: copyText,
+          });
+
+          if (!carousel) continue;
+
+          const generated: GeneratedContent = {
+            id: Date.now().toString() + i,
+            type: 'carousel',
+            title: `Copy Paulo ${i + 1}/${carouselTexts.length} — ${typeLabel}`,
+            preview: carousel.cover_headline || carousel.slides[0]?.headline || "Carrossel baseado na Copy",
+            fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
+            slides: carousel.slides,
+            templateId: selectedTemplate,
+            createdAt: new Date(),
+            platform,
+          };
+
+          const msgId = addDaviMessage(`✅ Carrossel ${i + 1} criado! Navegue com as setas e escolha o template:`);
+          setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+          addToLibrary(generated);
+        }
       } else {
         const generated: GeneratedContent = {
           id: Date.now().toString(),
