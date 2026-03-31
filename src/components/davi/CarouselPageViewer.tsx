@@ -167,7 +167,7 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
       case 'centered':
         return (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', zIndex: 1, gap: 12 }}>
-            {slide.sub_headline && (
+            {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
               <div style={{ fontSize: 11, fontWeight: 700, color: tpl.accent, letterSpacing: '0.1em', textTransform: 'uppercase', textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>
                 {slide.sub_headline}
               </div>
@@ -175,7 +175,7 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
             <div style={{ fontSize: isCover ? 32 : 28, fontWeight: 900, color: textColor, lineHeight: 1.15, textShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
               <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
             </div>
-            {slide.body && (
+            {typeof slide.body === 'string' && slide.body.trim() && (
               <div style={{ fontSize: 13, color: subColor, lineHeight: 1.5, marginTop: 8, maxWidth: '90%', textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>
                 {slide.body}
               </div>
@@ -184,12 +184,12 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, alignItems: 'center' }}>
                 {slide.bullets.map((b, i) => (
                   <div key={i} style={{ fontSize: 12, color: textColor, background: tpl.accent + '30', backdropFilter: 'blur(8px)', padding: '6px 14px', borderRadius: 12, border: `1px solid ${tpl.accent}50`, textShadow: '0 1px 5px rgba(0,0,0,0.5)' }}>
-                    {b}
+                    {typeof b === 'string' ? b : ''}
                   </div>
                 ))}
               </div>
             )}
-            {isCta && slide.cta && (
+            {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
               <div style={{ marginTop: 24, padding: '14px 28px', background: tpl.accent, color: tpl.bg, borderRadius: 30, fontWeight: 900, fontSize: 15, boxShadow: `0 8px 32px ${tpl.accentGlow}` }}>
                 {slide.cta}
               </div>
@@ -212,23 +212,23 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
               width: '100%', 
               boxShadow: `0 20px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1)` 
             }}>
-              {slide.sub_headline && <div style={{ fontSize: 10, fontWeight: 800, color: tpl.accent, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>}
+              {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && <div style={{ fontSize: 10, fontWeight: 800, color: tpl.accent, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>}
               <div style={{ fontSize: isCover ? 26 : 22, fontWeight: 900, color: textColor, lineHeight: 1.2 }}>
                 <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
               </div>
               <div style={{ height: 3, background: tpl.accent, width: 40, borderRadius: 2 }} />
-              {slide.body && <div style={{ fontSize: 14, color: subColor, lineHeight: 1.5 }}>{slide.body}</div>}
+              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ fontSize: 14, color: subColor, lineHeight: 1.5 }}>{slide.body}</div>}
               {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6 }}>
                   {slide.bullets.map((b, i) => (
                     <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                       <span style={{ color: tpl.accent, fontSize: 14 }}>✦</span>
-                      <span style={{ fontSize: 13, color: textColor, fontWeight: 500 }}>{b}</span>
+                      <span style={{ fontSize: 13, color: textColor, fontWeight: 500 }}>{typeof b === 'string' ? b : ''}</span>
                     </div>
                   ))}
                 </div>
               )}
-              {isCta && slide.cta && (
+              {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
                 <div style={{ marginTop: 12, padding: '12px', background: textColor, color: '#000', borderRadius: 10, fontWeight: 900, fontSize: 13, textAlign: 'center' }}>
                   {slide.cta}
                 </div>
@@ -246,7 +246,7 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
             padding: '40px 24px 40px',
             zIndex: 1, gap: 10,
           }}>
-            {slide.sub_headline && (
+            {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
               <div style={{ fontSize: 12, fontWeight: 800, color: tpl.accent, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 2, textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>
                 {slide.sub_headline}
               </div>
@@ -255,7 +255,7 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
               <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
             </div>
             <div style={{ width: 40, height: 4, background: tpl.accent, borderRadius: 2, marginTop: 4, marginBottom: 4, boxShadow: `0 0 10px ${tpl.accentGlow}` }} />
-            {slide.body && (
+            {typeof slide.body === 'string' && slide.body.trim() && (
               <div style={{ fontSize: 14, color: subColor, lineHeight: 1.55, maxWidth: '95%', textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>
                 {slide.body}
               </div>
@@ -265,12 +265,12 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
                 {slide.bullets.map((b, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: tpl.accent, marginTop: 6, flexShrink: 0, boxShadow: `0 0 8px ${tpl.accent}` }} />
-                    <span style={{ fontSize: 13, color: textColor, lineHeight: 1.4, fontWeight: 500, textShadow: '0 1px 8px rgba(0,0,0,0.8)' }}>{b}</span>
+                    <span style={{ fontSize: 13, color: textColor, lineHeight: 1.4, fontWeight: 500, textShadow: '0 1px 8px rgba(0,0,0,0.8)' }}>{typeof b === 'string' ? b : ''}</span>
                   </div>
                 ))}
               </div>
             )}
-            {isCta && slide.cta && (
+            {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
               <div style={{ marginTop: 16, padding: '12px 24px', background: tpl.accent, color: '#000', borderRadius: 10, fontWeight: 900, fontSize: 14, display: 'inline-block', width: 'fit-content', boxShadow: `0 8px 30px ${tpl.accentGlow}` }}>
                 {slide.cta}
               </div>
@@ -557,7 +557,7 @@ export function CarouselPageViewer({
             {/* Mini preview content */}
             <div style={{ transform: 'scale(0.25)', transformOrigin: 'top left', width: '400%', height: '400%', pointerEvents: 'none' }}>
               <div style={{ width: DISPLAY_W * 4, height: DISPLAY_H * 4, background: tpl.bgGradient, padding: 16 }}>
-                <div style={{ fontSize: 36, fontWeight: 900, color: tpl.text, lineHeight: 1.1 }}>{s.headline}</div>
+                <div style={{ fontSize: 36, fontWeight: 900, color: tpl.text, lineHeight: 1.1 }}>{typeof s.headline === 'string' ? s.headline : ''}</div>
               </div>
             </div>
             {/* Slide number overlay */}
