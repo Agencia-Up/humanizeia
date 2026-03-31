@@ -15,10 +15,17 @@ import { useAgentChat } from '@/contexts/AgentChatContext';
 import { CarouselPageViewer, TemplateId, CAROUSEL_TEMPLATES } from '@/components/davi/CarouselPageViewer';
 import {
   Instagram, Zap, Loader2, Clock, CheckCircle2, XCircle, ChevronRight,
-  Copy, Trash2, FolderOpen, Layers, Send, Link, Palette,
+  Copy, Trash2, FolderOpen, Layers, Send, Link, Palette, Eye,
   Brain, AlertTriangle, PenTool, TrendingUp, BookOpen, MessageSquare, AlertCircle, Footprints, Flame
 } from 'lucide-react';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -686,21 +693,55 @@ ${pautasStr}`;
         });
         return;
       }
-      // Pegar a última geração do Paulo
+      
       const lastPaulo = pauloMsgs[pauloMsgs.length - 1];
-      const generated: GeneratedContent = {
-        id: Date.now().toString(),
-        type: contentType,
-        title: `Importado do Paulo — ${new Date().toLocaleDateString('pt-BR')}`,
-        preview: lastPaulo.content.slice(0, 120),
-        fullContent: lastPaulo.content,
-        createdAt: new Date(),
-        platform,
-      };
-      const msgId = addDaviMessage('✅ Copy do Paulo importada! Aqui está o conteúdo gerado:');
-      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
-      addToLibrary(generated);
-      toast({ title: '✅ Copy do Paulo importada!', description: 'Conteúdo adicionado à sua biblioteca.' });
+
+      if (contentType === 'carousel') {
+        const typeLabel = CAROUSEL_TYPES.find(t => t.value === carouselType)?.label || carouselType;
+        addDaviMessage(`🔄 Importando copy do Paulo e construindo carrossel **${typeLabel}** com páginas visuais reais...`);
+        const carousel = await generateCarouselV2({
+          topic: "Carrossel baseado na copy do Paulo",
+          audience: clientContext?.publico || 'empreendedores digitais',
+          tone: 'persuasivo e direto',
+          slide_count: 8,
+          include_cta: true,
+          brand_name: clientContext?.name,
+          carousel_type: carouselType,
+          paul_copy: lastPaulo.content,
+        });
+
+        if (!carousel) return;
+
+        const generated: GeneratedContent = {
+          id: Date.now().toString(),
+          type: 'carousel',
+          title: `Copy Paulo — ${typeLabel}`,
+          preview: carousel.cover_headline || carousel.slides[0]?.headline || "Carrossel baseado na Copy",
+          fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
+          slides: carousel.slides,
+          templateId: selectedTemplate,
+          createdAt: new Date(),
+          platform,
+        };
+
+        const msgId = addDaviMessage(`✅ ${carousel.slides.length} slides criados a partir da copy do Paulo! Navegue com as setas e escolha o template:`);
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+        addToLibrary(generated);
+      } else {
+        const generated: GeneratedContent = {
+          id: Date.now().toString(),
+          type: contentType,
+          title: `Importado do Paulo — ${new Date().toLocaleDateString('pt-BR')}`,
+          preview: lastPaulo.content.slice(0, 120),
+          fullContent: lastPaulo.content,
+          createdAt: new Date(),
+          platform,
+        };
+        const msgId = addDaviMessage('✅ Copy do Paulo importada! Aqui está o conteúdo gerado:');
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+        addToLibrary(generated);
+      }
+      toast({ title: '✅ Importação concluída!', description: 'Conteúdo adicionado à sua biblioteca.' });
     } catch (err: any) {
       toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
     } finally {
@@ -1207,13 +1248,42 @@ ${pautasStr}`;
                       📅 {item.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
                     </p>
                   )}
+                  {item.slides && item.slides.length > 0 ? (
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="w-full text-[10px] h-7 gap-1.5 mb-1 bg-pink-500/10 text-pink-400 hover:bg-pink-500/20"
+                        >
+                          <Eye className="h-3 w-3" /> Ver Carrossel Visual
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40 p-6 flex flex-col items-center">
+                        <DialogHeader className="w-full text-center mb-2">
+                          <DialogTitle className="text-sm font-bold">{item.title}</DialogTitle>
+                        </DialogHeader>
+                        <CarouselPageViewer
+                          slides={item.slides}
+                          templateId={(item.templateId as TemplateId) ?? 'dark_pro'}
+                          onTemplateChange={(tid) => {
+                            // Update template in library item
+                            setLibrary(prev => prev.map(l => l.id === item.id ? { ...l, templateId: tid } : l));
+                            // Also update the message card if it exists
+                            setMessages(prev => prev.map(m => m.contentCard?.id === item.id ? { ...m, contentCard: { ...m.contentCard, templateId: tid } } : m));
+                          }}
+                          brandName={clientContext?.name || 'Minha Marca'}
+                        />
+                      </DialogContent>
+                    </Dialog>
+                  ) : null}
                   <Button
                     variant="ghost"
                     size="sm"
                     className="w-full h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
                     onClick={() => navigator.clipboard.writeText(item.fullContent).then(() => toast({ title: '📋 Copiado!' }))}
                   >
-                    <Copy className="h-3 w-3" /> Copiar Conteúdo
+                    <Copy className="h-3 w-3" /> {item.slides && item.slides.length > 0 ? 'Copiar Legenda' : 'Copiar Conteúdo'}
                   </Button>
                 </div>
               ))}
