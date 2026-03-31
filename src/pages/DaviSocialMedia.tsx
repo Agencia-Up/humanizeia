@@ -1122,29 +1122,7 @@ ${pautasStr}`;
             </div>
           </ScrollArea>
 
-          {/* Mini Calendar strip */}
-          <div className="px-6 py-2 border-t border-border/30 bg-background/50 shrink-0">
-            <div className="flex items-center gap-1 overflow-x-auto pb-1">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider shrink-0 mr-2">Calendário:</span>
-              {Array.from({ length: 7 }, (_, i) => {
-                const d = new Date();
-                d.setDate(d.getDate() + i);
-                const hasPost = posts.some(
-                  p => p.status === 'scheduled' && new Date(p.scheduled_at || '').toDateString() === d.toDateString()
-                );
-                return (
-                  <div
-                    key={i}
-                    className={`shrink-0 flex flex-col items-center px-2.5 py-1.5 rounded-lg cursor-pointer border transition-all ${hasPost ? 'bg-pink-500/20 border-pink-500/40' : 'bg-muted/30 border-border/40 hover:border-border'}`}
-                  >
-                    <span className="text-[9px] text-muted-foreground">{d.toLocaleDateString('pt-BR', { weekday: 'short' }).toUpperCase()}</span>
-                    <span className={`text-sm font-bold ${hasPost ? 'text-pink-400' : 'text-foreground'}`}>{d.getDate()}</span>
-                    {hasPost && <div className="w-1 h-1 rounded-full bg-pink-400 mt-0.5" />}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+
 
           {/* Input area */}
           <div className="px-4 pb-4 pt-2 border-t border-border/40 shrink-0">
@@ -1327,8 +1305,28 @@ ${pautasStr}`;
               <div className="px-3 pb-3">
                 <Separator className="my-2" />
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
-                  Agendados ({posts.filter(p => p.status === 'scheduled').length})
+                  Agendamentos para os próximos 7 dias
                 </p>
+                {/* Mini Calendar no Painel Lateral */}
+                <div className="flex items-center gap-1 overflow-x-auto pb-3 mb-2">
+                  {Array.from({ length: 7 }, (_, i) => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + i);
+                    const hasPost = posts.some(
+                      p => p.status === 'scheduled' && new Date(p.scheduled_at || '').toDateString() === d.toDateString()
+                    );
+                    return (
+                      <div
+                        key={i}
+                        className={`shrink-0 flex flex-col items-center px-2.5 py-1.5 rounded-lg cursor-pointer border transition-all ${hasPost ? 'bg-pink-500/20 border-pink-500/40' : 'bg-muted/30 border-border/40 hover:border-border'}`}
+                      >
+                        <span className="text-[9px] text-muted-foreground">{d.toLocaleDateString('pt-BR', { weekday: 'short' }).toUpperCase()}</span>
+                        <span className={`text-sm font-bold ${hasPost ? 'text-pink-400' : 'text-foreground'}`}>{d.getDate()}</span>
+                        {hasPost && <div className="w-1 h-1 rounded-full bg-pink-400 mt-0.5" />}
+                      </div>
+                    );
+                  })}
+                </div>
                 {posts.filter(p => p.status === 'scheduled').slice(0, 3).map(post => (
                   <div key={post.id} className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-2 mb-1.5">
                     <p className="text-xs text-foreground line-clamp-2">{(post.caption || '').slice(0, 60)}...</p>

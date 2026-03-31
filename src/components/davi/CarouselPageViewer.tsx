@@ -141,9 +141,9 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
     if (isCover) layout = 'centered';
     else if (isCta) layout = 'centered';
     else {
-      // Cria um ritmo alternado: Left, Minimal, Left, Centered...
-      const cadence: Array<'left' | 'minimal' | 'centered'> = ['minimal', 'left', 'centered', 'left'];
-      layout = cadence[(slide.order - 1) % cadence.length];
+      // Cria um ritmo alternado exato começando a partir do Slide 2: Minimal, Centered, Left...
+      const cadence: Array<'minimal' | 'centered' | 'left'> = ['minimal', 'centered', 'left'];
+      layout = cadence[(slide.order - 2 + cadence.length) % cadence.length];
     }
   }
 
