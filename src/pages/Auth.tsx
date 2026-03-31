@@ -133,9 +133,9 @@ export default function Auth() {
         return;
       }
 
-      // Verificação específica do Supabase: se o usuário já existe e a confirmação está pendente,
-      // ele pode retornar sucesso mas com a lista de identidades vazia para evitar vazamento de dados.
-      if (data.user && data.user.identities && data.user.identities.length === 0) {
+      // Verificação defensiva de conta existente (identities)
+      const identities = data?.user?.identities ?? [];
+      if (data?.user && identities.length === 0) {
         toast({
           title: 'Conta já existente',
           description: 'Este e-mail já possui um cadastro pendente ou ativo. Tente fazer login.',
@@ -144,7 +144,7 @@ export default function Auth() {
         return;
       }
 
-      // Sucesso no Supabase
+      // Registro realizado com sucesso
       toast({
         title: '🎉 Cadastro realizado!',
         description: 'Enviamos um e-mail de confirmação. Por favor, verifique sua caixa de entrada.',
