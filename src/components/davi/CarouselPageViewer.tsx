@@ -108,8 +108,8 @@ export type TemplateId = typeof CAROUSEL_TEMPLATES[number]['id'];
 
 // ── Accent word highlight ─────────────────────────────────────────────────────
 function HighlightHeadline({ text, accentWord, color }: { text: string; accentWord?: string; color: string }) {
-  if (!text) return null;
-  if (!accentWord || !text.toLowerCase().includes(accentWord.toLowerCase())) {
+  if (!text || typeof text !== 'string') return null;
+  if (!accentWord || typeof accentWord !== 'string' || !text.toLowerCase().includes(accentWord.toLowerCase())) {
     return <span>{text}</span>;
   }
   const regex = new RegExp(`(${accentWord})`, 'i');
@@ -180,7 +180,7 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
                 {slide.body}
               </div>
             )}
-            {slide.bullets && slide.bullets.length > 0 && (
+            {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, alignItems: 'center' }}>
                 {slide.bullets.map((b, i) => (
                   <div key={i} style={{ fontSize: 12, color: textColor, background: tpl.accent + '30', backdropFilter: 'blur(8px)', padding: '6px 14px', borderRadius: 12, border: `1px solid ${tpl.accent}50`, textShadow: '0 1px 5px rgba(0,0,0,0.5)' }}>
@@ -218,7 +218,7 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
               </div>
               <div style={{ height: 3, background: tpl.accent, width: 40, borderRadius: 2 }} />
               {slide.body && <div style={{ fontSize: 14, color: subColor, lineHeight: 1.5 }}>{slide.body}</div>}
-              {slide.bullets && slide.bullets.length > 0 && (
+              {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6 }}>
                   {slide.bullets.map((b, i) => (
                     <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
@@ -260,7 +260,7 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
                 {slide.body}
               </div>
             )}
-            {slide.bullets && slide.bullets.length > 0 && (
+            {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
                 {slide.bullets.map((b, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
