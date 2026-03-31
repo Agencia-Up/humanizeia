@@ -73,9 +73,9 @@ const PageLoader = () => (
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <AgentTasksProvider>
-        <AgentChatProvider>
-          <BrowserRouter>
+      <BrowserRouter>
+        <AgentTasksProvider>
+          <AgentChatProvider>
             <Suspense fallback={<PageLoader />}>
               <Routes>
                 <Route path="/auth" element={<Auth />} />
@@ -134,9 +134,9 @@ const App = () => (
             </Suspense>
             <Toaster />
             <Sonner />
-          </BrowserRouter>
-        </AgentChatProvider>
-      </AgentTasksProvider>
+          </AgentChatProvider>
+        </AgentTasksProvider>
+      </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
 );
