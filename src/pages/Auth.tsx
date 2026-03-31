@@ -112,27 +112,54 @@ export default function Auth() {
 
     setIsLoading(true);
     try {
-      const { error } = await signUp(signupEmail, signupPassword, signupName);
+      const { data, error } = await supabase.auth.signUp({
+        email: signupEmail,
+        password: signupPassword,
+        options: {
+          data: { full_name: signupName },
+        },
+      });
 
       if (error) {
         let msg = 'Não foi possível criar sua conta.';
         if (error.message.includes('already registered') || error.message.includes('already been registered')) {
-          msg = 'Este email já está cadastrado. Tente fazer login.';
+          msg = 'Este e-mail já está cadastrado em nossa base.';
         }
-        toast({ title: 'Erro no cadastro', description: error.message || msg, variant: 'destructive' });
-      } else {
-        // Envia email de boas-vindas via Resend
+        toast({ 
+          title: 'Erro no cadastro', 
+          description: msg, 
+          variant: 'destructive' 
+        });
+        return;
+      }
+
+      // Verificação específica do Supabase: se o usuário já existe e a confirmação está pendente,
+      // ele pode retornar sucesso mas com a lista de identidades vazia para evitar vazamento de dados.
+      if (data.user && data.user.identities && data.user.identities.length === 0) {
+        toast({
+          title: 'Conta já existente',
+          description: 'Este e-mail já possui um cadastro pendente ou ativo. Tente fazer login.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Sucesso no Supabase
+      toast({
+        title: '🎉 Cadastro realizado!',
+        description: 'Enviamos um e-mail de confirmação. Por favor, verifique sua caixa de entrada.',
+      });
+
+      // Envia email de boas-vindas/onboarding via Edge Function (Auxiliar)
+      try {
         await sendEmail({
           type: 'welcome',
           email: signupEmail,
           name: signupName || 'Usuário',
           redirectTo: window.location.origin,
         });
-
-        toast({
-          title: '🎉 Conta criada com sucesso!',
-          description: 'Verifique seu email para confirmar o cadastro.',
-        });
+      } catch (e) {
+        console.warn('Erro ao enviar e-mail de boas-vindas:', e);
       }
     } catch (err: any) {
       console.error("Erro crítico no Cadastro:", err);

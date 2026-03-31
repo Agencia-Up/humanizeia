@@ -404,7 +404,7 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'LogosIA <onboarding@resend.dev>',
+        from: 'Logosai <suporte@logosiabrasil.com>',
         to: [email],
         subject,
         html,
