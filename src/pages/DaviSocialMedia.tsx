@@ -638,7 +638,8 @@ export default function DaviSocialMedia() {
 
         const actualPrompt = `Acabei de importar as pesquisas de tendência do Daniel para o nicho "${research.niche}".
 
-Com base nas pautas do Daniel abaixo, crie opções de conteúdo de social media divididas obrigatoriamente por blocos de tipo: [TIPO: POST_ESTATICO], [TIPO: CARROSSEL] e [TIPO: REEL].
+Com base nas pautas do Daniel abaixo, crie opções de conteúdo de social media. 
+**REGRA CRUCIAL:** PARA CADA PAUTA LISTADA, você deve criar obrigatoriamente um bloco [TIPO: POST_ESTATICO], um bloco [TIPO: CARROSSEL] e um bloco [TIPO: REEL]. Se houver 3 pautas, espero 3 blocos CARROSSEL no total.
 
 Foque nas dores, desejos e objeções do público identificados na pesquisa:
 
