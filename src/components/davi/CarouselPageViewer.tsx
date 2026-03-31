@@ -133,15 +133,24 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
 }) {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta   = slide.type === 'cta'   || slide.order === total;
-  const isLight  = tpl.id === 'clean_light';
   
-  // Garantia Rítmica de Layouts: Força a variação caso a IA envie tudo 'left' (evitar engessamento percebido)
+  // Motor Fotográfico Pollinations.ai (Free/No-Key)
+  const visualPrompt = encodeURIComponent(`${slide.visual_cue || slide.headline}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`);
+  const seed = (slide.headline.length || 10) * slide.order * 42;
+  const bgImageUrl = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
+
+  // Para fundos fotográficos, forçamos o texto para branco puro para brilhar sob a máscara escura
+  const textColor = '#ffffff';
+  const subColor = 'rgba(255,255,255,0.85)';
+  const isLight = false;
+
+  // Garantia Rítmica de Layouts: Força a variação caso a IA envie tudo 'left' devagar
   let layout = slide.layout || 'left';
   if ((layout as string) === 'left' || (layout as string) === 'default') {
     if (isCover) layout = 'centered';
     else if (isCta) layout = 'centered';
     else {
-      // Cria um ritmo alternado exato começando a partir do Slide 2: Minimal, Centered, Left...
+      // Ritmo Moderno Apple:
       const cadence: Array<'minimal' | 'centered' | 'left'> = ['minimal', 'centered', 'left'];
       layout = cadence[(slide.order - 2 + cadence.length) % cadence.length];
     }
@@ -153,29 +162,29 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
         return (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', zIndex: 1, gap: 12 }}>
             {slide.sub_headline && (
-              <div style={{ fontSize: 11, fontWeight: 700, color: tpl.accent, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: tpl.accent, letterSpacing: '0.1em', textTransform: 'uppercase', textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>
                 {slide.sub_headline}
               </div>
             )}
-            <div style={{ fontSize: isCover ? 28 : 24, fontWeight: tpl.fontWeight as any, color: tpl.text, lineHeight: 1.15 }}>
+            <div style={{ fontSize: isCover ? 32 : 28, fontWeight: 900, color: textColor, lineHeight: 1.15, textShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
               <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
             </div>
             {slide.body && (
-              <div style={{ fontSize: 13, color: tpl.sub, lineHeight: 1.5, marginTop: 4, maxWidth: '90%' }}>
+              <div style={{ fontSize: 13, color: subColor, lineHeight: 1.5, marginTop: 8, maxWidth: '90%', textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>
                 {slide.body}
               </div>
             )}
             {slide.bullets && slide.bullets.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4, alignItems: 'center' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, alignItems: 'center' }}>
                 {slide.bullets.map((b, i) => (
-                  <div key={i} style={{ fontSize: 12, color: tpl.text, background: tpl.accent + '20', padding: '4px 10px', borderRadius: 12, border: `1px solid ${tpl.accent}40` }}>
+                  <div key={i} style={{ fontSize: 12, color: textColor, background: tpl.accent + '30', backdropFilter: 'blur(8px)', padding: '6px 14px', borderRadius: 12, border: `1px solid ${tpl.accent}50`, textShadow: '0 1px 5px rgba(0,0,0,0.5)' }}>
                     {b}
                   </div>
                 ))}
               </div>
             )}
             {isCta && slide.cta && (
-              <div style={{ marginTop: 16, padding: '12px 24px', background: tpl.accent, color: isLight ? '#fff' : tpl.bg, borderRadius: 30, fontWeight: 800, fontSize: 14, boxShadow: `0 8px 24px ${tpl.accentGlow}` }}>
+              <div style={{ marginTop: 24, padding: '14px 28px', background: tpl.accent, color: tpl.bg, borderRadius: 30, fontWeight: 900, fontSize: 15, boxShadow: `0 8px 32px ${tpl.accentGlow}` }}>
                 {slide.cta}
               </div>
             )}
@@ -186,35 +195,35 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
         return (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 1 }}>
             <div style={{ 
-              background: isLight ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.4)', 
-              backdropFilter: 'blur(12px)', 
+              background: 'rgba(0,0,0,0.5)', 
+              backdropFilter: 'blur(16px)', 
               border: `1px solid ${tpl.accent}50`, 
-              borderRadius: 16, 
-              padding: 24, 
+              borderRadius: 20, 
+              padding: 28, 
               display: 'flex', 
               flexDirection: 'column', 
               gap: 12, 
               width: '100%', 
-              boxShadow: `0 12px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1)` 
+              boxShadow: `0 20px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1)` 
             }}>
-              {slide.sub_headline && <div style={{ fontSize: 10, fontWeight: 700, color: tpl.sub, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>}
-              <div style={{ fontSize: isCover ? 24 : 20, fontWeight: tpl.fontWeight as any, color: tpl.text, lineHeight: 1.2 }}>
+              {slide.sub_headline && <div style={{ fontSize: 10, fontWeight: 800, color: tpl.accent, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>}
+              <div style={{ fontSize: isCover ? 26 : 22, fontWeight: 900, color: textColor, lineHeight: 1.2 }}>
                 <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
               </div>
-              <div style={{ height: 2, background: tpl.accent, width: 40, borderRadius: 2 }} />
-              {slide.body && <div style={{ fontSize: 13, color: tpl.text, lineHeight: 1.5, opacity: 0.9 }}>{slide.body}</div>}
+              <div style={{ height: 3, background: tpl.accent, width: 40, borderRadius: 2 }} />
+              {slide.body && <div style={{ fontSize: 14, color: subColor, lineHeight: 1.5 }}>{slide.body}</div>}
               {slide.bullets && slide.bullets.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6 }}>
                   {slide.bullets.map((b, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-                      <span style={{ color: tpl.accent }}>✦</span>
-                      <span style={{ fontSize: 12, color: tpl.sub }}>{b}</span>
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      <span style={{ color: tpl.accent, fontSize: 14 }}>✦</span>
+                      <span style={{ fontSize: 13, color: textColor, fontWeight: 500 }}>{b}</span>
                     </div>
                   ))}
                 </div>
               )}
               {isCta && slide.cta && (
-                <div style={{ marginTop: 8, padding: '10px', background: tpl.text, color: tpl.bg, borderRadius: 8, fontWeight: 800, fontSize: 13, textAlign: 'center' }}>
+                <div style={{ marginTop: 12, padding: '12px', background: textColor, color: '#000', borderRadius: 10, fontWeight: 900, fontSize: 13, textAlign: 'center' }}>
                   {slide.cta}
                 </div>
               )}
@@ -227,36 +236,36 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
         return (
           <div style={{
             flex: 1, display: 'flex', flexDirection: 'column',
-            justifyContent: isCover ? 'center' : 'flex-start',
-            padding: isCover ? '48px 24px 32px' : '56px 24px 24px',
+            justifyContent: 'flex-end',
+            padding: '40px 24px 40px',
             zIndex: 1, gap: 10,
           }}>
             {slide.sub_headline && (
-              <div style={{ fontSize: isCover ? 12 : 11, fontWeight: 600, color: tpl.accent, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 2 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: tpl.accent, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 2, textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>
                 {slide.sub_headline}
               </div>
             )}
-            <div style={{ fontSize: isCover ? 26 : 22, fontWeight: tpl.fontWeight as any, color: tpl.text, lineHeight: 1.15, letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: isCover ? 30 : 26, fontWeight: 900, color: textColor, lineHeight: 1.15, letterSpacing: '-0.02em', textShadow: '0 4px 20px rgba(0,0,0,0.8)' }}>
               <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
             </div>
-            <div style={{ width: 40, height: 3, background: tpl.accent, borderRadius: 2, marginTop: 2, marginBottom: 4 }} />
+            <div style={{ width: 40, height: 4, background: tpl.accent, borderRadius: 2, marginTop: 4, marginBottom: 4, boxShadow: `0 0 10px ${tpl.accentGlow}` }} />
             {slide.body && (
-              <div style={{ fontSize: 13, color: tpl.sub, lineHeight: 1.55, maxWidth: '92%' }}>
+              <div style={{ fontSize: 14, color: subColor, lineHeight: 1.55, maxWidth: '95%', textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>
                 {slide.body}
               </div>
             )}
             {slide.bullets && slide.bullets.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
                 {slide.bullets.map((b, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: tpl.accent, marginTop: 5, flexShrink: 0, boxShadow: `0 0 6px ${tpl.accentGlow}` }} />
-                    <span style={{ fontSize: 12, color: tpl.text, lineHeight: 1.4 }}>{b}</span>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: tpl.accent, marginTop: 6, flexShrink: 0, boxShadow: `0 0 8px ${tpl.accent}` }} />
+                    <span style={{ fontSize: 13, color: textColor, lineHeight: 1.4, fontWeight: 500, textShadow: '0 1px 8px rgba(0,0,0,0.8)' }}>{b}</span>
                   </div>
                 ))}
               </div>
             )}
             {isCta && slide.cta && (
-              <div style={{ marginTop: 12, padding: '10px 20px', background: tpl.accent, color: isLight ? '#fff' : tpl.bg, borderRadius: 8, fontWeight: 800, fontSize: 13, display: 'inline-block', width: 'fit-content', boxShadow: `0 4px 20px ${tpl.accentGlow}`, letterSpacing: '0.01em' }}>
+              <div style={{ marginTop: 16, padding: '12px 24px', background: tpl.accent, color: '#000', borderRadius: 10, fontWeight: 900, fontSize: 14, display: 'inline-block', width: 'fit-content', boxShadow: `0 8px 30px ${tpl.accentGlow}` }}>
                 {slide.cta}
               </div>
             )}
@@ -270,9 +279,11 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
       style={{
         width: '100%',
         height: '100%',
-        backgroundColor: tpl.bg,
-        backgroundImage: `${tpl.bgPattern}, ${tpl.bgGradient}`,
-        backgroundSize: `${tpl.bgSize}, 100% 100%`,
+        backgroundColor: '#000',
+        backgroundImage: `linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.6) 40%, rgba(0,0,0,0.2) 100%), url("${bgImageUrl}")`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
@@ -280,67 +291,48 @@ function SlidePageInner({ slide, tpl, brandName, total }: {
         fontFamily: "'Inter', 'Segoe UI', sans-serif",
       }}
     >
-      {/* Noise filter premium overlay */}
-      <div style={{
-          position: 'absolute', inset: 0, opacity: 0.15, pointerEvents: 'none', mixBlendMode: 'overlay', zIndex: 0,
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-        }}
-      />
-
-      {/* Top accent bar */}
+      {/* Accent superior sutil */}
       <div style={{ height: 4, background: `linear-gradient(90deg, ${tpl.accent}, transparent)`, width: '100%', flexShrink: 0, zIndex: 2 }} />
-
-      {/* Decorative background number (subtle) */}
-      {!isCta && layout !== 'minimal' && (
-        <div style={{
-          position: 'absolute', right: layout === 'centered' ? '50%' : -10, 
-          top: '50%', transform: layout === 'centered' ? 'translate(50%, -50%)' : 'translateY(-50%)',
-          fontSize: layout === 'centered' ? 240 : 180, 
-          fontWeight: 900, color: tpl.accentGlow,
-          lineHeight: 1, userSelect: 'none', zIndex: 0, pointerEvents: 'none',
-          opacity: layout === 'centered' ? 0.3 : 1
-        }}>
-          {String(slide.order).padStart(2, '0')}
-        </div>
-      )}
 
       {/* Brand tag top-left */}
       <div style={{
-        position: 'absolute', top: 14, left: 16, zIndex: 2,
-        fontSize: 10, fontWeight: 700, letterSpacing: '0.15em',
-        color: tpl.accent, textTransform: 'uppercase',
-        background: isLight ? 'rgba(99,102,241,0.08)' : 'rgba(255,255,255,0.08)',
-        backdropFilter: 'blur(4px)',
-        padding: '3px 8px', borderRadius: 4,
+        position: 'absolute', top: 16, left: 16, zIndex: 2,
+        fontSize: 10, fontWeight: 800, letterSpacing: '0.15em',
+        color: textColor, textTransform: 'uppercase',
+        background: 'rgba(0,0,0,0.5)',
+        backdropFilter: 'blur(8px)',
+        border: `1px solid rgba(255,255,255,0.1)`,
+        padding: '4px 10px', borderRadius: 6,
       }}>
         {brandName}
       </div>
 
       {/* Slide counter top-right */}
       <div style={{
-        position: 'absolute', top: 14, right: 16, zIndex: 2,
-        fontSize: 10, fontWeight: 700, color: tpl.sub,
+        position: 'absolute', top: 16, right: 16, zIndex: 2,
+        fontSize: 11, fontWeight: 800, color: subColor,
+        background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)',
+        padding: '3px 8px', borderRadius: 6,
         fontFeatureSettings: '"tnum"',
       }}>
         {slide.order}/{total}
       </div>
 
-      {/* Main Layout Content rendered dynamically */}
+      {/* Main Layout Content */}
       {renderLayoutContent()}
 
-      {/* Swipe hint (not on last) */}
+      {/* Swipe hint */}
       {!isCta && (
         <div style={{
           position: 'absolute', bottom: 20, right: 20, zIndex: 2,
-          fontSize: 10, color: tpl.muted, display: 'flex', alignItems: 'center', gap: 3,
-          fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em'
+          fontSize: 10, color: subColor, display: 'flex', alignItems: 'center', gap: 4,
+          fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em'
         }}>
           Arraste → 
         </div>
       )}
 
-      {/* Bottom accent */}
-      <div style={{ height: 2, background: `linear-gradient(90deg, transparent, ${tpl.accent}40)`, flexShrink: 0, zIndex: 2 }} />
+      <div style={{ height: 3, background: `linear-gradient(90deg, transparent, ${tpl.accent}80)`, flexShrink: 0, zIndex: 2 }} />
     </div>
   );
 }
