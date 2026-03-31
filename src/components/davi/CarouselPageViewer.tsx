@@ -428,6 +428,27 @@ function CarouselPageViewerInner({
     };
   }, [slides]);
 
+  const handleExport = useCallback(async () => {
+    if (!slideRef.current) return;
+    setExporting(true);
+    try {
+      const canvas = await html2canvas(slideRef.current, {
+        scale: 3,
+        useCORS: true,
+        backgroundColor: null,
+        logging: false,
+      });
+      const link = document.createElement('a');
+      link.download = `slide-${String(slides[current]?.order || 0).padStart(2, '0')}-${tpl.name.toLowerCase().replace(/\s/g, '-')}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (e) {
+      console.error('Export failed:', e);
+    } finally {
+      setExporting(false);
+    }
+  }, [current, slides, tpl]);
+
   if (loadingImages) {
     return (
       <div className="flex flex-col items-center justify-center p-12 gap-6 min-h-[400px] w-full">
@@ -454,28 +475,6 @@ function CarouselPageViewerInner({
   }
 
   const slide = slides[current];
-  if (!slide) return null;
-
-  const handleExport = useCallback(async () => {
-    if (!slideRef.current) return;
-    setExporting(true);
-    try {
-      const canvas = await html2canvas(slideRef.current, {
-        scale: 3,
-        useCORS: true,
-        backgroundColor: null,
-        logging: false,
-      });
-      const link = document.createElement('a');
-      link.download = `slide-${String(slide.order).padStart(2, '0')}-${tpl.name.toLowerCase().replace(/\s/g, '-')}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-    } catch (e) {
-      console.error('Export failed:', e);
-    } finally {
-      setExporting(false);
-    }
-  }, [slide, tpl]);
 
   // 4:5 proportional size — display at 300px wide = 375px tall
   const DISPLAY_W = 300;
