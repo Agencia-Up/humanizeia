@@ -532,7 +532,7 @@ export default function JoseTrafego() {
   useEffect(() => {
     if (!sessionLoaded && !session && !isAnalyzing && accountId) {
       setSessionLoaded(true);
-      loadSavedSession(accountId);
+      loadSavedSession(accountId).catch(() => {});
     }
   }, [sessionLoaded, session, isAnalyzing, accountId, loadSavedSession]);
   // ── AI Log: populate when analysis starts ──
@@ -612,7 +612,9 @@ export default function JoseTrafego() {
   const currencySymbol = currency === 'USD' ? 'US$' : 'R$';
 
   const handleAnalyze = useCallback(() => {
-    analyze({ targetAccountId: accountId, datePreset, auto_execute: autoExecute, viewMode });
+    analyze({ targetAccountId: accountId, datePreset, auto_execute: autoExecute, viewMode }).catch(() => {
+      // Error already shown via toast inside useApolloAgent
+    });
   }, [analyze, accountId, datePreset, autoExecute, viewMode]);
 
   const handleDiagnose = useCallback(async () => {
