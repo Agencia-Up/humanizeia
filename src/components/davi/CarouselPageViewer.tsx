@@ -758,7 +758,7 @@ function CarouselPageViewerInner({
         link.download = `slide-${String(i + 1).padStart(2, '0')}-${tpl.name.toLowerCase().replace(/\s/g, '-')}.png`;
         link.href = canvas.toDataURL('image/png');
         link.click();
-        await new Promise(res => setTimeout(res, 500)); // Pequena pausa pro navegador respirar
+        await new Promise(res => setTimeout(res, 500)); 
       }
     } catch (e) {
       console.error('Export failed:', e);
@@ -767,49 +767,42 @@ function CarouselPageViewerInner({
     }
   };
 
-  if (loadingImages) {
-    return (
-      <div className="flex flex-col items-center justify-center p-12 gap-6 min-h-[400px] w-full">
-        <div className="relative w-16 h-16 flex items-center justify-center">
-          <div className="absolute inset-0 rounded-full border-t-2 border-l-2 border-pink-500 animate-spin" />
-          <div className="absolute inset-2 rounded-full border-b-2 border-r-2 border-purple-500 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.2s' }} />
-        </div>
-        <div className="flex flex-col items-center gap-2 text-center">
-          <h3 className="text-lg font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-            Montando Galeria...
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            O Davi está posicionando as peças ({loadedCount}/{slides.length})
-          </p>
-        </div>
-        <div className="w-56 h-1.5 bg-muted/30 rounded-full overflow-hidden mt-2">
-          <div className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-300"
-            style={{ width: `${Math.max(5, (loadedCount / (slides?.length || 1)) * 100)}%` }} />
-        </div>
-      </div>
-    );
-  }
-
   const DISPLAY_W = 380;
   const DISPLAY_H = Math.round(DISPLAY_W * (1350 / 1080));
 
   return (
     <div className="flex flex-col w-full h-full max-h-[80vh]">
       {/* Header Actions */}
-      <div className="flex justify-between items-center mb-4 px-2 shrink-0">
+      <div className="flex justify-between items-center mb-4 px-2 shrink-0 flex-wrap gap-3">
         <div>
           <h2 className="text-lg font-bold">Galeria de Slides</h2>
-          <p className="text-xs text-muted-foreground">{slides.length} páginas geradas</p>
+          <p className="text-xs text-muted-foreground">
+            {slides.length} páginas geradas {loadingImages ? `(Carregando imagens ${loadedCount}/${slides.length}...)` : ''}
+          </p>
         </div>
-        <Button 
-          size="sm" 
-          onClick={handleExportAll} 
-          disabled={exporting} 
-          className="bg-pink-600 hover:bg-pink-700 text-white shadow-md gap-2 h-9"
-        >
-          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-          {exporting ? 'Baixando...' : 'Baixar Todos os Slides'}
-        </Button>
+        
+        <div className="flex items-center gap-4">
+          {/* Template picker */}
+          <div className="flex items-center gap-1.5 justify-center bg-muted/40 px-3 py-1.5 rounded-full border border-border/40">
+            <span className="text-[10px] text-muted-foreground mr-1 font-semibold uppercase tracking-wider">Estilo:</span>
+            {CAROUSEL_TEMPLATES.map(t => (
+              <button key={t.id} onClick={() => onTemplateChange(t.id as TemplateId)} title={t.name}
+                style={{ width: 22, height: 22, borderRadius: '50%', background: t.id === 'personal_brand' ? '#333' : t.id === 'futurista_ia' ? '#6366F1' : (t as any).accent, border: t.id === templateId ? '3px solid white' : '2px solid transparent', cursor: 'pointer', transform: t.id === templateId ? 'scale(1.2)' : 'scale(1)', transition: 'all 0.15s', boxShadow: t.id === templateId ? `0 0 8px ${(t as any).accentGlow}` : 'none', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {t.id === 'futurista_ia' ? '🤖' : t.id === 'personal_brand' ? '👤' : ''}
+              </button>
+            ))}
+          </div>
+
+          <Button 
+            size="sm" 
+            onClick={handleExportAll} 
+            disabled={exporting || loadingImages} 
+            className="bg-pink-600 hover:bg-pink-700 text-white shadow-md gap-2 h-9"
+          >
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            {exporting ? 'Baixando...' : 'Baixar Todos os Slides'}
+          </Button>
+        </div>
       </div>
 
       {/* Grid of All Slides */}
