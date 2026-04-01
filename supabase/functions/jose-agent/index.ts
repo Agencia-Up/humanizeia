@@ -931,10 +931,7 @@ INSTRUÇÕES DE ANÁLISE NÍVEL 6:
 9. Quando budget_pacing for underpacing, investigue problemas de entrega
 10. Use linguagem de especialista sênior: seja específico, cite dados, quantifique impactos
 
-${viewMode === "simplified"
-  ? `MODO SIMPLIFICADO (Dono de Negócio): Escreva o "summary" e a "analysis" em linguagem de negócios, SEM jargões técnicos. Foque em: dinheiro investido × retorno, o que está gerando resultado, o que está desperdiçando verba. Use frases curtas e diretas. O "summary" deve ser tipo: "Você investiu R$X e gerou Y conversões. A campanha Z está funcionando bem, mas a W precisa de atenção." Use emojis de forma moderada.`
-  : `MODO ESPECIALISTA (Gestor de Tráfego): Use linguagem técnica completa. Cite CTR, CPC, CPM, ROAS, Frequência, Fadiga Criativa, Pacing, WoW deltas. Seja detalhado e analítico.`
-}
+${viewMode === "simplified" ? "MODO SIMPLIFICADO (Dono de Negocio): Escreva summary e analysis em linguagem de negocios, SEM jargoes tecnicos. Foque em: dinheiro investido vs retorno, o que gera resultado e o que desperdicando verba. Frases curtas e diretas. Summary tipo: Voce investiu RX e gerou Y conversoes. Campanha Z funciona bem, W precisa de atencao. Emojis moderados." : "MODO ESPECIALISTA (Gestor de Trafego): Use linguagem tecnica completa. Cite CTR, CPC, CPM, ROAS, Frequencia, Fadiga Criativa, Pacing, WoW deltas. Seja detalhado e analitico."}
 
 Responda EXCLUSIVAMENTE em JSON válido:
 {
