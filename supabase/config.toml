@@ -114,6 +114,18 @@ verify_jwt = false
 [functions.apollo-measure-outcomes]
 verify_jwt = false
 
+[functions.jose-agent]
+verify_jwt = false
+
+[functions.jose-analyze]
+verify_jwt = false
+
+[functions.jose-cron-runner]
+verify_jwt = false
+
+[functions.jose-measure-outcomes]
+verify_jwt = false
+
 [functions.jose-debug]
 verify_jwt = false
 

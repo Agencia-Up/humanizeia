@@ -14,8 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { AILog, AILogEntry } from '@/components/apollo/AILog';
-import { GoldenRulesTab } from '@/components/apollo/GoldenRulesTab';
+import { AILog, AILogEntry } from '@/components/jose/AILog';
+import { GoldenRulesTab } from '@/components/jose/GoldenRulesTab';
 import CampanhaCreator from '@/components/jose/CampanhaCreator';
 import PublicosManager from '@/components/jose/PublicosManager';
 import AbTestManager from '@/components/jose/AbTestManager';
@@ -508,7 +508,7 @@ function TrendSummary({ snapshots, currencySymbol }: { snapshots: any[]; currenc
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function JoseTrafego() {
-  const { connectedAccount, connectedAccounts, selectConnectedAccount, isLoading: isLoadingAccount } = useMetaConnection();
+  const { connectedAccount, connectedAccounts, selectConnectedAccount, startOAuth, isConnecting, isLoading: isLoadingAccount } = useMetaConnection();
   const { session, isAnalyzing, isLoadingSession, pendingActions, executedActions, analyze, loadSavedSession, executeAction, getAdSets, dismissAction, testConnection } = useApolloAgent();
   const [diagResult, setDiagResult] = useState<string | null>(null);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
@@ -742,9 +742,9 @@ export default function JoseTrafego() {
                 <p className="text-xs text-muted-foreground max-w-sm">Para o JOSÉ analisar suas campanhas, conecte sua conta Meta Ads primeiro.</p>
               </div>
               <div className="flex gap-2">
-                <Button onClick={() => { window.location.href = '/connect-accounts'; }} className="gap-2 bg-amber-500 hover:bg-amber-600 text-black">
-                  <Zap className="h-4 w-4" />
-                  Conectar Meta Ads
+                <Button onClick={startOAuth} disabled={isConnecting} className="gap-2 bg-amber-500 hover:bg-amber-600 text-black">
+                  {isConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                  {isConnecting ? 'Conectando...' : 'Conectar Meta Ads'}
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleDiagnose} disabled={isDiagnosing} className="gap-2 text-xs">
                   {isDiagnosing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Activity className="h-3 w-3" />}
@@ -1148,7 +1148,7 @@ export default function JoseTrafego() {
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-sm font-medium">{actionLabel(log.action_type)}</span>
-                                  <Badge variant="outline" className="text-[10px]">{log.executed_by === 'apollo_auto' ? '🤖 José Auto' : '👤 Manual'}</Badge>
+                                  <Badge variant="outline" className="text-[10px]">{log.executed_by === 'jose_auto' ? '🤖 José Auto' : '👤 Manual'}</Badge>
                                 </div>
                                 <p className="text-xs text-muted-foreground truncate">{log.campaign_name}</p>
                                 {log.executed_at && <p className="text-[10px] text-muted-foreground mt-0.5">{new Date(log.executed_at).toLocaleString('pt-BR')}</p>}
