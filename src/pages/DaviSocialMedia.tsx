@@ -610,35 +610,72 @@ export default function DaviSocialMedia() {
   // ─── Flow: Manual Chat ────────────────────────────────────────────────────
 
   const runManualChat = async (text: string) => {
-    if (contentType === 'carousel') {
-      const typeLabel = CAROUSEL_TYPES.find(t => t.value === carouselType)?.label || carouselType;
-      addDaviMessage(`🎨 Construindo carrossel **${typeLabel}** com páginas visuais reais...`);
+    const isActuallyCarousel = contentType === 'carousel' || !contentType; 
+    
+    if (isActuallyCarousel) {
+      const attachedPhotoMsg = clientImageUrl ? `[FOTO ANEXADA] O usuário adicionou uma foto de rosto com a instrução implícita de que este carrossel seja pessoal.\n` : '';
+      
+      const progressId = addDaviMessage(`👨‍🎨 **Davi**: Analisando sua ideia e roteirizando as cenas do carrossel...`);
       const carousel = await generateCarouselV2({
-        topic: text,
+        topic: attachedPhotoMsg + text,
         audience: clientContext?.publico || 'empreendedores digitais',
         tone: 'persuasivo e direto',
         slide_count: 8,
         include_cta: true,
         brand_name: clientContext?.name,
-        carousel_type: carouselType,
+        carousel_type: 'interativo',
+        client_image_url: clientImageUrl || '',
       });
 
-      if (!carousel) return;
+      if (!carousel) {
+         setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: '❌ Erro ao gerar o roteiro visual. Verifique a conexão e tente novamente.' } : m));
+         return;
+      }
+
+      setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `🖼️ **Roteiro concluído!** Renderizando imagens (${carousel.slides.length} páginas)...` } : m));
+
+      // Iteratively load images to simulate step-by-step progress visually and avoid stuttering later
+      for (let i = 0; i < carousel.slides.length; i++) {
+         setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `⏳ **Gerando imagem ${i+1} de ${carousel.slides.length}...** (Processamento Avançado AI)` } : m));
+         const slide = carousel.slides[i];
+         
+         const isPersonal = clientImageUrl || carousel.visual_style === 'personal_brand';
+         let bgImageUrlRaw = '';
+         
+         if (isPersonal) {
+           const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'professional business photography';
+           const visualPrompt = encodeURIComponent(`${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`);
+           const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
+           bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}`;
+         } else {
+           const visualPrompt = encodeURIComponent(`${slide.image_prompt || slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece, no text`);
+           const seed = (slide.headline?.length || 10) * slide.order * 42;
+           bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
+         }
+         
+         try {
+           await new Promise((resolve) => {
+             const img = new window.Image();
+             img.onload = () => resolve(true);
+             img.onerror = () => resolve(false); 
+             img.src = bgImageUrlRaw;
+           });
+         } catch { /* silent fallback */ }
+      }
 
       const generated: GeneratedContent = {
         id: Date.now().toString(),
         type: 'carousel',
-        title: `${typeLabel} — ${text.slice(0, 30)}`,
+        title: `Carrossel — ${text.slice(0, 30)}`,
         preview: carousel.cover_headline || carousel.slides[0]?.headline || text,
         fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
         slides: carousel.slides,
-        templateId: selectedTemplate,
+        templateId: carousel.visual_style === 'personal_brand' || clientImageUrl ? 'personal_brand' : 'futurista_ia',
         createdAt: new Date(),
         platform,
       };
 
-      const msgId = addDaviMessage(`✅ ${carousel.slides.length} slides criados como páginas visuais! Navegue com as setas e escolha o template:`);
-      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+      setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `✨ **Pronto!** Carrossel gerado e salvo na Biblioteca. Abra a lateral para visualizar.`, contentCard: generated } : m));
       addToLibrary(generated);
     } else {
       const prompt = `Crie ${contentType === 'reel_script' ? `um script de Reel de 30-60 segundos para ${platform}` : `um post para ${platform}`} sobre: ${text}. Cliente: ${clientContext?.name || 'agência'}. Produto: ${clientContext?.produto || ''}. Público: ${clientContext?.publico || ''}.`;
@@ -986,46 +1023,7 @@ ${pautasStr}`;
                 Importar do Paulo
               </Button>
 
-              {/* Client photo upload button */}
-              <div className="relative">
-                <input
-                  ref={photoRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handlePhotoUpload}
-                />
-                {clientImageUrl ? (
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => photoRef.current?.click()}
-                      className="h-9 w-9 rounded-full overflow-hidden border-2 border-emerald-500/50 hover:border-emerald-400 transition-all"
-                      title="Trocar foto do cliente"
-                    >
-                      <img src={clientImageUrl} alt="foto cliente" className="w-full h-full object-cover" />
-                    </button>
-                    <button
-                      onClick={() => { setClientImageUrl(null); setSelectedTemplate('futurista_ia'); }}
-                      className="h-5 w-5 rounded-full bg-red-500/20 hover:bg-red-500/40 text-red-400 flex items-center justify-center transition-all"
-                      title="Remover foto"
-                    >
-                      <XIcon className="h-3 w-3" />
-                    </button>
-                  </div>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => photoRef.current?.click()}
-                    disabled={uploadingPhoto}
-                    className="h-9 px-3 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-400 border-emerald-500/20 font-semibold text-xs rounded-full transition-all gap-1.5"
-                    title="Enviar foto do cliente para usar no carrossel (ativa modo Personal Brand)"
-                  >
-                    {uploadingPhoto ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
-                    {uploadingPhoto ? 'Enviando...' : 'Foto do Cliente'}
-                  </Button>
-                )}
-              </div>
+              {/* Client photo moved to chat input */ }
 
               <Button
                 onClick={() => {
@@ -1146,14 +1144,22 @@ ${pautasStr}`;
                                 <Copy className="h-3 w-3" /> Copiar
                               </Button>
                             </div>
-                            {/* Carousel visual viewer - V2 page-based */}
+                            {/* Visual confirmation to redirect to library instead of heavy rendering */}
                             {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
-                              <CarouselPageViewer
-                                slides={message.contentCard.slides}
-                                templateId={(message.contentCard.templateId as TemplateId) ?? 'dark_pro'}
-                                onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
-                                brandName={clientContext?.name || 'Minha Marca'}
-                              />
+                              <div className="bg-background/50 rounded-xl p-4 flex flex-col items-center justify-center border border-border/50 shadow-inner">
+                                <div className="text-4xl mb-2">📸</div>
+                                <h5 className="font-bold text-sm text-foreground mb-1">Carrossel Salvo na Biblioteca!</h5>
+                                <p className="text-[11px] text-muted-foreground text-center mb-3">
+                                  As páginas do seu carrossel, incluindo a narrativa e visuais, foram geradas com sucesso.
+                                </p>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="h-8 text-xs font-semibold w-full bg-pink-500/10 text-pink-400 hover:bg-pink-500/20"
+                                >
+                                  Abra a Biblioteca (lateral) para visualizar ou baixar
+                                </Button>
+                              </div>
                             ) : (
                               <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
                             )}
@@ -1299,27 +1305,39 @@ ${pautasStr}`;
 
                 <div className="flex items-center justify-between pt-2 px-1">
                   <div className="flex items-center gap-2">
-                    <button onClick={() => fileRef.current?.click()} className="p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted/50" title="Anexar referência">
-                      <Link className="h-4 w-4" />
-                    </button>
+                    {/* Hidden inputs go here to stay within logic */}
+                    <input
+                      ref={photoRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handlePhotoUpload}
+                    />
                     
-                    {/* Carousel Type Selector Integrado */}
-                    {contentType === 'carousel' && (
-                      <div className="hidden sm:flex bg-muted/40 rounded-full p-1 border border-border/40">
-                        {CAROUSEL_TYPES.map(ct => (
-                          <button
-                            key={ct.value}
-                            onClick={() => setCarouselType(ct.value)}
-                            className={`px-3 py-1 rounded-full text-[11px] transition-all whitespace-nowrap ${
-                              carouselType === ct.value 
-                                ? 'bg-background text-pink-500 shadow-sm font-bold' 
-                                : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                          >
-                            {ct.label}
-                          </button>
-                        ))}
-                      </div>
+                    <button 
+                      onClick={() => photoRef.current?.click()} 
+                      className={`p-2 transition-colors rounded-full flex items-center justify-center ${
+                        clientImageUrl ? 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                      }`}
+                      title="Anexar Foto de Rosto para Carrossel Personal Brand"
+                    >
+                      {uploadingPhoto ? (
+                         <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : clientImageUrl ? (
+                         <img src={clientImageUrl} alt="Anexo" className="w-5 h-5 rounded-full object-cover shadow-sm border border-emerald-500/50" />
+                      ) : (
+                         <Camera className="h-4 w-4" />
+                      )}
+                    </button>
+
+                    {clientImageUrl && (
+                      <button
+                        onClick={() => { setClientImageUrl(null); setSelectedTemplate('futurista_ia'); }}
+                        className="text-[10px] bg-red-500/10 hover:bg-red-500/20 text-red-500 px-2 py-0.5 rounded-full flex items-center transition-all"
+                        title="Remover anexo"
+                      >
+                        <XIcon className="h-3 w-3 mr-1" /> Remover anexo
+                      </button>
                     )}
                   </div>
 

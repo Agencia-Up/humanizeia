@@ -702,12 +702,11 @@ interface CarouselPageViewerProps {
 function CarouselPageViewerInner({
   slides, templateId, onTemplateChange, brandName = 'Minha Marca', caption, clientImageUrl
 }: CarouselPageViewerProps) {
-  const [current, setCurrent] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [loadingImages, setLoadingImages] = useState(true);
   const [loadedCount, setLoadedCount] = useState(0);
 
-  const slideRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const tpl = CAROUSEL_TEMPLATES.find(t => t.id === templateId) ?? CAROUSEL_TEMPLATES[0];
   const templateMode = (tpl as any).layoutMode || 'standard';
 
@@ -747,18 +746,26 @@ function CarouselPageViewerInner({
     return () => { isCancelled = true; clearTimeout(fallbackTimeout); };
   }, [slides, templateMode]);
 
-  const handleExport = useCallback(async () => {
-    if (!slideRef.current) return;
+  const handleExportAll = async () => {
+    if (!containerRef.current) return;
     setExporting(true);
     try {
-      const canvas = await html2canvas(slideRef.current, { scale: 3, useCORS: true, backgroundColor: null, logging: false });
-      const link = document.createElement('a');
-      link.download = `slide-${String(slides[current]?.order || 0).padStart(2, '0')}-${tpl.name.toLowerCase().replace(/\s/g, '-')}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-    } catch (e) { console.error('Export failed:', e); }
-    finally { setExporting(false); }
-  }, [current, slides, tpl]);
+      const slideElements = containerRef.current.querySelectorAll('.davi-slide-node');
+      for (let i = 0; i < slideElements.length; i++) {
+        const el = slideElements[i] as HTMLElement;
+        const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: null, logging: false });
+        const link = document.createElement('a');
+        link.download = `slide-${String(i + 1).padStart(2, '0')}-${tpl.name.toLowerCase().replace(/\s/g, '-')}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        await new Promise(res => setTimeout(res, 500)); // Pequena pausa pro navegador respirar
+      }
+    } catch (e) {
+      console.error('Export failed:', e);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   if (loadingImages) {
     return (
@@ -769,10 +776,10 @@ function CarouselPageViewerInner({
         </div>
         <div className="flex flex-col items-center gap-2 text-center">
           <h3 className="text-lg font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-            Renderizando slides...
+            Montando Galeria...
           </h3>
-          <p className="text-sm text-muted-foreground w-[260px]">
-            {tpl.id === 'futurista_ia' ? '🤖 Gerando cenas AI cinemáticas' : tpl.id === 'personal_brand' ? '👤 Preparando layout editorial' : '🎨 Produzindo fundos cinemáticos'} ({loadedCount}/{slides.length})
+          <p className="text-sm text-muted-foreground">
+            O Davi está posicionando as peças ({loadedCount}/{slides.length})
           </p>
         </div>
         <div className="w-56 h-1.5 bg-muted/30 rounded-full overflow-hidden mt-2">
@@ -783,58 +790,53 @@ function CarouselPageViewerInner({
     );
   }
 
-  const slide = slides[current];
-  const DISPLAY_W = 300;
+  const DISPLAY_W = 380;
   const DISPLAY_H = Math.round(DISPLAY_W * (1350 / 1080));
 
   return (
-    <div className="flex flex-col gap-3 items-center">
-      {/* Main slide preview */}
-      <div style={{ position: 'relative', width: DISPLAY_W, height: DISPLAY_H }}>
-        <div ref={slideRef} style={{ width: DISPLAY_W, height: DISPLAY_H, borderRadius: 12, overflow: 'hidden', border: tpl.borderStyle, boxShadow: `0 8px 40px ${tpl.accentGlow}, 0 2px 8px rgba(0,0,0,0.4)`, transition: 'box-shadow 0.3s' }}>
-          <SlidePageInner slide={slide} tpl={tpl} brandName={brandName} total={slides.length} clientImageUrl={clientImageUrl} />
+    <div className="flex flex-col w-full h-full max-h-[80vh]">
+      {/* Header Actions */}
+      <div className="flex justify-between items-center mb-4 px-2 shrink-0">
+        <div>
+          <h2 className="text-lg font-bold">Galeria de Slides</h2>
+          <p className="text-xs text-muted-foreground">{slides.length} páginas geradas</p>
         </div>
-        {current > 0 && (
-          <button onClick={() => setCurrent(p => p - 1)} style={{ position: 'absolute', left: -14, top: '50%', transform: 'translateY(-50%)', width: 28, height: 28, borderRadius: '50%', background: tpl.accent, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 12px ${tpl.accentGlow}` }}>
-            <ChevronLeft style={{ width: 16, height: 16, color: '#fff' }} />
-          </button>
-        )}
-        {current < slides.length - 1 && (
-          <button onClick={() => setCurrent(p => p + 1)} style={{ position: 'absolute', right: -14, top: '50%', transform: 'translateY(-50%)', width: 28, height: 28, borderRadius: '50%', background: tpl.accent, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 12px ${tpl.accentGlow}` }}>
-            <ChevronRight style={{ width: 16, height: 16, color: '#fff' }} />
-          </button>
-        )}
+        <Button 
+          size="sm" 
+          onClick={handleExportAll} 
+          disabled={exporting} 
+          className="bg-pink-600 hover:bg-pink-700 text-white shadow-md gap-2 h-9"
+        >
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          {exporting ? 'Baixando...' : 'Baixar Todos os Slides'}
+        </Button>
       </div>
 
-      {/* Thumbnail strip */}
-      <div style={{ display: 'flex', gap: 5, overflowX: 'auto', maxWidth: DISPLAY_W + 28, paddingBottom: 4 }}>
-        {slides.map((s, i) => (
-          <button key={i} onClick={() => setCurrent(i)} style={{ flexShrink: 0, width: 44, height: 55, borderRadius: 6, border: i === current ? `2px solid ${tpl.accent}` : '2px solid transparent', overflow: 'hidden', cursor: 'pointer', opacity: i === current ? 1 : 0.5, transition: 'all 0.2s', background: tpl.bg, position: 'relative' }}>
-            <div style={{ transform: 'scale(0.25)', transformOrigin: 'top left', width: '400%', height: '400%', pointerEvents: 'none' }}>
-              <div style={{ width: DISPLAY_W * 4, height: DISPLAY_H * 4, background: tpl.bgGradient, padding: 16 }}>
-                <div style={{ fontSize: 36, fontWeight: 900, color: tpl.text, lineHeight: 1.1 }}>{typeof s.headline === 'string' ? s.headline : ''}</div>
+      {/* Grid of All Slides */}
+      <div className="overflow-y-auto pr-2 pb-8 flex-1" ref={containerRef}>
+        <div className="flex flex-wrap justify-center gap-6 pb-6">
+          {slides.map((slide, i) => (
+            <div key={i} className="flex flex-col items-center gap-2">
+              <span className="text-xs font-bold text-muted-foreground w-full text-left pl-1">
+                Slide {i + 1}
+              </span>
+              <div 
+                className="davi-slide-node shrink-0" 
+                style={{ 
+                  width: DISPLAY_W, 
+                  height: DISPLAY_H, 
+                  borderRadius: 12, 
+                  overflow: 'hidden', 
+                  border: tpl.borderStyle, 
+                  boxShadow: `0 8px 40px ${tpl.accentGlow}, 0 2px 8px rgba(0,0,0,0.4)` 
+                }}
+              >
+                <SlidePageInner slide={slide} tpl={tpl} brandName={brandName} total={slides.length} clientImageUrl={clientImageUrl} />
               </div>
             </div>
-            <div style={{ position: 'absolute', bottom: 2, right: 3, fontSize: 8, fontWeight: 700, color: tpl.accent }}>{i + 1}</div>
-          </button>
-        ))}
+          ))}
+        </div>
       </div>
-
-      {/* Template picker */}
-      <div className="flex items-center gap-1.5 justify-center flex-wrap max-w-xs">
-        {CAROUSEL_TEMPLATES.map(t => (
-          <button key={t.id} onClick={() => onTemplateChange(t.id as TemplateId)} title={t.name}
-            style={{ width: 22, height: 22, borderRadius: '50%', background: t.id === 'personal_brand' ? '#333' : t.id === 'futurista_ia' ? '#6366F1' : (t as any).accent, border: t.id === templateId ? '3px solid white' : '2px solid transparent', cursor: 'pointer', transform: t.id === templateId ? 'scale(1.3)' : 'scale(1)', transition: 'all 0.15s', boxShadow: t.id === templateId ? `0 0 8px ${(t as any).accentGlow}` : 'none', fontSize: 10 }}>
-            {t.id === 'futurista_ia' ? '🤖' : t.id === 'personal_brand' ? '👤' : ''}
-          </button>
-        ))}
-      </div>
-
-      {/* Export button */}
-      <Button size="sm" variant="outline" onClick={handleExport} disabled={exporting} className="gap-1.5 text-xs h-8" style={{ borderColor: tpl.accent + '60', color: tpl.accent }}>
-        {exporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-        {exporting ? 'Exportando...' : `Baixar Slide ${slide.order}`}
-      </Button>
     </div>
   );
 }

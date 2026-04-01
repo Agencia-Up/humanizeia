@@ -56,6 +56,7 @@ export interface GeneratedCarousel {
   hashtags: string[];
   cover_headline: string;
   carousel_type?: string;
+  visual_style?: string;
   hook_promise?: string;
 }
 
@@ -244,6 +245,7 @@ export function useSocialMedia() {
     carousel_type?: string;
     paul_copy?: string;
     trend_context?: string;
+    client_image_url?: string;
   }) => {
     if (!user) return null;
     setGenerating(true);
