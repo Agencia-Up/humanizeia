@@ -35,7 +35,77 @@ serve(async (req) => {
     if (authError || !user) throw new Error('Token inválido');
 
     const body = await req.json();
-    const { action, briefing } = body;
+    const { action, briefing, niche, base_template } = body;
+
+    if (action === 'build_questionnaire') {
+      const provider = body.ai_provider || 'openai';
+      const prompt = `Você é o Arquiteto de Briefing do Salomão. Sua tarefa é criar um questionário de briefing estratégico e direto para o nicho: "${niche}".
+
+Diretrizes:
+1. Tenha TOTAL LIBERDADE para adaptar as questões, mas mantenha-as simples e extremamente relevantes.
+2. Evite perguntas complexas ou burocráticas. Foque no que realmente importa para vender e atender bem nesse nicho.
+3. Use a estrutura base abaixo como inspiração para as seções, mas sinta-se livre para criar novas ou remover seções que não fazem sentido.
+4. O objetivo é extrair informações para treinar um Agente de IA de Vendas de elite.
+
+ESTRUTURA BASE DE INSPIRAÇÃO:
+${base_template || 'Negócio, Público, Oferta, Comunicação'}
+
+Retorne APENAS um objeto JSON puro (sem markdown ou blocos de código) no formato:
+{
+  "sections": [
+    {
+      "title": "Título da Seção (Ex: Perfil do Negócio)",
+      "fields": [
+        { 
+          "label": "Pergunta (Ex: Qual seu principal diferencial?)", 
+          "hint": "Exemplo curto (Ex: Atendimento 24h, preço)", 
+          "key": "chave_unica_em_snake_case" 
+        }
+      ]
+    }
+  ]
+}`;
+
+      let jsonResponse = '';
+      if (provider === 'openai') {
+        const openAiKey = Deno.env.get('OPENAI_API_KEY');
+        if (!openAiKey) throw new Error('Chave OpenAI não configurada');
+        
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openAiKey}` },
+          body: JSON.stringify({
+            model: 'gpt-4o',
+            messages: [{ role: 'system', content: 'Você é um arquiteto de dados que responde apenas em JSON puro.' }, { role: 'user', content: prompt }],
+            response_format: { type: 'json_object' }
+          }),
+        });
+        const data = await response.json();
+        jsonResponse = data.choices[0].message.content;
+
+      } else {
+        const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
+        if (!anthropicKey) throw new Error('Chave Anthropic não configurada');
+
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': anthropicKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-3-5-sonnet-20241022',
+            max_tokens: 2000,
+            messages: [{ role: 'user', content: prompt + '\n\nResponda APENAS o JSON.' }],
+          }),
+        });
+        const data = await response.json();
+        jsonResponse = data.content[0].text;
+      }
+
+      return new Response(jsonResponse, { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     if (action === 'generate_prompt') {
       const provider = body.ai_provider || 'openai'; // default to openai

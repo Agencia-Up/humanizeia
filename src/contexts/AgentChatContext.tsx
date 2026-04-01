@@ -26,7 +26,7 @@ export function AgentChatProvider({ children }: { children: React.ReactNode }) {
     if (!user) return [];
     
     const { data, error } = await supabase
-      .from('agent_chat_history')
+      .from('agent_chat_history' as any)
       .select('*')
       .eq('user_id', user.id)
       .eq('agent_id', agentId)
@@ -38,14 +38,14 @@ export function AgentChatProvider({ children }: { children: React.ReactNode }) {
       return [];
     }
     
-    return (data || []) as ChatMessage[];
+    return (data || []) as unknown as ChatMessage[];
   }, [user]);
 
   const saveMessage = async (agentId: string, role: 'user' | 'assistant', content: string, metadata: any = {}) => {
     if (!user) return;
 
     const { error } = await supabase
-      .from('agent_chat_history')
+      .from('agent_chat_history' as any)
       .insert({
         user_id: user.id,
         agent_id: agentId,
@@ -64,7 +64,7 @@ export function AgentChatProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
 
     const { error } = await supabase
-      .from('agent_chat_history')
+      .from('agent_chat_history' as any)
       .delete()
       .eq('user_id', user.id)
       .eq('agent_id', agentId);

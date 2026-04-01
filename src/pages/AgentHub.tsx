@@ -32,13 +32,14 @@ export default function AgentHub() {
   const navigate = useNavigate();
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
 
+
   return (
     <MainLayout>
       <div className="mx-auto max-w-6xl space-y-10 py-4">
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="text-center space-y-2">
           <h1 className="text-3xl font-bold tracking-tight lg:text-4xl">
-            Olá, <span className="gradient-text">{firstName}</span>! 👋
+            Oi, <span className="gradient-text">{firstName}</span>! 👋
           </h1>
           <p className="text-muted-foreground">Escolha um agente para começar ou acesse o dashboard de métricas.</p>
         </motion.div>

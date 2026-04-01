@@ -74,14 +74,20 @@ export default function Auth() {
     }
 
     setIsLoading(true);
-    const { error } = await signIn(loginEmail, loginPassword);
-    setIsLoading(false);
+    try {
+      const { error } = await signIn(loginEmail, loginPassword);
 
-    if (error) {
-      let msg = 'Não foi possível fazer login.';
-      if (error.message.includes('Invalid login credentials')) msg = 'Email ou senha incorretos.';
-      else if (error.message.includes('Email not confirmed')) msg = 'Confirme seu email antes de fazer login.';
-      toast({ title: 'Erro no login', description: msg, variant: 'destructive' });
+      if (error) {
+        let msg = 'Não foi possível fazer login.';
+        if (error.message.includes('Invalid login credentials')) msg = 'Email ou senha incorretos.';
+        else if (error.message.includes('Email not confirmed')) msg = 'Confirme seu email antes de fazer login.';
+        toast({ title: 'Erro no login', description: error.message || msg, variant: 'destructive' });
+      }
+    } catch (err: any) {
+      console.error("Erro crítico no Login:", err);
+      toast({ title: 'Erro Crítico de Conexão', description: err.message || 'Falha ao comunicar com o servidor. Verifique o console.', variant: 'destructive' });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -105,28 +111,61 @@ export default function Auth() {
     }
 
     setIsLoading(true);
-    const { error } = await signUp(signupEmail, signupPassword, signupName);
-    setIsLoading(false);
-
-    if (error) {
-      let msg = 'Não foi possível criar sua conta.';
-      if (error.message.includes('already registered') || error.message.includes('already been registered')) {
-        msg = 'Este email já está cadastrado. Tente fazer login.';
-      }
-      toast({ title: 'Erro no cadastro', description: msg, variant: 'destructive' });
-    } else {
-      // Envia email de boas-vindas via Resend
-      await sendEmail({
-        type: 'welcome',
+    try {
+      const { data, error } = await supabase.auth.signUp({
         email: signupEmail,
-        name: signupName || 'Usuário',
-        redirectTo: window.location.origin,
+        password: signupPassword,
+        options: {
+          data: { full_name: signupName },
+        },
       });
 
+      if (error) {
+        let msg = 'Não foi possível criar sua conta.';
+        if (error.message.includes('already registered') || error.message.includes('already been registered')) {
+          msg = 'Este e-mail já está cadastrado em nossa base.';
+        }
+        toast({ 
+          title: 'Erro no cadastro', 
+          description: msg, 
+          variant: 'destructive' 
+        });
+        return;
+      }
+
+      // Verificação defensiva de conta existente (identities)
+      const identities = data?.user?.identities ?? [];
+      if (data?.user && identities.length === 0) {
+        toast({
+          title: 'Conta já existente',
+          description: 'Este e-mail já possui um cadastro pendente ou ativo. Tente fazer login.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Registro realizado com sucesso
       toast({
-        title: '🎉 Conta criada com sucesso!',
-        description: 'Verifique seu email para confirmar o cadastro.',
+        title: '🎉 Cadastro realizado!',
+        description: 'Enviamos um e-mail de confirmação. Por favor, verifique sua caixa de entrada.',
       });
+
+      // Envia email de boas-vindas/onboarding via Edge Function (Auxiliar)
+      try {
+        await sendEmail({
+          type: 'welcome',
+          email: signupEmail,
+          name: signupName || 'Usuário',
+          redirectTo: window.location.origin,
+        });
+      } catch (e) {
+        console.warn('Erro ao enviar e-mail de boas-vindas:', e);
+      }
+    } catch (err: any) {
+      console.error("Erro crítico no Cadastro:", err);
+      toast({ title: 'Erro Crítico de Conexão', description: err.message || 'Falha ao comunicar com o servidor. Verifique o console.', variant: 'destructive' });
+    } finally {
+      setIsLoading(false);
     }
   };
 

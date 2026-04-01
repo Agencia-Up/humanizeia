@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { User, Loader2, Save } from 'lucide-react';
+import { User, Loader2, Save, RotateCcw, Sparkles } from 'lucide-react';
+
 
 interface Profile {
   full_name: string | null;
@@ -24,6 +26,8 @@ interface Profile {
 export function ProfileSettingsTab() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const [isResettingQuiz, setIsResettingQuiz] = useState(false);
 
   const [profile, setProfile] = useState<Profile>({
     full_name: '',
@@ -92,6 +96,30 @@ export function ProfileSettingsTab() {
 
   const updateField = (field: keyof Profile, value: string) => {
     setProfile(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleResetQuiz = async () => {
+    if (!user) return;
+    setIsResettingQuiz(true);
+    try {
+      // Limpa localStorage
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('quiz_'))
+        .forEach(k => localStorage.removeItem(k));
+
+      // Tenta resetar no banco (ignora se coluna não existe)
+      try {
+        await supabase.from('profiles').update({ quiz_completed: false } as any).eq('id', user.id);
+      } catch { /* coluna pode não existir */ }
+
+      toast({ title: '✅ Quiz resetado!', description: 'Você será redirecionado para o Quiz de Nicho.' });
+      await new Promise(r => setTimeout(r, 1200));
+      navigate('/niche-quiz', { replace: true });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsResettingQuiz(false);
+    }
   };
 
   if (isLoading) {
@@ -170,6 +198,39 @@ export function ProfileSettingsTab() {
         {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
         Salvar Alterações
       </Button>
+
+      {/* Refazer Quiz */}
+      <Card className="border-amber-500/20 bg-amber-500/5 backdrop-blur-sm">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10">
+              <Sparkles className="h-5 w-5 text-amber-400" />
+            </div>
+            <div>
+              <CardTitle className="text-base">Qualificação de Nicho</CardTitle>
+              <CardDescription>Refaça o quiz para atualizar seu briefing personalizado</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground mb-4">
+            Ao refazer o quiz, o Agente de Briefing irá gerar um novo briefing estratégico
+            baseado nas suas novas respostas.
+          </p>
+          <Button
+            variant="outline"
+            onClick={handleResetQuiz}
+            disabled={isResettingQuiz}
+            className="border-amber-500/30 hover:bg-amber-500/10 text-amber-400 hover:text-amber-300 gap-2"
+          >
+            {isResettingQuiz
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <RotateCcw className="h-4 w-4" />
+            }
+            Refazer Quiz de Nicho
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }

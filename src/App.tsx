@@ -58,6 +58,9 @@ const MeuPlano = lazy(() => import('./pages/MeuPlano'));
 const GeradorPrompt = lazy(() => import('./pages/GeradorPrompt'));
 const PauloAgente = lazy(() => import('./pages/PauloAgente'));
 const JoseTrafego = lazy(() => import('./pages/JoseTrafego'));
+const NicheQuiz = lazy(() => import("./pages/NicheQuiz"));
+const BriefingDetails = lazy(() => import("./pages/BriefingDetails"));
+
 
 const queryClient = new QueryClient();
 
@@ -70,65 +73,70 @@ const PageLoader = () => (
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-        <BrowserRouter>
-          <AgentTasksProvider>
-            <AgentChatProvider>
-              <Suspense fallback={<PageLoader />}>
-                <Routes>
-                  <Route path="/auth" element={<Auth />} />
-                  <Route path="/reset-password" element={<ResetPassword />} />
-                  <Route path="/privacy" element={<PrivacyPolicy />} />
-                  <Route path="/terms" element={<TermsOfService />} />
-                  <Route path="/onboarding" element={<Onboarding />} />
-                  <Route path="/" element={<LandingPage />} />
-                  <Route path="/dashboard" element={<ProtectedRoute><AgentHub /></ProtectedRoute>} />
-                  <Route path="/metrics" element={<ProtectedRoute><MetricsDashboard /></ProtectedRoute>} />
-                  <Route path="/connect-accounts" element={<ProtectedRoute><ConnectAccounts /></ProtectedRoute>} />
-                  <Route path="/copywriter" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
-                  <Route path="/paulo" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
-                  <Route path="/creative-studio" element={<ProtectedRoute><AICreativeStudio /></ProtectedRoute>} />
-                  <Route path="/optimizer" element={<ProtectedRoute><CampaignOptimizer /></ProtectedRoute>} />
-                  <Route path="/budget" element={<ProtectedRoute><BudgetAllocator /></ProtectedRoute>} />
-                  <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
-                  <Route path="/rules" element={<ProtectedRoute><AutomatedRules /></ProtectedRoute>} />
-                  <Route path="/ab-testing" element={<ProtectedRoute><ABTestingLab /></ProtectedRoute>} />
-                  <Route path="/library" element={<ProtectedRoute><CreativeLibrary /></ProtectedRoute>} />
-                  <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
-                  <Route path="/academy" element={<ProtectedRoute><AIAcademy /></ProtectedRoute>} />
-                  <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-                  <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
-                  <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
-                  <Route path="/tutorials" element={<ProtectedRoute><Tutorials /></ProtectedRoute>} />
-                  <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
-                  <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />
-                  <Route path="/whatsapp/broadcast" element={<ProtectedRoute><WhatsAppBroadcast /></ProtectedRoute>} />
-                  <Route path="/whatsapp/analytics" element={<ProtectedRoute><WhatsAppAnalytics /></ProtectedRoute>} />
-                  <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
-                  <Route path="/whatsapp/instances" element={<ProtectedRoute><WhatsAppInstances /></ProtectedRoute>} />
-                  <Route path="/whatsapp/ai-agent" element={<ProtectedRoute><WhatsAppAIAgent /></ProtectedRoute>} />
-                  <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
-                  <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
-                  <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
-                  <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
-                  <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
-                  <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
-                  <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
-                  <Route path="/competitor-radar" element={<ProtectedRoute><CompetitorRadar /></ProtectedRoute>} />
-                  <Route path="/leads" element={<ProtectedRoute><LeadManagement /></ProtectedRoute>} />
-                  <Route path="/google-ads" element={<ProtectedRoute><GoogleAdsDashboard /></ProtectedRoute>} />
-                  <Route path="/linkedin-ads" element={<ProtectedRoute><LinkedInAdsDashboard /></ProtectedRoute>} />
-                  <Route path="/davi" element={<ProtectedRoute><DaviSocialMedia /></ProtectedRoute>} />
-                  <Route path="/joao" element={<ProtectedRoute><JoaoEmail /></ProtectedRoute>} />
-                  <Route path="/daniel" element={<ProtectedRoute><DanielEstrategia /></ProtectedRoute>} />
-                  <Route path="/meu-plano" element={<ProtectedRoute><MeuPlano /></ProtectedRoute>} />
-                  <Route path="/gerador-prompt" element={<ProtectedRoute><GeradorPrompt /></ProtectedRoute>} />
-                  <Route path="/jose" element={<ProtectedRoute><JoseTrafego /></ProtectedRoute>} />
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </Suspense>
-            </AgentChatProvider>
-          </AgentTasksProvider>
-        </BrowserRouter>
+      <BrowserRouter>
+        <AgentTasksProvider>
+          <AgentChatProvider>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
+                <Route path="/auth" element={<Auth />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="/privacy" element={<PrivacyPolicy />} />
+                <Route path="/terms" element={<TermsOfService />} />
+                <Route path="/onboarding" element={<Onboarding />} />
+                <Route path="/niche-quiz" element={<ProtectedRoute><NicheQuiz /></ProtectedRoute>} />
+                <Route path="/briefing/:nicho" element={<ProtectedRoute><BriefingDetails /></ProtectedRoute>} />
+                <Route path="/" element={<LandingPage />} />
+
+                <Route path="/dashboard" element={<ProtectedRoute><AgentHub /></ProtectedRoute>} />
+                <Route path="/metrics" element={<ProtectedRoute><MetricsDashboard /></ProtectedRoute>} />
+                <Route path="/connect-accounts" element={<ProtectedRoute><ConnectAccounts /></ProtectedRoute>} />
+                <Route path="/copywriter" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
+                <Route path="/paulo" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
+                <Route path="/creative-studio" element={<ProtectedRoute><AICreativeStudio /></ProtectedRoute>} />
+                <Route path="/optimizer" element={<ProtectedRoute><CampaignOptimizer /></ProtectedRoute>} />
+                <Route path="/budget" element={<ProtectedRoute><BudgetAllocator /></ProtectedRoute>} />
+                <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
+                <Route path="/rules" element={<ProtectedRoute><AutomatedRules /></ProtectedRoute>} />
+                <Route path="/ab-testing" element={<ProtectedRoute><ABTestingLab /></ProtectedRoute>} />
+                <Route path="/library" element={<ProtectedRoute><CreativeLibrary /></ProtectedRoute>} />
+                <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+                <Route path="/academy" element={<ProtectedRoute><AIAcademy /></ProtectedRoute>} />
+                <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+                <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
+                <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
+                <Route path="/tutorials" element={<ProtectedRoute><Tutorials /></ProtectedRoute>} />
+                <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
+                <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />
+                <Route path="/whatsapp/broadcast" element={<ProtectedRoute><WhatsAppBroadcast /></ProtectedRoute>} />
+                <Route path="/whatsapp/analytics" element={<ProtectedRoute><WhatsAppAnalytics /></ProtectedRoute>} />
+                <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
+                <Route path="/whatsapp/instances" element={<ProtectedRoute><WhatsAppInstances /></ProtectedRoute>} />
+                <Route path="/whatsapp/ai-agent" element={<ProtectedRoute><WhatsAppAIAgent /></ProtectedRoute>} />
+                <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
+                <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
+                <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
+                <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
+                <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
+                <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
+                <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
+                <Route path="/competitor-radar" element={<ProtectedRoute><CompetitorRadar /></ProtectedRoute>} />
+                <Route path="/leads" element={<ProtectedRoute><LeadManagement /></ProtectedRoute>} />
+                <Route path="/google-ads" element={<ProtectedRoute><GoogleAdsDashboard /></ProtectedRoute>} />
+                <Route path="/linkedin-ads" element={<ProtectedRoute><LinkedInAdsDashboard /></ProtectedRoute>} />
+                <Route path="/davi" element={<ProtectedRoute><DaviSocialMedia /></ProtectedRoute>} />
+                <Route path="/joao" element={<ProtectedRoute><JoaoEmail /></ProtectedRoute>} />
+                <Route path="/daniel" element={<ProtectedRoute><DanielEstrategia /></ProtectedRoute>} />
+                <Route path="/meu-plano" element={<ProtectedRoute><MeuPlano /></ProtectedRoute>} />
+                <Route path="/gerador-prompt" element={<ProtectedRoute><GeradorPrompt /></ProtectedRoute>} />
+                <Route path="/jose" element={<ProtectedRoute><JoseTrafego /></ProtectedRoute>} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+            <Toaster />
+            <Sonner />
+          </AgentChatProvider>
+        </AgentTasksProvider>
+      </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
 );

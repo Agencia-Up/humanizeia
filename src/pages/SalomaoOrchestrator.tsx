@@ -38,35 +38,62 @@ const AGENTS = [
   { id: 'pedro', name: 'PEDRO', role: 'SDR & Atendimento', icon: Bot, description: 'Qualifica leads, agenda reuniões e responde clientes 24/7 via WhatsApp com inteligência humana.', status: 'active', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-500/20', url: '/whatsapp/ai-agent' },
 ];
 
-/* ── Prompt Generator types ─────────────────────────────────────────── */
-interface BriefingData {
-  vendeProduto: string; problemaResolve: string; transformacao: string; diferencial: string;
-  perfilCliente: string; dor: string; desejo: string; objecoes: string; triggerCompra: string;
-  produto: string; preco: string; beneficios: string; mecanismo: string; garantia: string; prazoResultado: string;
-  ondeVende: string; canais: string; funil: string; objetivo: string;
-  tom: string; girias: string; humor: string; referencia: string;
-  redesSociais: string; paletaCores: string; identidadeVisual: string; site: string;
-  resultados: string; autoridade: string; depoimento: string;
-  devesFazer: string; naoFazer: string; cta: string; nomeAgente: string;
+/* ── Dynamic Briefing Structure ─────────────────────────────────────────── */
+interface BriefingField {
+  label: string;
+  hint: string;
+  key: string;
 }
-const EMPTY_BRIEFING: BriefingData = {
-  vendeProduto: '', problemaResolve: '', transformacao: '', diferencial: '',
-  perfilCliente: '', dor: '', desejo: '', objecoes: '', triggerCompra: '',
-  produto: '', preco: '', beneficios: '', mecanismo: '', garantia: '', prazoResultado: '',
-  ondeVende: '', canais: '', funil: '', objetivo: '',
-  tom: '', girias: 'não usar gírias', humor: 'sem humor', referencia: '',
-  redesSociais: '', paletaCores: '', identidadeVisual: '', site: '',
-  resultados: '', autoridade: '', depoimento: '',
-  devesFazer: '', naoFazer: '', cta: '', nomeAgente: '',
-};
-const REQUIRED_FIELDS: (keyof BriefingData)[] = [
-  'vendeProduto', 'problemaResolve', 'transformacao', 'diferencial',
-  'perfilCliente', 'dor', 'desejo', 'objecoes', 'triggerCompra',
-  'produto', 'preco', 'beneficios', 'mecanismo',
-  'ondeVende', 'canais', 'objetivo', 'tom', 'devesFazer', 'naoFazer', 'cta',
-];
-function buildBriefingText(d: BriefingData) {
-  return `NEGÓCIO: ${d.vendeProduto}\nProblema resolve: ${d.problemaResolve}\nTransformação: ${d.transformacao}\nDiferencial único: ${d.diferencial}\n\nCLIENTE IDEAL:\nPerfil: ${d.perfilCliente}\nDor principal: ${d.dor}\nMaior desejo: ${d.desejo}\nObjeções: ${d.objecoes}\nGatilho de compra: ${d.triggerCompra}\n\nOFERTA:\nProduto: ${d.produto} | Preço: ${d.preco}\nBenefícios: ${d.beneficios}\nMecanismo único: ${d.mecanismo}\nGarantia/bônus: ${d.garantia} | Prazo resultado: ${d.prazoResultado}\n\nAQUISIÇÃO:\nCanal de venda: ${d.ondeVende}\nCanais de tráfego: ${d.canais}\nFunil atual: ${d.funil}\nObjetivo do agente: ${d.objetivo}\n\nCOMUNICAÇÃO:\nTom de voz: ${d.tom}\nGírias: ${d.girias} | Humor: ${d.humor}\nReferência de estilo: ${d.referencia || 'não especificada'}\n\nIDENTIDADE DE MARCA:\nRedes sociais: ${d.redesSociais || 'não informado'}\nPaleta de cores: ${d.paletaCores || 'não informado'}\nIdentidade visual: ${d.identidadeVisual || 'não informado'}\nSite: ${d.site || 'não informado'}\n\nAUTORIDADE:\nResultados: ${d.resultados}\nAutoridade/tempo: ${d.autoridade}\nDepoimento: ${d.depoimento}\n\nREGRAS:\nDeve fazer: ${d.devesFazer}\nNÃO pode fazer: ${d.naoFazer}\nCTA principal: ${d.cta}\nNome do agente: ${d.nomeAgente || 'não especificado'}`.trim();
+
+interface BriefingSection {
+  title: string;
+  fields: BriefingField[];
+}
+
+function parseBriefingTemplate(content: string): BriefingSection[] {
+  const sections: BriefingSection[] = [];
+  const lines = content.split('\n');
+  let currentSection: BriefingSection | null = null;
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    
+    // Identify Section (## Title)
+    if (trimmedLine.startsWith('##')) {
+      const title = trimmedLine.replace(/^##\s*\d*\.?\s*/, '').trim();
+      currentSection = { title, fields: [] };
+      sections.push(currentSection);
+      continue;
+    }
+
+    // Identify Field (* **Label:** Hint)
+    if (trimmedLine.startsWith('*') && currentSection) {
+      const match = trimmedLine.match(/^\*\s*\*\*(.*?):\*\*(.*)$/);
+      if (match) {
+        const label = match[1].trim();
+        const hint = match[2].trim();
+        const key = label.toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^\w\s-]/g, '')
+          .trim()
+          .replace(/[-\s]+/g, '_');
+        
+        currentSection.fields.push({ label, hint, key });
+      }
+    }
+  }
+  return sections;
+}
+
+function buildBriefingText(sections: BriefingSection[], data: Record<string, string>) {
+  let text = '';
+  for (const section of sections) {
+    text += `\n${section.title.toUpperCase()}:\n`;
+    for (const field of section.fields) {
+      text += `${field.label}: ${data[field.key] || 'Não informado'}\n`;
+    }
+  }
+  return text.trim();
 }
 
 /* ── Small helpers ───────────────────────────────────────────────────── */
@@ -82,17 +109,14 @@ function SectionCard({ num, icon: Icon, title, children }: { num: number; icon: 
     </div>
   );
 }
+
 function F({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{label}</Label>
       {children}
-      {hint && <p className="text-[10px] text-muted-foreground italic">{hint}</p>}
     </div>
   );
-}
-function R2({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{children}</div>;
 }
 
 /* ════════════════════════════════════════════════════════════════════ */
@@ -101,19 +125,78 @@ export default function SalomaoOrchestrator() {
   const { toast } = useToast();
   const { createTask } = useAgentTasks();
   const { getHistory, saveMessage, clearHistory } = useAgentChat();
+
   const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline' | 'fluxo' | 'conhecimento'>('gerador');
   const [activeBriefingId, setActiveBriefingId] = useState<string | null>(null);
   const [activeClientName, setActiveClientName] = useState('Selecione um cliente');
-  const [aiProvider, setAiProvider] = useState('openai'); // openai | anthropic_sonnet | anthropic_haiku
+  const [aiProvider, setAiProvider] = useState('openai');
 
-  /* ── Prompt generator state ── */
-  const [data, setData] = useState<BriefingData>(EMPTY_BRIEFING);
+  const [sections, setSections] = useState<BriefingSection[]>([]);
+  const [data, setData] = useState<Record<string, string>>({});
+  const [niche, setNiche] = useState<string | null>(null);
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState(false);
   const [generatedPrompt, setGeneratedPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
 
-  // Carregar histórico ao montar
+  useEffect(() => {
+    const loadData = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const storedNiche = localStorage.getItem(`quiz_niche_${user.id}`);
+      setNiche(storedNiche);
+      
+      setIsLoadingTemplate(true);
+      try {
+        // 1. Busca o template base para servir de contexto para a IA
+        let baseContent = '';
+        const baseResp = await fetch('/docs/prompt_brieffing.md');
+        if (baseResp.ok) baseContent = await baseResp.text();
+
+        // 2. Invoca o Agente de Montagem (Edge Function) para criar as perguntas dinâmicas
+        const { data: aiResponse, error } = await supabase.functions.invoke('prompt-generator-api', {
+          body: { 
+            action: 'build_questionnaire', 
+            niche: storedNiche || 'Geral',
+            base_template: baseContent,
+            ai_provider: aiProvider
+          }
+        });
+
+        if (error) throw error;
+
+        if (aiResponse && aiResponse.sections) {
+          const parsedSections: BriefingSection[] = aiResponse.sections;
+          setSections(parsedSections);
+          
+          const initialData: Record<string, string> = {};
+          parsedSections.forEach(s => s.fields.forEach(f => {
+            initialData[f.key] = '';
+          }));
+          setData(initialData);
+        } else {
+          // Fallback para o parsing estático se a IA falhar
+          const parsed = parseBriefingTemplate(baseContent);
+          setSections(parsed);
+          const initialData: Record<string, string> = {};
+          parsed.forEach(s => s.fields.forEach(f => {
+            initialData[f.key] = '';
+          }));
+          setData(initialData);
+        }
+      } catch (err) {
+        console.error('Falha ao carregar briefing dinâmico:', err);
+        toast({ title: 'Aviso', description: 'Usando template padrão. O Agente de Briefing pode estar offline.', variant: 'destructive' });
+      } finally {
+        setIsLoadingTemplate(false);
+      }
+    };
+
+    loadData();
+  }, [aiProvider]); // Recarrega se o provedor de IA mudar
+
   useEffect(() => {
     const loadHistory = async () => {
       const history = await getHistory('salomao');
@@ -126,31 +209,31 @@ export default function SalomaoOrchestrator() {
   }, [getHistory]);
 
   const activeCount = AGENTS.filter(a => a.status === 'active').length;
-  const filled = REQUIRED_FIELDS.filter(f => data[f]?.trim()).length;
-  const progress = Math.round((filled / REQUIRED_FIELDS.length) * 100);
+  const requiredFieldsCount = sections.reduce((acc, s) => acc + s.fields.length, 0);
+  const filledCount = Object.values(data).filter(v => v?.trim()).length;
+  const progressPerc = requiredFieldsCount > 0 ? Math.round((filledCount / requiredFieldsCount) * 100) : 0;
 
-  const set = (key: keyof BriefingData) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  const setField = (key: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setData(prev => ({ ...prev, [key]: e.target.value }));
-  const setSel = (key: keyof BriefingData) => (val: string) =>
-    setData(prev => ({ ...prev, [key]: val }));
 
   const generate = async () => {
-    if (progress < 40) {
+    if (progressPerc < 40) {
       toast({ title: 'Preencha mais campos', description: 'Complete pelo menos 40% do briefing.', variant: 'destructive' });
       return;
     }
     setGenerating(true);
     setGeneratedPrompt('');
     try {
+      const briefingText = buildBriefingText(sections, data);
       const taskId = await createTask('salomao', 'generate_prompt', { 
-        briefing: buildBriefingText(data),
+        briefing: briefingText,
         ai_provider: aiProvider 
       });
 
       const { data: res, error } = await supabase.functions.invoke('prompt-generator-api', {
         body: { 
           action: 'generate_prompt', 
-          briefing: buildBriefingText(data),
+          briefing: briefingText,
           ai_provider: aiProvider,
           task_id: taskId
         }
@@ -160,14 +243,13 @@ export default function SalomaoOrchestrator() {
       
       if (res?.prompt) {
         setGeneratedPrompt(res.prompt);
-        await saveMessage('salomao', 'user', `Gerar prompt completo para: ${data.vendeProduto}`);
+        await saveMessage('salomao', 'user', `Gerar prompt completo para: ${niche || 'Geral'}`);
         await saveMessage('salomao', 'assistant', res.prompt, { type: 'generated_prompt' });
+        toast({ title: '⚡ Prompt gerado!', description: 'O resultado foi salvo no seu histórico.' });
       }
 
       if (res?.demo) {
         toast({ title: 'Modo demo', description: 'Configure OpenAI API Key no Supabase para IA real.' });
-      } else {
-        toast({ title: '⚡ Prompt gerado!', description: 'O resultado foi salvo no seu histórico.' });
       }
       
       setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
@@ -199,7 +281,6 @@ export default function SalomaoOrchestrator() {
   return (
     <MainLayout>
       <div className="space-y-6 p-6 max-w-6xl mx-auto">
-
         {/* ── Header ────────────────────────────────────────────────── */}
         <div className="text-center space-y-3 py-4">
           <div className="flex items-center justify-center gap-3">
@@ -208,16 +289,9 @@ export default function SalomaoOrchestrator() {
             <Sparkles className="h-8 w-8 text-yellow-400" />
           </div>
           <p className="text-muted-foreground">A Agência de Marketing Digital do Futuro</p>
-          <p className="text-sm text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-            10 agentes especializados de IA trabalhando em equipe. Cada um é um especialista completo na sua área —
-            juntos formam a primeira agência 100% autônoma do Brasil.
-          </p>
           <div className="flex items-center justify-center gap-3 pt-1 flex-wrap">
             <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-1">
               <CheckCircle className="h-3.5 w-3.5 mr-1.5" />{activeCount} agentes ativos
-            </Badge>
-            <Badge variant="outline" className="text-muted-foreground px-3 py-1">
-              {AGENTS.length - activeCount} em desenvolvimento
             </Badge>
           </div>
         </div>
@@ -225,11 +299,11 @@ export default function SalomaoOrchestrator() {
         {/* ── Tabs ──────────────────────────────────────────────────── */}
         <div className="flex gap-1 rounded-xl bg-muted/50 p-1 w-fit mx-auto">
           {([
-            { key: 'equipe', label: '🤖 Equipe de Agentes' },
-            { key: 'gerador', label: '⚡ Gerador de Prompt IA' },
-            { key: 'conhecimento', label: '🧠 Base de Dados' },
-            { key: 'pipeline', label: '🚀 Fluxo Organizado de Etapas' },
-            { key: 'fluxo', label: '🗺️ Fluxo de Vendas' },
+            { key: 'equipe', label: '🤖 Equipe' },
+            { key: 'gerador', label: '⚡ Gerador' },
+            { key: 'conhecimento', label: '🧠 Agentes' },
+            { key: 'pipeline', label: '🚀 Etapas' },
+            { key: 'fluxo', label: '🗺️ Funil' },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -243,7 +317,7 @@ export default function SalomaoOrchestrator() {
 
         {/* ══════════════════════ TAB: EQUIPE ══════════════════════ */}
         {tab === 'equipe' && (
-          <>
+          <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {AGENTS.map((agent) => {
                 const Icon = agent.icon;
@@ -276,9 +350,6 @@ export default function SalomaoOrchestrator() {
                             <p className="text-xs text-muted-foreground font-medium">{agent.role}</p>
                           </div>
                         </div>
-                        <Badge variant="outline" className={isActive ? 'text-[10px] text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'text-[10px] text-muted-foreground'}>
-                          {isActive ? 'Ativo' : 'Em breve'}
-                        </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground leading-relaxed">{agent.description}</p>
                       {isActive && !isSelf && (
@@ -288,10 +359,10 @@ export default function SalomaoOrchestrator() {
                       )}
                       {isSelf && (
                         <button
-                          onClick={() => setTab('gerador')}
+                          onClick={(e) => { e.stopPropagation(); setTab('gerador'); }}
                           className="flex items-center gap-1.5 text-xs font-medium text-yellow-400 hover:text-yellow-300 transition-colors"
                         >
-                          <FileCode2 className="h-3.5 w-3.5" /> Gerar Prompt para Agente →
+                          <FileCode2 className="h-3.5 w-3.5" /> Configurar Prompt →
                         </button>
                       )}
                     </CardContent>
@@ -300,61 +371,49 @@ export default function SalomaoOrchestrator() {
               })}
             </div>
 
-            {/* Architecture */}
             <Card className="border-border/50 bg-card/50">
               <CardContent className="p-6">
-                <h3 className="text-sm font-semibold text-muted-foreground mb-4 text-center">ARQUITETURA DA EQUIPE</h3>
+                <h3 className="text-sm font-semibold text-muted-foreground mb-4 text-center text-primary italic">"A força do coletivo supera a genialidade individual."</h3>
                 <div className="font-mono text-xs text-muted-foreground space-y-1 text-center">
                   <p className="text-yellow-400 font-bold">👑 SALOMÃO (Orquestrador)</p>
                   <p>│</p>
-                  <div className="grid grid-cols-3 gap-2 text-center max-w-xl mx-auto">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center max-w-2xl mx-auto">
                     {[
-                      { color: 'text-emerald-400', name: '├── JOSÉ', role: 'Tráfego Pago' },
-                      { color: 'text-blue-400', name: '├── PAULO', role: 'Copywriter' },
+                      { color: 'text-emerald-400', name: '├── JOSÉ', role: 'Tráfego' },
+                      { color: 'text-blue-400', name: '├── PAULO', role: 'Copy' },
                       { color: 'text-purple-400', name: '├── MARIA', role: 'Design' },
                       { color: 'text-cyan-400', name: '├── DANIEL', role: 'Estratégia' },
-                      { color: 'text-pink-400', name: '├── DAVI', role: 'Social Media' },
+                      { color: 'text-pink-400', name: '├── DAVI', role: 'Social' },
                       { color: 'text-indigo-400', name: '├── JOÃO', role: 'Email' },
                       { color: 'text-teal-400', name: '├── MARCOS', role: 'Leads' },
-                      { color: 'text-teal-400', name: '└── PEDRO', role: 'Atendimento' },
+                      { color: 'text-teal-400', name: '└── PEDRO', role: 'SDR' },
                     ].map(a => (
-                      <div key={a.name} className="space-y-1">
-                        <p className={a.color}>{a.name}</p>
-                        <p className="text-[10px]">{a.role}</p>
+                      <div key={a.name} className="space-y-0.5 border border-white/5 p-2 rounded bg-white/5">
+                        <p className={a.color + " font-bold"}>{a.name.replace('├── ', '').replace('└── ', '')}</p>
+                        <p className="text-[9px] opacity-60 uppercase">{a.role}</p>
                       </div>
                     ))}
                   </div>
                 </div>
               </CardContent>
             </Card>
-          </>
+          </div>
         )}
 
         {/* ══════════════════════ TAB: GERADOR ══════════════════════ */}
         {tab === 'gerador' && (
           <div className="space-y-5">
-            {/* Sub-header */}
-            <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-5 py-4 flex items-start gap-3">
-              <FileCode2 className="h-5 w-5 text-yellow-400 shrink-0 mt-0.5" />
-              <div>
-                <div className="flex items-center justify-between w-full">
-                  <div>
-                    <p className="font-semibold text-sm text-yellow-400">Gerador de Prompt para Agente de Vendas</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Preencha o briefing do negócio e o SALOMÃO gera um System Prompt completo, pronto para colar no WhatsApp, ChatGPT, Claude ou qualquer automação.</p>
-                  </div>
-                  {generatedPrompt && (
-                    <Button variant="ghost" size="sm" onClick={handleClearHistory} className="text-muted-foreground hover:text-destructive gap-2">
-                       Limpar Histórico
-                    </Button>
-                  )}
+            <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-5 py-4 flex flex-col sm:flex-row items-center gap-3">
+              <div className="flex items-center gap-3 mr-auto">
+                <FileCode2 className="h-5 w-5 text-yellow-400 shrink-0" />
+                <div>
+                  <p className="font-semibold text-sm text-yellow-400">Gerador de Prompt IA</p>
+                  <p className="text-[11px] text-muted-foreground line-clamp-1">Personalize o comportamento do seu agente com base no seu nicho.</p>
                 </div>
               </div>
-              <div className="ml-auto flex items-center gap-2">
-                <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/30 gap-1.5 whitespace-nowrap hidden sm:flex h-7">
-                  <Sparkles className="h-3 w-3" /> Motor IA
-                </Badge>
+              <div className="flex items-center gap-2">
                 <Select value={aiProvider} onValueChange={setAiProvider} disabled={generating}>
-                  <SelectTrigger className="w-[180px] h-9 text-[11px] bg-background/50 border-yellow-500/20 focus:ring-yellow-500/50">
+                  <SelectTrigger className="w-[160px] h-9 text-[11px] bg-background/50 border-yellow-500/20 focus:ring-yellow-500/50">
                     <SelectValue placeholder="Selecione a IA" />
                   </SelectTrigger>
                   <SelectContent>
@@ -363,258 +422,139 @@ export default function SalomaoOrchestrator() {
                     <SelectItem value="anthropic_haiku">Claude 3 Haiku</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-            </div>
-
-            {/* Progress */}
-            <div className="rounded-xl border border-border/50 bg-card/40 p-4">
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-muted-foreground">Briefing preenchido</span>
-                <span className={`font-bold ${progress >= 80 ? 'text-green-400' : progress >= 40 ? 'text-yellow-400' : 'text-muted-foreground'}`}>
-                  {progress}% · {filled}/{REQUIRED_FIELDS.length} campos
-                </span>
-              </div>
-              <div className="h-2 rounded-full bg-muted overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${progress >= 80 ? 'bg-green-500' : progress >= 40 ? 'bg-yellow-500' : 'bg-primary'}`}
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="text-[10px] text-muted-foreground mt-1.5">Mínimo 40% para gerar · Mais campos = prompt mais poderoso</p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* ── LEFT: FORM ─────────────────────────────────────── */}
-              <div className="flex flex-col gap-5">
-
-                <SectionCard num={1} icon={ShoppingBag} title="Negócio & Posicionamento">
-                  <F label="O que você vende?" hint="Ex: Curso online de tráfego pago para iniciantes">
-                    <Input value={data.vendeProduto} onChange={set('vendeProduto')} placeholder="Descreva seu product ou serviço" />
-                  </F>
-                  <F label="Qual problema resolve?">
-                    <Textarea value={data.problemaResolve} onChange={set('problemaResolve')} placeholder="Ex: Pessoas que tentam anunciar no Meta Ads mas perdem dinheiro sem retorno" className="min-h-[70px]" />
-                  </F>
-                  <F label="Qual transformação entrega?">
-                    <Textarea value={data.transformacao} onChange={set('transformacao')} placeholder="Ex: O aluno cria campanhas lucrativas em 30 dias mesmo sem experiência" className="min-h-[70px]" />
-                  </F>
-                  <F label="Diferencial único">
-                    <Textarea value={data.diferencial} onChange={set('diferencial')} placeholder="Ex: Único método com suporte diário via WhatsApp" className="min-h-[60px]" />
-                  </F>
-                </SectionCard>
-
-                <SectionCard num={2} icon={Users} title="Cliente Ideal (ICP)">
-                  <F label="Perfil geral">
-                    <Input value={data.perfilCliente} onChange={set('perfilCliente')} placeholder="Ex: Empreendedores 25–45 anos, MEI ou autônomos" />
-                  </F>
-                  <F label="Principal dor (emocional e prática)">
-                    <Textarea value={data.dor} onChange={set('dor')} placeholder="Ex: Frustração de investir em anúncios sem vender. Medo de perder dinheiro." className="min-h-[60px]" />
-                  </F>
-                  <F label="Maior desejo">
-                    <Input value={data.desejo} onChange={set('desejo')} placeholder="Ex: Ter previsibilidade de vendas e escalar" />
-                  </F>
-                  <F label="Principais objeções">
-                    <Textarea value={data.objecoes} onChange={set('objecoes')} placeholder="Ex: 'É muito caro', 'não tenho tempo', 'já tentei'" className="min-h-[60px]" />
-                  </F>
-                  <F label="O que faria comprar agora?">
-                    <Input value={data.triggerCompra} onChange={set('triggerCompra')} placeholder="Ex: Desconto por tempo limitado + garantia de 7 dias" />
-                  </F>
-                </SectionCard>
-
-                <SectionCard num={3} icon={TrendingUp} title="Oferta">
-                  <R2>
-                    <F label="Produto / Serviço"><Input value={data.produto} onChange={set('produto')} placeholder="Nome do produto" /></F>
-                    <F label="Preço"><Input value={data.preco} onChange={set('preco')} placeholder="Ex: R$ 997 ou 12x R$ 97" /></F>
-                  </R2>
-                  <F label="Benefícios principais">
-                    <Textarea value={data.beneficios} onChange={set('beneficios')} placeholder="Ex: Aulas gravadas + mentorias ao vivo + templates prontos" className="min-h-[60px]" />
-                  </F>
-                  <F label="Mecanismo único (por que funciona)">
-                    <Textarea value={data.mecanismo} onChange={set('mecanismo')} placeholder="Ex: Método P.A.C.E.: 4 etapas para campanhas lucrativas" className="min-h-[60px]" />
-                  </F>
-                  <R2>
-                    <F label="Garantia / Bônus"><Input value={data.garantia} onChange={set('garantia')} placeholder="Ex: 7 dias + bônus masterclass" /></F>
-                    <F label="Prazo de resultado"><Input value={data.prazoResultado} onChange={set('prazoResultado')} placeholder="Ex: Resultados em 14 dias" /></F>
-                  </R2>
-                </SectionCard>
-
-                <SectionCard num={4} icon={Target} title="Aquisição & Funil">
-                  <R2>
-                    <F label="Onde vende hoje?"><Input value={data.ondeVende} onChange={set('ondeVende')} placeholder="Ex: Instagram, WhatsApp, Hotmart" /></F>
-                    <F label="Canais principais"><Input value={data.canais} onChange={set('canais')} placeholder="Ex: Orgânico + Meta Ads" /></F>
-                  </R2>
-                  <F label="Como funciona o funil atual?">
-                    <Textarea value={data.funil} onChange={set('funil')} placeholder="Ex: Lead cai no WhatsApp → sequência → CTA para página" className="min-h-[60px]" />
-                  </F>
-                  <F label="Objetivo principal do agente">
-                    <Select value={data.objetivo} onValueChange={setSel('objetivo')}>
-                      <SelectTrigger><SelectValue placeholder="— Selecione —" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="gerar lead qualificado">Gerar lead qualificado</SelectItem>
-                        <SelectItem value="fechar venda diretamente">Fechar venda diretamente</SelectItem>
-                        <SelectItem value="agendar uma call de vendas">Agendar call de vendas</SelectItem>
-                        <SelectItem value="qualificar e direcionar ao time comercial">Qualificar e direcionar ao time</SelectItem>
-                        <SelectItem value="nutrir e engajar o lead">Nutrir e engajar lead</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </F>
-                </SectionCard>
-
-                <SectionCard num={5} icon={MessageSquare} title="Comunicação & Tom">
-                  <F label="Tom de voz">
-                    <Select value={data.tom} onValueChange={setSel('tom')}>
-                      <SelectTrigger><SelectValue placeholder="— Selecione —" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="direto e energético (estilo Gary Vaynerchuk)">Direto e energético (Gary Vee)</SelectItem>
-                        <SelectItem value="empático e inspirador (estilo Tony Robbins)">Empático e inspirador (Tony Robbins)</SelectItem>
-                        <SelectItem value="técnico e educativo">Técnico e educativo</SelectItem>
-                        <SelectItem value="descontraído com humor leve">Descontraído com humor</SelectItem>
-                        <SelectItem value="agressivo e provocador">Agressivo e provocador</SelectItem>
-                        <SelectItem value="sofisticado e premium">Sofisticado e premium</SelectItem>
-                        <SelectItem value="amigável e consultivo">Amigável e consultivo</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </F>
-                  <R2>
-                    <F label="Pode usar gírias?">
-                      <Select value={data.girias} onValueChange={setSel('girias')}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="não usar gírias">Não</SelectItem>
-                          <SelectItem value="pode usar gírias com moderação">Sim, com moderação</SelectItem>
-                          <SelectItem value="pode usar gírias livremente">Sim, livremente</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </F>
-                    <F label="Pode usar humor?">
-                      <Select value={data.humor} onValueChange={setSel('humor')}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="sem humor">Não</SelectItem>
-                          <SelectItem value="humor sutil e inteligente">Sim, sutil</SelectItem>
-                          <SelectItem value="humor leve e descontraído">Sim, descontraído</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </F>
-                  </R2>
-                  <F label="Referência de estilo (opcional)">
-                    <Input value={data.referencia} onChange={set('referencia')} placeholder="Ex: Joel Jota, Primo Rico, Coppolla Filmes..." />
-                  </F>
-                </SectionCard>
-
-                <SectionCard num={6} icon={Palette} title="Identidade Visual & Marca">
-                  <F label="Redes sociais" hint="Perfis ativos onde o negócio tem presença">
-                    <Input value={data.redesSociais} onChange={set('redesSociais')} placeholder="Ex: @empresa no Instagram, LinkedIn /empresa, TikTok @empresa" />
-                  </F>
-                  <R2>
-                    <F label="Paleta de cores" hint="Cores principais da marca (hex ou nome)">
-                      <Input value={data.paletaCores} onChange={set('paletaCores')} placeholder="Ex: #1A1A2E (azul-escuro), #FFD700 (dourado)" />
-                    </F>
-                    <F label="Site (caso tenha)">
-                      <Input value={data.site} onChange={set('site')} placeholder="Ex: www.empresa.com.br" />
-                    </F>
-                  </R2>
-                  <F label="Identidade visual" hint="Descreva o estilo visual da marca">
-                    <Textarea value={data.identidadeVisual} onChange={set('identidadeVisual')} placeholder="Ex: Minimalista, tons escuros com dourado, tipografia sans-serif, estética premium/luxo. Logo com símbolo geométrico." className="min-h-[70px]" />
-                  </F>
-                </SectionCard>
-
-                <SectionCard num={7} icon={Megaphone} title="Provas & Autoridade">
-                  <F label="Resultados / números">
-                    <Textarea value={data.resultados} onChange={set('resultados')} placeholder="Ex: +500 alunos, média 3x ROI em 30 dias, R$2M em vendas" className="min-h-[60px]" />
-                  </F>
-                  <F label="Tempo de mercado + diferenciais reais">
-                    <Input value={data.autoridade} onChange={set('autoridade')} placeholder="Ex: 7 anos de mercado, ex-gestor de tráfego da [Empresa]" />
-                  </F>
-                  <F label="Exemplo de depoimento">
-                    <Textarea value={data.depoimento} onChange={set('depoimento')} placeholder="Ex: 'Em 21 dias recuperei o investimento' — João, pet shop SP" className="min-h-[60px]" />
-                  </F>
-                </SectionCard>
-
-                <SectionCard num={8} icon={Shield} title="Regras do Agente">
-                  <F label="O que o agente DEVE fazer?">
-                    <Textarea value={data.devesFazer} onChange={set('devesFazer')} placeholder="Ex: Identificar perfil, apresentar oferta naturalmente, contornar objeções, guiar para CTA" className="min-h-[70px]" />
-                  </F>
-                  <F label="O que NÃO pode fazer?">
-                    <Textarea value={data.naoFazer} onChange={set('naoFazer')} placeholder="Ex: Jamais oferecer desconto sem autorização, não prometer resultados garantidos" className="min-h-[60px]" />
-                  </F>
-                  <F label="CTA principal (para onde levar?)">
-                    <Input value={data.cta} onChange={set('cta')} placeholder="Ex: Link da página / WhatsApp / Calendly" />
-                  </F>
-                  <F label="Nome / identidade do agente (opcional)">
-                    <Input value={data.nomeAgente} onChange={set('nomeAgente')} placeholder="Ex: Kira — Especialista em tráfego da [Empresa]" />
-                  </F>
-                </SectionCard>
-
-                <Button
-                  className="w-full h-14 text-base font-bold gap-2 bg-yellow-500 hover:bg-yellow-400 text-black"
-                  onClick={generate}
-                  disabled={generating || progress < 40}
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={async () => {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (user) {
+                      localStorage.removeItem(`quiz_completed_${user.id}`);
+                      localStorage.removeItem(`quiz_niche_${user.id}`);
+                    }
+                    navigate('/niche-quiz');
+                  }} 
+                  className="h-9 px-3 text-xs text-muted-foreground hover:text-primary gap-2"
                 >
-                  {generating ? (
-                    <><Loader2 className="h-5 w-5 animate-spin" /> Salomão está gerando...</>
-                  ) : (
-                    <><Sparkles className="h-5 w-5" /> Gerar Prompt com SALOMÃO — {progress}%</>
-                  )}
+                  <Target className="h-3.5 w-3.5" /> Refazer Quiz
                 </Button>
-                {progress < 40 && (
-                  <p className="text-xs text-center text-muted-foreground -mt-2">
-                    Preencha mais {40 - progress}% para liberar
-                  </p>
+                {generatedPrompt && (
+                  <Button variant="ghost" size="sm" onClick={handleClearHistory} className="h-9 px-3 text-xs text-muted-foreground hover:text-destructive gap-2">
+                    <Zap className="h-3 w-3" /> Limpar
+                  </Button>
                 )}
               </div>
+            </div>
 
-              {/* ── RIGHT: OUTPUT ───────────────────────────────────── */}
-              <div ref={outputRef} className="flex flex-col gap-4 lg:sticky lg:top-6 lg:self-start">
-                <div className="rounded-xl border border-yellow-500/20 bg-card/40 overflow-hidden">
-                  <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/40 bg-card/60">
+            <div className="rounded-xl border border-border/50 bg-card/40 p-4">
+              <div className="flex justify-between text-xs mb-2">
+                <span className="text-muted-foreground">Progresso do Briefing ({niche || 'Geral'})</span>
+                <span className={`font-bold ${progressPerc >= 80 ? 'text-green-400' : progressPerc >= 40 ? 'text-yellow-400' : 'text-muted-foreground'}`}>
+                  {progressPerc}% ({filledCount}/{requiredFieldsCount})
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${progressPerc >= 80 ? 'bg-green-500' : progressPerc >= 40 ? 'bg-yellow-500' : 'bg-primary'}`}
+                  style={{ width: `${progressPerc}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              <div className="flex flex-col gap-4">
+                {isLoadingTemplate ? (
+                  <div className="flex flex-col items-center justify-center p-12 text-muted-foreground italic gap-4">
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                    <p className="text-sm">Adaptando para o nicho {niche}...</p>
+                  </div>
+                ) : sections.map((section, sIdx) => {
+                  const sectionIcons = [ShoppingBag, Palette, Users, TrendingUp, Target, MessageSquare, Shield, Globe];
+                  const Icon = sectionIcons[sIdx] || MessageSquare;
+                  return (
+                    <SectionCard key={sIdx} num={sIdx + 1} icon={Icon} title={section.title}>
+                      {section.fields.map((field) => (
+                        <F key={field.key} label={field.label} hint={field.hint}>
+                          {field.hint.length > 50 || field.label.toLowerCase().includes('dor') || field.label.toLowerCase().includes('desejo') || field.label.toLowerCase().includes('objetivos') ? (
+                            <Textarea 
+                              value={data[field.key] || ''} 
+                              onChange={setField(field.key)} 
+                              placeholder="Descreva detalhadamente..."
+                              className="min-h-[80px]"
+                            />
+                          ) : (
+                            <Input 
+                              value={data[field.key] || ''} 
+                              onChange={setField(field.key)} 
+                              placeholder="Especifique..."
+                            />
+                          )}
+                        </F>
+                      ))}
+                    </SectionCard>
+                  );
+                })}
+
+                <Button
+                  className="w-full h-14 text-base font-bold gap-2 bg-yellow-500 hover:bg-yellow-400 text-black shadow-lg shadow-yellow-500/10"
+                  onClick={generate}
+                  disabled={generating || progressPerc < 40}
+                >
+                  {generating ? (
+                    <><Loader2 className="h-5 w-5 animate-spin" /> Gerando Prompt...</>
+                  ) : (
+                    <><Sparkles className="h-5 w-5" /> Criar System Prompt — {progressPerc}%</>
+                  )}
+                </Button>
+              </div>
+
+              <div ref={outputRef} className="flex flex-col gap-4 lg:sticky lg:top-6">
+                <div className="rounded-xl border border-yellow-500/20 bg-card/40 overflow-hidden shadow-xl">
+                  <div className="flex items-center justify-between px-5 py-3 border-b border-border/40 bg-card/60">
                     <div className="flex items-center gap-2">
-                      <div className={`h-2 w-2 rounded-full transition-colors ${generating ? 'bg-yellow-400 animate-pulse' : generatedPrompt ? 'bg-green-400' : 'bg-muted-foreground'}`} />
-                      <span className="font-semibold text-sm">System Prompt Gerado</span>
+                       <span className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">Prompt do Agente</span>
                     </div>
                     {generatedPrompt && (
-                      <Button size="sm" variant="outline" className="gap-1.5 h-7 text-xs" onClick={copy}>
-                        {copied ? <><Check className="h-3 w-3 text-green-400" /> Copiado!</> : <><Copy className="h-3 w-3" /> Copiar</>}
+                      <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs font-bold" onClick={copy}>
+                        {copied ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+                        {copied ? 'Copiado!' : 'Copiar'}
                       </Button>
                     )}
                   </div>
-                  <div className="min-h-[500px] max-h-[80vh] overflow-y-auto">
+                  <div className="min-h-[400px] max-h-[70vh] overflow-y-auto bg-black/20">
                     {!generatedPrompt && !generating && (
-                      <div className="flex flex-col items-center justify-center h-[440px] text-center px-8 gap-4">
-                        <div className="relative">
-                          <Sparkles className="h-14 w-14 text-yellow-400/20" />
-                          <Sparkles className="h-6 w-6 text-yellow-400/40 absolute -top-1 -right-1" />
-                        </div>
-                        <p className="text-muted-foreground text-sm">Preencha o briefing ao lado</p>
-                        <p className="text-xs text-muted-foreground">O SALOMÃO vai criar um System Prompt completo e poderoso para seu agente de vendas</p>
+                      <div className="flex flex-col items-center justify-center h-[400px] text-center px-10 gap-4 opacity-40">
+                        <BotIcon className="h-12 w-12" />
+                        <p className="text-sm font-medium">Aguardando briefing...</p>
                       </div>
                     )}
                     {generating && (
-                      <div className="flex flex-col items-center justify-center h-[440px] gap-3">
+                      <div className="flex flex-col items-center justify-center h-[400px] gap-4">
                         <Sparkles className="h-10 w-10 text-yellow-400 animate-pulse" />
-                        <p className="text-sm text-muted-foreground font-medium">SALOMÃO está criando seu agente...</p>
-                        <p className="text-xs text-muted-foreground">Analisando briefing e estruturando o prompt</p>
+                        <div className="space-y-1 text-center">
+                          <p className="text-sm font-medium text-yellow-400">Salomão está orquestrando...</p>
+                          <p className="text-[10px] text-muted-foreground">Construindo as regras do seu novo agente</p>
+                        </div>
                       </div>
                     )}
                     {generatedPrompt && !generating && (
-                      <pre className="p-5 text-sm leading-relaxed whitespace-pre-wrap text-foreground font-sans">
-                        {generatedPrompt}
-                      </pre>
+                      <div className="p-6">
+                        <pre className="text-[13px] leading-relaxed whitespace-pre-wrap text-foreground/90 font-mono">
+                          {generatedPrompt}
+                        </pre>
+                      </div>
                     )}
                   </div>
                 </div>
 
-                {/* How to use */}
-                <div className="rounded-xl border border-border/40 bg-muted/20 p-4">
-                  <h4 className="text-sm font-semibold flex items-center gap-2 mb-2">
-                    <ChevronRight className="h-4 w-4 text-yellow-400" /> Como usar o prompt gerado
-                  </h4>
-                  <ul className="text-xs text-muted-foreground space-y-1.5">
-                    <li>📱 <strong>WhatsApp:</strong> Cole na Evolution API / ManyChat / Typebot</li>
-                    <li>🤖 <strong>ChatGPT:</strong> Cole em "Custom Instructions" ou GPT personalizado</li>
-                    <li>💬 <strong>Claude:</strong> Use como System Prompt via API ou projeto</li>
-                    <li>⚙️ <strong>N8n / Make:</strong> Use como system message no nó de IA</li>
-                    <li>🔗 <strong>PEDRO (SDR):</strong> Configure diretamente no agente de atendimento</li>
-                  </ul>
+                <div className="rounded-xl border border-border/40 bg-muted/20 p-4 space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Onde usar este prompt?</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    {['WhatsApp', 'ManyChat', 'n8n', 'Make', 'ChatGPT', 'Claude'].map(tool => (
+                      <div key={tool} className="flex items-center gap-2 text-[11px] text-muted-foreground bg-background/40 px-2 py-1.5 rounded-lg border border-white/5">
+                        <Check className="h-3 w-3 text-yellow-500" /> {tool}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -623,76 +563,34 @@ export default function SalomaoOrchestrator() {
 
         {/* ══════════════════════ TAB: PIPELINE ══════════════════════ */}
         {tab === 'pipeline' && (
-          <div className="space-y-5">
-            {/* Sub-header */}
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 flex items-start gap-3">
-              <Zap className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-500">
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 flex items-start gap-4">
+              <div className="h-10 w-10 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0 border border-amber-500/20">
+                <Zap className="h-5 w-5 text-amber-400" />
+              </div>
               <div>
-                <p className="font-semibold text-sm text-amber-400">Fluxo Organizado de Etapas entre Agentes</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Salomão coordena Daniel → Paulo + Maria → Aprovação → José em tempo real, usando o banco de dados como barramento de mensagens.
+                <p className="font-semibold text-sm text-amber-400">Orquestração de Fluxo</p>
+                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                  Gerencie a execução automática entre agentes. Salomão coordena Daniel (Estratégia), Paulo (Copy) e Maria (Design) em um fluxo contínuo de aprovação e execução.
                 </p>
               </div>
             </div>
-
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Left: smart briefing upload */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground">Criar / Selecionar Briefing</h3>
-                <BriefingSmartUpload
-                  onBriefingSaved={(id, name) => {
-                    setActiveBriefingId(id);
-                    setActiveClientName(name);
-                  }}
-                />
-
-                {/* Architecture reminder */}
-                <div className="rounded-xl border border-border/40 bg-muted/20 p-4 space-y-2">
-                  <h4 className="text-xs font-semibold text-muted-foreground">Fluxo Organizado de Etapas</h4>
-                  <div className="font-mono text-[10px] text-muted-foreground space-y-1">
-                    <p className="text-yellow-400">👑 Salomão (coordena)</p>
-                    <p className="ml-2">↓</p>
-                    <p className="ml-2 text-cyan-400">🧠 Daniel (estratégia)</p>
-                    <p className="ml-2">↓</p>
-                    <p className="ml-2 text-blue-400">✍️ Paulo + 🎨 Maria (paralelo)</p>
-                    <p className="ml-2">↓</p>
-                    <p className="ml-2 text-amber-400">⏸ Approval Gate</p>
-                    <p className="ml-2">↓</p>
-                    <p className="ml-2 text-emerald-400">🎯 José (campanha)</p>
+              <div className="space-y-4">
+                <BriefingSmartUpload onBriefingSaved={(id, name) => { setActiveBriefingId(id); setActiveClientName(name); }} />
+                <div className="rounded-xl border border-border/40 bg-muted/20 p-4">
+                  <h4 className="text-xs font-bold text-muted-foreground mb-3 uppercase tracking-wider">Hierarquia de Comando</h4>
+                  <div className="space-y-3 font-mono text-[10px]">
+                    <div className="flex items-center gap-2 text-yellow-400"><Sparkles className="h-3 w-3"/> Salomão Orquestra</div>
+                    <div className="ml-4 border-l border-white/10 pl-4 space-y-2">
+                       <div className="text-cyan-400">Daniel Estrutura</div>
+                       <div className="text-blue-400">Paulo Redige</div>
+                       <div className="text-purple-400">Maria Desenha</div>
+                    </div>
                   </div>
                 </div>
               </div>
-
-              {/* Right: orchestration panel */}
               <div className="lg:col-span-2">
-                {/* Funil AIDA — Mapa de Agentes */}
-                <div className="rounded-xl border border-border/50 bg-card/40 p-4 mb-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-sm font-semibold text-foreground">Funil AIDA — Mapa de Responsabilidades</span>
-                    <Badge variant="outline" className="text-[10px]">5 etapas</Badge>
-                  </div>
-                  <div className="flex items-center gap-1 overflow-x-auto pb-1">
-                    {[
-                      { stage: 'ATENÇÃO',   agent: 'DAVI',   action: 'Conteúdo Social', emoji: '👀', color: 'border-sky-500/40 bg-sky-500/10 text-sky-400' },
-                      { stage: 'INTERESSE', agent: 'DANIEL', action: 'Landing Page',    emoji: '🖥️', color: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-400' },
-                      { stage: 'DESEJO',    agent: 'JOÃO',   action: 'Email Sequence',  emoji: '📧', color: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' },
-                      { stage: 'AÇÃO',      agent: 'MARCOS', action: 'Checkout',        emoji: '💳', color: 'border-purple-500/40 bg-purple-500/10 text-purple-400' },
-                      { stage: 'PÓS-VENDA', agent: 'DANIEL', action: 'Análise KPI',    emoji: '📊', color: 'border-blue-500/40 bg-blue-500/10 text-blue-400' },
-                    ].map((step, i, arr) => (
-                      <div key={step.stage} className="flex items-center gap-1 shrink-0">
-                        <div className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg border ${step.color} min-w-[90px]`}>
-                          <span className="text-lg">{step.emoji}</span>
-                          <span className="text-[9px] font-bold uppercase tracking-wider opacity-70">{step.stage}</span>
-                          <span className="text-[11px] font-semibold">{step.agent}</span>
-                          <span className="text-[9px] opacity-60">{step.action}</span>
-                        </div>
-                        {i < arr.length - 1 && (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground/40 shrink-0" />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
                 <OrchestrationPanel briefingId={activeBriefingId} clientName={activeClientName} />
               </div>
             </div>
@@ -701,18 +599,14 @@ export default function SalomaoOrchestrator() {
 
         {/* ══════════════════════ TAB: FLUXO DE VENDAS ══════════════════════ */}
         {tab === 'fluxo' && (
-          <div className="space-y-4">
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 flex items-start gap-3">
-              <Sparkles className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold text-sm text-amber-400">Fluxo Visual do Funil de Vendas</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Mapa interativo da jornada do cliente — do primeiro anúncio até a recompra, com cada agente em seu papel dentro da metodologia AIDA.
-                  Escolha um modelo de funil, personalize e salve. Clique nos nós para editar.
-                </p>
-              </div>
-            </div>
-            <FunnelFlowchart />
+          <div className="space-y-4 animate-in fade-in duration-500">
+             <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4">
+                <h3 className="font-bold text-sm text-amber-400 mb-1 flex items-center gap-2">
+                  <Target className="h-4 w-4" /> Engenharia de Funis
+                </h3>
+                <p className="text-xs text-muted-foreground">Mapeie visualmente a jornada do seu cliente e defina os gatilhos para cada agente de IA.</p>
+             </div>
+             <FunnelFlowchart />
           </div>
         )}
 
@@ -722,10 +616,8 @@ export default function SalomaoOrchestrator() {
             <div className="rounded-xl border border-primary/20 bg-primary/5 px-5 py-4 flex items-start gap-3">
               <BrainCircuit className="h-5 w-5 text-primary shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold text-sm text-primary">Base de Conhecimento e Treinamento Especializado</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Personalize o que cada agente sabe. Informações aqui alimentam a "memória de longo prazo" dos agentes, tornando-os especialistas no seu nicho específico.
-                </p>
+                <p className="font-semibold text-sm text-primary">Cérebro da Agência</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Defina o que cada agente sabe. Alimente a memória de longo prazo com PDFs, sites e documentos do seu cliente.</p>
               </div>
             </div>
             <AgentKnowledgeBase agents={AGENTS} />

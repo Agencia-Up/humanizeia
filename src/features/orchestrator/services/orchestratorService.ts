@@ -39,7 +39,7 @@ export const orchestratorService = {
     }));
 
     const { data, error } = await supabase
-      .from('orchestrator_tasks')
+      .from('orchestrator_tasks' as any)
       .insert(tasksToInsert)
       .select();
 
@@ -50,7 +50,7 @@ export const orchestratorService = {
   // Log an agent execution
   async logExecution(taskId: string, agentId: string, input: string, output: string, userId: string) {
     const { data, error } = await supabase
-      .from('agent_executions')
+      .from('agent_executions' as any)
       .insert({
         task_id: taskId,
         agent_id: agentId,

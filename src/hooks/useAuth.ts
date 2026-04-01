@@ -2,44 +2,32 @@ import { useState, useEffect } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
-// ID do projeto Supabase atual — sessões de outros projetos são inválidas
-const CURRENT_PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID || 'seyljsqmhlopkcauhlor';
-
-/**
- * Remove do localStorage qualquer sessão Supabase que não seja do projeto atual.
- * Isso impede que tokens de projetos antigos (ex: Lovable) causem "Invalid JWT".
- * Roda uma única vez no boot do app.
- */
-function clearStaleSupabaseSessions() {
-  try {
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-      // Remove qualquer chave sb-* que NÃO seja do projeto atual
-      if (key.startsWith('sb-') && !key.includes(CURRENT_PROJECT_ID)) {
-        keysToRemove.push(key);
-      }
-    }
-    keysToRemove.forEach(k => {
-      console.log('[Auth] Removendo sessão de projeto antigo:', k);
-      localStorage.removeItem(k);
-    });
-  } catch { /* ignora erros de localStorage em alguns browsers */ }
-}
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // Limpa sessões de projetos antigos ANTES de qualquer coisa
-    clearStaleSupabaseSessions();
+  const fetchProfile = async (userId: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    
+    if (!error) {
+      setProfile(data);
+    }
+  };
 
+  useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      }
       setLoading(false);
     });
 
@@ -47,6 +35,11 @@ export function useAuth() {
       (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
+        if (session?.user) {
+          fetchProfile(session.user.id);
+        } else {
+          setProfile(null);
+        }
         setLoading(false);
       }
     );
@@ -77,5 +70,5 @@ export function useAuth() {
     return { error };
   };
 
-  return { user, session, loading, signUp, signIn, signOut };
+  return { user, profile, session, loading, signUp, signIn, signOut, refreshProfile: () => user && fetchProfile(user.id) };
 }

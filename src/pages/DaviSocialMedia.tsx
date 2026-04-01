@@ -10,11 +10,23 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { useSocialMedia, CarouselSlide } from '@/hooks/useSocialMedia';
+import { useSocialMedia } from '@/hooks/useSocialMedia';
+import { useAgentChat } from '@/contexts/AgentChatContext';
+import { CarouselPageViewer, TemplateId, CAROUSEL_TEMPLATES } from '@/components/davi/CarouselPageViewer';
 import {
   Instagram, Zap, Loader2, Clock, CheckCircle2, XCircle, ChevronRight,
-  Copy, Trash2, FolderOpen, Layers, Send, Link, ChevronLeft, Palette,
+  Copy, Trash2, FolderOpen, Layers, Send, Link, Palette, Eye,
+  Brain, AlertTriangle, PenTool, TrendingUp, BookOpen, MessageSquare, AlertCircle, Footprints, Flame,
+  Camera, X as XIcon
 } from 'lucide-react';
+import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -48,7 +60,7 @@ type GeneratedContent = {
   title: string;
   preview: string;
   fullContent: string;
-  slides?: CarouselSlide[];
+  slides?: import('@/hooks/useSocialMedia').CarouselSlide[];
   templateId?: string;
   createdAt: Date;
   scheduled?: Date;
@@ -79,104 +91,19 @@ const CONTENT_TYPES = [
 
 const INSTAGRAM_REGEX = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/;
 
-const CAROUSEL_TEMPLATES = [
-  { id: 'dark_pro',  name: 'Dark Pro', bg: '#0D0D0D', accent: '#7C3AED', text: '#FFFFFF', sub: '#A1A1AA' },
-  { id: 'gold',      name: 'Gold',     bg: '#1A1000', accent: '#DAA520', text: '#FFFFFF', sub: '#B8860B' },
-  { id: 'ocean',     name: 'Ocean',    bg: '#0C1445', accent: '#00B4D8', text: '#FFFFFF', sub: '#90E0EF' },
-  { id: 'forest',    name: 'Forest',   bg: '#0D1F0D', accent: '#22C55E', text: '#FFFFFF', sub: '#86EFAC' },
-  { id: 'sunset',    name: 'Sunset',   bg: '#1F0D0D', accent: '#F97316', text: '#FFFFFF', sub: '#FED7AA' },
-  { id: 'royal',     name: 'Royal',    bg: '#1A0D1F', accent: '#EC4899', text: '#FFFFFF', sub: '#F9A8D4' },
-  { id: 'minimal',   name: 'Minimal',  bg: '#FFFFFF', accent: '#18181B', text: '#18181B', sub: '#71717A' },
-  { id: 'rose',      name: 'Rose',     bg: '#1F0D15', accent: '#F43F5E', text: '#FFFFFF', sub: '#FDA4AF' },
+// Carousel type options for the V2 generator
+const CAROUSEL_TYPES = [
+  { value: 'educacional',  label: 'Educacional',    emoji: '📚', icon: BookOpen },
+  { value: 'lista',        label: 'Lista',          emoji: '📋', icon: Layers },
+  { value: 'storytelling', label: 'Storytelling',   emoji: '📖', icon: MessageSquare },
+  { value: 'mitos',        label: 'Mitos & Verdades',emoji: '🔍', icon: AlertCircle },
+  { value: 'passoapasso',  label: 'Passo a Passo',  emoji: '👣', icon: Footprints },
+  { value: 'polemica',     label: 'Polêmico',       emoji: '🔥', icon: Flame },
 ] as const;
 
-type TemplateId = typeof CAROUSEL_TEMPLATES[number]['id'];
+type CarouselTypeValue = typeof CAROUSEL_TYPES[number]['value'];
 
-// ─── Carousel Viewer ─────────────────────────────────────────────────────────
-
-interface CarouselViewerProps {
-  slides: CarouselSlide[];
-  templateId: TemplateId;
-  onTemplateChange: (id: TemplateId) => void;
-}
-
-function CarouselViewer({ slides, templateId, onTemplateChange }: CarouselViewerProps) {
-  const [current, setCurrent] = useState(0);
-  const tpl = CAROUSEL_TEMPLATES.find(t => t.id === templateId) ?? CAROUSEL_TEMPLATES[0];
-  const slide = slides[current];
-  if (!slide) return null;
-
-  return (
-    <div className="mt-3 space-y-2">
-      {/* Slide display */}
-      <div
-        className="relative rounded-xl overflow-hidden mx-auto"
-        style={{ backgroundColor: tpl.bg, width: 280, height: 280 }}
-      >
-        {/* Top accent bar */}
-        <div className="absolute top-0 left-0 w-full h-[3px]" style={{ backgroundColor: tpl.accent }} />
-        {/* Slide counter */}
-        <div className="absolute top-3 right-3 text-[10px] font-mono px-1.5 py-0.5 rounded"
-          style={{ backgroundColor: tpl.accent + '33', color: tpl.accent }}>
-          {current + 1}/{slides.length}
-        </div>
-        {/* Content */}
-        <div className="flex flex-col justify-center h-full px-6 py-10 gap-3">
-          <h3 className="text-base font-bold leading-tight" style={{ color: tpl.text }}>
-            {slide.headline}
-          </h3>
-          <p className="text-xs leading-relaxed" style={{ color: tpl.sub }}>
-            {slide.body}
-          </p>
-          {slide.cta && (
-            <span className="self-start mt-1 px-3 py-1 rounded-lg text-[11px] font-semibold"
-              style={{ backgroundColor: tpl.accent, color: tpl.bg }}>
-              {slide.cta}
-            </span>
-          )}
-        </div>
-        {/* Left arrow */}
-        {current > 0 && (
-          <button onClick={() => setCurrent(p => p - 1)}
-            className="absolute left-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: tpl.accent + '55' }}>
-            <ChevronLeft className="h-4 w-4" style={{ color: tpl.text }} />
-          </button>
-        )}
-        {/* Right arrow */}
-        {current < slides.length - 1 && (
-          <button onClick={() => setCurrent(p => p + 1)}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: tpl.accent + '55' }}>
-            <ChevronRight className="h-4 w-4" style={{ color: tpl.text }} />
-          </button>
-        )}
-      </div>
-
-      {/* Dot indicators */}
-      <div className="flex justify-center gap-1.5">
-        {slides.map((_, i) => (
-          <button key={i} onClick={() => setCurrent(i)}
-            className={`h-1.5 rounded-full transition-all duration-200 ${i === current ? 'w-4 bg-pink-400' : 'w-1.5 bg-border hover:bg-muted-foreground'}`}
-          />
-        ))}
-      </div>
-
-      {/* Template picker */}
-      <div className="flex items-center gap-2 justify-center">
-        <Palette className="h-3 w-3 text-muted-foreground shrink-0" />
-        <div className="flex gap-1.5">
-          {CAROUSEL_TEMPLATES.map(t => (
-            <button key={t.id} onClick={() => onTemplateChange(t.id as TemplateId)} title={t.name}
-              className={`w-5 h-5 rounded-full border-2 transition-all duration-150 ${t.id === templateId ? 'scale-125 border-white shadow-lg' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-110'}`}
-              style={{ backgroundColor: t.accent }}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+// CarouselViewer is now CarouselPageViewer from @/components/davi/CarouselPageViewer
 
 function getSmartScheduleTime(): Date {
   const now = new Date();
@@ -199,7 +126,8 @@ function extractHashtags(text: string): string[] {
 export default function DaviSocialMedia() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const { posts, schedulePost, saveDraft, fetchPosts, generateCarousel } = useSocialMedia();
+  const { posts, schedulePost, saveDraft, fetchPosts, generateCarousel, generateCarouselV2 } = useSocialMedia();
+  const { getHistory } = useAgentChat();
 
   const [messages, setMessages] = useState<ChatMessage[]>([{
     id: 'welcome',
@@ -212,27 +140,65 @@ export default function DaviSocialMedia() {
   const [switches, setSwitches] = useState<AgentSwitch>(AGENT_SWITCHES_DEFAULT);
   const [platform, setPlatform] = useState<'instagram' | 'tiktok' | 'linkedin'>('instagram');
   const [contentType, setContentType] = useState<'carousel' | 'reel_script' | 'post' | 'story'>('carousel');
-  const [library, setLibrary] = useState<GeneratedContent[]>([]);
+  const [library, setLibrary] = useState<GeneratedContent[]>(() => {
+    try {
+      const saved = localStorage.getItem('daviLibrary');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('daviLibrary', JSON.stringify(library));
+  }, [library]);
   const [autoModeRunning, setAutoModeRunning] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('dark_pro');
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('futurista_ia');
+  const [carouselType, setCarouselType] = useState<CarouselTypeValue>('educacional');
   const [clientContext, setClientContext] = useState<{ name: string; produto: string; publico: string } | null>(null);
+  const [briefingAlerta, setBriefingAlerta] = useState(false);
+  const [clientImageUrl, setClientImageUrl] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
 
   // ─── Instagram connection check ─────────────────────────────────────────
   const { data: igAccount } = useQuery({
     queryKey: ['ig-publisher-davi', user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('social-media-api', {
-        body: { action: 'get_ig_account' },
-      });
-      if (error) return null;
-      return data as { connected: boolean; ig_account_id?: string; username?: string } | null;
+      // Prioridade: conexao dedicada "instagram_publisher"
+      const { data } = await supabase
+        .from('connected_accounts' as any)
+        .select('*')
+        .eq('platform', 'instagram_publisher')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+
+      if (data) {
+        const d = data as any;
+        return { connected: true, ig_account_id: d.account_id, username: d.account_name };
+      }
+
+      // Fallback: antiga conexao via Meta Ads
+      const { data: meta } = await supabase
+        .from('ad_accounts' as any)
+        .select('extra_data')
+        .eq('platform', 'meta')
+        .eq('user_id', user?.id)
+        .eq('is_active', true)
+        .maybeSingle();
+        
+      const m = meta as any;
+      if (m?.extra_data?.ig_account_id) {
+         return { connected: true, ig_account_id: m.extra_data.ig_account_id, username: 'meta' };
+      }
+
+      return { connected: false };
     },
     enabled: !!user,
-    staleTime: 30000,
   });
 
   // ─── Load client context ─────────────────────────────────────────────────
@@ -253,6 +219,9 @@ export default function DaviSocialMedia() {
             produto: (data as any).product_service || (data as any).produto || '',
             publico: (data as any).target_audience || (data as any).publico || '',
           });
+          setBriefingAlerta(false);
+        } else {
+          setBriefingAlerta(true);
         }
       } catch {
         // No client context available
@@ -310,6 +279,35 @@ export default function DaviSocialMedia() {
       if (m.id !== msgId || !m.contentCard) return m;
       return { ...m, contentCard: { ...m.contentCard, templateId } };
     }));
+  };
+
+  // ─── Upload client photo ─────────────────────────────────────────────────
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    setUploadingPhoto(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `${user.id}/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage
+        .from('davi-uploads')
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from('davi-uploads').getPublicUrl(path);
+      setClientImageUrl(publicUrl);
+      // Auto-select Personal Brand template when client photo is uploaded
+      setSelectedTemplate('personal_brand');
+      toast({ title: '📷 Foto carregada!', description: 'Template Personal Brand ativado automaticamente. O Davi usará sua foto no carrossel.' });
+    } catch (err: any) {
+      // Fallback: create object URL from file directly for preview
+      const objectUrl = URL.createObjectURL(file);
+      setClientImageUrl(objectUrl);
+      setSelectedTemplate('personal_brand');
+      toast({ title: '📷 Foto carregada!', description: 'Preview local ativo. Configure o bucket davi-uploads no Supabase para salvar permanentemente.' });
+    } finally {
+      setUploadingPhoto(false);
+      if (e.target) e.target.value = '';
+    }
   };
 
   const handlePublishNow = async (content: GeneratedContent) => {
@@ -453,6 +451,18 @@ export default function DaviSocialMedia() {
 
   const runAutoMode = async () => {
     if (autoModeRunning) return;
+
+    // ── Verificação de briefing ──────────────────────
+    if (!clientContext || !clientContext.produto) {
+      setBriefingAlerta(true);
+      toast({
+        title: '⚠️ Briefing não preenchido',
+        description: 'Vá ao Salomão e preencha o briefing do cliente antes de rodar o Fluxo Automático.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setAutoModeRunning(true);
 
     const steps: AutoModeStep[] = [
@@ -483,10 +493,17 @@ export default function DaviSocialMedia() {
             goal: 'Criar conteúdo viral para redes sociais com alta taxa de engajamento',
           },
         });
+        // ── Fix: garantir que danielInsights é sempre string ──
         danielInsights = typeof result === 'string'
           ? result
-          : result?.strategy || result?.content || 'Tendências identificadas';
-        updateStep(stepMsgId, 'daniel', 'completed', danielInsights.slice(0, 80));
+          : typeof result?.strategy === 'string'
+            ? result.strategy
+            : typeof result?.content === 'string'
+              ? result.content
+              : result?.strategy || result?.content
+                ? JSON.stringify(result?.strategy || result?.content)
+                : 'Tendências identificadas';
+        updateStep(stepMsgId, 'daniel', 'completed', String(danielInsights).slice(0, 80));
       }
 
       // Step 2: Paulo (or carousel generator)
@@ -594,15 +611,16 @@ export default function DaviSocialMedia() {
 
   const runManualChat = async (text: string) => {
     if (contentType === 'carousel') {
-      // Use structured carousel generator
-      addDaviMessage('🎠 Gerando carrossel visual com slides estruturados...');
-      const carousel = await generateCarousel({
+      const typeLabel = CAROUSEL_TYPES.find(t => t.value === carouselType)?.label || carouselType;
+      addDaviMessage(`🎨 Construindo carrossel **${typeLabel}** com páginas visuais reais...`);
+      const carousel = await generateCarouselV2({
         topic: text,
         audience: clientContext?.publico || 'empreendedores digitais',
-        tone: 'persuasivo',
-        slide_count: 7,
+        tone: 'persuasivo e direto',
+        slide_count: 8,
         include_cta: true,
         brand_name: clientContext?.name,
+        carousel_type: carouselType,
       });
 
       if (!carousel) return;
@@ -610,16 +628,16 @@ export default function DaviSocialMedia() {
       const generated: GeneratedContent = {
         id: Date.now().toString(),
         type: 'carousel',
-        title: `Carrossel — ${text.slice(0, 30)}`,
+        title: `${typeLabel} — ${text.slice(0, 30)}`,
         preview: carousel.cover_headline || carousel.slides[0]?.headline || text,
-        fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.join(' ') : ''),
+        fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
         slides: carousel.slides,
         templateId: selectedTemplate,
         createdAt: new Date(),
         platform,
       };
 
-      const msgId = addDaviMessage(`✅ Carrossel criado com ${carousel.slides.length} slides! Use as setas para navegar e escolha um tema visual:`);
+      const msgId = addDaviMessage(`✅ ${carousel.slides.length} slides criados como páginas visuais! Navegue com as setas e escolha o template:`);
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
       addToLibrary(generated);
     } else {
@@ -639,6 +657,265 @@ export default function DaviSocialMedia() {
       const msgId = addDaviMessage('✅ Aqui está o conteúdo criado:');
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
       addToLibrary(generated);
+    }
+  };
+
+  const handleImportDanielResearch = async () => {
+    try {
+      setLoading(true);
+      const history = await getHistory('daniel');
+      const lastResearchMsg = [...history].reverse().find(m => m.metadata?.type === 'niche_research' && m.metadata?.research);
+      
+      if (lastResearchMsg && lastResearchMsg.metadata?.research) {
+        const research = lastResearchMsg.metadata.research;
+        
+        let pautasStr = '';
+        if (research.content_briefs && research.content_briefs.length > 0) {
+          pautasStr = research.content_briefs.map((b: any, i: number) => {
+            const hook = b.hook ? `Gancho: ${b.hook}\n` : '';
+            const slides = b.slides_or_points ? `Estrutura do Carrossel:\n- ${b.slides_or_points.join('\n- ')}` : '';
+            return `Pauta ${i + 1}: ${b.title}\n${hook}${slides}`;
+          }).join('\n\n');
+        } else {
+          pautasStr = "Nenhuma pauta específica encontrada. Analise as tendências brutas.";
+        }
+
+        const actualPrompt = `Acabei de importar as pesquisas de tendência do Daniel para o nicho "${research.niche}".
+
+Com base nas pautas do Daniel abaixo, crie opções de conteúdo de social media. 
+**REGRA CRUCIAL:** PARA CADA PAUTA LISTADA, você deve criar obrigatoriamente um bloco [TIPO: POST_ESTATICO], um bloco [TIPO: CARROSSEL] e um bloco [TIPO: REEL]. Se houver 3 pautas, espero 3 blocos CARROSSEL no total.
+
+Foque nas dores, desejos e objeções do público identificados na pesquisa:
+
+${pautasStr}`;
+        const displayPrompt = `🎯 Importando pesquisas do Daniel sobre "${research.niche}"...\nGerando posts, carrosséis e reels estratégicos.`;
+        
+        addUserMessage(displayPrompt);
+        toast({ title: 'Pesquisa do Daniel importada!', description: 'Davi está processando os blocos de conteúdo...' });
+        
+        // Simular o envio do prompt estruturado
+        const content = await callPauloApi(actualPrompt, switches);
+        
+        const generated: GeneratedContent = {
+          id: Date.now().toString(),
+          type: contentType, // Default visual do tipo selecionado no momento
+          title: `Estratégia Daniel — ${research.niche}`,
+          preview: content.slice(0, 120),
+          fullContent: content,
+          createdAt: new Date(),
+          platform,
+        };
+
+        const msgId = addDaviMessage('✅ Pesquisa processada! Aqui estão as sugestões divididas por blocos:');
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+        addToLibrary(generated);
+        
+      } else {
+        toast({ 
+          title: 'Nenhuma pesquisa encontrada', 
+          description: 'Gere a Busca de Tendências no DANIEL primeiro!', 
+          variant: 'destructive' 
+        });
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImportPaulo = async () => {
+    try {
+      setLoading(true);
+
+      // ── 1. Try paulo_carousels table (Paulo 2.0 structured data) ────────
+      const { data: pauloCarousels, error: pcError } = await supabase
+        .from('paulo_carousels' as any)
+        .select('*')
+        .eq('user_id', user?.id)
+        .eq('status', 'ready_for_davi')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (!pcError && pauloCarousels && pauloCarousels.length > 0) {
+        const typeLabel = CAROUSEL_TYPES.find(t => t.value === carouselType)?.label || carouselType;
+        addDaviMessage(`🎨 Paulo preparou **${pauloCarousels.length} carrossel(is)** prontos! Construindo o visual de cada um agora:`);
+
+        for (let i = 0; i < pauloCarousels.length; i++) {
+          const pauloCarousel = pauloCarousels[i] as any;
+          const progressMsgId = addDaviMessage(`🎨 Construindo visual do Carrossel ${i + 1}/${pauloCarousels.length}: "${pauloCarousel.title}"...`);
+
+          // Build a rich topic from the Paulo structured data
+          const slides = pauloCarousel.slides || [];
+          const coverSlide = slides.find((s: any) => s.type === 'cover') || slides[0];
+          const topic = `${pauloCarousel.title}. Ângulo: ${pauloCarousel.angle}. Cover: "${coverSlide?.headline || pauloCarousel.title}"`;
+          const paulCopy = slides.map((s: any) => `Slide ${s.slide_number}: ${s.headline}${s.subtext ? ' — ' + s.subtext : ''}`).join('\n');
+
+          const carousel = await generateCarouselV2({
+            topic,
+            audience: clientContext?.publico || 'empreendedores digitais',
+            tone: 'persuasivo e direto',
+            slide_count: Math.min(Math.max(slides.length, 4), 8),
+            include_cta: true,
+            brand_name: clientContext?.name,
+            carousel_type: carouselType,
+            paul_copy: paulCopy,
+          });
+
+          if (!carousel) {
+            setMessages(prev => prev.map(m => m.id === progressMsgId ? { ...m, content: `❌ Falha ao gerar o visual do Carrossel ${i + 1}.` } : m));
+            continue;
+          }
+
+          const generated: GeneratedContent = {
+            id: Date.now().toString() + i,
+            type: 'carousel',
+            title: `${pauloCarousel.title} — ${typeLabel}`,
+            preview: carousel.cover_headline || carousel.slides[0]?.headline || topic.slice(0, 80),
+            fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
+            slides: carousel.slides,
+            templateId: selectedTemplate,
+            createdAt: new Date(),
+            platform,
+          };
+
+          setMessages(prev => prev.map(m => m.id === progressMsgId ? {
+            ...m,
+            content: `✅ Carrossel ${i + 1}/${pauloCarousels.length} pronto! Navegue com as setas e escolha o template:`,
+            contentCard: generated
+          } : m));
+
+          addToLibrary(generated);
+
+          // Mark as in_production in paulo_carousels
+          await supabase
+            .from('paulo_carousels' as any)
+            .update({ status: 'in_production' })
+            .eq('id', pauloCarousel.id);
+
+          if (i < pauloCarousels.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
+        }
+
+        setLoading(false);
+        return;
+      }
+
+      // ── 2. Fallback: old chat history approach (Paulo 1.0 compatibility) ─
+      const history = await getHistory('paulo');
+      // Pega as últimas mensagens do assistente Paulo (excluir boas-vindas)
+      const pauloMsgs = history.filter(m => m.role === 'assistant' && m.content.length > 50);
+      if (pauloMsgs.length === 0) {
+        toast({
+          title: 'Nenhuma copy encontrada',
+          description: 'Acesse o Paulo e gere algumas copies antes de importar aqui!',
+          variant: 'destructive',
+        });
+        return;
+      }
+      
+      const lastPaulo = pauloMsgs[pauloMsgs.length - 1];
+
+      if (contentType === 'carousel') {
+        const typeLabel = CAROUSEL_TYPES.find(t => t.value === carouselType)?.label || carouselType;
+        
+        // 1. Separar múltiplos carrosséis
+        let rawBlocks = lastPaulo.content.match(/\[TIPO: CARROSSEL\]([\s\S]*?)(?=\[TIPO:|$)/gi);
+        let carouselTexts: string[] = [];
+
+        if (rawBlocks) {
+          rawBlocks.forEach(block => {
+            // Dividir internamente se houver "Pauta X:", "Ideia X:" ou "Opção X:" dentro do mesmo bloco
+            const splits = block.split(/(?=Pauta \d|Ideia \d|Opção \d|\*\*(?:Pauta|Ideia|Opção) \d)/i);
+            if (splits.length > 1) {
+              splits.forEach(s => {
+                if (s.replace(/\[TIPO: CARROSSEL\]/g, '').trim().length > 30) {
+                  carouselTexts.push(s);
+                }
+              });
+            } else {
+              carouselTexts.push(block);
+            }
+          });
+        } else {
+          carouselTexts = [lastPaulo.content];
+        }
+
+        // Limite de segurança: no máximo 3 carrosséis por vez para não estourar tempo da Edge Function
+        if (carouselTexts.length > 3) {
+           carouselTexts = carouselTexts.slice(0, 3);
+        }
+
+        addDaviMessage(`🔄 Importando copy do Paulo. Encontramos **${carouselTexts.length} ideia(s)** de Carrossel. Vou construir o visual de cada um para você agora:`);
+        
+        for (let i = 0; i < carouselTexts.length; i++) {
+          // Mensagem de progresso específica para este item
+          const progressMsgId = addDaviMessage(`🎨 Criando visual do Carrossel ${i + 1}/${carouselTexts.length}...`);
+          
+          const copyText = carouselTexts[i];
+          const carousel = await generateCarouselV2({
+            topic: `Carrossel ${i + 1} baseado na copy do Paulo`,
+            audience: clientContext?.publico || 'empreendedores digitais',
+            tone: 'persuasivo e direto',
+            slide_count: 8,
+            include_cta: true,
+            brand_name: clientContext?.name,
+            carousel_type: carouselType,
+            paul_copy: copyText,
+          });
+
+          // Se falhar um, avisa e continua para o próximo
+          if (!carousel) {
+             setMessages(prev => prev.map(m => m.id === progressMsgId ? { ...m, content: `❌ Falha ao gerar o visual do Carrossel ${i + 1}.` } : m));
+             continue;
+          }
+
+          const generated: GeneratedContent = {
+            id: Date.now().toString() + i,
+            type: 'carousel',
+            title: `Copy Paulo ${i + 1}/${carouselTexts.length} — ${typeLabel}`,
+            preview: carousel.cover_headline || carousel.slides[0]?.headline || "Carrossel baseado na Copy",
+            fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
+            slides: carousel.slides,
+            templateId: selectedTemplate,
+            createdAt: new Date(),
+            platform,
+          };
+
+          // Atualiza a mensagem de progresso para a mensagem final com o card
+          setMessages(prev => prev.map(m => m.id === progressMsgId ? { 
+            ...m, 
+            content: `✅ Carrossel ${i + 1}/${carouselTexts.length} pronto! Navegue com as setas e escolha o template:`,
+            contentCard: generated 
+          } : m));
+          
+          addToLibrary(generated);
+
+          // Pequeno delay para não sobrecarregar e dar tempo do usuário ver
+          if (i < carouselTexts.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
+        }
+      } else {
+        const generated: GeneratedContent = {
+          id: Date.now().toString(),
+          type: contentType,
+          title: `Importado do Paulo — ${new Date().toLocaleDateString('pt-BR')}`,
+          preview: lastPaulo.content.slice(0, 120),
+          fullContent: lastPaulo.content,
+          createdAt: new Date(),
+          platform,
+        };
+        const msgId = addDaviMessage('✅ Copy do Paulo importada! Aqui está o conteúdo gerado:');
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, contentCard: generated } : m));
+        addToLibrary(generated);
+      }
+      toast({ title: '✅ Importação concluída!', description: 'Conteúdo adicionado à sua biblioteca.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -677,63 +954,94 @@ export default function DaviSocialMedia() {
         {/* ── LEFT PANEL ── */}
         <div className="flex-1 flex flex-col min-w-0">
 
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-border/50 bg-background/95 backdrop-blur-sm shrink-0">
-            <div className="flex items-center gap-4">
-              <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-pink-500/20 to-purple-600/20 border border-pink-500/30 flex items-center justify-center">
-                <Instagram className="h-5 w-5 text-pink-400" />
+          {/* Header Premium Clean */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border/20 bg-background/60 backdrop-blur-xl shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-[14px] bg-gradient-to-br from-pink-500/10 to-purple-600/10 border border-pink-500/20 flex items-center justify-center shadow-inner">
+                <Instagram className="h-5 w-5 text-pink-500" />
               </div>
-              <div>
+              <div className="flex flex-col">
                 <div className="flex items-center gap-2">
-                  <h1 className="text-lg font-bold text-foreground">DAVI</h1>
-                  <Badge className="bg-pink-500/20 text-pink-400 border-pink-500/30 text-[10px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse mr-1.5 inline-block" />
-                    Social Media IA
-                  </Badge>
+                  <h1 className="text-[17px] font-black text-foreground tracking-tight">DAVI</h1>
+                  <span className="text-[9px] uppercase font-bold tracking-widest text-pink-500/80 bg-pink-500/10 px-2 py-0.5 rounded-full whitespace-nowrap border border-pink-500/20">
+                    Social Media
+                  </span>
                 </div>
                 {clientContext && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Cliente: <span className="text-pink-400 font-medium">{clientContext.name}</span>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 font-medium">
+                    Briefing: <span className="text-pink-400 font-bold">{clientContext.name}</span>
                   </p>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center gap-3 flex-wrap justify-end">
-              {/* Platform selector */}
-              <div className="flex gap-1">
-                {PLATFORMS.map(p => (
-                  <button
-                    key={p.value}
-                    onClick={() => setPlatform(p.value)}
-                    className={`px-2 py-1 rounded-lg text-xs border transition-all ${platform === p.value ? 'bg-pink-500/20 text-pink-400 border-pink-500/40' : 'bg-muted/30 text-muted-foreground border-border/40 hover:border-border'}`}
-                  >
-                    {p.emoji} {p.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Content type selector */}
-              <div className="flex gap-1">
-                {CONTENT_TYPES.map(ct => (
-                  <button
-                    key={ct.value}
-                    onClick={() => setContentType(ct.value)}
-                    className={`px-2 py-1 rounded-lg text-xs border transition-all ${contentType === ct.value ? 'bg-purple-500/20 text-purple-400 border-purple-500/40' : 'bg-muted/30 text-muted-foreground border-border/40 hover:border-border'}`}
-                  >
-                    {ct.emoji} {ct.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Modo Automático */}
+            <div className="flex items-center gap-3">
               <Button
-                onClick={() => { addUserMessage('⚡ Modo Automático'); detectAndProcess('__auto__'); }}
+                variant="outline"
+                onClick={handleImportPaulo}
                 disabled={autoModeRunning || loading}
-                className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white font-semibold gap-2 shadow-lg shadow-pink-500/20"
+                className="h-9 px-4 bg-violet-500/5 hover:bg-violet-500/10 text-violet-400 border-violet-500/20 font-semibold text-xs rounded-full transition-all"
               >
-                {autoModeRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-                Modo Automático
+                <PenTool className="h-3.5 w-3.5 mr-2" />
+                Importar do Paulo
+              </Button>
+
+              {/* Client photo upload button */}
+              <div className="relative">
+                <input
+                  ref={photoRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePhotoUpload}
+                />
+                {clientImageUrl ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => photoRef.current?.click()}
+                      className="h-9 w-9 rounded-full overflow-hidden border-2 border-emerald-500/50 hover:border-emerald-400 transition-all"
+                      title="Trocar foto do cliente"
+                    >
+                      <img src={clientImageUrl} alt="foto cliente" className="w-full h-full object-cover" />
+                    </button>
+                    <button
+                      onClick={() => { setClientImageUrl(null); setSelectedTemplate('futurista_ia'); }}
+                      className="h-5 w-5 rounded-full bg-red-500/20 hover:bg-red-500/40 text-red-400 flex items-center justify-center transition-all"
+                      title="Remover foto"
+                    >
+                      <XIcon className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => photoRef.current?.click()}
+                    disabled={uploadingPhoto}
+                    className="h-9 px-3 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-400 border-emerald-500/20 font-semibold text-xs rounded-full transition-all gap-1.5"
+                    title="Enviar foto do cliente para usar no carrossel (ativa modo Personal Brand)"
+                  >
+                    {uploadingPhoto ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+                    {uploadingPhoto ? 'Enviando...' : 'Foto do Cliente'}
+                  </Button>
+                )}
+              </div>
+
+              <Button
+                onClick={() => {
+                  if (!clientContext?.produto) {
+                    setBriefingAlerta(true);
+                    toast({ title: '⚠️ Briefing não preenchido', description: 'Preencha o briefing no Salomão.', variant: 'destructive' });
+                    return;
+                  }
+                  addUserMessage('⚡ Modo Automático');
+                  detectAndProcess('__auto__');
+                }}
+                disabled={autoModeRunning || loading}
+                className="h-9 px-5 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-bold text-xs rounded-full shadow-md shadow-pink-500/20 transition-all transform hover:scale-105"
+              >
+                {autoModeRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Zap className="h-3.5 w-3.5 mr-1.5 fill-white" />}
+                Auto-Piloto
               </Button>
             </div>
           </div>
@@ -759,6 +1067,17 @@ export default function DaviSocialMedia() {
               </label>
             ))}
           </div>
+
+          {/* Alerta de briefing não preenchido */}
+          {briefingAlerta && (
+            <div className="mx-6 my-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-center gap-3 text-sm text-red-400">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-semibold">Briefing não preenchido!</p>
+                <p className="text-xs text-red-400/80">Para usar o Fluxo Automático, <a href="/salomao" className="underline font-medium">acesse o Salomão</a> e preencha o briefing do cliente.</p>
+              </div>
+            </div>
+          )}
 
           {/* Instagram connection status */}
           {igAccount !== undefined && (
@@ -802,7 +1121,7 @@ export default function DaviSocialMedia() {
                       </div>
                       <div className="flex-1">
                         <div className="bg-pink-500/5 border border-pink-500/10 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-foreground">
-                          {message.content}
+                          <MarkdownRenderer content={message.content} />
                         </div>
                         {/* Content card attached to davi message */}
                         {message.contentCard && (
@@ -827,12 +1146,13 @@ export default function DaviSocialMedia() {
                                 <Copy className="h-3 w-3" /> Copiar
                               </Button>
                             </div>
-                            {/* Carousel visual viewer */}
+                            {/* Carousel visual viewer - V2 page-based */}
                             {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
-                              <CarouselViewer
+                              <CarouselPageViewer
                                 slides={message.contentCard.slides}
                                 templateId={(message.contentCard.templateId as TemplateId) ?? 'dark_pro'}
                                 onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
+                                brandName={clientContext?.name || 'Minha Marca'}
                               />
                             ) : (
                               <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
@@ -903,12 +1223,14 @@ export default function DaviSocialMedia() {
                               <Copy className="h-3 w-3" /> Copiar
                             </Button>
                           </div>
-                          {/* Carousel visual viewer */}
+                          {/* Carousel visual viewer - V2 page-based */}
                           {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
-                            <CarouselViewer
+                            <CarouselPageViewer
                               slides={message.contentCard.slides}
-                              templateId={(message.contentCard.templateId as TemplateId) ?? 'dark_pro'}
+                              templateId={(message.contentCard.templateId as TemplateId) ?? 'futurista_ia'}
                               onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
+                              brandName={clientContext?.name || 'Minha Marca'}
+                              clientImageUrl={clientImageUrl ?? undefined}
                             />
                           ) : (
                             <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
@@ -952,99 +1274,70 @@ export default function DaviSocialMedia() {
             </div>
           </ScrollArea>
 
-          {/* Mini Calendar strip */}
-          <div className="px-6 py-2 border-t border-border/30 bg-background/50 shrink-0">
-            <div className="flex items-center gap-1 overflow-x-auto pb-1">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider shrink-0 mr-2">Calendário:</span>
-              {Array.from({ length: 7 }, (_, i) => {
-                const d = new Date();
-                d.setDate(d.getDate() + i);
-                const hasPost = posts.some(
-                  p => p.status === 'scheduled' && new Date(p.scheduled_at || '').toDateString() === d.toDateString()
-                );
-                return (
-                  <div
-                    key={i}
-                    className={`shrink-0 flex flex-col items-center px-2.5 py-1.5 rounded-lg cursor-pointer border transition-all ${hasPost ? 'bg-pink-500/20 border-pink-500/40' : 'bg-muted/30 border-border/40 hover:border-border'}`}
-                  >
-                    <span className="text-[9px] text-muted-foreground">{d.toLocaleDateString('pt-BR', { weekday: 'short' }).toUpperCase()}</span>
-                    <span className={`text-sm font-bold ${hasPost ? 'text-pink-400' : 'text-foreground'}`}>{d.getDate()}</span>
-                    {hasPost && <div className="w-1 h-1 rounded-full bg-pink-400 mt-0.5" />}
+
+
+          {/* Input Area Premium */}
+          <div className="p-4 bg-background shrink-0 border-t border-border/20">
+            <div className="max-w-3xl mx-auto flex flex-col gap-2 relative">
+              
+              <div className="relative flex flex-col bg-muted/20 border border-border/50 rounded-[24px] p-2 focus-within:border-pink-500/50 focus-within:ring-1 focus-within:ring-pink-500/20 transition-all shadow-sm">
+                
+                <Textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  placeholder="Cole ideias do Paulo, links do Instagram ou peça carrosséis..."
+                  className="w-full min-h-[50px] max-h-[150px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-sm px-3 pt-3 pb-1"
+                  rows={1}
+                />
+
+                <div className="flex items-center justify-between pt-2 px-1">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => fileRef.current?.click()} className="p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted/50" title="Anexar referência">
+                      <Link className="h-4 w-4" />
+                    </button>
+                    
+                    {/* Carousel Type Selector Integrado */}
+                    {contentType === 'carousel' && (
+                      <div className="hidden sm:flex bg-muted/40 rounded-full p-1 border border-border/40">
+                        {CAROUSEL_TYPES.map(ct => (
+                          <button
+                            key={ct.value}
+                            onClick={() => setCarouselType(ct.value)}
+                            className={`px-3 py-1 rounded-full text-[11px] transition-all whitespace-nowrap ${
+                              carouselType === ct.value 
+                                ? 'bg-background text-pink-500 shadow-sm font-bold' 
+                                : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            {ct.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                );
-              })}
+
+                  <Button
+                    onClick={handleSend}
+                    disabled={!input.trim() || loading || autoModeRunning}
+                    size="icon"
+                    className="h-9 w-9 rounded-full bg-pink-600 hover:bg-pink-700 text-white shadow-md disabled:opacity-40 transition-transform hover:scale-105"
+                  >
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 ml-0.5" />}
+                  </Button>
+                </div>
+              </div>
+              
+              <p className="text-[10px] text-muted-foreground/40 text-center font-medium">
+                Davi analisará o briefing e contexto automaticamente. Use Shift+Enter para quebrar linha.
+              </p>
             </div>
-          </div>
-
-          {/* Input area */}
-          <div className="px-4 pb-4 pt-2 border-t border-border/40 shrink-0">
-            {/* Quick actions */}
-            <div className="flex gap-1.5 mb-2 overflow-x-auto pb-1">
-              {[
-                { emoji: '🎠', label: 'Criar Carrossel', action: 'Crie um carrossel viral de 7 slides' },
-                { emoji: '🎬', label: 'Script de Reel', action: 'Escreva um script de Reel de 30 segundos com hook forte' },
-                { emoji: '📊', label: 'Post de Autoridade', action: 'Crie um post educativo que demonstre autoridade no nicho' },
-                { emoji: '🔥', label: 'Post Viral', action: 'Crie um post com alto potencial de viralização e compartilhamento' },
-                { emoji: '💬', label: 'Story Interativo', action: 'Crie uma sequência de 3 Stories interativos com perguntas' },
-              ].map(qa => (
-                <button
-                  key={qa.label}
-                  onClick={() => { setInput(qa.action); inputRef.current?.focus(); }}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-muted/40 hover:bg-muted/70 border border-border/40 hover:border-pink-500/40 text-[11px] text-muted-foreground hover:text-foreground transition-all whitespace-nowrap"
-                >
-                  {qa.emoji} {qa.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Main input */}
-            <div className="relative flex items-end gap-2 bg-muted/30 border border-border/50 rounded-2xl p-2 focus-within:border-pink-500/50 transition-colors">
-              {/* File/link upload button */}
-              <button
-                onClick={() => fileRef.current?.click()}
-                className="p-2 text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                title="Anexar arquivo"
-              >
-                <Link className="h-4 w-4" />
-              </button>
-              <input
-                ref={fileRef}
-                type="file"
-                className="hidden"
-                accept="image/*,video/*,audio/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) setInput(prev => prev + ` [arquivo: ${file.name}]`);
-                }}
-              />
-
-              <Textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                placeholder="Cole um link do Instagram, descreva o conteúdo ou peça qualquer coisa... (Enter para enviar)"
-                className="flex-1 min-h-[44px] max-h-[100px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-sm py-2 px-1"
-                rows={1}
-              />
-
-              <Button
-                onClick={handleSend}
-                disabled={!input.trim() || loading || autoModeRunning}
-                size="icon"
-                className="h-9 w-9 shrink-0 rounded-xl bg-gradient-to-br from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white disabled:opacity-40"
-              >
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </Button>
-            </div>
-            <p className="text-[10px] text-muted-foreground/50 mt-1.5 text-center">
-              Cole links do Instagram para análise automática de estilo · Shift+Enter para nova linha
-            </p>
           </div>
         </div>
 
@@ -1088,16 +1381,46 @@ export default function DaviSocialMedia() {
                   <p className="text-xs text-muted-foreground line-clamp-3 mb-2">{item.preview}</p>
                   {item.scheduled && (
                     <p className="text-[10px] text-emerald-400 mb-1.5">
-                      📅 {item.scheduled.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                      📅 {new Date(item.scheduled).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
                     </p>
                   )}
+                  {item.slides && item.slides.length > 0 ? (
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="w-full text-[10px] h-7 gap-1.5 mb-1 bg-pink-500/10 text-pink-400 hover:bg-pink-500/20"
+                        >
+                          <Eye className="h-3 w-3" /> Ver Carrossel Visual
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40 p-6 flex flex-col items-center">
+                        <DialogHeader className="w-full text-center mb-2">
+                          <DialogTitle className="text-sm font-bold">{item.title}</DialogTitle>
+                        </DialogHeader>
+                        <CarouselPageViewer
+                          slides={item.slides}
+                          templateId={(item.templateId as TemplateId) ?? 'futurista_ia'}
+                          onTemplateChange={(tid) => {
+                            // Update template in library item
+                            setLibrary(prev => prev.map(l => l.id === item.id ? { ...l, templateId: tid } : l));
+                            // Also update the message card if it exists
+                            setMessages(prev => prev.map(m => m.contentCard?.id === item.id ? { ...m, contentCard: { ...m.contentCard, templateId: tid } } : m));
+                          }}
+                          brandName={clientContext?.name || 'Minha Marca'}
+                          clientImageUrl={clientImageUrl ?? undefined}
+                        />
+                      </DialogContent>
+                    </Dialog>
+                  ) : null}
                   <Button
                     variant="ghost"
                     size="sm"
                     className="w-full h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
                     onClick={() => navigator.clipboard.writeText(item.fullContent).then(() => toast({ title: '📋 Copiado!' }))}
                   >
-                    <Copy className="h-3 w-3" /> Copiar Conteúdo
+                    <Copy className="h-3 w-3" /> {item.slides && item.slides.length > 0 ? 'Copiar Legenda' : 'Copiar Conteúdo'}
                   </Button>
                 </div>
               ))}
@@ -1108,8 +1431,28 @@ export default function DaviSocialMedia() {
               <div className="px-3 pb-3">
                 <Separator className="my-2" />
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
-                  Agendados ({posts.filter(p => p.status === 'scheduled').length})
+                  Agendamentos para os próximos 7 dias
                 </p>
+                {/* Mini Calendar no Painel Lateral */}
+                <div className="flex items-center gap-1 overflow-x-auto pb-3 mb-2">
+                  {Array.from({ length: 7 }, (_, i) => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + i);
+                    const hasPost = posts.some(
+                      p => p.status === 'scheduled' && new Date(p.scheduled_at || '').toDateString() === d.toDateString()
+                    );
+                    return (
+                      <div
+                        key={i}
+                        className={`shrink-0 flex flex-col items-center px-2.5 py-1.5 rounded-lg cursor-pointer border transition-all ${hasPost ? 'bg-pink-500/20 border-pink-500/40' : 'bg-muted/30 border-border/40 hover:border-border'}`}
+                      >
+                        <span className="text-[9px] text-muted-foreground">{d.toLocaleDateString('pt-BR', { weekday: 'short' }).toUpperCase()}</span>
+                        <span className={`text-sm font-bold ${hasPost ? 'text-pink-400' : 'text-foreground'}`}>{d.getDate()}</span>
+                        {hasPost && <div className="w-1 h-1 rounded-full bg-pink-400 mt-0.5" />}
+                      </div>
+                    );
+                  })}
+                </div>
                 {posts.filter(p => p.status === 'scheduled').slice(0, 3).map(post => (
                   <div key={post.id} className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-2 mb-1.5">
                     <p className="text-xs text-foreground line-clamp-2">{(post.caption || '').slice(0, 60)}...</p>

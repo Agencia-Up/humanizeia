@@ -6,7 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const GRAPH = 'https://graph.facebook.com/v21.0';
+const IG_API = 'https://graph.facebook.com/v18.0';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -28,13 +28,40 @@ serve(async (req) => {
     const body = await req.json();
     const { action } = body;
 
-    if (action === 'generate_carousel') return await generateCarousel(body, corsHeaders);
-    if (action === 'publish_post')      return await publishPost(supabase, user.id, body.post_id, corsHeaders);
-    if (action === 'publish_reel')      return await publishReel(supabase, user.id, body, corsHeaders);
-    if (action === 'publish_story')     return await publishStory(supabase, user.id, body, corsHeaders);
-    if (action === 'get_post_insights') return await getPostInsights(supabase, user.id, body.post_id, corsHeaders);
-    if (action === 'get_ig_account')    return await getIgAccount(supabase, user.id, corsHeaders);
-    if (action === 'check_container')   return await checkContainerStatus(body.container_id, body.access_token, corsHeaders);
+    // ── GENERATE CAROUSEL V2 (RICH PAGE-BASED SLIDES) ──────────────────────
+    if (action === 'generate_carousel_v2') {
+      return await generateCarouselV2(body, corsHeaders);
+    }
+
+    // ── GENERATE CAROUSEL (legacy) ──────────────────────────────────────────
+    if (action === 'generate_carousel') {
+      return await generateCarousel(body, corsHeaders);
+    }
+
+    // ── FETCH TRENDS BRIEF ──────────────────────────────────────────────────
+    if (action === 'fetch_trends_brief') {
+      return await fetchTrendsBrief(body, corsHeaders);
+    }
+
+    // ── GENERATE SLIDE IMAGE (fal.ai Flux.1) ───────────────────────────────
+    if (action === 'generate_slide_image') {
+      return await generateSlideImage(body, corsHeaders);
+    }
+
+    // ── PUBLISH POST ────────────────────────────────────────────────────────
+    if (action === 'publish_post') {
+      return await publishPost(supabase, user.id, body.post_id, corsHeaders);
+    }
+
+    // ── GET POST INSIGHTS ───────────────────────────────────────────────────
+    if (action === 'get_post_insights') {
+      return await getPostInsights(supabase, user.id, body.post_id, corsHeaders);
+    }
+
+    // ── GET INSTAGRAM ACCOUNT ────────────────────────────────────────────────
+    if (action === 'get_ig_account') {
+      return await getIgAccount(supabase, user.id, corsHeaders);
+    }
 
     throw new Error(`Ação desconhecida: ${action}`);
 
@@ -47,414 +74,542 @@ serve(async (req) => {
   }
 });
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-/** Busca credenciais Instagram da conta conectada */
-async function getIgCredentials(supabase: any, userId: string) {
-  const { data: igAcct } = await supabase
-    .from('connected_accounts' as any)
-    .select('*')
-    .eq('user_id', userId)
-    .eq('platform', 'instagram_publisher')
-    .maybeSingle();
-
-  if (!igAcct) throw new Error('Conta Instagram não conectada. Conecte em Configurações → Integrações.');
-
-  // page_token é preferível para publicação (não expira)
-  const accessToken = igAcct.extra_data?.page_token || igAcct.access_token_encrypted;
-  const igUserId    = igAcct.extra_data?.ig_user_id  || igAcct.account_id;
-
-  if (!igUserId)    throw new Error('Instagram Business Account ID não encontrado. Reconecte sua conta.');
-  if (!accessToken) throw new Error('Token de acesso inválido. Reconecte sua conta Instagram.');
-
-  return { accessToken, igUserId };
-}
-
-/**
- * Aguarda o container ficar pronto (status FINISHED).
- * Faz polling por até 60 segundos.
- */
-async function waitForContainer(containerId: string, accessToken: string): Promise<void> {
-  const maxAttempts = 12;
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise(r => setTimeout(r, 5000)); // 5s entre tentativas
-    const res  = await fetch(`${GRAPH}/${containerId}?fields=status_code&access_token=${accessToken}`);
-    const data = await res.json();
-    console.log(`[IG] Container ${containerId} status: ${data.status_code} (tentativa ${i + 1})`);
-    if (data.status_code === 'FINISHED') return;
-    if (data.status_code === 'ERROR')    throw new Error(`Erro no container de mídia: ${JSON.stringify(data)}`);
-  }
-  throw new Error('Timeout: container de mídia não ficou pronto em 60s.');
-}
-
-/** Verifica status de um container (ação exposta ao frontend) */
-async function checkContainerStatus(containerId: string, accessToken: string, cors: Record<string, string>) {
-  const res  = await fetch(`${GRAPH}/${containerId}?fields=status_code,status&access_token=${accessToken}`);
-  const data = await res.json();
-  return new Response(JSON.stringify(data), { headers: { ...cors, 'Content-Type': 'application/json' } });
-}
-
-// ─── Publicação: Post (Imagem / Carrossel) ──────────────────────────────────
-
-async function publishPost(supabase: any, userId: string, postId: string, cors: Record<string, string>) {
-  const { data: post, error: postError } = await supabase
-    .from('social_posts')
-    .select('*')
-    .eq('id', postId)
-    .eq('user_id', userId)
-    .single();
-
-  if (postError || !post) throw new Error('Post não encontrado');
-
-  const { accessToken, igUserId } = await getIgCredentials(supabase, userId);
-  const caption = buildCaption(post.caption, post.hashtags);
-
-  try {
-    let mediaId: string;
-
-    if (post.post_type === 'carousel' && post.media_urls?.length > 1) {
-      // ── Carrossel ──────────────────────────────────────────────────────────
-      const childIds: string[] = [];
-      for (const url of post.media_urls) {
-        const r = await fetch(`${GRAPH}/${igUserId}/media`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_url: url, is_carousel_item: true, access_token: accessToken }),
-        });
-        const d = await r.json();
-        if (!d.id) throw new Error(`Erro ao criar item do carrossel: ${JSON.stringify(d)}`);
-        childIds.push(d.id);
-      }
-
-      const containerRes = await fetch(`${GRAPH}/${igUserId}/media`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          media_type: 'CAROUSEL',
-          caption,
-          children: childIds.join(','),
-          access_token: accessToken,
-        }),
-      });
-      const container = await containerRes.json();
-      if (!container.id) throw new Error(`Erro ao criar container: ${JSON.stringify(container)}`);
-      mediaId = container.id;
-
-    } else {
-      // ── Imagem única ────────────────────────────────────────────────────────
-      const imageUrl = post.media_urls?.[0];
-      if (!imageUrl) throw new Error('Nenhuma imagem encontrada no post');
-
-      const mediaRes = await fetch(`${GRAPH}/${igUserId}/media`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_url: imageUrl, caption, access_token: accessToken }),
-      });
-      const media = await mediaRes.json();
-      if (!media.id) throw new Error(`Erro ao criar mídia: ${JSON.stringify(media)}`);
-      mediaId = media.id;
-    }
-
-    // Aguarda container ficar pronto
-    await waitForContainer(mediaId, accessToken);
-
-    // Publica
-    const pubRes = await fetch(`${GRAPH}/${igUserId}/media_publish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ creation_id: mediaId, access_token: accessToken }),
-    });
-    const pub = await pubRes.json();
-    if (!pub.id) throw new Error(`Erro ao publicar: ${JSON.stringify(pub)}`);
-
-    await supabase.from('social_posts').update({
-      status:       'published',
-      published_at: new Date().toISOString(),
-      ig_media_id:  pub.id,
-    }).eq('id', postId);
-
-    return new Response(JSON.stringify({ success: true, ig_media_id: pub.id }), {
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
-
-  } catch (err: any) {
-    await supabase.from('social_posts').update({ status: 'failed' }).eq('id', postId);
-    throw err;
-  }
-}
-
-// ─── Publicação: Reel ───────────────────────────────────────────────────────
-
-async function publishReel(supabase: any, userId: string, body: any, cors: Record<string, string>) {
-  /**
-   * Parâmetros esperados em body:
-   * - video_url: string (URL pública do vídeo MP4/MOV)
-   * - caption: string
-   * - cover_url?: string (thumbnail opcional)
-   * - share_to_feed?: boolean (padrão: true)
-   */
-  const { video_url, caption, cover_url, share_to_feed = true } = body;
-  if (!video_url) throw new Error('video_url é obrigatório para publicar Reel');
-
-  const { accessToken, igUserId } = await getIgCredentials(supabase, userId);
-
-  // 1. Cria container de Reel
-  const payload: Record<string, unknown> = {
-    media_type:    'REELS',
-    video_url,
-    caption,
-    share_to_feed,
-    access_token:  accessToken,
-  };
-  if (cover_url) payload.cover_url = cover_url;
-
-  const containerRes = await fetch(`${GRAPH}/${igUserId}/media`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const container = await containerRes.json();
-  if (!container.id) throw new Error(`Erro ao criar container do Reel: ${JSON.stringify(container)}`);
-
-  console.log('[IG] Container Reel criado:', container.id);
-
-  // 2. Aguarda processamento (vídeos demoram mais)
-  await waitForContainer(container.id, accessToken);
-
-  // 3. Publica
-  const pubRes = await fetch(`${GRAPH}/${igUserId}/media_publish`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ creation_id: container.id, access_token: accessToken }),
-  });
-  const pub = await pubRes.json();
-  if (!pub.id) throw new Error(`Erro ao publicar Reel: ${JSON.stringify(pub)}`);
-
-  console.log('[IG] Reel publicado! ID:', pub.id);
-
-  return new Response(JSON.stringify({ success: true, ig_media_id: pub.id, type: 'reel' }), {
-    headers: { ...cors, 'Content-Type': 'application/json' },
-  });
-}
-
-// ─── Publicação: Story ──────────────────────────────────────────────────────
-
-async function publishStory(supabase: any, userId: string, body: any, cors: Record<string, string>) {
-  /**
-   * Parâmetros esperados em body:
-   * - media_url: string (URL pública — imagem JPEG ou vídeo MP4)
-   * - media_type: 'IMAGE' | 'VIDEO' (padrão: IMAGE)
-   */
-  const { media_url, media_type = 'IMAGE' } = body;
-  if (!media_url) throw new Error('media_url é obrigatório para publicar Story');
-
-  const { accessToken, igUserId } = await getIgCredentials(supabase, userId);
-
-  // 1. Cria container de Story
-  const payload: Record<string, unknown> = {
-    media_type: 'STORIES',
-    access_token: accessToken,
-  };
-
-  if (media_type === 'VIDEO') {
-    payload.video_url = media_url;
-  } else {
-    payload.image_url = media_url;
-  }
-
-  const containerRes = await fetch(`${GRAPH}/${igUserId}/media`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const container = await containerRes.json();
-  if (!container.id) throw new Error(`Erro ao criar container do Story: ${JSON.stringify(container)}`);
-
-  console.log('[IG] Container Story criado:', container.id);
-
-  // 2. Aguarda processamento
-  await waitForContainer(container.id, accessToken);
-
-  // 3. Publica
-  const pubRes = await fetch(`${GRAPH}/${igUserId}/media_publish`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ creation_id: container.id, access_token: accessToken }),
-  });
-  const pub = await pubRes.json();
-  if (!pub.id) throw new Error(`Erro ao publicar Story: ${JSON.stringify(pub)}`);
-
-  console.log('[IG] Story publicado! ID:', pub.id);
-
-  return new Response(JSON.stringify({ success: true, ig_media_id: pub.id, type: 'story' }), {
-    headers: { ...cors, 'Content-Type': 'application/json' },
-  });
-}
-
-// ─── Insights ───────────────────────────────────────────────────────────────
-
-async function getPostInsights(supabase: any, userId: string, postId: string, cors: Record<string, string>) {
-  const { data: post } = await supabase
-    .from('social_posts')
-    .select('ig_media_id')
-    .eq('id', postId)
-    .eq('user_id', userId)
-    .single();
-
-  if (!post?.ig_media_id) {
-    return new Response(JSON.stringify({ insights: null }), {
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
-  }
-
-  const { accessToken } = await getIgCredentials(supabase, userId);
-  const metrics = 'impressions,reach,likes_count,comments_count,saved,shares';
-  const res = await fetch(
-    `${GRAPH}/${post.ig_media_id}/insights?metric=${metrics}&access_token=${accessToken}`
-  );
-  const data = await res.json();
-
-  if (!data.data) {
-    return new Response(JSON.stringify({ insights: null }), {
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
-  }
-
-  const get = (name: string) => data.data.find((d: any) => d.name === name)?.values?.[0]?.value ?? 0;
-  const likes    = get('likes_count');
-  const comments = get('comments_count');
-  const reach    = get('reach');
-
-  return new Response(JSON.stringify({
-    insights: {
-      impressions:      get('impressions'),
-      reach,
-      likes,
-      comments,
-      saves:            get('saved'),
-      shares:           get('shares'),
-      engagement_rate:  reach > 0 ? +((likes + comments) / reach * 100).toFixed(2) : 0,
-    },
-  }), { headers: { ...cors, 'Content-Type': 'application/json' } });
-}
-
-// ─── Conta Instagram ─────────────────────────────────────────────────────────
-
-async function getIgAccount(supabase: any, userId: string, cors: Record<string, string>) {
-  const { data: igAcct } = await supabase
-    .from('connected_accounts' as any)
-    .select('account_id, account_name, extra_data, connected_at')
-    .eq('user_id', userId)
-    .eq('platform', 'instagram_publisher')
-    .maybeSingle();
-
-  if (igAcct) {
-    return new Response(JSON.stringify({
-      connected:    true,
-      ig_user_id:   igAcct.extra_data?.ig_user_id || igAcct.account_id,
-      username:     igAcct.extra_data?.username   || igAcct.account_name,
-      picture:      igAcct.extra_data?.profile_picture_url ?? null,
-      page_name:    igAcct.extra_data?.page_name  ?? null,
-      connected_at: igAcct.connected_at,
-      source:       'instagram_publisher',
-    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
-  }
-
-  return new Response(JSON.stringify({ connected: false }), {
-    headers: { ...cors, 'Content-Type': 'application/json' },
-  });
-}
-
-// ─── AI Carousel Generator ──────────────────────────────────────────────────
-
-async function generateCarousel(body: any, cors: Record<string, string>) {
+// ─── V2 Carousel Generator (Rich Page-Based Slides) ─────────────────────────
+async function generateCarouselV2(body: any, cors: Record<string, string>) {
   const {
     topic,
     audience,
-    tone        = 'profissional',
-    slide_count = 7,
+    tone = 'persuasivo',
+    slide_count = 8,
     include_cta = true,
-    brand_name  = 'Minha Empresa',
+    brand_name = 'Minha Empresa',
+    carousel_type = 'educacional',
+    paul_copy = '',         // Copy importada do Paulo
+    trend_context = '',     // Contexto de tendências
   } = body;
 
   const openaiKey = Deno.env.get('OPENAI_API_KEY');
+  if (!openaiKey) {
+    return new Response(JSON.stringify({
+      carousel: buildMockCarouselV2(topic, audience, slide_count, brand_name, include_cta, carousel_type),
+    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+  }
+
+  const typeInstructions: Record<string, string> = {
+    educacional: `Formato EDUCACIONAL: ensina algo valioso ao público. Cada slide = um conceito claro.
+      Slide 1 (CAPA): Promessa poderosa que justifica o arraste. Ex: "O que nenhum [NICHO] te contou sobre X"
+      Slides 2-${slide_count - 2}: Um insight profundo por slide, com dado ou exemplo concreto
+      Slide ${slide_count - 1} (CONCLUSÃO): Recapitula o valor entregue
+      Slide ${slide_count} (CTA): Ação clara e irresistível`,
+
+    lista: `Formato LISTA: título provoca curiosidade, cada slide revela um item numerado.
+      Slide 1 (CAPA): "X [coisas/erros/formas/razões] que [resultado impactante]"
+      Slides 2-${slide_count - 1}: Cada item da lista — NUMERADO, com headline direta e explicação curta
+      Slide ${slide_count} (CTA): Ação relacionada ao tema da lista`,
+
+    storytelling: `Formato STORYTELLING: narrativa com começo, meio, fim e virada.
+      Slide 1 (CAPA): Apresenta o protagonista e o conflito
+      Slides 2-4: O problema e as tentativas fracassadas (tensão)
+      Slides 5-6: A virada / descoberta / solução
+      Slide 7: O resultado conquistado (prova)
+      Slide ${slide_count} (CTA): "Quer o mesmo resultado? [ação]"`,
+
+    mitos: `Formato MITOS vs VERDADES: derruba crenças populares.
+      Slide 1 (CAPA): "X mitos sobre [tema] que estão sabotando você"
+      Slides pares: MITO — em vermelho ou destaque negativo
+      Slides ímpares: VERDADE — revelação que surpreende
+      Slide ${slide_count} (CTA): Posiciona a marca como detentora da verdade`,
+
+    passoapasso: `Formato PASSO A PASSO: guia prático com etapas sequenciais.
+      Slide 1 (CAPA): Promete o resultado final do processo
+      Slides 2-${slide_count - 1}: PASSO [N] — ação específica com orientação clara
+      Slide ${slide_count} (CTA): "Salve este post e comece agora"`,
+
+    polemica: `Formato POLÊMICO: gera debate e compartilhamento.
+      Slide 1 (CAPA): Afirmação provocativa e contrária ao senso comum
+      Slides 2-5: Argumentos que sustentam a posição, com dados
+      Slide 6: Antecipa e derruba a principal objeção
+      Slide 7: Convida ao debate nos comentários
+      Slide ${slide_count} (CTA): "Concorda ou discorda? Comenta aqui"`,
+  };
+
+  const pauloContext = paul_copy
+    ? `\n\nESTRATÉGIA DO COPYWRITER PAULO (use como base e expanda visualmente):\n${paul_copy.slice(0, 800)}`
+    : '';
+
+  const trendContext = trend_context
+    ? `\n\nCONTEXTO DE TENDÊNCIAS ATUAL:\n${trend_context.slice(0, 400)}`
+    : '';
+
+  const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
+Você pensa em PÁGINAS VISUAIS SEPARADAS — cada slide é uma página completa como um slide de PowerPoint/Canva.
+
+REGRAS ABSOLUTAS DE DESIGN:
+- headline: TÍTULO PODEROSO (máximo 5-7 palavras, impacto imediato, maiúsculas quando for necessário)
+- sub_headline: complemento ou numeração (ex: "Dica 1 de 5", "Passo 2", "O Erro Mais Comum")  
+- body: texto de apoio curto (máximo 120 caracteres — pois é um slide visual, não um artigo)
+- bullets: lista de até 3 itens quando o slide for do tipo lista (máximo 45 chars cada)
+- visual_cue: descrição precisa do elemento visual ideal para aquele slide (imagem, ícone, símbolo)
+- layout: como o conteúdo se organiza na página (centered/left/split/minimal/full_bleed)
+- accent_word: uma palavra-chave do headline que deve ganhar cor de destaque
+
+O carrossel deve ter RITMO: capa forte → conteúdo valioso → CTA irresistível.
+Retorne APENAS JSON válido sem markdown.`;
+
+  const userPrompt = `Crie um carrossel Instagram sobre "${topic}" para "${audience}".
+Tom: ${tone}. Slides: ${slide_count}. Marca: ${brand_name}. CTA: ${include_cta ? 'sim' : 'não'}.
+Tipo: ${carousel_type}.${pauloContext}${trendContext}
+
+${typeInstructions[carousel_type] || typeInstructions.educacional}
+
+Retorne este JSON:
+{
+  "carousel_type": "${carousel_type}",
+  "cover_headline": "headline da capa (max 7 palavras)",
+  "hook_promise": "o que o leitor vai aprender/ganhar com este carrossel",
+  "caption": "legenda completa do post para Instagram (max 2200 chars, com emojis estratégicos e quebras de linha)",
+  "hashtags": ["hashtag1", "hashtag2" ... (20 hashtags sem #, mix de nicho + trend)],
+  "slides": [
+    {
+      "order": 1,
+      "type": "cover",
+      "headline": "título dominante da capa",
+      "sub_headline": "frase secundária que amplifica o headline",
+      "body": "contexto ou promessa adicional (opcional na capa)",
+      "bullets": null,
+      "visual_cue": "descrição do elemento visual ideal",
+      "layout": "centered",
+      "accent_word": "palavra do headline para destacar"
+    }
+  ]
+}
+
+REGRAS DOS TIPOS DE SLIDE:
+- "cover": capa principal — headline impactante, sub_headline forte, sem body longo
+- "content": slide de conteúdo — headline direto, body explicando, visual_cue relevante
+- "list": slide de lista — sub_headline com numeração, bullets com 2-3 itens
+- "quote": citação poderosa — headline como a citação entre aspas, body com atribuição
+- "cta": slide final — headline como chamada para ação, body com instrução clara`;
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${openaiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.85,
+      max_tokens: 3500,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`OpenAI API: ${res.status} — ${err}`);
+  }
+
+  const aiData = await res.json();
+  const rawContent = aiData.choices?.[0]?.message?.content || '{}';
+
+  let carousel;
+  try {
+    carousel = JSON.parse(rawContent);
+  } catch {
+    throw new Error('Resposta da IA inválida — tente novamente');
+  }
+
+  return new Response(JSON.stringify({ carousel }), {
+    headers: { ...cors, 'Content-Type': 'application/json' },
+  });
+}
+
+// ─── Fetch Trends Brief ──────────────────────────────────────────────────────
+async function fetchTrendsBrief(body: any, cors: Record<string, string>) {
+  const { niche = 'marketing digital', limit = 8 } = body;
+  const newsdataKey = Deno.env.get('NEWSDATA_API_KEY');
+
+  const nicheToQuery: Record<string, string> = {
+    automotivo: 'carros mercado automóveis',
+    saude_bem_estar: 'saúde bem-estar medicina fitness',
+    varejo_ecommerce: 'e-commerce varejo vendas online consumo',
+    educacao_conhecimento: 'educação cursos online aprendizado',
+    alimentacao_bebidas: 'gastronomia alimentação restaurante',
+    imobiliario: 'imóveis mercado imobiliário',
+    servicos_b2b: 'negócios B2B empreendedorismo startups',
+    pet: 'pets animais domésticos veterinário',
+    financas_investimentos: 'finanças investimentos economia mercado',
+    tecnologia_saas: 'tecnologia inteligência artificial software',
+    'marketing digital': 'marketing digital redes sociais',
+    outro: 'negócios empreendedorismo tendências',
+  };
+
+  const query = nicheToQuery[niche] || niche;
+  const topics: { title: string; summary: string; source: string }[] = [];
+
+  // Source 1: Google Trends RSS Brazil
+  try {
+    const trendsUrl = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=BR`;
+    const trendsRes = await fetch(trendsUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    if (trendsRes.ok) {
+      const xml = await trendsRes.text();
+      const itemMatches = xml.matchAll(/<title><!\[CDATA\[([^\]]+)\]\]><\/title>/g);
+      let count = 0;
+      for (const match of itemMatches) {
+        if (count >= 5 && topics.length > 0) break;
+        const title = match[1].trim();
+        if (title && title.length > 3) {
+          topics.push({ title, summary: 'Tendência em alta no Google Brasil', source: 'Google Trends' });
+          count++;
+        }
+      }
+    }
+  } catch { /* silent fail */ }
+
+  // Source 2: NewsData.io
+  if (newsdataKey) {
+    try {
+      const newsUrl = `https://newsdata.io/api/1/news?apikey=${newsdataKey}&q=${encodeURIComponent(query)}&language=pt&country=br&size=${limit}`;
+      const newsRes = await fetch(newsUrl);
+      if (newsRes.ok) {
+        const newsData = await newsRes.json();
+        if (newsData.results) {
+          for (const article of newsData.results.slice(0, 6)) {
+            topics.push({
+              title: article.title || '',
+              summary: article.description || article.content?.slice(0, 200) || '',
+              source: article.source_id || 'NewsData',
+            });
+          }
+        }
+      }
+    } catch { /* silent fail */ }
+  }
+
+  // Source 3: Wikipedia summary for niche context
+  try {
+    const wikiQuery = query.split(' ')[0];
+    const wikiUrl = `https://pt.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`;
+    const wikiRes = await fetch(wikiUrl);
+    if (wikiRes.ok) {
+      const wikiData = await wikiRes.json();
+      if (wikiData.extract) {
+        topics.push({
+          title: wikiData.title,
+          summary: wikiData.extract.slice(0, 300),
+          source: 'Wikipedia',
+        });
+      }
+    }
+  } catch { /* silent fail */ }
+
+  // Compile a brief for the copywriter (Paulo)
+  const openaiKey = Deno.env.get('OPENAI_API_KEY');
+  let carouselIdeas: any[] = [];
+
+  if (openaiKey && topics.length > 0) {
+    try {
+      const topicsText = topics.map((t, i) => `${i + 1}. ${t.title}: ${t.summary}`).join('\n');
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{
+            role: 'user',
+            content: `Com base nas tendências abaixo do nicho "${niche}", crie ${limit} ideias de carrossel para Instagram.
+Para cada ideia, retorne JSON no formato:
+{"ideas": [{"title": "título do carrossel", "hook": "primeira frase para capturar atenção", "type": "educacional|lista|storytelling|mitos|passoapasso|polemica", "viral_score": 1-10, "why": "por que isso vai engajar o público"}]}
+
+TENDÊNCIAS:
+${topicsText}
+
+Retorne apenas JSON.`,
+          }],
+          temperature: 0.9,
+          max_tokens: 1500,
+          response_format: { type: 'json_object' },
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}');
+        carouselIdeas = parsed.ideas || [];
+      }
+    } catch { /* use raw topics as fallback */ }
+  }
+
+  if (!carouselIdeas.length) {
+    carouselIdeas = topics.slice(0, limit).map((t, i) => ({
+      title: t.title,
+      hook: t.summary.slice(0, 100),
+      type: ['educacional', 'lista', 'mitos'][i % 3],
+      viral_score: 7,
+      why: `Trending: ${t.source}`,
+    }));
+  }
+
+  return new Response(JSON.stringify({
+    niche,
+    raw_topics: topics,
+    carousel_ideas: carouselIdeas,
+    generated_at: new Date().toISOString(),
+  }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+}
+
+// ─── Generate Slide Image via fal.ai ────────────────────────────────────────
+async function generateSlideImage(body: any, cors: Record<string, string>) {
+  const { visual_cue, template_style = 'dark', slide_type = 'content' } = body;
+  const falKey = Deno.env.get('FAL_API_KEY');
+
+  if (!falKey) {
+    return new Response(JSON.stringify({ image_url: null, error: 'FAL_API_KEY não configurada' }), {
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const styleMap: Record<string, string> = {
+    dark: 'cinematic dark background, dramatic lighting, moody atmosphere, professional photography',
+    editorial: 'elegant editorial style, navy blue tones, minimalist composition, high-end magazine',
+    neon: 'neon cyberpunk aesthetic, dark background, glowing lights, futuristic',
+    clean_light: 'clean white studio background, natural lighting, modern minimal, lifestyle photography',
+  };
+
+  const prompt = `${visual_cue}. ${styleMap[template_style] || styleMap.dark}. Instagram carousel slide visual, 4:5 aspect ratio, no text, professional quality, high detail`;
+
+  try {
+    const falRes = await fetch('https://fal.run/fal-ai/flux/schnell', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${falKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt,
+        image_size: 'portrait_4_3',
+        num_inference_steps: 4,
+        num_images: 1,
+      }),
+    });
+
+    if (!falRes.ok) throw new Error(`fal.ai error: ${falRes.status}`);
+
+    const falData = await falRes.json();
+    const imageUrl = falData.images?.[0]?.url || null;
+
+    return new Response(JSON.stringify({ image_url: imageUrl }), {
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err: any) {
+    return new Response(JSON.stringify({ image_url: null, error: err.message }), {
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ─── Mock V2 Carousel (no API key) ──────────────────────────────────────────
+function buildMockCarouselV2(
+  topic: string, audience: string, slideCount: number,
+  brand: string, cta: boolean, carouselType: string
+) {
+  const typeSlides: Record<string, any[]> = {
+    educacional: [
+      { type: 'cover', headline: `Tudo sobre ${topic}`, sub_headline: 'O guia definitivo para quem quer resultados', layout: 'centered', accent_word: topic },
+      { type: 'content', headline: 'Por que isso importa?', sub_headline: 'Insight 1 de 5', body: `Entender ${topic} pode mudar completamente seus resultados.`, layout: 'left' },
+      { type: 'list', headline: '3 Pilares Fundamentais', sub_headline: 'Insight 2 de 5', bullets: ['Consistência acima de tudo', 'Estratégia antes de tática', 'Métricas que importam'], layout: 'left' },
+      { type: 'content', headline: 'O Erro Mais Comum', sub_headline: 'Insight 3 de 5', body: 'A maioria pula etapas cruciais e depois não entende por que não funciona.', layout: 'centered' },
+      { type: 'quote', headline: '"Quem domina o básico, domina o jogo."', sub_headline: 'Insight 4 de 5', body: `Aplicado a ${topic}`, layout: 'centered' },
+      { type: 'content', headline: 'O Que Fazer Agora', sub_headline: 'Insight 5 de 5', body: 'Aplicar um conceito por vez é mais poderoso do que saber tudo e não agir.', layout: 'left' },
+    ],
+    lista: [
+      { type: 'cover', headline: `7 segredos de ${topic}`, sub_headline: 'Que os especialistas não revelam', layout: 'centered', accent_word: '7' },
+      ...(Array.from({ length: slideCount - 2 }, (_, i) => ({
+        type: 'list', headline: `#${i + 1} ${['Comece pelo básico', 'Conheça seu público', 'Crie sistemas', 'Meça tudo', 'Itere rápido'][i] || `Ponto ${i + 1}`}`,
+        sub_headline: `Dica ${i + 1} de ${slideCount - 2}`, body: `Implementar isso muda completamente sua relação com ${topic}.`, layout: 'left',
+      }))),
+    ],
+  };
+
+  const slides = (typeSlides[carouselType] || typeSlides.educacional).slice(0, slideCount - 1);
+
+  if (cta) {
+    slides.push({
+      type: 'cta',
+      headline: 'Pronto para começar?',
+      sub_headline: `Fale com ${brand} hoje`,
+      body: 'Salve esse post e envie para alguém que precisa ver isso.',
+      layout: 'centered',
+      accent_word: 'começar',
+    });
+  }
+
+  return {
+    carousel_type: carouselType,
+    cover_headline: slides[0]?.headline || topic,
+    hook_promise: `Aprenda tudo sobre ${topic} em ${slideCount} slides`,
+    caption: `🚀 ${topic} — O guia completo!\n\nSalve esse post para não perder! ⬇️\n\n#${topic.replace(/\s+/g, '')} #marketing #digital`,
+    hashtags: [topic.replace(/\s+/g, ''), 'marketing', 'digitalmarketing', 'empreendedorismo'],
+    slides: slides.map((s, i) => ({ order: i + 1, visual_cue: `professional ${topic} concept`, ...s })),
+  };
+}
+
+// ─── AI Carousel Generator (Legacy) ─────────────────────────────────────────
+async function generateCarousel(body: any, cors: Record<string, string>) {
+  const openaiKey = Deno.env.get('OPENAI_API_KEY');
+  const { topic, audience, tone = 'profissional', slide_count = 7, include_cta = true, brand_name = 'Minha Empresa' } = body;
+
   if (!openaiKey) {
     return new Response(JSON.stringify({
       carousel: buildMockCarousel(topic, audience, slide_count, brand_name, include_cta),
     }), { headers: { ...cors, 'Content-Type': 'application/json' } });
   }
 
-  const systemPrompt = `Você é DAVI, especialista em social media marketing para Instagram.
-Sua missão é criar carrosséis virais em português brasileiro, educativos e persuasivos.
-Retorne APENAS um JSON válido, sem markdown, sem explicações extras.`;
-
-  const userPrompt = `Crie um carrossel Instagram sobre "${topic}" para o público: "${audience}".
-Tom: ${tone}. Slides: ${slide_count}. Marca: ${brand_name}. CTA: ${include_cta ? 'sim' : 'não'}.
-
-Retorne este JSON exato:
-{
-  "cover_headline": "frase de impacto para capa (max 8 palavras)",
-  "topic": "${topic}",
-  "audience": "${audience}",
-  "caption": "legenda completa do post (max 2200 chars, com emojis)",
-  "hashtags": ["hashtag1", "hashtag2" (15 hashtags sem #)],
-  "slides": [
-    {
-      "order": 1,
-      "headline": "título do slide (max 6 palavras)",
-      "body": "conteúdo principal (max 120 chars)",
-      "cta": "texto de ação (apenas no último slide se include_cta=true)",
-      "bg_color": "#hexcolor",
-      "accent_color": "#hexcolor"
-    }
-  ]
-}`;
-
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model:           'gpt-4o-mini',
-      messages:        [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-      temperature:     0.8,
-      max_tokens:      2000,
+      model: 'gpt-4o-mini',
+      messages: [{
+        role: 'system',
+        content: 'Você é DAVI, especialista em social media marketing. Retorne APENAS JSON válido.',
+      }, {
+        role: 'user',
+        content: `Crie um carrossel Instagram sobre "${topic}" para "${audience}". Tom: ${tone}. Slides: ${slide_count}. Marca: ${brand_name}. CTA: ${include_cta}.
+Retorne: {"cover_headline":"...","topic":"...","audience":"...","caption":"...","hashtags":[...],"slides":[{"order":1,"headline":"...","body":"...","cta":"...","bg_color":"#hex","accent_color":"#hex"}]}`,
+      }],
+      temperature: 0.8,
+      max_tokens: 2000,
       response_format: { type: 'json_object' },
     }),
   });
 
   if (!res.ok) throw new Error(`OpenAI API: ${res.status}`);
-
   const aiData = await res.json();
-  let carousel;
-  try {
-    carousel = JSON.parse(aiData.choices?.[0]?.message?.content || '{}');
-  } catch {
-    throw new Error('Resposta da IA inválida — tente novamente');
-  }
+  const carousel = JSON.parse(aiData.choices?.[0]?.message?.content || '{}');
 
   return new Response(JSON.stringify({ carousel }), { headers: { ...cors, 'Content-Type': 'application/json' } });
 }
 
 function buildMockCarousel(topic: string, audience: string, slideCount: number, brand: string, cta: boolean) {
-  return {
-    topic, audience,
-    cover_headline: `${topic}: Guia Completo`,
-    caption: `Tudo sobre ${topic}! 🚀\nSalve esse post! ⬇️\n\n#${topic.replace(/\s+/g, '')} #marketing`,
-    hashtags: [topic.replace(/\s+/g, ''), 'marketing', 'digitalmarketing', 'empreendedorismo'],
-    slides: Array.from({ length: slideCount }, (_, i) => ({
-      order:        i + 1,
-      headline:     i === 0 ? `${topic}: O Guia Definitivo` : `Dica ${i}`,
-      body:         `Estratégia ${i + 1} para dominar ${topic}.`,
-      cta:          cta && i === slideCount - 1 ? `Fale com ${brand}!` : undefined,
-      bg_color:     '#1A237E',
-      accent_color: '#DAA520',
-    })),
-  };
+  const slides = Array.from({ length: slideCount }, (_, i) => ({
+    order: i + 1,
+    headline: i === 0 ? `${topic}: O que você precisa saber` : `Ponto ${i}: Insight ${i}`,
+    body: i === 0 ? `Descubra como ${topic} pode transformar seus resultados` : `Estratégia ${i} para dominar ${topic}.`,
+    cta: cta && i === slideCount - 1 ? `Fale com ${brand} hoje mesmo!` : undefined,
+    bg_color: '#1A237E',
+    accent_color: '#DAA520',
+  }));
+  return { topic, audience, cover_headline: `${topic}: Guia Completo`, caption: `Tudo sobre ${topic}! 🚀`, hashtags: [topic.replace(/\s+/g, ''), 'marketing'], slides };
 }
 
-// ─── Utils ───────────────────────────────────────────────────────────────────
+// ─── Publish to Instagram ───────────────────────────────────────────────────
+async function publishPost(supabase: any, userId: string, postId: string, cors: Record<string, string>) {
+  const { data: post, error: postError } = await supabase.from('social_posts').select('*').eq('id', postId).eq('user_id', userId).single();
+  if (postError || !post) throw new Error('Post não encontrado');
 
-function buildCaption(caption: string, hashtags?: string[]): string {
-  if (!hashtags?.length) return caption ?? '';
-  return `${caption ?? ''}\n\n${hashtags.map((h: string) => `#${h}`).join(' ')}`;
+  let account: any = null;
+  const { data: igAccount } = await supabase.from('connected_accounts' as any).select('*').eq('user_id', userId).eq('platform', 'instagram_publisher').maybeSingle();
+  if (igAccount) {
+    account = { access_token: igAccount.access_token, extra_data: { ig_account_id: igAccount.account_id } };
+  } else {
+    const { data: metaAccount } = await supabase.from('ad_accounts').select('*').eq('user_id', userId).eq('platform', 'meta').eq('is_active', true).maybeSingle();
+    if (metaAccount) account = { access_token: metaAccount.access_token_encrypted || metaAccount.access_token, extra_data: metaAccount.extra_data };
+  }
+
+  if (!account) return new Response(JSON.stringify({ error: 'Conta Instagram não conectada.' }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+
+  const igAccountId = account.extra_data?.ig_account_id;
+  if (!igAccountId) return new Response(JSON.stringify({ error: 'Conta Instagram Business não encontrada.' }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+
+  const accessToken = account.access_token;
+  const caption = post.caption + (post.hashtags?.length ? '\n\n' + post.hashtags.map((h: string) => `#${h}`).join(' ') : '');
+
+  try {
+    const isVideo = (url: string) => /\.(mp4|mov)$/i.test(url) || post.post_type === 'reel';
+    let containerId: string | null = null;
+    let containerPayload: any = { access_token: accessToken };
+    const mediaUrls = post.media_urls || [];
+    if (!mediaUrls.length) throw new Error('Nenhuma mídia encontrada no post');
+
+    if (post.post_type === 'carousel' || mediaUrls.length > 1) {
+      const childIds = await Promise.all(mediaUrls.map(async (url: string) => {
+        const type = isVideo(url) ? 'video_url' : 'image_url';
+        const r = await fetch(`${IG_API}/${igAccountId}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [type]: url, is_carousel_item: true, media_type: isVideo(url) ? 'VIDEO' : 'IMAGE', access_token: accessToken }) });
+        const d = await r.json();
+        if (d.error) throw new Error(`Erro filho: ${d.error.message}`);
+        return d.id;
+      }));
+      containerPayload = { ...containerPayload, media_type: 'CAROUSEL', caption, children: childIds.join(',') };
+    } else if (post.post_type === 'reel') {
+      containerPayload = { ...containerPayload, media_type: 'REELS', video_url: mediaUrls[0], caption, share_to_feed: true };
+    } else {
+      const url = mediaUrls[0];
+      containerPayload = isVideo(url) ? { ...containerPayload, media_type: 'VIDEO', video_url: url, caption } : { ...containerPayload, image_url: url, caption };
+    }
+
+    const containerRes = await fetch(`${IG_API}/${igAccountId}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(containerPayload) });
+    const container = await containerRes.json();
+    if (container.error || !container.id) throw new Error(`Erro container: ${container.error?.message}`);
+    containerId = container.id;
+
+    let isFinished = false;
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const statusRes = await fetch(`${IG_API}/${containerId}?fields=status_code&access_token=${accessToken}`);
+      const statusData = await statusRes.json();
+      const code = statusData.status_code;
+      if (code === 'FINISHED' || code === 'PUBLISHED') { isFinished = true; break; }
+      if (code === 'ERROR' || code === 'EXPIRED') throw new Error(`Instagram rejeitou: ${code}`);
+    }
+    if (!isFinished) throw new Error('Timeout no processamento da mídia');
+
+    const pubRes = await fetch(`${IG_API}/${igAccountId}/media_publish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: containerId, access_token: accessToken }) });
+    const pub = await pubRes.json();
+    if (pub.error || !pub.id) throw new Error(`Erro na publicação: ${pub.error?.message}`);
+
+    await supabase.from('social_posts').update({ status: 'published', published_at: new Date().toISOString(), ig_media_id: pub.id }).eq('id', postId);
+    return new Response(JSON.stringify({ success: true, ig_media_id: pub.id }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+  } catch (err: any) {
+    await supabase.from('social_posts').update({ status: 'failed' }).eq('id', postId);
+    throw err;
+  }
+}
+
+// ─── Get Post Insights ──────────────────────────────────────────────────────
+async function getPostInsights(supabase: any, userId: string, postId: string, cors: Record<string, string>) {
+  const { data: post } = await supabase.from('social_posts').select('ig_media_id').eq('id', postId).eq('user_id', userId).single();
+  if (!post?.ig_media_id) return new Response(JSON.stringify({ insights: null }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+
+  const { data: account } = await supabase.from('ad_accounts').select('access_token_encrypted, access_token').eq('user_id', userId).eq('platform', 'meta').eq('is_active', true).maybeSingle();
+  if (!account) throw new Error('Conta Meta não conectada');
+
+  const accessToken = account.access_token_encrypted || account.access_token;
+  const metrics = 'impressions,reach,likes_count,comments_count,saved,shares';
+  const res = await fetch(`${IG_API}/${post.ig_media_id}/insights?metric=${metrics}&access_token=${accessToken}`);
+  const data = await res.json();
+  if (!data.data) return new Response(JSON.stringify({ insights: null }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+
+  const get = (name: string) => data.data.find((d: any) => d.name === name)?.values?.[0]?.value || 0;
+  const impressions = get('impressions'), likes = get('likes_count'), comments = get('comments_count'), reach = get('reach');
+  const insights = { impressions, reach, likes, comments, saves: get('saved'), shares: get('shares'), engagement_rate: reach > 0 ? ((likes + comments) / reach) * 100 : 0 };
+
+  return new Response(JSON.stringify({ insights }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+}
+
+// ─── Get Instagram Account ─────────────────────────────────────────────────
+async function getIgAccount(supabase: any, userId: string, cors: Record<string, string>) {
+  const { data: igAccount } = await supabase.from('connected_accounts' as any).select('account_id, extra_data').eq('user_id', userId).eq('platform', 'instagram_publisher').maybeSingle();
+  if (igAccount) return new Response(JSON.stringify({ connected: true, ig_account_id: igAccount.account_id, username: igAccount.extra_data?.username, source: 'instagram_publisher' }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+
+  const { data: metaAccount } = await supabase.from('ad_accounts').select('extra_data').eq('user_id', userId).eq('platform', 'meta').eq('is_active', true).maybeSingle();
+  if (metaAccount?.extra_data?.ig_account_id) return new Response(JSON.stringify({ connected: true, ig_account_id: metaAccount.extra_data.ig_account_id, source: 'meta_ads' }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+
+  return new Response(JSON.stringify({ connected: false }), { headers: { ...cors, 'Content-Type': 'application/json' } });
 }

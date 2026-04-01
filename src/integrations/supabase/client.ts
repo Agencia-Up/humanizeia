@@ -5,27 +5,6 @@ import type { Database } from './types';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-// ── Limpeza de sessões de projetos antigos ────────────────────────────────────
-// DEVE rodar ANTES do createClient() — o cliente lê o localStorage imediatamente
-// ao ser instanciado. Se houver uma sessão de outro projeto (ex: Lovable / projeto
-// antigo), o Supabase a carrega na memória e envia como JWT inválido para as
-// Edge Functions, causando "Invalid JWT". Limpamos aqui para que o createClient()
-// comece com slate limpo.
-const CURRENT_PROJECT_REF = 'seyljsqmhlopkcauhlor';
-try {
-  const staleKeys: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k && k.startsWith('sb-') && !k.includes(CURRENT_PROJECT_REF)) {
-      staleKeys.push(k);
-    }
-  }
-  staleKeys.forEach(k => {
-    console.warn('[Supabase] Removendo sessão de projeto antigo do localStorage:', k);
-    localStorage.removeItem(k);
-  });
-} catch { /* localStorage indisponível (SSR, iframe sandbox, etc.) */ }
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";

@@ -48,7 +48,7 @@ const BusinessBriefing = () => {
     setLoading(true);
     try {
       const { error } = await supabase
-        .from('client_briefings')
+        .from('client_briefings' as any)
         .upsert({
           user_id: user.id,
           ...formData,

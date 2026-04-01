@@ -14,10 +14,16 @@ import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
+import { AdminSettingsTab } from '@/components/settings/AdminSettingsTab';
+import { useAuth } from '@/hooks/useAuth';
+import { ShieldCheck } from 'lucide-react';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { profile } = useAuth();
+  
+  const isSuperAdmin = profile?.is_superadmin === true;
 
   useEffect(() => {
     const code = searchParams.get('code');
@@ -60,6 +66,12 @@ export default function SettingsPage() {
               <RefreshCw className="h-4 w-4" />
               Sincronização
             </TabsTrigger>
+            {isSuperAdmin && (
+              <TabsTrigger value="admin" className="gap-2 text-yellow-500 font-bold border-yellow-500/20">
+                <ShieldCheck className="h-4 w-4" />
+                Administração
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="company">
@@ -81,6 +93,12 @@ export default function SettingsPage() {
           <TabsContent value="sync">
             <DataSyncSettingsTab />
           </TabsContent>
+
+          {isSuperAdmin && (
+            <TabsContent value="admin">
+              <AdminSettingsTab />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </MainLayout>
