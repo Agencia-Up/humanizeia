@@ -338,17 +338,20 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
 }) {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta = slide.type === 'cta' || slide.order === total;
+  const [avatarError, setAvatarError] = React.useState(false);
 
-  // Bottom image: editorial widescreen
+  // Use image_prompt > visual_cue > headline for the bottom editorial image
+  const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'professional business photography';
   const visualPrompt = encodeURIComponent(
-    `${slide.visual_cue || slide.image_prompt || slide.headline}, editorial professional photography, business setting, warm cinematic light, widescreen landscape, high detail, no text, 8K`
+    `${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`
   );
   const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
-  const bottomImgRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=500&nologo=true&seed=${seed}`;
+  const bottomImgRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}`;
   const bottomImg = POLLINATIONS_CACHE.get(bottomImgRaw) || bottomImgRaw;
 
   // Initial for avatar placeholder
   const initial = (brandName || 'MC').charAt(0).toUpperCase();
+  const showAvatar = !!(clientImageUrl && !avatarError);
 
   return (
     <div style={{
@@ -360,77 +363,85 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
     }}>
       {/* TOP — Creator avatar + name */}
       <div style={{
-        padding: '20px 20px 0',
+        padding: '18px 20px 0',
         display: 'flex', alignItems: 'center', gap: 12,
         flexShrink: 0,
       }}>
         {/* Avatar */}
         <div style={{
-          width: 52, height: 52, borderRadius: '50%',
+          width: 50, height: 50, borderRadius: '50%',
           overflow: 'hidden', flexShrink: 0,
           border: '2px solid #E5E5E5',
           background: '#F0F0F0',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
+          position: 'relative',
         }}>
-          {clientImageUrl ? (
-            <img src={clientImageUrl} alt={brandName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          {showAvatar ? (
+            <img
+              src={clientImageUrl}
+              alt={brandName}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              onError={() => setAvatarError(true)}
+              crossOrigin="anonymous"
+            />
           ) : (
-            <span style={{ fontSize: 20, fontWeight: 700, color: '#555' }}>{initial}</span>
+            <div style={{
+              width: '100%', height: '100%',
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: '#fff' }}>{initial}</span>
+            </div>
           )}
         </div>
         {/* Name + handle */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: '#111', lineHeight: 1 }}>{brandName}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#111', lineHeight: 1 }}>{brandName}</span>
             {/* Verified badge */}
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="12" fill="#1D9BF0" />
               <path d="M9 12l2 2 4-4" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
-          <span style={{ fontSize: 11, color: '#888' }}>
+          <span style={{ fontSize: 10, color: '#888' }}>
             @{brandName.toLowerCase().replace(/\s+/g, '')}
           </span>
         </div>
       </div>
 
-      {/* MIDDLE — Narrative text */}
+      {/* MIDDLE — Narrative text (flex: 1 to fill remaining space) */}
       <div style={{
-        flex: 1, padding: '16px 20px 12px',
-        display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 10,
-        overflow: 'hidden',
+        flex: 1, padding: '14px 20px 8px',
+        display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 8,
+        overflow: 'hidden', minHeight: 0,
       }}>
-        {/* Sub label */}
+        {/* Sub label on cover */}
         {isCover && typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#333', lineHeight: 1.4 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#555', lineHeight: 1.4 }}>
             {slide.sub_headline}
           </div>
         )}
         {/* Main text */}
-        <div style={{
-          fontSize: isCover ? 15 : 13, lineHeight: 1.65, color: '#111',
-          fontWeight: 400,
-        }}>
+        <div style={
+          { fontSize: isCover ? 16 : 13, lineHeight: 1.65, color: '#111', fontWeight: 400, overflow: 'hidden' }
+        }>
           {isCover ? (
-            // On cover: headline as large text
-            <span style={{ fontWeight: 700, fontSize: 15 }}>{slide.headline}</span>
+            <span style={{ fontWeight: 700, fontSize: 16, lineHeight: 1.3 }}>{slide.headline}</span>
           ) : (
             <>
-              {/* Content slides: narrative body */}
               {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-                <div style={{ fontWeight: 700, marginBottom: 6, color: '#000' }}>{slide.sub_headline}</div>
+                <div style={{ fontWeight: 700, marginBottom: 5, color: '#000', fontSize: 13 }}>{slide.sub_headline}</div>
               )}
-              {typeof slide.body === 'string' && slide.body.trim() && <div>{slide.body}</div>}
-              {/* Bullets as ✖️/✅ style if available */}
+              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 4 }}>{slide.body}</div>}
               {Array.isArray(slide.bullets) && slide.bullets.map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                  <span style={{ color: '#111', fontWeight: 700 }}>•</span>
+                <div key={i} style={{ display: 'flex', gap: 6, marginTop: 5 }}>
+                  <span style={{ color: '#333', fontWeight: 700 }}>•</span>
                   <span style={{ fontWeight: 400 }}>{typeof b === 'string' ? b : ''}</span>
                 </div>
               ))}
-              {/* Headline as mid-paragraph emphasis */}
               {slide.headline && (
-                <div style={{ fontWeight: 700, marginTop: 8, color: '#000' }}>
+                <div style={{ fontWeight: 700, marginTop: 6, color: '#000', fontSize: 14 }}>
                   <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color='#1D9BF0' />
                 </div>
               )}
@@ -439,12 +450,12 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
         </div>
         {/* "Continua 👇" for non-last slides */}
         {!isCta && (
-          <div style={{ fontSize: 13, color: '#333' }}>Continua 👇</div>
+          <div style={{ fontSize: 12, color: '#444', marginTop: 'auto', paddingTop: 4 }}>Continua 👇</div>
         )}
         {/* CTA */}
         {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
           <div style={{
-            marginTop: 4, padding: '10px 0',
+            marginTop: 6, padding: '10px 0',
             fontWeight: 700, fontSize: 14, color: '#111',
           }}>
             {slide.cta}
@@ -452,17 +463,30 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
         )}
       </div>
 
-      {/* BOTTOM — Widescreen editorial image */}
+      {/* BOTTOM — Widescreen editorial image (fixed height) */}
       <div style={{
         flexShrink: 0,
-        height: '30%',
-        margin: '0 20px 16px',
+        height: '38%',
+        margin: '0 16px 14px',
         borderRadius: 10,
         overflow: 'hidden',
-        backgroundImage: `url("${bottomImg}")`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-      }} />
+        position: 'relative',
+        background: '#f0f0f0', // placeholder bg while loading
+      }}>
+        <div
+          style={{
+            position: 'absolute', inset: 0,
+            backgroundImage: `url("${bottomImg}")`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }}
+        />
+        {/* Subtle gradient overlay bottom */}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: '30%',
+          background: 'linear-gradient(to bottom, transparent, rgba(0,0,0,0.15))',
+        }} />
+      </div>
     </div>
   );
 }
