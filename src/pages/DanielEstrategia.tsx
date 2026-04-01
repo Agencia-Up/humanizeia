@@ -214,6 +214,7 @@ interface GeneratedStrategy {
 
 export default function DanielEstrategia() {
   const { toast } = useToast();
+  const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
   const [generating, setGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState('estrategia');
   const [strategy, setStrategy] = useState<GeneratedStrategy | null>(null);
@@ -385,7 +386,7 @@ Preencha TODOS os campos com conteúdo real, específico e atual para o nicho "$
     <MainLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-heading font-bold flex items-center gap-2">
               <div className="p-2 rounded-xl bg-gradient-to-br from-purple-500/20 to-blue-500/20">
@@ -397,22 +398,41 @@ Preencha TODOS os campos com conteúdo real, específico e atual para o nicho "$
               Planejamento estratégico e análise de negócios com IA
             </p>
           </div>
-          <Badge variant="outline" className="gap-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-            DANIEL Online
-          </Badge>
+          <div className="flex items-center gap-3">
+            {/* ── Mode switcher ── */}
+            <div className="flex items-center rounded-lg border border-border bg-card overflow-hidden h-9">
+              <button
+                onClick={() => { setViewMode('simplified'); setActiveTab('estrategia'); }}
+                className={`px-3 h-full text-xs font-medium transition-colors ${viewMode === 'simplified' ? 'bg-purple-500 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                📊 Simplificado
+              </button>
+              <button
+                onClick={() => setViewMode('expert')}
+                className={`px-3 h-full text-xs font-medium transition-colors ${viewMode === 'expert' ? 'bg-purple-500 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                ⚙️ Especialista
+              </button>
+            </div>
+            <Badge variant="outline" className="gap-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+              DANIEL Online
+            </Badge>
+          </div>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-8 text-xs">
+          <TabsList className={`flex-wrap h-auto gap-1 ${viewMode === 'simplified' ? 'w-auto' : 'grid w-full grid-cols-8'} text-xs`}>
             <TabsTrigger value="estrategia" className="gap-1 text-xs"><Compass className="h-3 w-3" />Estratégia</TabsTrigger>
-            <TabsTrigger value="analise" className="gap-1 text-xs"><BarChart3 className="h-3 w-3" />Análise</TabsTrigger>
-            <TabsTrigger value="swot" className="gap-1 text-xs"><Target className="h-3 w-3" />SWOT</TabsTrigger>
-            <TabsTrigger value="construtor" className="gap-1 text-xs"><Layers className="h-3 w-3" />Construtor</TabsTrigger>
-            <TabsTrigger value="modelos" className="gap-1 text-xs">📋 Modelos</TabsTrigger>
-            <TabsTrigger value="copy" className="gap-1 text-xs">✍️ Copy LP</TabsTrigger>
-            <TabsTrigger value="metricas" className="gap-1 text-xs"><TrendingUp className="h-3 w-3" />Métricas</TabsTrigger>
-            <TabsTrigger value="pesquisa" className="text-[10px]">🔍 Pesquisa</TabsTrigger>
+            <TabsTrigger value="pesquisa" className="text-xs gap-1">🔍 Pesquisa</TabsTrigger>
+            {viewMode === 'expert' && <>
+              <TabsTrigger value="analise" className="gap-1 text-xs"><BarChart3 className="h-3 w-3" />Análise</TabsTrigger>
+              <TabsTrigger value="swot" className="gap-1 text-xs"><Target className="h-3 w-3" />SWOT</TabsTrigger>
+              <TabsTrigger value="construtor" className="gap-1 text-xs"><Layers className="h-3 w-3" />Construtor</TabsTrigger>
+              <TabsTrigger value="modelos" className="gap-1 text-xs">📋 Modelos</TabsTrigger>
+              <TabsTrigger value="copy" className="gap-1 text-xs">✍️ Copy LP</TabsTrigger>
+              <TabsTrigger value="metricas" className="gap-1 text-xs"><TrendingUp className="h-3 w-3" />Métricas</TabsTrigger>
+            </>}
           </TabsList>
 
           {/* STRATEGY GENERATOR */}
@@ -946,16 +966,45 @@ Preencha TODOS os campos com conteúdo real, específico e atual para o nicho "$
                 </Badge>
               </div>
 
-              {/* Recommendation */}
-              {researchResult.recommendation && (
+              {/* SIMPLIFIED: Insights Acionáveis */}
+              {viewMode === 'simplified' && researchResult.recommendation && (
+                <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-4 space-y-3">
+                  <p className="text-sm font-bold text-purple-400">🎯 O que fazer agora</p>
+                  <p className="text-sm text-foreground leading-relaxed">{researchResult.recommendation}</p>
+                  {researchResult.content_briefs?.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                      {researchResult.content_briefs.slice(0, 3).map((brief: any) => (
+                        <div key={brief.id} className="rounded-lg border border-border/50 bg-card/60 p-3 space-y-2">
+                          <p className="text-xs font-semibold text-foreground leading-snug">{brief.title}</p>
+                          <p className="text-[11px] text-muted-foreground">{brief.hook}</p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full h-7 text-[11px] border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
+                            onClick={() => {
+                              navigator.clipboard.writeText(`Título: ${brief.title}\nHook: ${brief.hook}\nCTA: ${brief.cta}`);
+                              toast({ title: 'Pauta copiada!', description: 'Cole no Paulo ou Davi.' });
+                            }}
+                          >
+                            📋 Usar essa pauta
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* EXPERT: Recommendation full */}
+              {viewMode === 'expert' && researchResult.recommendation && (
                 <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
                   <p className="text-xs font-semibold text-cyan-400 mb-1">💡 Recomendação estratégica</p>
                   <p className="text-sm text-foreground">{researchResult.recommendation}</p>
                 </div>
               )}
 
-              {/* Trending topics */}
-              {researchResult.trending_topics?.length > 0 && (
+              {/* Trending topics (expert only) */}
+              {viewMode === 'expert' && researchResult.trending_topics?.length > 0 && (
                 <div>
                   <h3 className="text-sm font-semibold mb-2">🔥 Tópicos em alta</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -981,7 +1030,8 @@ Preencha TODOS os campos com conteúdo real, específico e atual para o nicho "$
               )}
 
               {/* Content briefs */}
-              {researchResult.content_briefs?.length > 0 && (
+              {/* Content briefs (expert only — simplified shows them above) */}
+              {viewMode === 'expert' && researchResult.content_briefs?.length > 0 && (
                 <div>
                   <h3 className="text-sm font-semibold mb-2">📋 Pautas prontas ({researchResult.content_briefs.length})</h3>
                   <div className="space-y-3">
