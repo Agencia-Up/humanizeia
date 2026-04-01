@@ -720,29 +720,35 @@ function CarouselPageViewerInner({
     const fallbackTimeout = setTimeout(() => { if (!isCancelled) setLoadingImages(false); }, 30000);
     const urls = preloadImages(slides, templateMode);
 
-    urls.forEach(url => {
-      if (POLLINATIONS_CACHE.has(url)) {
+    const loadSequentially = async () => {
+      for (const url of urls) {
+        if (isCancelled) break;
+        if (POLLINATIONS_CACHE.has(url)) {
+          completed++;
+          setLoadedCount(completed);
+          if (completed === total) { clearTimeout(fallbackTimeout); setLoadingImages(false); }
+          continue;
+        }
+        try {
+          // Bypassing Rate Limit with delay
+          const res = await fetch(url, { cache: 'force-cache' });
+          if (res.ok) {
+            const blob = await res.blob();
+            POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
+          }
+        } catch (e) {
+          console.warn('Silent preload failed');
+        }
         completed++;
         setLoadedCount(completed);
         if (completed === total) { clearTimeout(fallbackTimeout); setLoadingImages(false); }
-        return;
+        // Delay para evitar HTTP 429 Too Many Requests do Pollinations
+        await new Promise(r => setTimeout(r, 800));
       }
-      fetch(url, { cache: 'force-cache' })
-        .then(res => res.blob())
-        .then(blob => {
-          if (isCancelled) return;
-          POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
-          completed++;
-          setLoadedCount(completed);
-          if (completed === total) { clearTimeout(fallbackTimeout); setLoadingImages(false); }
-        })
-        .catch(() => {
-          if (isCancelled) return;
-          completed++;
-          setLoadedCount(completed);
-          if (completed === total) { clearTimeout(fallbackTimeout); setLoadingImages(false); }
-        });
-    });
+    };
+    
+    loadSequentially();
+    
     return () => { isCancelled = true; clearTimeout(fallbackTimeout); };
   }, [slides, templateMode]);
 
@@ -773,34 +779,41 @@ function CarouselPageViewerInner({
   return (
     <div className="flex flex-col w-full h-full max-h-[80vh]">
       {/* Header Actions */}
-      <div className="flex justify-between items-center mb-4 px-2 shrink-0 flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 px-2 shrink-0 gap-4 border-b border-white/5 pb-4">
         <div>
-          <h2 className="text-lg font-bold">Galeria de Slides</h2>
-          <p className="text-xs text-muted-foreground">
-            {slides.length} páginas geradas {loadingImages ? `(Carregando imagens ${loadedCount}/${slides.length}...)` : ''}
+          <h2 className="text-xl font-black text-white w-full sm:w-auto mt-2">Galeria de Slides</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            {slides.length} páginas geradas {loadingImages ? `(Carregando cenários ${loadedCount}/${slides.length}...)` : ''}
           </p>
         </div>
         
-        <div className="flex items-center gap-4">
-          {/* Template picker */}
-          <div className="flex items-center gap-1.5 justify-center bg-muted/40 px-3 py-1.5 rounded-full border border-border/40">
-            <span className="text-[10px] text-muted-foreground mr-1 font-semibold uppercase tracking-wider">Estilo:</span>
-            {CAROUSEL_TEMPLATES.map(t => (
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+          {/* Template picker - Filtramos as cores antigas */}
+          <div className="flex items-center gap-2 justify-center bg-black/40 px-4 py-2 rounded-xl border border-white/10 shadow-inner">
+            <span className="text-[10px] text-muted-foreground/80 mr-1 font-bold uppercase tracking-widest hidden sm:inline">Tema:</span>
+            {CAROUSEL_TEMPLATES.filter(t => t.id === 'futurista_ia' || t.id === 'personal_brand').map(t => (
               <button key={t.id} onClick={() => onTemplateChange(t.id as TemplateId)} title={t.name}
-                style={{ width: 22, height: 22, borderRadius: '50%', background: t.id === 'personal_brand' ? '#333' : t.id === 'futurista_ia' ? '#6366F1' : (t as any).accent, border: t.id === templateId ? '3px solid white' : '2px solid transparent', cursor: 'pointer', transform: t.id === templateId ? 'scale(1.2)' : 'scale(1)', transition: 'all 0.15s', boxShadow: t.id === templateId ? `0 0 8px ${(t as any).accentGlow}` : 'none', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {t.id === 'futurista_ia' ? '🤖' : t.id === 'personal_brand' ? '👤' : ''}
+                style={{ 
+                  width: 30, height: 30, borderRadius: '50%', 
+                  background: t.id === 'personal_brand' ? '#1f2023' : '#6366F1', 
+                  border: t.id === templateId ? '2px solid white' : '2px solid transparent', 
+                  cursor: 'pointer', transform: t.id === templateId ? 'scale(1.15)' : 'scale(1)', transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)', 
+                  boxShadow: t.id === templateId ? `0 0 16px ${(t as any).accentGlow}` : 'none', fontSize: 13, 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                }}>
+                {t.id === 'futurista_ia' ? '🤖' : '👤'}
               </button>
             ))}
           </div>
 
           <Button 
-            size="sm" 
+            size="default" 
             onClick={handleExportAll} 
             disabled={exporting || loadingImages} 
-            className="bg-pink-600 hover:bg-pink-700 text-white shadow-md gap-2 h-9"
+            className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-lg border-0 sm:h-11 sm:px-6 w-full sm:w-auto font-bold tracking-wide"
           >
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            {exporting ? 'Baixando...' : 'Baixar Todos os Slides'}
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+            {exporting ? 'Baixando Tudo...' : 'Salvar Carrossel'}
           </Button>
         </div>
       </div>
