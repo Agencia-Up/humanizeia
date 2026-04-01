@@ -158,6 +158,7 @@ export function useApolloAgent() {
     targetAccountId?: string;
     datePreset?: ApolloDatePreset;
     auto_execute?: boolean;
+    viewMode?: 'simplified' | 'expert';
   } = {}) => {
     setIsAnalyzing(true);
     try {
@@ -167,6 +168,7 @@ export function useApolloAgent() {
           targetAccountId: opts.targetAccountId,
           datePreset: opts.datePreset || 'last_30d',
           auto_execute: opts.auto_execute || false,
+          viewMode: opts.viewMode || 'simplified',
         },
       });
 
