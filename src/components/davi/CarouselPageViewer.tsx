@@ -174,21 +174,64 @@ function HighlightHeadline({ text, accentWord, color }: { text: string; accentWo
   );
 }
 
+// ── Lazy Image Queuing Hook to prevent HTTP 429 ──────────────────────────────
 const POLLINATIONS_CACHE = new Map<string, string>();
+const imgQueue: string[] = [];
+let isProcessingQueue = false;
 
-function buildImageUrl(visualCue: string, headline: string, order: number, isPersonalBrand = false): string {
-  const style = isPersonalBrand
-    ? 'editorial photography, business professional setting, warm natural light, widescreen, cinematic, no text, 8K'
-    : 'cinematic AI visualization, dark dramatic background, neon lighting, 3D holographic elements, ultra detailed, 4K, no text';
-  const prompt = encodeURIComponent(
-    `${visualCue || headline || 'creative abstract'}, ${style}`
-  );
-  const seed = ((headline?.length || 10) * (order + 1) * 37) % 9999;
-  return `https://image.pollinations.ai/prompt/${prompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
+const processQueue = async () => {
+  if (isProcessingQueue) return;
+  isProcessingQueue = true;
+  while (imgQueue.length > 0) {
+    const url = imgQueue[0];
+    if (!POLLINATIONS_CACHE.has(url)) {
+      try {
+        const res = await fetch(url, { cache: 'force-cache' });
+        if (res.ok) {
+          const blob = await res.blob();
+          POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
+        }
+      } catch (e) {
+        console.warn('Queue fetch failed', e);
+      }
+      // Delay mandatory to prevent Pollinations from blocking the IP
+      await new Promise(r => setTimeout(r, 1200));
+    }
+    imgQueue.shift();
+    window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
+  }
+  isProcessingQueue = false;
+};
+
+export function usePollinationsImage(prompt: string, width: number, height: number, seed: number) {
+  // Truncate prompt to prevent URL Too Long errors from giant copywriter prompts
+  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 250));
+  const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
+  
+  const [localUrl, setLocalUrl] = React.useState<string | null>(POLLINATIONS_CACHE.get(url) || null);
+
+  React.useEffect(() => {
+    if (POLLINATIONS_CACHE.has(url)) {
+      setLocalUrl(POLLINATIONS_CACHE.get(url)!);
+      return;
+    }
+    if (!imgQueue.includes(url)) {
+      imgQueue.push(url);
+      processQueue();
+    }
+    const listener = (e: any) => {
+      if (e.detail === url && POLLINATIONS_CACHE.has(url)) {
+        setLocalUrl(POLLINATIONS_CACHE.get(url)!);
+      }
+    };
+    window.addEventListener('pollinations_loaded', listener);
+    return () => window.removeEventListener('pollinations_loaded', listener);
+  }, [url]);
+
+  return localUrl;
 }
 
 // ── FUTURISTA IA SLIDE ────────────────────────────────────────────────────────
-// Layout: big cinematic image top 55% ; dark bar bottom 45% with bold text
 function FuturistaSlide({ slide, tpl, brandName, total }: {
   slide: CarouselSlide;
   tpl: typeof CAROUSEL_TEMPLATES[number];
@@ -198,12 +241,9 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta = slide.type === 'cta' || slide.order === total;
 
-  const visualPrompt = encodeURIComponent(
-    `${slide.visual_cue || slide.image_prompt || slide.headline}, cinematic dark AI scene, neon holographic elements, 3D floating objects, dramatic lighting, ultra realistic, 8K, no text overlay`
-  );
+  const visualPrompt = `${slide.visual_cue || slide.image_prompt || slide.headline}, cinematic dark AI scene, neon holographic elements, 3D floating objects, dramatic lighting, ultra realistic, 8K, no text overlay`;
   const seed = ((slide.headline?.length || 10) * slide.order * 57) % 9999;
-  const bgImgRawUrl = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=730&nologo=true&seed=${seed}`;
-  const bgImgUrl = POLLINATIONS_CACHE.get(bgImgRawUrl) || bgImgRawUrl;
+  const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 730, seed);
 
   return (
     <div style={{
@@ -216,12 +256,18 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
       {/* TOP — Cinematic image (55%) */}
       <div style={{
         flex: '0 0 55%',
-        backgroundImage: `url("${bgImgUrl}")`,
+        backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
         backgroundSize: 'cover',
         backgroundPosition: 'center top',
         position: 'relative',
         overflow: 'hidden',
-      }}>
+      }} className={!bgImgUrl ? "animate-pulse bg-slate-900 flex items-center justify-center" : ""}>
+        {!bgImgUrl && (
+          <div className="flex flex-col items-center gap-2 opacity-50">
+            <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
+            <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Renderizando IA...</span>
+          </div>
+        )}
         {/* Gradient fade bottom */}
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%',
@@ -328,7 +374,6 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
 }
 
 // ── PERSONAL BRAND SLIDE ──────────────────────────────────────────────────────
-// Layout: creator avatar + name top ; text body middle ; widescreen image bottom
 function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
   slide: CarouselSlide;
   tpl: typeof CAROUSEL_TEMPLATES[number];
@@ -342,12 +387,9 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
 
   // Use image_prompt > visual_cue > headline for the bottom editorial image
   const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'professional business photography';
-  const visualPrompt = encodeURIComponent(
-    `${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`
-  );
+  const visualPrompt = `${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`;
   const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
-  const bottomImgRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}`;
-  const bottomImg = POLLINATIONS_CACHE.get(bottomImgRaw) || bottomImgRaw;
+  const bottomImg = usePollinationsImage(visualPrompt, 1200, 600, seed);
 
   // Initial for avatar placeholder
   const initial = (brandName || 'MC').charAt(0).toUpperCase();
@@ -471,16 +513,24 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
         borderRadius: 10,
         overflow: 'hidden',
         position: 'relative',
-        background: '#f0f0f0', // placeholder bg while loading
-      }}>
-        <div
-          style={{
-            position: 'absolute', inset: 0,
-            backgroundImage: `url("${bottomImg}")`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-          }}
-        />
+        background: '#f0f0f0', 
+      }} className={!bottomImg ? "animate-pulse flex items-center justify-center bg-gray-200" : ""}>
+        {!bottomImg && (
+          <div className="flex flex-col items-center gap-2 opacity-60">
+            <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+            <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Carregando Cena...</span>
+          </div>
+        )}
+        {bottomImg && (
+          <div
+            style={{
+              position: 'absolute', inset: 0,
+              backgroundImage: `url("${bottomImg}")`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }}
+          />
+        )}
         {/* Subtle gradient overlay bottom */}
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0, height: '30%',
@@ -504,10 +554,9 @@ function StandardSlide({ slide, tpl, brandName, total }: {
   const textColor = isLight ? tpl.text : '#ffffff';
   const subColor = isLight ? tpl.sub : 'rgba(255,255,255,0.85)';
 
-  const visualPrompt = encodeURIComponent(`${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`);
+  const visualPrompt = `${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`;
   const seed = (slide.headline?.length || 10) * slide.order * 42;
-  const bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
-  const bgImageUrl = POLLINATIONS_CACHE.get(bgImageUrlRaw) || bgImageUrlRaw;
+  const bgImageUrl = usePollinationsImage(visualPrompt, 1080, 1350, seed);
 
   let layout = slide.layout || 'left';
   if ((layout as string) === 'left' || (layout as string) === 'default') {
@@ -622,12 +671,20 @@ function StandardSlide({ slide, tpl, brandName, total }: {
 
   return (
     <div style={{
-      width: '100%', height: '100%', backgroundColor: '#000',
-      backgroundImage: `linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.6) 40%, rgba(0,0,0,0.2) 100%), url("${bgImageUrl}")`,
+      width: '100%', height: '100%', backgroundColor: bgImageUrl ? '#000' : tpl.bg,
+      backgroundImage: bgImageUrl 
+        ? `linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.6) 40%, rgba(0,0,0,0.2) 100%), url("${bgImageUrl}")`
+        : 'none',
       backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat',
       display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden',
       fontFamily: "'Inter', 'Segoe UI', sans-serif",
-    }}>
+    }} className={!bgImageUrl ? "animate-pulse" : ""}>
+      {!bgImageUrl && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center opacity-30 pointer-events-none z-0">
+          <Loader2 className={`w-12 h-12 animate-spin mb-3 ${isLight ? 'text-gray-400' : 'text-white'}`} />
+          <span className={`text-xs font-bold uppercase tracking-widest ${isLight ? 'text-gray-500' : 'text-gray-300'}`}>Gerando Fundo...</span>
+        </div>
+      )}
       <div style={{ height: 4, background: `linear-gradient(90deg, ${tpl.accent}, transparent)`, width: '100%', flexShrink: 0, zIndex: 2 }} />
       <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 2, fontSize: 10, fontWeight: 800, letterSpacing: '0.15em', color: '#fff', textTransform: 'uppercase', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: 6 }}>
         {brandName}
@@ -664,31 +721,6 @@ function SlidePageInner({ slide, tpl, brandName, total, clientImageUrl }: {
   return <StandardSlide slide={slide} tpl={tpl} brandName={brandName} total={total} />;
 }
 
-// ── Preloader ─────────────────────────────────────────────────────────────────
-function preloadImages(slides: CarouselSlide[], templateMode: string): string[] {
-  const urls: string[] = [];
-  slides.forEach(slide => {
-    if (templateMode === 'image_top_text_bottom') {
-      const p = encodeURIComponent(
-        `${slide.visual_cue || slide.image_prompt || slide.headline}, cinematic dark AI scene, neon holographic elements, 3D floating objects, dramatic lighting, ultra realistic, 8K, no text overlay`
-      );
-      const seed = ((slide.headline?.length || 10) * slide.order * 57) % 9999;
-      urls.push(`https://image.pollinations.ai/prompt/${p}?width=1080&height=730&nologo=true&seed=${seed}`);
-    } else if (templateMode === 'avatar_text_image') {
-      const p = encodeURIComponent(
-        `${slide.visual_cue || slide.image_prompt || slide.headline}, editorial professional photography, business setting, warm cinematic light, widescreen landscape, high detail, no text, 8K`
-      );
-      const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
-      urls.push(`https://image.pollinations.ai/prompt/${p}?width=1200&height=500&nologo=true&seed=${seed}`);
-    } else {
-      const p = encodeURIComponent(`${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`);
-      const seed = (slide.headline?.length || 10) * slide.order * 42;
-      urls.push(`https://image.pollinations.ai/prompt/${p}?width=1080&height=1350&nologo=true&seed=${seed}`);
-    }
-  });
-  return urls;
-}
-
 // ── Main component ─────────────────────────────────────────────────────────────
 interface CarouselPageViewerProps {
   slides: CarouselSlide[];
@@ -699,7 +731,7 @@ interface CarouselPageViewerProps {
   clientImageUrl?: string;
 }
 
-function CarouselPageViewerInner({
+export function CarouselPageViewerInner({
   slides, templateId, onTemplateChange, brandName = 'Minha Marca', caption, clientImageUrl
 }: CarouselPageViewerProps) {
   const [exporting, setExporting] = useState(false);
@@ -708,49 +740,13 @@ function CarouselPageViewerInner({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const tpl = CAROUSEL_TEMPLATES.find(t => t.id === templateId) ?? CAROUSEL_TEMPLATES[0];
-  const templateMode = (tpl as any).layoutMode || 'standard';
 
+  // O preload principal agora é gerenciado globalmente pelo Queue Hook nos Slides
   useEffect(() => {
-    let completed = 0;
-    let isCancelled = false;
-    const total = slides.length;
-    if (!total) { setLoadingImages(false); return; }
-    setLoadingImages(true);
-    setLoadedCount(0);
-    const fallbackTimeout = setTimeout(() => { if (!isCancelled) setLoadingImages(false); }, 30000);
-    const urls = preloadImages(slides, templateMode);
-
-    const loadSequentially = async () => {
-      for (const url of urls) {
-        if (isCancelled) break;
-        if (POLLINATIONS_CACHE.has(url)) {
-          completed++;
-          setLoadedCount(completed);
-          if (completed === total) { clearTimeout(fallbackTimeout); setLoadingImages(false); }
-          continue;
-        }
-        try {
-          // Bypassing Rate Limit with delay
-          const res = await fetch(url, { cache: 'force-cache' });
-          if (res.ok) {
-            const blob = await res.blob();
-            POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
-          }
-        } catch (e) {
-          console.warn('Silent preload failed');
-        }
-        completed++;
-        setLoadedCount(completed);
-        if (completed === total) { clearTimeout(fallbackTimeout); setLoadingImages(false); }
-        // Delay para evitar HTTP 429 Too Many Requests do Pollinations
-        await new Promise(r => setTimeout(r, 800));
-      }
-    };
-    
-    loadSequentially();
-    
-    return () => { isCancelled = true; clearTimeout(fallbackTimeout); };
-  }, [slides, templateMode]);
+    // Apenas marca como carregado instantaneamente para exibir a galeria,
+    // já que as imagens têm seus próprios Skeletons e Controllers
+    setLoadingImages(false);
+  }, []);
 
   const handleExportAll = async () => {
     if (!containerRef.current) return;
