@@ -795,8 +795,8 @@ export default function JoseTrafego() {
           </Card>
         )}
 
-        {/* ── Historical WoW trend (always visible if data exists) ── */}
-        {snapshots.length > 0 && (
+        {/* ── Historical WoW trend (expert only) ── */}
+        {viewMode === 'expert' && snapshots.length > 0 && (
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground flex items-center gap-1">
               <Activity className="h-3.5 w-3.5" /> Tendências Acumuladas ({snapshots.length} semanas de dados)
@@ -805,8 +805,8 @@ export default function JoseTrafego() {
           </div>
         )}
 
-        {/* ── After analysis: overview ── */}
-        {session && (
+        {/* ── After analysis: overview (expert only) ── */}
+        {session && viewMode === 'expert' && (
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <Card className={`col-span-2 md:col-span-1 ${overallScore !== null ? healthBg(overallScore) : ''}`}>
@@ -829,7 +829,7 @@ export default function JoseTrafego() {
               </div>
             )}
 
-            {/* ── AI Log ── */}
+            {/* ── AI Log (expert only) ── */}
             {aiLogEntries.length > 0 && (
               <Collapsible open={aiLogOpen} onOpenChange={setAiLogOpen}>
                 <CollapsibleTrigger asChild>
