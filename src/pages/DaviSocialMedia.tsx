@@ -16,7 +16,8 @@ import { CarouselPageViewer, TemplateId, CAROUSEL_TEMPLATES } from '@/components
 import {
   Instagram, Zap, Loader2, Clock, CheckCircle2, XCircle, ChevronRight,
   Copy, Trash2, FolderOpen, Layers, Send, Link, Palette, Eye,
-  Brain, AlertTriangle, PenTool, TrendingUp, BookOpen, MessageSquare, AlertCircle, Footprints, Flame
+  Brain, AlertTriangle, PenTool, TrendingUp, BookOpen, MessageSquare, AlertCircle, Footprints, Flame,
+  Camera, X as XIcon
 } from 'lucide-react';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 import {
@@ -152,14 +153,17 @@ export default function DaviSocialMedia() {
     localStorage.setItem('daviLibrary', JSON.stringify(library));
   }, [library]);
   const [autoModeRunning, setAutoModeRunning] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('dark_pro');
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('futurista_ia');
   const [carouselType, setCarouselType] = useState<CarouselTypeValue>('educacional');
   const [clientContext, setClientContext] = useState<{ name: string; produto: string; publico: string } | null>(null);
   const [briefingAlerta, setBriefingAlerta] = useState(false);
+  const [clientImageUrl, setClientImageUrl] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
 
   // ─── Instagram connection check ─────────────────────────────────────────
   const { data: igAccount } = useQuery({
@@ -275,6 +279,35 @@ export default function DaviSocialMedia() {
       if (m.id !== msgId || !m.contentCard) return m;
       return { ...m, contentCard: { ...m.contentCard, templateId } };
     }));
+  };
+
+  // ─── Upload client photo ─────────────────────────────────────────────────
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    setUploadingPhoto(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `${user.id}/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage
+        .from('davi-uploads')
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from('davi-uploads').getPublicUrl(path);
+      setClientImageUrl(publicUrl);
+      // Auto-select Personal Brand template when client photo is uploaded
+      setSelectedTemplate('personal_brand');
+      toast({ title: '📷 Foto carregada!', description: 'Template Personal Brand ativado automaticamente. O Davi usará sua foto no carrossel.' });
+    } catch (err: any) {
+      // Fallback: create object URL from file directly for preview
+      const objectUrl = URL.createObjectURL(file);
+      setClientImageUrl(objectUrl);
+      setSelectedTemplate('personal_brand');
+      toast({ title: '📷 Foto carregada!', description: 'Preview local ativo. Configure o bucket davi-uploads no Supabase para salvar permanentemente.' });
+    } finally {
+      setUploadingPhoto(false);
+      if (e.target) e.target.value = '';
+    }
   };
 
   const handlePublishNow = async (content: GeneratedContent) => {
@@ -953,6 +986,47 @@ ${pautasStr}`;
                 Importar do Paulo
               </Button>
 
+              {/* Client photo upload button */}
+              <div className="relative">
+                <input
+                  ref={photoRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePhotoUpload}
+                />
+                {clientImageUrl ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => photoRef.current?.click()}
+                      className="h-9 w-9 rounded-full overflow-hidden border-2 border-emerald-500/50 hover:border-emerald-400 transition-all"
+                      title="Trocar foto do cliente"
+                    >
+                      <img src={clientImageUrl} alt="foto cliente" className="w-full h-full object-cover" />
+                    </button>
+                    <button
+                      onClick={() => { setClientImageUrl(null); setSelectedTemplate('futurista_ia'); }}
+                      className="h-5 w-5 rounded-full bg-red-500/20 hover:bg-red-500/40 text-red-400 flex items-center justify-center transition-all"
+                      title="Remover foto"
+                    >
+                      <XIcon className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => photoRef.current?.click()}
+                    disabled={uploadingPhoto}
+                    className="h-9 px-3 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-400 border-emerald-500/20 font-semibold text-xs rounded-full transition-all gap-1.5"
+                    title="Enviar foto do cliente para usar no carrossel (ativa modo Personal Brand)"
+                  >
+                    {uploadingPhoto ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+                    {uploadingPhoto ? 'Enviando...' : 'Foto do Cliente'}
+                  </Button>
+                )}
+              </div>
+
               <Button
                 onClick={() => {
                   if (!clientContext?.produto) {
@@ -1153,9 +1227,10 @@ ${pautasStr}`;
                           {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
                             <CarouselPageViewer
                               slides={message.contentCard.slides}
-                              templateId={(message.contentCard.templateId as TemplateId) ?? 'dark_pro'}
+                              templateId={(message.contentCard.templateId as TemplateId) ?? 'futurista_ia'}
                               onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
                               brandName={clientContext?.name || 'Minha Marca'}
+                              clientImageUrl={clientImageUrl ?? undefined}
                             />
                           ) : (
                             <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
@@ -1326,7 +1401,7 @@ ${pautasStr}`;
                         </DialogHeader>
                         <CarouselPageViewer
                           slides={item.slides}
-                          templateId={(item.templateId as TemplateId) ?? 'dark_pro'}
+                          templateId={(item.templateId as TemplateId) ?? 'futurista_ia'}
                           onTemplateChange={(tid) => {
                             // Update template in library item
                             setLibrary(prev => prev.map(l => l.id === item.id ? { ...l, templateId: tid } : l));
@@ -1334,6 +1409,7 @@ ${pautasStr}`;
                             setMessages(prev => prev.map(m => m.contentCard?.id === item.id ? { ...m, contentCard: { ...m.contentCard, templateId: tid } } : m));
                           }}
                           brandName={clientContext?.name || 'Minha Marca'}
+                          clientImageUrl={clientImageUrl ?? undefined}
                         />
                       </DialogContent>
                     </Dialog>
