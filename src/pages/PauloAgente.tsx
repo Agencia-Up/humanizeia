@@ -131,11 +131,12 @@ Slide 2: "Essa é a maior objeção de quem ainda resiste. Vou te mandar a real:
 Slide 3: "O problema é quem tá operando. E eu vou te mostrar o passo a passo definitivo."
 
 **Regras de ouro do estilo:**
-- Primeira linha do slide 1 = TUDO. Ela decide se rodam o dedo ou param.
-- Parágrafos curtos. Nunca mais de 3 linhas por slide.
-- Cada slide deve ter tensão suficiente para o leitor querer ver o próximo.
-- Use fatos específicos e números reais — nunca generalizações vazias.
-- O CTA final deve ser irresistível, não genérico ("Salva esse post" é melhor que "Curta e compartilhe").
+- A COPY DE CADA SLIDE DEVE SER LONGA, PROFUNDA E DENSAMENTE PERSUASIVA. Esqueça carrosséis com apenas "uma frase". Eu quero parágrafos robustos que expliquem o "por que" de forma genial e mostrem domínio absoluto do assunto.
+- Primeira linha do slide 1 = TUDO. Ela decide se rodam o dedo ou param. Tem que ser um soco no estômago (Hook agressivo/curioso).
+- Cada slide de conteúdo (slides do meio) DEVE ter no mínimo 3 a 4 parágrafos de explicação técnica ou storytelling emocional. Nunca seja raso. Aprofunde-se na dor.
+- Use fatos específicos, números reais e neurociência da persuasão — nunca generalizações vazias ou dicas de "ChatGPT genérico".
+- O CTA final deve ser um Ultimato Irresistível.
+- Legenda do post (Caption): ESCOLHA PALAVRAS AGRESSIVAS de marketing direto. O caption precisa ser um manifesto persuasivo de 5 parágrafos de puro valor, terminando com o CTA.
 
 ## CONTEXTO DO CLIENTE
 Cliente: ${ctx.clientName}
@@ -332,6 +333,22 @@ export default function PauloAgente() {
       toast({ title: '🎨 Enviado para o Davi!', description: 'O Davi já pode puxar esse carrossel para gerar o visual.' });
     } catch (err: any) {
       toast({ title: 'Erro ao enviar', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const handleDeleteCarousel = async (carouselId: string) => {
+    if (!user) return;
+    try {
+      await supabase
+        .from('paulo_carousels' as any)
+        .delete()
+        .eq('id', carouselId)
+        .eq('user_id', user.id);
+
+      setSavedCarousels(prev => prev.filter(c => c.id !== carouselId));
+      toast({ title: 'Ideia excluída!', description: 'O carrossel foi removido da sua biblioteca.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao excluir', description: err.message, variant: 'destructive' });
     }
   };
 
@@ -1014,15 +1031,25 @@ INSTRUÇÕES CRÍTICAS:
 
                     {/* Action */}
                     {carousel.id && carousel.status !== 'ready_for_davi' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="w-full h-6 text-[10px] mt-2 text-emerald-400 hover:bg-emerald-500/10 gap-1"
-                        onClick={() => sendToDavi(carousel.id!)}
-                      >
-                        <Zap className="h-2.5 w-2.5" />
-                        Enviar ao Davi
-                      </Button>
+                      <div className="flex gap-1 mt-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex-1 h-6 text-[10px] text-emerald-400 hover:bg-emerald-500/10 gap-1"
+                          onClick={() => sendToDavi(carousel.id!)}
+                        >
+                          <Zap className="h-2.5 w-2.5" />
+                          Enviar ao Davi
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0 text-muted-foreground hover:bg-red-500/10 hover:text-red-400"
+                          onClick={() => handleDeleteCarousel(carousel.id!)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
                     )}
                     {carousel.status === 'ready_for_davi' && (
                       <p className="text-[10px] text-emerald-400 mt-2 text-center flex items-center justify-center gap-1">

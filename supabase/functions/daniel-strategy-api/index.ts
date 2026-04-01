@@ -143,7 +143,7 @@ Formato JSON esperado:
 }
 
 async function researchTrends(body: any) {
-  const { niche, platforms = ['instagram', 'tiktok', 'google'] } = body;
+  const { niche, links, platforms = ['instagram', 'tiktok', 'google'] } = body;
   if (!niche?.trim()) return sendOkResponse({ error: 'O Nicho do cliente é obrigatório para realizar a pesquisa.' });
 
   const platformsList = Array.isArray(platforms) ? platforms.join(', ') : 'instagram, tiktok, google';
@@ -157,6 +157,9 @@ Retorne APENAS um objeto JSON válido, perfeitamente estruturado, sem tags markd
   const userPrompt = `INSTRUÇÕES OBRIGATÓRIAS DE PROFUNDIDADE E VOLUME (NÃO SEJA RASO! NUNCA RETORNE ITENS DE 1 LINHA!):
 
 1. "recommendation": Escreva um verdadeiro Manifesto Estratégico. Pelo menos 3 a 4 parágrafos robustos, viscerais, ensinando a empresa a dominar a indústria. Explore a visão macro-econômica, e depois afunile para a alavanca oculta de persuasão. Fale como um tubarão do mercado.
+
+${links ? `[ATENÇÃO - O CLIENTE FORNECEU REFERÊNCIAS/CONCORRENTES]:\n${links}\n-> Seu papel de Inteligência: Extraia/Infira/Deconstrua de forma profunda qual é a "mágica" dessas referências (estrutura de vídeo, retenção, hook, gatilho emocional dominante). Crie pelo menos 2 das pautas e trending topics emulando e batendo de frente com essas referências exatamente, superando-as.` : ''}
+
 2. "trending_topics": GERAR NO MÍNIMO 5 TÓPICOS. Você DEVE detalhar profundamente o porquê de cada um estar bombando. No "why_trending", me dê uma tese psicológica densa do porquê o cérebro límbico consome isso.
 3. "content_briefs": GERAR NO MÍNIMO 5 PAUTAS DE ALTO VALOR. Esqueça dicas rasas.
    - "hook": Uma frase bizarra, magnética e chocante que paralisa a rolagem na hora.
@@ -164,7 +167,7 @@ Retorne APENAS um objeto JSON válido, perfeitamente estruturado, sem tags markd
    - "reason": Uma análise aprofundada baseada em neurociência sobre por que o script acima derreteria a objeção da audiência. OBRIGATÓRIO SER LONGO.
 4. "viral_formats": GERAR NO MÍNIMO 3 ESTRUTURAS. No "format", dê nomes épicos. Em "description" e "example", destrinche as palavras e o tempo verbal exato que prende a atenção.
 
-Você será penalizado severamente se retornar listas curtas ou genéricas. Dê o sangue. O JSON final deve ser imenso e impecável (para evitar corte de limite de tokens, seja profundo porém preciso, priorize profundidade da informação em vez de formatação inútil).
+Você será penalizado severamente se retornar listas curtas ou genéricas. Dê o sangue. O JSON final deve ser imenso e impecável.
 
 Formato JSON EXATO esperado (lembre-se de preencher com textos COLOSSAIS):
 {

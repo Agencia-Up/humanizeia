@@ -301,6 +301,7 @@ export default function DanielEstrategia() {
 
   // ── Research state ──
   const [researchNiche, setResearchNiche] = useState('');
+  const [researchLinks, setResearchLinks] = useState('');
   const [researchPlatforms, setResearchPlatforms] = useState<string[]>(['instagram', 'tiktok', 'google']);
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchResult, setResearchResult] = useState<any>(null);
@@ -419,10 +420,10 @@ export default function DanielEstrategia() {
       if (!session) throw new Error('Sessão expirada');
       
       // 1. Salvar request no histórico
-      await saveMessage('daniel', 'user', `Pesquisar nicho: ${researchNiche}`);
+      await saveMessage('daniel', 'user', `Pesquisar nicho: ${researchNiche}\nReferências: ${researchLinks || 'Nenhuma'}`);
 
       const { data, error } = await supabase.functions.invoke('daniel-strategy-api', {
-        body: { action: 'research_trends', niche: researchNiche, platforms: researchPlatforms },
+        body: { action: 'research_trends', niche: researchNiche, links: researchLinks, platforms: researchPlatforms },
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (error) throw new Error(error.message);
@@ -968,6 +969,16 @@ export default function DanielEstrategia() {
                 placeholder="Ex: emagrecimento, marketing digital, moda feminina..."
                 className="w-full text-sm px-3 py-2.5 rounded-lg border border-border/60 bg-background/50 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cyan-500/40"
                 onKeyDown={e => e.key === 'Enter' && handleResearch()}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Links de Referência / Concorrentes (Opcional)</label>
+              <Textarea
+                value={researchLinks}
+                onChange={e => setResearchLinks(e.target.value)}
+                placeholder="Cole links de perfis do Instagram, vídeos do TikTok ou sites concorrentes para o Daniel extrair ideias e replicar a inteligência do conteúdo..."
+                className="w-full text-sm px-3 py-2.5 rounded-lg border border-border/60 bg-background/50 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cyan-500/40 min-h-[80px]"
               />
             </div>
 
