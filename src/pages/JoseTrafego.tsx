@@ -16,6 +16,7 @@ import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AILog, AILogEntry } from '@/components/jose/AILog';
 import { GoldenRulesTab } from '@/components/jose/GoldenRulesTab';
+import { ExecutiveSummary, ExecutiveSkeleton } from '@/components/jose/ExecutiveSummary';
 import CampanhaCreator from '@/components/jose/CampanhaCreator';
 import PublicosManager from '@/components/jose/PublicosManager';
 import AbTestManager from '@/components/jose/AbTestManager';
@@ -514,6 +515,7 @@ export default function JoseTrafego() {
   const [isDiagnosing, setIsDiagnosing] = useState(false);
   const { data: history, isLoading: isLoadingHistory } = useApolloHistory(connectedAccount?.account_id);
 
+  const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
   const [datePreset, setDatePreset] = useState<ApolloDatePreset>('last_30d');
   const [autoExecute, setAutoExecute] = useState(false);
   const [activeTab, setActiveTab] = useState('campaigns');
@@ -610,8 +612,8 @@ export default function JoseTrafego() {
   const currencySymbol = currency === 'USD' ? 'US$' : 'R$';
 
   const handleAnalyze = useCallback(() => {
-    analyze({ targetAccountId: accountId, datePreset, auto_execute: autoExecute });
-  }, [analyze, accountId, datePreset, autoExecute]);
+    analyze({ targetAccountId: accountId, datePreset, auto_execute: autoExecute, viewMode });
+  }, [analyze, accountId, datePreset, autoExecute, viewMode]);
 
   const handleDiagnose = useCallback(async () => {
     setIsDiagnosing(true);
@@ -648,6 +650,13 @@ export default function JoseTrafego() {
   const handleExecute = useCallback((action: ApolloAction) => {
     executeAction.mutate({ ...action, targetAccountId: accountId });
   }, [executeAction, accountId]);
+
+  const handleExecuteAll = useCallback(() => {
+    const topActions = pendingActions
+      .filter((a: any) => ['pause', 'increase_budget', 'decrease_budget', 'activate'].includes(a.action_type || a.type))
+      .slice(0, 3);
+    topActions.forEach((a: any) => executeAction.mutate({ ...a, targetAccountId: accountId }));
+  }, [pendingActions, executeAction, accountId]);
 
   const handleDrillDown = useCallback(async (campaignId: string) => {
     if (adsetCache[campaignId]) return;
@@ -689,6 +698,30 @@ export default function JoseTrafego() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* ── Mode switcher ── */}
+            <div className="flex items-center rounded-lg border border-border bg-card overflow-hidden h-9">
+              <button
+                onClick={() => setViewMode('simplified')}
+                className={`px-3 h-full text-xs font-medium transition-colors ${
+                  viewMode === 'simplified'
+                    ? 'bg-orange-500 text-white'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                📊 Simplificado
+              </button>
+              <button
+                onClick={() => setViewMode('expert')}
+                className={`px-3 h-full text-xs font-medium transition-colors ${
+                  viewMode === 'expert'
+                    ? 'bg-orange-500 text-white'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                ⚙️ Especialista
+              </button>
+            </div>
+
             {connectedAccounts.length > 1 && (
               <Select value={connectedAccount?.id ?? ''} onValueChange={selectConnectedAccount}>
                 <SelectTrigger className="w-48 h-9 text-sm">
@@ -847,8 +880,32 @@ export default function JoseTrafego() {
           </CardContent></Card>
         )}
 
-        {/* ── Main tabs ── */}
-        {(session || snapshots.length > 0 || accountId) && (
+        {/* ── SIMPLIFIED MODE ── */}
+        {viewMode === 'simplified' && accountId && (
+          <>
+            {(isAnalyzing || isLoadingSession) && !session
+              ? <ExecutiveSkeleton />
+              : session && (
+                  <ExecutiveSummary
+                    session={session}
+                    pendingActions={pendingActions.map((a: any) => ({
+                      ...a,
+                      type: a.action_type ?? a.type,
+                      campaign_name: a.campaign_name ?? a.target_id,
+                    }))}
+                    isAnalyzing={isAnalyzing}
+                    currencySymbol={currencySymbol}
+                    onExecuteAction={(action: any) => handleExecute(action)}
+                    onExecuteAll={handleExecuteAll}
+                    isExecuting={executeAction.isPending}
+                  />
+                )
+            }
+          </>
+        )}
+
+        {/* ── EXPERT MODE: Main tabs ── */}
+        {viewMode === 'expert' && (session || snapshots.length > 0 || accountId) && (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="flex-wrap h-auto gap-1">
               {session && <TabsTrigger value="campaigns" className="gap-1 text-xs"><Radar className="h-3 w-3" />Campanhas <Badge variant="secondary" className="text-[10px] h-4 px-1">{session.campaigns.length}</Badge></TabsTrigger>}

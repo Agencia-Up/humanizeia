@@ -52,6 +52,7 @@ Deno.serve(async (req) => {
       targetAccountId,
       auto_execute = false,
       datePreset = "last_30d",
+      viewMode = "simplified",
       action: bodyAction,
       campaignId,
       actionType,
@@ -335,7 +336,7 @@ Deno.serve(async (req) => {
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
     if (ANTHROPIC_KEY && enriched.length > 0) {
-      aiResult = await runApolloAI(ANTHROPIC_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext);
+      aiResult = await runApolloAI(ANTHROPIC_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext, viewMode);
     }
 
     // ── Validate & fix campaign IDs in actions (AI sometimes returns slugs instead of numeric IDs) ──
@@ -844,7 +845,7 @@ function detectPortfolioOpportunities(enriched: any[], currencySymbol: string): 
 async function runApolloAI(
   apiKey: string, campaigns: any[], currency: string, currencySymbol: string,
   datePreset: string, trendContext: string, learningContext: string,
-  seasonalContext: string, portfolioContext: string
+  seasonalContext: string, portfolioContext: string, viewMode = "simplified"
 ) {
   const periodLabel: Record<string, string> = {
     today: "hoje", yesterday: "ontem", last_7d: "últimos 7 dias",
@@ -929,6 +930,11 @@ INSTRUÇÕES DE ANÁLISE NÍVEL 6:
 8. Identifique campanhas subcapitalizadas (bom ROAS mas orçamento pequeno)
 9. Quando budget_pacing for underpacing, investigue problemas de entrega
 10. Use linguagem de especialista sênior: seja específico, cite dados, quantifique impactos
+
+${viewMode === "simplified"
+  ? `MODO SIMPLIFICADO (Dono de Negócio): Escreva o "summary" e a "analysis" em linguagem de negócios, SEM jargões técnicos. Foque em: dinheiro investido × retorno, o que está gerando resultado, o que está desperdiçando verba. Use frases curtas e diretas. O "summary" deve ser tipo: "Você investiu R$X e gerou Y conversões. A campanha Z está funcionando bem, mas a W precisa de atenção." Use emojis de forma moderada.`
+  : `MODO ESPECIALISTA (Gestor de Tráfego): Use linguagem técnica completa. Cite CTR, CPC, CPM, ROAS, Frequência, Fadiga Criativa, Pacing, WoW deltas. Seja detalhado e analítico.`
+}
 
 Responda EXCLUSIVAMENTE em JSON válido:
 {
