@@ -136,7 +136,7 @@ export function useApolloAgent() {
   const loadSavedSession = useCallback(async (targetAccountId?: string) => {
     setIsLoadingSession(true);
     try {
-      const { data, error } = await supabase.functions.invoke('jose-agent', {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
         body: { action: 'load_session', targetAccountId },
       });
       if (error || !data?.session) return null;
@@ -162,7 +162,7 @@ export function useApolloAgent() {
   } = {}) => {
     setIsAnalyzing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('jose-agent', {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
         body: {
           action: 'analyze',
           targetAccountId: opts.targetAccountId,
@@ -202,7 +202,7 @@ export function useApolloAgent() {
   const executeAction = useMutation({
     mutationFn: async (action: ApolloAction & { targetAccountId?: string }) => {
       if (action.action_type === 'clone_campaign') {
-        const { data, error } = await supabase.functions.invoke('jose-agent', {
+        const { data, error } = await supabase.functions.invoke('apollo-agent', {
           body: {
             action: 'clone_campaign',
             targetAccountId: action.targetAccountId,
@@ -222,7 +222,7 @@ export function useApolloAgent() {
         return data;
       }
 
-      const { data, error } = await supabase.functions.invoke('jose-agent', {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
         body: {
           action: 'execute_action',
           targetAccountId: action.targetAccountId,
@@ -270,7 +270,7 @@ export function useApolloAgent() {
   // ── Get ad sets for a campaign ──
   const getAdSets = useMutation({
     mutationFn: async ({ campaignId, targetAccountId, datePreset }: { campaignId: string; targetAccountId?: string; datePreset?: string }) => {
-      const { data, error } = await supabase.functions.invoke('jose-agent', {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
         body: { action: 'get_adsets', campaignId, targetAccountId, datePreset: datePreset || 'last_30d' },
       });
       if (error) throw error;
@@ -286,7 +286,7 @@ export function useApolloAgent() {
 
   // ── Test connection / diagnose ──
   const testConnection = useCallback(async (targetAccountId?: string) => {
-    const { data, error } = await supabase.functions.invoke('jose-agent', {
+    const { data, error } = await supabase.functions.invoke('apollo-agent', {
       body: { action: 'debug', targetAccountId },
     });
     if (error) {
@@ -316,7 +316,7 @@ export function useApolloHistory(targetAccountId?: string) {
   return useQuery({
     queryKey: ['jose-history', targetAccountId],
     queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('jose-agent', {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
         body: { action: 'get_history', targetAccountId },
       });
       if (error) throw error;
@@ -334,7 +334,7 @@ export function useApolloCronConfig() {
   const { data: config, isLoading } = useQuery({
     queryKey: ['jose-cron-config'],
     queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('jose-agent', {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
         body: { action: 'get_cron_config' },
       });
       if (error) throw error;
@@ -345,7 +345,7 @@ export function useApolloCronConfig() {
 
   const saveConfig = useMutation({
     mutationFn: async (newConfig: Partial<ApolloCronConfig>) => {
-      const { data, error } = await supabase.functions.invoke('jose-agent', {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
         body: { action: 'save_cron_config', ...newConfig },
       });
       if (error) throw error;
