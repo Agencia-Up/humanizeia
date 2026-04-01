@@ -532,6 +532,14 @@ Mantenha o número de slides entre 4 e 8, ajustando ao tamanho natural da ideia.
         researchContext += '\n';
       }
 
+      if (research.viral_formats?.length) {
+        researchContext += `FORMATOS VIRAIS QUE VOCÊ DEVE USAR ESTRITAMENTE COMO BASE:\n`;
+        research.viral_formats.slice(0, 3).forEach((f: any) => {
+          researchContext += `• ${typeof f === 'string' ? f : (f.format + ': ' + f.description + ' -> ' + f.example)}\n`;
+        });
+        researchContext += '\n';
+      }
+
       const angleLabel = ANGLES.find(a => a.value === angle)?.label || angle;
 
       const fullPrompt = `Você é Paulo, Diretor Criativo de Carrosséis. Analise TODA a pesquisa do Daniel abaixo e gere 3 carrosséis DISTINTOS e COMPLEMENTARES. Cada um com um ângulo narrativo diferente, explorando diferentes facetas do nicho.

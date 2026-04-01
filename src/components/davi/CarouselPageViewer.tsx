@@ -312,35 +312,35 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
           {/* Sub-label */}
           {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
             <div style={{
-              fontSize: 9, fontWeight: 800, color: tpl.accent,
-              letterSpacing: '0.12em', textTransform: 'uppercase',
+              fontSize: 12, fontWeight: 800, color: tpl.accent,
+              letterSpacing: '0.15em', textTransform: 'uppercase',
             }}>
               {slide.sub_headline}
             </div>
           )}
           {/* Big headline */}
           <div style={{
-            fontSize: isCover ? 22 : 19, fontWeight: 900, color: '#fff',
-            lineHeight: 1.12, letterSpacing: '-0.02em',
+            fontSize: isCover ? 32 : 25, fontWeight: 900, color: '#fff',
+            lineHeight: 1.1, letterSpacing: '-0.02em',
             textShadow: `0 2px 12px rgba(0,0,0,0.8)`,
           }}>
             <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
           </div>
           {/* Accent line */}
-          <div style={{ width: 32, height: 3, background: tpl.accent, borderRadius: 2, boxShadow: `0 0 8px ${tpl.accentGlow}` }} />
+          <div style={{ width: 44, height: 4, background: tpl.accent, borderRadius: 2, boxShadow: `0 0 12px ${tpl.accentGlow}`, marginTop: 4, marginBottom: 4 }} />
           {/* Body */}
           {typeof slide.body === 'string' && slide.body.trim() && (
-            <div style={{ fontSize: 12, color: tpl.sub, lineHeight: 1.5, maxWidth: '95%' }}>
+            <div style={{ fontSize: 15, color: 'rgba(255,255,255,0.9)', lineHeight: 1.5, maxWidth: '100%', fontWeight: 500 }}>
               {slide.body}
             </div>
           )}
           {/* Bullets */}
           {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
               {slide.bullets.map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
-                  <span style={{ color: tpl.accent, fontSize: 12, flexShrink: 0, marginTop: 1 }}>▸</span>
-                  <span style={{ fontSize: 11, color: '#fff', lineHeight: 1.35 }}>{typeof b === 'string' ? b : ''}</span>
+                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <span style={{ color: tpl.accent, fontSize: 16, flexShrink: 0, marginTop: 0 }}>✓</span>
+                  <span style={{ fontSize: 14, color: '#fff', lineHeight: 1.45, fontWeight: 500 }}>{typeof b === 'string' ? b : ''}</span>
                 </div>
               ))}
             </div>
@@ -348,10 +348,11 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
           {/* CTA button */}
           {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
             <div style={{
-              marginTop: 6, padding: '10px 20px',
-              background: tpl.accent, color: '#fff', borderRadius: 24,
-              fontWeight: 900, fontSize: 12, textAlign: 'center',
+              marginTop: 10, padding: '14px 24px',
+              background: tpl.accent, color: '#fff', borderRadius: 28,
+              fontWeight: 900, fontSize: 15, textAlign: 'center',
               boxShadow: `0 6px 24px ${tpl.accentGlow}`,
+              textTransform: 'uppercase', letterSpacing: '0.05em'
             }}>
               {slide.cta}
             </div>
@@ -454,36 +455,36 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
 
       {/* MIDDLE — Narrative text (flex: 1 to fill remaining space) */}
       <div style={{
-        flex: 1, padding: '14px 20px 8px',
-        display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 8,
+        flex: 1, padding: '16px 22px 10px',
+        display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 10,
         overflow: 'hidden', minHeight: 0,
       }}>
         {/* Sub label on cover */}
         {isCover && typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#555', lineHeight: 1.4 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#555', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
             {slide.sub_headline}
           </div>
         )}
         {/* Main text */}
         <div style={
-          { fontSize: isCover ? 16 : 13, lineHeight: 1.65, color: '#111', fontWeight: 400, overflow: 'hidden' }
+          { fontSize: isCover ? 18 : 15, lineHeight: 1.6, color: '#111', fontWeight: 500, overflow: 'hidden' }
         }>
           {isCover ? (
-            <span style={{ fontWeight: 700, fontSize: 16, lineHeight: 1.3 }}>{slide.headline}</span>
+            <span style={{ fontWeight: 800, fontSize: 30, lineHeight: 1.15, letterSpacing: '-0.02em' }}>{slide.headline}</span>
           ) : (
             <>
               {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-                <div style={{ fontWeight: 700, marginBottom: 5, color: '#000', fontSize: 13 }}>{slide.sub_headline}</div>
+                <div style={{ fontWeight: 800, marginBottom: 8, color: '#000', fontSize: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>
               )}
-              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 4 }}>{slide.body}</div>}
+              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 6, fontSize: 15, lineHeight: 1.5 }}>{slide.body}</div>}
               {Array.isArray(slide.bullets) && slide.bullets.map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 6, marginTop: 5 }}>
-                  <span style={{ color: '#333', fontWeight: 700 }}>•</span>
-                  <span style={{ fontWeight: 400 }}>{typeof b === 'string' ? b : ''}</span>
+                <div key={i} style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <span style={{ color: '#1D9BF0', fontWeight: 800, fontSize: 18, lineHeight: 1 }}>•</span>
+                  <span style={{ fontWeight: 500, fontSize: 14, lineHeight: 1.45 }}>{typeof b === 'string' ? b : ''}</span>
                 </div>
               ))}
               {slide.headline && (
-                <div style={{ fontWeight: 700, marginTop: 6, color: '#000', fontSize: 14 }}>
+                <div style={{ fontWeight: 800, marginTop: 10, color: '#000', fontSize: 22, lineHeight: 1.15 }}>
                   <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color='#1D9BF0' />
                 </div>
               )}
@@ -492,13 +493,14 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
         </div>
         {/* "Continua 👇" for non-last slides */}
         {!isCta && (
-          <div style={{ fontSize: 12, color: '#444', marginTop: 'auto', paddingTop: 4 }}>Continua 👇</div>
+          <div style={{ fontSize: 13, color: '#777', fontWeight: 700, marginTop: 'auto', paddingTop: 6, textAlign: 'center' }}>CONTINUA ››</div>
         )}
         {/* CTA */}
         {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
           <div style={{
-            marginTop: 6, padding: '10px 0',
-            fontWeight: 700, fontSize: 14, color: '#111',
+            marginTop: 10, padding: '12px 0',
+            fontWeight: 800, fontSize: 16, color: '#fff', background: '#1D9BF0',
+            borderRadius: 8, textAlign: 'center', boxShadow: '0 4px 14px rgba(29, 155, 240, 0.4)'
           }}>
             {slide.cta}
           </div>
@@ -803,13 +805,14 @@ export function CarouselPageViewerInner({
           </div>
 
           <Button 
-            size="default" 
+            size="icon" 
+            variant="outline"
             onClick={handleExportAll} 
             disabled={exporting || loadingImages} 
-            className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-lg border-0 sm:h-11 sm:px-6 w-full sm:w-auto font-bold tracking-wide"
+            className="h-10 w-10 rounded-xl bg-white/5 border-white/10 hover:bg-white/10 hover:text-white transition-all shrink-0"
+            title="Salvar Carrossel"
           >
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
-            {exporting ? 'Baixando Tudo...' : 'Salvar Carrossel'}
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           </Button>
         </div>
       </div>
