@@ -190,11 +190,25 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
           return;
         }
         
-        console.log('[polling] Resposta completa do QR Code:', JSON.stringify(data, null, 2));
-
         if (data?.connected) {
           handleConnectionSuccess();
-        } else if (data?.qr_code) {
+        } else if (data?.raw_response) {
+          // Fallback: Smart Frontend Detection (V5.2)
+          try {
+            const raw = typeof data.raw_response === 'string' ? JSON.parse(data.raw_response) : data.raw_response;
+            const rData = raw?.instance || raw;
+            const isConnected = rData?.status === 'connected' || rData?.state === 'open' || rData?.connected === true || rData?.loggedIn === true;
+            
+            if (isConnected) {
+              console.log('[polling] Detectado sucesso via Client-Side Logic!');
+              handleConnectionSuccess();
+            }
+          } catch (e) {
+            console.warn('[polling] Erro ao processar raw_response fallback');
+          }
+        }
+        
+        if (data?.qr_code) {
           setQrCode(data.qr_code);
         }
       } catch (err) {
