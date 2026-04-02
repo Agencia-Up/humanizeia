@@ -104,7 +104,7 @@ const AGENT_TYPES = [
 export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved }: AgentFormDialogProps) {
   useEffect(() => {
     if (open) {
-      console.info("!!! HUMANIZEIA UAZAPI DEBUG V4.1 ACTIVE !!!");
+      console.info("!!! HUMANIZEIA UAZAPI DEBUG V5.0 ACTIVE (Realtime) !!!");
     }
   }, [open]);
   const { user } = useAuth();
@@ -141,9 +141,15 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [isInstanceConnected, setIsInstanceConnected] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const realtimeChannel = useRef<any>(null);
 
   const stopPolling = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+    if (realtimeChannel.current) { 
+        console.log('[Realtime] Desconectando canal...');
+        supabase.removeChannel(realtimeChannel.current); 
+        realtimeChannel.current = null; 
+    }
   };
 
   useEffect(() => {
@@ -155,7 +161,25 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
 
   const startPolling = (slug: string) => {
     stopPolling();
-    console.log(`[polling] Monitorando conexão de: ${slug}`);
+    console.log(`[polling] Monitorando conexão de: ${slug} (Realtime + Polling fallback)`);
+    
+    // 1. Realtime Subscription (Mais rápido)
+    realtimeChannel.current = supabase
+      .channel(`instance-status-${slug}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'wa_instances', filter: `instance_name=eq.${slug}` },
+        (payload: any) => {
+          console.log('[Realtime] Mudança detectada:', payload.new.status, payload.new.is_active);
+          if (payload.new.is_active || payload.new.status === 'connected') {
+            console.log('[Realtime] SINAL DE CONEXÃO RECEBIDO!');
+            handleConnectionSuccess(payload.new.id);
+          }
+        }
+      )
+      .subscribe();
+
+    // 2. Polling Fallback (Caso o Realtime falhe)
     pollingRef.current = setInterval(async () => {
       try {
         const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
@@ -169,22 +193,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
         console.log('[polling] Resposta completa do QR Code:', JSON.stringify(data, null, 2));
 
         if (data?.connected) {
-          stopPolling();
-          setIsInstanceConnected(true);
-          setQrCode(null);
-          
-          // Auto link the instance
-          const { data: latestInst } = await supabase.from('wa_instances')
-             .select('id')
-             .eq('user_id', user!.id)
-             .order('created_at', { ascending: false })
-             .limit(1)
-             .single();
-          
-          if (latestInst) {
-             setSelectedInstanceIds(prev => prev.includes(latestInst.id) ? prev : [...prev, latestInst.id]);
-          }
-          toast({ title: "WhatsApp Conectado com Sucesso!", className: "bg-green-500 text-white" });
+          handleConnectionSuccess();
         } else if (data?.qr_code) {
           setQrCode(data.qr_code);
         }
@@ -192,6 +201,30 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
         console.error('[polling] Erro fatal no catch:', err);
       }
     }, 5000);
+  };
+
+  const handleConnectionSuccess = async (id?: string) => {
+    console.log('[Connection] Finalizando processo de conexão bem-sucedida...');
+    stopPolling();
+    setQrCode(null);
+    setIsInstanceConnected(true);
+
+    // Buscar o ID se não foi passado (Fallback)
+    let instId = id;
+    if (!instId) {
+        const { data: latestInst } = await supabase.from('wa_instances')
+            .select('id')
+            .eq('user_id', user!.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+        instId = latestInst?.id;
+    }
+
+    if (instId) {
+        setSelectedInstanceIds(prev => prev.includes(instId!) ? prev : [...prev, instId!]);
+    }
+    toast({ title: "WhatsApp Conectado!", description: "Instância está online e pronta.", className: "bg-green-600 text-white" });
   };
 
   const handleGenerateQr = async () => {
@@ -459,8 +492,20 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const isSdr = agentType === 'sdr';
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh]">
+    <Dialog 
+      open={open} 
+      onOpenChange={(val) => {
+        if (!val && qrCode) {
+            if (!confirm('O QR Code ainda está ativo. Deseja realmente fechar?')) return;
+        }
+        onOpenChange(val);
+      }}
+    >
+      <DialogContent 
+        className="sm:max-w-2xl max-h-[90vh]"
+        onPointerDownOutside={(e) => { if (qrCode) e.preventDefault(); }}
+        onEscapeKeyDown={(e) => { if (qrCode) e.preventDefault(); }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-primary" />
@@ -535,8 +580,34 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                       className="w-48 h-48 rounded shadow-sm"
                       alt="QR Code"
                     />
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
-                      <Loader2 className="w-3 h-3 animate-spin" /> Aguardando leitura no celular...
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse mb-2">
+                       <Loader2 className="w-3 h-3 animate-spin" /> Aguardando leitura no celular...
+                    </div>
+                    <div className="flex gap-2 w-full">
+                       <Button 
+                         variant="outline" 
+                         size="sm"
+                         className="flex-1 text-xs"
+                         onClick={() => {
+                            // Find the non-active instance to poll for it
+                            const inst = instances.find(i => !i.is_active);
+                            if (inst) startPolling(inst.instance_name);
+                            else toast({ title: "Tente gerar um novo QR Code" });
+                         }}
+                       >
+                         <RefreshCw className="w-3 h-3 mr-1" /> Já escaneei
+                       </Button>
+                       <Button 
+                         variant="ghost" 
+                         size="sm"
+                         className="flex-1 text-xs text-red-500"
+                         onClick={() => {
+                            setQrCode(null);
+                            stopPolling();
+                         }}
+                       >
+                         Cancelar
+                       </Button>
                     </div>
                   </div>
                 ) : (

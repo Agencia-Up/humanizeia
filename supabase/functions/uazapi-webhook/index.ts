@@ -24,21 +24,21 @@ serve(async (req) => {
     const eventRaw = payload.event || '';
     const event = eventRaw.toLowerCase();
     
-    // Suporte a eventos de Conexão
-    if (event === 'connection.update' || event === 'connection_update') {
+    // Suporte a eventos de Conexão (Uazapi / Evolution)
+    if (event.includes('connection.update') || event.includes('connection_update')) {
         const data = payload.data || payload;
         const instance = payload.instance || data.instance || '';
-        const state = (data.state || data.status || '').toLowerCase();
+        const state = (data.state || data.status || payload.state || payload.status || '').toLowerCase();
         
         console.log(`[Webhook] Conexão Atualizada em ${instance}: ${state}`);
         
-        if (state === 'open' || state === 'connected') {
+        if (state === 'open' || state === 'connected' || state === 'connected_authenticated') {
             await supabaseClient
               .from('wa_instances')
               .update({ is_active: true, status: 'connected', updated_at: new Date().toISOString() })
-              .eq('instance_name', instance);
+              .eq('instance_name', instance || payload.instance);
             
-            console.log(`[Webhook] Instância ${instance} agora está ONLINE!`);
+            console.log(`[Webhook] Instância ${instance} agora está ONLINE via Realtime!`);
         }
         return new Response(JSON.stringify({ message: "Connection processed" }), { headers: corsHeaders });
     }
@@ -48,10 +48,9 @@ serve(async (req) => {
       return new Response(JSON.stringify({ message: "Ignored event" }), { headers: corsHeaders })
     }
 
-    // Normalização: Uazapi costuma mandar data como um ARRAY [ { ... } ]
+    // Normalização de dados de mensagem
     let data = payload.data || payload; 
     if (Array.isArray(data)) {
-        console.log(`[Webhook] Detectado payload em ARRAY. Extraindo primeiro item.`);
         data = data[0];
     }
     
