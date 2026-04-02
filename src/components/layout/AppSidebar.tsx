@@ -74,8 +74,9 @@ type NavGroupConfig = {
 
 // 🏠 Início
 const dashboardItems: NavItem[] = [
-  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-  { title: 'Métricas',  url: '/metrics',   icon: BarChart3 },
+  { title: 'Dashboard',        url: '/dashboard',   icon: LayoutDashboard },
+  { title: 'Métricas',         url: '/metrics',     icon: BarChart3 },
+  { title: 'Performance 360°', url: '/performance', icon: Activity },
 ];
 
 // 🤖 Agentes IA — Marcos tem sub-itens do WhatsApp integrados
