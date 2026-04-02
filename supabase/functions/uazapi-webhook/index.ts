@@ -19,153 +19,145 @@ serve(async (req) => {
     )
 
     const payload = await req.json()
-    console.log("WebHook Uazapi Payload:", JSON.stringify(payload));
+    console.log("WebHook Uazapi Payload:", JSON.stringify(payload, null, 2));
 
-    // O WebHook da Uazapi (padrão Evolution/ZAPI) vem neste formato
-    const event = payload.event;
+    // Normalização de Eventos: Uazapi costuma usar MAIÚSCULAS (MESSAGES_UPSERT)
+    // Evolution API v1 usa minúsculas (messages.upsert)
+    const eventRaw = payload.event || '';
+    const event = eventRaw.toLowerCase();
+    
     if (event !== 'messages.upsert') {
-      return new Response(JSON.stringify({ message: "Ignored event" }), { headers: corsHeaders })
+      console.log(`[Webhook] Ignorando evento não suportado: ${eventRaw}`);
+      return new Response(JSON.stringify({ message: "Ignored event", event: eventRaw }), { headers: corsHeaders })
     }
 
-    const { instance, data } = payload;
+    // Normalização de Dados: O payload pode vir com 'instance' e 'data' no root
+    // ou dentro de estruturas diferentes dependendo da versão
+    const instance = payload.instance || payload.data?.instance || '';
+    const data = payload.data || payload; 
     const { key, message, pushName, messageType } = data;
 
+    if (!instance || !key || !message) {
+        console.error("[Webhook] Payload incompleto:", JSON.stringify({ instance: !!instance, key: !!key, message: !!message }));
+        return new Response('Incomplete payload', { headers: corsHeaders });
+    }
+
+    // Filtrar mensagens
     if (key.fromMe) return new Response('Ignored fromMe', { headers: corsHeaders });
     if (key.remoteJid.includes('@broadcast')) return new Response('Ignored broadcast', { headers: corsHeaders });
     if (key.remoteJid.includes('@g.us')) return new Response('Ignored group', { headers: corsHeaders });
 
-    // Extrai o texto da mensagem
+    // Extrai o texto da mensagem (Suporta múltiplos formatos)
     let userText = '';
-    if (messageType === 'conversation') userText = message.conversation;
-    else if (messageType === 'extendedTextMessage') userText = message.extendedTextMessage.text;
-    else return new Response('Unsupported message type', { headers: corsHeaders });
+    if (messageType === 'conversation') userText = message.conversation || '';
+    else if (messageType === 'extendedTextMessage') userText = message.extendedTextMessage?.text || '';
+    else if (message.conversation) userText = message.conversation;
+    else if (message.extendedTextMessage?.text) userText = message.extendedTextMessage.text;
+    
+    if (!userText.trim()) {
+        console.log("[Webhook] Texto vazio ignorado");
+        return new Response('Empty text', { headers: corsHeaders });
+    }
 
-    if (!userText.trim()) return new Response('Empty text', { headers: corsHeaders });
-
-    // 1. Achar o agente atrelado a essa instância ativa
-    const { data: waInstance } = await supabaseClient
+    // 1. Localizar a instância no banco
+    const { data: waInstance, error: fetchInstErr } = await supabaseClient
       .from('wa_instances')
-      .select('id, user_id, api_key_encrypted, api_url')
+      .select('*')
       .eq('instance_name', instance)
       .single();
 
-    if (!waInstance) {
-      console.log(`Instância ${instance} não encontrada no banco.`);
+    if (fetchInstErr || !waInstance) {
+      console.log(`[Webhook] Instância ${instance} não encontrada no banco.`);
       return new Response('Instance not found', { headers: corsHeaders });
     }
 
-    // Adaptando nomes para o restante do código
     const instanceData = {
       ...waInstance,
       api_key: waInstance.api_key_encrypted,
       server_url: waInstance.api_url
     };
 
-    // Achar o Agente (Pedro) que está ativo e atrelado a essa instância
-    const { data: agents } = await supabaseClient
+    // Achar o Agente Ativo vinculado a essa instância
+    const { data: agent, error: agentErr } = await supabaseClient
       .from('wa_ai_agents')
       .select('*')
       .eq('user_id', instanceData.user_id)
       .eq('is_active', true)
-      .contains('instance_ids', [instanceData.id]);
+      .contains('instance_ids', [instanceData.id])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    // Se o array estiver vazio, tenta achar o agente genérico (array vazio atende todos)
-    let agent = agents && agents.length > 0 ? agents[0] : null;
-
-    if (!agent) {
-      const { data: globalAgents } = await supabaseClient
-        .from('wa_ai_agents')
-        .select('*')
-        .eq('user_id', waInstance.user_id)
-        .eq('is_active', true)
-        .filter('instance_ids', 'eq', '[]'); // Array vazio significa Todas as Instâncias
-      
-      if (globalAgents && globalAgents.length > 0) agent = globalAgents[0];
-    }
-
-    if (!agent) {
-      console.log(`Nenhum agente ativo atribuído à instância ${instance}.`);
+    if (agentErr || !agent) {
+      console.log(`[Webhook] Nenhum agente ativo atribuído à instância ${instance}.`);
       return new Response('No matching agent', { headers: corsHeaders });
     }
 
     // 2. Salvar Mensagem do Cliente na Tabela de Histórico
-    await supabaseClient.from('wa_chat_history').insert({
-      user_id: agent.user_id,
-      agent_id: agent.id,
-      instance_id: instance,
-      remote_jid: key.remoteJid,
-      role: 'user',
-      content: userText,
-      lead_name: pushName
-    });
+    try {
+        await supabaseClient.from('wa_chat_history').insert({
+          user_id: agent.user_id,
+          agent_id: agent.id,
+          instance_id: instance,
+          remote_jid: key.remoteJid,
+          role: 'user',
+          content: userText,
+          lead_name: pushName || 'Lead'
+        });
+    } catch (dbErr) {
+        console.warn("[Webhook] Falha ao salvar histórico:", dbErr);
+    }
 
-    // 3. Montar o Contexto do LLM
-    //  3.1 - Buscar Base de Conhecimento do Salomão
+    // 3. Montar o Contexto do LLM (Semelhante ao anterior)
     const { data: knowledge } = await supabaseClient
       .from('agent_knowledge')
       .select('knowledge_text')
       .eq('user_id', agent.user_id)
-      .eq('agent_id', 'salomao')
-      .single();
+      .maybeSingle();
 
-    // 3.2 - Histórico da Conversa
     const { data: history } = await supabaseClient
       .from('wa_chat_history')
       .select('role, content')
       .eq('instance_id', instance)
       .eq('remote_jid', key.remoteJid)
       .order('created_at', { ascending: false })
-      .limit(15);
+      .limit(10);
     
-    const messagesReverse = (history || []).reverse();
-    const chatGptMessages = messagesReverse.map(m => ({
+    const chatGptMessages = (history || []).reverse().map(m => ({
       role: m.role,
       content: m.content
     }));
 
-    // 3.3 - Prompt final
-    let finalSystemPrompt = agent.system_prompt;
-    
-    if (agent.company_name) finalSystemPrompt += `\n\nNome da Empresa: ${agent.company_name}`;
-    if (agent.services) finalSystemPrompt += `\n\nProdutos/Serviços que vendemos: ${agent.services}`;
-    
+    let finalSystemPrompt = agent.system_prompt || 'Você é um assistente prestativo.';
+    if (agent.company_name) finalSystemPrompt += `\n\nEmpresa: ${agent.company_name}`;
+    if (agent.services) finalSystemPrompt += `\nProdutos/Serviços: ${agent.services}`;
     if (knowledge?.knowledge_text) {
-      finalSystemPrompt += `\n\nBASE DE CONHECIMENTO DA EMPRESA (Use isso para basear suas respostas):\n${knowledge.knowledge_text}`;
+      finalSystemPrompt += `\n\nBASE DE CONHECIMENTO:\n${knowledge.knowledge_text}`;
     }
 
-    if (agent.sdr_goal) {
-      finalSystemPrompt += `\n\nSEU OBJETIVO DE QUALIFICAÇÃO NESTA CONVERSA: ${agent.sdr_goal}`;
+    // 4. Chamar IA
+    const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+    if (!openaiApiKey) {
+        console.error("[Webhook] OPENAI_API_KEY desapareceu!");
+        return new Response('Missing AI Key', { status: 500 });
     }
-
-    if (agent.qualification_questions && agent.qualification_questions.length > 0) {
-      finalSystemPrompt += `\n\nPERGUNTAS OBRIGATÓRIAS QUE VOCÊ DEVE FAZER DURANTE A CONVERSA:\n`;
-      agent.qualification_questions.forEach((q: string, i: number) => {
-        finalSystemPrompt += `${i + 1}. ${q}\n`;
-      });
-      finalSystemPrompt += `\nInstrução Importante: Tente fazer as perguntas naturalmente na conversa, um passo de cada vez, ao invés de enviar um questionário robótico. Avalie se a pessoa já forneceu a resposta antes de perguntar novamente.`;
-    }
-
-    // 4. Chamar a IA para gerar a resposta
-    const openai = new Configuration({
-      apiKey: Deno.env.get('OPENAI_API_KEY')
-    });
-    const openaiApi = new OpenAIApi(openai);
+    
+    const configuration = new Configuration({ apiKey: openaiApiKey });
+    const openaiApi = new OpenAIApi(configuration);
 
     const completion = await openaiApi.createChatCompletion({
-      model: "gpt-4o-mini", // fallback model, o ideal é o usuário definir a chave e o gpt-4o
+      model: agent.model || "gpt-4o-mini",
       messages: [
         { role: 'system', content: finalSystemPrompt },
         ...chatGptMessages
       ],
       temperature: agent.temperature || 0.7,
-      max_tokens: agent.max_tokens || 500,
     });
 
     const aiResponse = completion.data.choices[0].message?.content || '';
-
     if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders });
 
-    // 5. Salvar a resposta da IA no banco
+    // 5. Salvar resposta IA
     await supabaseClient.from('wa_chat_history').insert({
       user_id: agent.user_id,
       agent_id: agent.id,
@@ -175,36 +167,39 @@ serve(async (req) => {
       content: aiResponse
     });
 
-    // Subir o total de replies do Agente
-    await supabaseClient.rpc('increment_agent_replies', { agent_id: agent.id });
+    // 6. Enviar de volta para WhatsApp (Universal Format)
+    const baseUrl = (instanceData.server_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
+    const globalKey = Deno.env.get('EVOLUTION_API_KEY') || '';
+    const instKey = instanceData.api_key || globalKey;
 
-    // 6. Enviar a Mensagem de Volta para o WhatsApp (via Uazapi)
-    // Se o cliente definiu o Uazapi API KEY pelo server_url, usamos.
-    // Senão, assumimos o painel global (isso varia conforme o deploy do app)
-    const uazapiUrl = instanceData.server_url || Deno.env.get('EVOLUTION_API_URL') || `https://${instance}.uazapi.com`;
-    const uazapiToken = instanceData.api_key || Deno.env.get('EVOLUTION_API_KEY') || Deno.env.get('UAZAPI_GLOBAL_TOKEN');
-
-    const sendResp = await fetch(`${uazapiUrl!}/message/sendText/${instance}`, {
+    console.log(`[Webhook] Enviando resposta para ${key.remoteJid} via ${instance}`);
+    
+    // Suporta Evolution v1 e v2/Uazapi enviando o máximo de tokens nos headers
+    const sendResp = await fetch(`${baseUrl}/message/sendText/${instance}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': uazapiToken as string
+        'apikey': globalKey,
+        'token': instKey,
+        'admintoken': globalKey
       },
       body: JSON.stringify({
-        number: key.remoteJid.replace('@s.whatsapp.net', ''),
-        options: { delay: agent.reply_delay_ms || 2000, presence: "composing" },
-        textMessage: { text: aiResponse }
+        number: key.remoteJid.split('@')[0],
+        text: aiResponse, // Formato v2/Uazapi
+        textMessage: { text: aiResponse }, // Formato v1 fallback
+        options: { delay: agent.reply_delay_ms || 1000, presence: "composing" }
       })
     });
 
     if (!sendResp.ok) {
-        console.error("Erro ao enviar msg:", await sendResp.text());
+        const errText = await sendResp.text();
+        console.error(`[Webhook] Erro no envio (${sendResp.status}):`, errText);
     }
 
     return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
 
-  } catch (error) {
-    console.error(error)
+  } catch (error: any) {
+    console.error("[Webhook] Erro Crítico:", error);
     return new Response(JSON.stringify({ error: error.message }), { headers: corsHeaders, status: 500 })
   }
-})
+});
