@@ -320,17 +320,19 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
           )}
           {/* Big headline */}
           <div style={{
-            fontSize: isCover ? 32 : 25, fontWeight: 900, color: '#fff',
-            lineHeight: 1.1, letterSpacing: '-0.02em',
-            textShadow: `0 2px 12px rgba(0,0,0,0.8)`,
+            fontSize: isCover ? 48 : 38, fontWeight: 950, color: '#fff',
+            lineHeight: 1.0, letterSpacing: '-0.04em',
+            textTransform: 'uppercase',
+            textShadow: `0 4px 16px rgba(0,0,0,0.9)`,
+            marginBottom: 2
           }}>
             <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
           </div>
           {/* Accent line */}
-          <div style={{ width: 44, height: 4, background: tpl.accent, borderRadius: 2, boxShadow: `0 0 12px ${tpl.accentGlow}`, marginTop: 4, marginBottom: 4 }} />
+          <div style={{ width: 60, height: 6, background: tpl.accent, borderRadius: 3, boxShadow: `0 0 16px ${tpl.accentGlow}`, marginTop: 6, marginBottom: 8 }} />
           {/* Body */}
           {typeof slide.body === 'string' && slide.body.trim() && (
-            <div style={{ fontSize: 15, color: 'rgba(255,255,255,0.9)', lineHeight: 1.5, maxWidth: '100%', fontWeight: 500 }}>
+            <div style={{ fontSize: 16, color: 'rgba(255,255,255,0.95)', lineHeight: 1.45, maxWidth: '100%', fontWeight: 600, textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>
               {slide.body}
             </div>
           )}
@@ -467,24 +469,24 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
         )}
         {/* Main text */}
         <div style={
-          { fontSize: isCover ? 18 : 15, lineHeight: 1.6, color: '#111', fontWeight: 500, overflow: 'hidden' }
+          { fontSize: isCover ? 22 : 18, lineHeight: 1.4, color: '#111', fontWeight: 600, overflow: 'hidden' }
         }>
           {isCover ? (
-            <span style={{ fontWeight: 800, fontSize: 30, lineHeight: 1.15, letterSpacing: '-0.02em' }}>{slide.headline}</span>
+            <span style={{ fontWeight: 900, fontSize: 44, lineHeight: 1.05, letterSpacing: '-0.04em', textTransform: 'uppercase' }}>{slide.headline}</span>
           ) : (
             <>
               {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-                <div style={{ fontWeight: 800, marginBottom: 8, color: '#000', fontSize: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>
+                <div style={{ fontWeight: 900, marginBottom: 10, color: '#000', fontSize: 18, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{slide.sub_headline}</div>
               )}
-              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 6, fontSize: 15, lineHeight: 1.5 }}>{slide.body}</div>}
+              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 10, fontSize: 17, lineHeight: 1.45, fontWeight: 500 }}>{slide.body}</div>}
               {Array.isArray(slide.bullets) && slide.bullets.map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                  <span style={{ color: '#1D9BF0', fontWeight: 800, fontSize: 18, lineHeight: 1 }}>•</span>
-                  <span style={{ fontWeight: 500, fontSize: 14, lineHeight: 1.45 }}>{typeof b === 'string' ? b : ''}</span>
+                <div key={i} style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                  <span style={{ color: '#1D9BF0', fontWeight: 900, fontSize: 24, lineHeight: 1 }}>•</span>
+                  <span style={{ fontWeight: 600, fontSize: 16, lineHeight: 1.4 }}>{typeof b === 'string' ? b : ''}</span>
                 </div>
               ))}
               {slide.headline && (
-                <div style={{ fontWeight: 800, marginTop: 10, color: '#000', fontSize: 22, lineHeight: 1.15 }}>
+                <div style={{ fontWeight: 900, marginTop: 14, color: '#000', fontSize: 32, lineHeight: 1.05, letterSpacing: '-0.02em', textTransform: 'uppercase' }}>
                   <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color='#1D9BF0' />
                 </div>
               )}

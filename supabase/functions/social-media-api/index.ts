@@ -142,54 +142,47 @@ async function generateCarouselV2(body: any, cors: Record<string, string>) {
     : '';
 
   const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
-Você pensa em PÁGINAS VISUAIS SEPARADAS — cada slide é uma página completa como um slide de PowerPoint/Canva.
+Você tem a obrigação de gerar EXATAMENTE ${slide_count} slides completos. NENHUM A MENOS.
+Cada slide é uma página completa e ricamente projetada de dar inveja em grandes marcas.
 
-REGRAS ABSOLUTAS DE DESIGN:
-- headline: TÍTULO PODEROSO (máximo 5-7 palavras, impacto imediato, maiúsculas quando for necessário)
-- sub_headline: complemento ou numeração (ex: "Dica 1 de 5", "Passo 2", "O Erro Mais Comum")  
-- body: texto de apoio curto (máximo 120 caracteres — pois é um slide visual, não um artigo)
-- bullets: lista de até 3 itens quando o slide for do tipo lista (máximo 45 chars cada)
-- visual_cue: descrição precisa do elemento visual ideal para aquele slide (imagem, ícone, símbolo)
-- layout: como o conteúdo se organiza na página (centered/left/split/minimal/full_bleed)
-- accent_word: uma palavra-chave do headline que deve ganhar cor de destaque
+REGRAS ABSOLUTAS DE DESIGN E COPYWRITING VISCERAL:
+1. headline: TÍTULO GIGANTE DE IMPACTO PROFUNDO. Chame a atenção. Seja agressivo e persuasivo na copy (máximo 6 palavras).
+2. sub_headline: frase de apoio em maiúsculas (ex: "DESCUBRA O SEGREDO OCULTO", "O VERDADEIRO MOTIVO").
+3. body: Parágrafo DENSO e impactante, use gatilhos mentais e neurociência. Nada óbvio ou genérico. Emília, aprofunde-se. (máx 200 chars).
+4. bullets: Quando aplicável, injete 2 a 3 pontos fortíssimos.
+5. visual_cue: Descrição de imagem cinematográfica 8K ultra realista, dark moody.
+6. accent_word: Destaque a palavra mais forte da headline.
 
-O carrossel deve ter RITMO: capa forte → conteúdo valioso → CTA irresistível.
-Retorne APENAS JSON válido sem markdown.`;
+GERE EXATAMENTE O ARRAY COM OS ${slide_count} OBJETOS DE SLIDES.`;
 
-  const userPrompt = `Crie um carrossel Instagram sobre "${topic}" para "${audience}".
-Tom: ${tone}. Slides: ${slide_count}. Marca: ${brand_name}. CTA: ${include_cta ? 'sim' : 'não'}.
-Tipo: ${carousel_type}.${pauloContext}${trendContext}
+  const userPrompt = `Crie um carrossel Instagram sobre: "${topic}" para o público: "${audience}".
+Tom: visceral, persuasivo, alta retenção. Quantidade obrigatória de slides no array: ${slide_count}. Marca: ${brand_name}.
+Tipo estrutural: ${carousel_type}.${pauloContext}${trendContext}
 
 ${typeInstructions[carousel_type] || typeInstructions.educacional}
 
-Retorne este JSON:
+Retorne este JSON exatamente com ${slide_count} slides no array. NÃO TRUNQUE, NÃO IGNORE OS SLIDES DO MEIO.
 {
   "carousel_type": "${carousel_type}",
-  "cover_headline": "headline da capa (max 7 palavras)",
-  "hook_promise": "o que o leitor vai aprender/ganhar com este carrossel",
-  "caption": "legenda completa do post para Instagram (max 2200 chars, com emojis estratégicos e quebras de linha)",
-  "hashtags": ["hashtag1", "hashtag2" ... (20 hashtags sem #, mix de nicho + trend)],
+  "cover_headline": "HEADLINE GIGANTE DA CAPA",
+  "hook_promise": "Promessa de valor",
+  "caption": "Legenda completa",
+  "hashtags": ["h1", "h2", "h3"],
   "slides": [
-    {
-      "order": 1,
-      "type": "cover",
-      "headline": "título dominante da capa",
-      "sub_headline": "frase secundária que amplifica o headline",
-      "body": "contexto ou promessa adicional (opcional na capa)",
-      "bullets": null,
-      "visual_cue": "descrição do elemento visual ideal",
-      "layout": "centered",
-      "accent_word": "palavra do headline para destacar"
-    }
+    { "order": 1, "type": "cover", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "centered", "accent_word": "..." },
+    { "order": 2, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "left", "accent_word": "..." },
+    { "order": 3, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": ["item 1", "item 2"], "visual_cue": "...", "layout": "left", "accent_word": "..." },
+    { "order": 4, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "centered", "accent_word": "..." },
+    { "order": 5, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "left", "accent_word": "..." },
+    { "order": 6, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "centered", "accent_word": "..." },
+    { "order": 7, "type": "cta", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "centered", "accent_word": "..." }
   ]
 }
 
-REGRAS DOS TIPOS DE SLIDE:
-- "cover": capa principal — headline impactante, sub_headline forte, sem body longo
-- "content": slide de conteúdo — headline direto, body explicando, visual_cue relevante
-- "list": slide de lista — sub_headline com numeração, bullets com 2-3 itens
-- "quote": citação poderosa — headline como a citação entre aspas, body com atribuição
-- "cta": slide final — headline como chamada para ação, body com instrução clara`;
+REGRAS DOS SLIDES:
+- "cover": capa principal (order 1)
+- "content": slides do meio (order 2 a ${slide_count - 1})
+- "cta": slide final (order ${slide_count}) — chamada de venda ou engajamento. GERE ATÉ COMPLETAR ${slide_count} SLIDES.`;
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
