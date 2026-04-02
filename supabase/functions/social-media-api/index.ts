@@ -106,112 +106,70 @@ const DESIGN_KITS = {
 
 // ─── V2 Carousel Generator (Rich Page-Based Slides) ─────────────────────────
 // ─── V2 Carousel Generator (Multi-Agent Architecture) ──────────────────────
+// ─── V2 Carousel Generator (Multi-Agent Architecture - Fast Mode) ──────────
 async function generateCarouselV2(body: any, cors: Record<string, string>) {
   const {
     topic,
     audience,
-    tone = 'persuasivo',
     slide_count = 8,
-    include_cta = true,
     brand_name = 'Minha Empresa',
     carousel_type = 'educacional',
-    paul_copy = '',
-    trend_context = '',
     niche = 'Negócios',
     objective = 'Engajamento e Vendas'
   } = body;
 
   const openaiKey = Deno.env.get('OPENAI_API_KEY');
-  if (!openaiKey) {
-    return new Response(JSON.stringify({ 
-      error: "API Key não configurada no Supabase." 
-    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
-  }
+  if (!openaiKey) throw new Error('OPENAI_API_KEY não configurada');
 
-  console.log(`[DAVI] Iniciando geração multi-agente para: ${topic}`);
+  console.log(`[DAVI] Iniciando geração Bulletproof para: ${topic}`);
 
   try {
-    // ── PHASE 1: DAVI STRATEGIST (CMO) ───────────────────────────────────────
-    const strategistRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    // ── PHASE 1: STRATEGIST & DESIGNER (Consolidated) ───────────────────────
+    const phase1Res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: 'Você é o DAVI ESTRATEGISTA, um CMO nível Senior. Sua função é analisar o tema e criar um "Ângulo de Ataque" viral e uma promessa de valor (Hook Promise) irrefutável.' },
-          { role: 'user', content: `Tema: ${topic}\nPúblico: ${audience}\nNiche: ${niche}\nObjetivo: ${objective}\n\nRetorne JSON: {"angle": "estratégia central", "hook_promise": "promessa do slide 1"}` }
-        ],
-        response_format: { type: 'json_object' }
-      })
-    });
-    const strategyData = await strategistRes.json();
-    const strategy = strategyData.choices?.[0]?.message?.content ? JSON.parse(strategyData.choices[0].message.content) : {};
-
-    // ── PHASE 2: DAVI DESIGNER (Freepik Specialist) ─────────────────────────
-    const designerRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: `Você é o DAVI DESIGNER, especialista em UI/UX e curador do Freepik. Sua função é escolher o melhor Kit Visual e definir os prompts de imagem cinematográficos.
+          { role: 'system', content: `Você é um CMO e Curador de Design do Freepik. Sua missão é definir a Estratégia Viral e o Estilo Visual (Design Kit) para um carrossel de alto impacto.
           KITS DISPONÍVEIS: ${JSON.stringify(DESIGN_KITS)}` },
-          { role: 'user', content: `Estratégia: ${strategy.angle}\nTema: ${topic}\nSlides: ${slide_count}\n\nRetorne JSON: {"selected_kit": "key_do_kit", "visual_style_guide": "descrição do clima visual", "slides_visuals": [{"order": 1, "visual_cue": "prompt de imagem 8k sem texto"}]}` }
+          { role: 'user', content: `Tema: ${topic}\nPúblico: ${audience}\nNiche: ${niche}\nObjetivo: ${objective}\nSlides: ${slide_count}\n\nRetorne JSON: {"strategy_angle": "x", "hook_promise": "y", "selected_kit": "key_do_kit", "visual_guide": "atmosfera visual cinematográfica", "slides_visuals": [{"order": 1, "cue": "prompt de imagem 8k focado no objeto/cena, SEM NENHUM TEXTO ESCRITO"}]}` }
         ],
         response_format: { type: 'json_object' }
       })
     });
-    const designerData = await designerRes.json();
-    const design = designerData.choices?.[0]?.message?.content ? JSON.parse(designerData.choices[0].message.content) : {};
-    const kitKey = (design.selected_kit || 'modern_bold') as keyof typeof DESIGN_KITS;
+    const p1 = JSON.parse((await phase1Res.json()).choices?.[0]?.message?.content || '{}');
+    const kitKey = (p1.selected_kit || 'modern_bold') as keyof typeof DESIGN_KITS;
     const selectedKit = DESIGN_KITS[kitKey] || DESIGN_KITS.modern_bold;
 
-    // ── PHASE 3: DAVI COPYWRITER (Final Assembly) ───────────────────────────
-    const copywriterSystem = `Você é o DAVI COPYWRITER, fundindo a expertise do Paulo Copywriter com o design do Freepik.
-    Sua missão é escrever as headlines e o corpo dos slides com base na estratégia e no design definidos.
+    // ── PHASE 2: COPYWRITER (Final Assembly) ────────────────────────────────
+    const copywriterSystem = `Você é o DAVI COPYWRITER. Escreva as headlines e o corpo dos slides.
+    ÂNGULO: ${p1.strategy_angle}\nESTILO: ${selectedKit.style}\nKIT: ${selectedKit.name}
     
-    ESTRATÉGIA: ${strategy.angle}
-    GUIA VISUAL: ${design.visual_style_guide}
-    ESTILO: ${selectedKit.style}
-    
-    REGRAS:
-    1. headlines curtas (máx 6 palavras), agressivas e viscerais.
-    2. body denso (máx 180 caracteres), focado em dor/desejo.
-    3. bullets impactantes (2 a 3 por slide quando couber).
-    4. Use EXATAMENTE ${slide_count} slides.`;
+    REGRAS DE OURO:
+    1. Headlines: Máximo 6 palavras. IMPACTANTES.
+    2. Body: Curto (máx 150 caracteres).
+    3. Use EXATAMENTE ${slide_count} slides.`;
 
-    const finalRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    const phase2Res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'gpt-4o',
         messages: [
           { role: 'system', content: copywriterSystem },
-          { role: 'user', content: `Crie o carrossel completo para o tema "${topic}". Público: ${audience}. Slides: ${slide_count}. Marca: ${brand_name}.
-          
-          Siga este formato JSON:
-          {
-            "carousel_type": "${carousel_type}",
-            "cover_headline": "HEADLINE PRINCIPAL",
-            "hook_promise": "${strategy.hook_promise}",
-            "caption": "Legenda com hashtags",
-            "hashtags": ["h1", "h2", "h3"],
-            "slides": [
-              { "order": 1, "headline": "...", "sub_headline": "...", "body": "...", "bullets": [], "accent_word": "...", "layout": "centered" }
-            ]
-          }` }
+          { role: 'user', content: `Tema: "${topic}". Público: "${audience}". Slides: ${slide_count}. Marca: ${brand_name}.
+          Retorne JSON: {"cover_headline": "...", "caption": "...", "hashtags": [], "slides": [{"order": 1, "headline": "...", "sub_headline": "...", "body": "...", "bullets": [], "accent_word": "...", "layout": "centered"}]}` }
         ],
         response_format: { type: 'json_object' }
       })
     });
+    const carousel = JSON.parse((await phase2Res.json()).choices?.[0]?.message?.content || '{}');
 
-    const finalData = await finalRes.json();
-    const carousel = JSON.parse(finalData.choices?.[0]?.message?.content || '{}');
-
-    // Mesclar os dados de design nos slides
+    // Mesclar design e visual_cue
     carousel.slides = carousel.slides.map((s: any, i: number) => ({
       ...s,
-      visual_cue: design.slides_visuals?.[i]?.visual_cue || `${topic} professional concept`,
+      visual_cue: p1.slides_visuals?.[i]?.cue || `${topic} visual`,
       visual_config: {
         bg: selectedKit.bg,
         accent: selectedKit.accent,
@@ -221,17 +179,11 @@ async function generateCarouselV2(body: any, cors: Record<string, string>) {
       }
     }));
 
-    console.log(`[DAVI] Geração concluída com sucesso.`);
-
-    return new Response(JSON.stringify({ carousel }), {
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify({ carousel }), { headers: { ...cors, 'Content-Type': 'application/json' } });
 
   } catch (err: any) {
     console.error("[DAVI ERROR]:", err);
-    return new Response(JSON.stringify({ error: `Erro na geração multi-agente: ${err.message}` }), {
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    });
+    throw err;
   }
 }
 

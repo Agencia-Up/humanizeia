@@ -276,15 +276,15 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
 function getHeadlineFontSize(text: string, isCover: boolean) {
   const len = text?.length || 0;
   if (isCover) {
-    if (len > 80) return 22;
-    if (len > 50) return 28;
-    if (len > 30) return 36;
-    return 44; // Reduced from 54
-  } else {
-    if (len > 80) return 16;
+    if (len > 80) return 18;
     if (len > 50) return 22;
     if (len > 30) return 28;
-    return 32; // Reduced from 38
+    return 34; // Reduced from 44
+  } else {
+    if (len > 80) return 14;
+    if (len > 50) return 18;
+    if (len > 30) return 22;
+    return 26; // Reduced from 32
   }
 }
 
@@ -324,16 +324,16 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
       {/* TOP — Cinematic image (55%) */}
       <div style={{
         flex: '0 0 55%',
-        backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
+        backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : `linear-gradient(135deg, ${bgColor}, ${accentColor}30)`,
         backgroundSize: 'cover',
         backgroundPosition: 'center top',
         position: 'relative',
         overflow: 'hidden',
-      }} className={!bgImgUrl ? "animate-pulse bg-slate-900 flex items-center justify-center" : ""}>
+      }} className={!bgImgUrl ? "animate-pulse flex items-center justify-center" : ""}>
         {!bgImgUrl && (
-          <div className="flex flex-col items-center gap-2 opacity-50">
+          <div className="flex flex-col items-center gap-2 opacity-40">
             <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
-            <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Renderizando IA...</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest">Sintetizando...</span>
           </div>
         )}
         {/* Gradient fade bottom */}
@@ -635,12 +635,12 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
         borderRadius: 10,
         overflow: 'hidden',
         position: 'relative',
-        background: '#f0f0f0', 
-      }} className={!bottomImg ? "animate-pulse flex items-center justify-center bg-gray-200" : ""}>
+        background: bottomImg ? 'none' : `linear-gradient(45deg, #eee, ${accentColor}20)`, 
+      }} className={!bottomImg ? "animate-pulse flex items-center justify-center" : ""}>
         {!bottomImg && (
-          <div className="flex flex-col items-center gap-2 opacity-60">
+          <div className="flex flex-col items-center gap-2 opacity-40">
             <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
-            <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Carregando Cena...</span>
+            <span className="text-[9px] font-bold uppercase tracking-widest">Design...</span>
           </div>
         )}
         {bottomImg && (
@@ -711,7 +711,7 @@ function StandardSlide({ slide, tpl, brandName, total }: {
             </div>
           )}
           <div style={{ 
-            fontSize: isCover ? 32 : 28, 
+            fontSize: isCover ? 32 : 24, 
             fontWeight: 900, 
             color: textColor, 
             lineHeight: 1.1, 
@@ -720,7 +720,8 @@ function StandardSlide({ slide, tpl, brandName, total }: {
             WebkitLineClamp: 4,
             WebkitBoxOrient: 'vertical',
             overflow: 'hidden',
-            wordBreak: 'break-word'
+            wordBreak: 'break-word',
+            hyphens: 'auto'
           }}>
             <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
           </div>
@@ -753,7 +754,7 @@ function StandardSlide({ slide, tpl, brandName, total }: {
           <div style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(16px)', border: `1px solid ${tpl.accent}50`, borderRadius: 20, padding: 28, display: 'flex', flexDirection: 'column', gap: 12, width: '100%', boxShadow: `0 20px 40px rgba(0,0,0,0.5)` }}>
             {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && <div style={{ fontSize: 10, fontWeight: 800, color: tpl.accent, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>}
             <div style={{
-              fontSize: (slide.headline?.length || 0) > 40 ? 32 : 44,
+              fontSize: (slide.headline?.length || 0) > 40 ? 28 : 34,
               fontWeight: 900,
               lineHeight: 1.1,
               color: '#fff',
@@ -763,7 +764,8 @@ function StandardSlide({ slide, tpl, brandName, total }: {
               WebkitLineClamp: 3,
               WebkitBoxOrient: 'vertical',
               overflow: 'hidden',
-              wordBreak: 'break-word'
+              wordBreak: 'break-word',
+              hyphens: 'auto'
             }}>
               <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
             </div>
