@@ -257,17 +257,33 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
           agent_id: agent?.id,
         },
       });
+
+      console.info("[QR] Resposta Create Completa:", JSON.stringify(data, null, 2));
       if (error) throw error;
-      
-      console.log('[QR] Resposta Create Completa:', JSON.stringify(data, null, 2));
-      
       if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
-      
-      if (data.qr_code) {
-        setQrCode(data.qr_code);
+
+      let finalQrCode = data?.qr_code;
+
+      // Fallback: Se o QR não veio no create, tenta buscar denovo após um pequeno delay
+      if (!finalQrCode) {
+          console.warn("[QR] QR Code não veio na resposta inicial. Tentando busca secundária...");
+          await new Promise(r => setTimeout(r, 2000));
+          const { data: qrData } = await supabase.functions.invoke('get-evolution-qrcode', {
+              body: { instance_name: slug, user_id: user!.id }
+          });
+          finalQrCode = qrData?.base64 || qrData?.qrcode || qrData?.qr_code;
       }
-      
-      startPolling(slug);
+
+      if (finalQrCode) {
+        setQrCode(finalQrCode);
+        startPolling(slug);
+      } else {
+        toast({
+            title: "Instância criada, mas o QR Code demorou",
+            description: "O número foi vinculado. Saia e entre novamente no Agente para tentar ver o QR Code atualizado.",
+            variant: "default"
+        });
+      }
     } catch (err: any) {
       console.error('[QR] Erro na criação:', err);
       toast({ title: 'Erro ao gerar QR Code', description: err.message, variant: 'destructive' });
