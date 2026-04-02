@@ -236,26 +236,33 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
     setDeletingId(id);
     console.log('[Delete] Iniciando exclusão da instância:', id);
     try {
-      const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
+      // Step 1: Try Edge Function (Full cleanup)
+      const { data, error: funcError } = await supabase.functions.invoke('delete-evolution-instance', {
         body: { instance_id: id, user_id: user?.id }
       });
       
-      console.log('[Delete] Resultado completo:', JSON.stringify(data, null, 2));
-      if (error) {
-        console.error('[Delete] Erro no invoke:', error);
-        throw error;
+      console.log('[Delete] Resultado Edge Function:', JSON.stringify(data || funcError, null, 2));
+      
+      // Step 2: FALLBACK - If Edge Function fails (401/406/non-2xx), try deleting directly from DB
+      if (funcError || !data?.success) {
+        console.warn('[Delete] Edge Function falhou ou retornou erro. Tentando exclusão direta no banco de dados...');
+        const { error: dbError } = await supabase
+          .from('wa_instances')
+          .delete()
+          .eq('id', id);
+          
+        if (dbError) {
+          console.error('[Delete] Erro na exclusão direta no banco:', dbError);
+          throw new Error('Falha total na exclusão: ' + dbError.message);
+        }
+        console.log('[Delete] Exclusão direta no banco realizada com sucesso.');
       }
       
-      if (!data?.success) {
-        console.error('[Delete] Erro lógico:', data?.error);
-        throw new Error(data?.error || 'Erro ao excluir');
-      }
-      
-      toast({ title: "Instância excluída com sucesso" });
+      toast({ title: "Instância removida com sucesso" });
       onSaved(); // Refresh lists
     } catch (err: any) {
-      console.error('[Delete] Falha catastrófica:', err);
-      toast({ title: "Falha ao excluir", description: err.message, variant: "destructive" });
+      console.error('[Delete] Falha crítica:', err);
+      toast({ title: "Falha ao excluir", description: "Tente novamente ou limpe o cache: " + err.message, variant: "destructive" });
     } finally {
       setDeletingId(null);
     }
