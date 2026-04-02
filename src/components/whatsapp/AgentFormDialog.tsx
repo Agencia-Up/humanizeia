@@ -286,7 +286,11 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
         throw new Error(data?.error || 'Erro ao sincronizar');
       }
       
-      toast({ title: "Webhook sincronizado!", description: "As mensagens agora devem ser processadas." });
+      const details = data?.results ? data.results.join(' | ') : '';
+      toast({ 
+        title: "Webhook sincronizado!", 
+        description: `Detalhes: ${details}. As mensagens agora devem ser processadas.` 
+      });
     } catch (err: any) {
       console.error('[Webhook] Falha na sincronização:', err);
       toast({ title: "Falha ao sincronizar", description: err.message, variant: "destructive" });
