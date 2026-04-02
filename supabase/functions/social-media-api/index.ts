@@ -134,11 +134,11 @@ async function generateCarouselV2(body: any, cors: Record<string, string>) {
   };
 
   const pauloContext = paul_copy
-    ? `\n\nESTRATÉGIA DO COPYWRITER PAULO (use como base e expanda visualmente):\n${paul_copy.slice(0, 800)}`
+    ? `\n\nESTRATÉGIA E ROTEIRO TÉCNICO DO PAULO (VOCÊ DEVE SEGUIR ESTE CONTEÚDO FIELMENTE SLIDE A SLIDE):\n${paul_copy.slice(0, 3000)}`
     : '';
 
   const trendContext = trend_context
-    ? `\n\nCONTEXTO DE TENDÊNCIAS ATUAL:\n${trend_context.slice(0, 400)}`
+    ? `\n\nCONTEXTO DE TENDÊNCIAS ADICIONAL:\n${trend_context.slice(0, 400)}`
     : '';
 
   const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.

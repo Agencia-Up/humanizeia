@@ -240,7 +240,7 @@ export default function PauloAgente() {
     setMessages([{
       id: 'welcome',
       role: 'assistant',
-      content: '🎬 Oi! Sou o Paulo — seu Diretor Criativo de Carrosséis.\n\nImporte a pesquisa do Daniel ou me diga o tema, e eu crio o roteiro completo: slide a slide, com texto de impacto e prompt de imagem pronto para o Davi gerar o visual.\n\nVamos criar algo que para o scroll? 🚀',
+      content: '🎬 Oi! Sou o **Paulo — seu Diretor Criativo Máster**.\n\nPronto para transformar a pesquisa do Daniel em um carrossel de elite? Importe a pesquisa ou me diga o seu tema que eu arquitetarei uma obra-prima de persuasão para o Davi gerar no visual. 🚀',
       timestamp: new Date(),
     }]);
   }, []);
@@ -452,6 +452,27 @@ export default function PauloAgente() {
     }
   };
 
+  const deleteCarousel = async (id: string, msgId: string) => {
+    try {
+      const { error } = await supabase.from('paulo_carousels' as any).delete().eq('id', id);
+      if (error) throw error;
+
+      setSavedCarousels(prev => prev.filter(c => c.id !== id));
+      
+      // Also remove from the message display if it's there
+      setMessages(prev => prev.map(m => {
+        if (m.id === msgId && m.carousels) {
+          return { ...m, carousels: m.carousels.filter(c => c.id !== id) };
+        }
+        return m;
+      }));
+
+      toast({ title: 'Carrossel excluído' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao excluir', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const handleSend = async () => {
     if (!input.trim() || loading) return;
     const topic = input.trim();
@@ -542,26 +563,29 @@ Mantenha o número de slides entre 4 e 8, ajustando ao tamanho natural da ideia.
 
       const angleLabel = ANGLES.find(a => a.value === angle)?.label || angle;
 
-      const fullPrompt = `Você é Paulo, Diretor Criativo de Carrosséis. Analise TODA a pesquisa do Daniel abaixo e gere 3 carrosséis DISTINTOS e COMPLEMENTARES. Cada um com um ângulo narrativo diferente, explorando diferentes facetas do nicho.
+      const fullPrompt = `VOCÊ É PAULO, DIRETOR CRIATIVO E COPYWRITER MASTER. POUPE O USUÁRIO DE COISAS GENÉRICAS. 
+Sua missão agora é pegar TODA a pesquisa do Daniel abaixo e transformá-la em 1 ÚNICO CARROSSEL DE ELITE (Masterpiece).
+
+REGRAS DE OURO:
+1. NÃO COPIE O TEXTO DO DANIEL. O Daniel é o seu estagiário de pesquisa. Você é o Gênio Criativo. 
+2. Use os dados dele para criar uma NARRATIVA NOVA, ganchos emocionais e ganchos psicológicos.
+3. Se o Daniel sugeriu uma pauta sobre "Como emagrecer", você deve criar algo como "O Segredo Oculto nas Células que impede você de secar". Transforme o óbvio em MAGNÉTICO.
+4. Gere entre 7 e 10 SLIDES. Queremos profundidade, densidade e valor real.
+5. Cada slide deve ser uma obra de arte: Headline curta, Body denso e persuasivo, e uma Direção de Arte (Image Prompt) impecável em inglês.
 
 ${researchContext}
 
+DADOS DO CLIENTE PARA PERSONALIZAÇÃO:
 CLIENTE: ${clientContext?.clientName || 'Demo'}
 PRODUTO: ${clientContext?.produto || 'Produto'}
 PÚBLICO: ${clientContext?.publico || 'Público geral'}
 OFERTA: ${clientContext?.oferta || ''}
 DIFERENCIAL: ${clientContext?.diferencial || ''}
 
-INSTRUÇÕES CRÍTICAS:
-1. Gere exatamente 3 carrosséis
-2. Cada carrossel deve usar um ângulo diferente (storytelling, lista, provocação, mito, passo a passo, polêmico)
-3. Explore diferentes tendências/dores da pesquisa em cada carrossel — não repita temas
-4. Cada slide deve ter headline impactante + prompt de imagem cinematográfico detalhado em inglês
-5. Entre 4 e 8 slides por carrossel — ajuste ao tamanho natural da ideia
-6. Qualidade de diretor criativo sênior. Nada genérico.
-7. JSON puro e válido. Sem texto fora do JSON.`;
+ESTRUTURA DE RESPOSTA:
+Gere 1 único carrossel denso no formato JSON que o Davi entenda. Abuse da sua criatividade. Busque conhecimento nos maiores copywriters do mundo (Gary Halbert, Eugene Schwartz).`;
 
-      const displayText = `🧠 Importando pesquisa do Daniel sobre "${niche}"...\nGerando 3 carrosséis distintos com roteiro completo + prompts de imagem.`;
+      const displayText = `🧠 **DIRETOR CRIATIVO ATIVADO**\nAnalisando pesquisa do Daniel sobre "${niche}" e arquitetando 1 Carrossel de Elite com profundidade máxima...`;
 
       setLoading(false); // Reset before generateCarousels sets it again
       await generateCarousels(displayText, fullPrompt, 'daniel_import', lastResearch.id);
@@ -657,6 +681,15 @@ INSTRUÇÕES CRÍTICAS:
               title={showPrompts ? 'Ocultar prompts' : 'Ver prompts de imagem'}
             >
               {showPrompts ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive transition-colors"
+              onClick={() => carousel.id && deleteCarousel(carousel.id, msgId)}
+              title="Excluir carrossel"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="ghost"
