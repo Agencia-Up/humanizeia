@@ -41,22 +41,22 @@ serve(async (req: Request) => {
     }
 
     const { instance_name, api_url, api_key_encrypted, provider } = inst;
-    const key = api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY');
+    const globalKey = Deno.env.get('EVOLUTION_API_KEY');
+    const instKey = api_key_encrypted || globalKey;
     const baseUrl = api_url?.replace(/\/$/, '') || Deno.env.get('EVOLUTION_API_URL')?.replace(/\/$/, '');
 
     console.log(`[delete-instance] Deleting ${instance_name} from ${baseUrl} (Provider: ${provider})`);
 
     // 2. Delete from Evolution/Uazapi
-    if (baseUrl && key) {
+    if (baseUrl && globalKey) {
       try {
-        // Uazapi DELETE /instance (with instance token)
-        // Evolution API DELETE /instance/delete/{name} (with admintoken)
-        
+        // Always prioritize Global Admin Token for deletion as it has higher privileges
         let delRes = await fetch(`${baseUrl}/instance/delete/${instance_name}`, {
           method: 'DELETE',
           headers: { 
-            'apikey': key,
-            'Authorization': `Bearer ${key}`
+            'apikey': globalKey,
+            'admintoken': globalKey,
+            'Authorization': `Bearer ${globalKey}`
           },
         });
 
@@ -65,8 +65,9 @@ serve(async (req: Request) => {
           delRes = await fetch(`${baseUrl}/instance`, {
             method: 'DELETE',
             headers: { 
-              'token': key,
-              'apikey': key,
+              'token': instKey,
+              'apikey': instKey,
+              'admintoken': globalKey,
               'Content-Type': 'application/json'
             },
           });

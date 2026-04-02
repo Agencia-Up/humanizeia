@@ -166,11 +166,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
           return;
         }
         
-        console.log('[polling] Resposta do QR Code:', { 
-          hasQr: !!data?.qr_code, 
-          connected: data?.connected,
-          qrLength: data?.qr_code?.length 
-        });
+        console.log('[polling] Resposta completa do QR Code:', JSON.stringify(data, null, 2));
 
         if (data?.connected) {
           stopPolling();
@@ -215,7 +211,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       });
       if (error) throw error;
       
-      console.log('[QR] Resposta Create:', data);
+      console.log('[QR] Resposta Create Completa:', JSON.stringify(data, null, 2));
       
       if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
       
@@ -237,16 +233,27 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
     if (!confirm('Deseja realmente excluir esta instância de WhatsApp?')) return;
 
     setDeletingId(id);
+    console.log('[Delete] Iniciando exclusão da instância:', id);
     try {
       const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
         body: { instance_id: id, user_id: user?.id }
       });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Erro ao excluir');
+      
+      console.log('[Delete] Resultado completo:', JSON.stringify(data, null, 2));
+      if (error) {
+        console.error('[Delete] Erro no invoke:', error);
+        throw error;
+      }
+      
+      if (!data?.success) {
+        console.error('[Delete] Erro lógico:', data?.error);
+        throw new Error(data?.error || 'Erro ao excluir');
+      }
       
       toast({ title: "Instância excluída com sucesso" });
       onSaved(); // Refresh lists
     } catch (err: any) {
+      console.error('[Delete] Falha catastrófica:', err);
       toast({ title: "Falha ao excluir", description: err.message, variant: "destructive" });
     } finally {
       setDeletingId(null);

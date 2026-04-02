@@ -214,27 +214,34 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   if (!qrCode) {
     await new Promise(resolve => setTimeout(resolve, 1500));
     // Try Evolution (GET) or Uazapi (POST)
-    let qrRes = await fetch(`${baseUrl}/instance/connect/${instance_name}`, { // Evolution API
-      method: 'GET',
-      headers: { 
-        'apikey': api_key,
-        'Authorization': `Bearer ${api_key}`
-      },
+    console.log(`[create-evolution-instance] Initial create didn't return QR, trying connect fallback...`);
+    let qrRes = await fetch(`${baseUrl}/instance/connect`, { // Uazapi POST
+        method: 'POST',
+        headers: { 
+            'token': instanceToken,
+            'apikey': instanceToken,
+            'admintoken': api_key,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
     });
     
-    // If 404 or fails, try Uazapi connect POST endpoint
+    // If 404 or fails, try Evolution GET method
     if (!qrRes.ok) {
-        qrRes = await fetch(`${baseUrl}/instance/connect`, {
-            method: 'POST',
-            headers: { 
-                'token': instanceToken,
-                'apikey': instanceToken
-            },
+        console.log(`[create-evolution-instance] Uazapi POST failed (${qrRes.status}), trying Evolution GET...`);
+        qrRes = await fetch(`${baseUrl}/instance/connect/${instance_name}`, {
+          method: 'GET',
+          headers: { 
+            'apikey': api_key,
+            'admintoken': api_key,
+            'Authorization': `Bearer ${api_key}`
+          },
         });
     }
+
     if (qrRes.ok) {
       const qrText = await qrRes.text();
-      console.log(`[create-evolution-instance] Connect API Response Detail:`, qrText.substring(0, 500));
+      console.log(`[create-evolution-instance] Connect API Response detail:`, qrText.substring(0, 500));
       try {
         const qrData = JSON.parse(qrText);
         qrCode = qrData?.base64 || qrData?.qrcode?.base64 || qrData?.qrcode || qrData?.instance?.qrcode?.base64 || null;

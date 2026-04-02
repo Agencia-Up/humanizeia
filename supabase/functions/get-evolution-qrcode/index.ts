@@ -88,20 +88,25 @@ serve(async (req: Request) => {
       });
     }
 
-    // Use instance-specific token as primary (crucial for Uazapi), fallback to Global Admin Token
+    // Use global key for status/metadata as it often has higher privilege
     const baseUrl = (apiUrl || evolutionApiUrl || '').replace(/\/$/, '');
-    const key = apiKey || evolutionApiKey || '';
+    const globalKey = evolutionApiKey || '';
+    const instKey = apiKey || globalKey; // Fallback to global if no instance key found
 
-    if (!baseUrl || !key) {
+    if (!baseUrl || !globalKey) {
       return new Response(JSON.stringify({ success: false, error: 'Credenciais da Evolution API não encontradas' }), {
-        status: 500,
+        status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Check connection state
+    // Check connection state using Global Key
+    console.log(`[get-evolution-qrcode] Checking state for ${instanceName} with Global Key...`);
     const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instanceName}`, {
-      headers: { 'apikey': key },
+      headers: { 
+        'apikey': globalKey,
+        'admintoken': globalKey
+      },
     });
 
     let currentState = 'disconnected';
@@ -119,12 +124,12 @@ serve(async (req: Request) => {
       let phoneNumber = '';
       try {
         const infoRes = await fetch(`${baseUrl}/instance/fetchInstances`, {
-          headers: { 'apikey': key },
+          headers: { 'apikey': globalKey, 'admintoken': globalKey },
         });
         if (infoRes.ok) {
-          const instances = await infoRes.json();
-          const inst = Array.isArray(instances)
-            ? instances.find((i: any) => i.instance?.instanceName === instanceName || i.instanceName === instanceName)
+          const fetchedInstances = await infoRes.json();
+          const inst = Array.isArray(fetchedInstances)
+            ? fetchedInstances.find((i: any) => i.instance?.instanceName === instanceName || i.instanceName === instanceName)
             : null;
           phoneNumber = inst?.instance?.owner || inst?.owner || '';
           phoneNumber = phoneNumber.replace(/@.*$/, '');
@@ -163,32 +168,35 @@ serve(async (req: Request) => {
       });
     }
 
-    // Fetch QR Code (Try Evolution API first)
-    let qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
-      method: 'GET',
-      headers: { 
-        'apikey': key,
-        'Authorization': `Bearer ${key}`
-      },
+    // Fetch QR Code (Try Uazapi POST first with Instance Key, then GET with Global Key)
+    console.log(`[get-evolution-qrcode] Fetching QR for ${instanceName}...`);
+    let qrRes = await fetch(`${baseUrl}/instance/connect`, {
+        method: 'POST',
+        headers: {
+            'token': instKey,
+            'apikey': instKey,
+            'admintoken': globalKey,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
     });
     
-    // If it's a Uazapi instance, the method is POST to /instance/connect with the instance token
+    // Fallback to standard Evolution GET if Uazapi POST fails
     if (!qrRes.ok) {
-        qrRes = await fetch(`${baseUrl}/instance/connect`, {
-            method: 'POST',
-            headers: {
-                'token': key,
-                'apikey': key,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({})
+        console.log(`[get-evolution-qrcode] POST failed (${qrRes.status}), trying GET...`);
+        qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
+          method: 'GET',
+          headers: { 
+            'apikey': globalKey,
+            'admintoken': globalKey,
+            'Authorization': `Bearer ${globalKey}`
+          },
         });
     }
 
     const qrText = await qrRes.text();
     console.log(`[get-evolution-qrcode] QR response status (${qrRes.status}) for ${instanceName}`);
     console.log(`[get-evolution-qrcode] Response Detail:`, qrText.substring(0, 500));
-    console.log(`[get-evolution-qrcode] Used token beginning with: ${key.substring(0, 6)}...`);
 
     let qrCode: string | null = null;
     let connected = false;
