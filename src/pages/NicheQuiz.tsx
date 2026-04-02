@@ -323,9 +323,27 @@ export default function NicheQuiz() {
             metadata: { type: 'generated_prompt', source: 'quiz', niche: identifiedNiche },
           });
         } catch { /* tabela pode não existir ainda */ }
+
+        // 6. NOVO: Sincroniza com a tabela de briefing global (Source of Truth)
+        try {
+          const productLabel = questions[1].options.find(o => o.id === answers[2])?.label || '';
+          const objectiveLabel = questions[2].options.find(o => o.id === answers[3])?.label || '';
+          
+          await supabase.from('client_briefings' as any).upsert({
+            user_id: user.id,
+            business_name: NICHE_LABELS[identifiedNiche] || identifiedNiche,
+            product_service: productLabel,
+            target_audience: 'Empresário do Nicho ' + (NICHE_LABELS[identifiedNiche] || identifiedNiche),
+            main_offer: objectiveLabel,
+            differentiators: otherInputs[1] || 'Não especificado',
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'user_id' });
+        } catch (e) { 
+          console.error('Erro ao sincronizar briefing global:', e);
+        }
       }
 
-      // 6. Aguarda animação e redireciona — navigate() mantém a sessão ativa
+      // 7. Aguarda animação e redireciona — navigate() mantém a sessão ativa
       await new Promise(resolve => setTimeout(resolve, 5200));
       navigate('/salomao', { replace: true });
 

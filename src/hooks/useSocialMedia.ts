@@ -115,6 +115,8 @@ export function useSocialMedia() {
     slide_count: number;
     include_cta: boolean;
     brand_name?: string;
+    niche?: string;
+    objective?: string;
   }) => {
     if (!user) return null;
     setGenerating(true);

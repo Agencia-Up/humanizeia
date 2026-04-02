@@ -155,7 +155,14 @@ export default function DaviSocialMedia() {
   const [autoModeRunning, setAutoModeRunning] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('futurista_ia');
   const [carouselType, setCarouselType] = useState<CarouselTypeValue>('educacional');
-  const [clientContext, setClientContext] = useState<{ name: string; produto: string; publico: string } | null>(null);
+  const [clientContext, setClientContext] = useState<{ 
+    name: string; 
+    produto: string; 
+    publico: string;
+    business_name?: string;
+    main_offer?: string;
+    differentiators?: string;
+  } | null>(null);
   const [briefingAlerta, setBriefingAlerta] = useState(false);
   const [clientImageUrl, setClientImageUrl] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -218,6 +225,9 @@ export default function DaviSocialMedia() {
             name: (data as any).client_name || (data as any).business_name || 'Cliente',
             produto: (data as any).product_service || (data as any).produto || '',
             publico: (data as any).target_audience || (data as any).publico || '',
+            business_name: (data as any).business_name,
+            main_offer: (data as any).main_offer,
+            differentiators: (data as any).differentiators,
           });
           setBriefingAlerta(false);
         } else {
@@ -521,6 +531,8 @@ export default function DaviSocialMedia() {
             slide_count: 7,
             include_cta: true,
             brand_name: clientContext?.name,
+            niche: clientContext?.business_name,
+            objective: clientContext?.main_offer,
           });
           if (carousel) {
             pauloContent = carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.join(' ') : '');

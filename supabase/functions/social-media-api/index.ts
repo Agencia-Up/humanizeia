@@ -74,6 +74,26 @@ serve(async (req) => {
   }
 });
 
+// ─── Design Codes Knowledge Base (Inspired by Freepik) ────────────────────────
+const DESIGN_CODES = {
+  high_performance: {
+    bg: '#FFD700', accent: '#000000', text: '#000000',
+    description: 'Vendas agressivas, itálico pesado, amarelo e preto, showroom vibe.'
+  },
+  premium_executive: {
+    bg: '#0A0A0A', accent: '#E60000', text: '#FFFFFF',
+    description: 'Luxo, sobriedade, grafite e vermelho, fontes limpas e elegantes.'
+  },
+  modern_grid: {
+    bg: '#FAFAF8', accent: '#E60000', text: '#111111',
+    description: 'Técnico, diagramado em grids, off-white, foco em dados e clareza.'
+  },
+  lifestyle: {
+    bg: '#F0F4F8', accent: '#E60000', text: '#333333',
+    description: 'Aproximação, ambiente real, overlays suaves, fontes amigáveis.'
+  }
+};
+
 // ─── V2 Carousel Generator (Rich Page-Based Slides) ─────────────────────────
 async function generateCarouselV2(body: any, cors: Record<string, string>) {
   const {
@@ -131,6 +151,15 @@ async function generateCarouselV2(body: any, cors: Record<string, string>) {
       Slide 6: Antecipa e derruba a principal objeção
       Slide 7: Convida ao debate nos comentários
       Slide ${slide_count} (CTA): "Concorda ou discorda? Comenta aqui"`,
+
+    vendas: `Formato VENDAS/CONVERSÃO: Foco total em transformar desejo em ação imediata.
+      Slide 1 (CAPA): Gancho de Dor Extrema ou Desejo Ardente + Promessa de Solução.
+      Slide 2: Agitação da Dor (o que acontece se não resolver agora).
+      Slide 3: Apresentação da Solução Única (por que o seu produto/serviço é diferente).
+      Slide 4-5: Demonstração de Valor / Benefícios Incomparáveis / Facilidades.
+      Slide 6: Prova Social ou Autoridade (Resultados reais).
+      Slide 7: Oferta Irresistível + Escassez/Urgência.
+      Slide ${slide_count} (CTA): Comando claro para compra, agendamento ou link na bio.`,
   };
 
   const pauloContext = paul_copy
@@ -141,16 +170,22 @@ async function generateCarouselV2(body: any, cors: Record<string, string>) {
     ? `\n\nCONTEXTO DE TENDÊNCIAS ADICIONAL:\n${trend_context.slice(0, 400)}`
     : '';
 
+  const nicheContext = body.niche ? `🚀 NICHO DO CLIENTE: ${body.niche}\n` : '';
+  const objectiveContext = body.objective ? `🎯 OBJETIVO PRINCIPAL: ${body.objective}\n` : '';
+
   const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
+Sua especialidade é criar conteúdo que converte e gera vendas reais para empresários.
+
+${nicheContext}${objectiveContext}
 Você tem a obrigação de gerar EXATAMENTE ${slide_count} slides completos. NENHUM A MENOS.
 Cada slide é uma página completa e ricamente projetada de dar inveja em grandes marcas.
 
 REGRAS ABSOLUTAS DE DESIGN E COPYWRITING VISCERAL:
 1. headline: TÍTULO GIGANTE DE IMPACTO PROFUNDO. Chame a atenção. Seja agressivo e persuasivo na copy (máximo 6 palavras).
 2. sub_headline: frase de apoio em maiúsculas (ex: "DESCUBRA O SEGREDO OCULTO", "O VERDADEIRO MOTIVO").
-3. body: Parágrafo DENSO e impactante, use gatilhos mentais e neurociência. Nada óbvio ou genérico. Emília, aprofunde-se. (máx 200 chars).
-4. bullets: Quando aplicável, injete 2 a 3 pontos fortíssimos.
-5. visual_cue: Descrição de imagem cinematográfica 8K ultra realista, dark moody.
+3. body: Parágrafo DENSO e impactante, use gatilhos mentais e neurociência. Nada óbvio ou genérico. (máx 200 chars).
+4. bullets: Quando aplicável (listas ou argumentos), injete 2 a 3 pontos fortíssimos.
+5. visual_cue: Descrição de imagem cinematográfica 8K ultra realista, condizente com o nicho (ex: se for automotivo, descreva carros de luxo ou ambientes de concessionária high-end).
 6. accent_word: Destaque a palavra mais forte da headline.
 
 GERE EXATAMENTE O ARRAY COM OS ${slide_count} OBJETOS DE SLIDES.`;
@@ -169,13 +204,18 @@ Retorne este JSON exatamente com ${slide_count} slides no array. NÃO TRUNQUE, N
   "caption": "Legenda completa",
   "hashtags": ["h1", "h2", "h3"],
   "slides": [
-    { "order": 1, "type": "cover", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "centered", "accent_word": "..." },
-    { "order": 2, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "left", "accent_word": "..." },
-    { "order": 3, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": ["item 1", "item 2"], "visual_cue": "...", "layout": "left", "accent_word": "..." },
-    { "order": 4, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "centered", "accent_word": "..." },
-    { "order": 5, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "left", "accent_word": "..." },
-    { "order": 6, "type": "content", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "centered", "accent_word": "..." },
-    { "order": 7, "type": "cta", "headline": "...", "sub_headline": "...", "body": "...", "bullets": null, "visual_cue": "...", "layout": "centered", "accent_word": "..." }
+    { 
+      "order": 1, 
+      "type": "cover", 
+      "headline": "...", 
+      "sub_headline": "...", 
+      "body": "...", 
+      "visual_cue": "...", 
+      "layout": "centered", 
+      "accent_word": "...",
+      "visual_config": { "bg": "#hex", "accent": "#hex", "text": "#hex", "theme": "..." }
+    },
+    ... outros slides seguindo o mesmo schema ...
   ]
 }
 

@@ -116,8 +116,10 @@ Transformar dados brutos de pesquisa (Daniel) em **1 única peça de conteúdo m
 
 ### BLOCO 2: ROTEIRO TÉCNICO PARA O DAVI (Obrigatório 7 a 10 slides)
 **[DAVI — ROTEIRO TÉCNICO]**
-**Estilo Visual Sugerido:** [futurista_ia | personal_brand]
+**Estilo Visual Sugerido (Freepik Realism):** [high_performance | premium_executive | modern_grid | lifestyle]
+**Justificativa do Estilo:** [Explique por que este estilo se conecta com o nicho do cliente]
 **Tom de Voz:** [ex: Agressivo, Sofisticado, Amigável, Autoritário]
+**Paleta Sugerida:** [Diga a cor de destaque (Accent), padrão: #E60000]
 
 [SLIDE 1 (CAPA)]
 - headline: "[Headline Dominante — máx 6 palavras, impactante]"
@@ -125,14 +127,15 @@ Transformar dados brutos de pesquisa (Daniel) em **1 única peça de conteúdo m
 - body: "[Frase curta que gera curiosidade infinita]"
 - accent_word: "[Palavra de destaque]"
 - layout: centered
-- image_prompt: "[INGLÊS: Descreva uma cena cinematográfica 8K, iluminação dramática, composição de alto nível. Mínimo 60 palavras.]"
-- visual_cue: "[Elemento visual principal]"
+- visual_config: { "bg": "#hex", "accent": "#hex", "text": "#hex", "theme": "estilo_escolhido" }
+- image_prompt: "[INGLÊS: Descreva uma cena cinematográfica realista 8K, iluminação real de showroom/concessionária (se nicho for auto), composição de alto nível. SEM NEON, SEM FUTURISTA (exceto se pedido). Mínimo 60 palavras.]"
 
 [SLIDE 2 a 9 (CONTEÚDO PROFUNDO)]
 - headline: "[Insight do Slide]"
 - body: "[Texto denso, persuasivo, que usa "Future Pacing" ou "Social Proof"]"
 - bullets: ["Dado 1", "Dado 2", "Benefício 3"]
-- image_prompt: "[INGLÊS: Direção de arte específica para este slide.]"
+- visual_config: { "bg": "#hex", "accent": "#hex", "text": "#hex", "theme": "estilo_escolhido" }
+- image_prompt: "[INGLÊS: Direção de arte realista para este slide.]"
 
 [SLIDE FINAL (O FECHAMENTO)]
 - headline: "[CTA de Venda ou Engajamento Direto]"
@@ -140,7 +143,8 @@ Transformar dados brutos de pesquisa (Daniel) em **1 única peça de conteúdo m
 - body: "[Último gatilho de escassez ou urgência]"
 - accent_word: "[Ação final]"
 - layout: centered
-- image_prompt: "[Visual de autoridade ou celebração final.]"
+- visual_config: { "bg": "#hex", "accent": "#hex", "text": "#hex", "theme": "estilo_escolhido" }
+- image_prompt: "[Visual de autoridade real ou celebração final.]"
 
 **Legenda Pro (Instagram):** [Copy longo, estruturado com Hook -> Story -> Offer. Use quebras de linha e emojis estratégicos.]
 **Hashtags Estratégicas:** [20 hashtags do nicho]
@@ -375,6 +379,21 @@ Deno.serve(async (req) => {
       if (config.swipeFileExamples && context === 'copywriter') {
         systemPrompt += `\n\n## SWIPE FILE DO USUÁRIO\nUse estas copies como INSPIRAÇÃO:\n\n${config.swipeFileExamples}\n\nIMPORTANTE: Suas novas copies devem igualar ou superar esse nível.`;
       }
+    }
+
+    // ─── CLIENT CONTEXT INJECTION (PAULO) ───
+    if (systemPrompt.includes('{{CLIENT_CONTEXT}}')) {
+      const clientDetails = [];
+      if (config?.product) clientDetails.push(`PRODUTO/SERVIÇO: ${config.product}`);
+      if (config?.description) clientDetails.push(`SOBRE O NEGÓCIO: ${config.description}`);
+      if (config?.objective) clientDetails.push(`OBJETIVO: ${config.objective}`);
+      if (config?.platform) clientDetails.push(`PLATAFORMA: ${config.platform}`);
+      
+      const contextString = clientDetails.length > 0 
+        ? clientDetails.join('\n') 
+        : 'Nenhum contexto específico fornecido pelo usuário. Use um nicho genérico de marketing de alta conversão.';
+      
+      systemPrompt = systemPrompt.replace('{{CLIENT_CONTEXT}}', contextString);
     }
 
     const creativityLevel = config?.creativity ?? 5;

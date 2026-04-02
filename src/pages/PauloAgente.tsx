@@ -394,7 +394,9 @@ export default function PauloAgente() {
           stream: false,
           task_id: taskId,
           config: {
-            description: systemPrompt,
+            product: clientContext?.produto,
+            objective: clientContext?.oferta || 'Conversão e Vendas',
+            description: `${clientContext?.publico}. Diferenciais: ${clientContext?.diferencial}`,
             creativity: 0.85,
           },
         },

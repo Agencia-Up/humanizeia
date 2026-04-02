@@ -247,8 +247,23 @@ export default function DanielEstrategia() {
         setResearchResult(lastResearch.metadata.research as any);
       }
     };
+
+    const loadBriefing = async () => {
+      if (!user) return;
+      const { data } = await supabase.from('client_briefings' as any).select('*').eq('user_id', user.id).maybeSingle();
+      if (data) {
+        setBusinessName((data as any).business_name || (data as any).client_name || '');
+        setMainChallenge((data as any).main_offer || '');
+        setProduto((data as any).product_service || '');
+        setPublico((data as any).target_audience || '');
+        setOferta((data as any).main_offer || '');
+        setDiferencial((data as any).differentiators || '');
+      }
+    };
+
     loadHistory();
-  }, [getHistory]);
+    loadBriefing();
+  }, [getHistory, user]);
 
   const handleClearHistory = async () => {
     try {
