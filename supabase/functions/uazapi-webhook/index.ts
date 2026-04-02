@@ -19,83 +19,88 @@ serve(async (req) => {
     )
 
     const payload = await req.json()
-    console.log("WebHook Uazapi Payload:", JSON.stringify(payload, null, 2));
+    console.log("[Webhook] Payload Recebido:", JSON.stringify(payload, null, 2));
 
-    // Normalização de Eventos: Uazapi costuma usar MAIÚSCULAS (MESSAGES_UPSERT)
-    // Evolution API v1 usa minúsculas (messages.upsert)
     const eventRaw = payload.event || '';
     const event = eventRaw.toLowerCase();
     
     if (event !== 'messages.upsert') {
-      console.log(`[Webhook] Ignorando evento não suportado: ${eventRaw}`);
-      return new Response(JSON.stringify({ message: "Ignored event", event: eventRaw }), { headers: corsHeaders })
+      console.log(`[Webhook] Evento ignorado: ${eventRaw}`);
+      return new Response(JSON.stringify({ message: "Ignored event" }), { headers: corsHeaders })
     }
 
-    // Normalização de Dados: O payload pode vir com 'instance' e 'data' no root
-    // ou dentro de estruturas diferentes dependendo da versão
-    const instance = payload.instance || payload.data?.instance || '';
-    const data = payload.data || payload; 
+    // Normalização: Uazapi costuma mandar data como um ARRAY [ { ... } ]
+    let data = payload.data || payload; 
+    if (Array.isArray(data)) {
+        console.log(`[Webhook] Detectado payload em ARRAY. Extraindo primeiro item.`);
+        data = data[0];
+    }
+    
+    const instance = payload.instance || data.instance || '';
     const { key, message, pushName, messageType } = data;
 
     if (!instance || !key || !message) {
-        console.error("[Webhook] Payload incompleto:", JSON.stringify({ instance: !!instance, key: !!key, message: !!message }));
+        console.error("[Webhook] Erro: Dados incompletos no payload (Normalizado).", JSON.stringify({ instance: !!instance, key: !!key, message: !!message }));
         return new Response('Incomplete payload', { headers: corsHeaders });
     }
 
-    // Filtrar mensagens
     if (key.fromMe) return new Response('Ignored fromMe', { headers: corsHeaders });
-    if (key.remoteJid.includes('@broadcast')) return new Response('Ignored broadcast', { headers: corsHeaders });
-    if (key.remoteJid.includes('@g.us')) return new Response('Ignored group', { headers: corsHeaders });
+    if (key.remoteJid.includes('@broadcast') || key.remoteJid.includes('@g.us')) {
+        return new Response('Ignored group/broadcast', { headers: corsHeaders });
+    }
 
-    // Extrai o texto da mensagem (Suporta múltiplos formatos)
+    // Extração robusta de texto
     let userText = '';
     if (messageType === 'conversation') userText = message.conversation || '';
     else if (messageType === 'extendedTextMessage') userText = message.extendedTextMessage?.text || '';
-    else if (message.conversation) userText = message.conversation;
-    else if (message.extendedTextMessage?.text) userText = message.extendedTextMessage.text;
+    else {
+        // Fallbacks para formatos variados
+        userText = message.conversation || 
+                   message.extendedTextMessage?.text || 
+                   message.text || 
+                   data.text || 
+                   '';
+    }
     
     if (!userText.trim()) {
-        console.log("[Webhook] Texto vazio ignorado");
+        console.log("[Webhook] Texto não encontrado no objeto message.");
         return new Response('Empty text', { headers: corsHeaders });
     }
 
-    // 1. Localizar a instância no banco
-    const { data: waInstance, error: fetchInstErr } = await supabaseClient
+    console.log(`[Webhook] Mensagem de ${pushName} (${key.remoteJid}): "${userText}"`);
+
+    // 1. Localizar Instância
+    const { data: waInstance, error: instErr } = await supabaseClient
       .from('wa_instances')
       .select('*')
       .eq('instance_name', instance)
-      .single();
+      .maybeSingle();
 
-    if (fetchInstErr || !waInstance) {
-      console.log(`[Webhook] Instância ${instance} não encontrada no banco.`);
+    if (instErr || !waInstance) {
+      console.log(`[Webhook] Instância "${instance}" não configurada no HumanizeIA.`);
       return new Response('Instance not found', { headers: corsHeaders });
     }
 
-    const instanceData = {
-      ...waInstance,
-      api_key: waInstance.api_key_encrypted,
-      server_url: waInstance.api_url
-    };
-
-    // Achar o Agente Ativo vinculado a essa instância
+    // 2. Achar Agente Ativo
+    console.log(`[Webhook] Buscando agente para Instância ID: ${waInstance.id}`);
     const { data: agent, error: agentErr } = await supabaseClient
       .from('wa_ai_agents')
       .select('*')
-      .eq('user_id', instanceData.user_id)
+      .eq('user_id', waInstance.user_id)
       .eq('is_active', true)
-      .contains('instance_ids', [instanceData.id])
-      .order('updated_at', { ascending: false })
-      .limit(1)
+      .contains('instance_ids', [waInstance.id])
       .maybeSingle();
 
     if (agentErr || !agent) {
-      console.log(`[Webhook] Nenhum agente ativo atribuído à instância ${instance}.`);
-      return new Response('No matching agent', { headers: corsHeaders });
+      console.log(`[Webhook] Nenhum agente ATIVO e VINCULADO encontrado para a instância ${instance}.`);
+      return new Response('No matching active agent', { headers: corsHeaders });
     }
 
-    // 2. Salvar Mensagem do Cliente na Tabela de Histórico
+    console.log(`[Webhook] Agente encontrado: "${agent.name}" (ID: ${agent.id})`);
+
+    // 3. Salvar Histórico
     try {
-        await supabaseClient.from('wa_chat_history').insert({
+        const { error: histErr } = await supabaseClient.from('wa_chat_history').insert({
           user_id: agent.user_id,
           agent_id: agent.id,
           instance_id: instance,
@@ -104,8 +109,9 @@ serve(async (req) => {
           content: userText,
           lead_name: pushName || 'Lead'
         });
-    } catch (dbErr) {
-        console.warn("[Webhook] Falha ao salvar histórico:", dbErr);
+        if (histErr) console.warn("[Webhook] Erro ao salvar histórico:", histErr);
+    } catch (e) {
+        console.error("[Webhook] Exceção ao salvar histórico:", e);
     }
 
     // 3. Montar o Contexto do LLM (Semelhante ao anterior)
@@ -168,9 +174,9 @@ serve(async (req) => {
     });
 
     // 6. Enviar de volta para WhatsApp (Universal Format)
-    const baseUrl = (instanceData.server_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
+    const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
     const globalKey = Deno.env.get('EVOLUTION_API_KEY') || '';
-    const instKey = instanceData.api_key || globalKey;
+    const instKey = waInstance.api_key_encrypted || globalKey;
 
     console.log(`[Webhook] Enviando resposta para ${key.remoteJid} via ${instance}`);
     
