@@ -1,5 +1,6 @@
 import {
   Home,
+  LayoutDashboard,
   Brain,
   PenTool,
   Palette,
@@ -63,7 +64,7 @@ const agentItems = [
 
 // 🏠 Dashboard
 const dashboardItems = [
-  { title: 'Home', url: '/dashboard', icon: Home },
+  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'Métricas', url: '/metrics', icon: BarChart3 },
 ];
 
