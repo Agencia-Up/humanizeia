@@ -273,47 +273,26 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
           position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%',
           background: `linear-gradient(to bottom, transparent, ${tpl.bg})`,
         }} />
-        {/* Brand top-left */}
-        <div style={{
-          position: 'absolute', top: 16, left: 16, zIndex: 2,
-          fontSize: 10, fontWeight: 900, letterSpacing: '0.2em',
-          color: '#fff', textTransform: 'uppercase',
-          background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)',
-          border: '1px solid rgba(255,255,255,0.25)', 
-          padding: '6px 14px', borderRadius: 100,
-          boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
-          display: 'flex', alignItems: 'center', gap: 6
-        }}>
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: tpl.accent, boxShadow: `0 0 8px ${tpl.accent}` }} />
-          {brandName}
-        </div>
-        {/* Slide counter */}
-        <div style={{
-          position: 'absolute', top: 18, right: 18, zIndex: 2,
-          fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.9)',
-          background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)',
-          padding: '4px 10px', borderRadius: 8,
-          border: '1px solid rgba(255,255,255,0.1)'
-        }}>
-          {slide.order} / {total}
-        </div>
+        {/* Brand/Counter removed for cleaner look as requested */}
       </div>
 
-      {/* BOTTOM — Text area (45%) */}
+      {/* BOTTOM — Text area (45%) — Using flex: 1 and min-height: 0 to handle overflow better */}
       <div style={{
-        flex: '0 0 45%',
+        flex: '1',
         background: tpl.bgGradient,
-        padding: '16px 20px 14px',
-        display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+        padding: '20px 24px 16px',
+        display: 'flex', flexDirection: 'column', justifyContent: 'center',
         position: 'relative',
+        overflow: 'hidden',
+        minHeight: 0,
       }}>
         {/* Top accent bar */}
         <div style={{
-          position: 'absolute', top: 0, left: 20, right: 20, height: 2,
+          position: 'absolute', top: 0, left: 24, right: 24, height: 3,
           background: `linear-gradient(90deg, ${tpl.accent}, transparent)`,
         }} />
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {/* Sub-label */}
           {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
             <div style={{
@@ -337,7 +316,18 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
           <div style={{ width: 60, height: 6, background: tpl.accent, borderRadius: 3, boxShadow: `0 0 16px ${tpl.accentGlow}`, marginTop: 6, marginBottom: 8 }} />
           {/* Body */}
           {typeof slide.body === 'string' && slide.body.trim() && (
-            <div style={{ fontSize: 16, color: 'rgba(255,255,255,0.95)', lineHeight: 1.45, maxWidth: '100%', fontWeight: 600, textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>
+            <div style={{ 
+              fontSize: 16, 
+              color: 'rgba(255,255,255,0.95)', 
+              lineHeight: 1.4, 
+              maxWidth: '100%', 
+              fontWeight: 600, 
+              textShadow: '0 2px 4px rgba(0,0,0,0.5)',
+              display: '-webkit-box',
+              WebkitLineClamp: 4,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden'
+            }}>
               {slide.body}
             </div>
           )}
@@ -695,12 +685,7 @@ function StandardSlide({ slide, tpl, brandName, total }: {
         </div>
       )}
       <div style={{ height: 4, background: `linear-gradient(90deg, ${tpl.accent}, transparent)`, width: '100%', flexShrink: 0, zIndex: 2 }} />
-      <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 2, fontSize: 10, fontWeight: 800, letterSpacing: '0.15em', color: '#fff', textTransform: 'uppercase', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: 6 }}>
-        {brandName}
-      </div>
-      <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 2, fontSize: 11, fontWeight: 800, color: subColor, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', padding: '3px 8px', borderRadius: 6, fontFeatureSettings: '"tnum"' }}>
-        {slide.order}/{total}
-      </div>
+      {/* Floating labels removed for clean look */}
       {renderContent()}
       {!isCta && (
         <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 2, fontSize: 10, color: subColor, display: 'flex', alignItems: 'center', gap: 4, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
