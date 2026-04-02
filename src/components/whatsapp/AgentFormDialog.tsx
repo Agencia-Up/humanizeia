@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2 } from 'lucide-react';
 
 interface Instance {
   id: string;
@@ -102,6 +102,11 @@ const AGENT_TYPES = [
 ];
 
 export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved }: AgentFormDialogProps) {
+  useEffect(() => {
+    if (open) {
+      console.info("!!! HUMANIZEIA UAZAPI DEBUG V4.1 ACTIVE !!!");
+    }
+  }, [open]);
   const { user } = useAuth();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -134,6 +139,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [isInstanceConnected, setIsInstanceConnected] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = () => {
@@ -149,12 +155,23 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
 
   const startPolling = () => {
     stopPolling();
+    console.log('[polling] Início do rastreamento de QR Code...');
     pollingRef.current = setInterval(async () => {
       try {
         const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
           body: { user_id: user!.id },
         });
-        if (error) return;
+        if (error) {
+          console.error('[polling] Erro na Edge Function:', error);
+          return;
+        }
+        
+        console.log('[polling] Resposta do QR Code:', { 
+          hasQr: !!data?.qr_code, 
+          connected: data?.connected,
+          qrLength: data?.qr_code?.length 
+        });
+
         if (data?.connected) {
           stopPolling();
           setIsInstanceConnected(true);
@@ -175,14 +192,18 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
         } else if (data?.qr_code) {
           setQrCode(data.qr_code);
         }
-      } catch {}
+      } catch (err) {
+        console.error('[polling] Erro fatal no catch:', err);
+      }
     }, 5000);
   };
 
   const handleGenerateQr = async () => {
     if (!name.trim()) { toast({ title: "Preencha o nome do agente primeiro", variant: "destructive" }); return; }
     setIsGeneratingQr(true);
+    setQrCode(null); // Reset
     const slug = generateSlug(name) || `agente-${Date.now()}`;
+    console.log('[QR] Gerando instância:', slug);
     try {
       const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
         body: {
@@ -193,13 +214,42 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
         },
       });
       if (error) throw error;
+      
+      console.log('[QR] Resposta Create:', data);
+      
       if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
-      setQrCode(data.qr_code || null);
+      
+      if (data.qr_code) {
+        setQrCode(data.qr_code);
+      }
+      
       startPolling();
     } catch (err: any) {
+      console.error('[QR] Erro na criação:', err);
       toast({ title: 'Erro ao gerar QR Code', description: err.message, variant: 'destructive' });
     } finally {
       setIsGeneratingQr(false);
+    }
+  };
+
+  const handleDeleteInstance = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Deseja realmente excluir esta instância de WhatsApp?')) return;
+
+    setDeletingId(id);
+    try {
+      const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
+        body: { instance_id: id, user_id: user?.id }
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Erro ao excluir');
+      
+      toast({ title: "Instância excluída com sucesso" });
+      onSaved(); // Refresh lists
+    } catch (err: any) {
+      toast({ title: "Falha ao excluir", description: err.message, variant: "destructive" });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -463,7 +513,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                         <Label className="text-xs mb-2 block">Ou use um número já conectado:</Label>
                         <div className="space-y-2 max-h-[120px] overflow-y-auto">
                           {instances.map(inst => (
-                            <div key={inst.id} className="flex items-center gap-3 p-1">
+                            <div key={inst.id} className="flex items-center gap-3 p-1 hover:bg-muted/50 rounded-md group">
                               <Checkbox
                                 checked={selectedInstanceIds.includes(inst.id)}
                                 onCheckedChange={() => toggleInstance(inst.id)}
@@ -472,6 +522,15 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                               <Badge variant={inst.is_active ? 'default' : 'secondary'} className="text-[10px]">
                                 {inst.is_active ? 'Online' : 'Offline'}
                               </Badge>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-red-500 hover:bg-red-50 transition-colors"
+                                onClick={(e) => handleDeleteInstance(inst.id, e)}
+                                disabled={deletingId === inst.id}
+                              >
+                                {deletingId === inst.id ? <Loader2 className="h-3 w-3 animate-spin"/> : <Trash2 className="h-3 w-3" />}
+                              </Button>
                             </div>
                           ))}
                         </div>

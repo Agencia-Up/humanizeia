@@ -1,11 +1,12 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-Deno.serve(async (req) => {
+serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -87,9 +88,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Use env secrets as primary, fallback to DB values
-    const baseUrl = (evolutionApiUrl || apiUrl || '').replace(/\/$/, '');
-    const key = evolutionApiKey || apiKey || '';
+    // Use instance-specific token as primary (crucial for Uazapi), fallback to Global Admin Token
+    const baseUrl = (apiUrl || evolutionApiUrl || '').replace(/\/$/, '');
+    const key = apiKey || evolutionApiKey || '';
 
     if (!baseUrl || !key) {
       return new Response(JSON.stringify({ success: false, error: 'Credenciais da Evolution API não encontradas' }), {
@@ -162,21 +163,40 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch QR Code
-    const qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
-      headers: { 'apikey': key },
+    // Fetch QR Code (Try Evolution API first)
+    let qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
+      method: 'GET',
+      headers: { 
+        'apikey': key,
+        'Authorization': `Bearer ${key}`
+      },
     });
+    
+    // If it's a Uazapi instance, the method is POST to /instance/connect with the instance token
+    if (!qrRes.ok) {
+        qrRes = await fetch(`${baseUrl}/instance/connect`, {
+            method: 'POST',
+            headers: {
+                'token': key,
+                'apikey': key,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+        });
+    }
 
     const qrText = await qrRes.text();
-    console.log(`[get-evolution-qrcode] QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
+    console.log(`[get-evolution-qrcode] QR response status (${qrRes.status}) for ${instanceName}`);
+    console.log(`[get-evolution-qrcode] Response Detail:`, qrText.substring(0, 500));
+    console.log(`[get-evolution-qrcode] Used token beginning with: ${key.substring(0, 6)}...`);
 
     let qrCode: string | null = null;
     let connected = false;
 
     try {
       const qrData = JSON.parse(qrText);
-      qrCode = qrData?.base64 || qrData?.qrcode?.base64 || null;
-      connected = qrData?.state === 'open' || qrData?.instance?.state === 'open';
+      qrCode = qrData?.base64 || qrData?.qrcode?.base64 || qrData?.qrcode || qrData?.instance?.qrcode?.base64 || qrData?.qrcode?.code || null;
+      connected = qrData?.state === 'open' || qrData?.instance?.state === 'open' || qrData?.state === 'CONNECTED';
     } catch {}
 
     if (connected) {
@@ -200,11 +220,10 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
-  } catch (error: unknown) {
+  } catch (error: any) {
     console.error('[get-evolution-qrcode] Error:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ success: false, error: message }), {
-      status: 500,
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
+      status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
