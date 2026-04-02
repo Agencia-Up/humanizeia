@@ -31,9 +31,12 @@ serve(async (req) => {
     const instanceToken = inst.api_key_encrypted;
     const globalKey = Deno.env.get("EVOLUTION_API_KEY") || "";
     
-    const webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/uazapi-webhook`;
+    // Garantir que a URL não tenha barra duplicada
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")?.replace(/\/$/, "");
+    const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
 
-    console.log(`[sync-webhook] Syncing ${instanceName} to ${webhookUrl}`);
+    console.log(`[V5.4] Sincronizando Instância: ${instanceName}`);
+    console.log(`[V5.4] URL do Webhook: ${webhookUrl}`);
 
     const results = [];
 

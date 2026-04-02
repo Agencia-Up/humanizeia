@@ -254,6 +254,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
           instance_name: slug,
           friendly_name: `WhatsApp - ${name} (${randomSuffix})`,
           user_id: user!.id,
+          agent_id: agent?.id,
         },
       });
       if (error) throw error;

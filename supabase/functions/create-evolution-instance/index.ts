@@ -135,7 +135,7 @@ async function handleMetaProvider(supabase: any, body: any) {
 // ====================== EVOLUTION API PROVIDER ======================
 
 async function handleEvolutionProvider(supabase: any, body: any) {
-  const { instance_name, user_id, friendly_name, custom_api_url, custom_api_key } = body;
+  const { instance_name, user_id, friendly_name, custom_api_url, custom_api_key, agent_id } = body;
 
   // Read credentials: use custom if provided, otherwise fallback to secrets
   const api_url = (custom_api_url || Deno.env.get('EVOLUTION_API_URL') || '').trim();
@@ -183,147 +183,79 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   });
 
   const createText = await createRes.text();
-  console.log(`[create-evolution-instance] Create response (${createRes.status}): ${createText.substring(0, 500)}`);
-
   let createData: any = {};
   try { createData = JSON.parse(createText); } catch {}
 
-  console.log(`[create-evolution-instance] Response Structure:`, JSON.stringify(createData, null, 2));
-
-  if (!createRes.ok && createRes.status !== 200 && createRes.status !== 201) {
-    return new Response(JSON.stringify({
-      success: false,
-      error: `Falha na Uazapi (Erro ${createRes.status}): Verifique se sua URL está correta (ex: https://dominio.com.br) e seu Token Global. Detalhes: ${createText}`,
-      details: createText,
-    }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  // In Uazapi, the token is returned on create.
   const instanceToken = createData?.token || api_key;
 
   // 2. Get QR Code
-  let qrCode: string | null = createData?.qrcode?.base64 || createData?.hash?.qrcode || null;
-  // If Uazapi, it might be inside response.instance.qrcode.base64
-  if (!qrCode && createData?.instance?.qrcode?.base64) {
-    qrCode = createData.instance.qrcode.base64;
-  }
+  let qrCode: string | null = createData?.qrcode?.base64 || createData?.hash?.qrcode || createData?.instance?.qrcode?.base64 || null;
 
   if (!qrCode) {
     await new Promise(resolve => setTimeout(resolve, 1500));
-    // Try Evolution (GET) or Uazapi (POST)
-    console.log(`[create-evolution-instance] Initial create didn't return QR, trying connect fallback...`);
-    let qrRes = await fetch(`${baseUrl}/instance/connect`, { // Uazapi POST
-        method: 'POST',
-        headers: { 
-            'token': instanceToken,
-            'apikey': instanceToken,
-            'admintoken': api_key,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({})
+    let qrRes = await fetch(`${baseUrl}/instance/connect/${instance_name}`, {
+      method: 'GET',
+      headers: { 'apikey': api_key, 'admintoken': api_key },
     });
-    
-    // If 404 or fails, try Evolution GET method
-    if (!qrRes.ok) {
-        console.log(`[create-evolution-instance] Uazapi POST failed (${qrRes.status}), trying Evolution GET...`);
-        qrRes = await fetch(`${baseUrl}/instance/connect/${instance_name}`, {
-          method: 'GET',
-          headers: { 
-            'apikey': api_key,
-            'admintoken': api_key,
-            'Authorization': `Bearer ${api_key}`
-          },
-        });
-    }
-
     if (qrRes.ok) {
-      const qrText = await qrRes.text();
-      console.log(`[create-evolution-instance] Connect API Response detail:`, qrText.substring(0, 500));
-      try {
-        const qrData = JSON.parse(qrText);
-        qrCode = qrData?.base64 || qrData?.qrcode?.base64 || qrData?.qrcode || qrData?.instance?.qrcode?.base64 || null;
-      } catch {}
+        const qrData = await qrRes.json();
+        qrCode = qrData?.base64 || qrData?.qrcode?.base64 || qrData?.qrcode || null;
     }
   }
 
-  // 2.5. Set webhook for this instance
+  // 2.5. Set webhook
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
+  const webhookUrl = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/uazapi-webhook`;
   try {
-    // Evolution API
-    let webhookRes = await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
+    await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json', 
-        'apikey': api_key,
-        'Authorization': `Bearer ${api_key}`
-      },
+      headers: { 'Content-Type': 'application/json', 'apikey': api_key },
       body: JSON.stringify({
-        webhook: {
-          url: webhookUrl,
-          enabled: true,
-          webhook_by_events: false,
-          webhook_base64: false,
-          events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"],
-        },
+        webhook: { url: webhookUrl, enabled: true, events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"] }
       }),
     });
-    
-    // For Uazapi
-    if (!webhookRes.ok) {
-        await fetch(`${baseUrl}/webhook/set`, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json', 
-                'token': instanceToken
-            },
-            body: JSON.stringify({
-                url: webhookUrl,
-                enabled: true,
-                webhook_by_events: false,
-                webhook_base64: false,
-                events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"],
-            })
-        });
-    }
-    console.log(`[create-evolution-instance] Webhook set for ${instance_name}`);
-  } catch (webhookErr) {
-    console.warn('[create-evolution-instance] Failed to set webhook:', webhookErr);
-  }
+  } catch (e) { console.warn('Webhook jump failed', e); }
 
   // 3. Save to wa_instances
-  const { error: insertErr } = await supabase
+  const { data: newInstance, error: insertErr } = await supabase
     .from('wa_instances')
     .insert({
       user_id,
       instance_name,
       friendly_name: friendly_name || instance_name,
       api_url: baseUrl,
-      api_key_encrypted: instanceToken, // Salvar o token da instancia (se Uazapi)
-      phone_number: '',
+      api_key_encrypted: instanceToken,
       status: 'waiting_qr',
       is_active: false,
       provider: 'evolution',
-    });
+    })
+    .select('id')
+    .single();
 
-  if (insertErr) {
-    console.error('[create-evolution-instance] DB insert error:', insertErr);
-    await supabase.from('whatsapp_config').upsert({
-      user_id,
-      api_url: baseUrl,
-      api_key: api_key,
-      instance_name,
-      is_active: false,
-      phone_number: '',
-    }, { onConflict: 'user_id' });
+  // 4. AUTO-LINK TO AGENT (V5.7)
+  if (!insertErr && newInstance && agent_id) {
+    console.log(`[V5.7] Auto-linking to agent: ${agent_id}`);
+    const { data: currentAgent } = await supabase
+      .from('wa_ai_agents')
+      .select('instance_ids')
+      .eq('id', agent_id)
+      .single();
+    
+    if (currentAgent) {
+      const ids = currentAgent.instance_ids || [];
+      if (!ids.includes(newInstance.id)) {
+        await supabase
+          .from('wa_ai_agents')
+          .update({ instance_ids: [...ids, newInstance.id] })
+          .eq('id', agent_id);
+      }
+    }
   }
 
   return new Response(JSON.stringify({
     success: true,
     qr_code: qrCode,
+    instance_id: newInstance?.id,
     provider: 'evolution',
   }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
