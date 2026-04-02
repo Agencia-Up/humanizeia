@@ -87,9 +87,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Use env secrets as primary, fallback to DB values
-    const baseUrl = (evolutionApiUrl || apiUrl || '').replace(/\/$/, '');
-    const key = evolutionApiKey || apiKey || '';
+    // Use instance-specific token as primary (crucial for Uazapi), fallback to Global Admin Token
+    const baseUrl = (apiUrl || evolutionApiUrl || '').replace(/\/$/, '');
+    const key = apiKey || evolutionApiKey || '';
 
     if (!baseUrl || !key) {
       return new Response(JSON.stringify({ success: false, error: 'Credenciais da Evolution API não encontradas' }), {
@@ -162,13 +162,31 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch QR Code
-    const qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
-      headers: { 'apikey': key },
+    // Fetch QR Code (Try Evolution API first)
+    let qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
+      method: 'GET',
+      headers: { 
+        'apikey': key,
+        'Authorization': `Bearer ${key}`
+      },
     });
+    
+    // If it's a Uazapi instance, the method is POST to /instance/connect with the instance token
+    if (!qrRes.ok) {
+        qrRes = await fetch(`${baseUrl}/instance/connect`, {
+            method: 'POST',
+            headers: {
+                'token': key,
+                'apikey': key,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+        });
+    }
 
     const qrText = await qrRes.text();
     console.log(`[get-evolution-qrcode] QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
+    console.log(`[get-evolution-qrcode] Used token beginning with: ${key.substring(0, 6)}...`);
 
     let qrCode: string | null = null;
     let connected = false;
