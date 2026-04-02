@@ -224,6 +224,7 @@ serve(async (req: Request) => {
       success: true,
       connected,
       qr_code: qrCode,
+      raw_response: !qrCode ? qrText.substring(0, 1000) : null
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

@@ -79,13 +79,17 @@ serve(async (req: Request) => {
       }
     }
 
-    // 3. Delete from Database
+    // 3. Delete from Database - ALWAYS RUN THIS
+    console.log(`[delete-instance] Removing from DB: ${instance_id}`);
     const { error: dbErr } = await supabase
       .from('wa_instances')
       .delete()
       .eq('id', instance_id);
 
-    if (dbErr) throw dbErr;
+    if (dbErr) {
+        console.error('[delete-instance] DB Delete Error:', dbErr);
+        throw dbErr;
+    }
 
     return new Response(JSON.stringify({ success: true, message: 'Instância removida com sucesso' }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

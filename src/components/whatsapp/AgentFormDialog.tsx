@@ -198,14 +198,15 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
     if (!name.trim()) { toast({ title: "Preencha o nome do agente primeiro", variant: "destructive" }); return; }
     setIsGeneratingQr(true);
     setQrCode(null); // Reset
-    const slug = generateSlug(name) || `agente-${Date.now()}`;
-    console.log('[QR] Gerando instância:', slug);
+    const randomSuffix = Math.random().toString(36).substring(2, 6);
+    const slug = `${generateSlug(name) || 'agente'}-${randomSuffix}`;
+    console.log('[QR] Gerando instância única:', slug);
     try {
       const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
         body: {
           provider: 'evolution',
           instance_name: slug,
-          friendly_name: `WhatsApp - ${name}`,
+          friendly_name: `WhatsApp - ${name} (${randomSuffix})`,
           user_id: user!.id,
         },
       });
