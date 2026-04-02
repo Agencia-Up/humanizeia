@@ -102,6 +102,11 @@ const AGENT_TYPES = [
 ];
 
 export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved }: AgentFormDialogProps) {
+  useEffect(() => {
+    if (open) {
+      console.info("!!! HUMANIZEIA UAZAPI DEBUG V4.1 ACTIVE !!!");
+    }
+  }, [open]);
   const { user } = useAuth();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -520,7 +525,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 text-muted-foreground hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="h-7 w-7 text-red-500 hover:bg-red-50 transition-colors"
                                 onClick={(e) => handleDeleteInstance(inst.id, e)}
                                 disabled={deletingId === inst.id}
                               >
