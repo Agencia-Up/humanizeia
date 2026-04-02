@@ -43,10 +43,11 @@ serve(async (req) => {
             method: "POST",
             headers: { "Content-Type": "application/json", "apikey": globalKey, "token": instanceToken, "admintoken": globalKey },
             body: JSON.stringify({
-                webhook: { url: webhookUrl, enabled: true, events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"] }
+                webhook: { url: webhookUrl, enabled: true, events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "SEND_MESSAGE"] }
             })
         });
-        results.push(`V1: ${r1.status}`);
+        const t1 = await r1.text();
+        results.push(`V1 (${r1.status}): ${t1.substring(0, 100)}`);
     } catch(e) { results.push(`V1 Error: ${e.message}`); }
 
     // Attempt 2: Evolution v2 / Uazapi
@@ -54,9 +55,10 @@ serve(async (req) => {
         const r2 = await fetch(`${baseUrl}/webhook/set`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "apikey": globalKey, "token": instanceToken, "admintoken": globalKey },
-            body: JSON.stringify({ instance: instanceName, url: webhookUrl, enabled: true })
+            body: JSON.stringify({ instance: instanceName, url: webhookUrl, enabled: true, events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"] })
         });
-        results.push(`V2: ${r2.status}`);
+        const t2 = await r2.text();
+        results.push(`V2 (${r2.status}): ${t2.substring(0, 100)}`);
     } catch(e) { results.push(`V2 Error: ${e.message}`); }
 
     return new Response(JSON.stringify({ success: true, results }), {
