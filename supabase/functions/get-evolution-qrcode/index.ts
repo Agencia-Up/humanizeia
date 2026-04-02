@@ -212,8 +212,20 @@ serve(async (req: Request) => {
                null;
       
       const state = (qrData?.state || qrData?.status || qrData?.instance?.state || qrData?.instance?.status || '').toLowerCase();
-      connected = state === 'open' || state === 'connected';
-    } catch {}
+      
+      // Robust connection check (V5.1)
+      connected = state === 'open' || 
+                  state === 'connected' || 
+                  state === 'connected_authenticated' || 
+                  qrData?.connected === true || 
+                  qrData?.instance?.connected === true || 
+                  qrData?.loggedIn === true || 
+                  qrData?.instance?.loggedIn === true;
+
+      console.log(`[get-evolution-qrcode] Evaluated connected state: ${connected} (${state})`);
+    } catch (e) {
+        console.error(`[get-evolution-qrcode] Parsing error:`, e);
+    }
 
     if (connected) {
       await supabase
