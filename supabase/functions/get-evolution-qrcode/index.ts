@@ -185,7 +185,8 @@ Deno.serve(async (req) => {
     }
 
     const qrText = await qrRes.text();
-    console.log(`[get-evolution-qrcode] QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
+    console.log(`[get-evolution-qrcode] QR response status (${qrRes.status}) for ${instanceName}`);
+    console.log(`[get-evolution-qrcode] Response Detail:`, qrText.substring(0, 500));
     console.log(`[get-evolution-qrcode] Used token beginning with: ${key.substring(0, 6)}...`);
 
     let qrCode: string | null = null;
@@ -193,8 +194,8 @@ Deno.serve(async (req) => {
 
     try {
       const qrData = JSON.parse(qrText);
-      qrCode = qrData?.base64 || qrData?.qrcode?.base64 || null;
-      connected = qrData?.state === 'open' || qrData?.instance?.state === 'open';
+      qrCode = qrData?.base64 || qrData?.qrcode?.base64 || qrData?.qrcode || qrData?.instance?.qrcode?.base64 || qrData?.qrcode?.code || null;
+      connected = qrData?.state === 'open' || qrData?.instance?.state === 'open' || qrData?.state === 'CONNECTED';
     } catch {}
 
     if (connected) {

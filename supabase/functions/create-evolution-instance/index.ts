@@ -187,6 +187,8 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   let createData: any = {};
   try { createData = JSON.parse(createText); } catch {}
 
+  console.log(`[create-evolution-instance] Response Structure:`, JSON.stringify(createData, null, 2));
+
   if (!createRes.ok && createRes.status !== 200 && createRes.status !== 201) {
     return new Response(JSON.stringify({
       success: false,
@@ -231,9 +233,10 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     }
     if (qrRes.ok) {
       const qrText = await qrRes.text();
+      console.log(`[create-evolution-instance] Connect API Response Detail:`, qrText.substring(0, 500));
       try {
         const qrData = JSON.parse(qrText);
-        qrCode = qrData?.base64 || qrData?.qrcode?.base64 || null;
+        qrCode = qrData?.base64 || qrData?.qrcode?.base64 || qrData?.qrcode || qrData?.instance?.qrcode?.base64 || null;
       } catch {}
     }
   }
