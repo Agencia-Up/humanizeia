@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2 } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw } from 'lucide-react';
 
 interface Instance {
   id: string;
@@ -265,6 +265,25 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       toast({ title: "Falha ao excluir", description: "Tente novamente ou limpe o cache: " + err.message, variant: "destructive" });
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleSyncWebhook = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log('[Webhook] Sincronizando instância:', id);
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
+        body: { instance_id: id, user_id: user?.id }
+      });
+      
+      if (error || !data?.success) {
+        throw new Error(data?.error || 'Erro ao sincronizar');
+      }
+      
+      toast({ title: "Webhook sincronizado!", description: "As mensagens agora devem ser processadas." });
+    } catch (err: any) {
+      console.error('[Webhook] Falha na sincronização:', err);
+      toast({ title: "Falha ao sincronizar", description: err.message, variant: "destructive" });
     }
   };
 
@@ -537,15 +556,26 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                               <Badge variant={inst.is_active ? 'default' : 'secondary'} className="text-[10px]">
                                 {inst.is_active ? 'Online' : 'Offline'}
                               </Badge>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-red-500 hover:bg-red-50 transition-colors"
-                                onClick={(e) => handleDeleteInstance(inst.id, e)}
-                                disabled={deletingId === inst.id}
-                              >
-                                {deletingId === inst.id ? <Loader2 className="h-3 w-3 animate-spin"/> : <Trash2 className="h-3 w-3" />}
-                              </Button>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-blue-500 hover:bg-blue-50"
+                                  onClick={(e) => handleSyncWebhook(inst.id, e)}
+                                  title="Sincronizar Webhook"
+                                >
+                                  <RefreshCw className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-red-500 hover:bg-red-50"
+                                  onClick={(e) => handleDeleteInstance(inst.id, e)}
+                                  disabled={deletingId === inst.id}
+                                >
+                                  {deletingId === inst.id ? <Loader2 className="h-3 w-3 animate-spin"/> : <Trash2 className="h-3 w-3" />}
+                                </Button>
+                              </div>
                             </div>
                           ))}
                         </div>
