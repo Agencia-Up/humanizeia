@@ -275,22 +275,27 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
         }} />
         {/* Brand top-left */}
         <div style={{
-          position: 'absolute', top: 14, left: 14, zIndex: 2,
-          fontSize: 9, fontWeight: 800, letterSpacing: '0.15em',
+          position: 'absolute', top: 16, left: 16, zIndex: 2,
+          fontSize: 10, fontWeight: 900, letterSpacing: '0.2em',
           color: '#fff', textTransform: 'uppercase',
-          background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(255,255,255,0.15)', padding: '4px 10px', borderRadius: 6,
+          background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(255,255,255,0.25)', 
+          padding: '6px 14px', borderRadius: 100,
+          boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
+          display: 'flex', alignItems: 'center', gap: 6
         }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: tpl.accent, boxShadow: `0 0 8px ${tpl.accent}` }} />
           {brandName}
         </div>
         {/* Slide counter */}
         <div style={{
-          position: 'absolute', top: 14, right: 14, zIndex: 2,
-          fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.7)',
-          background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)',
-          padding: '3px 8px', borderRadius: 6,
+          position: 'absolute', top: 18, right: 18, zIndex: 2,
+          fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.9)',
+          background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)',
+          padding: '4px 10px', borderRadius: 8,
+          border: '1px solid rgba(255,255,255,0.1)'
         }}>
-          {slide.order}/{total}
+          {slide.order} / {total}
         </div>
       </div>
 
