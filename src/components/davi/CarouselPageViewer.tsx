@@ -192,28 +192,47 @@ function HighlightHeadline({ text, accentWord, color }: { text: string; accentWo
   );
 }
 
-// ── Lazy Image Queuing Hook to prevent HTTP 429 ──────────────────────────────
+// ── Lazy Image Queuing Hook with Retry & Fallback ────────────────────────────
 const POLLINATIONS_CACHE = new Map<string, string>();
-const imgQueue: string[] = [];
+const imgQueue: { url: string; retryCount: number }[] = [];
 let isProcessingQueue = false;
 
 const processQueue = async () => {
   if (isProcessingQueue) return;
   isProcessingQueue = true;
   while (imgQueue.length > 0) {
-    const url = imgQueue[0];
+    const item = imgQueue[0];
+    const { url, retryCount } = item;
+    
     if (!POLLINATIONS_CACHE.has(url)) {
       try {
         const res = await fetch(url, { cache: 'force-cache' });
         if (res.ok) {
           const blob = await res.blob();
           POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
+        } else if (res.status >= 400) {
+           // Fallback logic: if Flux fails, try standard model
+           if (retryCount < 2) {
+             console.log(`Pollinations retry ${retryCount + 1} for ${url}`);
+             imgQueue.push({ url, retryCount: retryCount + 1 });
+           } else if (retryCount === 2 && url.includes('model=flux')) {
+             const fallbackUrl = url.replace('&model=flux', '').replace('?model=flux', '');
+             console.log(`Pollinations FALLBACK to standard for ${url}`);
+             imgQueue.push({ url: fallbackUrl, retryCount: 0 });
+             // Map original URL to fallback result to satisfy listeners
+             window.addEventListener('pollinations_loaded', (e: any) => {
+               if (e.detail === fallbackUrl) {
+                 POLLINATIONS_CACHE.set(url, POLLINATIONS_CACHE.get(fallbackUrl)!);
+                 window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
+               }
+             }, { once: true });
+           }
         }
       } catch (e) {
         console.warn('Queue fetch failed', e);
       }
-      // Delay mandatory to prevent Pollinations from blocking the IP
-      await new Promise(r => setTimeout(r, 1200));
+      // Increased delay to prevent rate limits from Pollinations
+      await new Promise(r => setTimeout(r, 2000));
     }
     imgQueue.shift();
     window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
@@ -222,8 +241,12 @@ const processQueue = async () => {
 };
 
 export function usePollinationsImage(prompt: string, width: number, height: number, seed: number) {
-  // Truncate prompt to prevent URL Too Long errors from giant copywriter prompts
-  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 250));
+  // Deep clean prompt: remove characters that break Pollinations and limit length
+  const cleanPrompt = encodeURIComponent(
+    String(prompt)
+      .replace(/[^\w\s\-,.]/gi, '')
+      .substring(0, 180)
+  );
   const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
   
   const [localUrl, setLocalUrl] = React.useState<string | null>(POLLINATIONS_CACHE.get(url) || null);
@@ -233,8 +256,9 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
       setLocalUrl(POLLINATIONS_CACHE.get(url)!);
       return;
     }
-    if (!imgQueue.includes(url)) {
-      imgQueue.push(url);
+    const inQueue = imgQueue.some(item => item.url === url);
+    if (!inQueue) {
+      imgQueue.push({ url, retryCount: 0 });
       processQueue();
     }
     const listener = (e: any) => {
@@ -247,6 +271,21 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
   }, [url]);
 
   return localUrl;
+}
+
+function getHeadlineFontSize(text: string, isCover: boolean) {
+  const len = text?.length || 0;
+  if (isCover) {
+    if (len > 80) return 22;
+    if (len > 50) return 28;
+    if (len > 30) return 36;
+    return 44; // Reduced from 54
+  } else {
+    if (len > 80) return 16;
+    if (len > 50) return 22;
+    if (len > 30) return 28;
+    return 32; // Reduced from 38
+  }
 }
 
 // ── FUTURISTA IA SLIDE ────────────────────────────────────────────────────────
@@ -307,7 +346,7 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
       {/* BOTTOM — Text area (45%) */}
       <div style={{
         flex: '1',
-        padding: '20px 24px 16px',
+        padding: '16px 24px 12px',
         display: 'flex', flexDirection: 'column', justifyContent: 'center',
         position: 'relative',
         overflow: 'hidden',
@@ -320,40 +359,47 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
           background: `linear-gradient(90deg, ${accentColor}, transparent)`,
         }} />
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {/* Sub-label */}
           {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
             <div style={{
-              fontSize: 12, fontWeight: 800, color: accentColor,
+              fontSize: 10, fontWeight: 800, color: accentColor,
               letterSpacing: '0.15em', textTransform: 'uppercase',
+              marginBottom: 2
             }}>
               {slide.sub_headline}
             </div>
           )}
           {/* Big headline */}
           <div style={{
-            fontSize: isCover ? 48 : 38, 
+            fontSize: getHeadlineFontSize(slide.headline, isCover), 
             fontWeight: 950, 
             color: textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF') ? '#FFFFFF' : textColor,
-            lineHeight: 1.0, 
-            letterSpacing: '-0.04em',
+            lineHeight: 1.1, 
+            letterSpacing: '-0.03em',
             textTransform: 'uppercase',
             textShadow: (textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF')) ? `0 4px 16px rgba(0,0,0,0.9)` : 'none',
-            marginBottom: 2
+            marginBottom: 4,
+            display: '-webkit-box',
+            WebkitLineClamp: isCover ? 4 : 3,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+            wordBreak: 'break-word',
+            hyphens: 'auto'
           }}>
             <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
           </div>
           {/* Accent line */}
-          <div style={{ width: 60, height: 6, background: accentColor, borderRadius: 3, boxShadow: `0 0 16px ${accentColor}66`, marginTop: 6, marginBottom: 8 }} />
+          <div style={{ width: 40, height: 4, background: accentColor, borderRadius: 2, boxShadow: `0 0 16px ${accentColor}66`, marginTop: 2, marginBottom: 6 }} />
           {/* Body */}
           {typeof slide.body === 'string' && slide.body.trim() && (
             <div style={{ 
-              fontSize: 16, 
+              fontSize: isCover ? 15 : 14, 
               fontWeight: 600, 
               color: textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF') ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.7)',
-              lineHeight: 1.3,
+              lineHeight: 1.25,
               display: '-webkit-box',
-              WebkitLineClamp: 4,
+              WebkitLineClamp: isCover ? 3 : 4,
               WebkitBoxOrient: 'vertical',
               overflow: 'hidden'
             }}>
@@ -363,15 +409,18 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
           
           {/* Bullets */}
           {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-              {slide.bullets.map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <span style={{ color: accentColor, fontSize: 16, flexShrink: 0, marginTop: 0 }}>✓</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+              {slide.bullets.slice(0, 3).map((b, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                  <span style={{ color: accentColor, fontSize: 13, flexShrink: 0, marginTop: 0 }}>✓</span>
                   <span style={{ 
-                    fontSize: 14, 
+                    fontSize: 12, 
                     color: textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF') ? '#FFFFFF' : '#333', 
-                    lineHeight: 1.45, 
-                    fontWeight: 500 
+                    lineHeight: 1.3, 
+                    fontWeight: 500,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
                   }}>{typeof b === 'string' ? b : ''}</span>
                 </div>
               ))}
@@ -519,40 +568,42 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
           {isCover ? (
             <div style={{
               fontWeight: 900,
-              fontSize: (slide.headline?.length || 0) > 40 ? 32 : 44, 
-              lineHeight: 1.05,
-              letterSpacing: '-0.04em',
+              fontSize: getHeadlineFontSize(slide.headline || '', true), 
+              lineHeight: 1.1,
+              letterSpacing: '-0.03em',
               textTransform: 'uppercase',
               display: '-webkit-box',
               WebkitLineClamp: (slide.headline?.length || 0) > 40 ? 4 : 3,
               WebkitBoxOrient: 'vertical',
-              overflow: 'hidden'
+              overflow: 'hidden',
+              wordBreak: 'break-word'
             }}>{slide.headline}</div>
           ) : (
             <>
               {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-                <div style={{ fontWeight: 900, marginBottom: 10, color: accentColor, fontSize: 18, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{slide.sub_headline}</div>
+                <div style={{ fontWeight: 900, marginBottom: 6, color: accentColor, fontSize: 14, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{slide.sub_headline}</div>
               )}
-              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 10, fontSize: 17, lineHeight: 1.45, fontWeight: 500 }}>{slide.body}</div>}
-              {Array.isArray(slide.bullets) && slide.bullets.map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-                  <span style={{ color: '#1D9BF0', fontWeight: 900, fontSize: 24, lineHeight: 1 }}>•</span>
-                  <span style={{ fontWeight: 600, fontSize: 16, lineHeight: 1.4 }}>{typeof b === 'string' ? b : ''}</span>
+              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 6, fontSize: 14, lineHeight: 1.35, fontWeight: 500, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{slide.body}</div>}
+              {Array.isArray(slide.bullets) && slide.bullets.slice(0, 3).map((b, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                  <span style={{ color: '#1D9BF0', fontWeight: 900, fontSize: 18, lineHeight: 1 }}>•</span>
+                  <span style={{ fontWeight: 600, fontSize: 13, lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{typeof b === 'string' ? b : ''}</span>
                 </div>
               ))}
               {slide.headline && (
                 <div style={{ 
                   fontWeight: 900, 
-                  marginTop: 10, 
+                  marginTop: 6, 
                   color: '#000', 
-                  fontSize: (slide.headline?.length || 0) > 60 ? 22 : 28, 
-                  lineHeight: 1.05, 
+                  fontSize: getHeadlineFontSize(slide.headline, false), 
+                  lineHeight: 1.1, 
                   letterSpacing: '-0.02em', 
                   textTransform: 'uppercase',
                   display: '-webkit-box',
-                  WebkitLineClamp: 3,
+                  WebkitLineClamp: 2,
                   WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden'
+                  overflow: 'hidden',
+                  wordBreak: 'break-word'
                 }}>
                   <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
                 </div>
@@ -663,12 +714,13 @@ function StandardSlide({ slide, tpl, brandName, total }: {
             fontSize: isCover ? 32 : 28, 
             fontWeight: 900, 
             color: textColor, 
-            lineHeight: 1.15, 
+            lineHeight: 1.1, 
             textShadow: '0 4px 20px rgba(0,0,0,0.6)',
             display: '-webkit-box',
             WebkitLineClamp: 4,
             WebkitBoxOrient: 'vertical',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            wordBreak: 'break-word'
           }}>
             <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
           </div>
@@ -703,14 +755,15 @@ function StandardSlide({ slide, tpl, brandName, total }: {
             <div style={{
               fontSize: (slide.headline?.length || 0) > 40 ? 32 : 44,
               fontWeight: 900,
-              lineHeight: 1.05,
+              lineHeight: 1.1,
               color: '#fff',
               textTransform: 'uppercase',
               letterSpacing: '-0.02em',
               display: '-webkit-box',
               WebkitLineClamp: 3,
               WebkitBoxOrient: 'vertical',
-              overflow: 'hidden'
+              overflow: 'hidden',
+              wordBreak: 'break-word'
             }}>
               <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
             </div>
