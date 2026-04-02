@@ -134,18 +134,18 @@ async function handleMetaProvider(supabase: any, body: any) {
 // ====================== EVOLUTION API PROVIDER ======================
 
 async function handleEvolutionProvider(supabase: any, body: any) {
-  const { instance_name, user_id, friendly_name } = body;
+  const { instance_name, user_id, friendly_name, custom_api_url, custom_api_key } = body;
 
-  // Read credentials from environment secrets
-  const api_url = Deno.env.get('EVOLUTION_API_URL');
-  const api_key = Deno.env.get('EVOLUTION_API_KEY');
+  // Read credentials: use custom if provided, otherwise fallback to secrets
+  const api_url = custom_api_url || Deno.env.get('EVOLUTION_API_URL');
+  const api_key = custom_api_key || Deno.env.get('EVOLUTION_API_KEY');
 
   if (!api_url || !api_key) {
     return new Response(JSON.stringify({
       success: false,
-      error: 'Evolution API não configurada no servidor. Contate o administrador.',
+      error: 'Serviço de WhatsApp não configurado pelo administrador.',
     }), {
-      status: 500,
+      status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
@@ -212,7 +212,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
 
   // 2.5. Set webhook for this instance
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const webhookUrl = `${supabaseUrl}/functions/v1/wa-inbox-webhook`;
+  const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
   try {
     await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
       method: 'POST',

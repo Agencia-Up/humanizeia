@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle } from 'lucide-react';
 
 interface Instance {
   id: string;
@@ -130,6 +130,79 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [sdrGoal, setSdrGoal] = useState('');
   const [qualificationStr, setQualificationStr] = useState('');
 
+  // QR Code states
+  const [qrCode, setQrCode] = useState<string | null>(null);
+  const [isGeneratingQr, setIsGeneratingQr] = useState(false);
+  const [isInstanceConnected, setIsInstanceConnected] = useState(false);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = () => {
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+  };
+
+  useEffect(() => {
+    return () => stopPolling();
+  }, []);
+
+  const generateSlug = (nameStr: string) =>
+    nameStr.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+  const startPolling = () => {
+    stopPolling();
+    pollingRef.current = setInterval(async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
+          body: { user_id: user!.id },
+        });
+        if (error) return;
+        if (data?.connected) {
+          stopPolling();
+          setIsInstanceConnected(true);
+          setQrCode(null);
+          
+          // Auto link the instance
+          const { data: latestInst } = await supabase.from('wa_instances')
+             .select('id')
+             .eq('user_id', user!.id)
+             .order('created_at', { ascending: false })
+             .limit(1)
+             .single();
+          
+          if (latestInst) {
+             setSelectedInstanceIds(prev => prev.includes(latestInst.id) ? prev : [...prev, latestInst.id]);
+          }
+          toast({ title: "WhatsApp Conectado com Sucesso!", className: "bg-green-500 text-white" });
+        } else if (data?.qr_code) {
+          setQrCode(data.qr_code);
+        }
+      } catch {}
+    }, 5000);
+  };
+
+  const handleGenerateQr = async () => {
+    if (!name.trim()) { toast({ title: "Preencha o nome do agente primeiro", variant: "destructive" }); return; }
+    setIsGeneratingQr(true);
+    const slug = generateSlug(name) || `agente-${Date.now()}`;
+    try {
+      const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
+        body: {
+          provider: 'evolution',
+          instance_name: slug,
+          friendly_name: `WhatsApp - ${name}`,
+          user_id: user!.id,
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
+      setQrCode(data.qr_code || null);
+      startPolling();
+    } catch (err: any) {
+      toast({ title: 'Erro ao gerar QR Code', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsGeneratingQr(false);
+    }
+  };
+
   useEffect(() => {
     if (agent) {
       setName(agent.name);
@@ -173,6 +246,9 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       setN8nWebhookUrl('');
       setSdrGoal('');
       setQualificationStr('');
+      setQrCode(null);
+      setIsInstanceConnected(false);
+      stopPolling();
     }
   }, [agent, open]);
 
@@ -345,31 +421,62 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                 </Select>
               </div>
 
-              {/* Instance multi-select */}
-              <div className="space-y-2">
-                <Label>Números WhatsApp atribuídos</Label>
+              {/* WhatsApp Connection */}
+              <div className="space-y-4 border rounded-lg p-4 bg-muted/10">
+                <Label className="text-sm font-semibold">Conexão WhatsApp</Label>
                 <p className="text-xs text-muted-foreground">
-                  Selecione quais números este agente deve atender. Sem seleção = todas as instâncias.
+                  Conecte um número exclusivo gerando um QR Code, ou selecione um já conectado.
                 </p>
-                {instances.length === 0 ? (
-                  <p className="text-sm text-muted-foreground italic">Nenhuma instância conectada</p>
+
+                {isInstanceConnected ? (
+                  <div className="flex flex-col items-center justify-center p-4 border rounded-lg bg-green-500/10 border-green-500/20">
+                    <CheckCircle className="w-8 h-8 text-green-500 mb-2" />
+                    <span className="font-medium text-sm text-green-600">WhatsApp Conectado e Ativo!</span>
+                    <span className="text-xs text-green-600/80">O número foi vinculado a este agente. Lembre-se de salvar.</span>
+                  </div>
+                ) : qrCode ? (
+                  <div className="flex flex-col items-center gap-4 p-4 border rounded-lg bg-white">
+                    <img
+                      src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
+                      className="w-48 h-48 rounded shadow-sm"
+                      alt="QR Code"
+                    />
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
+                      <Loader2 className="w-3 h-3 animate-spin" /> Aguardando leitura no celular...
+                    </div>
+                  </div>
                 ) : (
-                  <div className="space-y-2 border rounded-lg p-3 bg-muted/30">
-                    {instances.map(inst => (
-                      <div key={inst.id} className="flex items-center gap-3">
-                        <Checkbox
-                          checked={selectedInstanceIds.includes(inst.id)}
-                          onCheckedChange={() => toggleInstance(inst.id)}
-                        />
-                        <div className="flex-1">
-                          <span className="text-sm font-medium">{inst.friendly_name}</span>
-                          <span className="text-xs text-muted-foreground ml-2">({inst.provider})</span>
+                  <div className="flex flex-col gap-3">
+                    <Button 
+                      type="button"
+                      onClick={handleGenerateQr} 
+                      disabled={isGeneratingQr || !name.trim()} 
+                      variant="outline" 
+                      className="w-full border-primary/50 hover:bg-primary/5 text-primary"
+                    >
+                      {isGeneratingQr ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <QrCode className="w-4 h-4 mr-2" />}
+                      Gerar QR Code para o Agente
+                    </Button>
+                    
+                    {instances.length > 0 && (
+                      <div className="pt-2 border-t mt-2">
+                        <Label className="text-xs mb-2 block">Ou use um número já conectado:</Label>
+                        <div className="space-y-2 max-h-[120px] overflow-y-auto">
+                          {instances.map(inst => (
+                            <div key={inst.id} className="flex items-center gap-3 p-1">
+                              <Checkbox
+                                checked={selectedInstanceIds.includes(inst.id)}
+                                onCheckedChange={() => toggleInstance(inst.id)}
+                              />
+                              <div className="flex-1 text-sm">{inst.friendly_name}</div>
+                              <Badge variant={inst.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                                {inst.is_active ? 'Online' : 'Offline'}
+                              </Badge>
+                            </div>
+                          ))}
                         </div>
-                        <Badge variant={inst.is_active ? 'default' : 'secondary'} className="text-xs">
-                          {inst.is_active ? 'Online' : 'Offline'}
-                        </Badge>
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
               </div>
