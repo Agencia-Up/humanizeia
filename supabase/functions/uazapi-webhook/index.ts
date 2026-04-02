@@ -24,7 +24,26 @@ serve(async (req) => {
     const eventRaw = payload.event || '';
     const event = eventRaw.toLowerCase();
     
-    if (event !== 'messages.upsert') {
+    // Suporte a eventos de Conexão
+    if (event === 'connection.update' || event === 'connection_update') {
+        const data = payload.data || payload;
+        const instance = payload.instance || data.instance || '';
+        const state = (data.state || data.status || '').toLowerCase();
+        
+        console.log(`[Webhook] Conexão Atualizada em ${instance}: ${state}`);
+        
+        if (state === 'open' || state === 'connected') {
+            await supabaseClient
+              .from('wa_instances')
+              .update({ is_active: true, status: 'connected', updated_at: new Date().toISOString() })
+              .eq('instance_name', instance);
+            
+            console.log(`[Webhook] Instância ${instance} agora está ONLINE!`);
+        }
+        return new Response(JSON.stringify({ message: "Connection processed" }), { headers: corsHeaders });
+    }
+
+    if (event !== 'messages.upsert' && event !== 'messages_upsert') {
       console.log(`[Webhook] Evento ignorado: ${eventRaw}`);
       return new Response(JSON.stringify({ message: "Ignored event" }), { headers: corsHeaders })
     }

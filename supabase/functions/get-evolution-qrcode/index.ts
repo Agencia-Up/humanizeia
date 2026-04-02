@@ -203,15 +203,16 @@ serve(async (req: Request) => {
 
     try {
       const qrData = JSON.parse(qrText);
-      // Uazapi structure check: qrData?.instance?.qrcode is often the direct base64 string
+      // Uazapi structure check
       qrCode = qrData?.base64 || 
                qrData?.qrcode?.base64 || 
                qrData?.instance?.qrcode?.base64 || 
                qrData?.instance?.qrcode || 
                qrData?.qrcode || 
-               qrData?.qrcode?.code || 
                null;
-      connected = qrData?.state === 'open' || qrData?.instance?.state === 'open' || qrData?.state === 'CONNECTED';
+      
+      const state = (qrData?.state || qrData?.status || qrData?.instance?.state || qrData?.instance?.status || '').toLowerCase();
+      connected = state === 'open' || state === 'connected';
     } catch {}
 
     if (connected) {

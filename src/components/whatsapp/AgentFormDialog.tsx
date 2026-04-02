@@ -153,13 +153,13 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const generateSlug = (nameStr: string) =>
     nameStr.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-  const startPolling = () => {
+  const startPolling = (slug: string) => {
     stopPolling();
-    console.log('[polling] Início do rastreamento de QR Code...');
+    console.log(`[polling] Monitorando conexão de: ${slug}`);
     pollingRef.current = setInterval(async () => {
       try {
         const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
-          body: { user_id: user!.id },
+          body: { user_id: user!.id, instance_name: slug },
         });
         if (error) {
           console.error('[polling] Erro na Edge Function:', error);
@@ -220,7 +220,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
         setQrCode(data.qr_code);
       }
       
-      startPolling();
+      startPolling(slug);
     } catch (err: any) {
       console.error('[QR] Erro na criação:', err);
       toast({ title: 'Erro ao gerar QR Code', description: err.message, variant: 'destructive' });
