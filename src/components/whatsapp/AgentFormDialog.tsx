@@ -86,12 +86,11 @@ Informações do produto/serviço:
 [EDITE AQUI COM AS INFORMAÇÕES DO SEU NEGÓCIO]`;
 
 const MODEL_OPTIONS = [
-  { value: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (Premium)' },
-  { value: 'google/gemini-3-flash-preview', label: 'Gemini 3 Flash (Rápido)' },
-  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Balanceado)' },
-  { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro (Avançado)' },
-  { value: 'openai/gpt-5-mini', label: 'GPT-5 Mini (Balanceado)' },
-  { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano (Econômico)' },
+  { value: 'openai/gpt-4o', label: 'GPT-4o (Alta Qualidade)' },
+  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Recomendado)' },
+  { value: 'openai/gpt-3.5-turbo', label: 'GPT-3.5 Turbo (Legado)' },
+  { value: 'google/gemini-2.0-flash', label: 'Gemini 2.0 Flash (Alternativo)' },
+  { value: 'anthropic/claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
 ];
 
 const AGENT_TYPES = [
@@ -104,7 +103,7 @@ const AGENT_TYPES = [
 export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved }: AgentFormDialogProps) {
   useEffect(() => {
     if (open) {
-      console.info("!!! HUMANIZEIA UAZAPI DEBUG V5.0 ACTIVE (Realtime) !!!");
+      console.info("!!! HUMANIZEIA UAZAPI DEBUG V5.3 ACTIVE (OpenAI + Stability) !!!");
     }
   }, [open]);
   const { user } = useAuth();
@@ -116,7 +115,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [agentType, setAgentType] = useState('generic');
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [isActive, setIsActive] = useState(false);
-  const [model, setModel] = useState('google/gemini-3-flash-preview');
+  const [model, setModel] = useState('openai/gpt-4o-mini');
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(500);
   const [replyDelay, setReplyDelay] = useState(3000);
