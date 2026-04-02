@@ -272,8 +272,14 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
     e.stopPropagation();
     console.log('[Webhook] Sincronizando instância:', id);
     try {
+      // Pega a sessão atual para garantir autenticação
+      const { data: { session } } = await supabase.auth.getSession();
+      
       const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
-        body: { instance_id: id, user_id: user?.id }
+        body: { instance_id: id, user_id: user?.id },
+        headers: {
+            Authorization: `Bearer ${session?.access_token}`
+        }
       });
       
       if (error || !data?.success) {
