@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw } from 'lucide-react';
 
 interface Instance {
   id: string;
@@ -86,12 +86,11 @@ Informações do produto/serviço:
 [EDITE AQUI COM AS INFORMAÇÕES DO SEU NEGÓCIO]`;
 
 const MODEL_OPTIONS = [
-  { value: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (Premium)' },
-  { value: 'google/gemini-3-flash-preview', label: 'Gemini 3 Flash (Rápido)' },
-  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Balanceado)' },
-  { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro (Avançado)' },
-  { value: 'openai/gpt-5-mini', label: 'GPT-5 Mini (Balanceado)' },
-  { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano (Econômico)' },
+  { value: 'openai/gpt-4o', label: 'GPT-4o (Alta Qualidade)' },
+  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Recomendado)' },
+  { value: 'openai/gpt-3.5-turbo', label: 'GPT-3.5 Turbo (Legado)' },
+  { value: 'google/gemini-2.0-flash', label: 'Gemini 2.0 Flash (Alternativo)' },
+  { value: 'anthropic/claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
 ];
 
 const AGENT_TYPES = [
@@ -102,6 +101,11 @@ const AGENT_TYPES = [
 ];
 
 export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved }: AgentFormDialogProps) {
+  useEffect(() => {
+    if (open) {
+      console.info("!!! HUMANIZEIA UAZAPI DEBUG V5.3 ACTIVE (OpenAI + Stability) !!!");
+    }
+  }, [open]);
   const { user } = useAuth();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -111,7 +115,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [agentType, setAgentType] = useState('generic');
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [isActive, setIsActive] = useState(false);
-  const [model, setModel] = useState('google/gemini-3-flash-preview');
+  const [model, setModel] = useState('openai/gpt-4o-mini');
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(500);
   const [replyDelay, setReplyDelay] = useState(3000);
@@ -134,10 +138,17 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [isInstanceConnected, setIsInstanceConnected] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const realtimeChannel = useRef<any>(null);
 
   const stopPolling = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+    if (realtimeChannel.current) { 
+        console.log('[Realtime] Desconectando canal...');
+        supabase.removeChannel(realtimeChannel.current); 
+        realtimeChannel.current = null; 
+    }
   };
 
   useEffect(() => {
@@ -147,59 +158,213 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const generateSlug = (nameStr: string) =>
     nameStr.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-  const startPolling = () => {
+  const startPolling = (slug: string) => {
     stopPolling();
+    console.log(`[polling] Monitorando conexão de: ${slug} (Realtime + Polling fallback)`);
+    
+    // 1. Realtime Subscription (Mais rápido)
+    realtimeChannel.current = supabase
+      .channel(`instance-status-${slug}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'wa_instances', filter: `instance_name=eq.${slug}` },
+        (payload: any) => {
+          console.log('[Realtime] Mudança detectada:', payload.new.status, payload.new.is_active);
+          if (payload.new.is_active || payload.new.status === 'connected') {
+            console.log('[Realtime] SINAL DE CONEXÃO RECEBIDO!');
+            handleConnectionSuccess(payload.new.id);
+          }
+        }
+      )
+      .subscribe();
+
+    // 2. Polling Fallback (Caso o Realtime falhe)
     pollingRef.current = setInterval(async () => {
       try {
         const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
-          body: { user_id: user!.id },
+          body: { user_id: user!.id, instance_name: slug },
         });
-        if (error) return;
+        if (error) {
+          console.error('[polling] Erro na Edge Function:', error);
+          return;
+        }
+        
         if (data?.connected) {
-          stopPolling();
-          setIsInstanceConnected(true);
-          setQrCode(null);
-          
-          // Auto link the instance
-          const { data: latestInst } = await supabase.from('wa_instances')
-             .select('id')
-             .eq('user_id', user!.id)
-             .order('created_at', { ascending: false })
-             .limit(1)
-             .single();
-          
-          if (latestInst) {
-             setSelectedInstanceIds(prev => prev.includes(latestInst.id) ? prev : [...prev, latestInst.id]);
+          handleConnectionSuccess();
+        } else if (data?.raw_response) {
+          // Fallback: Smart Frontend Detection (V5.2)
+          try {
+            const raw = typeof data.raw_response === 'string' ? JSON.parse(data.raw_response) : data.raw_response;
+            const rData = raw?.instance || raw;
+            const isConnected = rData?.status === 'connected' || rData?.state === 'open' || rData?.connected === true || rData?.loggedIn === true;
+            
+            if (isConnected) {
+              console.log('[polling] Detectado sucesso via Client-Side Logic!');
+              handleConnectionSuccess();
+            }
+          } catch (e) {
+            console.warn('[polling] Erro ao processar raw_response fallback');
           }
-          toast({ title: "WhatsApp Conectado com Sucesso!", className: "bg-green-500 text-white" });
-        } else if (data?.qr_code) {
+        }
+        
+        if (data?.qr_code) {
           setQrCode(data.qr_code);
         }
-      } catch {}
+      } catch (err) {
+        console.error('[polling] Erro fatal no catch:', err);
+      }
     }, 5000);
+  };
+
+  const handleConnectionSuccess = async (id?: string) => {
+    console.log('[Connection] Finalizando processo de conexão bem-sucedida...');
+    stopPolling();
+    setQrCode(null);
+    setIsInstanceConnected(true);
+
+    // Buscar o ID se não foi passado (Fallback)
+    let instId = id;
+    if (!instId) {
+        const { data: latestInst } = await supabase.from('wa_instances')
+            .select('id')
+            .eq('user_id', user!.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+        instId = latestInst?.id;
+    }
+
+    if (instId) {
+        setSelectedInstanceIds(prev => prev.includes(instId!) ? prev : [...prev, instId!]);
+    }
+    toast({ title: "WhatsApp Conectado!", description: "Instância está online e pronta.", className: "bg-green-600 text-white" });
   };
 
   const handleGenerateQr = async () => {
     if (!name.trim()) { toast({ title: "Preencha o nome do agente primeiro", variant: "destructive" }); return; }
     setIsGeneratingQr(true);
-    const slug = generateSlug(name) || `agente-${Date.now()}`;
+    setQrCode(null); // Reset
+    const randomSuffix = Math.random().toString(36).substring(2, 6);
+    const slug = `${generateSlug(name) || 'agente'}-${randomSuffix}`;
+    console.log('[QR] Gerando instância única:', slug);
     try {
       const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
         body: {
           provider: 'evolution',
           instance_name: slug,
-          friendly_name: `WhatsApp - ${name}`,
+          friendly_name: `WhatsApp - ${name} (${randomSuffix})`,
           user_id: user!.id,
+          agent_id: agent?.id,
         },
       });
+
+      console.info("[QR] Resposta Create Completa:", JSON.stringify(data, null, 2));
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
-      setQrCode(data.qr_code || null);
-      startPolling();
+
+      let finalQrCode = data?.qr_code;
+      const createdInstanceId = data?.instance_id;
+
+      // Fallback: Se o QR não veio no create, tenta buscar via instance_id
+      if (!finalQrCode && createdInstanceId) {
+          console.warn("[QR] QR Code não veio na resposta inicial. Tentando busca secundária via instance_id:", createdInstanceId);
+          await new Promise(r => setTimeout(r, 3000));
+          const { data: qrData, error: qrErr } = await supabase.functions.invoke('get-evolution-qrcode', {
+              body: { instance_id: createdInstanceId, user_id: user!.id }
+          });
+          console.info("[QR] Resposta fallback:", JSON.stringify(qrData));
+          if (qrErr) console.error("[QR] Erro no fallback:", qrErr);
+          finalQrCode = qrData?.qr_code || qrData?.base64 || qrData?.qrcode;
+          
+          // Log da resposta bruta para diagnóstico
+          if (!finalQrCode && qrData?.raw_response) {
+            console.warn("[QR] Resposta bruta da Uazapi (fallback):", qrData.raw_response);
+          }
+      }
+
+      if (finalQrCode) {
+        setQrCode(finalQrCode);
+        startPolling(slug);
+      } else {
+        toast({
+            title: "Instância criada, mas o QR Code demorou",
+            description: "Verifique os logs do Supabase (create-evolution-instance) para ver a resposta da Uazapi.",
+            variant: "default"
+        });
+      }
     } catch (err: any) {
+      console.error('[QR] Erro na criação:', err);
       toast({ title: 'Erro ao gerar QR Code', description: err.message, variant: 'destructive' });
     } finally {
       setIsGeneratingQr(false);
+    }
+  };
+
+  const handleDeleteInstance = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Deseja realmente excluir esta instância de WhatsApp?')) return;
+
+    setDeletingId(id);
+    console.log('[Delete] Iniciando exclusão da instância:', id);
+    try {
+      // Step 1: Try Edge Function (Full cleanup)
+      const { data, error: funcError } = await supabase.functions.invoke('delete-evolution-instance', {
+        body: { instance_id: id, user_id: user?.id }
+      });
+      
+      console.log('[Delete] Resultado Edge Function:', JSON.stringify(data || funcError, null, 2));
+      
+      // Step 2: FALLBACK - If Edge Function fails (401/406/non-2xx), try deleting directly from DB
+      if (funcError || !data?.success) {
+        console.warn('[Delete] Edge Function falhou ou retornou erro. Tentando exclusão direta no banco de dados...');
+        const { error: dbError } = await supabase
+          .from('wa_instances')
+          .delete()
+          .eq('id', id);
+          
+        if (dbError) {
+          console.error('[Delete] Erro na exclusão direta no banco:', dbError);
+          throw new Error('Falha total na exclusão: ' + dbError.message);
+        }
+        console.log('[Delete] Exclusão direta no banco realizada com sucesso.');
+      }
+      
+      toast({ title: "Instância removida com sucesso" });
+      onSaved(); // Refresh lists
+    } catch (err: any) {
+      console.error('[Delete] Falha crítica:', err);
+      toast({ title: "Falha ao excluir", description: "Tente novamente ou limpe o cache: " + err.message, variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleSyncWebhook = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log('[Webhook] Sincronizando instância:', id);
+    try {
+      // Pega a sessão atual para garantir autenticação
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
+        body: { instance_id: id, user_id: user?.id },
+        headers: {
+            Authorization: `Bearer ${session?.access_token}`
+        }
+      });
+      
+      if (error || !data?.success) {
+        throw new Error(data?.error || 'Erro ao sincronizar');
+      }
+      
+      const details = data?.results ? data.results.join(' | ') : '';
+      toast({ 
+        title: "Webhook sincronizado!", 
+        description: `Detalhes: ${details}. As mensagens agora devem ser processadas.` 
+      });
+    } catch (err: any) {
+      console.error('[Webhook] Falha na sincronização:', err);
+      toast({ title: "Falha ao sincronizar", description: err.message, variant: "destructive" });
     }
   };
 
@@ -365,8 +530,20 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const isSdr = agentType === 'sdr';
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh]">
+    <Dialog 
+      open={open} 
+      onOpenChange={(val) => {
+        if (!val && qrCode) {
+            if (!confirm('O QR Code ainda está ativo. Deseja realmente fechar?')) return;
+        }
+        onOpenChange(val);
+      }}
+    >
+      <DialogContent 
+        className="sm:max-w-2xl max-h-[90vh]"
+        onPointerDownOutside={(e) => { if (qrCode) e.preventDefault(); }}
+        onEscapeKeyDown={(e) => { if (qrCode) e.preventDefault(); }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-primary" />
@@ -441,8 +618,34 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                       className="w-48 h-48 rounded shadow-sm"
                       alt="QR Code"
                     />
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
-                      <Loader2 className="w-3 h-3 animate-spin" /> Aguardando leitura no celular...
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse mb-2">
+                       <Loader2 className="w-3 h-3 animate-spin" /> Aguardando leitura no celular...
+                    </div>
+                    <div className="flex gap-2 w-full">
+                       <Button 
+                         variant="outline" 
+                         size="sm"
+                         className="flex-1 text-xs"
+                         onClick={() => {
+                            // Find the non-active instance to poll for it
+                            const inst = instances.find(i => !i.is_active);
+                            if (inst) startPolling(inst.instance_name);
+                            else toast({ title: "Tente gerar um novo QR Code" });
+                         }}
+                       >
+                         <RefreshCw className="w-3 h-3 mr-1" /> Já escaneei
+                       </Button>
+                       <Button 
+                         variant="ghost" 
+                         size="sm"
+                         className="flex-1 text-xs text-red-500"
+                         onClick={() => {
+                            setQrCode(null);
+                            stopPolling();
+                         }}
+                       >
+                         Cancelar
+                       </Button>
                     </div>
                   </div>
                 ) : (
@@ -463,7 +666,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                         <Label className="text-xs mb-2 block">Ou use um número já conectado:</Label>
                         <div className="space-y-2 max-h-[120px] overflow-y-auto">
                           {instances.map(inst => (
-                            <div key={inst.id} className="flex items-center gap-3 p-1">
+                            <div key={inst.id} className="flex items-center gap-3 p-1 hover:bg-muted/50 rounded-md group">
                               <Checkbox
                                 checked={selectedInstanceIds.includes(inst.id)}
                                 onCheckedChange={() => toggleInstance(inst.id)}
@@ -472,6 +675,26 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                               <Badge variant={inst.is_active ? 'default' : 'secondary'} className="text-[10px]">
                                 {inst.is_active ? 'Online' : 'Offline'}
                               </Badge>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-blue-500 hover:bg-blue-50"
+                                  onClick={(e) => handleSyncWebhook(inst.id, e)}
+                                  title="Sincronizar Webhook"
+                                >
+                                  <RefreshCw className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-red-500 hover:bg-red-50"
+                                  onClick={(e) => handleDeleteInstance(inst.id, e)}
+                                  disabled={deletingId === inst.id}
+                                >
+                                  {deletingId === inst.id ? <Loader2 className="h-3 w-3 animate-spin"/> : <Trash2 className="h-3 w-3" />}
+                                </Button>
+                              </div>
                             </div>
                           ))}
                         </div>

@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { Configuration, OpenAIApi } from 'https://esm.sh/openai@3.3.0'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -8,203 +7,297 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const supabaseClient = createClient(
+    const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
     const payload = await req.json()
-    console.log("WebHook Uazapi Payload:", JSON.stringify(payload));
+    
+    // Log completo para diagnóstico do formato Uazapi
+    console.log("[Webhook] Payload COMPLETO:", JSON.stringify(payload))
 
-    // O WebHook da Uazapi (padrão Evolution/ZAPI) vem neste formato
-    const event = payload.event;
-    if (event !== 'messages.upsert') {
-      return new Response(JSON.stringify({ message: "Ignored event" }), { headers: corsHeaders })
-    }
+    // =============================================
+    // NORMALIZAÇÃO: Suporta Uazapi E Evolution API
+    // =============================================
+    
+    const isUazapi = !!(payload.BaseUrl || payload.EventType || payload.instanceId)
+    const isEvolution = !!(payload.event || payload.data)
+    
+    console.log(`[Webhook] Formato detectado: ${isUazapi ? 'UAZAPI' : isEvolution ? 'EVOLUTION' : 'DESCONHECIDO'}`)
 
-    const { instance, data } = payload;
-    const { key, message, pushName, messageType } = data;
+    // --- FORMATO UAZAPI ---
+    // { BaseUrl, EventType: "messages", instance/instanceName/InstanceId, chat: {...}, messages: [{body, fromMe, ...}] }
+    if (isUazapi) {
+      const eventType = String(payload.EventType || payload.eventType || '').toLowerCase()
 
-    if (key.fromMe) return new Response('Ignored fromMe', { headers: corsHeaders });
-    if (key.remoteJid.includes('@broadcast')) return new Response('Ignored broadcast', { headers: corsHeaders });
-    if (key.remoteJid.includes('@g.us')) return new Response('Ignored group', { headers: corsHeaders });
-
-    // Extrai o texto da mensagem
-    let userText = '';
-    if (messageType === 'conversation') userText = message.conversation;
-    else if (messageType === 'extendedTextMessage') userText = message.extendedTextMessage.text;
-    else return new Response('Unsupported message type', { headers: corsHeaders });
-
-    if (!userText.trim()) return new Response('Empty text', { headers: corsHeaders });
-
-    // 1. Achar o agente atrelado a essa instância ativa
-    const { data: waInstance } = await supabaseClient
-      .from('wa_instances')
-      .select('id, user_id, api_key_encrypted, api_url')
-      .eq('instance_name', instance)
-      .single();
-
-    if (!waInstance) {
-      console.log(`Instância ${instance} não encontrada no banco.`);
-      return new Response('Instance not found', { headers: corsHeaders });
-    }
-
-    // Adaptando nomes para o restante do código
-    const instanceData = {
-      ...waInstance,
-      api_key: waInstance.api_key_encrypted,
-      server_url: waInstance.api_url
-    };
-
-    // Achar o Agente (Pedro) que está ativo e atrelado a essa instância
-    const { data: agents } = await supabaseClient
-      .from('wa_ai_agents')
-      .select('*')
-      .eq('user_id', instanceData.user_id)
-      .eq('is_active', true)
-      .contains('instance_ids', [instanceData.id]);
-
-    // Se o array estiver vazio, tenta achar o agente genérico (array vazio atende todos)
-    let agent = agents && agents.length > 0 ? agents[0] : null;
-
-    if (!agent) {
-      const { data: globalAgents } = await supabaseClient
-        .from('wa_ai_agents')
-        .select('*')
-        .eq('user_id', waInstance.user_id)
-        .eq('is_active', true)
-        .filter('instance_ids', 'eq', '[]'); // Array vazio significa Todas as Instâncias
+      // Evento de conexão (ignorar mas logar)
+      if (eventType === 'connection' || eventType === 'status' || eventType.includes('connect')) {
+        console.log("[Webhook-Uazapi] Evento de conexão recebido:", eventType)
+        
+        // Atualizar status da instância se conectou
+        const instanceName = payload.instance || payload.instanceName || payload.InstanceId || payload.instanceId || ''
+        if (instanceName) {
+          const state = String(payload.state || payload.status || '').toLowerCase()
+          if (state === 'open' || state === 'connected') {
+            await supabase.from('wa_instances')
+              .update({ is_active: true, status: 'connected', updated_at: new Date().toISOString() })
+              .eq('instance_name', instanceName)
+            console.log(`[Webhook-Uazapi] Instância ${instanceName} marcada como conectada.`)
+          }
+        }
+        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
+      }
       
-      if (globalAgents && globalAgents.length > 0) agent = globalAgents[0];
+      // Evento de mensagem
+      if (eventType !== 'messages' && eventType !== 'message' && !eventType.includes('message')) {
+        console.log(`[Webhook-Uazapi] Evento ignorado: ${eventType}`)
+        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
+      }
+
+      // Extrair dados da mensagem no formato Uazapi
+      const instanceName = payload.instance || payload.instanceName || payload.InstanceId || payload.instanceId || ''
+      const chat = payload.chat || {}
+      
+      // A mensagem pode estar em payload.messages (array) ou payload.message (objeto)
+      let msgObj = null
+      if (Array.isArray(payload.messages) && payload.messages.length > 0) {
+        msgObj = payload.messages[0]
+      } else if (payload.message) {
+        msgObj = payload.message
+      }
+      
+      if (!msgObj) {
+        console.log("[Webhook-Uazapi] Nenhuma mensagem encontrada no payload:", JSON.stringify(payload))
+        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
+      }
+
+      console.log("[Webhook-Uazapi] Mensagem encontrada:", JSON.stringify(msgObj))
+
+      // Ignorar mensagens próprias e grupos
+      if (msgObj.fromMe === true) return new Response('Ignored fromMe', { headers: corsHeaders })
+      
+      // IMPORTANTE: Uazapi usa chatId (com @s.whatsapp.net) — NÃO usar msgObj.from (é ID interno)
+      // O chatId é o número real do remetente (ex: 5511999999999@s.whatsapp.net)
+      const remoteJid = msgObj.chatId || msgObj.chatid || msgObj.from || chat.id || chat.chatId || ''
+      if (!remoteJid) {
+        console.log('[Webhook-Uazapi] remoteJid vazio, ignorando')
+        return new Response('No remoteJid', { headers: corsHeaders })
+      }
+      if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {
+        return new Response('Ignored group/broadcast', { headers: corsHeaders })
+      }
+
+      // Extrair texto
+      const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim()
+      if (!userText) {
+        console.log("[Webhook-Uazapi] Texto vazio, ignorando.")
+        return new Response('Empty text', { headers: corsHeaders })
+      }
+
+      const pushName = msgObj.senderName || chat.name || msgObj.notifyName || 'Lead'
+      console.log(`[Webhook-Uazapi] De: ${pushName} (${remoteJid}) | Instância: ${instanceName} | Texto: "${userText}"`)
+
+      // Processar a mensagem (busca agente, chama OpenAI, responde)
+      return await processMessage(supabase, instanceName, remoteJid, userText, pushName)
     }
 
-    if (!agent) {
-      console.log(`Nenhum agente ativo atribuído à instância ${instance}.`);
-      return new Response('No matching agent', { headers: corsHeaders });
+    // --- FORMATO EVOLUTION API ---
+    const eventRaw = payload.event || ''
+    const event = String(eventRaw).toLowerCase()
+
+    // Evento de conexão (Evolution)
+    if (event.includes('connection.update') || event.includes('connection_update')) {
+      const data = payload.data || payload
+      const instance = payload.instance || data.instance || ''
+      const state = String(data.state || data.status || '').toLowerCase()
+      if ((state === 'open' || state === 'connected') && instance) {
+        await supabase.from('wa_instances')
+          .update({ is_active: true, status: 'connected', updated_at: new Date().toISOString() })
+          .eq('instance_name', instance)
+        console.log(`[Webhook-Evolution] Instância ${instance} conectada.`)
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
     }
 
-    // 2. Salvar Mensagem do Cliente na Tabela de Histórico
-    await supabaseClient.from('wa_chat_history').insert({
-      user_id: agent.user_id,
-      agent_id: agent.id,
-      instance_id: instance,
-      remote_jid: key.remoteJid,
-      role: 'user',
-      content: userText,
-      lead_name: pushName
-    });
-
-    // 3. Montar o Contexto do LLM
-    //  3.1 - Buscar Base de Conhecimento do Salomão
-    const { data: knowledge } = await supabaseClient
-      .from('agent_knowledge')
-      .select('knowledge_text')
-      .eq('user_id', agent.user_id)
-      .eq('agent_id', 'salomao')
-      .single();
-
-    // 3.2 - Histórico da Conversa
-    const { data: history } = await supabaseClient
-      .from('wa_chat_history')
-      .select('role, content')
-      .eq('instance_id', instance)
-      .eq('remote_jid', key.remoteJid)
-      .order('created_at', { ascending: false })
-      .limit(15);
-    
-    const messagesReverse = (history || []).reverse();
-    const chatGptMessages = messagesReverse.map(m => ({
-      role: m.role,
-      content: m.content
-    }));
-
-    // 3.3 - Prompt final
-    let finalSystemPrompt = agent.system_prompt;
-    
-    if (agent.company_name) finalSystemPrompt += `\n\nNome da Empresa: ${agent.company_name}`;
-    if (agent.services) finalSystemPrompt += `\n\nProdutos/Serviços que vendemos: ${agent.services}`;
-    
-    if (knowledge?.knowledge_text) {
-      finalSystemPrompt += `\n\nBASE DE CONHECIMENTO DA EMPRESA (Use isso para basear suas respostas):\n${knowledge.knowledge_text}`;
+    if (event !== 'messages.upsert' && event !== 'messages_upsert') {
+      console.log(`[Webhook-Evolution] Evento ignorado: ${eventRaw}`)
+      return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
     }
 
-    if (agent.sdr_goal) {
-      finalSystemPrompt += `\n\nSEU OBJETIVO DE QUALIFICAÇÃO NESTA CONVERSA: ${agent.sdr_goal}`;
+    let data = payload.data || payload
+    if (Array.isArray(data)) data = data[0]
+
+    const instance = payload.instance || data.instance || ''
+    const { key, message, pushName, messageType } = data
+
+    if (!instance || !key || !message) return new Response('Incomplete payload', { headers: corsHeaders })
+    if (key.fromMe) return new Response('Ignored fromMe', { headers: corsHeaders })
+    if (key.remoteJid?.includes('@broadcast') || key.remoteJid?.includes('@g.us')) {
+      return new Response('Ignored group/broadcast', { headers: corsHeaders })
     }
 
-    if (agent.qualification_questions && agent.qualification_questions.length > 0) {
-      finalSystemPrompt += `\n\nPERGUNTAS OBRIGATÓRIAS QUE VOCÊ DEVE FAZER DURANTE A CONVERSA:\n`;
-      agent.qualification_questions.forEach((q: string, i: number) => {
-        finalSystemPrompt += `${i + 1}. ${q}\n`;
-      });
-      finalSystemPrompt += `\nInstrução Importante: Tente fazer as perguntas naturalmente na conversa, um passo de cada vez, ao invés de enviar um questionário robótico. Avalie se a pessoa já forneceu a resposta antes de perguntar novamente.`;
-    }
+    let userText = message.conversation || message.extendedTextMessage?.text || message.text || data.text || ''
+    if (!userText.trim()) return new Response('Empty text', { headers: corsHeaders })
 
-    // 4. Chamar a IA para gerar a resposta
-    const openai = new Configuration({
-      apiKey: Deno.env.get('OPENAI_API_KEY')
-    });
-    const openaiApi = new OpenAIApi(openai);
+    return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead')
 
-    const completion = await openaiApi.createChatCompletion({
-      model: "gpt-4o-mini", // fallback model, o ideal é o usuário definir a chave e o gpt-4o
-      messages: [
-        { role: 'system', content: finalSystemPrompt },
-        ...chatGptMessages
-      ],
-      temperature: agent.temperature || 0.7,
-      max_tokens: agent.max_tokens || 500,
-    });
-
-    const aiResponse = completion.data.choices[0].message?.content || '';
-
-    if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders });
-
-    // 5. Salvar a resposta da IA no banco
-    await supabaseClient.from('wa_chat_history').insert({
-      user_id: agent.user_id,
-      agent_id: agent.id,
-      instance_id: instance,
-      remote_jid: key.remoteJid,
-      role: 'assistant',
-      content: aiResponse
-    });
-
-    // Subir o total de replies do Agente
-    await supabaseClient.rpc('increment_agent_replies', { agent_id: agent.id });
-
-    // 6. Enviar a Mensagem de Volta para o WhatsApp (via Uazapi)
-    // Se o cliente definiu o Uazapi API KEY pelo server_url, usamos.
-    // Senão, assumimos o painel global (isso varia conforme o deploy do app)
-    const uazapiUrl = instanceData.server_url || Deno.env.get('EVOLUTION_API_URL') || `https://${instance}.uazapi.com`;
-    const uazapiToken = instanceData.api_key || Deno.env.get('EVOLUTION_API_KEY') || Deno.env.get('UAZAPI_GLOBAL_TOKEN');
-
-    const sendResp = await fetch(`${uazapiUrl!}/message/sendText/${instance}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': uazapiToken as string
-      },
-      body: JSON.stringify({
-        number: key.remoteJid.replace('@s.whatsapp.net', ''),
-        options: { delay: agent.reply_delay_ms || 2000, presence: "composing" },
-        textMessage: { text: aiResponse }
-      })
-    });
-
-    if (!sendResp.ok) {
-        console.error("Erro ao enviar msg:", await sendResp.text());
-    }
-
-    return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
-
-  } catch (error) {
-    console.error(error)
+  } catch (error: any) {
+    console.error("[Webhook] Erro Crítico:", error)
     return new Response(JSON.stringify({ error: error.message }), { headers: corsHeaders, status: 500 })
   }
 })
+
+// =============================================
+// PROCESSAR MENSAGEM: Busca agente → OpenAI → Responde
+// =============================================
+async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string) {
+  const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
+
+  // 1. Localizar Instância no banco
+  const { data: waInstance } = await supabase
+    .from('wa_instances')
+    .select('*')
+    .eq('instance_name', instanceName)
+    .maybeSingle()
+
+  if (!waInstance) {
+    console.log(`[Webhook] Instância "${instanceName}" não encontrada no banco.`)
+    return new Response('Instance not found', { headers: corsHeaders })
+  }
+
+  // 2. Buscar Agente vinculado
+  const { data: agent } = await supabase
+    .from('wa_ai_agents')
+    .select('*')
+    .eq('user_id', waInstance.user_id)
+    .eq('is_active', true)
+    .contains('instance_ids', [waInstance.id])
+    .maybeSingle()
+
+  if (!agent) {
+    console.log(`[Webhook] Nenhum agente ativo encontrado para a instância ${instanceName}. Instance ID: ${waInstance.id}`)
+    return new Response('No matching active agent', { headers: corsHeaders })
+  }
+
+  console.log(`[Webhook] Agente: "${agent.name}" | Mensagem: "${userText}"`)
+
+  // 3. Salvar histórico (usuário)
+  const { error: histUserErr } = await supabase.from('wa_chat_history').insert({
+    user_id: agent.user_id,
+    agent_id: agent.id,
+    instance_id: instanceName,
+    remote_jid: remoteJid,
+    role: 'user',
+    content: userText,
+    lead_name: pushName
+  })
+  if (histUserErr) console.warn("[Webhook] Erro ao salvar histórico user:", histUserErr.message)
+
+  // 4. Buscar histórico de conversa
+  const { data: history } = await supabase
+    .from('wa_chat_history')
+    .select('role, content')
+    .eq('instance_id', instanceName)
+    .eq('remote_jid', remoteJid)
+    .order('created_at', { ascending: false })
+    .limit(10)
+
+  const chatHistory = (history || []).reverse().map((m: any) => ({ role: m.role, content: m.content }))
+
+  // 5. Buscar conhecimento
+  const { data: knowledge } = await supabase
+    .from('agent_knowledge')
+    .select('knowledge_text')
+    .eq('user_id', agent.user_id)
+    .maybeSingle()
+
+  // 6. Montar prompt
+  let systemPrompt = agent.system_prompt || 'Você é um assistente prestativo.'
+  if (agent.company_name) systemPrompt += `\n\nEmpresa: ${agent.company_name}`
+  if (agent.services) systemPrompt += `\nProdutos/Serviços: ${agent.services}`
+  if (knowledge?.knowledge_text) systemPrompt += `\n\nBASE DE CONHECIMENTO:\n${knowledge.knowledge_text}`
+
+  // 7. Chamar OpenAI
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
+  if (!openaiApiKey) {
+    console.error("[Webhook] OPENAI_API_KEY não configurada!")
+    return new Response('Missing AI Key', { status: 500 })
+  }
+
+  // Validar modelo — garante que sempre usa um modelo válido
+  const VALID_MODELS = ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo']
+  const rawModel = (agent.model || '').trim()
+  const model = VALID_MODELS.includes(rawModel) ? rawModel : 'gpt-4o-mini'
+  console.log(`[Webhook] Usando modelo: ${model} (original no banco: "${rawModel}")`)
+
+  const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+    body: JSON.stringify({
+      model: model,
+      messages: [{ role: 'system', content: systemPrompt }, ...chatHistory],
+      temperature: agent.temperature || 0.7,
+    })
+  })
+
+  if (!openaiRes.ok) {
+    const errText = await openaiRes.text()
+    console.error(`[Webhook] OpenAI erro (${openaiRes.status}):`, errText)
+    return new Response('OpenAI error', { status: 500 })
+  }
+
+  const openaiData = await openaiRes.json()
+  const aiResponse = openaiData.choices?.[0]?.message?.content || ''
+  if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders })
+
+  console.log(`[Webhook] Resposta IA: "${aiResponse.substring(0, 100)}..."`)
+
+  // 8. Salvar resposta IA
+  const { error: histAiErr } = await supabase.from('wa_chat_history').insert({
+    user_id: agent.user_id,
+    agent_id: agent.id,
+    instance_id: instanceName,
+    remote_jid: remoteJid,
+    role: 'assistant',
+    content: aiResponse
+  })
+  if (histAiErr) console.warn("[Webhook] Erro ao salvar resposta IA:", histAiErr.message)
+
+  // 9. Enviar resposta via Uazapi — POST /send/text (conforme docs.uazapi.com)
+  // O token da instância identifica QUAL instância envia (sem nome na URL)
+  // Token global (jOnM6gdi...) retornou 401 — usa APENAS o token da instância
+  const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '')
+  const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || ''
+  // Extrair apenas os dígitos do número (sem @s.whatsapp.net)
+  const phoneNumber = remoteJid.replace(/@.*$/, '').replace(/\D/g, '')
+
+  console.log(`[Webhook] Enviando para: ${phoneNumber} via ${baseUrl}/send/text`)
+
+  try {
+    const r = await fetch(`${baseUrl}/send/text`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'token': instKey,
+      },
+      body: JSON.stringify({ number: phoneNumber, text: aiResponse })
+    })
+    const t = await r.text()
+    console.log(`[Webhook] POST /send/text (${r.status}): ${t.substring(0, 300)}`)
+    if (r.status < 400) {
+      console.log('[Webhook] ✅ Mensagem enviada com sucesso!')
+    } else {
+      console.error(`[Webhook] ❌ Falha ao enviar: ${r.status} — ${t.substring(0, 200)}`)
+    }
+  } catch (e) {
+    console.error('[Webhook] Erro ao enviar mensagem:', e)
+  }
+
+  return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
+}
+

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -48,6 +48,7 @@ export default function WhatsAppAIAgent() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
+  const isInitialMount = useRef(true);
   const [instances, setInstances] = useState<Instance[]>([]);
   const [agents, setAgents] = useState<AIAgent[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -55,23 +56,29 @@ export default function WhatsAppAIAgent() {
 
   const fetchData = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    if (isInitialMount.current) {
+        setLoading(true);
+    }
 
-    const [{ data: inst }, { data: agentsData }] = await Promise.all([
-      supabase
-        .from('wa_instances')
-        .select('id, friendly_name, instance_name, is_active, provider')
-        .eq('user_id', user.id),
-      (supabase as any)
-        .from('wa_ai_agents')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false }),
-    ]);
+    try {
+        const [{ data: inst }, { data: agentsData }] = await Promise.all([
+          supabase
+            .from('wa_instances')
+            .select('id, friendly_name, instance_name, is_active, provider')
+            .eq('user_id', user.id),
+          (supabase as any)
+            .from('wa_ai_agents')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false }),
+        ]);
 
-    setInstances((inst as Instance[]) || []);
-    setAgents((agentsData as unknown as AIAgent[]) || []);
-    setLoading(false);
+        setInstances((inst as Instance[]) || []);
+        setAgents((agentsData as unknown as AIAgent[]) || []);
+    } finally {
+        setLoading(false);
+        isInitialMount.current = false;
+    }
   }, [user]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
