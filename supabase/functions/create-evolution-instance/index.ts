@@ -1,241 +1,225 @@
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
-
-  try {
-    const body = await req.json();
-    const provider = body.provider || "evolution";
-
-    if (provider === "meta") {
-      return await handleMetaProvider(supabase, body);
-    }
-    return await handleEvolutionProvider(supabase, body);
-
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("[V6.0] Erro critico:", message);
-    return new Response(JSON.stringify({ success: false, error: message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-});
-
-// ====================== META API PROVIDER ======================
-
-async function handleMetaProvider(supabase: any, body: any) {
-  const { user_id, friendly_name, phone_number_id, waba_id, access_token } = body;
-
-  if (!user_id || !phone_number_id || !access_token || !friendly_name) {
-    return new Response(JSON.stringify({
-      success: false,
-      error: "Campos obrigatorios: user_id, friendly_name, phone_number_id, access_token",
-    }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  }
-
-  try {
-    const verifyRes = await fetch(
-      `https://graph.facebook.com/v21.0/${phone_number_id}?fields=verified_name,display_phone_number,quality_rating`,
-      { headers: { Authorization: `Bearer ${access_token}` } }
-    );
-
-    if (!verifyRes.ok) {
-      const errText = await verifyRes.text();
-      return new Response(JSON.stringify({ success: false, error: `Meta API error: ${verifyRes.status}`, details: errText }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const phoneData = await verifyRes.json();
-    const phoneNumber = phoneData.display_phone_number || null;
-    const verifiedName = phoneData.verified_name || friendly_name;
-    const instanceSlug = `meta-${Date.now().toString(36)}`;
-
-    const { data: newInstance, error: insertErr } = await supabase
-      .from("wa_instances")
-      .insert({
-        user_id,
-        instance_name: instanceSlug,
-        friendly_name: verifiedName,
-        api_url: "https://graph.facebook.com/v21.0",
-        api_key_encrypted: access_token,
-        phone_number: phoneNumber,
-        status: "connected",
-        is_active: true,
-        provider: "meta",
-        meta_config: { phone_number_id, waba_id: waba_id || null },
-      })
-      .select("id").single();
-
-    if (insertErr) throw insertErr;
-
-    return new Response(JSON.stringify({
-      success: true, instance_id: newInstance.id, provider: "meta",
-      phone_number: phoneNumber, verified_name: verifiedName,
-    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  } catch (err: any) {
-    return new Response(JSON.stringify({ success: false, error: `Meta API error: ${err.message}` }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// ====================== EVOLUTION / UAZAPI PROVIDER ======================
+serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
-async function handleEvolutionProvider(supabase: any, body: any) {
-  const { instance_name, user_id, friendly_name, agent_id } = body;
-
-  const api_url = (Deno.env.get("EVOLUTION_API_URL") || "").replace(/\/$/, "");
-  const api_key = Deno.env.get("EVOLUTION_API_KEY") || "";
-
-  if (!api_url || !api_key) {
-    return new Response(JSON.stringify({
-      success: false,
-      error: "EVOLUTION_API_URL ou EVOLUTION_API_KEY nao configurado nos Secrets do Supabase. Acesse: supabase.com > Edge Functions > Secrets",
-    }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  }
-
-  if (!instance_name || !user_id) {
-    return new Response(JSON.stringify({ success: false, error: "instance_name e user_id sao obrigatorios" }), {
-      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  console.log(`[V6.0] Criando instancia: ${instance_name} em ${api_url}`);
-
-  // 1. Criar instancia na Uazapi/Evolution
-  const createRes = await fetch(`${api_url}/instance/create`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": api_key,
-      "token": api_key,
-      "admintoken": api_key,
-    },
-    body: JSON.stringify({
-      instanceName: instance_name,
-      token: api_key,
-      qrcode: true,
-    }),
-  });
-
-  const createText = await createRes.text();
-  console.log(`[V6.0] Create response (${createRes.status}): ${createText.substring(0, 600)}`);
-
-  let createData: any = {};
-  try { createData = JSON.parse(createText); } catch (e) { console.error("[V6.0] Parse error:", e); }
-
-  const instanceToken = createData?.token || createData?.instance?.token || api_key;
-
-  // 2. Extrair QR Code da resposta de criacao
-  let qrCode: string | null =
-    createData?.qrcode?.base64 ||
-    createData?.instance?.qrcode?.base64 ||
-    createData?.hash?.qrcode ||
-    createData?.base64 ||
-    null;
-
-  // 3. Se QR nao veio, tentar endpoints alternativos
-  if (!qrCode) {
-    console.log("[V6.0] QR nao veio no create. Aguardando 3s e tentando /instance/connect/...");
-    await new Promise((r) => setTimeout(r, 3000));
-
-    // Tentativa 1: GET /instance/connect/{name} (Evolution API padrao)
-    try {
-      const r1 = await fetch(`${api_url}/instance/connect/${instance_name}`, {
-        method: "GET",
-        headers: { "apikey": api_key, "token": instanceToken, "admintoken": api_key },
-      });
-      const t1 = await r1.text();
-      console.log(`[V6.0] connect GET (${r1.status}): ${t1.substring(0, 400)}`);
-      if (r1.ok) {
-        const d1 = JSON.parse(t1);
-        qrCode = d1?.base64 || d1?.qrcode?.base64 || d1?.code || null;
-      }
-    } catch (e) { console.log("[V6.0] connect GET falhou:", e); }
-
-    // Tentativa 2: POST /instance/connect (Uazapi style)
-    if (!qrCode) {
-      try {
-        const r2 = await fetch(`${api_url}/instance/connect`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "token": instanceToken, "apikey": api_key, "admintoken": api_key },
-          body: JSON.stringify({ instanceName: instance_name }),
-        });
-        const t2 = await r2.text();
-        console.log(`[V6.0] connect POST (${r2.status}): ${t2.substring(0, 400)}`);
-        if (r2.ok) {
-          const d2 = JSON.parse(t2);
-          qrCode = d2?.base64 || d2?.qrcode?.base64 || d2?.code || null;
-        }
-      } catch (e) { console.log("[V6.0] connect POST falhou:", e); }
-    }
-  }
-
-  // 4. Configurar Webhook automaticamente
-  const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
-  const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
   try {
-    const wRes = await fetch(`${api_url}/webhook/set/${instance_name}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "apikey": api_key, "token": instanceToken },
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
+
+    const { instance_name, friendly_name, user_id, agent_id, api_url, api_key } = await req.json()
+
+    const baseUrl = (api_url || Deno.env.get('EVOLUTION_API_URL') || 'https://logos-ia.uazapi.com').replace(/\/$/, '')
+    const adminToken = api_key || Deno.env.get('EVOLUTION_API_KEY') || ''
+    const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '')
+    const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`
+
+    console.log(`[Uazapi V8] Criando instância: ${instance_name} em ${baseUrl}`)
+
+    // ============================================================
+    // PASSO 1: Criar instância via POST /instance/create (admintoken)
+    // ============================================================
+    const createRes = await fetch(`${baseUrl}/instance/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'admintoken': adminToken,
+      },
       body: JSON.stringify({
-        webhook: { url: webhookUrl, enabled: true, events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "MESSAGES_UPDATE"] },
+        name: instance_name,
+        systemName: 'uazapiGO',
+        adminField01: '',
+        adminField02: '',
       }),
-    });
-    console.log(`[V6.0] Webhook set (${wRes.status}): ${webhookUrl}`);
-  } catch (e) { console.warn("[V6.0] Webhook setup falhou:", e); }
-
-  // 5. Salvar no banco
-  const { data: newInstance, error: insertErr } = await supabase
-    .from("wa_instances")
-    .insert({
-      user_id,
-      instance_name,
-      friendly_name: friendly_name || instance_name,
-      api_url: api_url,
-      api_key_encrypted: instanceToken,
-      status: "waiting_qr",
-      is_active: false,
-      provider: "evolution",
     })
-    .select("id")
-    .single();
 
-  if (insertErr) {
-    console.error("[V6.0] Erro ao salvar instancia:", insertErr.message);
-  }
+    const createText = await createRes.text()
+    console.log(`[Uazapi V8] POST /instance/create (${createRes.status}): ${createText.substring(0, 300)}`)
 
-  // 6. Vincular ao Agente automaticamente
-  if (newInstance && agent_id) {
-    console.log(`[V6.0] Vinculando instancia ${newInstance.id} ao agente ${agent_id}`);
-    const { data: agentData } = await supabase.from("wa_ai_agents").select("instance_ids").eq("id", agent_id).single();
-    if (agentData) {
-      const ids: string[] = agentData.instance_ids || [];
-      if (!ids.includes(newInstance.id)) {
-        await supabase.from("wa_ai_agents").update({ instance_ids: [...ids, newInstance.id] }).eq("id", agent_id);
+    let createData: any = {}
+    try { createData = JSON.parse(createText) } catch(_) {}
+
+    if (!createRes.ok && createRes.status !== 208) {
+      // Verificar se instância já existe (208 Already Reported)
+      if (createRes.status !== 208) {
+        throw new Error(`Falha ao criar instância: ${createRes.status} — ${createText.substring(0, 200)}`)
       }
     }
+
+    // Extrair token da instância retornado pela Uazapi
+    const instanceToken = createData?.token || createData?.instance?.token || createData?.data?.token || ''
+    console.log(`[Uazapi V8] Token da instância: ${instanceToken ? instanceToken.substring(0, 8) + '...' : 'NÃO ENCONTRADO'}`)
+
+    if (!instanceToken) {
+      throw new Error(`Token da instância não retornado. Resposta: ${createText.substring(0, 300)}`)
+    }
+
+    // ============================================================
+    // PASSO 2: Salvar instância no banco ANTES de configurar webhook
+    // Não usa upsert com onConflict pois não há UNIQUE constraint em instance_name
+    // ============================================================
+    let waInstance: any = null
+
+    // Tentar inserir novo registro
+    const { data: inserted, error: insertError } = await supabase
+      .from('wa_instances')
+      .insert({
+        instance_name,
+        friendly_name: friendly_name || instance_name,
+        user_id,
+        api_url: baseUrl,
+        api_key_encrypted: instanceToken,
+        status: 'waiting_qr',
+        is_active: false,
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single()
+
+    if (insertError) {
+      // Tentar buscar instância já existente com esse nome
+      console.warn('[Uazapi V8] Insert falhou, tentando buscar existente:', insertError.message)
+      const { data: existing } = await supabase
+        .from('wa_instances')
+        .select()
+        .eq('instance_name', instance_name)
+        .eq('user_id', user_id)
+        .single()
+
+      if (existing) {
+        // Atualizar o token e status da instância existente
+        const { data: updated } = await supabase
+          .from('wa_instances')
+          .update({
+            api_key_encrypted: instanceToken,
+            status: 'waiting_qr',
+            is_active: false,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id)
+          .select()
+          .single()
+        waInstance = updated || existing
+        console.log('[Uazapi V8] Instância existente atualizada. ID:', waInstance?.id)
+      } else {
+        throw new Error(`Erro ao salvar no banco: ${insertError.message}`)
+      }
+    } else {
+      waInstance = inserted
+      console.log(`[Uazapi V8] Instância inserida no banco. ID: ${waInstance?.id}`)
+    }
+
+    // Vincular ao agente (se agent_id fornecido)
+    if (agent_id && waInstance?.id) {
+      const { data: agent } = await supabase
+        .from('wa_ai_agents')
+        .select('instance_ids')
+        .eq('id', agent_id)
+        .single()
+
+      const currentIds: string[] = agent?.instance_ids || []
+      if (!currentIds.includes(waInstance.id)) {
+        await supabase
+          .from('wa_ai_agents')
+          .update({ instance_ids: [...currentIds, waInstance.id] })
+          .eq('id', agent_id)
+        console.log(`[Uazapi V8] Instância vinculada ao agente: ${agent_id}`)
+      }
+    }
+
+    // ============================================================
+    // PASSO 3: Configurar Webhook via POST /webhook (token da instância)
+    // ============================================================
+    const webhookRes = await fetch(`${baseUrl}/webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'token': instanceToken,
+      },
+      body: JSON.stringify({
+        enabled: true,
+        url: webhookUrl,
+        events: ['messages', 'connection'],
+        excludeMessages: ['wasSentByApi'], // Evita loop do bot respondendo a si mesmo
+      }),
+    })
+
+    const webhookText = await webhookRes.text()
+    console.log(`[Uazapi V8] POST /webhook (${webhookRes.status}): ${webhookText.substring(0, 200)}`)
+
+    if (!webhookRes.ok) {
+      console.warn(`[Uazapi V8] Webhook não configurado (${webhookRes.status}) — o usuário precisará configurar manualmente`)
+    } else {
+      console.log('[Uazapi V8] ✅ Webhook configurado com sucesso!')
+    }
+
+    // ============================================================
+    // PASSO 4: Conectar instância e obter QR Code via POST /instance/connect
+    // ============================================================
+    const connectRes = await fetch(`${baseUrl}/instance/connect`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'token': instanceToken,
+      },
+      body: JSON.stringify({}),
+    })
+
+    const connectText = await connectRes.text()
+    console.log(`[Uazapi V8] POST /instance/connect (${connectRes.status}): ${connectText.substring(0, 300)}`)
+
+    let connectData: any = {}
+    try { connectData = JSON.parse(connectText) } catch(_) {}
+
+    // O QR Code pode estar em diferentes campos dependendo da resposta
+    const qrCode = connectData?.qrcode || connectData?.qr || connectData?.base64 || connectData?.qrCode || null
+
+    if (qrCode) {
+      console.log('[Uazapi V8] ✅ QR Code obtido com sucesso!')
+    } else {
+      // Instância já pode estar conectada
+      const state = (connectData?.status || connectData?.state || '').toLowerCase()
+      if (state === 'open' || state === 'connected') {
+        console.log('[Uazapi V8] Instância já está conectada!')
+        await supabase
+          .from('wa_instances')
+          .update({ status: 'connected', is_active: true, updated_at: new Date().toISOString() })
+          .eq('instance_name', instance_name)
+      } else {
+        console.log(`[Uazapi V8] QR Code não encontrado. Estado: ${state}. Resposta: ${connectText.substring(0, 200)}`)
+      }
+    }
+
+    return new Response(JSON.stringify({
+      success: true,
+      instance_id: waInstance?.id,
+      instance_name,
+      token: instanceToken,
+      qr_code: qrCode,      // Frontend espera qr_code (não qrCode)
+      qrCode,               // Manter compatibilidade
+      webhook_configured: webhookRes.ok,
+      connect_status: connectRes.status,
+    }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
+    })
+
+  } catch (error: any) {
+    console.error('[Uazapi V8] Erro crítico:', error.message)
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
+    })
   }
-
-  console.log(`[V6.0] Concluido. QR Code: ${qrCode ? "OBTIDO ✓" : "NAO OBTIDO ✗"}`);
-
-  return new Response(JSON.stringify({
-    success: true,
-    qr_code: qrCode,
-    instance_id: newInstance?.id || null,
-    provider: "evolution",
-  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-}
+})

@@ -40,47 +40,37 @@ serve(async (req: Request) => {
       });
     }
 
-    const { instance_name, api_url, api_key_encrypted, provider } = inst;
-    const globalKey = Deno.env.get('EVOLUTION_API_KEY');
-    const instKey = api_key_encrypted || globalKey;
-    const baseUrl = api_url?.replace(/\/$/, '') || Deno.env.get('EVOLUTION_API_URL')?.replace(/\/$/, '');
+    const { instance_name, api_url, api_key_encrypted } = inst;
+    const instanceToken = api_key_encrypted;
+    const baseUrl = api_url?.replace(/\/$/, "") || Deno.env.get('EVOLUTION_API_URL')?.replace(/\/$/, "");
 
-    console.log(`[delete-instance] Deleting ${instance_name} from ${baseUrl} (Provider: ${provider})`);
+    console.log(`[delete-instance V8.2] Deletando instância: ${instance_name} (${instance_id})`);
 
-    // 2. Delete from Evolution/Uazapi
-    if (baseUrl && globalKey) {
+    // 2. Delete from Uazapi — DELETE /instance com token no header (conforme docs.uazapi.com)
+    if (baseUrl && instanceToken) {
       try {
-        // Always prioritize Global Admin Token for deletion as it has higher privileges
-        let delRes = await fetch(`${baseUrl}/instance/delete/${instance_name}`, {
+        const delRes = await fetch(`${baseUrl}/instance`, {
           method: 'DELETE',
           headers: { 
-            'apikey': globalKey,
-            'admintoken': globalKey,
-            'Authorization': `Bearer ${globalKey}`
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'token': instanceToken,
           },
         });
-
-        if (!delRes.ok) {
-          // Try Uazapi method: DELETE /instance with instance token
-          delRes = await fetch(`${baseUrl}/instance`, {
-            method: 'DELETE',
-            headers: { 
-              'token': instKey,
-              'apikey': instKey,
-              'admintoken': globalKey,
-              'Content-Type': 'application/json'
-            },
-          });
-        }
         
-        console.log(`[delete-instance] API Response status: ${delRes.status}`);
-      } catch (apiErr) {
-        console.warn('[delete-instance] API error (continuing with DB deletion):', apiErr);
+        const delText = await delRes.text();
+        console.log(`[delete-instance] API Response (${delRes.status}): ${delText.substring(0, 300)}`);
+        
+        if (!delRes.ok) {
+           console.warn(`[delete-instance] Falha na API Uazapi (${delRes.status}), continuando remoção do banco.`);
+        }
+      } catch (apiErr: any) {
+        console.warn('[delete-instance] Erro ao chamar API Uazapi:', apiErr.message);
       }
     }
 
     // 3. Delete from Database - ALWAYS RUN THIS
-    console.log(`[delete-instance] Removing from DB: ${instance_id}`);
+    console.log(`[delete-instance] Removendo registro do banco: ${instance_id}`);
     const { error: dbErr } = await supabase
       .from('wa_instances')
       .delete()

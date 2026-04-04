@@ -11,13 +11,13 @@ serve(async (req) => {
 
   try {
     const { instance_id, user_id } = await req.json();
-    
+
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // 1. Get Instance Data
+    // 1. Buscar dados da instância
     const { data: inst, error: fetchErr } = await supabase
       .from("wa_instances")
       .select("*")
@@ -27,48 +27,46 @@ serve(async (req) => {
     if (fetchErr || !inst) throw new Error("Instância não encontrada");
 
     const baseUrl = inst.api_url.replace(/\/$/, "");
-    const instanceName = inst.instance_name;
     const instanceToken = inst.api_key_encrypted;
-    const globalKey = Deno.env.get("EVOLUTION_API_KEY") || "";
-    
-    // Garantir que a URL não tenha barra duplicada
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")?.replace(/\/$/, "");
+
+    const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
     const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
 
-    console.log(`[V5.4] Sincronizando Instância: ${instanceName}`);
-    console.log(`[V5.4] URL do Webhook: ${webhookUrl}`);
+    console.log(`[sync-webhook V8.2] Instância: ${inst.instance_name} | Webhook: ${webhookUrl}`);
 
-    const results = [];
+    // Uazapi format — POST /webhook com token no header (conforme docs.uazapi.com)
+    const response = await fetch(`${baseUrl}/webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "token": instanceToken,
+      },
+      body: JSON.stringify({
+        enabled: true,
+        url: webhookUrl,
+        events: ["messages", "newsletter_messages", "connection"],
+        excludeMessages: ["wasSentByApi"]
+      }),
+    });
 
-    // Attempt 1: Evolution v1
-    try {
-        const r1 = await fetch(`${baseUrl}/webhook/set/${instanceName}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "apikey": globalKey, "token": instanceToken, "admintoken": globalKey },
-            body: JSON.stringify({
-                webhook: { url: webhookUrl, enabled: true, events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "SEND_MESSAGE"] }
-            })
-        });
-        const t1 = await r1.text();
-        results.push(`V1 (${r1.status}): ${t1.substring(0, 100)}`);
-    } catch(e) { results.push(`V1 Error: ${e.message}`); }
+    const resultText = await response.text();
+    console.log(`[sync-webhook] POST /webhook (${response.status}): ${resultText.substring(0, 300)}`);
 
-    // Attempt 2: Evolution v2 / Uazapi
-    try {
-        const r2 = await fetch(`${baseUrl}/webhook/set`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "apikey": globalKey, "token": instanceToken, "admintoken": globalKey },
-            body: JSON.stringify({ instance: instanceName, url: webhookUrl, enabled: true, events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"] })
-        });
-        const t2 = await r2.text();
-        results.push(`V2 (${r2.status}): ${t2.substring(0, 100)}`);
-    } catch(e) { results.push(`V2 Error: ${e.message}`); }
+    if (!response.ok) {
+      throw new Error(`Erro ao configurar webhook: ${response.status} - ${resultText}`);
+    }
 
-    return new Response(JSON.stringify({ success: true, results }), {
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: "Webhook sincronizado com sucesso",
+      webhookUrl 
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error: any) {
+    console.error("[sync-webhook] Erro:", error.message);
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

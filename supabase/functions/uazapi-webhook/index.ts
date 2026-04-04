@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { Configuration, OpenAIApi } from 'https://esm.sh/openai@3.3.0'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -8,222 +7,297 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const supabaseClient = createClient(
+    const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
     const payload = await req.json()
-    console.log("[Webhook] Payload Recebido:", JSON.stringify(payload, null, 2));
-
-    const eventRaw = payload.event || '';
-    const event = eventRaw.toLowerCase();
     
-    // Suporte a eventos de Conexão (Uazapi / Evolution)
-    if (event.includes('connection.update') || event.includes('connection_update')) {
-        const data = payload.data || payload;
-        const instance = payload.instance || data.instance || '';
-        const state = (data.state || data.status || payload.state || payload.status || '').toLowerCase();
+    // Log completo para diagnóstico do formato Uazapi
+    console.log("[Webhook] Payload COMPLETO:", JSON.stringify(payload))
+
+    // =============================================
+    // NORMALIZAÇÃO: Suporta Uazapi E Evolution API
+    // =============================================
+    
+    const isUazapi = !!(payload.BaseUrl || payload.EventType || payload.instanceId)
+    const isEvolution = !!(payload.event || payload.data)
+    
+    console.log(`[Webhook] Formato detectado: ${isUazapi ? 'UAZAPI' : isEvolution ? 'EVOLUTION' : 'DESCONHECIDO'}`)
+
+    // --- FORMATO UAZAPI ---
+    // { BaseUrl, EventType: "messages", instance/instanceName/InstanceId, chat: {...}, messages: [{body, fromMe, ...}] }
+    if (isUazapi) {
+      const eventType = (payload.EventType || payload.eventType || '').toLowerCase()
+
+      // Evento de conexão (ignorar mas logar)
+      if (eventType === 'connection' || eventType === 'status' || eventType.includes('connect')) {
+        console.log("[Webhook-Uazapi] Evento de conexão recebido:", eventType)
         
-        console.log(`[Webhook] Conexão Atualizada em ${instance}: ${state}`);
-        
-        if (state === 'open' || state === 'connected' || state === 'connected_authenticated') {
-            await supabaseClient
-              .from('wa_instances')
+        // Atualizar status da instância se conectou
+        const instanceName = payload.instance || payload.instanceName || payload.InstanceId || payload.instanceId || ''
+        if (instanceName) {
+          const state = (payload.state || payload.status || '').toLowerCase()
+          if (state === 'open' || state === 'connected') {
+            await supabase.from('wa_instances')
               .update({ is_active: true, status: 'connected', updated_at: new Date().toISOString() })
-              .eq('instance_name', instance || payload.instance);
-            
-            console.log(`[Webhook] Instância ${instance} agora está ONLINE via Realtime!`);
+              .eq('instance_name', instanceName)
+            console.log(`[Webhook-Uazapi] Instância ${instanceName} marcada como conectada.`)
+          }
         }
-        return new Response(JSON.stringify({ message: "Connection processed" }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
+      }
+      
+      // Evento de mensagem
+      if (eventType !== 'messages' && eventType !== 'message' && !eventType.includes('message')) {
+        console.log(`[Webhook-Uazapi] Evento ignorado: ${eventType}`)
+        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
+      }
+
+      // Extrair dados da mensagem no formato Uazapi
+      const instanceName = payload.instance || payload.instanceName || payload.InstanceId || payload.instanceId || ''
+      const chat = payload.chat || {}
+      
+      // A mensagem pode estar em payload.messages (array) ou payload.message (objeto)
+      let msgObj = null
+      if (Array.isArray(payload.messages) && payload.messages.length > 0) {
+        msgObj = payload.messages[0]
+      } else if (payload.message) {
+        msgObj = payload.message
+      }
+      
+      if (!msgObj) {
+        console.log("[Webhook-Uazapi] Nenhuma mensagem encontrada no payload:", JSON.stringify(payload))
+        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
+      }
+
+      console.log("[Webhook-Uazapi] Mensagem encontrada:", JSON.stringify(msgObj))
+
+      // Ignorar mensagens próprias e grupos
+      if (msgObj.fromMe === true) return new Response('Ignored fromMe', { headers: corsHeaders })
+      
+      // IMPORTANTE: Uazapi usa chatId (com @s.whatsapp.net) — NÃO usar msgObj.from (é ID interno)
+      // O chatId é o número real do remetente (ex: 5511999999999@s.whatsapp.net)
+      const remoteJid = msgObj.chatId || msgObj.chatid || msgObj.from || chat.id || chat.chatId || ''
+      if (!remoteJid) {
+        console.log('[Webhook-Uazapi] remoteJid vazio, ignorando')
+        return new Response('No remoteJid', { headers: corsHeaders })
+      }
+      if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {
+        return new Response('Ignored group/broadcast', { headers: corsHeaders })
+      }
+
+      // Extrair texto
+      const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim()
+      if (!userText) {
+        console.log("[Webhook-Uazapi] Texto vazio, ignorando.")
+        return new Response('Empty text', { headers: corsHeaders })
+      }
+
+      const pushName = msgObj.senderName || chat.name || msgObj.notifyName || 'Lead'
+      console.log(`[Webhook-Uazapi] De: ${pushName} (${remoteJid}) | Instância: ${instanceName} | Texto: "${userText}"`)
+
+      // Processar a mensagem (busca agente, chama OpenAI, responde)
+      return await processMessage(supabase, instanceName, remoteJid, userText, pushName)
+    }
+
+    // --- FORMATO EVOLUTION API ---
+    const eventRaw = payload.event || ''
+    const event = eventRaw.toLowerCase()
+
+    // Evento de conexão (Evolution)
+    if (event.includes('connection.update') || event.includes('connection_update')) {
+      const data = payload.data || payload
+      const instance = payload.instance || data.instance || ''
+      const state = (data.state || data.status || '').toLowerCase()
+      if ((state === 'open' || state === 'connected') && instance) {
+        await supabase.from('wa_instances')
+          .update({ is_active: true, status: 'connected', updated_at: new Date().toISOString() })
+          .eq('instance_name', instance)
+        console.log(`[Webhook-Evolution] Instância ${instance} conectada.`)
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
     }
 
     if (event !== 'messages.upsert' && event !== 'messages_upsert') {
-      console.log(`[Webhook] Evento ignorado: ${eventRaw}`);
-      return new Response(JSON.stringify({ message: "Ignored event" }), { headers: corsHeaders })
+      console.log(`[Webhook-Evolution] Evento ignorado: ${eventRaw}`)
+      return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
     }
 
-    // Normalização de dados de mensagem
-    let data = payload.data || payload; 
-    if (Array.isArray(data)) {
-        data = data[0];
-    }
-    
-    const instance = payload.instance || data.instance || '';
-    const { key, message, pushName, messageType } = data;
+    let data = payload.data || payload
+    if (Array.isArray(data)) data = data[0]
 
-    if (!instance || !key || !message) {
-        console.error("[Webhook] Erro: Dados incompletos no payload (Normalizado).", JSON.stringify({ instance: !!instance, key: !!key, message: !!message }));
-        return new Response('Incomplete payload', { headers: corsHeaders });
+    const instance = payload.instance || data.instance || ''
+    const { key, message, pushName, messageType } = data
+
+    if (!instance || !key || !message) return new Response('Incomplete payload', { headers: corsHeaders })
+    if (key.fromMe) return new Response('Ignored fromMe', { headers: corsHeaders })
+    if (key.remoteJid?.includes('@broadcast') || key.remoteJid?.includes('@g.us')) {
+      return new Response('Ignored group/broadcast', { headers: corsHeaders })
     }
 
-    if (key.fromMe) return new Response('Ignored fromMe', { headers: corsHeaders });
-    if (key.remoteJid.includes('@broadcast') || key.remoteJid.includes('@g.us')) {
-        return new Response('Ignored group/broadcast', { headers: corsHeaders });
-    }
+    let userText = message.conversation || message.extendedTextMessage?.text || message.text || data.text || ''
+    if (!userText.trim()) return new Response('Empty text', { headers: corsHeaders })
 
-    // Extração robusta de texto
-    let userText = '';
-    if (messageType === 'conversation') userText = message.conversation || '';
-    else if (messageType === 'extendedTextMessage') userText = message.extendedTextMessage?.text || '';
-    else {
-        // Fallbacks para formatos variados
-        userText = message.conversation || 
-                   message.extendedTextMessage?.text || 
-                   message.text || 
-                   data.text || 
-                   '';
-    }
-    
-    if (!userText.trim()) {
-        console.log("[Webhook] Texto não encontrado no objeto message.");
-        return new Response('Empty text', { headers: corsHeaders });
-    }
+    return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead')
 
-    console.log(`[Webhook] Mensagem de ${pushName} (${key.remoteJid}): "${userText}"`);
+  } catch (error: any) {
+    console.error("[Webhook] Erro Crítico:", error)
+    return new Response(JSON.stringify({ error: error.message }), { headers: corsHeaders, status: 500 })
+  }
+})
 
-    // 1. Localizar Instância
-    const { data: waInstance, error: instErr } = await supabaseClient
-      .from('wa_instances')
-      .select('*')
-      .eq('instance_name', instance)
-      .maybeSingle();
+// =============================================
+// PROCESSAR MENSAGEM: Busca agente → OpenAI → Responde
+// =============================================
+async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string) {
+  const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 
-    if (instErr || !waInstance) {
-      console.log(`[Webhook] Instância "${instance}" não configurada no HumanizeIA.`);
-      return new Response('Instance not found', { headers: corsHeaders });
-    }
+  // 1. Localizar Instância no banco
+  const { data: waInstance } = await supabase
+    .from('wa_instances')
+    .select('*')
+    .eq('instance_name', instanceName)
+    .maybeSingle()
 
-    // 2. Achar Agente Ativo
-    console.log(`[Webhook] Buscando agente para Instância ID: ${waInstance.id}`);
-    const { data: agent, error: agentErr } = await supabaseClient
-      .from('wa_ai_agents')
-      .select('*')
-      .eq('user_id', waInstance.user_id)
-      .eq('is_active', true)
-      .contains('instance_ids', [waInstance.id])
-      .maybeSingle();
+  if (!waInstance) {
+    console.log(`[Webhook] Instância "${instanceName}" não encontrada no banco.`)
+    return new Response('Instance not found', { headers: corsHeaders })
+  }
 
-    if (agentErr || !agent) {
-      console.log(`[Webhook] Nenhum agente ATIVO e VINCULADO encontrado para a instância ${instance}.`);
-      return new Response('No matching active agent', { headers: corsHeaders });
-    }
+  // 2. Buscar Agente vinculado
+  const { data: agent } = await supabase
+    .from('wa_ai_agents')
+    .select('*')
+    .eq('user_id', waInstance.user_id)
+    .eq('is_active', true)
+    .contains('instance_ids', [waInstance.id])
+    .maybeSingle()
 
-    console.log(`[Webhook] Agente encontrado: "${agent.name}" (ID: ${agent.id})`);
+  if (!agent) {
+    console.log(`[Webhook] Nenhum agente ativo encontrado para a instância ${instanceName}. Instance ID: ${waInstance.id}`)
+    return new Response('No matching active agent', { headers: corsHeaders })
+  }
 
-    // 3. Salvar Histórico
-    try {
-        const { error: histErr } = await supabaseClient.from('wa_chat_history').insert({
-          user_id: agent.user_id,
-          agent_id: agent.id,
-          instance_id: instance,
-          remote_jid: key.remoteJid,
-          role: 'user',
-          content: userText,
-          lead_name: pushName || 'Lead'
-        });
-        if (histErr) console.warn("[Webhook] Erro ao salvar histórico:", histErr);
-    } catch (e) {
-        console.error("[Webhook] Exceção ao salvar histórico:", e);
-    }
+  console.log(`[Webhook] Agente: "${agent.name}" | Mensagem: "${userText}"`)
 
-    // 3. Montar o Contexto do LLM (Semelhante ao anterior)
-    const { data: knowledge } = await supabaseClient
-      .from('agent_knowledge')
-      .select('knowledge_text')
-      .eq('user_id', agent.user_id)
-      .maybeSingle();
+  // 3. Salvar histórico (usuário)
+  const { error: histUserErr } = await supabase.from('wa_chat_history').insert({
+    user_id: agent.user_id,
+    agent_id: agent.id,
+    instance_id: instanceName,
+    remote_jid: remoteJid,
+    role: 'user',
+    content: userText,
+    lead_name: pushName
+  })
+  if (histUserErr) console.warn("[Webhook] Erro ao salvar histórico user:", histUserErr.message)
 
-    const { data: history } = await supabaseClient
-      .from('wa_chat_history')
-      .select('role, content')
-      .eq('instance_id', instance)
-      .eq('remote_jid', key.remoteJid)
-      .order('created_at', { ascending: false })
-      .limit(10);
-    
-    const chatGptMessages = (history || []).reverse().map(m => ({
-      role: m.role,
-      content: m.content
-    }));
+  // 4. Buscar histórico de conversa
+  const { data: history } = await supabase
+    .from('wa_chat_history')
+    .select('role, content')
+    .eq('instance_id', instanceName)
+    .eq('remote_jid', remoteJid)
+    .order('created_at', { ascending: false })
+    .limit(10)
 
-    let finalSystemPrompt = agent.system_prompt || 'Você é um assistente prestativo.';
-    if (agent.company_name) finalSystemPrompt += `\n\nEmpresa: ${agent.company_name}`;
-    if (agent.services) finalSystemPrompt += `\nProdutos/Serviços: ${agent.services}`;
-    if (knowledge?.knowledge_text) {
-      finalSystemPrompt += `\n\nBASE DE CONHECIMENTO:\n${knowledge.knowledge_text}`;
-    }
+  const chatHistory = (history || []).reverse().map((m: any) => ({ role: m.role, content: m.content }))
 
-    // 4. Chamar IA
-    const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!openaiApiKey) {
-        console.error("[Webhook] OPENAI_API_KEY desapareceu!");
-        return new Response('Missing AI Key', { status: 500 });
-    }
-    
-    const configuration = new Configuration({ apiKey: openaiApiKey });
-    const openaiApi = new OpenAIApi(configuration);
+  // 5. Buscar conhecimento
+  const { data: knowledge } = await supabase
+    .from('agent_knowledge')
+    .select('knowledge_text')
+    .eq('user_id', agent.user_id)
+    .maybeSingle()
 
-    const completion = await openaiApi.createChatCompletion({
-      model: agent.model || "gpt-4o-mini",
-      messages: [
-        { role: 'system', content: finalSystemPrompt },
-        ...chatGptMessages
-      ],
+  // 6. Montar prompt
+  let systemPrompt = agent.system_prompt || 'Você é um assistente prestativo.'
+  if (agent.company_name) systemPrompt += `\n\nEmpresa: ${agent.company_name}`
+  if (agent.services) systemPrompt += `\nProdutos/Serviços: ${agent.services}`
+  if (knowledge?.knowledge_text) systemPrompt += `\n\nBASE DE CONHECIMENTO:\n${knowledge.knowledge_text}`
+
+  // 7. Chamar OpenAI
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
+  if (!openaiApiKey) {
+    console.error("[Webhook] OPENAI_API_KEY não configurada!")
+    return new Response('Missing AI Key', { status: 500 })
+  }
+
+  // Validar modelo — garante que sempre usa um modelo válido
+  const VALID_MODELS = ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo']
+  const rawModel = (agent.model || '').trim()
+  const model = VALID_MODELS.includes(rawModel) ? rawModel : 'gpt-4o-mini'
+  console.log(`[Webhook] Usando modelo: ${model} (original no banco: "${rawModel}")`)
+
+  const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+    body: JSON.stringify({
+      model: model,
+      messages: [{ role: 'system', content: systemPrompt }, ...chatHistory],
       temperature: agent.temperature || 0.7,
-    });
+    })
+  })
 
-    const aiResponse = completion.data.choices[0].message?.content || '';
-    if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders });
+  if (!openaiRes.ok) {
+    const errText = await openaiRes.text()
+    console.error(`[Webhook] OpenAI erro (${openaiRes.status}):`, errText)
+    return new Response('OpenAI error', { status: 500 })
+  }
 
-    // 5. Salvar resposta IA
-    await supabaseClient.from('wa_chat_history').insert({
-      user_id: agent.user_id,
-      agent_id: agent.id,
-      instance_id: instance,
-      remote_jid: key.remoteJid,
-      role: 'assistant',
-      content: aiResponse
-    });
+  const openaiData = await openaiRes.json()
+  const aiResponse = openaiData.choices?.[0]?.message?.content || ''
+  if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders })
 
-    // 6. Enviar de volta para WhatsApp (Universal Format)
-    const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
-    const globalKey = Deno.env.get('EVOLUTION_API_KEY') || '';
-    const instKey = waInstance.api_key_encrypted || globalKey;
+  console.log(`[Webhook] Resposta IA: "${aiResponse.substring(0, 100)}..."`)
 
-    console.log(`[Webhook] Enviando resposta para ${key.remoteJid} via ${instance}`);
-    
-    // Suporta Evolution v1 e v2/Uazapi enviando o máximo de tokens nos headers
-    const sendResp = await fetch(`${baseUrl}/message/sendText/${instance}`, {
+  // 8. Salvar resposta IA
+  const { error: histAiErr } = await supabase.from('wa_chat_history').insert({
+    user_id: agent.user_id,
+    agent_id: agent.id,
+    instance_id: instanceName,
+    remote_jid: remoteJid,
+    role: 'assistant',
+    content: aiResponse
+  })
+  if (histAiErr) console.warn("[Webhook] Erro ao salvar resposta IA:", histAiErr.message)
+
+  // 9. Enviar resposta via Uazapi — POST /send/text (conforme docs.uazapi.com)
+  // O token da instância identifica QUAL instância envia (sem nome na URL)
+  // Token global (jOnM6gdi...) retornou 401 — usa APENAS o token da instância
+  const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '')
+  const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || ''
+  // Extrair apenas os dígitos do número (sem @s.whatsapp.net)
+  const phoneNumber = remoteJid.replace(/@.*$/, '').replace(/\D/g, '')
+
+  console.log(`[Webhook] Enviando para: ${phoneNumber} via ${baseUrl}/send/text`)
+
+  try {
+    const r = await fetch(`${baseUrl}/send/text`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': globalKey,
+        'Accept': 'application/json',
         'token': instKey,
-        'admintoken': globalKey
       },
-      body: JSON.stringify({
-        number: key.remoteJid.split('@')[0],
-        text: aiResponse, // Formato v2/Uazapi
-        textMessage: { text: aiResponse }, // Formato v1 fallback
-        options: { delay: agent.reply_delay_ms || 1000, presence: "composing" }
-      })
-    });
-
-    if (!sendResp.ok) {
-        const errText = await sendResp.text();
-        console.error(`[Webhook] Erro no envio (${sendResp.status}):`, errText);
+      body: JSON.stringify({ number: phoneNumber, text: aiResponse })
+    })
+    const t = await r.text()
+    console.log(`[Webhook] POST /send/text (${r.status}): ${t.substring(0, 300)}`)
+    if (r.status < 400) {
+      console.log('[Webhook] ✅ Mensagem enviada com sucesso!')
+    } else {
+      console.error(`[Webhook] ❌ Falha ao enviar: ${r.status} — ${t.substring(0, 200)}`)
     }
-
-    return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
-
-  } catch (error: any) {
-    console.error("[Webhook] Erro Crítico:", error);
-    return new Response(JSON.stringify({ error: error.message }), { headers: corsHeaders, status: 500 })
+  } catch (e) {
+    console.error('[Webhook] Erro ao enviar mensagem:', e)
   }
-});
+
+  return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
+}
+
