@@ -189,7 +189,8 @@ serve(async (req) => {
       console.log('[Uazapi V8] ✅ QR Code obtido com sucesso!')
     } else {
       // Instância já pode estar conectada
-      const state = (connectData?.status || connectData?.state || '').toLowerCase()
+      // Instância já pode estar conectada
+      const state = String(connectData?.status || connectData?.state || '').toLowerCase()
       if (state === 'open' || state === 'connected') {
         console.log('[Uazapi V8] Instância já está conectada!')
         await supabase

@@ -211,7 +211,7 @@ serve(async (req: Request) => {
                qrData?.qrcode || 
                null;
       
-      const state = (qrData?.state || qrData?.status || qrData?.instance?.state || qrData?.instance?.status || '').toLowerCase();
+      const state = String(qrData?.state || qrData?.status || qrData?.instance?.state || qrData?.instance?.status || '').toLowerCase();
       
       // Robust connection check (V5.1)
       connected = state === 'open' || 

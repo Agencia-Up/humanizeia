@@ -32,7 +32,7 @@ serve(async (req) => {
     // --- FORMATO UAZAPI ---
     // { BaseUrl, EventType: "messages", instance/instanceName/InstanceId, chat: {...}, messages: [{body, fromMe, ...}] }
     if (isUazapi) {
-      const eventType = (payload.EventType || payload.eventType || '').toLowerCase()
+      const eventType = String(payload.EventType || payload.eventType || '').toLowerCase()
 
       // Evento de conexão (ignorar mas logar)
       if (eventType === 'connection' || eventType === 'status' || eventType.includes('connect')) {
@@ -41,7 +41,7 @@ serve(async (req) => {
         // Atualizar status da instância se conectou
         const instanceName = payload.instance || payload.instanceName || payload.InstanceId || payload.instanceId || ''
         if (instanceName) {
-          const state = (payload.state || payload.status || '').toLowerCase()
+          const state = String(payload.state || payload.status || '').toLowerCase()
           if (state === 'open' || state === 'connected') {
             await supabase.from('wa_instances')
               .update({ is_active: true, status: 'connected', updated_at: new Date().toISOString() })
@@ -107,13 +107,13 @@ serve(async (req) => {
 
     // --- FORMATO EVOLUTION API ---
     const eventRaw = payload.event || ''
-    const event = eventRaw.toLowerCase()
+    const event = String(eventRaw).toLowerCase()
 
     // Evento de conexão (Evolution)
     if (event.includes('connection.update') || event.includes('connection_update')) {
       const data = payload.data || payload
       const instance = payload.instance || data.instance || ''
-      const state = (data.state || data.status || '').toLowerCase()
+      const state = String(data.state || data.status || '').toLowerCase()
       if ((state === 'open' || state === 'connected') && instance) {
         await supabase.from('wa_instances')
           .update({ is_active: true, status: 'connected', updated_at: new Date().toISOString() })
