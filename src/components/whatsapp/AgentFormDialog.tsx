@@ -263,15 +263,23 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
 
       let finalQrCode = data?.qr_code;
+      const createdInstanceId = data?.instance_id;
 
-      // Fallback: Se o QR não veio no create, tenta buscar denovo após um pequeno delay
-      if (!finalQrCode) {
-          console.warn("[QR] QR Code não veio na resposta inicial. Tentando busca secundária...");
-          await new Promise(r => setTimeout(r, 2000));
-          const { data: qrData } = await supabase.functions.invoke('get-evolution-qrcode', {
-              body: { instance_name: slug, user_id: user!.id }
+      // Fallback: Se o QR não veio no create, tenta buscar via instance_id
+      if (!finalQrCode && createdInstanceId) {
+          console.warn("[QR] QR Code não veio na resposta inicial. Tentando busca secundária via instance_id:", createdInstanceId);
+          await new Promise(r => setTimeout(r, 3000));
+          const { data: qrData, error: qrErr } = await supabase.functions.invoke('get-evolution-qrcode', {
+              body: { instance_id: createdInstanceId, user_id: user!.id }
           });
-          finalQrCode = qrData?.base64 || qrData?.qrcode || qrData?.qr_code;
+          console.info("[QR] Resposta fallback:", JSON.stringify(qrData));
+          if (qrErr) console.error("[QR] Erro no fallback:", qrErr);
+          finalQrCode = qrData?.qr_code || qrData?.base64 || qrData?.qrcode;
+          
+          // Log da resposta bruta para diagnóstico
+          if (!finalQrCode && qrData?.raw_response) {
+            console.warn("[QR] Resposta bruta da Uazapi (fallback):", qrData.raw_response);
+          }
       }
 
       if (finalQrCode) {
@@ -280,7 +288,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       } else {
         toast({
             title: "Instância criada, mas o QR Code demorou",
-            description: "O número foi vinculado. Saia e entre novamente no Agente para tentar ver o QR Code atualizado.",
+            description: "Verifique os logs do Supabase (create-evolution-instance) para ver a resposta da Uazapi.",
             variant: "default"
         });
       }
