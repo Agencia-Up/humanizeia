@@ -18,7 +18,6 @@ import {
   Inbox,
   Zap,
   Smartphone,
-  Bot,
   Activity,
   Radar,
   Target,
@@ -26,6 +25,8 @@ import {
   Instagram,
   CreditCard,
   FileCode2,
+  Kanban,
+  UserCheck,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -82,14 +83,15 @@ const integrationItems = [
   { title: 'Integrações', url: '/integrations', icon: Plug },
 ];
 
-// 💬 WhatsApp
+// 💬 WhatsApp & CRM — Agente IA removido (fica só dentro da página do Pedro)
 const whatsappItems = [
+  { title: 'CRM — Pipeline', url: '/crm', icon: Kanban },
+  { title: 'Gestão de Leads', url: '/leads', icon: UserCheck },
   { title: 'Instâncias', url: '/whatsapp/instances', icon: Smartphone },
   { title: 'Inbox', url: '/whatsapp/inbox', icon: Inbox },
   { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
   { title: 'Analytics', url: '/whatsapp/analytics', icon: BarChart3 },
   { title: 'Automações', url: '/whatsapp/automations', icon: Zap },
-  { title: 'Agente IA', url: '/whatsapp/ai-agent', icon: Bot },
   { title: 'Extrator de Contatos', url: '/whatsapp/contacts', icon: Contact },
   { title: 'CAPI Tracking', url: '/whatsapp/capi', icon: Activity },
 ];
@@ -221,7 +223,7 @@ export function AppSidebar() {
     { label: '🤖 Agentes IA', items: agentItems, triggerIcon: Bot, dataTour: 'sidebar-agents' },
     { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
     { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
-    { label: '💬 WhatsApp', items: whatsappItems, triggerIcon: MessageCircle },
+    { label: '💬 WhatsApp & CRM', items: whatsappItems, triggerIcon: MessageCircle },
     { label: '⚙️ Sistema', items: systemItems, triggerIcon: Settings },
   ];
 
