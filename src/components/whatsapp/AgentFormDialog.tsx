@@ -56,6 +56,7 @@ interface AgentFormDialogProps {
   onOpenChange: (open: boolean) => void;
   agent: AIAgent | null;
   instances: Instance[];
+  agents: AIAgent[]; // Novo prop para filtrar instâncias em uso
   onSaved: () => void;
 }
 
@@ -100,7 +101,49 @@ const AGENT_TYPES = [
   { value: 'sales', label: '💰 Vendas' },
 ];
 
-export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved }: AgentFormDialogProps) {
+const PROMPT_TEMPLATES: Record<string, string> = {
+  generic: DEFAULT_PROMPT,
+  sdr: `Você é o {{NAME}}, consultor de pré-vendas (SDR) da {{COMPANY}}. Atuamos no nicho de {{NICHE}}. 
+
+Seu objetivo é qualificar leads interessados em {{PRODUCT}} e agendar uma conversa com um especialista.
+
+Regras de Ouro:
+1. Seja humano, amigável e empático. Evite linguagem comercial agressiva.
+2. Mantenha frases curtas (máximo 2-3 linhas no WhatsApp).
+3. Nunca faça um interrogatório. Faça apenas uma pergunta por vez.
+4. Se o cliente tiver dúvidas, responda com autoridade mas seja acessível.
+
+Funil de Qualificação:
+- Pergunte sobre a dor principal do cliente hoje.
+- Identifique se ele já tentou outras soluções.
+- Se houver interesse real e fit, ofereça 2 horários para uma call rápida.
+
+Persona: Especialista prestativo, rápido e focado em ajudar o cliente a resolver o problema dele.`,
+  support: `Você é o {{NAME}}, especialista de suporte ao cliente da {{COMPANY}} no nicho de {{NICHE}}. 
+
+Seu objetivo é sanar dúvidas sobre {{PRODUCT}} e garantir a melhor experiência para o cliente.
+
+Diretrizes:
+1. Respostas rápidas e precisas.
+2. Use tom empático, especialmente se o cliente estiver frustrado.
+3. Se não puder resolver imediatamente, explique o processo de solução.
+4. Instruções passo a passo são melhores que textos longos.
+
+Objetivo: Resolver o problema no primeiro contato ou encaminhar para o suporte técnico avançado se necessário.`,
+  sales: `Você é o {{NAME}}, consultor de vendas sênior da {{COMPANY}} ({{NICHE}}). 
+
+Seu objetivo é fechar vendas de {{PRODUCT}} e converter interessados em clientes satisfeitos.
+
+Técnicas:
+1. Foco total em ROI e benefícios, não apenas funcionalidades.
+2. Use prova social e gatilhos de escassez/urgência quando apropriado.
+3. Identifique o momento de compra (fase do funil) e adapte o fechamento.
+4. Seja direto e confiante ao falar de preços e planos.
+
+Mantenha a conversa fluida, natural e foque em resolver a necessidade real do cliente.`,
+};
+
+export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, onSaved }: AgentFormDialogProps) {
   useEffect(() => {
     if (open) {
       console.info("!!! HUMANIZEIA UAZAPI DEBUG V5.3 ACTIVE (OpenAI + Stability) !!!");
@@ -139,8 +182,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [isInstanceConnected, setIsInstanceConnected] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [nicheData, setNicheData] = useState<{ niche: string; business: string; product: string } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeChannel = useRef<any>(null);
+  const promptInitializedRef = useRef(false);
 
   const stopPolling = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
@@ -152,8 +197,60 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   };
 
   useEffect(() => {
+    // Buscar dados do briefing/quiz para o prompt
+    const fetchNicheData = async () => {
+      if (!user) return;
+      try {
+        const { data: quizData } = await supabase
+          .from('user_quiz_responses' as any)
+          .select('nicho_identificado, respostas_completas')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        const { data: briefingData } = await supabase
+          .from('client_briefings' as any)
+          .select('business_name, product_service')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        setNicheData({
+          niche: (quizData as any)?.nicho_identificado || 'Seu Nicho',
+          business: briefingData?.business_name || 'Sua Empresa',
+          product: briefingData?.product_service || 'Nossos Serviços',
+        });
+      } catch (e) {
+        console.error('Erro ao buscar dados do quiz:', e);
+      }
+    };
+
+    if (open) {
+      fetchNicheData();
+    }
     return () => stopPolling();
-  }, []);
+  }, [user, open]);
+
+  // Efeito para atualizar prompt dinamicamente
+  useEffect(() => {
+    if (!open || !nicheData) return;
+    
+    // Se for um agente novo ou se o prompt estiver vázio/default, ou se o usuário mudou o tipo AGORA
+    // Para evitar apagar prompts customizados de agentes antigos, só mudamos se o agent for null (novo)
+    // ou se o prompt for exatamente igual ao default.
+    const isNewAgent = !agent?.id;
+    const isDefaultPrompt = prompt === DEFAULT_PROMPT;
+    
+    if (isNewAgent || isDefaultPrompt || promptInitializedRef.current === false) {
+      const template = PROMPT_TEMPLATES[agentType] || DEFAULT_PROMPT;
+      let finalPrompt = template
+        .replace(/{{NAME}}/g, name)
+        .replace(/{{COMPANY}}/g, nicheData.business)
+        .replace(/{{NICHE}}/g, nicheData.niche)
+        .replace(/{{PRODUCT}}/g, nicheData.product);
+      
+      setPrompt(finalPrompt);
+      promptInitializedRef.current = true;
+    }
+  }, [agentType, name, nicheData, open, agent?.id]);
 
   const generateSlug = (nameStr: string) =>
     nameStr.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -235,7 +332,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
     }
 
     if (instId) {
-        setSelectedInstanceIds(prev => prev.includes(instId!) ? prev : [...prev, instId!]);
+        setSelectedInstanceIds([instId]); // Restringe a apenas uma
     }
     toast({ title: "WhatsApp Conectado!", description: "Instância está online e pronta.", className: "bg-green-600 text-white" });
   };
@@ -418,9 +515,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   }, [agent, open]);
 
   const toggleInstance = (id: string) => {
-    setSelectedInstanceIds(prev =>
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-    );
+    // Restringe apenas a um selecionado (estilo Radio Button)
+    setSelectedInstanceIds(prev => prev.includes(id) ? [] : [id]);
   };
 
   const toggleCategory = (cat: string) => {
@@ -665,7 +761,20 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                       <div className="pt-2 border-t mt-2">
                         <Label className="text-xs mb-2 block">Ou use um número já conectado:</Label>
                         <div className="space-y-2 max-h-[120px] overflow-y-auto">
-                          {instances.map(inst => (
+                          {instances
+                            .filter(inst => {
+                                // Se for edição, mostra a atual + as livres
+                                // Se for novo, mostra apenas as livres
+                                const isCurrentAgentInstance = selectedInstanceIds.includes(inst.id);
+                                if (isCurrentAgentInstance) return true;
+                                
+                                const isInstanceInUse = agents.some(a => 
+                                    a.id !== agent?.id && 
+                                    (a.instance_id === inst.id || a.instance_ids?.includes(inst.id))
+                                );
+                                return !isInstanceInUse;
+                            })
+                            .map(inst => (
                             <div key={inst.id} className="flex items-center gap-3 p-1 hover:bg-muted/50 rounded-md group">
                               <Checkbox
                                 checked={selectedInstanceIds.includes(inst.id)}
