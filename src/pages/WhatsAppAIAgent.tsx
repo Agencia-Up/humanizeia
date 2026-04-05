@@ -83,13 +83,36 @@ export default function WhatsAppAIAgent() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleDelete = async (agentId: string) => {
-    const { error } = await (supabase as any).from('wa_ai_agents').delete().eq('id', agentId);
-    if (error) {
-      toast({ title: 'Erro ao excluir', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'Agente excluído' });
-      fetchData();
+  const handleDelete = async (agent: AIAgent) => {
+    if (!confirm(`Deseja realmente excluir o agente "${agent.name}"? As instâncias vinculadas exclusivamente a ele também serão removidas da Uazapi.`)) return;
+    
+    setLoading(true);
+    try {
+        // Obter os IDs de instâncias vinculados
+        const ids = agent.instance_ids?.length ? agent.instance_ids : (agent.instance_id ? [agent.instance_id] : []);
+        
+        // Limpeza automática na Uazapi para cada instância deste agente
+        if (ids.length > 0) {
+            console.log('[Cleanup] Iniciando limpeza das instâncias do agente:', agent.id, ids);
+            await Promise.all(ids.map(async (id) => {
+                // Tenta remover via Edge Function (que já cuida da Uazapi + DB local)
+                return supabase.functions.invoke('delete-evolution-instance', {
+                    body: { instance_id: id, user_id: user?.id }
+                });
+            }));
+        }
+
+        // Agora deleta o agente
+        const { error } = await (supabase as any).from('wa_ai_agents').delete().eq('id', agent.id);
+        if (error) throw error;
+
+        toast({ title: 'Agente e instâncias excluídos!' });
+        fetchData();
+    } catch (err: any) {
+        console.error('[Delete] Erro complete:', err);
+        toast({ title: 'Erro ao excluir', description: err.message, variant: 'destructive' });
+    } finally {
+        setLoading(false);
     }
   };
 
@@ -114,9 +137,10 @@ export default function WhatsAppAIAgent() {
   };
 
   const getInstanceNames = (agent: AIAgent) => {
+    if (!agent) return 'Desconhecido';
     const ids = agent.instance_ids?.length ? agent.instance_ids : (agent.instance_id ? [agent.instance_id] : []);
     if (ids.length === 0) return 'Todas as instâncias';
-    return ids.map(id => instances.find(i => i.id === id)?.friendly_name || 'Desconhecido').join(', ');
+    return ids.map(id => (instances || []).find(i => i?.id === id)?.friendly_name || 'Desconhecido').join(', ');
   };
 
   if (loading) {
@@ -246,7 +270,7 @@ export default function WhatsAppAIAgent() {
                     <Button size="sm" variant="outline" onClick={() => handleDuplicate(agent)}>
                       <Copy className="h-3 w-3" />
                     </Button>
-                    <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => handleDelete(agent.id)}>
+                    <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => handleDelete(agent)}>
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>

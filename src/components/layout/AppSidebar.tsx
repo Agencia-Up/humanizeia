@@ -27,6 +27,7 @@ import {
   FileCode2,
   Kanban,
   UserCheck,
+  Bot,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';

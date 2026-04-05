@@ -185,7 +185,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [nicheData, setNicheData] = useState<{ niche: string; business: string; product: string } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeChannel = useRef<any>(null);
-  const promptInitializedRef = useRef(false);
+  const promptInitializedRef = useRef<string>('');
 
   const stopPolling = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
@@ -215,8 +215,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
         setNicheData({
           niche: (quizData as any)?.nicho_identificado || 'Seu Nicho',
-          business: briefingData?.business_name || 'Sua Empresa',
-          product: briefingData?.product_service || 'Nossos Serviços',
+          business: (briefingData as any)?.business_name || 'Sua Empresa',
+          product: (briefingData as any)?.product_service || 'Nossos Serviços',
         });
       } catch (e) {
         console.error('Erro ao buscar dados do quiz:', e);
@@ -233,22 +233,23 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   useEffect(() => {
     if (!open || !nicheData) return;
     
-    // Se for um agente novo ou se o prompt estiver vázio/default, ou se o usuário mudou o tipo AGORA
-    // Para evitar apagar prompts customizados de agentes antigos, só mudamos se o agent for null (novo)
-    // ou se o prompt for exatamente igual ao default.
+    // Se for um agente novo ou se o prompt estiver vazio/default, ou se é a primeira vez que abrimos este agente específico
     const isNewAgent = !agent?.id;
     const isDefaultPrompt = prompt === DEFAULT_PROMPT;
     
-    if (isNewAgent || isDefaultPrompt || promptInitializedRef.current === false) {
-      const template = PROMPT_TEMPLATES[agentType] || DEFAULT_PROMPT;
+    // Resetar flag se mudou o ID do agente (para garantir que ao editar um novo agente o prompt atualize)
+    const currentAgentId = agent?.id || 'new';
+    
+    if (isNewAgent || isDefaultPrompt || promptInitializedRef.current !== currentAgentId) {
+      const template = PROMPT_TEMPLATES[agentType || 'generic'] || DEFAULT_PROMPT;
       let finalPrompt = template
-        .replace(/{{NAME}}/g, name)
-        .replace(/{{COMPANY}}/g, nicheData.business)
-        .replace(/{{NICHE}}/g, nicheData.niche)
-        .replace(/{{PRODUCT}}/g, nicheData.product);
+        .replace(/{{NAME}}/g, name || 'Agente')
+        .replace(/{{COMPANY}}/g, nicheData?.business || 'Sua Empresa')
+        .replace(/{{NICHE}}/g, nicheData?.niche || 'Seu Nicho')
+        .replace(/{{PRODUCT}}/g, nicheData?.product || 'Nossos Serviços');
       
       setPrompt(finalPrompt);
-      promptInitializedRef.current = true;
+      promptInitializedRef.current = currentAgentId;
     }
   }, [agentType, name, nicheData, open, agent?.id]);
 
@@ -757,20 +758,20 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                       Gerar QR Code para o Agente
                     </Button>
                     
-                    {instances.length > 0 && (
+                    {(instances || []).length > 0 && (
                       <div className="pt-2 border-t mt-2">
                         <Label className="text-xs mb-2 block">Ou use um número já conectado:</Label>
                         <div className="space-y-2 max-h-[120px] overflow-y-auto">
-                          {instances
+                          {(instances || [])
                             .filter(inst => {
                                 // Se for edição, mostra a atual + as livres
                                 // Se for novo, mostra apenas as livres
-                                const isCurrentAgentInstance = selectedInstanceIds.includes(inst.id);
+                                const isCurrentAgentInstance = (selectedInstanceIds || []).includes(inst.id);
                                 if (isCurrentAgentInstance) return true;
                                 
-                                const isInstanceInUse = agents.some(a => 
-                                    a.id !== agent?.id && 
-                                    (a.instance_id === inst.id || a.instance_ids?.includes(inst.id))
+                                const isInstanceInUse = (agents || []).some(a => 
+                                    a?.id !== agent?.id && 
+                                    (a?.instance_id === inst.id || a?.instance_ids?.includes(inst.id))
                                 );
                                 return !isInstanceInUse;
                             })
