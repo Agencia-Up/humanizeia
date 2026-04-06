@@ -20,13 +20,12 @@ import {
   Smartphone,
   Activity,
   Radar,
-  Target,
   Users,
   Instagram,
   CreditCard,
-  FileCode2,
   Kanban,
-  UserCheck,
+  GraduationCap,
+  FileText,
   Bot,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
@@ -52,7 +51,14 @@ import {
 } from '@/components/ui/sidebar';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 
-// 🤖 Agentes IA
+// 🏠 Dashboard
+const dashboardItems = [
+  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
+  { title: 'Métricas', url: '/metrics', icon: BarChart3 },
+  { title: 'Performance 360°', url: '/performance', icon: Activity },
+];
+
+// 🤖 Agentes IA — Pedro incluído
 const agentItems = [
   { title: 'Salomão — Orquestrador', url: '/salomao', icon: Sparkles },
   { title: 'Daniel — Estrategista', url: '/daniel', icon: Brain },
@@ -61,33 +67,13 @@ const agentItems = [
   { title: 'Davi — Social Media', url: '/davi', icon: Instagram },
   { title: 'João — Email Mkt', url: '/joao', icon: Send },
   { title: 'José — Tráfego Pago', url: '/jose', icon: Radar },
-  { title: 'Marcos — Leads & WhatsApp', url: '/leads', icon: Users },
+  { title: 'Marcos — Leads & CRM', url: '/leads', icon: Users },
+  { title: 'Pedro — Atendimento IA', url: '/whatsapp/ai-agent', icon: Bot },
 ];
 
-// 🏠 Dashboard
-const dashboardItems = [
-  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-  { title: 'Métricas', url: '/metrics', icon: BarChart3 },
-  { title: 'Performance 360°', url: '/performance', icon: Activity },
-];
-
-// 🛠️ Ferramentas IA
-const aiItems = [
-  { title: 'Estúdio Criativo', url: '/creative-studio', icon: Palette },
-  { title: 'Inteligência Criativa', url: '/creative-intelligence', icon: Target },
-  { title: 'Radar de Concorrentes', url: '/competitor-radar', icon: Radar },
-  { title: 'Gerador de Prompt IA', url: '/gerador-prompt', icon: FileCode2 },
-];
-
-// 🔗 Integrações
-const integrationItems = [
-  { title: 'Integrações', url: '/integrations', icon: Plug },
-];
-
-// 💬 WhatsApp & CRM — Agente IA removido (fica só dentro da página do Pedro)
+// 💬 WhatsApp & CRM — sem duplicata de /leads, Pedro no grupo Agentes
 const whatsappItems = [
   { title: 'CRM — Pipeline', url: '/crm', icon: Kanban },
-  { title: 'Gestão de Leads', url: '/leads', icon: UserCheck },
   { title: 'Instâncias', url: '/whatsapp/instances', icon: Smartphone },
   { title: 'Inbox', url: '/whatsapp/inbox', icon: Inbox },
   { title: 'Disparo em Massa', url: '/whatsapp/broadcast', icon: Send },
@@ -97,9 +83,16 @@ const whatsappItems = [
   { title: 'CAPI Tracking', url: '/whatsapp/capi', icon: Activity },
 ];
 
-// ⚙️ Sistema
+// 🔗 Integrações
+const integrationItems = [
+  { title: 'Integrações', url: '/integrations', icon: Plug },
+];
+
+// ⚙️ Sistema — Academia e Tutoriais adicionados
 const systemItems = [
   { title: 'Meu Plano & Tokens', url: '/meu-plano', icon: CreditCard },
+  { title: 'Academia IA', url: '/academy', icon: GraduationCap },
+  { title: 'Tutoriais', url: '/tutorials', icon: FileText },
   { title: 'Configurações', url: '/settings', icon: Settings },
 ];
 
@@ -222,9 +215,8 @@ export function AppSidebar() {
   const groups: NavGroupConfig[] = [
     { label: '🏠 Dashboard', items: dashboardWithBadges, triggerIcon: Home },
     { label: '🤖 Agentes IA', items: agentItems, triggerIcon: Bot, dataTour: 'sidebar-agents' },
-    { label: '🛠️ Ferramentas', items: aiItems, triggerIcon: Brain },
-    { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '💬 WhatsApp & CRM', items: whatsappItems, triggerIcon: MessageCircle },
+    { label: '🔗 Integrações', items: integrationItems, triggerIcon: Plug },
     { label: '⚙️ Sistema', items: systemItems, triggerIcon: Settings },
   ];
 

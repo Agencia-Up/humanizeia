@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,6 +32,7 @@ import {
   Loader2, Minus, Pause, Play, Radar, Settings, Sparkles,
   ThumbsDown, TrendingDown, TrendingUp, Zap, Sun, BarChart3,
   Flame, Gauge, PieChart, RefreshCw, MessageCircle, Phone, Shield,
+  ExternalLink, Target, Layers, FlaskConical, BookOpen, Users, Code2, Wallet,
 } from 'lucide-react';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -509,6 +511,7 @@ function TrendSummary({ snapshots, currencySymbol }: { snapshots: any[]; currenc
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function JoseTrafego() {
+  const navigate = useNavigate();
   const { connectedAccount, connectedAccounts, selectConnectedAccount, startOAuth, isConnecting, isLoading: isLoadingAccount } = useMetaConnection();
   const { session, isAnalyzing, isLoadingSession, pendingActions, executedActions, analyze, loadSavedSession, executeAction, getAdSets, dismissAction, testConnection } = useApolloAgent();
   const [diagResult, setDiagResult] = useState<string | null>(null);
@@ -922,6 +925,7 @@ export default function JoseTrafego() {
               <TabsTrigger value="criar" className="gap-1 text-xs">🚀 Criar Campanha</TabsTrigger>
               <TabsTrigger value="publicos" className="gap-1 text-xs">🎯 Públicos</TabsTrigger>
               <TabsTrigger value="abtests" className="gap-1 text-xs">🧪 Testes A/B</TabsTrigger>
+              <TabsTrigger value="ferramentas" className="gap-1 text-xs"><Layers className="h-3 w-3" />Ferramentas</TabsTrigger>
             </TabsList>
 
             {/* Campaigns */}
@@ -1298,6 +1302,47 @@ export default function JoseTrafego() {
             {/* Testes A/B */}
             <TabsContent value="abtests" className="mt-4">
               <AbTestManager connectedAccount={connectedAccount} />
+            </TabsContent>
+
+            {/* Ferramentas Integradas */}
+            <TabsContent value="ferramentas" className="mt-4">
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">Ferramentas Integradas</h2>
+                  <p className="text-sm text-muted-foreground">Todas as ferramentas de tráfego pago disponíveis para você</p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[
+                    { title: 'Analytics Avançado', description: 'Análise detalhada de performance das campanhas', url: '/analytics', icon: BarChart3, color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' },
+                    { title: 'Alocação de Orçamento', description: 'Distribua seu investimento de forma inteligente', url: '/budget', icon: Wallet, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
+                    { title: 'Otimizador de Campanhas', description: 'Sugestões automáticas para melhorar resultados', url: '/optimizer', icon: Target, color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
+                    { title: 'Regras Automáticas', description: 'Crie regras para otimizar campanhas no piloto automático', url: '/rules', icon: Zap, color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20' },
+                    { title: 'Testes A/B', description: 'Compare criativos, públicos e configurações', url: '/ab-testing', icon: FlaskConical, color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20' },
+                    { title: 'Google Ads', description: 'Dashboard e métricas do Google Ads', url: '/google-ads', icon: BarChart3, color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' },
+                    { title: 'LinkedIn Ads', description: 'Gestão de campanhas no LinkedIn', url: '/linkedin-ads', icon: Users, color: 'text-sky-400', bg: 'bg-sky-500/10 border-sky-500/20' },
+                    { title: 'Meta Pixels', description: 'Gerencie seus pixels de rastreamento Meta', url: '/meta-pixels', icon: Code2, color: 'text-violet-400', bg: 'bg-violet-500/10 border-violet-500/20' },
+                    { title: 'Públicos Meta', description: 'Crie e gerencie públicos personalizados e semelhantes', url: '/meta-audiences', icon: Users, color: 'text-pink-400', bg: 'bg-pink-500/10 border-pink-500/20' },
+                    { title: 'Biblioteca de Criativos', description: 'Todos os seus criativos e assets em um lugar', url: '/library', icon: BookOpen, color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-500/20' },
+                  ].map((tool) => (
+                    <button
+                      key={tool.url}
+                      onClick={() => navigate(tool.url)}
+                      className={`group flex items-start gap-4 rounded-xl border p-4 text-left transition-all hover:scale-[1.01] hover:shadow-md ${tool.bg}`}
+                    >
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-background/50 ${tool.color}`}>
+                        <tool.icon className="h-5 w-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className={`font-semibold text-sm ${tool.color}`}>{tool.title}</p>
+                          <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{tool.description}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </TabsContent>
           </Tabs>
         )}
