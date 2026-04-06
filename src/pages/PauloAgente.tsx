@@ -10,7 +10,8 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   Brain, Layers, ChevronDown, ChevronUp, Send, Trash2,
   RefreshCw, Copy, CheckCircle2, Zap, ArrowRight,
-  Image, LayoutGrid, RotateCcw, Eye, EyeOff, Clock
+  Image, LayoutGrid, RotateCcw, Eye, EyeOff, Clock,
+  ImagePlus, X
 } from 'lucide-react';
 import { useAgentChat } from '@/contexts/AgentChatContext';
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
@@ -47,9 +48,26 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  images?: string[];
   timestamp: Date;
   carousels?: PauloCarousel[];
   isLoading?: boolean;
+}
+
+export interface PauloCarousel {
+  id?: string;
+  user_id?: string;
+  title: string;
+  niche: string;
+  angle: string;
+  caption: string;
+  hashtags: string[];
+  slides: CarouselSlide[];
+  source: 'manual' | 'daniel_import';
+  status: 'draft' | 'ready_for_davi' | 'in_production';
+  created_at?: string;
+  daniel_research_id?: string;
+  reference_images?: string[];
 }
 
 interface ClientContext {
@@ -121,11 +139,23 @@ function parseCarouselsFromResponse(text: string): PauloCarousel[] {
   return [];
 }
 
-function buildPauloSystemPrompt(ctx: ClientContext, angle: AngleType): string {
-  return `Você é PAULO — Diretor Criativo de Carrosséis da LogosIA. Você é um mestre absoluto em criar carrosséis virais para Instagram que param o scroll, geram salvamentos em massa e constroem autoridade de marca.
+function buildPauloSystemPrompt(ctx: ClientContext, angle: AngleType, hasImages: boolean = false): string {
+  let prompt = `Você é PAULO — Diretor Criativo de Carrosséis da LogosIA. Você é um mestre absoluto em criar carrosséis virais para Instagram que param o scroll, geram salvamentos em massa e constroem autoridade de marca.
 
 ## SEU NOVO PAPEL
-Você não gera textos soltos. Você arquiteta carrosséis completos: cada slide com texto de alto impacto E um prompt de imagem AI-ready para o gerador de imagens.
+Você não gera textos soltos. Você arquiteta carrosséis completos: cada slide com texto de alto impacto E um prompt de imagem AI-ready para o gerador de imagens.`;
+
+  if (hasImages) {
+    prompt += `
+
+## IMAGENS DE REFERÊNCIA DETECTADAS [VISÃO COMPUTACIONAL ATIVADA]
+O usuário anexou fotos/imagens junto com esta solicitação inicial. 
+1. Analise meticulosamente o que está nas imagens.
+2. Identifique os elementos visuais chave (cores, produtos, estilo, contexto).
+3. INCLUA citações desses mesmos elementos e a mesma direção de arte em todos os seus \`image_prompt\` nos slides. Davi irá usar isso e a própria imagem base real combinadas!`;
+  }
+
+  prompt += `
 
 ## ESTILO DE REFERÊNCIA (grave isso no seu núcleo)
 Analise estes exemplos de carrossel viral:
@@ -211,6 +241,7 @@ REGRAS:
 4. O último slide é sempre do tipo "cta"
 5. JSON deve ser 100% válido — sem vírgulas extras, sem caracteres especiais fora de strings
 6. NUNCA inclua texto fora do JSON`;
+  return prompt;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -223,6 +254,7 @@ export default function PauloAgente() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [angle, setAngle] = useState<AngleType>('storytelling');
   const [isDemo, setIsDemo] = useState(true);
@@ -234,6 +266,7 @@ export default function PauloAgente() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll
   useEffect(() => {
@@ -367,7 +400,8 @@ export default function PauloAgente() {
     userDisplayText: string,
     fullPrompt: string,
     source: 'manual' | 'daniel_import',
-    danielResearchId?: string
+    danielResearchId?: string,
+    passedImages?: string[]
   ) => {
     if (loading) return;
 
@@ -375,6 +409,7 @@ export default function PauloAgente() {
       id: Date.now().toString(),
       role: 'user',
       content: userDisplayText,
+      images: passedImages?.length ? [...passedImages] : undefined,
       timestamp: new Date(),
     };
 
@@ -390,7 +425,7 @@ export default function PauloAgente() {
     setLoading(true);
 
     try {
-      const systemPrompt = buildPauloSystemPrompt(clientContext || DEMO_CLIENT, angle);
+      const systemPrompt = buildPauloSystemPrompt(clientContext || DEMO_CLIENT, angle, !!passedImages?.length);
 
       const taskId = await createTask('paulo', 'generate_carousel', {
         input: fullPrompt,
@@ -400,7 +435,7 @@ export default function PauloAgente() {
 
       const { data, error } = await supabase.functions.invoke('claude-chat', {
         body: {
-          messages: [{ role: 'user', content: fullPrompt }],
+          messages: [{ role: 'user', content: fullPrompt, images: passedImages?.length ? passedImages : undefined }],
           context: 'paulo',
           system_prompt: systemPrompt,
           stream: false,
@@ -487,10 +522,32 @@ export default function PauloAgente() {
     }
   };
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.length) return;
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setSelectedImages(prev => [...prev, event.target!.result as string]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+    // Reset input
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeImage = (index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleSend = async () => {
-    if (!input.trim() || loading) return;
-    const topic = input.trim();
+    if ((!input.trim() && selectedImages.length === 0) || loading) return;
+    const topic = input.trim() || 'Criar carrossel com base nas referências visuais anexadas';
+    const imagesToProcess = [...selectedImages];
     setInput('');
+    setSelectedImages([]);
 
     const angleLabel = ANGLES.find(a => a.value === angle)?.label || angle;
     const fullPrompt = `Gere 1 carrossel no ângulo "${angleLabel}" sobre o seguinte tema para o nicho do cliente:
@@ -508,7 +565,9 @@ Mantenha o número de slides entre 4 e 8, ajustando ao tamanho natural da ideia.
     await generateCarousels(
       `🎯 Criando carrossel sobre: "${topic}" — Ângulo: ${angleLabel}`,
       fullPrompt,
-      'manual'
+      'manual',
+      undefined,
+      imagesToProcess.length ? imagesToProcess : undefined
     );
   };
 
@@ -894,8 +953,17 @@ Gere 1 único carrossel denso no formato JSON que o Davi entenda. Abuse da sua c
                   <div key={message.id}>
                     {message.role === 'user' ? (
                       <div className="flex justify-end">
-                        <div className="max-w-[75%] bg-muted/60 rounded-2xl rounded-tr-sm px-4 py-3 text-sm text-foreground whitespace-pre-line">
-                          {message.content}
+                        <div className="flex flex-col items-end gap-1.5 max-w-[75%]">
+                          {message.images && message.images.length > 0 && (
+                            <div className="flex flex-wrap justify-end gap-2">
+                              {message.images.map((img, i) => (
+                                <img key={i} src={img} alt="attached" className="h-24 w-24 object-cover rounded-xl border border-border/30 shadow-sm" />
+                              ))}
+                            </div>
+                          )}
+                          <div className="bg-muted/60 rounded-2xl rounded-tr-sm px-4 py-3 text-sm text-foreground whitespace-pre-line w-fit">
+                            {message.content}
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -984,10 +1052,46 @@ Gere 1 único carrossel denso no formato JSON que o Davi entenda. Abuse da sua c
 
             {/* ── Input area ────────────────────────────────────────────── */}
             <div className="px-4 pb-4 shrink-0">
-              <div className="relative flex items-end gap-2 bg-muted/30 border border-border/50 rounded-2xl p-2 focus-within:border-violet-500/50 transition-colors">
-                <Textarea
-                  ref={inputRef}
-                  value={input}
+              <div className="relative flex flex-col gap-2 bg-muted/30 border border-border/50 rounded-2xl p-2 focus-within:border-violet-500/50 transition-colors">
+                
+                {selectedImages.length > 0 && (
+                  <div className="flex gap-2 p-1 overflow-x-auto">
+                    {selectedImages.map((img, idx) => (
+                      <div key={idx} className="relative group shrink-0 w-14 h-14 rounded-xl border border-border/50 overflow-hidden shadow-sm">
+                        <img src={img} alt="upload" className="w-full h-full object-cover" />
+                        <button
+                          onClick={() => removeImage(idx)}
+                          className="absolute top-0.5 right-0.5 bg-background/80 hover:bg-destructive hover:text-white rounded-full p-0.5 transition-colors"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-end gap-2 w-full">
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    multiple 
+                    className="hidden" 
+                    ref={fileInputRef} 
+                    onChange={handleImageUpload} 
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={loading || selectedImages.length >= 4}
+                    className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground mb-1"
+                    title="Anexar imagens de referência (máx 4)"
+                  >
+                    <ImagePlus className="h-5 w-5" />
+                  </Button>
+                  <Textarea
+                    ref={inputRef}
+                    value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1002,7 +1106,7 @@ Gere 1 único carrossel denso no formato JSON que o Davi entenda. Abuse da sua c
                 />
                 <Button
                   onClick={handleSend}
-                  disabled={!input.trim() || loading}
+                  disabled={(!input.trim() && selectedImages.length === 0) || loading}
                   size="icon"
                   className="h-9 w-9 shrink-0 rounded-xl bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-40"
                 >
@@ -1012,6 +1116,7 @@ Gere 1 único carrossel denso no formato JSON que o Davi entenda. Abuse da sua c
                     <Send className="h-4 w-4" />
                   )}
                 </Button>
+                </div>
               </div>
               <p className="text-[10px] text-muted-foreground/50 mt-1.5 text-center">
                 Paulo gera roteiro completo: slide a slide com texto + prompt de imagem para o Davi. Shift+Enter para nova linha.

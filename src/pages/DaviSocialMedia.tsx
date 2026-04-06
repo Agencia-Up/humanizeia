@@ -219,7 +219,7 @@ export default function DaviSocialMedia() {
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
         if (data) {
           setClientContext({
             name: (data as any).client_name || (data as any).business_name || 'Cliente',
@@ -646,34 +646,7 @@ export default function DaviSocialMedia() {
 
       setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `🖼️ **Roteiro concluído!** Renderizando imagens (${carousel.slides.length} páginas)...` } : m));
 
-      // Iteratively load images to simulate step-by-step progress visually and avoid stuttering later
-      for (let i = 0; i < carousel.slides.length; i++) {
-         setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `⏳ **Gerando imagem ${i+1} de ${carousel.slides.length}...** (Processamento Avançado AI)` } : m));
-         const slide = carousel.slides[i];
-         
-         const isPersonal = clientImageUrl || carousel.visual_style === 'personal_brand';
-         let bgImageUrlRaw = '';
-         
-         if (isPersonal) {
-           const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'professional business photography';
-           const visualPrompt = encodeURIComponent(`${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`);
-           const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
-           bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}`;
-         } else {
-           const visualPrompt = encodeURIComponent(`${slide.image_prompt || slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece, no text`);
-           const seed = (slide.headline?.length || 10) * slide.order * 42;
-           bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
-         }
-         
-         try {
-           await new Promise((resolve) => {
-             const img = new window.Image();
-             img.onload = () => resolve(true);
-             img.onerror = () => resolve(false); 
-             img.src = bgImageUrlRaw;
-           });
-         } catch { /* silent fallback */ }
-      }
+      // Removed blocking image pre-load loop to make generation instant. Images will load lazily with 'sintetizando' fallback.
 
       const generated: GeneratedContent = {
         id: Date.now().toString(),

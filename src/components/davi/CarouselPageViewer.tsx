@@ -231,8 +231,8 @@ const processQueue = async () => {
       } catch (e) {
         console.warn('Queue fetch failed', e);
       }
-      // Increased delay to prevent rate limits from Pollinations
-      await new Promise(r => setTimeout(r, 2000));
+      // Reduced delay to 500ms since we rely more on the frontend loading state.
+      await new Promise(r => setTimeout(r, 500));
     }
     imgQueue.shift();
     window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));

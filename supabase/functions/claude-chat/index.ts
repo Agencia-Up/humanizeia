@@ -8,6 +8,7 @@ const corsHeaders = {
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  images?: string[]; // Array of base64 data URIs
 }
 
 interface RequestBody {
@@ -383,7 +384,21 @@ Deno.serve(async (req) => {
 
       const openaiMessages = [
         { role: 'system', content: systemPrompt },
-        ...messages.map((msg: Message) => ({ role: msg.role, content: msg.content }))
+        ...messages.map((msg: Message) => {
+          if (msg.images && msg.images.length > 0) {
+            return {
+              role: msg.role,
+              content: [
+                { type: 'text', text: msg.content },
+                ...msg.images.map(img => ({
+                  type: 'image_url',
+                  image_url: { url: img }
+                }))
+              ]
+            }
+          }
+          return { role: msg.role, content: msg.content };
+        })
       ];
 
       try {
@@ -434,10 +449,30 @@ Deno.serve(async (req) => {
     if (ANTHROPIC_API_KEY) {
       console.log('Using Anthropic Claude as fallback...');
 
-      const anthropicMessages = messages.map((msg: Message) => ({
-        role: msg.role,
-        content: msg.content,
-      }));
+      const anthropicMessages = messages.map((msg: Message) => {
+        if (msg.images && msg.images.length > 0) {
+          return {
+            role: msg.role,
+            content: [
+              ...msg.images.map(img => {
+                const match = img.match(/^data:(image\/[a-zA-Z]*);base64,(.*)$/);
+                if (match) {
+                  return {
+                    type: 'image',
+                    source: { type: 'base64', media_type: match[1], data: match[2] }
+                  };
+                }
+                return null;
+              }).filter(Boolean),
+              { type: 'text', text: msg.content }
+            ]
+          };
+        }
+        return {
+          role: msg.role,
+          content: msg.content,
+        }
+      });
 
       try {
         const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
@@ -531,7 +566,21 @@ Deno.serve(async (req) => {
 
       const aiMessages = [
         { role: 'system', content: systemPrompt },
-        ...messages.map((msg: Message) => ({ role: msg.role, content: msg.content })),
+        ...messages.map((msg: Message) => {
+          if (msg.images && msg.images.length > 0) {
+            return {
+              role: msg.role,
+              content: [
+                { type: 'text', text: msg.content },
+                ...msg.images.map(img => ({
+                  type: 'image_url',
+                  image_url: { url: img }
+                }))
+              ]
+            }
+          }
+          return { role: msg.role, content: msg.content };
+        }),
       ];
 
       const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -555,9 +604,16 @@ Deno.serve(async (req) => {
           await response.text();
           const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
           const geminiBody = {
-            contents: aiMessages.map(m => ({
+            contents: aiMessages.map((m: any) => ({
               role: m.role === 'system' ? 'user' : m.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: m.role === 'system' ? `[System Instructions]\n${m.content}` : m.content }],
+              parts: [
+                { text: m.role === 'system' ? `[System Instructions]\n${m.content || (Array.isArray(m.content) ? m.content[0]?.text : '')}` : (Array.isArray(m.content) ? m.content[0]?.text : m.content) },
+                ...(m.content && Array.isArray(m.content) ? m.content.filter((c: any) => c.type === 'image_url').map((c: any) => {
+                   const match = c.image_url.url.match(/^data:(image\/[a-zA-Z]*);base64,(.*)$/);
+                   if (match) return { inlineData: { mimeType: match[1], data: match[2] } };
+                   return null;
+                }).filter(Boolean) : [])
+              ],
             })),
             generationConfig: { temperature: parseFloat(temperature.toFixed(2)), maxOutputTokens: 4096 },
           };
