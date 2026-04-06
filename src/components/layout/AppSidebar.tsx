@@ -27,6 +27,8 @@ import {
   GraduationCap,
   FileText,
   Bot,
+  ClipboardList,
+  Wand2,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -56,6 +58,7 @@ const dashboardItems = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'Métricas', url: '/metrics', icon: BarChart3 },
   { title: 'Performance 360°', url: '/performance', icon: Activity },
+  { title: 'Relatórios', url: '/reports', icon: ClipboardList },
 ];
 
 // 🤖 Agentes IA — Pedro incluído
@@ -91,6 +94,7 @@ const integrationItems = [
 // ⚙️ Sistema — Academia e Tutoriais adicionados
 const systemItems = [
   { title: 'Meu Plano & Tokens', url: '/meu-plano', icon: CreditCard },
+  { title: 'Gerador de Prompt IA', url: '/gerador-prompt', icon: Wand2 },
   { title: 'Academia IA', url: '/academy', icon: GraduationCap },
   { title: 'Tutoriais', url: '/tutorials', icon: FileText },
   { title: 'Configurações', url: '/settings', icon: Settings },
