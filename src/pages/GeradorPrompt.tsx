@@ -214,10 +214,10 @@ export default function GeradorPrompt() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <Bot className="h-6 w-6 text-primary" />
-              Gerador de Prompt para Agente de Vendas
+              Configure seus Agentes de IA
             </h1>
             <p className="text-muted-foreground text-sm mt-1">
-              Preencha o briefing → IA gera um system prompt completo e pronto para uso
+              Conte sobre seu negócio e a IA cria as instruções completas para todos os seus agentes
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -234,6 +234,18 @@ export default function GeradorPrompt() {
                 <SelectItem value="anthropic_haiku">Claude 3 Haiku</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+        </div>
+
+        {/* ── Explicação amigável ──────────────────────────────────── */}
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 flex gap-3">
+          <span className="text-2xl shrink-0">🤖</span>
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-foreground">Como funciona?</p>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Responda as perguntas abaixo sobre seu negócio (não precisa preencher tudo). Quando clicar em <strong>Gerar</strong>, a IA cria um conjunto de instruções personalizadas que ensinam os agentes — Paulo, Daniel, Marcos e outros — a falar exatamente como sua marca.
+            </p>
+            <p className="text-xs text-muted-foreground">💡 Dica: quanto mais detalhes, melhor o resultado. Mas com 40% já funciona bem!</p>
           </div>
         </div>
 
