@@ -428,8 +428,12 @@ Deno.serve(async (req) => {
             });
           } else {
             const data = await openaiResponse.json();
+            const content = data.choices?.[0]?.message?.content || '';
+            if (content.includes("I'm sorry, I can't assist") || content.includes("I cannot fulfill")) {
+              throw new Error("OpenAI Refusal Triggered");
+            }
             const compatResponse = {
-              choices: [{ message: { role: 'assistant', content: data.choices?.[0]?.message?.content || '' } }],
+              choices: [{ message: { role: 'assistant', content } }],
               _provider: 'openai',
             };
             return new Response(JSON.stringify(compatResponse), {
@@ -547,6 +551,9 @@ Deno.serve(async (req) => {
           } else {
             const data = await anthropicResponse.json();
             const text = data.content?.filter((b: any) => b.type === 'text')?.map((b: any) => b.text)?.join('') || '';
+            if (text.includes("I'm sorry, I can't assist") || text.includes("I cannot fulfill")) {
+              throw new Error("Anthropic Refusal Triggered");
+            }
             return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: text } }], _provider: 'anthropic' }), {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
@@ -643,6 +650,10 @@ Deno.serve(async (req) => {
         return new Response(response.body, { headers: { ...corsHeaders, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } });
       } else {
         const data = await response.json();
+        const text = data.choices?.[0]?.message?.content || '';
+        if (text.includes("I'm sorry, I can't assist") || text.includes("I cannot fulfill")) {
+            return new Response(JSON.stringify({ error: "Todas as IAs ativaram filtro de segurança para esta imagem. Tente uma foto sem marcas/pessoas explícitas." }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
         return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
     }
