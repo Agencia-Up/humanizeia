@@ -52,11 +52,36 @@ export default function WhatsAppCAPI() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Zap className="h-6 w-6 text-primary" />
-            WhatsApp → CAPI Tracking
+            Rastreamento de Conversões (CAPI)
           </h1>
           <p className="text-muted-foreground mt-1">
-            Rastreie cada etapa do funil e envie eventos ao Meta para otimização
+            Avise o Meta quando um lead avançar no funil — melhora automaticamente seus anúncios
           </p>
+        </div>
+
+        {/* Onboarding card */}
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-5 flex gap-3">
+          <span className="text-2xl shrink-0">📡</span>
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-foreground">Como isso funciona?</p>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Toda vez que um lead avança no seu funil de WhatsApp, você pode avisar o Meta Ads. Com isso, o algoritmo aprende quais pessoas têm mais chances de comprar e melhora automaticamente a entrega dos seus anúncios.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              {[
+                { emoji: '👤', label: 'Lead', desc: 'Alguém entrou em contato' },
+                { emoji: '🎯', label: 'Qualificado', desc: 'Mostrou interesse real' },
+                { emoji: '💬', label: 'Proposta', desc: 'Recebeu uma oferta' },
+                { emoji: '💰', label: 'Venda', desc: 'Comprou seu produto' },
+              ].map(s => (
+                <div key={s.label} className="rounded-lg border border-border/40 bg-background/50 p-2.5 text-center">
+                  <p className="text-base">{s.emoji}</p>
+                  <p className="text-xs font-semibold text-foreground mt-0.5">{s.label}</p>
+                  <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{s.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Status */}

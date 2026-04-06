@@ -99,8 +99,8 @@ export default function FluxCRM() {
                 <Sparkles className="h-6 w-6 text-purple-500" />
             </div>
             <div>
-                <h1 className="text-2xl font-bold text-white">Flux CRM</h1>
-                <p className="text-xs text-muted-foreground uppercase tracking-widest font-mono">Orquestrado por Salomão</p>
+                <h1 className="text-2xl font-bold text-white">CRM — Pipeline de Vendas</h1>
+                <p className="text-xs text-muted-foreground">Arraste os leads entre colunas conforme avançam no processo</p>
             </div>
           </div>
           <Button onClick={() => openNewLead()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2">

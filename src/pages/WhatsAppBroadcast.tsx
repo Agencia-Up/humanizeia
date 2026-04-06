@@ -263,7 +263,7 @@ Não numere as variações. Não inclua explicações adicionais.`
               Disparo em Massa
             </h1>
             <p className="text-muted-foreground">
-              Campanhas inteligentes com IA, rodízio de números e comportamento humano
+              Envie mensagens para centenas de contatos de forma segura e humanizada
             </p>
           </div>
           <div className="flex gap-2">
@@ -274,6 +274,23 @@ Não numere as variações. Não inclua explicações adicionais.`
               <Plus className="h-4 w-4 mr-2" /> Nova Campanha
             </Button>
           </div>
+        </div>
+
+        {/* Feature glossary */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {[
+            { emoji: '⏱️', title: 'Delay entre mensagens', desc: 'Pausa aleatória entre envios — imita comportamento humano e evita bloqueio do WhatsApp' },
+            { emoji: '🔄', title: 'Rodízio de números', desc: 'Distribui os disparos entre vários chips para não sobrecarregar um número só' },
+            { emoji: '🔥', title: 'Aquecimento', desc: 'Começa enviando poucas mensagens e vai aumentando gradualmente — reduz risco de ban' },
+          ].map(f => (
+            <div key={f.title} className="rounded-lg border border-border/40 bg-card/40 p-3 flex gap-3">
+              <span className="text-xl shrink-0">{f.emoji}</span>
+              <div>
+                <p className="text-xs font-semibold text-foreground">{f.title}</p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">{f.desc}</p>
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Stats */}
