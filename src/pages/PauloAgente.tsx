@@ -82,30 +82,41 @@ const DEMO_CLIENT: ClientContext = {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseCarouselsFromResponse(text: string): PauloCarousel[] {
-  // Try to extract JSON from the response
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)```/) ||
-                    text.match(/\{[\s\S]*"carousels"[\s\S]*\}/) ||
-                    text.match(/(\{[\s\S]*\})/);
+  // Extract JSON more robustly by finding the first { and last }
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+    console.error('No JSON found in response');
+    return [];
+  }
 
-  let jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
-  jsonStr = jsonStr.trim();
+  const jsonStr = text.substring(firstBrace, lastBrace + 1);
 
   try {
     const parsed = JSON.parse(jsonStr);
-    if (parsed.carousels && Array.isArray(parsed.carousels)) {
-      return parsed.carousels.map((c: any) => ({
+    const carouselsData = parsed.carousels || (Array.isArray(parsed) ? parsed : null);
+    
+    if (carouselsData && Array.isArray(carouselsData)) {
+      return carouselsData.map((c: any) => ({
         title: c.title || 'Carrossel sem título',
         niche: c.niche || '',
         angle: c.angle || 'storytelling',
         caption: c.caption || '',
         hashtags: Array.isArray(c.hashtags) ? c.hashtags : [],
-        slides: Array.isArray(c.slides) ? c.slides : [],
+        slides: Array.isArray(c.slides) ? c.slides.map((s: any) => ({
+          slide_number: s.slide_number || 0,
+          type: s.type || 'content',
+          headline: s.headline || '',
+          subtext: s.subtext || '',
+          image_prompt: s.image_prompt || ''
+        })) : [],
         source: 'manual' as const,
         status: 'draft' as const,
       }));
     }
-  } catch {
-    // If JSON parse fails, return empty array — error will show in chat
+  } catch (err) {
+    console.error('Failed to parse JSON from AI response:', err);
   }
   return [];
 }
@@ -254,7 +265,7 @@ export default function PauloAgente() {
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (data) {
         setClientContext({
@@ -309,7 +320,7 @@ export default function PauloAgente() {
           daniel_research_id: carousel.daniel_research_id || null,
         })
         .select('id')
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
       return (data as any)?.id || null;
@@ -391,6 +402,7 @@ export default function PauloAgente() {
         body: {
           messages: [{ role: 'user', content: fullPrompt }],
           context: 'paulo',
+          system_prompt: systemPrompt,
           stream: false,
           task_id: taskId,
           config: {
