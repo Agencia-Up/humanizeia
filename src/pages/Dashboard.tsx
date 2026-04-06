@@ -35,6 +35,7 @@ export default function Dashboard() {
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
   const [dateRange, setDateRange] = useState<MetaDatePreset>('last_7d');
   const [isSending, setIsSending] = useState(false);
+  const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
 
   const { connectedAccount, connectedAccounts, selectConnectedAccount } = useMetaConnection();
 
@@ -195,6 +196,21 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            {/* ── Modo Simplificado / Especialista ── */}
+            <div className="flex h-9 overflow-hidden rounded-xl border border-border/60 bg-muted/30 text-xs">
+              <button
+                onClick={() => setViewMode('simplified')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'simplified' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                📊 Simplificado
+              </button>
+              <button
+                onClick={() => setViewMode('expert')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'expert' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                ⚙️ Especialista
+              </button>
+            </div>
             {connectedAccounts.length > 1 && (
               <Select
                 value={connectedAccount?.id || ''}
@@ -231,47 +247,69 @@ export default function Dashboard() {
           </div>
         </motion.div>
 
-        {/* KPI Cards — refined grid */}
-        <div data-tour="kpi-cards" className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4">
+        {/* ── KPI Cards ── Simplificado: 4 principais | Especialista: todos ── */}
+        <div data-tour="kpi-cards" className={`grid gap-4 ${viewMode === 'simplified' ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2 md:grid-cols-4'}`}>
           {isLoading ? (
-            Array.from({ length: 8 }).map((_, i) => (
+            Array.from({ length: viewMode === 'simplified' ? 4 : 8 }).map((_, i) => (
               <Skeleton key={i} className="h-[120px] rounded-xl" />
             ))
           ) : (
-            kpis.map((kpi, index) => <DashboardKPICard key={kpi.id} kpi={kpi} index={index} />)
+            (viewMode === 'simplified' ? kpis.slice(0, 4) : kpis).map((kpi, index) => (
+              <DashboardKPICard key={kpi.id} kpi={kpi} index={index} />
+            ))
           )}
         </div>
 
-        {/* Anomaly Alerts */}
-        <AnomalyAlertsWidget anomalies={anomalies} />
-
-        {/* Performance Summary */}
-        {performanceSummary && (
-          <PerformanceSummary {...performanceSummary} />
+        {/* ── Modo Simplificado: Gráfico de tendência + Insights ── */}
+        {viewMode === 'simplified' && (
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              <TrendChart data={trendData} isLoading={isTrendLoading} />
+            </div>
+            <div className="flex flex-col gap-4">
+              <AIInsightsCard insights={defaultInsights} />
+              {/* CTA para modo especialista */}
+              <div className="rounded-xl border border-border/50 bg-card/50 p-4 text-center space-y-2">
+                <p className="text-sm font-medium text-foreground">Quer ver mais detalhes?</p>
+                <p className="text-xs text-muted-foreground">Gráficos avançados, mapa de calor, criativos e muito mais.</p>
+                <button
+                  onClick={() => setViewMode('expert')}
+                  className="mt-1 w-full rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors"
+                >
+                  ⚙️ Ver análise completa
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
-        {/* Trend Chart */}
-        <TrendChart data={trendData} isLoading={isTrendLoading} />
+        {/* ── Modo Especialista: todos os widgets avançados ── */}
+        {viewMode === 'expert' && (
+          <>
+            <AnomalyAlertsWidget anomalies={anomalies} />
 
-        {/* 2-column grid */}
-        <div className="grid gap-6 lg:grid-cols-2">
-          <SpendDistributionChart data={campaignData} isLoading={isCampaignLoading} />
-          <EfficiencyScatterChart data={campaignData} isLoading={isCampaignLoading} />
-        </div>
+            {performanceSummary && (
+              <PerformanceSummary {...performanceSummary} />
+            )}
 
-        {/* 3-column grid */}
-        <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
-          <WeekdayHeatmap data={trendData} isLoading={isTrendLoading} />
-          <AIInsightsCard insights={defaultInsights} />
-          <AgentStatusWidget />
-        </div>
+            <TrendChart data={trendData} isLoading={isTrendLoading} />
 
-        {/* Campaign Table */}
-        <FunnelTable data={campaignData} isLoading={isCampaignLoading} />
+            <div className="grid gap-6 lg:grid-cols-2">
+              <SpendDistributionChart data={campaignData} isLoading={isCampaignLoading} />
+              <EfficiencyScatterChart data={campaignData} isLoading={isCampaignLoading} />
+            </div>
 
-        {/* Daily Spend + Creative Alerts */}
-        <DailySpendChart data={dailySpendData} isLoading={isSpendLoading} />
-        <CreativeAlertsWidget bestCreatives={bestCreatives} worstCreatives={worstCreatives} isLoading={isAdLoading} />
+            <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
+              <WeekdayHeatmap data={trendData} isLoading={isTrendLoading} />
+              <AIInsightsCard insights={defaultInsights} />
+              <AgentStatusWidget />
+            </div>
+
+            <FunnelTable data={campaignData} isLoading={isCampaignLoading} />
+            <DailySpendChart data={dailySpendData} isLoading={isSpendLoading} />
+            <CreativeAlertsWidget bestCreatives={bestCreatives} worstCreatives={worstCreatives} isLoading={isAdLoading} />
+          </>
+        )}
       </div>
     </MainLayout>
   );
