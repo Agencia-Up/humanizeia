@@ -221,6 +221,7 @@ export default function AutomatedRules() {
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [logFilter, setLogFilter] = useState<'all' | 'success' | 'error' | 'simulation'>('all');
   const [activeTab, setActiveTab] = useState('rules');
+  const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
 
   /* ─── AI hooks ─── */
   const { sendSingleMessage: sendSuggestion, isLoading: isSuggesting } = useClaudeChat({
@@ -572,7 +573,22 @@ Formate em Markdown com emojis e bullet points. Use linguagem simples e acessív
             <h1 className="text-2xl font-bold lg:text-3xl">Regras Automáticas</h1>
             <p className="text-muted-foreground">Automatize decisões sobre suas campanhas com regras inteligentes</p>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
+            {/* Toggle Simplificado / Especialista */}
+            <div className="flex h-9 overflow-hidden rounded-xl border border-border/60 bg-muted/30 text-xs">
+              <button
+                onClick={() => setViewMode('simplified')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'simplified' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                📋 Simplificado
+              </button>
+              <button
+                onClick={() => setViewMode('expert')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'expert' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                ⚙️ Especialista
+              </button>
+            </div>
             <Button variant="outline" onClick={handleSuggestRules} disabled={isSuggesting}>
               {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
               Sugerir com IA
@@ -582,6 +598,77 @@ Formate em Markdown com emojis e bullet points. Use linguagem simples e acessív
             </Button>
           </div>
         </div>
+
+        {/* ── MODO SIMPLIFICADO ── */}
+        {viewMode === 'simplified' && (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+              <p className="text-sm font-medium text-foreground">💡 Como funciona?</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Você define uma condição (<span className="text-foreground font-medium">ex: quando o custo estiver alto</span>) e uma ação automática (<span className="text-foreground font-medium">ex: pausar a campanha</span>). A regra roda sozinha no piloto automático.
+              </p>
+            </div>
+
+            <div>
+              <h2 className="text-lg font-semibold mb-1">🚀 Começar com um modelo pronto</h2>
+              <p className="text-sm text-muted-foreground mb-4">Clique em qualquer modelo abaixo para criar sua regra em segundos</p>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {ruleTemplates.map((template, index) => (
+                  <button
+                    key={index}
+                    onClick={() => { openCreate(template.form); }}
+                    className="group flex flex-col gap-3 rounded-xl border border-border/50 bg-card/60 p-5 text-left transition-all hover:border-primary/50 hover:bg-primary/5 hover:shadow-md"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                        <template.icon className="h-5 w-5 text-primary" />
+                      </div>
+                      <p className="font-semibold text-sm text-foreground leading-tight">{template.name}</p>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{template.description}</p>
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Plus className="h-3 w-3" /> Usar este modelo
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {rules && rules.length > 0 && (
+              <div>
+                <h2 className="text-lg font-semibold mb-3">Minhas Regras Ativas</h2>
+                <div className="space-y-2">
+                  {rules.map((rule: any) => (
+                    <div key={rule.id} className="flex items-center justify-between gap-4 rounded-lg border border-border/50 bg-card/50 px-4 py-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`h-2 w-2 rounded-full shrink-0 ${rule.is_active ? 'bg-emerald-400' : 'bg-muted-foreground'}`} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{rule.name}</p>
+                          <p className="text-xs text-muted-foreground">Disparada {rule.trigger_count || 0}x</p>
+                        </div>
+                      </div>
+                      <Switch checked={rule.is_active} onCheckedChange={(checked) => toggleRule.mutate({ id: rule.id, is_active: checked })} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-border/50 bg-card/50 p-4 text-center space-y-2">
+              <p className="text-sm font-medium">Quer configurar regras mais avançadas?</p>
+              <p className="text-xs text-muted-foreground">Defina condições múltiplas, frequências e modo simulação.</p>
+              <button
+                onClick={() => setViewMode('expert')}
+                className="mt-1 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors"
+              >
+                ⚙️ Abrir modo especialista
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODO ESPECIALISTA ── */}
+        {viewMode === 'expert' && (<>
 
         {/* ─── Stats row ─── */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1098,6 +1185,7 @@ Formate em Markdown com emojis e bullet points. Use linguagem simples e acessív
             </CardContent>
           </Card>
         )}
+        </>)}
       </div>
 
       {/* ─── Create/Edit Dialog ─── */}
