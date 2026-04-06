@@ -92,7 +92,6 @@ const App = () => (
                 <Route path="/metrics" element={<ProtectedRoute><MetricsDashboard /></ProtectedRoute>} />
                 <Route path="/connect-accounts" element={<ProtectedRoute><ConnectAccounts /></ProtectedRoute>} />
                 <Route path="/copywriter" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
-                <Route path="/paulo" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
                 <Route path="/creative-studio" element={<ProtectedRoute><AICreativeStudio /></ProtectedRoute>} />
                 <Route path="/optimizer" element={<ProtectedRoute><CampaignOptimizer /></ProtectedRoute>} />
                 <Route path="/budget" element={<ProtectedRoute><BudgetAllocator /></ProtectedRoute>} />

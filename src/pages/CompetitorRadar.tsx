@@ -24,6 +24,8 @@ import {
   ExternalLink,
   Eye,
   Filter,
+  Clock,
+  Sparkles,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -193,6 +195,27 @@ export default function CompetitorRadar() {
   return (
     <MainLayout>
       <div className="space-y-6">
+
+        {/* ── Banner Em breve ──────────────────────────────────────────────── */}
+        <div className="flex items-start gap-4 rounded-xl border border-amber-500/30 bg-amber-500/8 p-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/15">
+            <Clock className="h-5 w-5 text-amber-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-semibold text-amber-400 text-sm">Funcionalidade em desenvolvimento</p>
+              <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400 uppercase tracking-wider">Em breve</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+              O Radar de Concorrentes está sendo integrado às APIs de inteligência de mercado. Os dados exibidos abaixo são <strong>demonstrativos</strong> — a versão real vai monitorar anúncios da concorrência em tempo real automaticamente.
+            </p>
+          </div>
+          <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3">
+            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+            <span className="text-xs font-semibold text-amber-400">Preview</span>
+          </div>
+        </div>
+
         {/* Header */}
         <div className="space-y-2">
           <div className="flex items-center gap-3">
