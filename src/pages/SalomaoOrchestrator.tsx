@@ -19,7 +19,7 @@ import {
   Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
   FileCode2, Zap, Copy, Check, Loader2, ChevronRight,
   ShoppingBag, Target, MessageSquare, Shield, TrendingUp,
-  Globe, Share2, BrainCircuit, Bot as BotIcon,
+  Globe, Share2, BrainCircuit, Bot as BotIcon, X, ArrowRight,
 } from 'lucide-react';
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
 import { useAgentChat } from '@/contexts/AgentChatContext';
@@ -127,6 +127,7 @@ export default function SalomaoOrchestrator() {
   const { getHistory, saveMessage, clearHistory } = useAgentChat();
 
   const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline' | 'fluxo' | 'conhecimento'>('gerador');
+  const [showGuide, setShowGuide] = useState(() => localStorage.getItem('salomao_guide_dismissed') !== 'true');
   const [activeBriefingId, setActiveBriefingId] = useState<string | null>(null);
   const [activeClientName, setActiveClientName] = useState('Selecione um cliente');
   const [aiProvider, setAiProvider] = useState('openai');
@@ -318,6 +319,82 @@ export default function SalomaoOrchestrator() {
         {/* ══════════════════════ TAB: EQUIPE ══════════════════════ */}
         {tab === 'equipe' && (
           <div className="space-y-6">
+
+            {/* ── Por onde começar ── */}
+            {showGuide && (
+              <div className="relative rounded-2xl border border-yellow-500/30 bg-gradient-to-br from-yellow-500/8 to-amber-500/5 p-6">
+                <button
+                  onClick={() => { setShowGuide(false); localStorage.setItem('salomao_guide_dismissed', 'true'); }}
+                  className="absolute right-4 top-4 rounded-lg p-1 text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+
+                <div className="flex items-center gap-2 mb-4">
+                  <Sparkles className="h-5 w-5 text-yellow-400" />
+                  <h2 className="text-lg font-bold text-foreground">Por onde começar?</h2>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-3 mb-5">
+                  {[
+                    {
+                      step: '1',
+                      emoji: '📋',
+                      title: 'Cadastre seu negócio',
+                      description: 'Responda algumas perguntas sobre sua empresa. O Salomão cria um prompt completo para todos os agentes.',
+                      action: () => setTab('gerador'),
+                      cta: 'Ir para o Gerador',
+                    },
+                    {
+                      step: '2',
+                      emoji: '🤖',
+                      title: 'Escolha um agente',
+                      description: 'Cada agente tem uma especialidade. Paulo escreve, Maria cria imagens, José gerencia seus anúncios.',
+                      action: null,
+                      cta: 'Role para ver os agentes',
+                    },
+                    {
+                      step: '3',
+                      emoji: '📊',
+                      title: 'Acompanhe os resultados',
+                      description: 'Veja as métricas dos seus anúncios, leads capturados e performance em tempo real.',
+                      action: () => navigate('/metrics'),
+                      cta: 'Ver Dashboard',
+                    },
+                  ].map((item) => (
+                    <div key={item.step} className="flex flex-col gap-3 rounded-xl border border-border/40 bg-background/50 p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-yellow-500/20 text-sm font-bold text-yellow-400">
+                          {item.step}
+                        </div>
+                        <span className="text-xl">{item.emoji}</span>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-sm text-foreground">{item.title}</p>
+                        <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{item.description}</p>
+                      </div>
+                      {item.action && (
+                        <button
+                          onClick={item.action}
+                          className="flex items-center gap-1.5 text-xs font-semibold text-yellow-400 hover:text-yellow-300 transition-colors mt-auto"
+                        >
+                          {item.cta} <ArrowRight className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <Button
+                  onClick={() => setTab('gerador')}
+                  className="bg-yellow-500 hover:bg-yellow-400 text-black font-bold"
+                >
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Começar agora — Configurar meus agentes
+                </Button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {AGENTS.map((agent) => {
                 const Icon = agent.icon;
