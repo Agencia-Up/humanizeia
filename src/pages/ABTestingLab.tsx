@@ -119,6 +119,7 @@ export default function ABTestingLab() {
   const [expandedTestId, setExpandedTestId] = useState<string | null>(null);
   const [insightsData, setInsightsData] = useState<Record<string, AdInsight>>({});
   const [loadingInsights, setLoadingInsights] = useState(false);
+  const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
 
   const { sendSingleMessage: analyzeWithAI, isLoading: aiLoading } = useClaudeChat({
     context: 'insights',
@@ -491,21 +492,111 @@ Formate em Markdown com headers e emojis.`;
         {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold lg:text-3xl">A/B Testing Lab</h1>
-            <p className="text-muted-foreground">Compare anúncios reais do Meta Ads lado a lado</p>
+            <h1 className="text-2xl font-bold lg:text-3xl">Comparador de Anúncios</h1>
+            <p className="text-muted-foreground">Teste qual anúncio funciona melhor e invista no vencedor</p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setShowManualDialog(true)}>
-              <BarChart3 className="mr-2 h-4 w-4" /> Análise Manual
-            </Button>
+          <div className="flex gap-2 flex-wrap items-center">
+            {/* Toggle Simplificado / Especialista */}
+            <div className="flex h-9 overflow-hidden rounded-xl border border-border/60 bg-muted/30 text-xs">
+              <button
+                onClick={() => setViewMode('simplified')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'simplified' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                🧪 Simplificado
+              </button>
+              <button
+                onClick={() => setViewMode('expert')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'expert' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                ⚙️ Especialista
+              </button>
+            </div>
             <Button variant="outline" onClick={handleSuggestTests} disabled={aiLoading}>
               <Sparkles className="mr-2 h-4 w-4" /> Sugerir com IA
             </Button>
             <Button className="gradient-primary" onClick={() => setIsCreateOpen(true)} disabled={!connectedAccount}>
-              <Plus className="mr-2 h-4 w-4" /> Criar Novo Teste
+              <Plus className="mr-2 h-4 w-4" /> Criar Teste
             </Button>
           </div>
         </div>
+
+        {/* ── MODO SIMPLIFICADO ── */}
+        {viewMode === 'simplified' && (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+              <p className="text-sm font-medium text-foreground">💡 O que é um teste A/B?</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Você coloca dois anúncios para rodar ao mesmo tempo e o sistema mede qual traz mais resultado. Depois é só pausar o que perder e investir mais no que ganhar.
+              </p>
+            </div>
+
+            <div>
+              <h2 className="text-lg font-semibold mb-1">🚀 Ideias de testes para começar</h2>
+              <p className="text-sm text-muted-foreground mb-4">Clique em uma ideia para criar o teste agora</p>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  { emoji: '🖼️', title: 'Imagem vs Vídeo', description: 'Teste se um vídeo curto performa melhor do que uma imagem estática no seu anúncio.', hypothesis: 'O vídeo terá CTR mais alto do que a imagem estática' },
+                  { emoji: '✍️', title: 'Dois textos diferentes', description: 'Mantenha a mesma imagem mas teste dois textos diferentes para ver qual convence mais.', hypothesis: 'Um texto mais curto e direto terá mais cliques do que um texto longo' },
+                  { emoji: '🎯', title: 'Públicos diferentes', description: 'Mostre o mesmo anúncio para dois públicos distintos e veja qual responde melhor.', hypothesis: 'O público mais jovem (18-30) terá CTR mais alto' },
+                  { emoji: '🔴 vs 🔵', title: 'Cores do criativo', description: 'Teste variações do seu criativo com cores ou fundos diferentes.', hypothesis: 'Criativo com fundo claro terá mais cliques do que fundo escuro' },
+                  { emoji: '📢', title: 'CTAs diferentes', description: 'Teste chamadas para ação distintas como "Compre agora" vs "Saiba mais".', hypothesis: '"Compre agora" gerará mais conversões do que "Saiba mais"' },
+                  { emoji: '⏰', title: 'Horário de veiculação', description: 'Teste o mesmo anúncio em horários diferentes do dia para achar o melhor momento.', hypothesis: 'Anúncios à noite terão mais conversões do que de manhã' },
+                ].map((idea, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { setHypothesis(idea.hypothesis); setIsCreateOpen(true); }}
+                    className="group flex flex-col gap-3 rounded-xl border border-border/50 bg-card/60 p-5 text-left transition-all hover:border-primary/50 hover:bg-primary/5 hover:shadow-md"
+                  >
+                    <span className="text-3xl">{idea.emoji}</span>
+                    <div>
+                      <p className="font-semibold text-sm text-foreground">{idea.title}</p>
+                      <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{idea.description}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Plus className="h-3 w-3" /> Criar este teste
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {tests && tests.length > 0 && (
+              <div>
+                <h2 className="text-lg font-semibold mb-3">Meus Testes</h2>
+                <div className="space-y-2">
+                  {tests.map((test: any) => (
+                    <div key={test.id} className="flex items-center justify-between gap-4 rounded-lg border border-border/50 bg-card/50 px-4 py-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`h-2 w-2 rounded-full shrink-0 ${test.status === 'running' ? 'bg-primary animate-pulse' : test.status === 'winner_selected' ? 'bg-emerald-400' : 'bg-muted-foreground'}`} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{test.name}</p>
+                          <p className="text-xs text-muted-foreground">{statusLabels[test.status] || test.status}</p>
+                        </div>
+                      </div>
+                      <Badge variant="outline" className={`text-xs shrink-0 ${statusColors[test.status] || ''}`}>
+                        {statusLabels[test.status] || test.status}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-border/50 bg-card/50 p-4 text-center space-y-2">
+              <p className="text-sm font-medium">Quer ver métricas detalhadas lado a lado?</p>
+              <p className="text-xs text-muted-foreground">CTR, CPC, CPM, alcance e análise de IA para cada variante.</p>
+              <button
+                onClick={() => setViewMode('expert')}
+                className="mt-1 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors"
+              >
+                ⚙️ Abrir modo especialista
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODO ESPECIALISTA ── */}
+        {viewMode === 'expert' && (<>
 
         {!connectedAccount && !metaLoading && (
           <Card className="border-warning/30 bg-warning/5">
@@ -766,6 +857,7 @@ Formate em Markdown com headers e emojis.`;
             })}
           </div>
         )}
+        </>)}
       </div>
 
       {/* Create Test Dialog — Select Real Ads */}
