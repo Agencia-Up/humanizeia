@@ -55,6 +55,7 @@ const lowerIsBetter = new Set(['cpc', 'cpm']);
 export default function Analytics() {
   const [dateRange, setDateRange] = useState('last_30d');
   const [activeTab, setActiveTab] = useState('overview');
+  const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
   const [aiDiagnostic, setAiDiagnostic] = useState('');
   const [aiAnomalies, setAiAnomalies] = useState('');
   const [aiTrends, setAiTrends] = useState('');
@@ -238,18 +239,123 @@ export default function Analytics() {
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold lg:text-3xl">Analytics & Attribution</h1>
-            <p className="text-muted-foreground">Análise completa de performance — Meta Ads</p>
+            <h1 className="text-2xl font-bold lg:text-3xl">Analytics</h1>
+            <p className="text-muted-foreground">Veja como suas campanhas estão performando</p>
           </div>
-          <Select value={dateRange} onValueChange={setDateRange}>
-            <SelectTrigger className="w-36"><Calendar className="mr-2 h-4 w-4" /><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {Object.entries(DATE_RANGES).map(([k, v]) => (
-                <SelectItem key={k} value={k}>{v.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Toggle Simplificado / Especialista */}
+            <div className="flex h-9 overflow-hidden rounded-xl border border-border/60 bg-muted/30 text-xs">
+              <button
+                onClick={() => setViewMode('simplified')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'simplified' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                📊 Simplificado
+              </button>
+              <button
+                onClick={() => setViewMode('expert')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'expert' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                ⚙️ Especialista
+              </button>
+            </div>
+            <Select value={dateRange} onValueChange={setDateRange}>
+              <SelectTrigger className="w-36"><Calendar className="mr-2 h-4 w-4" /><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(DATE_RANGES).map(([k, v]) => (
+                  <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
+
+        {/* ── MODO SIMPLIFICADO ── */}
+        {viewMode === 'simplified' && (
+          <div className="space-y-6">
+            {/* 3 KPIs principais com interpretação */}
+            <div className="grid gap-4 sm:grid-cols-3">
+              {loadingAccount ? (
+                Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)
+              ) : (
+                [
+                  {
+                    emoji: '💰',
+                    label: 'Quanto você investiu',
+                    value: kpis.find(k => k.id === 'spend')?.value || '—',
+                    change: kpis.find(k => k.id === 'spend')?.change || 0,
+                    hint: spend > 0 ? 'Total gasto no período selecionado' : 'Conecte o Meta Ads para ver',
+                    invert: false,
+                  },
+                  {
+                    emoji: '👆',
+                    label: 'Pessoas que clicaram',
+                    value: kpis.find(k => k.id === 'clicks')?.value || '—',
+                    change: kpis.find(k => k.id === 'clicks')?.change || 0,
+                    hint: ctr >= 1.5 ? '✅ CTR acima de 1.5% — bom engajamento' : ctr >= 0.8 ? '⚠️ CTR entre 0.8–1.5% — pode melhorar' : ctr > 0 ? '🔴 CTR abaixo de 0.8% — criativos precisam de atenção' : 'Conecte o Meta Ads para ver',
+                    invert: false,
+                  },
+                  {
+                    emoji: '💵',
+                    label: 'Custo por clique',
+                    value: kpis.find(k => k.id === 'cpc')?.value || '—',
+                    change: kpis.find(k => k.id === 'cpc')?.change || 0,
+                    hint: cpc > 0 && cpc <= 1.5 ? '✅ CPC baixo — ótima eficiência' : cpc > 1.5 && cpc <= 3 ? '⚠️ CPC médio — monitorar' : cpc > 3 ? '🔴 CPC alto — otimize seu público' : 'Conecte o Meta Ads para ver',
+                    invert: true,
+                  },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-xl border border-border/50 bg-card/60 p-5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">{item.emoji}</span>
+                      <p className="text-xs text-muted-foreground font-medium">{item.label}</p>
+                    </div>
+                    <p className="text-3xl font-bold text-foreground">{item.value}</p>
+                    {item.change !== 0 && (
+                      <div className={`flex items-center gap-1 text-xs font-medium ${item.invert ? (item.change < 0 ? 'text-emerald-400' : 'text-red-400') : (item.change > 0 ? 'text-emerald-400' : 'text-red-400')}`}>
+                        {item.change > 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                        {item.change > 0 ? '+' : ''}{item.change}% vs período anterior
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground border-t border-border/40 pt-2 mt-2">{item.hint}</p>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Resumo de campanhas */}
+            {campaignRows.length > 0 && (
+              <div className="rounded-xl border border-border/50 bg-card/50 p-5 space-y-3">
+                <p className="text-sm font-semibold">🏆 Suas campanhas (do melhor ao pior CTR)</p>
+                <div className="space-y-2">
+                  {[...campaignRows].sort((a, b) => b.ctr - a.ctr).slice(0, 5).map((c, i) => {
+                    const rank = getRank(c.ctr);
+                    return (
+                      <div key={i} className="flex items-center justify-between gap-4 rounded-lg border border-border/40 bg-background/50 px-4 py-2.5">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">{c.name}</p>
+                          <p className="text-xs text-muted-foreground">{fmtMoney(c.spend)} investido · {fmt(c.clicks)} cliques</p>
+                        </div>
+                        <Badge variant="outline" className={`text-xs shrink-0 ${rank.color}`}>{rank.label}</Badge>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-border/50 bg-card/50 p-4 text-center space-y-2">
+              <p className="text-sm font-medium">Quer ver gráficos de tendência, comparação de campanhas e análise de IA?</p>
+              <button
+                onClick={() => setViewMode('expert')}
+                className="mt-1 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors"
+              >
+                ⚙️ Abrir modo especialista
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODO ESPECIALISTA ── */}
+        {viewMode === 'expert' && (<>
 
         {/* Token expired warning */}
         {tokenExpired && (
@@ -485,6 +591,7 @@ export default function Analytics() {
             ) : null)}
           </TabsContent>
         </Tabs>
+        </>)}
       </div>
     </MainLayout>
   );
