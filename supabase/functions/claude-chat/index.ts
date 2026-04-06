@@ -429,7 +429,8 @@ Deno.serve(async (req) => {
           } else {
             const data = await openaiResponse.json();
             const content = data.choices?.[0]?.message?.content || '';
-            if (content.includes("I'm sorry, I can't assist") || content.includes("I cannot fulfill")) {
+            const lower = content.toLowerCase();
+            if (lower.includes("sorry") || lower.includes("cannot fulfill") || lower.includes("can't assist") || lower.includes("cannot assist")) {
               throw new Error("OpenAI Refusal Triggered");
             }
             const compatResponse = {
@@ -551,7 +552,8 @@ Deno.serve(async (req) => {
           } else {
             const data = await anthropicResponse.json();
             const text = data.content?.filter((b: any) => b.type === 'text')?.map((b: any) => b.text)?.join('') || '';
-            if (text.includes("I'm sorry, I can't assist") || text.includes("I cannot fulfill")) {
+            const lower = text.toLowerCase();
+            if (lower.includes("sorry") || lower.includes("cannot fulfill") || lower.includes("can't assist") || lower.includes("cannot assist")) {
               throw new Error("Anthropic Refusal Triggered");
             }
             return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: text } }], _provider: 'anthropic' }), {
@@ -651,8 +653,9 @@ Deno.serve(async (req) => {
       } else {
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content || '';
-        if (text.includes("I'm sorry, I can't assist") || text.includes("I cannot fulfill")) {
-            return new Response(JSON.stringify({ error: "Todas as IAs ativaram filtro de segurança para esta imagem. Tente uma foto sem marcas/pessoas explícitas." }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        const lower = text.toLowerCase();
+        if (lower.includes("sorry") || lower.includes("cannot fulfill") || lower.includes("can't assist") || lower.includes("cannot assist")) {
+            return new Response(JSON.stringify({ error: "Filtragem de IA: A imagem conteve elementos protegidos ou as IAs se recusaram. Tente enviar uma imagem diferente ou com menos elementos." }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
         return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }

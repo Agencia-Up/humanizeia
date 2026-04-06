@@ -453,6 +453,7 @@ export default function PauloAgente() {
       });
 
       if (error) throw new Error(error.message || 'Erro na Edge Function');
+      if (data?.error) throw new Error(data.error);
       if (!data?.choices?.[0]?.message?.content) throw new Error('Resposta vazia da IA');
 
       const rawContent = data.choices[0].message.content;
