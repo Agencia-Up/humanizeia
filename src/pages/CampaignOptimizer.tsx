@@ -132,6 +132,7 @@ export default function CampaignOptimizer() {
   const [manualAudData, setManualAudData] = useState('');
   const [midasActions, setMidasActions] = useState<MidasAction[]>([]);
   const [dateRange, setDateRange] = useState<MetaDatePreset>('last_30d');
+  const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
 
   // Connections
   const { connectedAccount: metaAccount, connectedAccounts: metaAccounts, selectConnectedAccount, isLoading: metaLoading } = useMetaConnection();
@@ -519,12 +520,27 @@ Responda em Markdown com:
         {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-xl font-bold sm:text-2xl lg:text-3xl">Campaign Optimizer</h1>
+            <h1 className="text-xl font-bold sm:text-2xl lg:text-3xl">Otimizador de Campanhas</h1>
             <p className="text-sm text-muted-foreground">
-              Otimize suas campanhas com análises e recomendações de IA
+              Descubra o que melhorar nas suas campanhas e aumente os resultados
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+            {/* Toggle Simplificado / Especialista */}
+            <div className="flex h-9 overflow-hidden rounded-xl border border-border/60 bg-muted/30 text-xs">
+              <button
+                onClick={() => setViewMode('simplified')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'simplified' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                🚀 Simplificado
+              </button>
+              <button
+                onClick={() => setViewMode('expert')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'expert' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                ⚙️ Especialista
+              </button>
+            </div>
             {metaAccounts.length > 1 && (
               <Select
                 value={metaAccount?.id || ''}
@@ -566,7 +582,104 @@ Responda em Markdown com:
           />
         </div>
 
-        {/* Main Tabs */}
+        {/* ── MODO SIMPLIFICADO ── */}
+        {viewMode === 'simplified' && (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+              <p className="text-sm font-medium text-foreground">💡 O que este otimizador faz?</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Analisa suas campanhas em tempo real e diz exatamente o que está errado, o que pode melhorar e quem é o seu público ideal — tudo com linguagem simples.
+              </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              {[
+                {
+                  emoji: '🔍',
+                  title: 'Ver o que está errado',
+                  description: 'A IA analisa cada campanha e aponta problemas como CTR baixo, custo alto e anúncios saturados.',
+                  cta: 'Analisar agora',
+                  action: handleDiagnose,
+                  loading: isDiagnosing,
+                  disabled: !isMetaConnected,
+                  color: 'border-red-500/30 bg-red-500/5',
+                  btnColor: 'bg-red-500/20 text-red-400 hover:bg-red-500/30',
+                },
+                {
+                  emoji: '💡',
+                  title: 'Descobrir oportunidades',
+                  description: 'Encontre onde você pode crescer: campanhas que merecem mais investimento e nichos inexplorados.',
+                  cta: 'Encontrar oportunidades',
+                  action: handleDiscoverOpportunities,
+                  loading: isDiscovering,
+                  disabled: !isMetaConnected,
+                  color: 'border-emerald-500/30 bg-emerald-500/5',
+                  btnColor: 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30',
+                },
+                {
+                  emoji: '🎯',
+                  title: 'Conhecer meu público',
+                  description: 'Descubra quem realmente clica nos seus anúncios e como falar melhor com essas pessoas.',
+                  cta: 'Analisar público',
+                  action: handleAnalyzeAudience,
+                  loading: isAnalyzingAudience,
+                  disabled: !isMetaConnected,
+                  color: 'border-blue-500/30 bg-blue-500/5',
+                  btnColor: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30',
+                },
+              ].map((item) => (
+                <div key={item.title} className={`flex flex-col gap-4 rounded-xl border p-5 ${item.color}`}>
+                  <div>
+                    <span className="text-3xl">{item.emoji}</span>
+                    <h3 className="mt-2 font-semibold text-sm text-foreground">{item.title}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{item.description}</p>
+                  </div>
+                  <button
+                    onClick={item.action}
+                    disabled={item.loading || item.disabled}
+                    className={`mt-auto flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-xs font-semibold transition-colors disabled:opacity-50 ${item.btnColor}`}
+                  >
+                    {item.loading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
+                    {item.loading ? 'Analisando...' : item.disabled ? 'Conecte o Meta Ads' : item.cta}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Show results inline */}
+            {diagnosticMd && (
+              <div className="rounded-xl border border-border/50 bg-card/50 p-5 space-y-2">
+                <p className="text-sm font-semibold flex items-center gap-2"><Rocket className="h-4 w-4 text-red-400" /> Resultado do Diagnóstico</p>
+                <MarkdownRenderer content={diagnosticMd} />
+              </div>
+            )}
+            {opportunitiesMd && (
+              <div className="rounded-xl border border-border/50 bg-card/50 p-5 space-y-2">
+                <p className="text-sm font-semibold flex items-center gap-2"><Lightbulb className="h-4 w-4 text-emerald-400" /> Oportunidades Encontradas</p>
+                <MarkdownRenderer content={opportunitiesMd} />
+              </div>
+            )}
+            {audienceMd && (
+              <div className="rounded-xl border border-border/50 bg-card/50 p-5 space-y-2">
+                <p className="text-sm font-semibold flex items-center gap-2"><Users className="h-4 w-4 text-blue-400" /> Análise do Público</p>
+                <MarkdownRenderer content={audienceMd} />
+              </div>
+            )}
+
+            <div className="rounded-xl border border-border/50 bg-card/50 p-4 text-center space-y-2">
+              <p className="text-sm font-medium">Quer ver os dados campanha por campanha com gráficos e ações?</p>
+              <button
+                onClick={() => setViewMode('expert')}
+                className="mt-1 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors"
+              >
+                ⚙️ Abrir modo especialista
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODO ESPECIALISTA ── */}
+        {viewMode === 'expert' && (
         <Tabs defaultValue="diagnostic" className="space-y-4 md:space-y-6">
           <TabsList className="bg-muted/50 w-full sm:w-auto flex">
             <TabsTrigger value="diagnostic" className="gap-1.5 flex-1 sm:flex-initial text-xs sm:text-sm">
@@ -761,6 +874,7 @@ Responda em Markdown com:
             />
           </TabsContent>
         </Tabs>
+        )}
       </div>
     </MainLayout>
   );
