@@ -14,7 +14,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen } from 'lucide-react';
+import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
 
 interface Instance {
   id: string;
@@ -664,6 +665,9 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
               <TabsTrigger value="settings" className="flex-1 gap-1.5 hidden sm:flex">
                 <Settings2 className="h-3.5 w-3.5" /> Modelo
               </TabsTrigger>
+              <TabsTrigger value="knowledge" className="flex-1 gap-1.5">
+                <BookOpen className="h-3.5 w-3.5" /> Conhecimento
+              </TabsTrigger>
               <TabsTrigger value="integrations" className="flex-1 gap-1.5">
                 <Webhook className="h-3.5 w-3.5" /> n8n
               </TabsTrigger>
@@ -1010,6 +1014,13 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   </div>
                 )}
               </div>
+            </TabsContent>
+            {/* ── Tab: Knowledge Base ── */}
+            <TabsContent value="knowledge" className="space-y-4 mt-0">
+              <KnowledgeBaseManager
+                agentId={agent?.id || null}
+                userId={user?.id || ''}
+              />
             </TabsContent>
           </Tabs>
         </ScrollArea>
