@@ -653,32 +653,34 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
         <ScrollArea className="max-h-[65vh] pr-4">
           <Tabs defaultValue="general" className="space-y-4">
-            <TabsList className="w-full">
-              <TabsTrigger value="general" className="flex-1 gap-1.5">
-                <Brain className="h-3.5 w-3.5" /> Geral
-              </TabsTrigger>
-              <TabsTrigger value="business" className="flex-1 gap-1.5 hidden sm:flex">
-                <Building2 className="h-3.5 w-3.5" /> Empresa
-              </TabsTrigger>
-              <TabsTrigger value="sdr" className="flex-1 gap-1.5">
-                <Target className="h-3.5 w-3.5" /> Funil SDR
-              </TabsTrigger>
-              <TabsTrigger value="settings" className="flex-1 gap-1.5 hidden sm:flex">
-                <Settings2 className="h-3.5 w-3.5" /> Modelo
-              </TabsTrigger>
-              <TabsTrigger value="knowledge" className="flex-1 gap-1.5">
-                <BookOpen className="h-3.5 w-3.5" /> Conhecimento
-              </TabsTrigger>
-              <TabsTrigger value="crm" className="flex-1 gap-1.5 bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-colors">
-                <UserCheck className="h-3.5 w-3.5" /> CRM & Equipe
-              </TabsTrigger>
-              <TabsTrigger value="integrations" className="flex-1 gap-1.5">
-                <Webhook className="h-3.5 w-3.5" /> n8n
-              </TabsTrigger>
-            </TabsList>
+            <div className="w-full overflow-x-auto pb-1 scrollbar-hide flex">
+              <TabsList className="w-max inline-flex h-10 items-center justify-start rounded-md bg-muted p-1 text-muted-foreground">
+                <TabsTrigger value="general" className="gap-1.5 px-4">
+                  <Brain className="h-3.5 w-3.5" /> Geral
+                </TabsTrigger>
+                <TabsTrigger value="business" className="gap-1.5 px-4 hidden sm:flex">
+                  <Building2 className="h-3.5 w-3.5" /> Empresa
+                </TabsTrigger>
+                <TabsTrigger value="sdr" className="gap-1.5 px-4">
+                  <Target className="h-3.5 w-3.5" /> Funil SDR
+                </TabsTrigger>
+                <TabsTrigger value="settings" className="gap-1.5 px-4 hidden sm:flex">
+                  <Settings2 className="h-3.5 w-3.5" /> Modelo
+                </TabsTrigger>
+                <TabsTrigger value="knowledge" className="gap-1.5 px-4">
+                  <BookOpen className="h-3.5 w-3.5" /> Conhecimento
+                </TabsTrigger>
+                <TabsTrigger value="equipe" className="gap-1.5 px-4 bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-colors">
+                  <UserCheck className="h-3.5 w-3.5" /> Vendedores
+                </TabsTrigger>
+                <TabsTrigger value="integrations" className="gap-1.5 px-4">
+                  <Webhook className="h-3.5 w-3.5" /> n8n
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-            {/* ── Tab: CRM & Equipe ── */}
-            <TabsContent value="crm" className="space-y-6 mt-0">
+            {/* ── Tab: Vendedores (Repasse) ── */}
+            <TabsContent value="equipe" className="space-y-6 mt-0">
                <AgentCrmEquipeTab agentId={agent?.id || null} userId={user?.id || ''} />
             </TabsContent>
 
