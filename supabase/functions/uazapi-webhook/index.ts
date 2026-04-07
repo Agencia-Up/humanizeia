@@ -346,16 +346,42 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true);
           if (sellers && sellers.length > 0) {
             for (const seller of sellers) {
+              let sellerNum = seller.whatsapp_number.replace(/\D/g, '');
+              if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
+              
               const sellerMsg = `🚨 *LEAD QUALIFICADO*\n\n*Agente IA:* ${agent.name}\n*Nome:* ${pushName}\n*Contato:* ${phoneNumber}\n\n📝 *Resumo do Atendimento:*\n${args.resumo}\n\n👉 *Atender Lead:* https://wa.me/${phoneNumber}`;
               await fetch(`${baseUrl}/send/text`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'token': instKey },
-                body: JSON.stringify({ number: seller.whatsapp_number, text: sellerMsg })
+                body: JSON.stringify({ number: sellerNum, text: sellerMsg })
               });
             }
           }
           // Se qualificou, substituir a resposta para a de Handoff
           aiResponse = handoffMsg;
+        } else if (!aiResponse) {
+          // Se não é qualificado, e o GPT não retornou texto (só o tool_call), devemos devolver o resultado da tool e pedir o texto!
+          console.log(`[Webhook] IA apenas executou a tool sem texto. Solicitando resposta final...`);
+          const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+            body: JSON.stringify({
+              model: aiModel,
+              messages: [
+                { role: 'system', content: systemPrompt }, 
+                ...chatHistory, 
+                { role: 'user', content: userMessageContentForOpenAi },
+                aiMessage,
+                { role: 'tool', tool_call_id: toolCall.id, name: toolCall.function.name, content: `{"success": true}` }
+              ],
+              temperature: agent.temperature || 0.7
+            })
+          });
+          if (secondRes.ok) {
+            const secondData = await secondRes.json();
+            aiResponse = secondData.choices?.[0]?.message?.content || '';
+            console.log(`[Webhook] Resposta final capturada: ${aiResponse}`);
+          }
         }
       } catch (err) {
         console.error("[Webhook] Erro no Handoff/CRM", err)
