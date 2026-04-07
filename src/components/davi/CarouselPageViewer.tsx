@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import html2canvas from 'html2canvas';
+import { supabase } from '@/integrations/supabase/client';
 import { ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
 import { CarouselSlide } from '@/hooks/useSocialMedia';
 import { Button } from '@/components/ui/button';
@@ -192,9 +193,9 @@ function HighlightHeadline({ text, accentWord, color }: { text: string; accentWo
   );
 }
 
-// ── Lazy Image Queuing Hook with Retry & Fallback ────────────────────────────
-const POLLINATIONS_CACHE = new Map<string, string>();
-const imgQueue: { url: string; retryCount: number }[] = [];
+// ── Lazy Image Queuing Hook directly with Edge Function ────────────────────────
+const DAVI_IMAGE_CACHE = new Map<string, string>();
+const imgQueue: { prompt: string; width: number; height: number; urlKey: string; retryCount: number }[] = [];
 let isProcessingQueue = false;
 
 const processQueue = async () => {
@@ -202,75 +203,73 @@ const processQueue = async () => {
   isProcessingQueue = true;
   while (imgQueue.length > 0) {
     const item = imgQueue[0];
-    const { url, retryCount } = item;
+    const { prompt, width, height, urlKey, retryCount } = item;
     
-    if (!POLLINATIONS_CACHE.has(url)) {
+    if (!DAVI_IMAGE_CACHE.has(urlKey)) {
       try {
-        const res = await fetch(url, { cache: 'force-cache' });
-        if (res.ok) {
-          const blob = await res.blob();
-          POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
-        } else if (res.status >= 400) {
-           // Fallback logic: if Flux fails, try standard model
-           if (retryCount < 2) {
-             console.log(`Pollinations retry ${retryCount + 1} for ${url}`);
-             imgQueue.push({ url, retryCount: retryCount + 1 });
-           } else if (retryCount === 2 && url.includes('model=flux')) {
-             const fallbackUrl = url.replace('&model=flux', '').replace('?model=flux', '');
-             console.log(`Pollinations FALLBACK to standard for ${url}`);
-             imgQueue.push({ url: fallbackUrl, retryCount: 0 });
-             // Map original URL to fallback result to satisfy listeners
-             window.addEventListener('pollinations_loaded', (e: any) => {
-               if (e.detail === fallbackUrl) {
-                 POLLINATIONS_CACHE.set(url, POLLINATIONS_CACHE.get(fallbackUrl)!);
-                 window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
-               }
-             }, { once: true });
-           }
+        const { data, error } = await supabase.functions.invoke('davi-image', {
+          body: { prompt, size: width > height ? 'wide' : height > width ? 'tall' : '1024x1024' }
+        });
+        
+        if (error) throw error;
+        if (data?.url) {
+           DAVI_IMAGE_CACHE.set(urlKey, data.url);
+        } else if (data?.error) {
+           throw new Error(data.error);
         }
       } catch (e) {
-        console.warn('Queue fetch failed', e);
+        console.warn('Davi Image failed:', e);
+        if (retryCount < 2) {
+             imgQueue.push({ ...item, retryCount: retryCount + 1 });
+        }
       }
-      // Reduced delay to 500ms since we rely more on the frontend loading state.
-      await new Promise(r => setTimeout(r, 500));
+      // DALL-E/Pollinations cooldown
+      await new Promise(r => setTimeout(r, 600));
     }
     imgQueue.shift();
-    window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
+    window.dispatchEvent(new CustomEvent('davi_image_loaded', { detail: urlKey }));
   }
   isProcessingQueue = false;
 };
 
-export function usePollinationsImage(prompt: string, width: number, height: number, seed: number) {
-  // Deep clean prompt: remove characters that break Pollinations and limit length
-  const cleanPrompt = encodeURIComponent(
-    String(prompt)
-      .replace(/[^\w\s\-,.]/gi, '')
-      .substring(0, 180)
-  );
-  const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
-  
-  const [localUrl, setLocalUrl] = React.useState<string | null>(POLLINATIONS_CACHE.get(url) || null);
+export function useDaviImage(prompt: string, width: number, height: number, seed: number) {
+  // Generate unique URL key
+  const urlKey = `davi_${seed}_${prompt.substring(0, 30).replace(/[^a-zA-Z0-9]/g, '')}`;
+  const [localUrl, setLocalUrl] = React.useState<string | null>(DAVI_IMAGE_CACHE.get(urlKey) || null);
 
   React.useEffect(() => {
-    if (POLLINATIONS_CACHE.has(url)) {
-      setLocalUrl(POLLINATIONS_CACHE.get(url)!);
+    if (DAVI_IMAGE_CACHE.has(urlKey)) {
+      setLocalUrl(DAVI_IMAGE_CACHE.get(urlKey)!);
       return;
     }
-    const inQueue = imgQueue.some(item => item.url === url);
+    const inQueue = imgQueue.some(item => item.urlKey === urlKey);
     if (!inQueue) {
-      imgQueue.push({ url, retryCount: 0 });
+      imgQueue.push({ prompt, width, height, urlKey, retryCount: 0 });
       processQueue();
     }
     const listener = (e: any) => {
-      if (e.detail === url && POLLINATIONS_CACHE.has(url)) {
-        setLocalUrl(POLLINATIONS_CACHE.get(url)!);
+      if (e.detail === urlKey && DAVI_IMAGE_CACHE.has(urlKey)) {
+        setLocalUrl(DAVI_IMAGE_CACHE.get(urlKey)!);
       }
     };
-    window.addEventListener('pollinations_loaded', listener);
-    return () => window.removeEventListener('pollinations_loaded', listener);
-  }, [url]);
+    window.addEventListener('davi_image_loaded', listener);
+    return () => window.removeEventListener('davi_image_loaded', listener);
+  }, [urlKey, prompt, width, height]);
 
   return localUrl;
+}
+
+// ── SMART CONTRAST ALGORITHM ──────────────────────────────────────────────────
+function getContrastTextColor(hexColor: string, defaultLight = '#FFFFFF', defaultDark = '#111111'): string {
+  if (!hexColor) return defaultLight;
+  let color = hexColor.replace('#', '');
+  if (color.length === 3) color = color[0]+color[0]+color[1]+color[1]+color[2]+color[2];
+  if (color.length !== 6) return defaultLight;
+  const r = parseInt(color.substr(0, 2), 16);
+  const g = parseInt(color.substr(2, 2), 16);
+  const b = parseInt(color.substr(4, 2), 16);
+  const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+  return (yiq >= 128) ? defaultDark : defaultLight;
 }
 
 function getHeadlineFontSize(text: string, isCover: boolean) {
@@ -309,9 +308,9 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
   const textColor = visualConfig.text || tpl.text;
   const bgColor = visualConfig.bg || tpl.bg;
 
-  const visualPrompt = `${slide.visual_cue || slide.image_prompt || slide.headline}, cinematic dark AI scene, neon holographic elements, 3D floating objects, dramatic lighting, ultra realistic, 8K, no text overlay`;
+  const visualPrompt = `${slide.visual_cue || slide.image_prompt || slide.headline}, cinematic photography, luxury layout background, photorealistic, 8k, rule of thirds, dramatic lighting, empty space on bottom`;
   const seed = ((slide.headline?.length || 10) * slide.order * 57) % 9999;
-  const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 730, seed);
+  const bgImgUrl = useDaviImage(visualPrompt, 1080, 730, seed);
 
   return (
     <div style={{
@@ -370,15 +369,14 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
               {slide.sub_headline}
             </div>
           )}
-          {/* Big headline */}
           <div style={{
             fontSize: getHeadlineFontSize(slide.headline, isCover), 
             fontWeight: 950, 
-            color: textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF') ? '#FFFFFF' : textColor,
+            color: getContrastTextColor(bgColor),
             lineHeight: 1.1, 
             letterSpacing: '-0.03em',
             textTransform: 'uppercase',
-            textShadow: (textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF')) ? `0 4px 16px rgba(0,0,0,0.9)` : 'none',
+            textShadow: (getContrastTextColor(bgColor) === '#FFFFFF') ? `0 4px 16px rgba(0,0,0,0.9)` : 'none',
             marginBottom: 4,
             display: '-webkit-box',
             WebkitLineClamp: isCover ? 4 : 3,
@@ -391,12 +389,11 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
           </div>
           {/* Accent line */}
           <div style={{ width: 40, height: 4, background: accentColor, borderRadius: 2, boxShadow: `0 0 16px ${accentColor}66`, marginTop: 2, marginBottom: 6 }} />
-          {/* Body */}
           {typeof slide.body === 'string' && slide.body.trim() && (
             <div style={{ 
               fontSize: isCover ? 15 : 14, 
               fontWeight: 600, 
-              color: textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF') ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.7)',
+              color: getContrastTextColor(bgColor, 'rgba(255,255,255,0.9)', 'rgba(0,0,0,0.7)'),
               lineHeight: 1.25,
               display: '-webkit-box',
               WebkitLineClamp: isCover ? 3 : 4,
@@ -475,7 +472,7 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
   const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'professional business photography';
   const visualPrompt = `${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`;
   const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
-  const bottomImg = usePollinationsImage(visualPrompt, 1200, 600, seed);
+  const bottomImg = useDaviImage(visualPrompt, 1200, 600, seed);
 
   // Initial for avatar placeholder
   const initial = (brandName || 'MC').charAt(0).toUpperCase();
@@ -563,7 +560,7 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
         )}
         {/* Main text */}
         <div style={
-          { fontSize: isCover ? 22 : 18, lineHeight: 1.4, color: '#111', fontWeight: 600, overflow: 'hidden' }
+          { fontSize: isCover ? 22 : 18, lineHeight: 1.4, color: getContrastTextColor(bgColor, '#FFFFFF', '#111111'), fontWeight: 600, overflow: 'hidden' }
         }>
           {isCover ? (
             <div style={{
@@ -594,7 +591,7 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
                 <div style={{ 
                   fontWeight: 900, 
                   marginTop: 6, 
-                  color: '#000', 
+                  color: getContrastTextColor(bgColor, '#FFFFFF', '#000000'), 
                   fontSize: getHeadlineFontSize(slide.headline, false), 
                   lineHeight: 1.1, 
                   letterSpacing: '-0.02em', 
@@ -683,13 +680,13 @@ function StandardSlide({ slide, tpl, brandName, total }: {
   const accentColor = visualConfig.accent || tpl.accent || '#E60000';
   const bgColor = visualConfig.bg || tpl.bg;
 
-  const isLight = (bgColor as string) === '#FAFAFA' || (bgColor as string) === '#FFFFFF' || (bgColor as string) === '#FAFAF8';
-  const textColor = visualConfig.text || (isLight ? tpl.text : '#ffffff');
-  const subColor = visualConfig.sub || (isLight ? tpl.sub : 'rgba(255,255,255,0.85)');
+  const textColor = visualConfig.text || getContrastTextColor(bgColor as string);
+  const subColor = visualConfig.sub || getContrastTextColor(bgColor as string, 'rgba(255,255,255,0.85)', 'rgba(0,0,0,0.6)');
+  const isLight = textColor === '#111111';
 
   const visualPrompt = `${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`;
   const seed = (slide.headline?.length || 10) * slide.order * 42;
-  const bgImageUrl = usePollinationsImage(visualPrompt, 1080, 1350, seed);
+  const bgImageUrl = useDaviImage(visualPrompt, 1080, 1350, seed);
 
   let layout = slide.layout || 'left';
   if ((layout as string) === 'left' || (layout as string) === 'default') {
