@@ -293,9 +293,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   if (knowledgeContext) systemPrompt += `\n\n## BASE DE CONHECIMENTO:\n${knowledgeContext}`
 
   let aiModel = agent.model || 'gpt-4o';
-  // O endpoint direto da OpenAI não aceita prefixos como 'openai/', então removemos.
+  // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
   if (aiModel.startsWith('openai/')) {
     aiModel = aiModel.replace('openai/', '');
+  } else if (aiModel.includes('google/') || aiModel.includes('anthropic/')) {
+    console.log(`[Webhook] Aviso: Modelo externo (${aiModel}) detectado no endpoint OpenAI nativo. Fazendo fallback para gpt-4o-mini para evitar falha.`);
+    aiModel = 'gpt-4o-mini';
   }
 
   const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
