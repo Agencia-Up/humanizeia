@@ -3,12 +3,12 @@ import { useAuth } from '@/hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { LogosIALogo, LogosIAIcon } from '@/components/brand/LogosIALogo';
+import { LogosIAIcon } from '@/components/brand/LogosIALogo';
 import {
   Sparkles, BarChart3, Zap, Shield, Bot, Target, Mail, TrendingUp,
   Users, Clock, CheckCircle2, XCircle, ArrowRight, Star, ChevronDown,
   MessageSquare, Globe, Layers, Award, Rocket, Brain, Instagram,
-  LayoutDashboard, PenTool, Megaphone,
+  LayoutDashboard, PenTool, Megaphone, Menu, X,
 } from 'lucide-react';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, Radar,
@@ -230,6 +230,7 @@ export default function LandingPage() {
   const { user, loading } = useAuth();
   const { isDarkMode, toggleDarkMode } = useAppStore();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   if (!loading && user) return <Navigate to="/dashboard" replace />;
 
@@ -237,39 +238,100 @@ export default function LandingPage() {
     <div className="min-h-screen bg-background text-foreground overflow-x-hidden">
 
       {/* ── HEADER ─────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 border-b border-border/40 bg-background/80 backdrop-blur-md px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <LogosIAIcon size={36} />
-          <LogosIALogo size="sm" showText iconOnly={false} />
+      <header className="sticky top-0 z-50 border-b border-border/40 bg-background/95 backdrop-blur-md">
+        <div className="px-4 md:px-6 py-3.5 flex items-center justify-between gap-4">
+
+          {/* Logo */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            <LogosIAIcon size={30} />
+            <span className="text-[15px] font-extrabold tracking-[0.18em] bg-gradient-to-r from-[#1A237E] via-[#5C6BC0] to-[#DAA520] bg-clip-text text-transparent select-none">
+              LOGOSIA
+            </span>
+          </div>
+
+          {/* Desktop Nav */}
+          <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
+            <a href="#solucao" className="hover:text-foreground transition-colors">Solução</a>
+            <a href="#agentes" className="hover:text-foreground transition-colors">Agentes</a>
+            <a href="#performance" className="hover:text-foreground transition-colors">Performance</a>
+            <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
+            <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
+          </nav>
+
+          {/* Desktop Actions */}
+          <div className="hidden md:flex items-center gap-2 shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleDarkMode}
+              className="text-muted-foreground hover:text-foreground"
+              title={isDarkMode ? 'Modo claro' : 'Modo escuro'}
+            >
+              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
+            <Button variant="ghost" asChild className="text-muted-foreground hover:text-foreground">
+              <Link to="/auth">Entrar</Link>
+            </Button>
+            <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
+              <Link to="/auth?tab=signup">Começar agora</Link>
+            </Button>
+          </div>
+
+          {/* Mobile Actions */}
+          <div className="flex md:hidden items-center gap-1 shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleDarkMode}
+              className="text-muted-foreground hover:text-foreground h-9 w-9"
+            >
+              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMobileMenuOpen(v => !v)}
+              className="text-muted-foreground hover:text-foreground h-9 w-9"
+              aria-label="Menu"
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </Button>
+          </div>
         </div>
-        <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
-          <a href="#solucao" className="hover:text-foreground transition-colors">Solução</a>
-          <a href="#agentes" className="hover:text-foreground transition-colors">Agentes</a>
-          <a href="#performance" className="hover:text-foreground transition-colors">Performance</a>
-          <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
-          <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
-        </nav>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleDarkMode}
-            className="text-muted-foreground hover:text-foreground"
-            title={isDarkMode ? 'Modo claro' : 'Modo escuro'}
-          >
-            {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
-          <Button variant="ghost" asChild className="text-muted-foreground hover:text-foreground">
-            <Link to="/auth">Entrar</Link>
-          </Button>
-          <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
-            <Link to="/auth?tab=signup">Começar agora</Link>
-          </Button>
-        </div>
+
+        {/* Mobile Dropdown Nav */}
+        {mobileMenuOpen && (
+          <nav className="md:hidden border-t border-border/40 bg-background/98 px-4 py-3 space-y-0.5">
+            {[
+              { href: '#solucao', label: 'Solução' },
+              { href: '#agentes', label: 'Agentes' },
+              { href: '#performance', label: 'Performance' },
+              { href: '#planos', label: 'Planos' },
+              { href: '#faq', label: 'FAQ' },
+            ].map(item => (
+              <a
+                key={item.href}
+                href={item.href}
+                className="block px-3 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-card/60 rounded-lg transition-colors"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                {item.label}
+              </a>
+            ))}
+            <div className="pt-3 mt-2 border-t border-border/30 flex flex-col gap-2">
+              <Button variant="outline" asChild className="w-full">
+                <Link to="/auth" onClick={() => setMobileMenuOpen(false)}>Entrar</Link>
+              </Button>
+              <Button asChild className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+                <Link to="/auth?tab=signup" onClick={() => setMobileMenuOpen(false)}>Começar agora →</Link>
+              </Button>
+            </div>
+          </nav>
+        )}
       </header>
 
       {/* ── HERO ───────────────────────────────────────────────────── */}
-      <section className="relative px-6 py-24 flex flex-col items-center text-center overflow-hidden">
+      <section className="relative px-4 md:px-6 py-14 md:py-24 flex flex-col items-center text-center overflow-hidden">
         {/* Background gradient orbs */}
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-yellow-500/8 rounded-full blur-3xl pointer-events-none" />
@@ -279,7 +341,7 @@ export default function LandingPage() {
           Mentorada pela Comunidade Viver de IA
         </div>
 
-        <h1 className="text-4xl md:text-6xl font-bold max-w-4xl leading-tight mb-6">
+        <h1 className="text-3xl sm:text-4xl md:text-6xl font-bold max-w-4xl leading-tight mb-6">
           Transforme Seu Marketing: Sua{' '}
           <span className="bg-gradient-to-r from-[#5C6BC0] to-[#DAA520] bg-clip-text text-transparent">
             Agência de IA Autônoma
@@ -287,32 +349,38 @@ export default function LandingPage() {
           {' '}que Multiplica Seus Resultados 24/7
         </h1>
 
-        <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mb-4">
+        <p className="text-base md:text-xl text-muted-foreground max-w-2xl mb-4 px-2 md:px-0">
           Cansado de agências caras e ineficientes? A LogosIA é a revolução que você precisa: 9 Agentes de IA especializados trabalhando em perfeita sincronia para escalar seu negócio, reduzir custos e gerar resultados previsíveis, sem falhas humanas ou gestão de equipe.
         </p>
 
-        <p className="text-sm text-muted-foreground mb-10 flex items-center gap-2">
-          <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
-          Sem contrato de fidelidade &nbsp;·&nbsp;
-          <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
-          Setup em menos de 24h &nbsp;·&nbsp;
-          <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
-          Cancele quando quiser
-        </p>
+        <div className="flex flex-wrap justify-center items-center gap-x-5 gap-y-2 text-sm text-muted-foreground mb-10">
+          <span className="flex items-center gap-1.5">
+            <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
+            Sem contrato de fidelidade
+          </span>
+          <span className="flex items-center gap-1.5">
+            <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
+            Setup em menos de 24h
+          </span>
+          <span className="flex items-center gap-1.5">
+            <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
+            Cancele quando quiser
+          </span>
+        </div>
 
-        <div className="flex items-center gap-4 flex-wrap justify-center mb-16">
-          <Button asChild size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 px-8 text-base gap-2">
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full max-w-sm sm:max-w-none sm:justify-center mb-12 md:mb-16">
+          <Button asChild size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 px-8 text-base gap-2 w-full sm:w-auto">
             <Link to="/auth?tab=signup">
               Agendar Implementação VIP <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
-          <Button asChild size="lg" variant="outline" className="px-8 text-base">
+          <Button asChild size="lg" variant="outline" className="px-8 text-base w-full sm:w-auto">
             <Link to="/auth">Ver o Dashboard</Link>
           </Button>
         </div>
 
         {/* Métricas em destaque */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-3xl w-full">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6 max-w-3xl w-full">
           {[
             { value: '9', label: 'Agentes de IA ativos' },
             { value: '24/7', label: 'Operação ininterrupta' },
@@ -328,7 +396,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── COMPARATIVO: R$57K vs R$2.497 ─────────────────────────── */}
-      <section id="solucao" className="px-6 py-20 bg-card/20">
+      <section id="solucao" className="px-4 md:px-6 py-16 md:py-20 bg-card/20">
         <div className="max-w-5xl mx-auto">
 
           {/* Headline principal */}
@@ -336,7 +404,7 @@ export default function LandingPage() {
             <Badge variant="outline" className="mb-5 border-yellow-500/40 text-yellow-400 text-sm px-4 py-1">
               PARE E PENSE POR 30 SEGUNDOS
             </Badge>
-            <h2 className="text-3xl md:text-5xl font-bold leading-tight mb-4">
+            <h2 className="text-2xl sm:text-3xl md:text-5xl font-bold leading-tight mb-4">
               O Custo Oculto da Agência Tradicional:{' '}
               <span className="text-red-400">Tempo, Dinheiro e Frustração</span>
             </h2>
@@ -354,7 +422,7 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-16">
 
             {/* OPÇÃO 1 — Modelo Tradicional */}
-            <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-7">
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-5 md:p-7">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center">
                   <XCircle className="h-4 w-4 text-red-400" />
@@ -408,7 +476,7 @@ export default function LandingPage() {
             </div>
 
             {/* OPÇÃO 2 — Logos IA */}
-            <div className="rounded-2xl border border-green-500/40 bg-green-500/5 p-7 relative overflow-hidden">
+            <div className="rounded-2xl border border-green-500/40 bg-green-500/5 p-5 md:p-7 relative overflow-hidden">
               <div className="absolute top-4 right-4">
                 <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">ESCOLHA INTELIGENTE</Badge>
               </div>
@@ -449,16 +517,16 @@ export default function LandingPage() {
           </div>
 
           {/* Contraste brutal */}
-          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-8 text-center mb-16">
+          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-5 md:p-8 text-center mb-12 md:mb-16">
             <p className="text-muted-foreground text-sm uppercase tracking-widest mb-3">Você leu certo</p>
-            <div className="flex items-center justify-center gap-6 flex-wrap mb-4">
+            <div className="flex items-center justify-center gap-4 md:gap-6 flex-wrap mb-4">
               <div className="text-center">
-                <p className="text-4xl md:text-5xl font-black text-red-400 line-through opacity-60">R$ 15.000</p>
+                <p className="text-3xl md:text-5xl font-black text-red-400 line-through opacity-60">R$ 15.000</p>
                 <p className="text-xs text-muted-foreground mt-1">Modelo tradicional / mês</p>
               </div>
-              <div className="text-3xl font-bold text-muted-foreground">vs</div>
+              <div className="text-2xl font-bold text-muted-foreground">vs</div>
               <div className="text-center">
-                <p className="text-4xl md:text-5xl font-black text-green-400">R$ 2.497</p>
+                <p className="text-3xl md:text-5xl font-black text-green-400">R$ 2.497</p>
                 <p className="text-xs text-muted-foreground mt-1">Logos IA / mês</p>
               </div>
             </div>
@@ -470,19 +538,19 @@ export default function LandingPage() {
           </div>
 
           {/* A matemática brutal — 12 meses */}
-          <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/5 p-8 mb-16">
+          <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/5 p-5 md:p-8 mb-12 md:mb-16">
             <h3 className="text-xl font-bold text-center mb-8 text-yellow-400">
               A Matemática é Brutal — Em 12 Meses:
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
               <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-5">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Modelo Tradicional</p>
                 <p className="text-3xl font-black text-red-400">R$ 180.000</p>
                 <p className="text-xs text-muted-foreground mt-1">por ano</p>
               </div>
-              <div className="flex items-center justify-center">
+              <div className="flex items-center justify-center py-2 sm:py-0">
                 <div className="text-center">
-                  <p className="text-4xl font-black text-green-400">R$ 140.036</p>
+                  <p className="text-3xl font-black text-green-400">R$ 140.036</p>
                   <p className="text-sm text-green-400 font-semibold mt-1">de economia no 1º ano</p>
                 </div>
               </div>
@@ -509,7 +577,7 @@ export default function LandingPage() {
             <Badge variant="outline" className="mb-4 border-primary/30 text-primary">Nossa Entrega Completa</Badge>
             <h3 className="text-2xl md:text-3xl font-bold mb-2">Tudo rodando simultaneamente, 24/7, sem parar.</h3>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-16">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-12 md:mb-16">
             {[
               { icon: '🎯', title: 'Tráfego Pago', desc: 'Google, Meta e LinkedIn' },
               { icon: '✍️', title: 'Copywriting IA', desc: 'Anúncios, emails e LPs' },
@@ -529,7 +597,7 @@ export default function LandingPage() {
           </div>
 
           {/* Urgência final */}
-          <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center mb-10">
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-5 md:p-8 text-center mb-8 md:mb-10">
             <p className="text-lg font-bold mb-3">Aqui está a verdade:</p>
             <p className="text-muted-foreground mb-4 max-w-xl mx-auto">
               Daqui 2 anos, toda empresa que não migrou para IA vai estar pagando{' '}
@@ -543,9 +611,10 @@ export default function LandingPage() {
 
           {/* CTA principal */}
           <div className="text-center">
-            <Button asChild size="lg" className="bg-green-600 hover:bg-green-700 text-white px-10 text-lg gap-3 py-6 rounded-2xl font-bold shadow-lg shadow-green-900/30">
-              <Link to="/auth?tab=signup">
-                QUERO MULTIPLICAR MEUS RESULTADOS E ECONOMIZAR ATÉ R$5.000 a R$15.000/MÊS COM IA <ArrowRight className="h-5 w-5" />
+            <Button asChild size="lg" className="bg-green-600 hover:bg-green-700 text-white px-8 text-base md:text-lg gap-2 py-5 rounded-2xl font-bold shadow-lg shadow-green-900/30 h-auto whitespace-normal max-w-sm md:max-w-none">
+              <Link to="/auth?tab=signup" className="flex items-center justify-center gap-2 text-center leading-snug">
+                Quero Multiplicar Meus Resultados e Economizar Até R$15k/mês com IA
+                <ArrowRight className="h-5 w-5 shrink-0" />
               </Link>
             </Button>
             <p className="text-xs text-muted-foreground mt-3">
@@ -556,11 +625,11 @@ export default function LandingPage() {
       </section>
 
       {/* ── O PROBLEMA ─────────────────────────────────────────────── */}
-      <section className="px-6 py-20 bg-card/30">
+      <section className="px-4 md:px-6 py-16 md:py-20 bg-card/30">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-red-500/30 text-red-400">O Problema</Badge>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Agências tradicionais estão te limitando</h2>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Agências tradicionais estão te limitando</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">Enquanto você paga caro por serviços lentos e inconsistentes, seus concorrentes já automatizaram com IA.</p>
           </div>
 
@@ -584,11 +653,11 @@ export default function LandingPage() {
       </section>
 
       {/* ── A SOLUÇÃO ──────────────────────────────────────────────── */}
-      <section id="diferenciais" className="px-6 py-20">
+      <section id="diferenciais" className="px-4 md:px-6 py-16 md:py-20">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-primary/30 text-primary">A Solução</Badge>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">LogosIA: A Inteligência Artificial que Nunca Dorme para o Seu Marketing</h2>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">LogosIA: A Inteligência Artificial que Nunca Dorme para o Seu Marketing</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">Imagine ter uma equipe de marketing de elite, trabalhando 24 horas por dia, 7 dias por semana, sem salário, sem férias e sem reuniões. A LogosIA é essa realidade. Nossos 9 agentes de IA especializados operam com precisão matemática, otimizando suas campanhas, criando conteúdo de alta conversão e gerenciando seus leads de forma autônoma.</p>
           </div>
 
@@ -614,11 +683,11 @@ export default function LandingPage() {
       </section>
 
       {/* ── AGENTES ────────────────────────────────────────────────── */}
-      <section id="agentes" className="px-6 py-20 bg-card/30">
+      <section id="agentes" className="px-4 md:px-6 py-16 md:py-20 bg-card/30">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-primary/30 text-primary">Agentes Inteligentes</Badge>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Sua equipe completa de IA</h2>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Sua equipe completa de IA</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">6 agentes especializados trabalhando em conjunto como uma agência de marketing de elite — sem salário, sem férias, sem reuniões.</p>
           </div>
 
@@ -637,11 +706,11 @@ export default function LandingPage() {
       </section>
 
       {/* ── COMPARATIVO DE PERFORMANCE ─────────────────────────────── */}
-      <section id="performance" className="px-6 py-20">
+      <section id="performance" className="px-4 md:px-6 py-16 md:py-20">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-yellow-500/30 text-yellow-400">Análise Comparativa</Badge>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Logos IA vs. Mercado</h2>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Logos IA vs. Mercado</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">9 agentes de IA especializados superam agências inteiras com dezenas de funcionários. Veja a comparação.</p>
           </div>
 
@@ -683,7 +752,8 @@ export default function LandingPage() {
           </div>
 
           {/* Tabela comparativa */}
-          <div className="rounded-xl border border-border/50 overflow-hidden">
+          <div className="overflow-x-auto rounded-xl border border-border/50">
+          <div className="min-w-[560px]">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-card border-b border-border/50">
@@ -712,16 +782,17 @@ export default function LandingPage() {
               </tbody>
             </table>
           </div>
+          </div>
           <p className="text-xs text-muted-foreground/60 text-center mt-3">* Dados baseados em benchmarks de mercado e estudos internos da Comunidade Viver de IA.</p>
         </div>
       </section>
 
       {/* ── PLANOS ─────────────────────────────────────────────────── */}
-      <section id="planos" className="px-6 py-20 bg-card/30">
+      <section id="planos" className="px-4 md:px-6 py-16 md:py-20 bg-card/30">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-primary/30 text-primary">Planos Premium</Badge>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Escolha seu nível de performance</h2>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Escolha seu nível de performance</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">Todos os planos incluem taxa de implementação única — garantia de que você começa do jeito certo.</p>
           </div>
 
@@ -800,11 +871,11 @@ export default function LandingPage() {
       </section>
 
       {/* ── DEPOIMENTOS ────────────────────────────────────────────── */}
-      <section className="px-6 py-20">
+      <section className="px-4 md:px-6 py-16 md:py-20">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-primary/30 text-primary">Resultados Reais</Badge>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Quem já usa a Logos IA</h2>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Quem já usa a Logos IA</h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -827,11 +898,11 @@ export default function LandingPage() {
       </section>
 
       {/* ── FAQ ────────────────────────────────────────────────────── */}
-      <section id="faq" className="px-6 py-20 bg-card/30">
+      <section id="faq" className="px-4 md:px-6 py-16 md:py-20 bg-card/30">
         <div className="max-w-3xl mx-auto">
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 border-primary/30 text-primary">FAQ</Badge>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Perguntas frequentes</h2>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Perguntas frequentes</h2>
           </div>
 
           <div className="space-y-3">
@@ -856,13 +927,13 @@ export default function LandingPage() {
       </section>
 
       {/* ── CTA FINAL ──────────────────────────────────────────────── */}
-      <section className="px-6 py-24 flex flex-col items-center text-center relative overflow-hidden">
+      <section className="px-4 md:px-6 py-16 md:py-24 flex flex-col items-center text-center relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-yellow-500/5 pointer-events-none" />
         <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm text-primary font-medium mb-6">
           <Sparkles className="h-3.5 w-3.5" />
           Comece hoje mesmo
         </div>
-        <h2 className="text-3xl md:text-5xl font-bold max-w-3xl mb-6">
+        <h2 className="text-2xl sm:text-3xl md:text-5xl font-bold max-w-3xl mb-6">
           Pronto para ter uma{' '}
           <span className="bg-gradient-to-r from-[#5C6BC0] to-[#DAA520] bg-clip-text text-transparent">
             agência de IA
@@ -872,27 +943,29 @@ export default function LandingPage() {
         <p className="text-muted-foreground max-w-xl mb-10">
           Junte-se a centenas de empreendedores e agências que já substituíram custos de agência por resultados de IA.
         </p>
-        <div className="flex items-center gap-4 flex-wrap justify-center">
-          <Button asChild size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 px-10 text-base gap-2">
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full max-w-sm sm:max-w-none sm:justify-center">
+          <Button asChild size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 px-10 text-base gap-2 w-full sm:w-auto">
             <Link to="/auth?tab=signup">
               Agendar Implementação VIP <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
-          <Button asChild size="lg" variant="outline" className="px-8 text-base">
+          <Button asChild size="lg" variant="outline" className="px-8 text-base w-full sm:w-auto">
             <a href="mailto:carvalho@scalpergx.com.br">Falar com especialista</a>
           </Button>
         </div>
       </section>
 
       {/* ── FOOTER ─────────────────────────────────────────────────── */}
-      <footer className="border-t border-border/40 px-6 py-8">
-        <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <LogosIAIcon size={28} />
-            <span className="text-sm font-semibold">Logos IA</span>
-            <span className="text-xs text-muted-foreground ml-2">Mentorada pela Comunidade Viver de IA</span>
+      <footer className="border-t border-border/40 px-4 md:px-6 py-8">
+        <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-5 text-center md:text-left">
+          <div className="flex flex-col sm:flex-row items-center gap-2">
+            <div className="flex items-center gap-2">
+              <LogosIAIcon size={26} />
+              <span className="text-sm font-bold tracking-wide">Logos IA</span>
+            </div>
+            <span className="text-xs text-muted-foreground sm:ml-1">· Mentorada pela Comunidade Viver de IA</span>
           </div>
-          <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap justify-center">
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
             <span>© {new Date().getFullYear()} LogosIA. Todos os direitos reservados.</span>
             <a href="/privacy" className="hover:text-primary transition-colors">Privacidade</a>
             <a href="/terms" className="hover:text-primary transition-colors">Termos</a>
