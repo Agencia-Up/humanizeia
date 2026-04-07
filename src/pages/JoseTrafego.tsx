@@ -18,6 +18,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { AILog, AILogEntry } from '@/components/jose/AILog';
 import { GoldenRulesTab } from '@/components/jose/GoldenRulesTab';
 import { ExecutiveSummary, ExecutiveSkeleton } from '@/components/jose/ExecutiveSummary';
+import { JoseChat } from '@/components/jose/JoseChat';
 import CampanhaCreator from '@/components/jose/CampanhaCreator';
 import PublicosManager from '@/components/jose/PublicosManager';
 import AbTestManager from '@/components/jose/AbTestManager';
@@ -906,6 +907,8 @@ export default function JoseTrafego() {
                   />
                 )
             }
+            {/* Chat always visible in simplified mode */}
+            <JoseChat session={session} currencySymbol={currencySymbol} accountId={accountId} />
           </>
         )}
 
@@ -913,6 +916,7 @@ export default function JoseTrafego() {
         {viewMode === 'expert' && (session || snapshots.length > 0 || accountId) && (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="flex-wrap h-auto gap-1">
+              <TabsTrigger value="chat" className="gap-1 text-xs bg-orange-500/10 data-[state=active]:bg-orange-500 data-[state=active]:text-white"><MessageCircle className="h-3 w-3" />💬 Chat IA</TabsTrigger>
               {session && <TabsTrigger value="campaigns" className="gap-1 text-xs"><Radar className="h-3 w-3" />Campanhas <Badge variant="secondary" className="text-[10px] h-4 px-1">{session.campaigns.length}</Badge></TabsTrigger>}
               {session && <TabsTrigger value="actions" className="gap-1 text-xs"><Zap className="h-3 w-3" />Ações {pendingActions.length > 0 && <Badge className="text-[10px] h-4 px-1 bg-primary">{pendingActions.length}</Badge>}</TabsTrigger>}
               {session && <TabsTrigger value="analysis" className="gap-1 text-xs"><Brain className="h-3 w-3" />Análise IA</TabsTrigger>}
@@ -927,6 +931,15 @@ export default function JoseTrafego() {
               <TabsTrigger value="abtests" className="gap-1 text-xs">🧪 Testes A/B</TabsTrigger>
               <TabsTrigger value="ferramentas" className="gap-1 text-xs"><Layers className="h-3 w-3" />Ferramentas</TabsTrigger>
             </TabsList>
+
+            {/* Chat IA */}
+            <TabsContent value="chat" className="mt-4">
+              <JoseChat
+                session={session}
+                currencySymbol={currencySymbol}
+                accountId={accountId}
+              />
+            </TabsContent>
 
             {/* Campaigns */}
             {session && (
