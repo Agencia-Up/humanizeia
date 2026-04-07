@@ -55,14 +55,15 @@ serve(async (req) => {
       if (!msgObj) return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
       if (msgObj.fromMe === true) return new Response('Ignored fromMe', { headers: corsHeaders })
       
-      const remoteJid = msgObj.chatId || msgObj.chatid || msgObj.from || chat.id || chat.chatId || ''
-      if (!remoteJid) return new Response('No remoteJid', { headers: corsHeaders })
-      if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return new Response('Ignored group/broadcast', { headers: corsHeaders })
+      const remoteJid = msgObj.chatId || msgObj.chatid || msgObj.from || chat.id || chat.chatId || '';
+      if (!remoteJid) { console.log('[Webhook] No remoteJid'); return new Response('No remoteJid', { headers: corsHeaders }); }
+      if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return new Response('Ignored group/broadcast', { headers: corsHeaders });
 
-      const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim()
-      const pushName = msgObj.senderName || chat.name || msgObj.notifyName || 'Lead'
+      const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim();
+      const pushName = msgObj.senderName || chat.name || msgObj.notifyName || msgObj.pushName || 'Lead';
       
-      return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj)
+      console.log(`[Webhook] Mensagem recebida [UAZAPI]. Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
+      return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
     }
 
     // --- FORMATO EVOLUTION API ---
@@ -109,12 +110,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 
   const { data: waInstance } = await supabase.from('wa_instances').select('*').eq('instance_name', instanceName).maybeSingle()
-  if (!waInstance) return new Response('Instance not found', { headers: corsHeaders })
+  if (!waInstance) {
+    console.log(`[Webhook] Instance not found: ${instanceName}`);
+    return new Response('Instance not found', { headers: corsHeaders })
+  }
 
   const { data: agent } = await supabase.from('wa_ai_agents')
     .select('*').eq('user_id', waInstance.user_id).eq('is_active', true).contains('instance_ids', [waInstance.id]).maybeSingle()
 
-  if (!agent) return new Response('No matching active agent', { headers: corsHeaders })
+  if (!agent) {
+    console.log(`[Webhook] No matching active agent for instanceId: ${waInstance.id}`);
+    return new Response('No matching active agent', { headers: corsHeaders })
+  }
+  
+  console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
 
   // Registrar Lead no CRM
   await supabase.from('ai_crm_leads').upsert({
@@ -230,7 +239,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   }
 
-  if (!finalUserText && typeof userMessageContentForOpenAi === 'string') return new Response('Empty text', { headers: corsHeaders })
+  if (!finalUserText && typeof userMessageContentForOpenAi === 'string') {
+    console.log('[Webhook] Empty text after media processing');
+    return new Response('Empty text', { headers: corsHeaders });
+  }
+
+  console.log(`[Webhook] Salvando histórico e chamando OpenAI para: ${finalUserText}`);
 
   // Salvar histórico
   await supabase.from('wa_chat_history').insert({
@@ -278,11 +292,17 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   if (agent.company_name) systemPrompt += `\n\nEmpresa: ${agent.company_name}`
   if (knowledgeContext) systemPrompt += `\n\n## BASE DE CONHECIMENTO:\n${knowledgeContext}`
 
+  let aiModel = agent.model || 'gpt-4o';
+  // O endpoint direto da OpenAI não aceita prefixos como 'openai/', então removemos.
+  if (aiModel.startsWith('openai/')) {
+    aiModel = aiModel.replace('openai/', '');
+  }
+
   const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
     body: JSON.stringify({
-      model: agent.model || 'gpt-4o',
+      model: aiModel,
       messages: [{ role: 'system', content: systemPrompt }, ...chatHistory, { role: 'user', content: userMessageContentForOpenAi }],
       temperature: agent.temperature || 0.7,
       tools: tools,
@@ -290,9 +310,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     })
   })
 
-  if (!openaiRes.ok) return new Response('OpenAI erro', { status: 500 })
+  if (!openaiRes.ok) {
+    const errText = await openaiRes.text();
+    console.error(`[Webhook] OpenAI Erro: ${openaiRes.status} - ${errText}`);
+    return new Response('OpenAI erro', { status: 500 });
+  }
   const openaiData = await openaiRes.json()
   const aiMessage = openaiData.choices?.[0]?.message
+  
+  console.log(`[Webhook] Resposta da IA recebida. ToolCalls: ${aiMessage?.tool_calls?.length || 0}`);
 
   let aiResponse = aiMessage?.content || ''
 
