@@ -13,7 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   BookOpen, Plus, Loader2, Trash2, FileText, Link, HelpCircle,
   CheckCircle2, AlertCircle, Clock, ChevronDown, ChevronUp, Database,
-  RefreshCw, Info,
+  RefreshCw, Info, Zap,
 } from 'lucide-react';
 
 interface KnowledgeSource {
@@ -65,7 +65,7 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function SourceCard({ source, onDelete }: { source: KnowledgeSource; onDelete: () => void }) {
+function SourceCard({ source, onDelete, onResync }: { source: KnowledgeSource; onDelete: () => void; onResync: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const typeConf = SOURCE_TYPE_CONFIG[source.type] || SOURCE_TYPE_CONFIG.text;
   const statusConf = STATUS_CONFIG[source.status] || STATUS_CONFIG.pending;
@@ -93,6 +93,15 @@ function SourceCard({ source, onDelete }: { source: KnowledgeSource; onDelete: (
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 text-muted-foreground hover:text-violet-400"
+            onClick={onResync}
+            title="Re-processar embeddings"
+          >
+            <Zap className="h-3 w-3" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -255,7 +264,7 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
 
     setSaving(true);
     try {
-      const { error } = await (supabase as any)
+      const { data: newSource, error } = await (supabase as any)
         .from('knowledge_sources')
         .insert({
           kb_id: selectedKbId,
@@ -265,13 +274,15 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
           content,
           metadata,
           token_count: tokens,
-          chunk_count: Math.ceil(content.length / 500), // ~500 chars por chunk
-          status: 'synced', // Por enquanto salva direto (sem embedding em tempo real)
-          last_synced_at: new Date().toISOString(),
-        });
+          chunk_count: 0,
+          status: 'pending', // será atualizado pela Edge Function
+        })
+        .select()
+        .single();
 
       if (error) throw error;
-      toast({ title: 'Fonte adicionada!', description: `${tokens.toLocaleString()} tokens estimados` });
+
+      toast({ title: 'Fonte adicionada!', description: 'Gerando embeddings em background...' });
       setSourceName('');
       setSourceContent('');
       setSourceUrl('');
@@ -279,12 +290,43 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
       setQaAnswer('');
       setShowAddSource(false);
       await fetchSources();
+
+      // Chamar Edge Function para gerar embeddings em background
+      if (newSource?.id) {
+        embedSource(newSource.id);
+      }
     } catch (err: any) {
       toast({ title: 'Erro ao adicionar fonte', description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);
     }
   };
+
+  // Chama a Edge Function de embedding (em background, sem bloquear UI)
+  const embedSource = async (sourceId: string) => {
+    try {
+      console.log('[KB] Iniciando embedding para fonte:', sourceId);
+      const { error } = await supabase.functions.invoke('knowledge-embed', {
+        body: { source_id: sourceId },
+      });
+      if (error) {
+        console.error('[KB] Erro no embedding:', error);
+      } else {
+        console.log('[KB] Embedding concluído para:', sourceId);
+        // Recarrega fontes para mostrar status atualizado
+        setTimeout(() => fetchSources(), 1000);
+      }
+    } catch (err) {
+      console.warn('[KB] Falha ao chamar knowledge-embed:', err);
+    }
+  };
+
+  const handleResyncSource = async (sourceId: string) => {
+    toast({ title: '⚡ Re-processando embeddings...', description: 'Isso pode levar alguns segundos' });
+    await embedSource(sourceId);
+    await fetchSources();
+  };
+
 
   const handleDeleteSource = async (sourceId: string) => {
     if (!confirm('Remover esta fonte de dados?')) return;
@@ -543,6 +585,7 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
                     key={source.id}
                     source={source}
                     onDelete={() => handleDeleteSource(source.id)}
+                    onResync={() => handleResyncSource(source.id)}
                   />
                 ))
               )}
