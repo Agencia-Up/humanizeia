@@ -16,6 +16,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
+import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
 
 interface Instance {
   id: string;
@@ -668,10 +669,18 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
               <TabsTrigger value="knowledge" className="flex-1 gap-1.5">
                 <BookOpen className="h-3.5 w-3.5" /> Conhecimento
               </TabsTrigger>
+              <TabsTrigger value="crm" className="flex-1 gap-1.5 bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-colors">
+                <UserCheck className="h-3.5 w-3.5" /> CRM & Equipe
+              </TabsTrigger>
               <TabsTrigger value="integrations" className="flex-1 gap-1.5">
                 <Webhook className="h-3.5 w-3.5" /> n8n
               </TabsTrigger>
             </TabsList>
+
+            {/* ── Tab: CRM & Equipe ── */}
+            <TabsContent value="crm" className="space-y-6 mt-0">
+               <AgentCrmEquipeTab agentId={agent?.id || null} userId={user?.id || ''} />
+            </TabsContent>
 
             {/* ── Tab: General ── */}
             <TabsContent value="general" className="space-y-6 mt-0">
