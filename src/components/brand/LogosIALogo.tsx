@@ -130,7 +130,7 @@ export function LogosIALogo({ size = 'md', showText = false, className = '', ico
             letterSpacing="4"
             fill={`url(#text-grad-${size})`}
           >
-            HUMANIZEAI
+            LOGOSIA
           </text>
         </svg>
       )}
