@@ -522,7 +522,7 @@ export default function JoseTrafego() {
   const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
   const [datePreset, setDatePreset] = useState<ApolloDatePreset>('last_30d');
   const [autoExecute, setAutoExecute] = useState(false);
-  const [activeTab, setActiveTab] = useState('campaigns');
+  const [activeTab, setActiveTab] = useState('chat');
   const [adsetCache, setAdsetCache] = useState<Record<string, any[]>>({});
   const [loadingAdsets, setLoadingAdsets] = useState<Record<string, boolean>>({});
   const [sessionLoaded, setSessionLoaded] = useState(false);
