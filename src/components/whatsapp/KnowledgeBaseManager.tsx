@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -139,6 +140,7 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
   // KB state
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [selectedKbId, setSelectedKbId] = useState<string | null>(null);
+  const [linkedKbIds, setLinkedKbIds] = useState<string[]>([]);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
 
   // Form: nova KB
@@ -165,14 +167,19 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
-      // Filtrar por agente se for agente específico
-      if (agentId) {
-        // Busca KBs do agente + KBs sem agente (compartilhadas)
-      }
-
       const { data, error } = await query;
       if (error) throw error;
       setKbs(data || []);
+
+      if (agentId) {
+        const { data: linkedData } = await (supabase as any)
+          .from('agent_knowledge_bases')
+          .select('kb_id')
+          .eq('agent_id', agentId);
+        setLinkedKbIds((linkedData || []).map((k: any) => k.kb_id));
+      } else {
+        setLinkedKbIds([]);
+      }
 
       // Seleciona a primeira automaticamente
       if ((data || []).length > 0 && !selectedKbId) {
@@ -221,6 +228,12 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
         .single();
 
       if (error) throw error;
+      
+      // Auto vincular ao agente se existir
+      if (agentId) {
+        await (supabase as any).from('agent_knowledge_bases').insert({ agent_id: agentId, kb_id: data.id });
+      }
+
       toast({ title: 'Base de conhecimento criada!' });
       setNewKbName('');
       setNewKbDesc('');
@@ -230,6 +243,30 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
       setSelectedKbId(data.id);
     } catch (err: any) {
       toast({ title: 'Erro ao criar base', description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleLink = async (checked: boolean) => {
+    if (!agentId || !selectedKbId) {
+      if (!agentId) toast({ title: 'Aviso', description: 'Salve o agente primeiro antes de vincular bases.' });
+      return;
+    }
+    
+    setSaving(true);
+    try {
+      if (checked) {
+        await (supabase as any).from('agent_knowledge_bases').insert({ agent_id: agentId, kb_id: selectedKbId });
+        setLinkedKbIds(prev => [...prev, selectedKbId]);
+        toast({ title: 'Base ativada para este agente!' });
+      } else {
+        await (supabase as any).from('agent_knowledge_bases').delete().match({ agent_id: agentId, kb_id: selectedKbId });
+        setLinkedKbIds(prev => prev.filter(id => id !== selectedKbId));
+        toast({ title: 'Base desativada deste agente!' });
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao vincular', description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -387,33 +424,36 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
         <>
           {/* KB selector + actions */}
           <div className="flex items-center gap-2 w-full">
-            <div className="flex-1 flex gap-1 overflow-x-auto pb-1 scrollbar-none min-w-0">
-              {kbs.map(kb => (
-                <button
-                  key={kb.id}
-                  onClick={() => setSelectedKbId(kb.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all border
-                    ${selectedKbId === kb.id
-                      ? 'bg-primary/10 text-primary border-primary/30'
-                      : 'bg-muted/30 text-muted-foreground border-border/40 hover:border-border'}`}
-                >
-                  <span>{kb.icon}</span>
-                  <span>{kb.name}</span>
-                  {kb.rag_restricted && <span className="text-[9px] opacity-60">· Restrito</span>}
-                </button>
-              ))}
-            </div>
-            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" onClick={() => setShowNewKb(!showNewKb)}>
-              <Plus className="h-4 w-4" />
+            <Select value={selectedKbId || ''} onValueChange={setSelectedKbId}>
+              <SelectTrigger className="flex-1 text-xs h-9 font-medium">
+                <SelectValue placeholder="Selecione uma base de conhecimento" />
+              </SelectTrigger>
+              <SelectContent>
+                {kbs.map(kb => (
+                  <SelectItem key={kb.id} value={kb.id} className="text-xs">
+                    <span className="flex items-center gap-2">
+                      <span>{kb.icon}</span>
+                      <span>{kb.name}</span>
+                      {linkedKbIds.includes(kb.id) && (
+                        <span className="text-[9px] text-green-500 font-bold bg-green-500/10 px-1.5 py-0.5 rounded uppercase">Ativa</span>
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="outline" className="h-9 shrink-0 gap-1 border-dashed" onClick={() => setShowNewKb(!showNewKb)}>
+              <Plus className="h-4 w-4" /> Nova Base
             </Button>
             {selectedKbId && (
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 w-7 p-0 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                className="h-9 w-9 p-0 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                 onClick={() => selectedKbId && handleDeleteKb(selectedKbId)}
+                title="Excluir Permanentemente"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-4 w-4" />
               </Button>
             )}
           </div>
@@ -469,14 +509,34 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
                   <Badge variant="outline" className="shrink-0 text-[10px] bg-violet-500/10 text-violet-400 border-violet-500/30">Restrito</Badge>
                 )}
               </h4>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {sources.length} {sources.length === 1 ? 'fonte' : 'fontes'} · {totalTokens.toLocaleString()} tokens
-              </p>
+              <div className="flex items-center gap-4 mt-2">
+                <p className="text-xs text-muted-foreground">
+                  {sources.length} {sources.length === 1 ? 'fonte' : 'fontes'} · {totalTokens.toLocaleString()} tokens
+                </p>
+                {agentId ? (
+                  <div className="flex items-center gap-2 border-l border-border pl-4">
+                    <Switch 
+                      id="link-kb" 
+                      checked={linkedKbIds.includes(selectedKb.id)} 
+                      onCheckedChange={handleToggleLink}
+                      disabled={saving}
+                    />
+                    <Label htmlFor="link-kb" className={`text-xs cursor-pointer font-medium ${linkedKbIds.includes(selectedKb.id) ? 'text-green-400' : 'text-muted-foreground'}`}>
+                      {linkedKbIds.includes(selectedKb.id) ? 'Ativa neste Agente' : 'Inativa neste Agente'}
+                    </Label>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 border-l border-border pl-4 opacity-50">
+                    <Switch disabled />
+                    <Label className="text-[10px]">Salve o agente para ativar</Label>
+                  </div>
+                )}
+              </div>
             </div>
             <Button
               size="sm"
               variant="outline"
-              className="h-7 gap-1 text-xs"
+              className="h-8 shrink-0 gap-1 text-xs"
               onClick={() => setShowAddSource(!showAddSource)}
             >
               <Plus className="h-3 w-3" /> Adicionar Fonte
