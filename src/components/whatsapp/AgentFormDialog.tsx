@@ -653,39 +653,31 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
         <ScrollArea className="max-h-[65vh] pr-4">
           <Tabs defaultValue="general" className="space-y-6">
-            <div className="w-full pb-2 border-b">
-              {/* Contêiner de rolagem suave nativo com Webkit styling */}
-              <div
-                className="flex w-full overflow-x-auto overflow-y-hidden snap-x snap-mandatory pt-1 pb-2 
-                           [&::-webkit-scrollbar]:h-2 
-                           [&::-webkit-scrollbar-track]:bg-transparent 
-                           [&::-webkit-scrollbar-thumb]:bg-border/60 [&::-webkit-scrollbar-thumb]:rounded-full 
-                           hover:[&::-webkit-scrollbar-thumb]:bg-border"
-              >
-                <TabsList className="flex-none inline-flex h-11 items-center justify-start rounded-lg bg-card border border-border/50 p-1 shadow-sm text-muted-foreground mr-4">
-                  <TabsTrigger value="general" className="snap-start gap-2 px-5 rounded-md data-[state=active]:bg-primary/10 data-[state=active]:text-primary transition-all">
-                    <Brain className="h-4 w-4" /> Geral
-                  </TabsTrigger>
-                  <TabsTrigger value="business" className="snap-start gap-2 px-5 rounded-md data-[state=active]:bg-primary/10 data-[state=active]:text-primary transition-all">
-                    <Building2 className="h-4 w-4" /> Empresa
-                  </TabsTrigger>
-                  <TabsTrigger value="sdr" className="snap-start gap-2 px-5 rounded-md data-[state=active]:bg-primary/10 data-[state=active]:text-primary transition-all">
-                    <Target className="h-4 w-4" /> SDR
-                  </TabsTrigger>
-                  <TabsTrigger value="settings" className="snap-start gap-2 px-5 rounded-md data-[state=active]:bg-primary/10 data-[state=active]:text-primary transition-all">
-                    <Settings2 className="h-4 w-4" /> Modelo
-                  </TabsTrigger>
-                  <TabsTrigger value="knowledge" className="snap-start gap-2 px-5 rounded-md data-[state=active]:bg-purple-500/10 data-[state=active]:text-purple-500 transition-all">
-                    <BookOpen className="h-4 w-4" /> Base
-                  </TabsTrigger>
-                  <TabsTrigger value="equipe" className="snap-start gap-2 px-5 rounded-md bg-blue-500/5 text-blue-500 hover:bg-blue-500/10 data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-all">
-                    <UserCheck className="h-4 w-4" /> Time
-                  </TabsTrigger>
-                  <TabsTrigger value="integrations" className="snap-start gap-2 px-5 rounded-md data-[state=active]:bg-orange-500/10 data-[state=active]:text-orange-500 transition-all">
-                    <Webhook className="h-4 w-4" /> n8n
-                  </TabsTrigger>
-                </TabsList>
-              </div>
+            <div className="w-full pb-4 border-b">
+              {/* Contêiner em grid/auto-wrap para garantir que as abas não cortem */}
+              <TabsList className="flex flex-wrap h-auto w-full items-center justify-start gap-1.5 bg-transparent p-0 border-none shadow-none">
+                <TabsTrigger value="general" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
+                  <Brain className="h-4 w-4" /> Geral
+                </TabsTrigger>
+                <TabsTrigger value="business" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
+                  <Building2 className="h-4 w-4" /> Empresa
+                </TabsTrigger>
+                <TabsTrigger value="sdr" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
+                  <Target className="h-4 w-4" /> SDR
+                </TabsTrigger>
+                <TabsTrigger value="settings" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
+                  <Settings2 className="h-4 w-4" /> Modelo
+                </TabsTrigger>
+                <TabsTrigger value="knowledge" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-purple-500/10 data-[state=active]:text-purple-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-purple-500/20">
+                  <BookOpen className="h-4 w-4" /> Base
+                </TabsTrigger>
+                <TabsTrigger value="equipe" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-blue-500/10 data-[state=active]:text-blue-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-blue-500/20">
+                  <UserCheck className="h-4 w-4" /> Vendedores
+                </TabsTrigger>
+                <TabsTrigger value="integrations" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-orange-500/10 data-[state=active]:text-orange-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-orange-500/20">
+                  <Webhook className="h-4 w-4" /> n8n
+                </TabsTrigger>
+              </TabsList>
             </div>
 
             {/* ── Tab: Vendedores (Repasse) ── */}
