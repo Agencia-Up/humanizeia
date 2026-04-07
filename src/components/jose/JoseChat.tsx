@@ -72,7 +72,7 @@ export function JoseChat({ session, currencySymbol = 'R$', accountId }: JoseChat
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // ── Build context string from campaign session ──
@@ -116,9 +116,7 @@ ${session.summary ? `RESUMO EXECUTIVO:\n${session.summary}` : ''}
 
   // ── Scroll to bottom ──
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streaming]);
 
   // ── Load conversations list ──
@@ -222,9 +220,9 @@ ${session.summary ? `RESUMO EXECUTIVO:\n${session.summary}` : ''}
     // Save user message to DB
     await saveMessage(convId, 'user', userText);
 
-    // Build message history for the LLM
+    // Build message history for the LLM (exclude only the pending user temp message)
     const history = messages
-      .filter(m => !m.id.startsWith('temp-'))
+      .filter(m => m.id !== tempUserMsg.id)
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
     // Inject context as system note in first message if session exists
@@ -251,13 +249,18 @@ ${session.summary ? `RESUMO EXECUTIVO:\n${session.summary}` : ''}
     setIsThinking(false);
 
     // Add assistant message locally and save to DB
+    const ts = Date.now();
     const assistantMsg: ChatMessage = {
-      id: `temp-assist-${Date.now()}`,
+      id: `msg-assist-${ts}`,
       role: 'assistant',
       content: fullResponse,
       created_at: new Date().toISOString(),
     };
-    setMessages(prev => [...prev.filter(m => m.id !== tempUserMsg.id), { ...tempUserMsg, id: `saved-user-${Date.now()}` }, assistantMsg]);
+    setMessages(prev => [
+      ...prev.filter(m => m.id !== tempUserMsg.id),
+      { ...tempUserMsg, id: `msg-user-${ts}` },
+      assistantMsg,
+    ]);
 
     await saveMessage(convId, 'assistant', fullResponse);
     await loadConversations();
@@ -367,7 +370,7 @@ ${session.summary ? `RESUMO EXECUTIVO:\n${session.summary}` : ''}
         </div>
 
         {/* ── Messages area ── */}
-        <ScrollArea className="flex-1" ref={scrollRef as any}>
+        <ScrollArea className="flex-1">
           <div className="p-4 space-y-5">
 
             {/* Welcome screen */}
@@ -465,6 +468,9 @@ ${session.summary ? `RESUMO EXECUTIVO:\n${session.summary}` : ''}
                 </div>
               </div>
             )}
+
+            {/* Scroll anchor */}
+            <div ref={messagesEndRef} />
           </div>
         </ScrollArea>
 
