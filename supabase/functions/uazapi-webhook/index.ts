@@ -125,21 +125,22 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     last_interaction_at: new Date().toISOString()
   }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
 
-  const aiResponseMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
+  const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
 
   // Tools
   const tools = [
     {
       type: "function",
       function: {
-        name: "qualificar_lead",
-        description: "Encerra o atendimento automático transferindo a conversa para o vendedor humano. SÓ ACIONE QUANDO o cliente disser que quer comprar, demonstrar forte interesse, confirmar as informações ou pedir pra falar com alguem.",
+        name: "atualizar_etapa_crm",
+        description: "Atualiza o Kanban/CRM conforme a evolução da conversa. Chame esta função secretamente para categorizar o lead. Valores válidos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando não quer comprar). OBS IMPORTANTE: Ao chamar esta função para status 'interessado' ou 'encerrado', VOCÊ DEVE TAMBÉM gerar uma mensagem normal para o cliente. Só encerre a conversa se for status 'qualificado'.",
         parameters: {
           type: "object",
           properties: {
-            resumo: { type: "string", description: "O que o cliente deseja e as informações que você coletou dele até agora." }
+            status: { type: "string", enum: ["interessado", "qualificado", "encerrado"], description: "A etapa atual do cliente." },
+            resumo: { type: "string", description: "O que o cliente deseja e as informações que você coletou dele até o momento. Seja breve." }
           },
-          required: ["resumo"]
+          required: ["status", "resumo"]
         }
       }
     }
@@ -295,36 +296,40 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   let aiResponse = aiMessage?.content || ''
 
-  // Verificar se o modelo decidiu chamar a função de qualificar (Handoff)
+  // Verificar se o modelo decidiu chamar a função de CRM (atualizar_etapa_crm)
   if (aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
-    const toolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'qualificar_lead');
+    const toolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'atualizar_etapa_crm');
     if (toolCall) {
       try {
         const args = JSON.parse(toolCall.function.arguments);
         
-        // 1. Atualizar banco de dados CRM
+        // 1. Atualizar banco de dados CRM (arrastar cartão para a coluna correta)
         await supabase.from('ai_crm_leads').update({
-          status: 'qualificado',
+          status: args.status,
           summary: args.resumo,
           last_interaction_at: new Date().toISOString()
         }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
-        // 2. Alertar vendedores
-        const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true);
-        if (sellers && sellers.length > 0) {
-          for (const seller of sellers) {
-            const sellerMsg = `🚨 *NOVO LEAD QUALIFICADO (IA)*\n\n*Agente:* ${agent.name}\n*Lead:* ${pushName} (${phoneNumber})\n\n📝 *Resumo do Bot:*\n${args.resumo}\n\n👉 *Atender:* https://wa.me/${phoneNumber}`;
-            await fetch(`${baseUrl}/send/text`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'token': instKey },
-              body: JSON.stringify({ number: seller.whatsapp_number, text: sellerMsg })
-            });
-          }
-        }
+        console.log(`[CRM] Lead ${phoneNumber} movido para: ${args.status}`);
 
-        aiResponse = aiResponseMsg;
+        // 2. Alertar vendedores APENAS SE status for 'qualificado' (Transbordo Humano)
+        if (args.status === 'qualificado') {
+          const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true);
+          if (sellers && sellers.length > 0) {
+            for (const seller of sellers) {
+              const sellerMsg = `🚨 *LEAD QUALIFICADO*\n\n*Agente IA:* ${agent.name}\n*Nome:* ${pushName}\n*Contato:* ${phoneNumber}\n\n📝 *Resumo do Atendimento:*\n${args.resumo}\n\n👉 *Atender Lead:* https://wa.me/${phoneNumber}`;
+              await fetch(`${baseUrl}/send/text`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'token': instKey },
+                body: JSON.stringify({ number: seller.whatsapp_number, text: sellerMsg })
+              });
+            }
+          }
+          // Se qualificou, substituir a resposta para a de Handoff
+          aiResponse = handoffMsg;
+        }
       } catch (err) {
-        console.error("[Webhook] Erro no Handoff", err)
+        console.error("[Webhook] Erro no Handoff/CRM", err)
       }
     }
   }
