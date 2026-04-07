@@ -386,8 +386,8 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
       ) : (
         <>
           {/* KB selector + actions */}
-          <div className="flex items-center gap-2">
-            <div className="flex-1 flex gap-1 overflow-x-auto pb-1 scrollbar-none">
+          <div className="flex items-center gap-2 w-full">
+            <div className="flex-1 flex gap-1 overflow-x-auto pb-1 scrollbar-none min-w-0">
               {kbs.map(kb => (
                 <button
                   key={kb.id}
@@ -460,12 +460,13 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
       {selectedKb && (
         <div className="space-y-3">
           {/* KB header */}
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-start justify-between w-full gap-2">
+            <div className="flex-1 min-w-0">
               <h4 className="text-sm font-semibold flex items-center gap-2">
-                {selectedKb.icon} {selectedKb.name}
+                <span className="shrink-0">{selectedKb.icon}</span> 
+                <span className="truncate" title={selectedKb.name}>{selectedKb.name}</span>
                 {selectedKb.rag_restricted && (
-                  <Badge variant="outline" className="text-[10px] bg-violet-500/10 text-violet-400 border-violet-500/30">Restrito</Badge>
+                  <Badge variant="outline" className="shrink-0 text-[10px] bg-violet-500/10 text-violet-400 border-violet-500/30">Restrito</Badge>
                 )}
               </h4>
               <p className="text-xs text-muted-foreground mt-0.5">
