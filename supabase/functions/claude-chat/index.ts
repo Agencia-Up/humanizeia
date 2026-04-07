@@ -431,7 +431,7 @@ Deno.serve(async (req) => {
             const content = data.choices?.[0]?.message?.content || '';
             const lower = content.toLowerCase();
             if (lower.includes("sorry") || lower.includes("cannot fulfill") || lower.includes("can't assist") || lower.includes("cannot assist")) {
-              throw new Error("OpenAI Refusal Triggered");
+              return new Response(JSON.stringify({ error: "OpenAI: A imagem contém marcas ou rostos que a trava de segurança bloqueou. Envie uma foto genérica ou sem copyright aparente." }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
             }
             const compatResponse = {
               choices: [{ message: { role: 'assistant', content } }],
@@ -554,7 +554,7 @@ Deno.serve(async (req) => {
             const text = data.content?.filter((b: any) => b.type === 'text')?.map((b: any) => b.text)?.join('') || '';
             const lower = text.toLowerCase();
             if (lower.includes("sorry") || lower.includes("cannot fulfill") || lower.includes("can't assist") || lower.includes("cannot assist")) {
-              throw new Error("Anthropic Refusal Triggered");
+              return new Response(JSON.stringify({ error: "Anthropic: A imagem contém marcas ou rostos que a trava de segurança bloqueou." }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
             }
             return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: text } }], _provider: 'anthropic' }), {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -655,7 +655,7 @@ Deno.serve(async (req) => {
         const text = data.choices?.[0]?.message?.content || '';
         const lower = text.toLowerCase();
         if (lower.includes("sorry") || lower.includes("cannot fulfill") || lower.includes("can't assist") || lower.includes("cannot assist")) {
-            return new Response(JSON.stringify({ error: "Filtragem de IA: A imagem conteve elementos protegidos ou as IAs se recusaram. Tente enviar uma imagem diferente ou com menos elementos." }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            return new Response(JSON.stringify({ error: "Gemini: A imagem conteve elementos protegidos ou as IAs se recusaram. Tente enviar uma imagem diferente ou com menos elementos." }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
         return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
