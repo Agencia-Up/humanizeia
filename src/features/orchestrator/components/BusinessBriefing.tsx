@@ -106,7 +106,7 @@ const BusinessBriefing = () => {
             </Label>
             <Input 
               id="biz-name" 
-              placeholder="Ex: HumanizeIA Marketing" 
+              placeholder="Ex: LogosIA Marketing"
               className="bg-white/5 border-white/10"
               value={formData.business_name}
               onChange={(e) => setFormData({...formData, business_name: e.target.value})}
