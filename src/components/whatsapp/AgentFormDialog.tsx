@@ -16,6 +16,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
+import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
 
 interface Instance {
   id: string;
@@ -651,27 +652,38 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         </DialogHeader>
 
         <ScrollArea className="max-h-[65vh] pr-4">
-          <Tabs defaultValue="general" className="space-y-4">
-            <TabsList className="w-full">
-              <TabsTrigger value="general" className="flex-1 gap-1.5">
-                <Brain className="h-3.5 w-3.5" /> Geral
-              </TabsTrigger>
-              <TabsTrigger value="business" className="flex-1 gap-1.5 hidden sm:flex">
-                <Building2 className="h-3.5 w-3.5" /> Empresa
-              </TabsTrigger>
-              <TabsTrigger value="sdr" className="flex-1 gap-1.5">
-                <Target className="h-3.5 w-3.5" /> Funil SDR
-              </TabsTrigger>
-              <TabsTrigger value="settings" className="flex-1 gap-1.5 hidden sm:flex">
-                <Settings2 className="h-3.5 w-3.5" /> Modelo
-              </TabsTrigger>
-              <TabsTrigger value="knowledge" className="flex-1 gap-1.5">
-                <BookOpen className="h-3.5 w-3.5" /> Conhecimento
-              </TabsTrigger>
-              <TabsTrigger value="integrations" className="flex-1 gap-1.5">
-                <Webhook className="h-3.5 w-3.5" /> n8n
-              </TabsTrigger>
-            </TabsList>
+          <Tabs defaultValue="general" className="space-y-6">
+            <div className="w-full pb-4 border-b">
+              {/* Contêiner em grid/auto-wrap para garantir que as abas não cortem */}
+              <TabsList className="flex flex-wrap h-auto w-full items-center justify-start gap-1.5 bg-transparent p-0 border-none shadow-none">
+                <TabsTrigger value="general" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
+                  <Brain className="h-4 w-4" /> Geral
+                </TabsTrigger>
+                <TabsTrigger value="business" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
+                  <Building2 className="h-4 w-4" /> Empresa
+                </TabsTrigger>
+                <TabsTrigger value="sdr" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
+                  <Target className="h-4 w-4" /> SDR
+                </TabsTrigger>
+                <TabsTrigger value="settings" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
+                  <Settings2 className="h-4 w-4" /> Modelo
+                </TabsTrigger>
+                <TabsTrigger value="knowledge" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-purple-500/10 data-[state=active]:text-purple-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-purple-500/20">
+                  <BookOpen className="h-4 w-4" /> Base
+                </TabsTrigger>
+                <TabsTrigger value="equipe" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-blue-500/10 data-[state=active]:text-blue-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-blue-500/20">
+                  <UserCheck className="h-4 w-4" /> Vendedores
+                </TabsTrigger>
+                <TabsTrigger value="integrations" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-orange-500/10 data-[state=active]:text-orange-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-orange-500/20">
+                  <Webhook className="h-4 w-4" /> n8n
+                </TabsTrigger>
+              </TabsList>
+            </div>
+
+            {/* ── Tab: Vendedores (Repasse) ── */}
+            <TabsContent value="equipe" className="space-y-6 mt-0">
+               <AgentCrmEquipeTab agentId={agent?.id || null} userId={user?.id || ''} />
+            </TabsContent>
 
             {/* ── Tab: General ── */}
             <TabsContent value="general" className="space-y-6 mt-0">
