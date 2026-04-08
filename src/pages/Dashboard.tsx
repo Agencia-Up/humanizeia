@@ -1,170 +1,202 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { DashboardKPICard } from '@/components/dashboard/DashboardKPICard';
-import { TrendChart } from '@/components/dashboard/TrendChart';
-import { FunnelTable } from '@/components/dashboard/FunnelTable';
-import { DailySpendChart } from '@/components/dashboard/ChannelRevenueChart';
-import { CreativeAlertsWidget } from '@/components/dashboard/CreativeAlertsWidget';
-import { PerformanceSummary } from '@/components/dashboard/RevenueProjection';
-import { SpendDistributionChart } from '@/components/dashboard/SpendDistributionChart';
-import { EfficiencyScatterChart } from '@/components/dashboard/EfficiencyScatterChart';
-import { WeekdayHeatmap } from '@/components/dashboard/WeekdayHeatmap';
-import { AIInsightsCard } from '@/components/dashboard/AIInsightsCard';
-import { AnomalyAlertsWidget } from '@/components/dashboard/AnomalyAlertsWidget';
-import { AgentStatusWidget } from '@/components/dashboard/AgentStatusWidget';
-import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
 import { useMetaDashboard, MetaDatePreset } from '@/hooks/useMetaDashboard';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
 import { useAuth } from '@/hooks/useAuth';
-import { Sparkles, MessageCircle, Loader2, Plug, ShieldCheck, BarChart3, TrendingUp, ArrowRight } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MetaRefreshIndicator } from '@/components/dashboard/MetaRefreshIndicator';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import {
+  Sparkles, MessageCircle, Loader2, Plug, ArrowRight,
+  Target, PenTool, Palette, Send, Mail, Brain,
+  TrendingUp, TrendingDown, Minus, RefreshCw, Bot,
+  Megaphone, ChevronRight,
+} from 'lucide-react';
+
+/* ── Atalhos para os agentes ──────────────────────────────────── */
+const AGENTS = [
+  {
+    emoji: '👑', name: 'Salomão', role: 'Ponto de partida',
+    desc: 'Treine seus agentes com informações do seu negócio',
+    url: '/salomao', color: 'border-yellow-500/30 hover:border-yellow-400/60',
+    badge: 'bg-yellow-500/10 text-yellow-400',
+  },
+  {
+    emoji: '🎯', name: 'José', role: 'Anúncios',
+    desc: 'Veja o desempenho das suas campanhas de anúncios',
+    url: '/jose', color: 'border-blue-500/30 hover:border-blue-400/60',
+    badge: 'bg-blue-500/10 text-blue-400',
+  },
+  {
+    emoji: '✍️', name: 'Paulo', role: 'Textos e anúncios',
+    desc: 'Crie textos persuasivos para vender mais',
+    url: '/copywriter', color: 'border-violet-500/30 hover:border-violet-400/60',
+    badge: 'bg-violet-500/10 text-violet-400',
+  },
+  {
+    emoji: '🎨', name: 'Maria', role: 'Imagens e artes',
+    desc: 'Gere imagens e criativos para suas campanhas',
+    url: '/creative-studio', color: 'border-pink-500/30 hover:border-pink-400/60',
+    badge: 'bg-pink-500/10 text-pink-400',
+  },
+  {
+    emoji: '📱', name: 'Davi', role: 'Redes sociais',
+    desc: 'Crie posts e legendas para Instagram e Facebook',
+    url: '/davi', color: 'border-cyan-500/30 hover:border-cyan-400/60',
+    badge: 'bg-cyan-500/10 text-cyan-400',
+  },
+  {
+    emoji: '📧', name: 'João', role: 'E-mail marketing',
+    desc: 'Monte sequências de e-mails para seus clientes',
+    url: '/joao', color: 'border-emerald-500/30 hover:border-emerald-400/60',
+    badge: 'bg-emerald-500/10 text-emerald-400',
+  },
+  {
+    emoji: '🧠', name: 'Daniel', role: 'Estratégia',
+    desc: 'Monte um plano de marketing para o seu negócio',
+    url: '/daniel', color: 'border-indigo-500/30 hover:border-indigo-400/60',
+    badge: 'bg-indigo-500/10 text-indigo-400',
+  },
+  {
+    emoji: '💬', name: 'Pedro', role: 'Atendimento',
+    desc: 'Configure respostas automáticas no WhatsApp',
+    url: '/whatsapp/ai-agent', color: 'border-teal-500/30 hover:border-teal-400/60',
+    badge: 'bg-teal-500/10 text-teal-400',
+  },
+];
+
+/* ── Traduz valores de tendência para linguagem simples ─────────── */
+function TrendBadge({ delta }: { delta?: number }) {
+  if (delta === undefined || delta === null) return null;
+  if (delta > 5) return (
+    <span className="flex items-center gap-0.5 text-xs font-medium text-green-400">
+      <TrendingUp className="h-3 w-3" /> subindo
+    </span>
+  );
+  if (delta < -5) return (
+    <span className="flex items-center gap-0.5 text-xs font-medium text-red-400">
+      <TrendingDown className="h-3 w-3" /> caindo
+    </span>
+  );
+  return (
+    <span className="flex items-center gap-0.5 text-xs font-medium text-muted-foreground">
+      <Minus className="h-3 w-3" /> estável
+    </span>
+  );
+}
 
 export default function Dashboard() {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
-  const [dateRange, setDateRange] = useState<MetaDatePreset>('last_7d');
-  const [isSending, setIsSending] = useState(false);
-  const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
+  const firstName = user?.user_metadata?.full_name?.split(' ')[0]
+    || user?.email?.split('@')[0]
+    || 'Usuário';
 
-  const { connectedAccount, connectedAccounts, selectConnectedAccount } = useMetaConnection();
+  const [isSending, setIsSending] = useState(false);
+  const [isRefreshingManual, setIsRefreshingManual] = useState(false);
+
+  const { connectedAccount } = useMetaConnection();
 
   const {
-    isConnected, isLoading, kpis, trendData, campaignData,
-    dailySpendData, bestCreatives, worstCreatives, performanceSummary,
-    anomalies,
-    isTrendLoading, isCampaignLoading, isAdLoading, isSpendLoading,
+    isConnected, isLoading, kpis, anomalies,
     isRefreshing, lastUpdated, refreshAll,
-  } = useMetaDashboard(dateRange, connectedAccount?.account_id, connectedAccount?.currency ?? undefined);
+    performanceSummary,
+  } = useMetaDashboard('last_7d', connectedAccount?.account_id, connectedAccount?.currency ?? undefined);
 
   const { processAnomalies } = useCampaignNotifications();
 
-  // Trigger toast notifications when anomalies are detected
   useEffect(() => {
-    if (anomalies.length > 0) {
-      processAnomalies(anomalies);
-    }
+    if (anomalies.length > 0) processAnomalies(anomalies);
   }, [anomalies, processAnomalies]);
 
+  const currencySymbol = connectedAccount?.currency === 'USD' ? 'US$' : 'R$';
+
+  /* ── Extrai KPIs chave em linguagem humana ── */
+  const spend   = kpis.find(k => k.id === 'gasto')?.value || 0;
+  const clicks  = kpis.find(k => k.id === 'cliques')?.value || 0;
+  const ctr     = kpis.find(k => k.id === 'ctr')?.value || 0;
+  const cpc     = kpis.find(k => k.id === 'cpc')?.value || 0;
+  const reach   = performanceSummary?.totalReach || 0;
+
+  /* ── Saúde geral (simples) ── */
+  const healthScore = anomalies.length === 0 ? 'good' : anomalies.some(a => a.severity === 'high') ? 'bad' : 'warn';
+  const healthConfig = {
+    good: { label: 'Tudo funcionando bem', color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20', dot: 'bg-green-400', emoji: '🟢' },
+    warn: { label: 'Há pontos de atenção', color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20', dot: 'bg-yellow-400', emoji: '🟡' },
+    bad:  { label: 'Precisa de atenção agora', color: 'text-red-400',    bg: 'bg-red-500/10 border-red-500/20',    dot: 'bg-red-400',    emoji: '🔴' },
+  }[healthScore];
+
+  /* ── Enviar relatório WhatsApp ── */
   const handleSendWhatsApp = async () => {
     setIsSending(true);
     try {
-      const spend = kpis.find(k => k.id === 'gasto')?.value || 0;
-      const impressions = kpis.find(k => k.id === 'impressoes')?.value || 0;
-      const clicks = kpis.find(k => k.id === 'cliques')?.value || 0;
-      const ctr = kpis.find(k => k.id === 'ctr')?.value || 0;
-      const cpc = kpis.find(k => k.id === 'cpc')?.value || 0;
-
-      const currencySymbol = connectedAccount?.currency === 'USD' ? 'US$' : 'R$';
-      const reportContent = `📊 *RELATÓRIO META ADS*\n\n💰 *MÉTRICAS*\n\nInvestimento: ${currencySymbol} ${spend.toLocaleString('pt-BR')}\nImpressões: ${impressions.toLocaleString('pt-BR')}\nCliques: ${clicks.toLocaleString('pt-BR')}\nCTR: ${ctr.toFixed(2)}%\nCPC: ${currencySymbol} ${cpc.toFixed(2)}\nAlcance: ${(performanceSummary?.totalReach || 0).toLocaleString('pt-BR')}\nCPM: ${currencySymbol} ${(performanceSummary?.avgCPM || 0).toFixed(2)}\n\n✅ Relatório gerado por LogosIA`;
-
+      const reportContent = `📊 *Relatório da semana*\n\n💰 Investimento: ${currencySymbol} ${spend.toLocaleString('pt-BR')}\n👁️ Pessoas alcançadas: ${reach.toLocaleString('pt-BR')}\n🖱️ Cliques: ${clicks.toLocaleString('pt-BR')}\n📈 Taxa de cliques: ${ctr.toFixed(2)}%\n💵 Custo por clique: ${currencySymbol} ${cpc.toFixed(2)}\n\n✅ Gerado por LogosIA`;
       const { data, error } = await supabase.functions.invoke('send-whatsapp-report', {
         body: { action: 'send_report', reportContent },
       });
-
       if (error) throw error;
       if (data?.success) {
         toast({ title: 'Relatório enviado! 🎉', description: 'Confira seu WhatsApp.' });
       } else {
-        throw new Error(data?.error || 'Falha ao enviar relatório');
+        throw new Error(data?.error || 'Falha ao enviar');
       }
     } catch (err: any) {
-      console.error('Error sending WhatsApp report:', err);
-      toast({
-        title: 'Erro ao enviar',
-        description: err.message || 'Verifique a configuração em Settings > WhatsApp.',
-        variant: 'destructive',
-      });
+      toast({ title: 'Erro ao enviar', description: 'Verifique se o WhatsApp está conectado.', variant: 'destructive' });
     } finally {
       setIsSending(false);
     }
   };
 
-  // Empty State
+  const handleRefresh = async () => {
+    setIsRefreshingManual(true);
+    await refreshAll();
+    setIsRefreshingManual(false);
+  };
+
+  /* ═══ TELA SEM CONTA CONECTADA ════════════════════════════════ */
   if (!isConnected && !isLoading) {
     return (
       <MainLayout>
-        <div className="flex flex-1 items-center justify-center py-10">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-lg"
-          >
-            <Card className="border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden">
-              {/* Decorative top gradient */}
-              <div className="h-2 w-full gradient-primary" />
+        <div className="flex flex-1 items-center justify-center py-10 px-4">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
+            <Card className="border-border/50 bg-card/80 overflow-hidden">
+              <div className="h-1.5 w-full bg-gradient-to-r from-primary to-yellow-500" />
               <CardContent className="flex flex-col items-center gap-6 p-8 text-center">
-                {/* Illustration */}
-                <div className="relative">
-                  <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-primary/10">
-                    <BarChart3 className="h-12 w-12 text-primary" />
-                  </div>
-                  <motion.div
-                    animate={{ y: [0, -5, 0] }}
-                    transition={{ repeat: Infinity, duration: 2 }}
-                    className="absolute -right-2 -top-2 flex h-10 w-10 items-center justify-center rounded-full bg-warning/20"
-                  >
-                    <TrendingUp className="h-5 w-5 text-warning" />
-                  </motion.div>
+                <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 text-4xl">
+                  📊
                 </div>
-
-                <div className="space-y-2">
-                  <h2 className="text-2xl font-bold text-foreground">
-                    Seus dados estão esperando! 📊
-                  </h2>
+                <div>
+                  <h2 className="text-2xl font-bold mb-2">Olá, {firstName}! 👋</h2>
                   <p className="text-muted-foreground leading-relaxed">
-                    Conecte sua conta de anúncios para ver seus resultados em tempo real, 
-                    com gráficos, métricas e dicas da nossa IA.
+                    Para ver seus resultados aqui, você precisa conectar sua conta de anúncios do Meta (Facebook/Instagram).
+                    É rápido e seguro!
                   </p>
                 </div>
-
-                {/* Benefits */}
-                <div className="w-full space-y-2">
+                <div className="w-full space-y-3 text-left">
                   {[
-                    { icon: BarChart3, text: 'Métricas atualizadas automaticamente' },
-                    { icon: Sparkles, text: 'Insights inteligentes com IA' },
-                    { icon: ShieldCheck, text: 'Seus dados 100% seguros' },
-                  ].map((item, i) => (
-                    <div key={i} className="flex items-center gap-3 rounded-lg bg-muted/50 p-3 text-left">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                        <item.icon className="h-4 w-4 text-primary" />
-                      </div>
-                      <span className="text-sm text-foreground">{item.text}</span>
+                    { emoji: '⚡', text: 'Leva menos de 2 minutos' },
+                    { emoji: '🔒', text: 'Seus dados ficam 100% seguros' },
+                    { emoji: '📈', text: 'Você vê tudo num só lugar' },
+                  ].map(item => (
+                    <div key={item.text} className="flex items-center gap-3 rounded-xl bg-muted/40 px-4 py-3">
+                      <span className="text-xl">{item.emoji}</span>
+                      <span className="text-sm font-medium">{item.text}</span>
                     </div>
                   ))}
                 </div>
-
-                <div className="flex w-full flex-col gap-2 sm:flex-row">
-                  <Button
-                    onClick={() => navigate('/connect-accounts')}
-                    className="flex-1 gradient-primary text-primary-foreground h-12 text-base"
-                  >
-                    <Plug className="mr-2 h-5 w-5" />
-                    Conectar minha conta
-                  </Button>
-                  <Button
-                    onClick={() => navigate('/settings')}
-                    variant="outline"
-                    className="flex-1"
-                  >
-                    Configurações
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
-                </div>
-
-                <p className="text-xs text-muted-foreground">
-                  ✦ Leva menos de 2 minutos para configurar ✦
-                </p>
+                <Button onClick={() => navigate('/connect-accounts')} className="w-full h-12 text-base bg-primary hover:bg-primary/90">
+                  <Plug className="mr-2 h-5 w-5" />
+                  Conectar minha conta de anúncios
+                </Button>
+                <button onClick={() => navigate('/salomao')} className="text-sm text-muted-foreground hover:text-primary transition-colors underline underline-offset-4">
+                  Quero primeiro treinar meus agentes
+                </button>
               </CardContent>
             </Card>
           </motion.div>
@@ -173,143 +205,187 @@ export default function Dashboard() {
     );
   }
 
-  const defaultInsights = [
-    { id: '1', type: 'opportunity' as const, title: 'Análise de Performance Disponível', description: 'Clique no botão de atualizar para gerar insights automáticos com IA sobre suas campanhas.', impact: 'Recomendado' },
-    { id: '2', type: 'info' as const, title: 'Otimização de Orçamento', description: 'A IA analisa a distribuição do seu investimento e sugere realocações para maximizar resultados.' },
-    { id: '3', type: 'warning' as const, title: 'Monitoramento Contínuo', description: 'Insights são gerados com base nos últimos 7 dias de dados da sua conta Meta Ads.', impact: 'Automático' },
-    { id: '4', type: 'success' as const, title: 'Benchmarks do Setor', description: 'Compare seus KPIs com médias do mercado e identifique oportunidades de crescimento.' },
-  ];
-
+  /* ═══ DASHBOARD PRINCIPAL ══════════════════════════════════════ */
   return (
     <MainLayout>
-      <div className="space-y-8">
-        {/* Header — elegant greeting */}
-        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1.5">
-            <h1 className="text-3xl font-bold lg:text-4xl tracking-tight">
-              Oi, <span className="gradient-text">{firstName}</span>! 👋
-            </h1>
-            <p className="flex items-center gap-2 text-sm text-muted-foreground/80">
-              <Sparkles className="h-4 w-4 text-primary" />
-              Acompanhe seus resultados em tempo real
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* ── Modo Simplificado / Especialista ── */}
-            <div className="flex h-9 overflow-hidden rounded-xl border border-border/60 bg-muted/30 text-xs">
-              <button
-                onClick={() => setViewMode('simplified')}
-                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'simplified' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                📊 Simplificado
-              </button>
-              <button
-                onClick={() => setViewMode('expert')}
-                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'expert' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                ⚙️ Especialista
-              </button>
+      <div className="space-y-8 max-w-5xl mx-auto">
+
+        {/* ── Saudação ─────────────────────────────────────────── */}
+        <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }}>
+          <h1 className="text-2xl md:text-3xl font-bold">
+            Oi, <span className="bg-gradient-to-r from-primary to-yellow-400 bg-clip-text text-transparent">{firstName}</span>! 👋
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Aqui está um resumo do que está acontecendo com seus anúncios esta semana.
+          </p>
+        </motion.div>
+
+        {/* ── Status geral ─────────────────────────────────────── */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+          <div className={`rounded-2xl border p-4 flex items-center justify-between gap-4 ${healthConfig.bg}`}>
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">{healthConfig.emoji}</span>
+              <div>
+                <p className={`font-semibold ${healthConfig.color}`}>{healthConfig.label}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {anomalies.length === 0
+                    ? 'Nenhum problema detectado nas suas campanhas'
+                    : `${anomalies.length} ponto(s) de atenção detectado(s) pelo JOSÉ`}
+                </p>
+              </div>
             </div>
-            {connectedAccounts.length > 1 && (
-              <Select
-                value={connectedAccount?.id || ''}
-                onValueChange={(id) => selectConnectedAccount(id)}
-              >
-                <SelectTrigger className="h-9 min-w-[160px] max-w-[220px] text-xs rounded-xl border-border/40 bg-card/50 backdrop-blur-sm">
-                  <SelectValue placeholder="Selecionar conta" />
-                </SelectTrigger>
-                <SelectContent>
-                  {connectedAccounts.map((account) => (
-                    <SelectItem key={account.id} value={account.id}>
-                      <span className="flex items-center gap-1.5">
-                        <span className="truncate max-w-[130px]">{account.account_name}</span>
-                        <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground">
-                          {account.currency || 'BRL'}
-                        </span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {anomalies.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => navigate('/jose')} className="shrink-0 text-xs h-8">
+                Ver detalhes <ChevronRight className="h-3 w-3 ml-1" />
+              </Button>
             )}
-            <MetaRefreshIndicator
-              isRefreshing={isRefreshing}
-              lastUpdated={lastUpdated}
-              onRefresh={refreshAll}
-            />
-            <DateRangeFilter value={dateRange} onChange={setDateRange} />
-            <Button onClick={handleSendWhatsApp} disabled={isSending} size="sm"
-              className="h-9 gap-1.5 rounded-xl bg-success hover:bg-success/90 text-success-foreground shadow-sm">
+          </div>
+        </motion.div>
+
+        {/* ── Números da semana ────────────────────────────────── */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-base font-semibold">Resultados desta semana</h2>
+              <p className="text-xs text-muted-foreground">Últimos 7 dias dos seus anúncios</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing || isRefreshingManual}
+                className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-card/50 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3 w-3 ${(isRefreshing || isRefreshingManual) ? 'animate-spin' : ''}`} />
+                Atualizar
+              </button>
+              {lastUpdated && (
+                <span className="text-[10px] text-muted-foreground/60 hidden sm:inline">
+                  Atualizado {new Date(lastUpdated).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {isLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-28 rounded-2xl bg-muted/40 animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                {
+                  emoji: '💰',
+                  label: 'Quanto você investiu',
+                  value: `${currencySymbol} ${spend.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                  hint: 'Total gasto em anúncios',
+                  delta: kpis.find(k => k.id === 'gasto')?.change,
+                },
+                {
+                  emoji: '👁️',
+                  label: 'Pessoas alcançadas',
+                  value: reach >= 1000 ? `${(reach / 1000).toFixed(1)}k` : reach.toLocaleString('pt-BR'),
+                  hint: 'Viram seu anúncio',
+                  delta: undefined,
+                },
+                {
+                  emoji: '🖱️',
+                  label: 'Cliques recebidos',
+                  value: clicks.toLocaleString('pt-BR'),
+                  hint: 'Pessoas que clicaram',
+                  delta: kpis.find(k => k.id === 'cliques')?.change,
+                },
+                {
+                  emoji: '💵',
+                  label: 'Custo por clique',
+                  value: `${currencySymbol} ${cpc.toFixed(2)}`,
+                  hint: 'Quanto pagou por clique',
+                  delta: kpis.find(k => k.id === 'cpc')?.change !== undefined ? -(kpis.find(k => k.id === 'cpc')?.change ?? 0) : undefined,
+                },
+              ].map((card, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.12 + i * 0.05 }}
+                  className="rounded-2xl border border-border/50 bg-card/60 p-4 flex flex-col gap-2 hover:border-primary/30 transition-colors"
+                >
+                  <span className="text-2xl">{card.emoji}</span>
+                  <div>
+                    <p className="text-[11px] text-muted-foreground leading-tight">{card.label}</p>
+                    <p className="text-xl font-bold mt-0.5 leading-tight">{card.value}</p>
+                  </div>
+                  <TrendBadge delta={card.delta} />
+                </motion.div>
+              ))}
+            </div>
+          )}
+
+          {/* Botão enviar WhatsApp */}
+          <div className="mt-4 flex justify-end">
+            <Button
+              onClick={handleSendWhatsApp}
+              disabled={isSending || isLoading || !spend}
+              size="sm"
+              className="h-9 gap-2 bg-green-600 hover:bg-green-700 text-white rounded-xl"
+            >
               {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
-              <span className="hidden sm:inline">Enviar WhatsApp</span>
+              Receber resumo no WhatsApp
             </Button>
           </div>
         </motion.div>
 
-        {/* ── KPI Cards ── Simplificado: 4 principais | Especialista: todos ── */}
-        <div data-tour="kpi-cards" className={`grid gap-4 ${viewMode === 'simplified' ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2 md:grid-cols-4'}`}>
-          {isLoading ? (
-            Array.from({ length: viewMode === 'simplified' ? 4 : 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-[120px] rounded-xl" />
-            ))
-          ) : (
-            (viewMode === 'simplified' ? kpis.slice(0, 4) : kpis).map((kpi, index) => (
-              <DashboardKPICard key={kpi.id} kpi={kpi} index={index} />
-            ))
-          )}
-        </div>
+        {/* ── O que você quer fazer hoje? ──────────────────────── */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+          <h2 className="text-base font-semibold mb-1">O que você quer fazer hoje?</h2>
+          <p className="text-xs text-muted-foreground mb-4">Escolha um agente e comece agora</p>
 
-        {/* ── Modo Simplificado: Gráfico de tendência + Insights ── */}
-        {viewMode === 'simplified' && (
-          <div className="grid gap-6 lg:grid-cols-3">
-            <div className="lg:col-span-2">
-              <TrendChart data={trendData} isLoading={isTrendLoading} />
-            </div>
-            <div className="flex flex-col gap-4">
-              <AIInsightsCard insights={defaultInsights} />
-              {/* CTA para modo especialista */}
-              <div className="rounded-xl border border-border/50 bg-card/50 p-4 text-center space-y-2">
-                <p className="text-sm font-medium text-foreground">Quer ver mais detalhes?</p>
-                <p className="text-xs text-muted-foreground">Gráficos avançados, mapa de calor, criativos e muito mais.</p>
-                <button
-                  onClick={() => setViewMode('expert')}
-                  className="mt-1 w-full rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors"
-                >
-                  ⚙️ Ver análise completa
-                </button>
-              </div>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {AGENTS.map((agent, i) => (
+              <motion.button
+                key={agent.name}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.22 + i * 0.04 }}
+                onClick={() => navigate(agent.url)}
+                className={`group rounded-2xl border bg-card/60 p-4 text-left hover:bg-card/80 transition-all hover:shadow-md ${agent.color}`}
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <span className="text-2xl">{agent.emoji}</span>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors mt-0.5" />
+                </div>
+                <p className="font-semibold text-sm leading-tight">{agent.name}</p>
+                <p className={`text-[10px] font-medium mt-0.5 mb-2 ${agent.badge.split(' ')[1]}`}>{agent.role}</p>
+                <p className="text-xs text-muted-foreground leading-snug">{agent.desc}</p>
+              </motion.button>
+            ))}
           </div>
-        )}
+        </motion.div>
 
-        {/* ── Modo Especialista: todos os widgets avançados ── */}
-        {viewMode === 'expert' && (
-          <>
-            <AnomalyAlertsWidget anomalies={anomalies} />
-
-            {performanceSummary && (
-              <PerformanceSummary {...performanceSummary} />
-            )}
-
-            <TrendChart data={trendData} isLoading={isTrendLoading} />
-
-            <div className="grid gap-6 lg:grid-cols-2">
-              <SpendDistributionChart data={campaignData} isLoading={isCampaignLoading} />
-              <EfficiencyScatterChart data={campaignData} isLoading={isCampaignLoading} />
+        {/* ── Dica rápida ──────────────────────────────────────── */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+          <div className="rounded-2xl border border-primary/20 bg-primary/5 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-2xl">
+              💡
             </div>
-
-            <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
-              <WeekdayHeatmap data={trendData} isLoading={isTrendLoading} />
-              <AIInsightsCard insights={defaultInsights} />
-              <AgentStatusWidget />
+            <div className="flex-1">
+              <p className="font-semibold text-sm">Dica: comece pelo Salomão</p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Antes de usar qualquer agente, treine o Salomão com informações do seu negócio. Assim todos os agentes vão falar com a voz e o estilo da sua empresa.
+              </p>
             </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate('/salomao')}
+              className="shrink-0 border-primary/30 hover:bg-primary/10 text-primary text-xs"
+            >
+              Treinar agora <ArrowRight className="h-3 w-3 ml-1" />
+            </Button>
+          </div>
+        </motion.div>
 
-            <FunnelTable data={campaignData} isLoading={isCampaignLoading} />
-            <DailySpendChart data={dailySpendData} isLoading={isSpendLoading} />
-            <CreativeAlertsWidget bestCreatives={bestCreatives} worstCreatives={worstCreatives} isLoading={isAdLoading} />
-          </>
-        )}
       </div>
     </MainLayout>
   );
