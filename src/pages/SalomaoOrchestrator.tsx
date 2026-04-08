@@ -34,7 +34,6 @@ const AGENTS = [
   { id: 'davi', name: 'DAVI', role: 'Social Media', icon: Send, description: 'Cria calendário editorial, escreve legendas e publica automaticamente no melhor horário.', status: 'active', color: 'text-pink-400', bg: 'bg-pink-500/10 border-pink-500/20', url: '/davi' },
   { id: 'lucas', name: 'LUCAS', role: 'Gestor de Funil', icon: Layers, description: 'Mapeia e otimiza toda a jornada do cliente: anúncio → landing page → checkout → retenção.', status: 'coming', color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20', url: null },
   { id: 'joao', name: 'JOÃO', role: 'Email Marketing', icon: Megaphone, description: 'Cria sequências de nutrição, segmenta listas e envia campanhas no timing certo.', status: 'active', color: 'text-indigo-400', bg: 'bg-indigo-500/10 border-indigo-500/20', url: '/joao' },
-  { id: 'marcos', name: 'MARCOS', role: 'Gestor de Leads', icon: Users, description: 'Gerencia leads, funil de vendas e conversões. Mini-CRM integrado com WhatsApp.', status: 'active', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-400/20', url: '/leads' },
   { id: 'pedro', name: 'PEDRO', role: 'SDR & Atendimento', icon: Bot, description: 'Qualifica leads, agenda reuniões e responde clientes 24/7 via WhatsApp com inteligência humana.', status: 'active', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-500/20', url: '/whatsapp/ai-agent' },
 ];
 
@@ -462,7 +461,6 @@ export default function SalomaoOrchestrator() {
                       { color: 'text-cyan-400', name: '├── DANIEL', role: 'Estratégia' },
                       { color: 'text-pink-400', name: '├── DAVI', role: 'Social' },
                       { color: 'text-indigo-400', name: '├── JOÃO', role: 'Email' },
-                      { color: 'text-teal-400', name: '├── MARCOS', role: 'Leads' },
                       { color: 'text-teal-400', name: '└── PEDRO', role: 'SDR' },
                     ].map(a => (
                       <div key={a.name} className="space-y-0.5 border border-white/5 p-2 rounded bg-white/5">

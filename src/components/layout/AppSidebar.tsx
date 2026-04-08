@@ -20,7 +20,6 @@ import {
   Smartphone,
   Activity,
   Radar,
-  Users,
   Instagram,
   CreditCard,
   Kanban,
@@ -61,7 +60,7 @@ const dashboardItems = [
   { title: 'Relatórios', url: '/reports', icon: ClipboardList },
 ];
 
-// 🤖 Agentes IA — Pedro incluído
+// 🤖 Agentes IA
 const agentItems = [
   { title: 'Salomão — Orquestrador', url: '/salomao', icon: Sparkles },
   { title: 'Daniel — Estrategista', url: '/daniel', icon: Brain },
@@ -70,11 +69,10 @@ const agentItems = [
   { title: 'Davi — Social Media', url: '/davi', icon: Instagram },
   { title: 'João — Email Mkt', url: '/joao', icon: Send },
   { title: 'José — Tráfego Pago', url: '/jose', icon: Radar },
-  { title: 'Marcos — Leads & CRM', url: '/leads', icon: Users },
   { title: 'Pedro — Atendimento IA', url: '/whatsapp/ai-agent', icon: Bot },
 ];
 
-// 💬 WhatsApp & CRM — sem duplicata de /leads, Pedro no grupo Agentes
+// 💬 WhatsApp & CRM
 const whatsappItems = [
   { title: 'CRM — Pipeline', url: '/crm', icon: Kanban },
   { title: 'Instâncias', url: '/whatsapp/instances', icon: Smartphone },

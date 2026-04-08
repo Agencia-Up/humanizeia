@@ -81,20 +81,7 @@ const tourSteps: Step[] = [
       tip: 'Experimente gerar um criativo agora! Basta descrever o que precisa.',
     },
   },
-  // 6 — MARCOS
-  {
-    target: '[data-tour="sidebar-agents"] a[href="/leads"]',
-    placement: 'right',
-    disableBeacon: true,
-    content: '',
-    data: {
-      emoji: '👥',
-      title: 'MARCOS — Gestão de Leads',
-      body: 'Marcos cuida do seu CRM inteligente. Ele organiza leads, acompanha o funil de vendas, qualifica contatos automaticamente e ajuda a converter mais oportunidades em clientes.',
-      tip: 'Importe seus contatos ou conecte formulários para começar.',
-    },
-  },
-  // 7 — Dashboard KPIs
+  // 6 — Dashboard KPIs
   {
     target: '[data-tour="kpi-cards"]',
     placement: 'bottom',
