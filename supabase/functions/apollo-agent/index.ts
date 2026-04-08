@@ -330,12 +330,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Claude AI Analysis ──
+    // ── AI Analysis (OpenAI GPT-4o com fallback Anthropic) ──
+    const OPENAI_KEY    = Deno.env.get("OPENAI_API_KEY");
     const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    const AI_KEY        = OPENAI_KEY || ANTHROPIC_KEY;
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
-    if (ANTHROPIC_KEY && enriched.length > 0) {
-      aiResult = await runApolloAI(ANTHROPIC_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext);
+    if (AI_KEY && enriched.length > 0) {
+      aiResult = await runApolloAI(AI_KEY, !!OPENAI_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext);
     }
 
     // ── Validate & fix campaign IDs in actions (AI sometimes returns slugs instead of numeric IDs) ──
@@ -839,10 +841,10 @@ function detectPortfolioOpportunities(enriched: any[], currencySymbol: string): 
   return insights.join("\n");
 }
 
-// ── Claude AI Analysis ────────────────────────────────────────────────────────
+// ── AI Analysis (OpenAI GPT-4o / Anthropic fallback) ─────────────────────────
 
 async function runApolloAI(
-  apiKey: string, campaigns: any[], currency: string, currencySymbol: string,
+  apiKey: string, useOpenAI: boolean, campaigns: any[], currency: string, currencySymbol: string,
   datePreset: string, trendContext: string, learningContext: string,
   seasonalContext: string, portfolioContext: string
 ) {
@@ -951,33 +953,57 @@ Responda EXCLUSIVAMENTE em JSON válido:
   ]
 }`;
 
+  const userMessage = `Analise estas ${campaigns.length} campanhas (período: ${periodLabel[datePreset] || datePreset}):\n\n${campaignSummary}\n\nGere análise profunda NÍVEL 6 considerando: histórico WoW, aprendizado acumulado, fadiga criativa, sazonalidade e oportunidades de portfólio.`;
+
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-3-5-sonnet-20241022",
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [{
-          role: "user",
-          content: `Analise estas ${campaigns.length} campanhas (período: ${periodLabel[datePreset] || datePreset}):\n\n${campaignSummary}\n\nGere análise profunda NÍVEL 6 considerando: histórico WoW, aprendizado acumulado, fadiga criativa, sazonalidade e oportunidades de portfólio.`
-        }]
-      }),
-    });
+    let res: Response;
+
+    if (useOpenAI) {
+      // ── OpenAI GPT-4o ──
+      res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          max_tokens: 4000,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user",   content: userMessage },
+          ],
+        }),
+      });
+    } else {
+      // ── Anthropic Claude 3.5 Sonnet (fallback) ──
+      res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-3-5-sonnet-20241022",
+          max_tokens: 4000,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userMessage }],
+        }),
+      });
+    }
 
     if (!res.ok) {
       const errText = await res.text();
-      console.error("[apollo-agent] Claude error:", res.status, errText);
+      console.error("[apollo-agent] AI error:", res.status, errText);
       return { analysis: null, actions: [], health_score: null, summary: null };
     }
 
     const data = await res.json();
-    const content = data.content?.[0]?.text || "";
+    // OpenAI: choices[0].message.content  |  Anthropic: content[0].text
+    const content = useOpenAI
+      ? (data.choices?.[0]?.message?.content || "")
+      : (data.content?.[0]?.text || "");
 
     try {
       const parsed = JSON.parse(content.trim());
@@ -1003,7 +1029,7 @@ Responda EXCLUSIVAMENTE em JSON válido:
       return { analysis: content, actions: [], health_score: null, summary: null };
     }
   } catch (err: any) {
-    console.error("[apollo-agent] Claude call error:", err);
+    console.error("[apollo-agent] AI call error:", err);
     return { analysis: null, actions: [], health_score: null, summary: null };
   }
 }
