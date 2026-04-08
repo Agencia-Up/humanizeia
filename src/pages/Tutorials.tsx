@@ -1,7 +1,7 @@
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { GraduationCap, Play, Clock, Sparkles, Radar, PenTool, Palette, Send, Bot, Layers, BookOpen, ArrowRight } from 'lucide-react';
+import { GraduationCap, Play, Clock, Sparkles, Radar, PenTool, Palette, Send, Bot, BookOpen, ArrowRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 
@@ -12,7 +12,6 @@ const tutorials = [
   { title: 'Criando Artes com IA (Maria)', desc: 'Gere imagens e criativos profissionais.', icon: Palette, duration: '8 min', category: 'Design', color: '#f472b6' },
   { title: 'Social Media com Davi', desc: 'Planeje e publique conteúdo nas redes.', icon: Send, duration: '6 min', category: 'Social', color: '#60a5fa' },
   { title: 'Funil WhatsApp (Pedro)', desc: 'Configure automações e atendimento com IA.', icon: Bot, duration: '12 min', category: 'WhatsApp', color: '#34d399' },
-  { title: 'CRM e Gestão de Leads (Lucas)', desc: 'Organize seus leads e funis de vendas.', icon: Layers, duration: '9 min', category: 'CRM', color: '#fb923c' },
   { title: 'Dashboard de Métricas', desc: 'Interprete seus KPIs e tome decisões inteligentes.', icon: GraduationCap, duration: '8 min', category: 'Analytics', color: '#a78bfa' },
 ];
 
