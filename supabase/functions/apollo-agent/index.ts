@@ -31,21 +31,39 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
-    }
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const token = authHeader.replace("Bearer ", "");
 
     const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      serviceKey
     );
+
+    // ── Detect cron call (jose-cron-runner passes service role key + x-apollo-cron header) ──
+    const isCronCall = req.headers.get("x-apollo-cron") === "true";
+    const cronUserId = req.headers.get("x-user-id");
+
+    let userId: string;
+
+    if (isCronCall && cronUserId && token === serviceKey) {
+      // Cron call — trust x-user-id header (validated by service role key match)
+      userId = cronUserId;
+    } else {
+      // Normal user call — validate JWT
+      const supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_ANON_KEY")!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      }
+      userId = user.id;
+    }
+
+    // Expose as user object for backward compat with rest of code
+    const user = { id: userId };
 
     const body = await req.json().catch(() => ({}));
     const {
@@ -1124,51 +1142,61 @@ async function scheduleOutcomeChecks(admin: any, userId: string, executionLog: a
 // ── WhatsApp notifications ────────────────────────────────────────────────────
 
 async function sendCriticalWhatsApp(admin: any, userId: string, aiResult: any, enriched: any[], currencySymbol: string) {
-  const { data: waCfg } = await admin
-    .from("whatsapp_config")
-    .select("*")
+  // Busca instância WhatsApp ativa do usuário (wa_instances = Evolution API)
+  const { data: instance } = await admin
+    .from("wa_instances")
+    .select("api_url, instance_name, api_key_encrypted")
     .eq("user_id", userId)
-    .eq("is_active", true)
+    .eq("status", "connected")
+    .order("created_at", { ascending: false })
+    .limit(1)
     .single();
 
-  if (!waCfg?.phone_number || !waCfg?.api_url) return;
+  if (!instance?.api_url || !instance?.instance_name) return;
 
+  // Busca número destino e preferências do cron config
   const { data: cronCfg } = await admin
     .from("apollo_cron_config")
-    .select("send_whatsapp_on_critical")
+    .select("send_whatsapp_on_critical, whatsapp_report_number")
     .eq("user_id", userId)
     .single();
 
-  if (cronCfg && !cronCfg.send_whatsapp_on_critical) return;
+  if (!cronCfg?.send_whatsapp_on_critical) return;
+  if (!cronCfg?.whatsapp_report_number) return;
+
+  const destPhone = cronCfg.whatsapp_report_number.replace(/\D/g, '');
+  if (destPhone.length < 10) return;
+  const intlPhone = destPhone.startsWith('55') ? destPhone : `55${destPhone}`;
 
   const criticals = (aiResult.actions || []).filter((a: any) => a.priority === "critical");
   const score = aiResult.health_score;
 
   const lines = [
-    `🔴 *Apollo — Alerta Crítico*`,
+    `🔴 *JOSÉ — Alerta Crítico*`,
     `📊 Score Geral: ${score ?? "??"}/100`,
     ``,
     `⚠️ *Ações Críticas Detectadas:*`,
     ...criticals.map((a: any) => `• ${a.campaign_name}: ${a.reason}`),
     ``,
-    `📈 Abra o Apollo para aprovar as ações recomendadas.`,
+    `📈 Abra o JOSÉ para aprovar as ações recomendadas.`,
   ];
 
   try {
-    await fetch(`${waCfg.api_url}/message/sendText/${waCfg.instance_name || "default"}`, {
+    const apiUrl = (instance.api_url as string).replace(/\/+$/, "");
+    await fetch(`${apiUrl}/message/sendText/${instance.instance_name}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "apikey": waCfg.api_key || "",
+        "apikey": instance.api_key_encrypted || "",
       },
       body: JSON.stringify({
-        number: waCfg.phone_number,
+        number: intlPhone,
         options: { delay: 1200, presence: "composing" },
         textMessage: { text: lines.join("\n") },
       }),
     });
   } catch (err) {
-    console.error("[apollo-agent] WhatsApp notify error:", err);
+    console.error("[apollo-agent] WhatsApp critical alert error:", err);
   }
 }
 
@@ -1776,12 +1804,14 @@ async function sendDailyReport(
   // Format phone to international (55 + DDD + number)
   const intlPhone = phone.startsWith('55') ? phone : `55${phone}`;
 
-  // Get WhatsApp API config
+  // Busca instância WhatsApp ativa (wa_instances = Evolution API)
   const { data: waCfg } = await admin
-    .from("whatsapp_config")
-    .select("*")
+    .from("wa_instances")
+    .select("api_url, instance_name, api_key_encrypted")
     .eq("user_id", userId)
-    .eq("is_active", true)
+    .eq("status", "connected")
+    .order("created_at", { ascending: false })
+    .limit(1)
     .single();
 
   if (!waCfg?.api_url) return;
@@ -1885,11 +1915,12 @@ async function sendDailyReport(
   lines.push(`🤖 _Gerado por JOSÉ Governador — LogosIA_`);
 
   try {
-    await fetch(`${waCfg.api_url}/message/sendText/${waCfg.instance_name || "default"}`, {
+    const apiUrl = (waCfg.api_url as string).replace(/\/+$/, "");
+    await fetch(`${apiUrl}/message/sendText/${waCfg.instance_name}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "apikey": waCfg.api_key || "",
+        "apikey": waCfg.api_key_encrypted || "",
       },
       body: JSON.stringify({
         number: intlPhone,
