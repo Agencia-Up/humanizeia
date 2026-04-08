@@ -14,11 +14,9 @@ import { Card, CardContent } from '@/components/ui/card';
 const agents = [
   { name: 'Salomão', role: 'Orquestrador', icon: Sparkles, color: '#f59e0b', url: '/salomao', desc: 'Coordena todos os agentes e estratégias', active: true },
   { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#f97316', url: '/jose', desc: 'Meta Ads, Google Ads e otimização de campanhas', active: true },
-  { name: 'Marcos', role: 'Leads & CRM', icon: Users, color: '#3b82f6', url: '/leads', desc: 'Captação e gestão de leads qualificados', active: true },
   { name: 'Paulo', role: 'Copywriter', icon: PenTool, color: '#22d3a0', url: '/copywriter', desc: 'Copies persuasivas geradas por IA', active: true },
   { name: 'Maria', role: 'Design', icon: Palette, color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA', active: true },
   { name: 'Davi', role: 'Social Media', icon: Instagram, color: '#60a5fa', url: '/davi', desc: 'Gestão de redes sociais e conteúdo', active: true },
-  { name: 'Lucas', role: 'Funil', icon: Layers, color: '#fb923c', url: '/crm', desc: 'Funis de vendas e CRM inteligente', active: true },
   { name: 'João', role: 'Email', icon: Mail, color: '#a78bfa', url: '/joao', desc: 'Email marketing e automações', active: true },
   { name: 'Pedro', role: 'Atendimento', icon: Bot, color: '#34d399', url: '/whatsapp/ai-agent', desc: 'WhatsApp com IA humanizada', active: true },
   { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', desc: 'Planejamento e análise estratégica', active: true },

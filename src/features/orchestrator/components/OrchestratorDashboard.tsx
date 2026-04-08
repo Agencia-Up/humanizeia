@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Brain, Target, MessageSquare, ListTodo, Activity, Plus, History, RefreshCw, Zap, Sparkles, PenTool, Palette, Send, Layers, Megaphone, Bot } from "lucide-react";
+import { Brain, Target, MessageSquare, ListTodo, Activity, Plus, History, RefreshCw, Zap, Sparkles, PenTool, Palette, Send, Megaphone, Bot } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -314,7 +314,6 @@ const OrchestratorDashboard = () => {
                 { name: 'PAULO', role: 'Copywriter', icon: PenTool },
                 { name: 'MARIA', role: 'Design', icon: Palette },
                 { name: 'DAVI', role: 'Social Media', icon: Send },
-                { name: 'LUCAS', role: 'Funil/CRM', icon: Layers },
                 { name: 'JOÃO', role: 'E-mail Marketing', icon: Megaphone },
                 { name: 'PEDRO', role: 'Atendimento', icon: Bot },
                 { name: 'DANIEL', role: 'Estratégia', icon: Brain },
