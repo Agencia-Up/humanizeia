@@ -12,6 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { JoseChat } from '@/components/jose/JoseChat';
+import { SegmentKnowledgeBase } from '@/components/jose/SegmentKnowledgeBase';
+import { JoseCreativeLibrary } from '@/components/jose/JoseCreativeLibrary';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import {
   useApolloAgent, useApolloCronConfig,
@@ -20,7 +22,7 @@ import {
 import {
   Activity, AlertTriangle, Brain, CheckCircle, CheckCircle2, Clock,
   Loader2, MessageCircle, Phone, Plug, Radar, RefreshCw,
-  Settings, TrendingDown, TrendingUp, Zap, ChevronRight, Layers,
+  Settings, TrendingDown, TrendingUp, Zap, ChevronRight, Layers, Image,
 } from 'lucide-react';
 
 // ── Segment Profiles (hardcoded base — extends DB records) ────────────────────
@@ -303,7 +305,13 @@ function ActionCard({
 
 // ── CronSettings ──────────────────────────────────────────────────────────────
 
-function CronSettings() {
+function CronSettings({
+  activeSegment,
+  setActiveSegment,
+}: {
+  activeSegment: string | null;
+  setActiveSegment: (s: string | null) => void;
+}) {
   const { config, isLoading, saveConfig } = useApolloCronConfig();
   const [hour, setHour] = useState(config?.run_hour ?? 8);
   const [autoExec, setAutoExec] = useState(config?.auto_execute ?? false);
@@ -311,7 +319,14 @@ function CronSettings() {
   const [sendDailyReport, setSendDailyReport] = useState(config?.send_daily_report ?? true);
   const [waNumber, setWaNumber] = useState(config?.whatsapp_report_number ?? '');
   const [enabled, setEnabled] = useState(config?.is_enabled ?? false);
-  const [activeSegment, setActiveSegment] = useState<string | null>(config?.active_segment_slug ?? null);
+
+  // Sync activeSegment from loaded config when it first arrives
+  useEffect(() => {
+    if (config?.active_segment_slug !== undefined && activeSegment === null) {
+      setActiveSegment(config.active_segment_slug ?? null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config?.active_segment_slug]);
 
   const formatPhone = (value: string) => {
     const digits = value.replace(/\D/g, '');
@@ -478,6 +493,7 @@ export default function JoseTrafego() {
   const [datePreset, setDatePreset] = useState<ApolloDatePreset>('last_30d');
   const [activeTab, setActiveTab] = useState('chat');
   const [sessionLoaded, setSessionLoaded] = useState(false);
+  const [activeSegment, setActiveSegment] = useState<string | null>(null);
 
   const accountId = connectedAccount?.account_id;
   const currency = session?.account?.currency || connectedAccount?.currency || 'BRL';
@@ -702,7 +718,7 @@ export default function JoseTrafego() {
         {/* ── 4 Tabs ── */}
         {accountId && (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="w-full grid grid-cols-4 h-10">
+            <TabsList className="w-full grid grid-cols-5 h-10">
               <TabsTrigger value="chat" className="text-xs gap-1">
                 <MessageCircle className="h-3.5 w-3.5" />
                 Conversar
@@ -724,6 +740,10 @@ export default function JoseTrafego() {
                     {pendingActions.length}
                   </Badge>
                 )}
+              </TabsTrigger>
+              <TabsTrigger value="creatives" className="text-xs gap-1">
+                <Image className="h-3.5 w-3.5" />
+                Biblioteca
               </TabsTrigger>
               <TabsTrigger value="config" className="text-xs gap-1">
                 <Settings className="h-3.5 w-3.5" />
@@ -881,9 +901,21 @@ export default function JoseTrafego() {
               )}
             </TabsContent>
 
+            {/* ── BIBLIOTECA DE CRIATIVOS ── */}
+            <TabsContent value="creatives" className="mt-4">
+              <JoseCreativeLibrary segmentSlug={activeSegment} accountId={accountId} />
+            </TabsContent>
+
             {/* ── CONFIGURAÇÕES ── */}
             <TabsContent value="config" className="mt-4">
-              <CronSettings />
+              <div className="space-y-6 max-w-lg">
+                <CronSettings activeSegment={activeSegment} setActiveSegment={setActiveSegment} />
+                {activeSegment && (
+                  <div className="border-t border-border/50 pt-6">
+                    <SegmentKnowledgeBase segmentSlug={activeSegment} />
+                  </div>
+                )}
+              </div>
             </TabsContent>
           </Tabs>
         )}
