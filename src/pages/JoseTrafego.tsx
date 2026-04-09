@@ -18,10 +18,89 @@ import {
   ApolloAction, ApolloEnrichedCampaign, ApolloDatePreset,
 } from '@/hooks/useApolloAgent';
 import {
-  Activity, AlertTriangle, Brain, CheckCircle, Clock,
+  Activity, AlertTriangle, Brain, CheckCircle, CheckCircle2, Clock,
   Loader2, MessageCircle, Phone, Plug, Radar, RefreshCw,
-  Settings, TrendingDown, TrendingUp, Zap, ChevronRight,
+  Settings, TrendingDown, TrendingUp, Zap, ChevronRight, Layers,
 } from 'lucide-react';
+
+// ── Segment Profiles (hardcoded base — extends DB records) ────────────────────
+const BUILTIN_SEGMENTS = [
+  {
+    slug: 'veiculos',
+    name: 'Agência de Veículos',
+    description: 'Concessionárias, revendas e lojas de veículos novos e usados',
+    icon: '🚗',
+    color: 'border-blue-500/30 bg-blue-500/5 hover:border-blue-400/60',
+    activeBg: 'border-blue-500 bg-blue-500/15',
+    badge: 'bg-blue-500/20 text-blue-400',
+    highlights: ['CPL R$30–80 ideal', 'Foco em leads', 'Remarketing essencial'],
+  },
+];
+
+// ── SegmentSelector ────────────────────────────────────────────────────────────
+function SegmentSelector({
+  activeSlug, onToggle,
+}: {
+  activeSlug: string | null;
+  onToggle: (slug: string | null) => void;
+}) {
+  return (
+    <Card>
+      <CardContent className="p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Layers className="h-4 w-4 text-primary" />
+          <p className="font-semibold text-sm">Segmento de Negócio</p>
+          <Badge variant="outline" className="text-[10px] ml-auto">Beta</Badge>
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Ative um segmento para que o José use benchmarks e regras específicas do seu tipo de negócio ao analisar suas campanhas.
+        </p>
+
+        <div className="space-y-2">
+          {BUILTIN_SEGMENTS.map(seg => {
+            const isActive = activeSlug === seg.slug;
+            return (
+              <button
+                key={seg.slug}
+                onClick={() => onToggle(isActive ? null : seg.slug)}
+                className={`w-full text-left rounded-xl border p-4 transition-all ${isActive ? seg.activeBg : seg.color}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">{seg.icon}</span>
+                    <div>
+                      <p className="font-semibold text-sm">{seg.name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{seg.description}</p>
+                    </div>
+                  </div>
+                  <div className={`shrink-0 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-all ${isActive ? 'border-blue-500 bg-blue-500' : 'border-border'}`}>
+                    {isActive && <CheckCircle2 className="h-3 w-3 text-white" />}
+                  </div>
+                </div>
+                {isActive && (
+                  <div className="flex gap-1.5 mt-3 flex-wrap">
+                    {seg.highlights.map(h => (
+                      <Badge key={h} variant="outline" className={`text-[10px] px-1.5 ${seg.badge}`}>
+                        {h}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeSlug && (
+          <p className="text-xs text-emerald-400 flex items-center gap-1">
+            <CheckCircle className="h-3 w-3" />
+            Segmento ativo — José usará as regras deste segmento na próxima análise
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -232,6 +311,7 @@ function CronSettings() {
   const [sendDailyReport, setSendDailyReport] = useState(config?.send_daily_report ?? true);
   const [waNumber, setWaNumber] = useState(config?.whatsapp_report_number ?? '');
   const [enabled, setEnabled] = useState(config?.is_enabled ?? false);
+  const [activeSegment, setActiveSegment] = useState<string | null>(config?.active_segment_slug ?? null);
 
   const formatPhone = (value: string) => {
     const digits = value.replace(/\D/g, '');
@@ -255,6 +335,7 @@ function CronSettings() {
       send_whatsapp_on_critical: sendWa,
       send_daily_report: sendDailyReport,
       whatsapp_report_number: waNumber || null,
+      active_segment_slug: activeSegment,
     });
   };
 
@@ -368,6 +449,8 @@ function CronSettings() {
           </div>
         </CardContent>
       </Card>
+
+      <SegmentSelector activeSlug={activeSegment} onToggle={setActiveSegment} />
 
       <Button className="w-full gap-2 h-11" onClick={save} disabled={saveConfig.isPending}>
         {saveConfig.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Settings className="h-4 w-4" />}
