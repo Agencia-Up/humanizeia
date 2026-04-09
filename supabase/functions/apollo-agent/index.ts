@@ -307,6 +307,24 @@ Deno.serve(async (req) => {
 
     const currencySymbol = currency === "USD" ? "US$" : "R$";
 
+    // ── Load active segment profile ──
+    let segmentContext = "";
+    try {
+      const { data: cronConf } = await admin
+        .from("apollo_cron_config")
+        .select("active_segment_slug")
+        .eq("user_id", user.id)
+        .single();
+      if (cronConf?.active_segment_slug) {
+        const { data: seg } = await admin
+          .from("jose_segment_profiles")
+          .select("*")
+          .eq("slug", cronConf.active_segment_slug)
+          .single();
+        if (seg) segmentContext = buildSegmentContext(seg);
+      }
+    } catch { /* segment optional — ignore errors */ }
+
     // ── Fetch all data in parallel ──
     const [campaigns, insights, adSetInsights, historicalSnapshots, pastOutcomes] = await Promise.all([
       fetchMetaCampaigns(accessToken, accountId),
@@ -355,7 +373,7 @@ Deno.serve(async (req) => {
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
     if (AI_KEY && enriched.length > 0) {
-      aiResult = await runApolloAI(AI_KEY, !!OPENAI_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext);
+      aiResult = await runApolloAI(AI_KEY, !!OPENAI_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext, segmentContext);
     }
 
     // ── Validate & fix campaign IDs in actions (AI sometimes returns slugs instead of numeric IDs) ──
@@ -859,12 +877,67 @@ function detectPortfolioOpportunities(enriched: any[], currencySymbol: string): 
   return insights.join("\n");
 }
 
+// ── Segment Context Builder ───────────────────────────────────────────────────
+
+function buildSegmentContext(segment: any): string {
+  const lines: string[] = [
+    `🏭 SEGMENTO DE NEGÓCIO ATIVO: ${segment.icon || ""} ${segment.name}`,
+    segment.description || "",
+    "",
+  ];
+
+  // Benchmarks específicos
+  const b = segment.benchmarks || {};
+  if (Object.keys(b).length > 0) {
+    lines.push("BENCHMARKS DO SEGMENTO (substituem os genéricos):");
+    if (b.cpl_otimo)          lines.push(`  • CPL: ótimo < R$${b.cpl_otimo}, bom R$${b.cpl_bom}, crítico > R$${b.cpl_critico}`);
+    if (b.ctr_fraco)          lines.push(`  • CTR: fraco < ${b.ctr_fraco}%, bom > ${b.ctr_bom}%, excelente > ${b.ctr_excelente}%`);
+    if (b.cpc_bom)            lines.push(`  • CPC: bom < R$${b.cpc_bom}, ótimo < R$${b.cpc_otimo}`);
+    if (b.frequencia_alerta)  lines.push(`  • Frequência: alertar apenas > ${b.frequencia_alerta}x`);
+    if (b.conversao_meta)     lines.push(`  • Conversão principal: ${b.conversao_meta}`);
+    if (b.objetivo_campanha)  lines.push(`  • Objetivo recomendado: ${b.objetivo_campanha}`);
+  }
+
+  // Regras do segmento
+  const rules: string[] = segment.rules || [];
+  if (rules.length > 0) {
+    lines.push("", "REGRAS DO SEGMENTO (aplicar rigorosamente):");
+    rules.forEach((r: string) => lines.push(`  ⚙️ ${r}`));
+  }
+
+  // Sazonalidade relevante para hoje
+  const seasonal: any[] = segment.seasonal_insights || [];
+  if (seasonal.length > 0) {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const relevant = seasonal.filter((s: any) => {
+      const p = s.period;
+      if (p === "fim_mes" && day >= 25) return true;
+      if (p === "jan-feb" && (month === 1 || month === 2)) return true;
+      if (p === "mar" && month === 3) return true;
+      if (p === "apr-may" && (month === 4 || month === 5)) return true;
+      if (p === "jun-jul" && (month === 6 || month === 7)) return true;
+      if (p === "sep" && month === 9) return true;
+      if (p === "oct-nov" && (month === 10 || month === 11)) return true;
+      if (p === "dec" && month === 12) return true;
+      return false;
+    });
+    if (relevant.length > 0) {
+      lines.push("", "SAZONALIDADE DO SEGMENTO (CONTEXTO DE HOJE):");
+      relevant.forEach((s: any) => lines.push(`  ${s.insight}`));
+    }
+  }
+
+  return lines.join("\n");
+}
+
 // ── AI Analysis (OpenAI GPT-4o / Anthropic fallback) ─────────────────────────
 
 async function runApolloAI(
   apiKey: string, useOpenAI: boolean, campaigns: any[], currency: string, currencySymbol: string,
   datePreset: string, trendContext: string, learningContext: string,
-  seasonalContext: string, portfolioContext: string
+  seasonalContext: string, portfolioContext: string, segmentContext = ""
 ) {
   const periodLabel: Record<string, string> = {
     today: "hoje", yesterday: "ontem", last_7d: "últimos 7 dias",
@@ -916,6 +989,12 @@ ${seasonalContext}
 
 ANÁLISE DE PORTFÓLIO:
 ${portfolioContext}
+${segmentContext ? `
+══════════════════════════════════════════
+${segmentContext}
+══════════════════════════════════════════
+INSTRUÇÃO CRÍTICA: O segmento acima está ativo. Substitua os benchmarks genéricos pelos do segmento. Aplique TODAS as regras do segmento na análise e nas recomendações.
+` : ""}
 
 REGRAS DE DECISÃO AUTOMÁTICA (auto_safe=true):
 1. Pausar campanha: CTR < 0.5% E frequência > 4 (fadiga confirmada) E gasto > ${currencySymbol}${currency === "USD" ? "20" : "50"}
@@ -1708,7 +1787,7 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
   const {
     run_hour, run_minute, timezone, date_preset, auto_execute,
     send_whatsapp_on_critical, send_daily_report, whatsapp_report_number,
-    is_enabled,
+    is_enabled, active_segment_slug,
   } = body;
 
   // Compute next_run_at
@@ -1729,6 +1808,7 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
       send_whatsapp_on_critical: send_whatsapp_on_critical ?? true,
       send_daily_report: send_daily_report ?? true,
       whatsapp_report_number: whatsapp_report_number || null,
+      active_segment_slug: active_segment_slug || null,
       next_run_at: nextRun.toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
