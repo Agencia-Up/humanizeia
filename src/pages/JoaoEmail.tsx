@@ -184,30 +184,19 @@ export default function JoaoEmail() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-heading font-bold flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20">
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-amber-500/10">
                 <Mail className="h-6 w-6 text-amber-400" />
               </div>
-              JOÃO — Email Marketing
+              João
+              <Badge className="text-xs bg-amber-500/20 text-amber-400 border-amber-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block mr-1" />
+                E-mail Marketing
+              </Badge>
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Crie emails persuasivos com IA e gerencie suas campanhas
+              Crie emails persuasivos com IA em segundos
             </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleClearHistory}
-              className="text-muted-foreground hover:text-destructive gap-1.5 text-xs h-8"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Limpar Histórico
-            </Button>
-            <Badge variant="outline" className="gap-1 h-8">
-              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-              JOÃO Online
-            </Badge>
           </div>
         </div>
 
@@ -228,10 +217,9 @@ export default function JoaoEmail() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="gerador" className="gap-1.5"><Sparkles className="h-3.5 w-3.5" />Gerador IA</TabsTrigger>
-            <TabsTrigger value="rascunhos" className="gap-1.5"><Mail className="h-3.5 w-3.5" />Rascunhos {drafts.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{drafts.length}</Badge>}</TabsTrigger>
-            <TabsTrigger value="sequencias" className="gap-1.5"><Zap className="h-3.5 w-3.5" />Sequências</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="gerador" className="gap-1.5"><Sparkles className="h-3.5 w-3.5" />Criar Email</TabsTrigger>
+            <TabsTrigger value="rascunhos" className="gap-1.5"><Mail className="h-3.5 w-3.5" />Emails Salvos {drafts.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{drafts.length}</Badge>}</TabsTrigger>
           </TabsList>
 
           {/* GERADOR */}

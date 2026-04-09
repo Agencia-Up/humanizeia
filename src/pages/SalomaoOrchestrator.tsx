@@ -27,7 +27,7 @@ import { useAgentChat } from '@/contexts/AgentChatContext';
 /* ── Agent definitions ──────────────────────────────────────────────── */
 const AGENTS = [
   { id: 'salomao', name: 'SALOMÃO', role: 'Orquestrador', icon: Sparkles, description: 'Coordena todos os agentes. Recebe o briefing do cliente e distribui tarefas.', status: 'active', color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20', url: '/salomao' },
-  { id: 'jose', name: 'JOSÉ', role: 'Tráfego Pago', icon: Radar, description: 'Gerencia Meta Ads, Google Ads e TikTok com autonomia total. Analisa, otimiza, pausa e escala campanhas.', status: 'coming', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', url: null },
+  { id: 'jose', name: 'JOSÉ', role: 'Tráfego Pago', icon: Radar, description: 'Gerencia Meta Ads e Google Ads com autonomia total. Analisa, otimiza, pausa e escala campanhas automaticamente.', status: 'active', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', url: '/jose' },
   { id: 'paulo', name: 'PAULO', role: 'Copywriter', icon: PenTool, description: 'Escreve headlines, body copy, CTAs, scripts de vídeo e sequências de email que convertem.', status: 'active', color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20', url: '/copywriter' },
   { id: 'maria', name: 'MARIA', role: 'Designer', icon: Palette, description: 'Cria imagens, banners e criativos com IA. Remove fundo, redimensiona e gera variações.', status: 'active', color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20', url: '/creative-studio' },
   { id: 'daniel', name: 'DANIEL', role: 'Estrategista', icon: Brain, description: 'Analisa mercado, concorrentes e posicionamento. Define personas, ângulos e plano de 90 dias.', status: 'active', color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20', url: '/daniel' },
@@ -281,28 +281,33 @@ export default function SalomaoOrchestrator() {
     <MainLayout>
       <div className="space-y-6 p-6 max-w-6xl mx-auto">
         {/* ── Header ────────────────────────────────────────────────── */}
-        <div className="text-center space-y-3 py-4">
-          <div className="flex items-center justify-center gap-3">
-            <Sparkles className="h-8 w-8 text-yellow-400" />
-            <h1 className="text-3xl font-bold tracking-tight">SALOMÃO</h1>
-            <Sparkles className="h-8 w-8 text-yellow-400" />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-yellow-500/10">
+                <Sparkles className="h-6 w-6 text-yellow-400" />
+              </div>
+              Salomão
+              <Badge className="text-xs bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse inline-block mr-1" />
+                Orquestrador
+              </Badge>
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Treine seus agentes e gerencie sua equipe de IA
+            </p>
           </div>
-          <p className="text-muted-foreground">A Agência de Marketing Digital do Futuro</p>
-          <div className="flex items-center justify-center gap-3 pt-1 flex-wrap">
-            <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-1">
-              <CheckCircle className="h-3.5 w-3.5 mr-1.5" />{activeCount} agentes ativos
-            </Badge>
-          </div>
+          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-1.5 w-fit">
+            <CheckCircle className="h-3.5 w-3.5 mr-1.5" />{activeCount} agentes ativos
+          </Badge>
         </div>
 
         {/* ── Tabs ──────────────────────────────────────────────────── */}
         <div className="flex gap-1 rounded-xl bg-muted/50 p-1 w-fit mx-auto">
           {([
-            { key: 'equipe', label: '🤖 Equipe' },
-            { key: 'gerador', label: '⚡ Gerador' },
-            { key: 'conhecimento', label: '🧠 Agentes' },
-            { key: 'pipeline', label: '🚀 Etapas' },
-            { key: 'fluxo', label: '🗺️ Funil' },
+            { key: 'equipe', label: '🤖 Minha Equipe' },
+            { key: 'gerador', label: '⚡ Treinar Agentes' },
+            { key: 'conhecimento', label: '🧠 Base de Conhecimento' },
           ] as const).map(t => (
             <button
               key={t.key}
