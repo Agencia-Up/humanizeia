@@ -79,36 +79,38 @@ export function JoseChat({ session, currencySymbol = 'R$', accountId }: JoseChat
   const buildContext = useCallback(() => {
     if (!session) return '';
     const campaigns = session.campaigns || [];
-    const topCamps = campaigns.slice(0, 5).map((c: any) =>
-      `- ${c.name}: score ${c.health_score}, ROAS ${c.roas?.toFixed(2) || 0}x, CTR ${c.ctr?.toFixed(2) || 0}%, spend ${currencySymbol} ${c.spend?.toFixed(0) || 0}, CPC ${currencySymbol} ${c.cpc?.toFixed(2) || 0}`
+    const totalSpend = campaigns.reduce((s: number, c: any) => s + (c.spend || 0), 0);
+    const activeCamps = campaigns.filter((c: any) => c.effective_status === 'ACTIVE').length;
+    const criticalCamps = campaigns.filter((c: any) => c.health_score < 45).length;
+
+    const allCamps = campaigns.map((c: any) =>
+      `- [Score ${c.health_score}] "${c.name}" | Status: ${c.effective_status} | Spend: ${currencySymbol} ${c.spend?.toFixed(0) || 0} | ROAS: ${c.roas?.toFixed(2) || 0}x | CTR: ${c.ctr?.toFixed(2) || 0}% | CPC: ${currencySymbol} ${c.cpc?.toFixed(2) || 0} | Conversões: ${c.conversions || 0} | CPL: ${c.cost_per_result ? `${currencySymbol} ${c.cost_per_result?.toFixed(2)}` : 'N/A'} | Freq: ${c.frequency?.toFixed(1) || 'N/A'}x | Objetivo: ${c.objective || 'N/A'}`
     ).join('\n');
-    const actions = (session.actions || []).slice(0, 3).map((a: any) =>
+
+    const actions = (session.actions || []).map((a: any) =>
       `- [${a.priority?.toUpperCase()}] ${a.action_type?.replace(/_/g, ' ')} em "${a.campaign_name}": ${a.reason}`
     ).join('\n');
+
     return `
 CONTEXTO ATUAL DAS CAMPANHAS (${new Date().toLocaleDateString('pt-BR')}):
-Score geral: ${session.health_score ?? 'N/D'}/100
-Total campanhas: ${campaigns.length}
-Período: ${session.date_preset || 'últimos 30 dias'}
+Score geral da conta: ${session.health_score ?? 'N/D'}/100
+Período analisado: ${session.date_preset || 'últimos 30 dias'}
+Total investido: ${currencySymbol} ${totalSpend.toFixed(0)}
+Campanhas ativas: ${activeCamps} | Total: ${campaigns.length} | Críticas: ${criticalCamps}
 
-TOP CAMPANHAS:
-${topCamps || 'Nenhuma disponível'}
+TODAS AS CAMPANHAS:
+${allCamps || 'Nenhuma campanha encontrada'}
 
-AÇÕES RECOMENDADAS PELO SISTEMA:
+RECOMENDAÇÕES PENDENTES (${(session.actions || []).length} ações):
 ${actions || 'Nenhuma ação pendente'}
 
-${session.summary ? `RESUMO EXECUTIVO:\n${session.summary}` : ''}
+${session.summary ? `RESUMO IA:\n${session.summary}` : ''}
     `.trim();
   }, [session, currencySymbol]);
 
   // ── Claude chat hook ──
   const { sendMessage } = useClaudeChat({
-    context: 'midas',
-    config: {
-      metricsData: session,
-      campaignData: session?.campaigns,
-      description: buildContext(),
-    },
+    context: 'jose',
     onDelta: (delta) => setStreaming(prev => prev + delta),
     onComplete: () => {},
     onError: (err) => toast.error(`Erro: ${err}`),
@@ -238,9 +240,7 @@ ${session.summary ? `RESUMO EXECUTIVO:\n${session.summary}` : ''}
 
     let fullResponse = '';
     try {
-      fullResponse = await sendMessage(messagesForLLM, {
-        description: `Você é JOSÉ, o agente especialista em tráfego pago da LogosIA. Responda em português do Brasil. Seja direto, use dados quando disponíveis, formate em Markdown com headers e listas quando útil. Foque em ações concretas e números reais.`,
-      });
+      fullResponse = await sendMessage(messagesForLLM);
     } catch {
       fullResponse = 'Desculpe, houve um erro ao processar sua mensagem. Tente novamente.';
     }
