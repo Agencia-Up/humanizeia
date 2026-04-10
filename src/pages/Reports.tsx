@@ -280,11 +280,11 @@ export default function Reports() {
         {!whatsappConfigured && (
           <Alert variant="destructive" className="border-orange-500/50 bg-orange-500/10 text-orange-200">
             <AlertTriangle className="h-4 w-4 !text-orange-400" />
-            <AlertTitle className="text-orange-300">Evolution API não conectada</AlertTitle>
+            <AlertTitle className="text-orange-300">Uazapi não conectada</AlertTitle>
             <AlertDescription className="flex items-center justify-between">
-              <span>Conecte sua Evolution API para enviar reports via WhatsApp.</span>
+              <span>Conecte sua Uazapi para enviar reports via WhatsApp.</span>
               <Button size="sm" variant="outline" className="ml-4 border-orange-500/50 text-orange-300 hover:bg-orange-500/20" onClick={() => setSetupWhatsAppOpen(true)}>
-                <Plug className="mr-1.5 h-3.5 w-3.5" /> Conectar Evolution API
+                <Plug className="mr-1.5 h-3.5 w-3.5" /> Conectar Uazapi
               </Button>
             </AlertDescription>
           </Alert>

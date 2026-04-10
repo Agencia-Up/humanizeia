@@ -73,7 +73,12 @@ Deno.serve(async (req) => {
     }
 
     // Check real connection state
-    const headers = { 'Content-Type': 'application/json', 'apikey': apiKey };
+    const headers = { 
+      'Content-Type': 'application/json', 
+      'apikey': apiKey,
+      'admintoken': apiKey,
+      'Authorization': `Bearer ${apiKey}`
+    };
     
     let realStatus = 'disconnected';
     let isConnected = false;
@@ -92,6 +97,7 @@ Deno.serve(async (req) => {
         // Robust connection check (V5.2)
         isConnected = state === 'open' || 
                     state === 'connected' || 
+                    state === 'connecting' || // Do not drop connection immediately while it connects
                     state === 'connected_authenticated' || 
                     stateData?.connected === true || 
                     stateData?.instance?.connected === true || 
@@ -99,10 +105,10 @@ Deno.serve(async (req) => {
                     stateData?.instance?.loggedIn === true;
 
         if (isConnected) {
-          realStatus = 'connected';
+          realStatus = state === 'connecting' ? 'connecting' : 'connected';
         } else if (state === 'close' || state === 'closed' || state === 'disconnected') {
           realStatus = 'disconnected';
-        } else if (state === 'connecting' || state === 'qrcode') {
+        } else if (state === 'qrcode') {
           realStatus = 'waiting_qr';
         } else {
           realStatus = state || 'disconnected';
@@ -112,7 +118,8 @@ Deno.serve(async (req) => {
         realStatus = 'disconnected';
         console.log(`[verify-instance] ${instance.instance_name} not found on Evolution server (404)`);
       } else {
-        console.log(`[verify-instance] ${instance.instance_name} check failed: ${stateRes.status}`);
+        const errText = await stateRes.text().catch(() => '');
+        console.log(`[verify-instance] ${instance.instance_name} check failed: ${stateRes.status} - ${errText}`);
         realStatus = 'error';
       }
     } catch (fetchErr) {
@@ -126,7 +133,7 @@ Deno.serve(async (req) => {
       updated_at: new Date().toISOString(),
     };
 
-    // If connected, activate and fix health
+    // If connected or connecting, activate and fix health
     if (isConnected) {
       updateData.is_active = true;
       updateData.health_score = 100;
@@ -136,7 +143,8 @@ Deno.serve(async (req) => {
       updateData.is_active = false;
       
       // If was marked as connected but is actually disconnected, reduce health
-      if (instance.status === 'connected') {
+      // Do not reduce health if we just transitioned to a known waiting state recently
+      if (instance.status === 'connected' && realStatus === 'disconnected') {
         updateData.health_score = 0;
         updateData.shadow_ban_suspect = true;
       }

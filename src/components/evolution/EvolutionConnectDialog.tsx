@@ -92,9 +92,9 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
       const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
         body: {
           provider: 'evolution',
-          instance_name: slug,
-          friendly_name: friendlyName || activeOverride,
-          user_id: user!.id,
+          instance_name: String(slug),
+          friendly_name: String(friendlyName || activeOverride || ""),
+          user_id: String(user?.id || ""),
         },
       });
       if (error) throw error;

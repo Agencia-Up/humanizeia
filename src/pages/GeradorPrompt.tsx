@@ -494,7 +494,7 @@ export default function GeradorPrompt() {
                 <ChevronRight className="h-4 w-4 text-primary" /> Como usar o prompt
               </h4>
               <ul className="text-xs text-muted-foreground space-y-1.5">
-                <li>📱 <strong>WhatsApp:</strong> Cole como prompt da Evolution API / ManyChat</li>
+                <li>📱 <strong>WhatsApp:</strong> Cole como prompt da Uazapi / ManyChat</li>
                 <li>🤖 <strong>ChatGPT:</strong> Cole em "Custom Instructions" ou GPT personalizado</li>
                 <li>💬 <strong>Claude:</strong> Use como System Prompt via API ou projeto</li>
                 <li>⚙️ <strong>N8n / Make:</strong> Use como system message no nó de IA</li>
