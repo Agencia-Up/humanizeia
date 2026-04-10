@@ -367,9 +367,15 @@ Deno.serve(async (req) => {
     }
 
     // ── AI Analysis (OpenAI GPT-4o com fallback Anthropic) ──
+<<<<<<< Updated upstream
     const OPENAI_KEY    = Deno.env.get("OPENAI_API_KEY");
     const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     const AI_KEY        = OPENAI_KEY || ANTHROPIC_KEY;
+=======
+    const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
+    const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    const AI_KEY = OPENAI_KEY || ANTHROPIC_KEY;
+>>>>>>> Stashed changes
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
     if (AI_KEY && enriched.length > 0) {
@@ -459,21 +465,21 @@ Deno.serve(async (req) => {
     } catch { /* ignore session save error */ }
 
     // ── Save snapshot (fire and forget) ──
-    saveMetricSnapshot(admin, user.id, adAccountDbId || "", enriched, historicalSnapshots, aiResult.health_score).catch(() => {});
+    saveMetricSnapshot(admin, user.id, adAccountDbId || "", enriched, historicalSnapshots, aiResult.health_score).catch(() => { });
 
     // ── Schedule outcome checks for executed actions ──
     if (executionLog.length > 0) {
-      scheduleOutcomeChecks(admin, user.id, executionLog, enriched).catch(() => {});
+      scheduleOutcomeChecks(admin, user.id, executionLog, enriched).catch(() => { });
     }
 
     // ── WhatsApp notifications ──
     const hasCritical = (aiResult.actions || []).some((a: any) => a.priority === "critical");
     if (hasCritical) {
-      sendCriticalWhatsApp(admin, user.id, aiResult, enriched, currencySymbol).catch(() => {});
+      sendCriticalWhatsApp(admin, user.id, aiResult, enriched, currencySymbol).catch(() => { });
     }
 
     // ── Daily WhatsApp report (resumo de campanhas + ações) ──
-    sendDailyReport(admin, user.id, aiResult, enriched, executionLog, currencySymbol).catch(() => {});
+    sendDailyReport(admin, user.id, aiResult, enriched, executionLog, currencySymbol).catch(() => { });
 
     return new Response(JSON.stringify({
       status: "analyzed",
@@ -796,10 +802,10 @@ function computeCreativeFatigue(adsets: any[]): { score: number; level: string; 
   const recommendation = score >= 70
     ? "⚠️ Fadiga crítica: Pause Ad Sets com frequência > 4 e renove criativos urgente."
     : score >= 40
-    ? "🔄 Fadiga moderada: Considere novos criativos e expansão de audiência."
-    : score >= 20
-    ? "👀 Fadiga leve: Monitore frequência. Prepare variações criativas."
-    : "✅ Criativos saudáveis.";
+      ? "🔄 Fadiga moderada: Considere novos criativos e expansão de audiência."
+      : score >= 20
+        ? "👀 Fadiga leve: Monitore frequência. Prepare variações criativas."
+        : "✅ Criativos saudáveis.";
 
   return { score, level, recommendation };
 }
@@ -947,8 +953,8 @@ async function runApolloAI(
   const campaignSummary = campaigns.map(c => {
     const adsetSummary = c.adsets?.length
       ? `  Ad Sets: ${c.adsets.map((as: any) =>
-          `${as.name}[CTR:${as.ctr.toFixed(2)}% CPC:${currencySymbol}${as.cpc.toFixed(2)} Freq:${as.frequency.toFixed(1)} Fatiga:${as.creative_fatigue_score ?? 0}%]`
-        ).join(", ")}`
+        `${as.name}[CTR:${as.ctr.toFixed(2)}% CPC:${currencySymbol}${as.cpc.toFixed(2)} Freq:${as.frequency.toFixed(1)} Fatiga:${as.creative_fatigue_score ?? 0}%]`
+      ).join(", ")}`
       : "";
     const fatigueInfo = c.creative_fatigue ? ` | Fadiga Criativa: ${c.creative_fatigue.score}% (${c.creative_fatigue.level})` : "";
     const pacingInfo = c.budget_pacing ? ` | Pacing: ${c.budget_pacing.status} (${Math.round(c.budget_pacing.ratio * 100)}%)` : "";
@@ -1068,7 +1074,7 @@ Responda EXCLUSIVAMENTE em JSON válido:
           max_tokens: 4000,
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user",   content: userMessage },
+            { role: "user", content: userMessage },
           ],
         }),
       });
@@ -1355,7 +1361,7 @@ async function executeMetaAction(accessToken: string, action: any) {
     const targetId = action.adset_id || action.campaign_id;
 
     if (action.action_type === "pause" || action.action_type === "activate" ||
-        action.action_type === "pause_adset" || action.action_type === "activate_adset") {
+      action.action_type === "pause_adset" || action.action_type === "activate_adset") {
       const status = (action.action_type === "pause" || action.action_type === "pause_adset") ? "PAUSED" : "ACTIVE";
       const url = new URL(`${META_GRAPH_URL}/${targetId}`);
       url.searchParams.set("access_token", accessToken);
@@ -1722,13 +1728,24 @@ async function handleGetHistory(admin: any, userId: string, targetAccountId: str
 
 async function handleLoadSession(admin: any, userId: string, targetAccountId: string, corsHeaders: any) {
   try {
+    let adAccountDbId: string | null = null;
+    if (targetAccountId) {
+      const { data: adAccount } = await admin.from("ad_accounts")
+        .select("id").eq("user_id", userId).eq("platform", "meta")
+        .eq("is_active", true).eq("account_id", targetAccountId)
+        .limit(1).single();
+      if (adAccount) {
+        adAccountDbId = adAccount.id;
+      }
+    }
+
     let query = admin.from("apollo_sessions")
       .select("*")
       .eq("user_id", userId)
       .order("analyzed_at", { ascending: false })
       .limit(1);
 
-    if (targetAccountId) query = query.eq("account_id", targetAccountId);
+    if (adAccountDbId) query = query.eq("account_id", adAccountDbId);
 
     const { data: session } = await query.single();
 

@@ -1592,13 +1592,24 @@ async function handleGetHistory(admin: any, userId: string, targetAccountId: str
 
 async function handleLoadSession(admin: any, userId: string, targetAccountId: string, corsHeaders: any) {
   try {
+    let adAccountDbId: string | null = null;
+    if (targetAccountId) {
+      const { data: adAccount } = await admin.from("ad_accounts")
+        .select("id").eq("user_id", userId).eq("platform", "meta")
+        .eq("is_active", true).eq("account_id", targetAccountId)
+        .limit(1).single();
+      if (adAccount) {
+        adAccountDbId = adAccount.id;
+      }
+    }
+
     let query = admin.from("apollo_sessions")
       .select("*")
       .eq("user_id", userId)
       .order("analyzed_at", { ascending: false })
       .limit(1);
 
-    if (targetAccountId) query = query.eq("account_id", targetAccountId);
+    if (adAccountDbId) query = query.eq("account_id", adAccountDbId);
 
     const { data: session } = await query.single();
 

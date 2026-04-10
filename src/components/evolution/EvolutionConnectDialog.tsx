@@ -51,7 +51,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
         setFriendlyName(initialFriendlyName || initialInstanceName);
         setActiveSlug(initialInstanceName);
         setProvider('evolution');
-        handleCreateEvolutionInstance(initialInstanceName);
+        handleCreateUazapiInstance(initialInstanceName);
       }
     } else {
       stopPolling();
@@ -77,9 +77,11 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
   const generateSlug = (name: string) =>
     name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-  // ========== EVOLUTION FLOW (Managed Mode) ==========
-  const handleCreateEvolutionInstance = async (overrideSlug?: string) => {
-    const slug = overrideSlug || generateSlug(friendlyName || 'midas-instance');
+  // ========== UAZAPI FLOW (Managed Mode) ==========
+  const handleCreateUazapiInstance = async (overrideSlug?: string) => {
+    // Garantir que overrideSlug seja uma string (evita erro de circular structure se for evento)
+    const activeOverride = typeof overrideSlug === 'string' ? overrideSlug : undefined;
+    const slug = activeOverride || generateSlug(friendlyName || 'midas-instance');
     if (!slug) { toast.error('Informe um nome para a conexão'); return; }
 
     setIsCreating(true);
@@ -91,7 +93,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
         body: {
           provider: 'evolution',
           instance_name: slug,
-          friendly_name: friendlyName || overrideSlug,
+          friendly_name: friendlyName || activeOverride,
           user_id: user!.id,
         },
       });
@@ -263,7 +265,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
             <div className="flex gap-2 pt-2">
               <Button variant="outline" onClick={() => setStep('provider')} className="flex-1">Voltar</Button>
               <Button
-                onClick={handleCreateEvolutionInstance}
+                onClick={() => handleCreateUazapiInstance()}
                 disabled={isCreating || !friendlyName}
                 className="flex-1 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
               >

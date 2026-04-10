@@ -351,7 +351,7 @@ export default function WhatsAppInstances() {
                             {instance.friendly_name || instance.instance_name}
                           </CardTitle>
                           <CardDescription className="text-xs">
-                            {instance.provider === 'meta' ? 'Meta API Oficial' : 'Evolution API'}
+                            {instance.provider === 'meta' ? 'Meta API Oficial' : 'Uazapi'}
                           </CardDescription>
                         </div>
                       </div>
@@ -372,7 +372,7 @@ export default function WhatsAppInstances() {
                       )}
                       <div>
                         <p className="text-muted-foreground text-xs">Provedor</p>
-                        <p className="font-medium text-xs">{instance.provider === 'meta' ? 'Meta API' : 'Evolution'}</p>
+                        <p className="font-medium text-xs">{instance.provider === 'meta' ? 'Meta API' : 'Uazapi'}</p>
                       </div>
                     </div>
 
@@ -456,8 +456,8 @@ export default function WhatsAppInstances() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <ol className="list-decimal list-inside space-y-2">
-              <li>Clique em <strong>"Conectar Número"</strong> e escolha o provedor (Evolution API ou Meta API Oficial)</li>
-              <li>Para <strong>Evolution API</strong>: informe URL + API Key, teste a conexão e escaneie o QR Code</li>
+              <li>Clique em <strong>"Conectar Número"</strong> e escolha o provedor (Uazapi ou Meta API Oficial)</li>
+              <li>Para <strong>Uazapi</strong>: informe URL + API Key, teste a conexão e escaneie o QR Code</li>
               <li>Para <strong>Meta API</strong>: informe o Phone Number ID e Access Token da sua conta Business</li>
               <li>O sistema fará <strong>rodízio inteligente</strong> entre as instâncias ativas durante o disparo</li>
               <li>Instâncias com <strong>saúde baixa</strong> são automaticamente desativadas para proteger seus números</li>
