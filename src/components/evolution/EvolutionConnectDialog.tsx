@@ -19,9 +19,11 @@ interface EvolutionConnectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected?: () => void;
+  initialInstanceName?: string;
+  initialFriendlyName?: string;
 }
 
-export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: EvolutionConnectDialogProps) {
+export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initialInstanceName, initialFriendlyName }: EvolutionConnectDialogProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -31,6 +33,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
   // Evolution fields
   const [friendlyName, setFriendlyName] = useState('');
   const [qrCode, setQrCode] = useState<string | null>(null);
+  const [activeSlug, setActiveSlug] = useState<string | null>(null);
 
   // Meta fields
   const [metaPhoneNumberId, setMetaPhoneNumberId] = useState('');
@@ -40,32 +43,47 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
 
   const [isCreating, setIsCreating] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const realtimeChannel = useRef<any>(null);
 
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      if (initialInstanceName) {
+        setFriendlyName(initialFriendlyName || initialInstanceName);
+        setActiveSlug(initialInstanceName);
+        setProvider('evolution');
+        handleCreateEvolutionInstance(initialInstanceName);
+      }
+    } else {
       stopPolling();
       setStep('provider');
       setProvider('evolution');
       setQrCode(null);
       setIsCreating(false);
       setFriendlyName('');
+      setActiveSlug(null);
       setMetaPhoneNumberId(''); setMetaWabaId(''); setMetaAccessToken(''); setMetaFriendlyName('');
     }
-  }, [open]);
+  }, [open, initialInstanceName, initialFriendlyName]);
 
   const stopPolling = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+    if (realtimeChannel.current) { 
+        console.log('[Realtime] Desconectando canal...');
+        supabase.removeChannel(realtimeChannel.current); 
+        realtimeChannel.current = null; 
+    }
   };
 
   const generateSlug = (name: string) =>
     name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
   // ========== EVOLUTION FLOW (Managed Mode) ==========
-  const handleCreateEvolutionInstance = async () => {
-    const slug = generateSlug(friendlyName || 'midas-instance');
+  const handleCreateEvolutionInstance = async (overrideSlug?: string) => {
+    const slug = overrideSlug || generateSlug(friendlyName || 'midas-instance');
     if (!slug) { toast.error('Informe um nome para a conexão'); return; }
 
     setIsCreating(true);
+    setActiveSlug(slug);
     try {
       // In Managed Mode, custom_api_url and custom_api_key are NOT sent from frontend
       // The backend will use its own global secrets (EVOLUTION_API_URL/KEY)
@@ -73,7 +91,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
         body: {
           provider: 'evolution',
           instance_name: slug,
-          friendly_name: friendlyName,
+          friendly_name: friendlyName || overrideSlug,
           user_id: user!.id,
         },
       });
@@ -81,7 +99,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
       if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
       setQrCode(data.qr_code || null);
       setStep('qrcode');
-      startPolling();
+      startPolling(slug);
     } catch (err: any) {
       toast.error(err.message || 'Erro ao criar instância');
     } finally {
@@ -119,19 +137,35 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
     }
   };
 
-  const startPolling = () => {
+  const startPolling = (slug: string) => {
     stopPolling();
+    console.log(`[polling] Monitorando conexão de: ${slug} (Realtime + Polling fallback)`);
+    
+    // 1. Realtime Subscription (Mais rápido)
+    realtimeChannel.current = supabase
+      .channel(`instance-status-${slug}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'wa_instances', filter: `instance_name=eq.${slug}` },
+        (payload: any) => {
+          console.log('[Realtime] Mudança detectada:', payload.new.status, payload.new.is_active);
+          if (payload.new.is_active || payload.new.status === 'connected') {
+            console.log('[Realtime] SINAL DE CONEXÃO RECEBIDO!');
+            handleSuccess();
+          }
+        }
+      )
+      .subscribe();
+
+    // 2. Polling Fallback
     pollingRef.current = setInterval(async () => {
       try {
         const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
-          body: { user_id: user!.id },
+          body: { user_id: user!.id, instance_name: slug },
         });
         if (error) return;
         if (data?.connected) {
-          stopPolling();
-          setStep('connected');
-          queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
-          onConnected?.();
+          handleSuccess();
         } else if (data?.qr_code) {
           setQrCode(data.qr_code);
         }
@@ -139,14 +173,21 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
     }, 5000);
   };
 
+  const handleSuccess = () => {
+    stopPolling();
+    setStep('connected');
+    queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
+    onConnected?.();
+  };
+
   const handleRefreshQr = async () => {
+    if (!activeSlug) return;
     try {
       const { data } = await supabase.functions.invoke('get-evolution-qrcode', {
-        body: { user_id: user!.id },
+        body: { user_id: user!.id, instance_name: activeSlug },
       });
       if (data?.connected) {
-        stopPolling(); setStep('connected');
-        onConnected?.();
+        handleSuccess();
       } else if (data?.qr_code) {
         setQrCode(data.qr_code);
         toast.success('QR Code atualizado');
@@ -286,9 +327,20 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected }: Evol
                 Aguardando leitura do QR Code...
               </div>
             </div>
-            <Button variant="outline" onClick={handleRefreshQr} className="w-full">
-              <RefreshCw className="h-4 w-4 mr-2" /> Atualizar QR Code
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={handleRefreshQr} className="flex-1 text-xs">
+                <RefreshCw className="h-3.5 w-3.5 mr-2" /> Já escaneei
+              </Button>
+              {!initialInstanceName && (
+                <Button 
+                    variant="ghost" 
+                    onClick={() => setStep('instance')} 
+                    className="flex-1 text-xs text-muted-foreground"
+                >
+                    Voltar
+                </Button>
+              )}
+            </div>
           </div>
         )}
 

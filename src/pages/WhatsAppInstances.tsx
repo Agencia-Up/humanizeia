@@ -89,6 +89,7 @@ export default function WhatsAppInstances() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [isVerifyingAll, setIsVerifyingAll] = useState(false);
+  const [selectedInstance, setSelectedInstance] = useState<{ name: string; friendlyName: string } | null>(null);
 
   const verifyInstanceStatus = async (instanceId: string, silent = false) => {
     setVerifyingId(instanceId);
@@ -177,6 +178,14 @@ export default function WhatsAppInstances() {
       setIsDeleting(false);
       setDeleteId(null);
     }
+  };
+
+  const handleConnectInstance = (instance: WaInstance) => {
+    setSelectedInstance({ 
+      name: instance.instance_name, 
+      friendlyName: instance.friendly_name || instance.instance_name 
+    });
+    setConnectOpen(true);
   };
 
   const handleToggleActive = async (instance: WaInstance) => {
@@ -395,24 +404,36 @@ export default function WhatsAppInstances() {
                           <RefreshCw className="h-3.5 w-3.5" />
                         )}
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => handleToggleActive(instance)}
-                      >
-                        {instance.is_active ? (
-                          <>
-                            <WifiOff className="h-3.5 w-3.5 mr-1.5" />
-                            Desativar
-                          </>
-                        ) : (
-                          <>
-                            <Wifi className="h-3.5 w-3.5 mr-1.5" />
-                            Ativar
-                          </>
-                        )}
-                      </Button>
+                      {instance.status === 'connected' ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => handleToggleActive(instance)}
+                        >
+                          {instance.is_active ? (
+                            <>
+                              <WifiOff className="h-3.5 w-3.5 mr-1.5" />
+                              Desativar
+                            </>
+                          ) : (
+                            <>
+                              <Wifi className="h-3.5 w-3.5 mr-1.5" />
+                              Ativar
+                            </>
+                          )}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="flex-1 bg-primary hover:bg-primary/90"
+                          onClick={() => handleConnectInstance(instance)}
+                        >
+                          <QrCode className="h-3.5 w-3.5 mr-1.5" />
+                          Conectar
+                        </Button>
+                      )}
                       <Button
                         variant="destructive"
                         size="sm"
@@ -447,9 +468,15 @@ export default function WhatsAppInstances() {
 
       <EvolutionConnectDialog
         open={connectOpen}
-        onOpenChange={setConnectOpen}
+        onOpenChange={(open) => {
+          setConnectOpen(open);
+          if (!open) setSelectedInstance(null);
+        }}
+        initialInstanceName={selectedInstance?.name}
+        initialFriendlyName={selectedInstance?.friendlyName}
         onConnected={() => {
           setConnectOpen(false);
+          setSelectedInstance(null);
           fetchInstances();
         }}
       />
