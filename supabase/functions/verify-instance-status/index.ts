@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
     // Get instance from DB
     const { data: instance, error: dbError } = await supabase
       .from('wa_instances')
-      .select('id, instance_name, provider, status, is_active')
+      .select('id, instance_name, provider, status, is_active, api_url, api_key_encrypted')
       .eq('id', instance_id)
       .eq('user_id', user.id)
       .single();
@@ -72,29 +72,62 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Check real connection state
+    const baseUrl = (instance.api_url || apiUrl || '').replace(/\/$/, '');
+    const instKey = instance.api_key_encrypted || apiKey;
+    const globalKey = apiKey;
+
+    // First try: instance/connectionState with global key AND instance key
     const headers = { 
       'Content-Type': 'application/json', 
-      'apikey': apiKey,
-      'admintoken': apiKey,
-      'Authorization': `Bearer ${apiKey}`
+      'apikey': globalKey,
+      'admintoken': globalKey,
+      'Authorization': `Bearer ${globalKey}`
     };
     
     let realStatus = 'disconnected';
     let isConnected = false;
 
     try {
-      const stateRes = await fetch(
-        `${apiUrl}/instance/connectionState/${instance.instance_name}`,
+      let stateRes = await fetch(
+        `${baseUrl}/instance/connectionState/${instance.instance_name}`,
         { method: 'GET', headers }
       );
 
-      if (stateRes.ok) {
-        const stateData = await stateRes.json();
-        const state = String(stateData?.state || stateData?.instance?.state || stateData?.status || stateData?.instance?.status || '').toLowerCase();
-        console.log(`[verify-instance] ${instance.instance_name} state: ${state}`);
+      // If connectionState fails, fallback to POST /instance/connect like in get-qrcode (Uazapi feature)
+      if (!stateRes.ok || stateRes.status === 404) {
+        console.log(`[verify-instance] GET connectionState failed (${stateRes.status}), trying POST /instance/connect`);
+        stateRes = await fetch(`${baseUrl}/instance/connect`, {
+          method: 'POST',
+          headers: {
+              'token': instKey,
+              'apikey': instKey,
+              'admintoken': globalKey,
+              'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({})
+        });
+      }
 
-        // Robust connection check (V5.2)
+      const rawText = await stateRes.text();
+      console.log(`[verify-instance] ${instance.instance_name} raw response from Uazapi:`, rawText.substring(0, 300));
+      
+      let stateData: any = {};
+      try {
+        stateData = JSON.parse(rawText);
+      } catch {}
+
+      if (stateRes.ok || stateData.state || stateData.status || stateData.connected) {
+        const state = String(
+          stateData?.state || 
+          stateData?.instance?.state || 
+          stateData?.status || 
+          stateData?.instance?.status || 
+          ''
+        ).toLowerCase();
+        
+        console.log(`[verify-instance] Parsed logic state: ${state}`);
+
+        // Robust connection check (V6 Uazapi)
         isConnected = state === 'open' || 
                     state === 'connected' || 
                     state === 'connecting' || // Do not drop connection immediately while it connects
@@ -108,18 +141,13 @@ Deno.serve(async (req) => {
           realStatus = state === 'connecting' ? 'connecting' : 'connected';
         } else if (state === 'close' || state === 'closed' || state === 'disconnected') {
           realStatus = 'disconnected';
-        } else if (state === 'qrcode') {
+        } else if (state === 'qrcode' || stateData?.base64 || stateData?.qrcode) {
           realStatus = 'waiting_qr';
         } else {
           realStatus = state || 'disconnected';
         }
-      } else if (stateRes.status === 404) {
-        // Instance doesn't exist anymore on the server
-        realStatus = 'disconnected';
-        console.log(`[verify-instance] ${instance.instance_name} not found on Evolution server (404)`);
       } else {
-        const errText = await stateRes.text().catch(() => '');
-        console.log(`[verify-instance] ${instance.instance_name} check failed: ${stateRes.status} - ${errText}`);
+        console.log(`[verify-instance] ${instance.instance_name} check completely failed: ${stateRes.status}`);
         realStatus = 'error';
       }
     } catch (fetchErr) {
