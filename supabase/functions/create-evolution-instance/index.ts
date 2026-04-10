@@ -195,7 +195,7 @@ serve(async (req) => {
         console.log('[Uazapi V8] Instância já está conectada!')
         await supabase
           .from('wa_instances')
-          .update({ status: 'connected', is_active: true, updated_at: new Date().toISOString() })
+          .update({ status: 'connected', is_active: true, health_score: 100, updated_at: new Date().toISOString() })
           .eq('instance_name', instance_name)
       } else {
         console.log(`[Uazapi V8] QR Code não encontrado. Estado: ${state}. Resposta: ${connectText.substring(0, 200)}`)

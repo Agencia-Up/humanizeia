@@ -86,15 +86,23 @@ Deno.serve(async (req) => {
 
       if (stateRes.ok) {
         const stateData = await stateRes.json();
-        const state = stateData?.instance?.state || stateData?.state || '';
+        const state = String(stateData?.state || stateData?.instance?.state || stateData?.status || stateData?.instance?.status || '').toLowerCase();
         console.log(`[verify-instance] ${instance.instance_name} state: ${state}`);
 
-        if (state === 'open' || state === 'connected') {
+        // Robust connection check (V5.2)
+        isConnected = state === 'open' || 
+                    state === 'connected' || 
+                    state === 'connected_authenticated' || 
+                    stateData?.connected === true || 
+                    stateData?.instance?.connected === true || 
+                    stateData?.loggedIn === true || 
+                    stateData?.instance?.loggedIn === true;
+
+        if (isConnected) {
           realStatus = 'connected';
-          isConnected = true;
-        } else if (state === 'close' || state === 'closed') {
+        } else if (state === 'close' || state === 'closed' || state === 'disconnected') {
           realStatus = 'disconnected';
-        } else if (state === 'connecting') {
+        } else if (state === 'connecting' || state === 'qrcode') {
           realStatus = 'waiting_qr';
         } else {
           realStatus = state || 'disconnected';
@@ -118,15 +126,20 @@ Deno.serve(async (req) => {
       updated_at: new Date().toISOString(),
     };
 
-    // If disconnected, deactivate
-    if (!isConnected && realStatus !== 'error') {
+    // If connected, activate and fix health
+    if (isConnected) {
+      updateData.is_active = true;
+      updateData.health_score = 100;
+      updateData.shadow_ban_suspect = false;
+    } else if (realStatus !== 'error') {
+      // If disconnected, deactivate
       updateData.is_active = false;
-    }
-
-    // If was marked as connected but is actually disconnected, reduce health
-    if (instance.status === 'connected' && !isConnected && realStatus !== 'error') {
-      updateData.health_score = 0;
-      updateData.shadow_ban_suspect = true;
+      
+      // If was marked as connected but is actually disconnected, reduce health
+      if (instance.status === 'connected') {
+        updateData.health_score = 0;
+        updateData.shadow_ban_suspect = true;
+      }
     }
 
     await supabase

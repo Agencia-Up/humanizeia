@@ -142,6 +142,7 @@ serve(async (req: Request) => {
         .update({
           status: 'connected',
           is_active: true,
+          health_score: 100,
           phone_number: phoneNumber || '',
           updated_at: new Date().toISOString(),
         })
@@ -230,7 +231,12 @@ serve(async (req: Request) => {
     if (connected) {
       await supabase
         .from('wa_instances')
-        .update({ status: 'connected', is_active: true, updated_at: new Date().toISOString() })
+        .update({ 
+          status: 'connected', 
+          is_active: true, 
+          health_score: 100,
+          updated_at: new Date().toISOString() 
+        })
         .eq('user_id', user_id)
         .eq('instance_name', instanceName);
 
