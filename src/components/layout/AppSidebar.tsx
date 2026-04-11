@@ -23,6 +23,7 @@ import {
   Bot,
   ChevronDown,
   Mail,
+  Users,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -55,8 +56,9 @@ const agentItems = [
   { title: 'Maria',   subtitle: 'Design',        url: '/creative-studio',icon: Palette,   emoji: '🎨' },
   { title: 'Davi',    subtitle: 'Social Media',  url: '/davi',           icon: Instagram, emoji: '📱' },
   { title: 'João',    subtitle: 'E-mail',        url: '/joao',           icon: Mail,      emoji: '📧' },
-  { title: 'Daniel',  subtitle: 'Estratégia',    url: '/daniel',         icon: Brain,     emoji: '🧠' },
-  { title: 'Pedro',   subtitle: 'WhatsApp IA',   url: '/whatsapp/ai-agent', icon: Bot,   emoji: '💬' },
+  { title: 'Daniel',  subtitle: 'Estratégia',    url: '/daniel',            icon: Brain,  emoji: '🧠' },
+  { title: 'Marcos',  subtitle: 'CRM & Leads',   url: '/crm',               icon: Users,  emoji: '🤝' },
+  { title: 'Pedro',   subtitle: 'WhatsApp IA',   url: '/whatsapp/ai-agent', icon: Bot,    emoji: '💬' },
 ];
 
 // ── WhatsApp & CRM ────────────────────────────────────────────────────────────
