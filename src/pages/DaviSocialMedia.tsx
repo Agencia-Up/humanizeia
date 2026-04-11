@@ -61,6 +61,7 @@ type GeneratedContent = {
   preview: string;
   fullContent: string;
   slides?: import('@/hooks/useSocialMedia').CarouselSlide[];
+  clientImages?: string[];
   templateId?: string;
   createdAt: Date;
   scheduled?: Date;
@@ -164,7 +165,7 @@ export default function DaviSocialMedia() {
     differentiators?: string;
   } | null>(null);
   const [briefingAlerta, setBriefingAlerta] = useState(false);
-  const [clientImageUrl, setClientImageUrl] = useState<string | null>(null);
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -291,29 +292,21 @@ export default function DaviSocialMedia() {
     }));
   };
 
-  // ─── Upload client photo ─────────────────────────────────────────────────
+  // ─── Upload multiple client photos ──────────────────────────────────────────
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !user) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length || !user) return;
     setUploadingPhoto(true);
     try {
-      const ext = file.name.split('.').pop() || 'jpg';
-      const path = `${user.id}/${Date.now()}.${ext}`;
-      const { error } = await supabase.storage
-        .from('davi-uploads')
-        .upload(path, file, { upsert: true, contentType: file.type });
-      if (error) throw error;
-      const { data: { publicUrl } } = supabase.storage.from('davi-uploads').getPublicUrl(path);
-      setClientImageUrl(publicUrl);
-      // Auto-select Personal Brand template when client photo is uploaded
-      setSelectedTemplate('personal_brand');
-      toast({ title: '📷 Foto carregada!', description: 'Template Personal Brand ativado automaticamente. O Davi usará sua foto no carrossel.' });
+      const newUrls: string[] = [];
+      for (const file of files) {
+        // Usa object URL para preview local imediato
+        const objectUrl = URL.createObjectURL(file);
+        newUrls.push(objectUrl);
+      }
+      setAttachedImages(prev => [...prev, ...newUrls]);
     } catch (err: any) {
-      // Fallback: create object URL from file directly for preview
-      const objectUrl = URL.createObjectURL(file);
-      setClientImageUrl(objectUrl);
-      setSelectedTemplate('personal_brand');
-      toast({ title: '📷 Foto carregada!', description: 'Preview local ativo. Configure o bucket davi-uploads no Supabase para salvar permanentemente.' });
+      toast({ title: 'Erro', description: 'Erro ao processar imagem', variant: 'destructive' });
     } finally {
       setUploadingPhoto(false);
       if (e.target) e.target.value = '';
@@ -620,23 +613,90 @@ export default function DaviSocialMedia() {
   };
 
   // ─── Flow: Manual Chat ────────────────────────────────────────────────────
-
   const runManualChat = async (text: string) => {
-    const isActuallyCarousel = contentType === 'carousel' || !contentType; 
+    const isActuallyCarousel = contentType === 'carousel' || text.toLowerCase().includes('carrossel'); 
     
+    // If the user attached images and it's NOT a carousel, interpret it as a Native Canvas Product request.
+    if (attachedImages.length > 0 && !isActuallyCarousel) {
+      const progressId = addDaviMessage(`👨‍🎨 **Davi**: Fotos detectadas! Modelando layout comercial para a sua cópia...`);
+      try {
+        const _systemPrompt = `O usuário quer gerar um post de venda enviando fotos reais do produto/veículo e a descrição: "${text}". 
+Sua tarefa é extrair e organizar isso em exatas 3 linhas (para um layout matemático de arte nativa).
+Extraia as informações cruciais e responda EXATAMENTE com um objeto JSON e nada mais:
+{
+  "line1": "ex: NOME DO PRODUTO (max 20 chars, ex: TRACKER LT)",
+  "line2": "ex: DESCRITIVO CURTO (ano, cor, km - ex: 2018 • 80mil km • Flex)",
+  "line3": "ex: PREÇO (ex: R$ 107.990) ou CALL TO ACTION",
+  "theme": "icom", // ou "minimal"
+  "caption": "ex: Roteiro para a legenda social post"
+}
+Retorne APENAS JSON, sem \`\`\`json ou texto extra.`;
+
+        const ctx = clientContext;
+        const contextStr = ctx ? `Cliente: ${ctx.name}\nProduto: ${ctx.produto}` : '';
+
+        // Import function dynamically to avoid circular issues
+        const { generateNativeCanvas } = await import('@/components/davi/NativeCanvasRenderer');
+
+        const { data, error } = await supabase.functions.invoke('claude-chat', {
+          body: {
+             messages: [{ role: 'user', content: _systemPrompt }],
+             context: 'paulo',
+             config: { description: contextStr, temperature: 0.2 }
+          }
+        });
+
+        if (error) throw new Error(error.message);
+        
+        let resultJson = data?.choices?.[0]?.message?.content || '{}';
+        // Clean markdown block if model disobeyed
+        resultJson = resultJson.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        const extracted = JSON.parse(resultJson);
+
+        setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `🖼️ **Layout Pronto!** Renderizando de forma nativa e ultra-rápida (Canvas)...` } : m));
+
+        const base64Img = await generateNativeCanvas({
+           images: attachedImages,
+           line1: extracted.line1 || 'PRODUTO',
+           line2: extracted.line2 || 'Detalhes do produto.',
+           line3: extracted.line3 || 'Consulte preço',
+           theme: extracted.theme || 'icom',
+           footerText: clientContext?.name?.toUpperCase() || 'DAVI EXCLUSIVE'
+        });
+
+        const generated: GeneratedContent = {
+           id: Date.now().toString(),
+           type: 'post',
+           title: `Oferta — ${text.slice(0, 20)}`,
+           preview: base64Img,
+           fullContent: extracted.caption || text,
+           createdAt: new Date(),
+           platform,
+        };
+
+        setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `✨ **Arte de Produto Criada!** Zero atraso de IA e precisão máxima.`, contentCard: generated } : m));
+        addToLibrary(generated);
+        setAttachedImages([]); // Clear images after dispatch
+
+        return;
+      } catch (err: any) {
+        setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `❌ Falha ao processar imagens para a arte final: ${err.message}` } : m));
+        return;
+      }
+    }
+
     if (isActuallyCarousel) {
-      const attachedPhotoMsg = clientImageUrl ? `[FOTO ANEXADA] O usuário adicionou uma foto de rosto com a instrução implícita de que este carrossel seja pessoal.\n` : '';
-      
       const progressId = addDaviMessage(`👨‍🎨 **Davi**: Analisando sua ideia e roteirizando as cenas do carrossel...`);
       const carousel = await generateCarouselV2({
-        topic: attachedPhotoMsg + text,
+        topic: text,
         audience: clientContext?.publico || 'empreendedores digitais',
         tone: 'persuasivo e direto',
         slide_count: 8,
         include_cta: true,
         brand_name: clientContext?.name,
         carousel_type: 'interativo',
-        client_image_url: clientImageUrl || '',
+        client_image_url: '',
       });
 
       if (!carousel) {
@@ -646,8 +706,6 @@ export default function DaviSocialMedia() {
 
       setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `🖼️ **Roteiro concluído!** Renderizando imagens (${carousel.slides.length} páginas)...` } : m));
 
-      // Removed blocking image pre-load loop to make generation instant. Images will load lazily with 'sintetizando' fallback.
-
       const generated: GeneratedContent = {
         id: Date.now().toString(),
         type: 'carousel',
@@ -655,13 +713,15 @@ export default function DaviSocialMedia() {
         preview: carousel.cover_headline || carousel.slides[0]?.headline || text,
         fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
         slides: carousel.slides,
-        templateId: carousel.visual_style === 'personal_brand' || clientImageUrl ? 'personal_brand' : 'futurista_ia',
+        clientImages: attachedImages.length > 0 ? [...attachedImages] : [],
+        templateId: selectedTemplate,
         createdAt: new Date(),
         platform,
       };
 
       setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `✨ **Pronto!** Carrossel gerado e salvo na Biblioteca. Abra a lateral para visualizar.`, contentCard: generated } : m));
       addToLibrary(generated);
+      if (attachedImages.length > 0) setAttachedImages([]);
     } else {
       const prompt = `Crie ${contentType === 'reel_script' ? `um script de Reel de 30-60 segundos para ${platform}` : `um post para ${platform}`} sobre: ${text}. Cliente: ${clientContext?.name || 'agência'}. Produto: ${clientContext?.produto || ''}. Público: ${clientContext?.publico || ''}.`;
       const content = await callPauloApi(prompt, switches);
@@ -1129,7 +1189,6 @@ ${pautasStr}`;
                                 <Copy className="h-3 w-3" /> Copiar
                               </Button>
                             </div>
-                            {/* Visual confirmation to redirect to library instead of heavy rendering */}
                             {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
                               <div className="bg-background/50 rounded-xl p-4 flex flex-col items-center justify-center border border-border/50 shadow-inner">
                                 <div className="text-4xl mb-2">📸</div>
@@ -1146,7 +1205,11 @@ ${pautasStr}`;
                                 </Button>
                               </div>
                             ) : (
-                              <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
+                              message.contentCard.preview.startsWith('data:image') ? (
+                                <img src={message.contentCard.preview} alt="Gerado" className="rounded-lg shadow-sm border border-border/30 w-full object-contain max-h-[350px]" />
+                              ) : (
+                                <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
+                              )
                             )}
                             {message.contentCard.scheduled && (
                               <p className="text-[10px] text-emerald-400 mt-2">
@@ -1221,7 +1284,7 @@ ${pautasStr}`;
                               templateId={(message.contentCard.templateId as TemplateId) ?? 'futurista_ia'}
                               onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
                               brandName={clientContext?.name || 'Minha Marca'}
-                              clientImageUrl={clientImageUrl ?? undefined}
+                              clientImages={message.contentCard.clientImages ?? []}
                             />
                           ) : (
                             <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
@@ -1290,11 +1353,11 @@ ${pautasStr}`;
 
                 <div className="flex items-center justify-between pt-2 px-1">
                   <div className="flex items-center gap-2">
-                    {/* Hidden inputs go here to stay within logic */}
                     <input
                       ref={photoRef}
                       type="file"
                       accept="image/*"
+                      multiple
                       className="hidden"
                       onChange={handlePhotoUpload}
                     />
@@ -1302,27 +1365,33 @@ ${pautasStr}`;
                     <button 
                       onClick={() => photoRef.current?.click()} 
                       className={`p-2 transition-colors rounded-full flex items-center justify-center ${
-                        clientImageUrl ? 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                        attachedImages.length > 0 ? 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                       }`}
-                      title="Anexar Foto de Rosto para Carrossel Personal Brand"
+                      title="Anexar Fotos do Produto (até 3 recomendadas) para Arte Premium"
                     >
                       {uploadingPhoto ? (
                          <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : clientImageUrl ? (
-                         <img src={clientImageUrl} alt="Anexo" className="w-5 h-5 rounded-full object-cover shadow-sm border border-emerald-500/50" />
-                      ) : (
-                         <Camera className="h-4 w-4" />
-                      )}
+                      ) : attachedImages.length > 0 ? (
+                         <Badge variant="secondary" className="bg-emerald-500 text-white border-0 py-0 px-1.5 rounded-full absolute -top-1 -right-1 text-[9px]">{attachedImages.length}</Badge>
+                      ) : null}
+                      <Camera className="h-4 w-4" />
                     </button>
 
-                    {clientImageUrl && (
-                      <button
-                        onClick={() => { setClientImageUrl(null); setSelectedTemplate('futurista_ia'); }}
-                        className="text-[10px] bg-red-500/10 hover:bg-red-500/20 text-red-500 px-2 py-0.5 rounded-full flex items-center transition-all"
-                        title="Remover anexo"
-                      >
-                        <XIcon className="h-3 w-3 mr-1" /> Remover anexo
-                      </button>
+                    {attachedImages.length > 0 && (
+                      <div className="flex gap-1 items-center px-2 py-1 bg-muted/30 rounded-full border border-border/40">
+                         {attachedImages.map((imgUrl, i) => (
+                           <div key={i} className="relative w-6 h-6 rounded overflow-hidden shadow-sm group border border-border">
+                             <img src={imgUrl} alt="Anexo" className="w-full h-full object-cover" />
+                           </div>
+                         ))}
+                         <button
+                           onClick={() => setAttachedImages([])}
+                           className="text-red-500 p-1 hover:bg-red-500/10 rounded-full ml-1 m-0 transition-colors"
+                           title="Remover todas as fotos anexadas"
+                         >
+                           <XIcon className="h-3 w-3" />
+                         </button>
+                      </div>
                     )}
                   </div>
 
@@ -1381,7 +1450,11 @@ ${pautasStr}`;
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground line-clamp-3 mb-2">{item.preview}</p>
+                  {item.preview?.startsWith('data:image') ? (
+                    <img src={item.preview} alt="Arte" className="rounded-md w-full object-cover max-h-32 mb-2 border border-border/30 shadow-sm" />
+                  ) : (
+                    <p className="text-xs text-muted-foreground line-clamp-3 mb-2">{item.preview}</p>
+                  )}
                   {item.scheduled && (
                     <p className="text-[10px] text-emerald-400 mb-1.5">
                       📅 {new Date(item.scheduled).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
@@ -1398,7 +1471,7 @@ ${pautasStr}`;
                           <Eye className="h-3 w-3" /> Ver Carrossel Visual
                         </Button>
                       </DialogTrigger>
-                      <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40 p-6 flex flex-col items-center">
+                      <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40 p-6 flex flex-col items-center max-h-[90vh] overflow-hidden">
                         <DialogHeader className="w-full text-center mb-2">
                           <DialogTitle className="text-sm font-bold">{item.title}</DialogTitle>
                         </DialogHeader>
@@ -1412,7 +1485,7 @@ ${pautasStr}`;
                             setMessages(prev => prev.map(m => m.contentCard?.id === item.id ? { ...m, contentCard: { ...m.contentCard, templateId: tid } } : m));
                           }}
                           brandName={clientContext?.name || 'Minha Marca'}
-                          clientImageUrl={clientImageUrl ?? undefined}
+                          clientImages={item.clientImages ?? []}
                         />
                       </DialogContent>
                     </Dialog>

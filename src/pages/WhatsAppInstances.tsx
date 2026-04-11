@@ -89,6 +89,7 @@ export default function WhatsAppInstances() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [isVerifyingAll, setIsVerifyingAll] = useState(false);
+  const [selectedInstance, setSelectedInstance] = useState<{ name: string; friendlyName: string } | null>(null);
 
   const verifyInstanceStatus = async (instanceId: string, silent = false) => {
     setVerifyingId(instanceId);
@@ -177,6 +178,14 @@ export default function WhatsAppInstances() {
       setIsDeleting(false);
       setDeleteId(null);
     }
+  };
+
+  const handleConnectInstance = (instance: WaInstance) => {
+    setSelectedInstance({ 
+      name: instance.instance_name, 
+      friendlyName: instance.friendly_name || instance.instance_name 
+    });
+    setConnectOpen(true);
   };
 
   const handleToggleActive = async (instance: WaInstance) => {
@@ -342,7 +351,7 @@ export default function WhatsAppInstances() {
                             {instance.friendly_name || instance.instance_name}
                           </CardTitle>
                           <CardDescription className="text-xs">
-                            {instance.provider === 'meta' ? 'Meta API Oficial' : 'Evolution API'}
+                            {instance.provider === 'meta' ? 'Meta API Oficial' : 'Uazapi'}
                           </CardDescription>
                         </div>
                       </div>
@@ -363,7 +372,7 @@ export default function WhatsAppInstances() {
                       )}
                       <div>
                         <p className="text-muted-foreground text-xs">Provedor</p>
-                        <p className="font-medium text-xs">{instance.provider === 'meta' ? 'Meta API' : 'Evolution'}</p>
+                        <p className="font-medium text-xs">{instance.provider === 'meta' ? 'Meta API' : 'Uazapi'}</p>
                       </div>
                     </div>
 
@@ -395,24 +404,36 @@ export default function WhatsAppInstances() {
                           <RefreshCw className="h-3.5 w-3.5" />
                         )}
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => handleToggleActive(instance)}
-                      >
-                        {instance.is_active ? (
-                          <>
-                            <WifiOff className="h-3.5 w-3.5 mr-1.5" />
-                            Desativar
-                          </>
-                        ) : (
-                          <>
-                            <Wifi className="h-3.5 w-3.5 mr-1.5" />
-                            Ativar
-                          </>
-                        )}
-                      </Button>
+                      {instance.status === 'connected' ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => handleToggleActive(instance)}
+                        >
+                          {instance.is_active ? (
+                            <>
+                              <WifiOff className="h-3.5 w-3.5 mr-1.5" />
+                              Desativar
+                            </>
+                          ) : (
+                            <>
+                              <Wifi className="h-3.5 w-3.5 mr-1.5" />
+                              Ativar
+                            </>
+                          )}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="flex-1 bg-primary hover:bg-primary/90"
+                          onClick={() => handleConnectInstance(instance)}
+                        >
+                          <QrCode className="h-3.5 w-3.5 mr-1.5" />
+                          Conectar
+                        </Button>
+                      )}
                       <Button
                         variant="destructive"
                         size="sm"
@@ -435,8 +456,8 @@ export default function WhatsAppInstances() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <ol className="list-decimal list-inside space-y-2">
-              <li>Clique em <strong>"Conectar Número"</strong> e escolha o provedor (Evolution API ou Meta API Oficial)</li>
-              <li>Para <strong>Evolution API</strong>: informe URL + API Key, teste a conexão e escaneie o QR Code</li>
+              <li>Clique em <strong>"Conectar Número"</strong> e escolha o provedor (Uazapi ou Meta API Oficial)</li>
+              <li>Para <strong>Uazapi</strong>: informe URL + API Key, teste a conexão e escaneie o QR Code</li>
               <li>Para <strong>Meta API</strong>: informe o Phone Number ID e Access Token da sua conta Business</li>
               <li>O sistema fará <strong>rodízio inteligente</strong> entre as instâncias ativas durante o disparo</li>
               <li>Instâncias com <strong>saúde baixa</strong> são automaticamente desativadas para proteger seus números</li>
@@ -447,9 +468,15 @@ export default function WhatsAppInstances() {
 
       <EvolutionConnectDialog
         open={connectOpen}
-        onOpenChange={setConnectOpen}
+        onOpenChange={(open) => {
+          setConnectOpen(open);
+          if (!open) setSelectedInstance(null);
+        }}
+        initialInstanceName={selectedInstance?.name}
+        initialFriendlyName={selectedInstance?.friendlyName}
         onConnected={() => {
           setConnectOpen(false);
+          setSelectedInstance(null);
           fetchInstances();
         }}
       />
