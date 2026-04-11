@@ -61,6 +61,7 @@ type GeneratedContent = {
   preview: string;
   fullContent: string;
   slides?: import('@/hooks/useSocialMedia').CarouselSlide[];
+  clientImages?: string[];
   templateId?: string;
   createdAt: Date;
   scheduled?: Date;
@@ -613,8 +614,10 @@ export default function DaviSocialMedia() {
 
   // ─── Flow: Manual Chat ────────────────────────────────────────────────────
   const runManualChat = async (text: string) => {
-    // If the user attached images, interpret it as a Native Canvas Product Generation request.
-    if (attachedImages.length > 0) {
+    const isActuallyCarousel = contentType === 'carousel' || text.toLowerCase().includes('carrossel'); 
+    
+    // If the user attached images and it's NOT a carousel, interpret it as a Native Canvas Product request.
+    if (attachedImages.length > 0 && !isActuallyCarousel) {
       const progressId = addDaviMessage(`👨‍🎨 **Davi**: Fotos detectadas! Modelando layout comercial para a sua cópia...`);
       try {
         const _systemPrompt = `O usuário quer gerar um post de venda enviando fotos reais do produto/veículo e a descrição: "${text}". 
@@ -683,8 +686,6 @@ Retorne APENAS JSON, sem \`\`\`json ou texto extra.`;
       }
     }
 
-    const isActuallyCarousel = contentType === 'carousel' || !contentType; 
-    
     if (isActuallyCarousel) {
       const progressId = addDaviMessage(`👨‍🎨 **Davi**: Analisando sua ideia e roteirizando as cenas do carrossel...`);
       const carousel = await generateCarouselV2({
@@ -712,6 +713,7 @@ Retorne APENAS JSON, sem \`\`\`json ou texto extra.`;
         preview: carousel.cover_headline || carousel.slides[0]?.headline || text,
         fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
         slides: carousel.slides,
+        clientImages: attachedImages.length > 0 ? [...attachedImages] : [],
         templateId: selectedTemplate,
         createdAt: new Date(),
         platform,
@@ -719,6 +721,7 @@ Retorne APENAS JSON, sem \`\`\`json ou texto extra.`;
 
       setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `✨ **Pronto!** Carrossel gerado e salvo na Biblioteca. Abra a lateral para visualizar.`, contentCard: generated } : m));
       addToLibrary(generated);
+      if (attachedImages.length > 0) setAttachedImages([]);
     } else {
       const prompt = `Crie ${contentType === 'reel_script' ? `um script de Reel de 30-60 segundos para ${platform}` : `um post para ${platform}`} sobre: ${text}. Cliente: ${clientContext?.name || 'agência'}. Produto: ${clientContext?.produto || ''}. Público: ${clientContext?.publico || ''}.`;
       const content = await callPauloApi(prompt, switches);
@@ -1281,7 +1284,7 @@ ${pautasStr}`;
                               templateId={(message.contentCard.templateId as TemplateId) ?? 'futurista_ia'}
                               onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
                               brandName={clientContext?.name || 'Minha Marca'}
-                              clientImageUrl={attachedImages[0] ?? undefined}
+                              clientImages={message.contentCard.clientImages ?? []}
                             />
                           ) : (
                             <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
@@ -1482,7 +1485,7 @@ ${pautasStr}`;
                             setMessages(prev => prev.map(m => m.contentCard?.id === item.id ? { ...m, contentCard: { ...m.contentCard, templateId: tid } } : m));
                           }}
                           brandName={clientContext?.name || 'Minha Marca'}
-                          clientImageUrl={attachedImages[0] ?? undefined}
+                          clientImages={item.clientImages ?? []}
                         />
                       </DialogContent>
                     </Dialog>
