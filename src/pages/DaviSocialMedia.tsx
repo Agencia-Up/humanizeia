@@ -1471,7 +1471,7 @@ ${pautasStr}`;
                           <Eye className="h-3 w-3" /> Ver Carrossel Visual
                         </Button>
                       </DialogTrigger>
-                      <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40 p-6 flex flex-col items-center">
+                      <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40 p-6 flex flex-col items-center max-h-[90vh] overflow-hidden">
                         <DialogHeader className="w-full text-center mb-2">
                           <DialogTitle className="text-sm font-bold">{item.title}</DialogTitle>
                         </DialogHeader>

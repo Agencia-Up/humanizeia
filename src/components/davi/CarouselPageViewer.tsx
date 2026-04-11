@@ -88,7 +88,7 @@ export function CarouselPageViewer({ slides, templateId, onTemplateChange, brand
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0f1d]/50 p-4 rounded-xl border border-white/5">
+    <div className="flex flex-col h-full max-h-[85vh] bg-[#0a0f1d]/50 p-4 rounded-xl border border-white/5 w-full">
       <div className="flex justify-between items-center bg-black/40 backdrop-blur-md rounded-2xl p-2 px-4 shadow-lg border border-white/10 mb-4 sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <h3 className="text-sm font-semibold text-white tracking-tight">Galeria de Slides</h3>
