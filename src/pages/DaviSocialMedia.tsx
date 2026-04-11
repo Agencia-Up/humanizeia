@@ -1281,7 +1281,7 @@ ${pautasStr}`;
                               templateId={(message.contentCard.templateId as TemplateId) ?? 'futurista_ia'}
                               onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
                               brandName={clientContext?.name || 'Minha Marca'}
-                              clientImageUrl={clientImageUrl ?? undefined}
+                              clientImageUrl={attachedImages[0] ?? undefined}
                             />
                           ) : (
                             <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">{message.contentCard.preview}</p>
@@ -1478,7 +1478,7 @@ ${pautasStr}`;
                             setMessages(prev => prev.map(m => m.contentCard?.id === item.id ? { ...m, contentCard: { ...m.contentCard, templateId: tid } } : m));
                           }}
                           brandName={clientContext?.name || 'Minha Marca'}
-                          clientImageUrl={clientImageUrl ?? undefined}
+                          clientImageUrl={attachedImages[0] ?? undefined}
                         />
                       </DialogContent>
                     </Dialog>
