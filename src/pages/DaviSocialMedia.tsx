@@ -1447,7 +1447,11 @@ ${pautasStr}`;
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground line-clamp-3 mb-2">{item.preview}</p>
+                  {item.preview?.startsWith('data:image') ? (
+                    <img src={item.preview} alt="Arte" className="rounded-md w-full object-cover max-h-32 mb-2 border border-border/30 shadow-sm" />
+                  ) : (
+                    <p className="text-xs text-muted-foreground line-clamp-3 mb-2">{item.preview}</p>
+                  )}
                   {item.scheduled && (
                     <p className="text-[10px] text-emerald-400 mb-1.5">
                       📅 {new Date(item.scheduled).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
