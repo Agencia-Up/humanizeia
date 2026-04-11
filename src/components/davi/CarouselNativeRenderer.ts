@@ -3,16 +3,20 @@ import { CarouselSlide } from '@/hooks/useSocialMedia';
 const CANVAS_W = 1080;
 const CANVAS_H = 1350; // Instagram Portrait Feed aspect ratio
 
-// helper: load image
+// helper: load image with strict 3-second timeout
 const loadImage = (src: string): Promise<HTMLImageElement> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(new Error(`Failed to load image: ${src}`));
-    // Use pollinations.ai for background generation if prompted
-    img.src = src;
-  });
+  return Promise.race([
+    new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = (e) => reject(new Error(`Failed to load image: ${src}`));
+      img.src = src;
+    }),
+    new Promise<HTMLImageElement>((_, reject) =>
+      setTimeout(() => reject(new Error('Image fetch timeout')), 3000)
+    )
+  ]);
 };
 
 export interface GenerateCarouselProps {
@@ -48,8 +52,25 @@ export async function generateNativeCarousel({
     }
   }
 
-  // Pre-load pollinations generated images if needed
-  // We don't want to block everything sequentially, but let's do it simply for now
+  // Pre-fetch all images in parallel to avoid sequential blocking
+  const backgroundPromises = slides.map(async (slide, i) => {
+    if (loadedAttachedImages.length > 0) {
+      return loadedAttachedImages[i % loadedAttachedImages.length];
+    }
+    
+    // Fallback to lightning fast Picsum API instead of 500-prone Pollinations
+    const picsumUrl = `https://picsum.photos/1080/1350?random=${Date.now() + i}`;
+    try {
+      return await loadImage(picsumUrl);
+    } catch (e) {
+      console.warn('Could not fetch auto background:', e);
+      return null;
+    }
+  });
+
+  const slideBackgrounds = await Promise.all(backgroundPromises);
+
+  // Synchronously draw all slides now that images are in memory
   for (let i = 0; i < slides.length; i++) {
     const slide = slides[i];
     
@@ -57,21 +78,7 @@ export async function generateNativeCarousel({
     ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
     // 1. BACKGROUND
-    // Try to use an attached image via rotation
-    let bgImg: HTMLImageElement | null = null;
-    if (loadedAttachedImages.length > 0) {
-      bgImg = loadedAttachedImages[i % loadedAttachedImages.length];
-    } else {
-      // If no attached image, generate an automatic background via Pollinations AI
-      const prompt = slide.visual_cue || slide.headline || 'abstract professional background aesthetic minimal';
-      const encodedPrompt = encodeURIComponent(`cinematic dark background ${prompt} high resolution`);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${CANVAS_W}&height=${CANVAS_H}&nologo=true&seed=${i}`;
-      try {
-        bgImg = await loadImage(pollinationsUrl);
-      } catch (e) {
-        console.warn('Could not fetch auto background from pollinations');
-      }
-    }
+    const bgImg = slideBackgrounds[i];
 
     // Fill background solid color first as fallback
     const config = slide.visual_config || {};
