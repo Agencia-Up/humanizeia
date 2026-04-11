@@ -929,6 +929,60 @@ function buildSegmentContext(segment: any): string {
     }
   }
 
+  // Knowledge base personalizado (configurado pelo usuário)
+  const kb = segment.knowledge_base || {};
+  if (Object.keys(kb).length > 0) {
+    lines.push("", "REGRAS PERSONALIZADAS DO GESTOR (prioridade máxima):");
+
+    // CPL/CPA targets override
+    if (kb.cpl_min !== undefined || kb.cpl_max !== undefined) {
+      lines.push(`  💰 CPL alvo: mín R$${kb.cpl_min ?? 0}, ótimo R$${kb.cpl_optimal ?? '?'}, máx R$${kb.cpl_max ?? '?'}`);
+    }
+    if (kb.cpa_max !== undefined) {
+      lines.push(`  💰 CPA alvo: ótimo R$${kb.cpa_optimal ?? '?'}, máx R$${kb.cpa_max}`);
+    }
+
+    // Geo rules
+    if (kb.geo_type && kb.geo_type !== 'country') {
+      if (kb.geo_type === 'radius' && kb.geo_center_city) {
+        lines.push(`  📍 Segmentação geográfica: raio de ${kb.geo_radius_km ?? 50}km em torno de ${kb.geo_center_city}`);
+      } else if (kb.geo_type === 'cities' && kb.geo_cities?.length) {
+        lines.push(`  📍 Cidades alvo: ${kb.geo_cities.join(', ')}`);
+      } else if (kb.geo_type === 'states' && kb.geo_states?.length) {
+        lines.push(`  📍 Estados alvo: ${kb.geo_states.join(', ')}`);
+      }
+      if (kb.geo_exclude_cities?.length) {
+        lines.push(`  🚫 Regiões excluídas: ${kb.geo_exclude_cities.join(', ')}`);
+      }
+      lines.push(`  ⚠️ NUNCA expandir segmentação geográfica além do definido acima`);
+    }
+
+    // Audience
+    if (kb.age_min || kb.age_max) {
+      lines.push(`  👥 Público: ${kb.age_min ?? 18}-${kb.age_max ?? 65} anos, gênero: ${kb.gender === 'male' ? 'masculino' : kb.gender === 'female' ? 'feminino' : 'todos'}`);
+    }
+    if (kb.interests?.length) {
+      lines.push(`  🎯 Interesses validados: ${kb.interests.slice(0, 8).join(', ')}`);
+    }
+    if (kb.behaviors?.length) {
+      lines.push(`  🧠 Comportamentos: ${kb.behaviors.slice(0, 5).join(', ')}`);
+    }
+
+    // Creative rules
+    if (kb.creative_rotation_days) {
+      lines.push(`  🔄 Trocar criativos a cada ${kb.creative_rotation_days} dias`);
+    }
+    if (kb.max_frequency) {
+      lines.push(`  ⚠️ Alertar frequência > ${kb.max_frequency}x (configurado pelo gestor)`);
+    }
+
+    // Custom rules
+    if (kb.custom_rules?.length) {
+      lines.push("", "  REGRAS PERSONALIZADAS:");
+      (kb.custom_rules as string[]).forEach((r: string) => lines.push(`    → ${r}`));
+    }
+  }
+
   return lines.join("\n");
 }
 
