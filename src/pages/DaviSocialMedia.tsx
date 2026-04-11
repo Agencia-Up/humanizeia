@@ -665,20 +665,20 @@ Retorne APENAS JSON, sem \`\`\`json ou texto extra.`;
         const generated: GeneratedContent = {
            id: Date.now().toString(),
            type: 'post',
-           title: \`Oferta — \${text.slice(0, 20)}\`,
+           title: `Oferta — ${text.slice(0, 20)}`,
            preview: base64Img,
            fullContent: extracted.caption || text,
            createdAt: new Date(),
            platform,
         };
 
-        setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: \`✨ **Arte de Produto Criada!** Zero atraso de IA e precisão máxima.\`, contentCard: generated } : m));
+        setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `✨ **Arte de Produto Criada!** Zero atraso de IA e precisão máxima.`, contentCard: generated } : m));
         addToLibrary(generated);
         setAttachedImages([]); // Clear images after dispatch
 
         return;
       } catch (err: any) {
-        setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: \`❌ Falha ao processar imagens para a arte final: \${err.message}\` } : m));
+        setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `❌ Falha ao processar imagens para a arte final: ${err.message}` } : m));
         return;
       }
     }
@@ -686,7 +686,7 @@ Retorne APENAS JSON, sem \`\`\`json ou texto extra.`;
     const isActuallyCarousel = contentType === 'carousel' || !contentType; 
     
     if (isActuallyCarousel) {
-      const progressId = addDaviMessage(\`👨‍🎨 **Davi**: Analisando sua ideia e roteirizando as cenas do carrossel...\`);
+      const progressId = addDaviMessage(`👨‍🎨 **Davi**: Analisando sua ideia e roteirizando as cenas do carrossel...`);
       const carousel = await generateCarouselV2({
         topic: text,
         audience: clientContext?.publico || 'empreendedores digitais',
@@ -703,30 +703,30 @@ Retorne APENAS JSON, sem \`\`\`json ou texto extra.`;
          return;
       }
 
-      setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: \`🖼️ **Roteiro concluído!** Renderizando imagens (\${carousel.slides.length} páginas)...\` } : m));
+      setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `🖼️ **Roteiro concluído!** Renderizando imagens (${carousel.slides.length} páginas)...` } : m));
 
       const generated: GeneratedContent = {
         id: Date.now().toString(),
         type: 'carousel',
-        title: \`Carrossel — \${text.slice(0, 30)}\`,
+        title: `Carrossel — ${text.slice(0, 30)}`,
         preview: carousel.cover_headline || carousel.slides[0]?.headline || text,
-        fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => \`#\${h}\`).join(' ') : ''),
+        fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
         slides: carousel.slides,
         templateId: selectedTemplate,
         createdAt: new Date(),
         platform,
       };
 
-      setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: \`✨ **Pronto!** Carrossel gerado e salvo na Biblioteca. Abra a lateral para visualizar.\`, contentCard: generated } : m));
+      setMessages(prev => prev.map(m => m.id === progressId ? { ...m, content: `✨ **Pronto!** Carrossel gerado e salvo na Biblioteca. Abra a lateral para visualizar.`, contentCard: generated } : m));
       addToLibrary(generated);
     } else {
-      const prompt = \`Crie \${contentType === 'reel_script' ? \`um script de Reel de 30-60 segundos para \${platform}\` : \`um post para \${platform}\`} sobre: \${text}. Cliente: \${clientContext?.name || 'agência'}. Produto: \${clientContext?.produto || ''}. Público: \${clientContext?.publico || ''}.\`;
+      const prompt = `Crie ${contentType === 'reel_script' ? `um script de Reel de 30-60 segundos para ${platform}` : `um post para ${platform}`} sobre: ${text}. Cliente: ${clientContext?.name || 'agência'}. Produto: ${clientContext?.produto || ''}. Público: ${clientContext?.publico || ''}.`;
       const content = await callPauloApi(prompt, switches);
 
       const generated: GeneratedContent = {
         id: Date.now().toString(),
         type: contentType,
-        title: \`\${contentType} — \${text.slice(0, 30)}\`,
+        title: `${contentType} — ${text.slice(0, 30)}`,
         preview: content.slice(0, 120),
         fullContent: content,
         createdAt: new Date(),
@@ -1370,7 +1370,7 @@ ${pautasStr}`;
                          <Loader2 className="h-4 w-4 animate-spin" />
                       ) : attachedImages.length > 0 ? (
                          <Badge variant="secondary" className="bg-emerald-500 text-white border-0 py-0 px-1.5 rounded-full absolute -top-1 -right-1 text-[9px]">{attachedImages.length}</Badge>
-                      )}
+                      ) : null}
                       <Camera className="h-4 w-4" />
                     </button>
 
