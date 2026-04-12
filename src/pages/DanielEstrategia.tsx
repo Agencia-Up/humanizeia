@@ -9,12 +9,14 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
 import { useAgentChat } from '@/contexts/AgentChatContext';
 import {
   Brain, BarChart3, Compass, Lightbulb, Loader2, Sparkles, Target,
   TrendingUp, ChevronRight, Shield, Star, Search, Trash2, Copy,
+  Calendar, AlertCircle, Crosshair, HeartCrack,
 } from 'lucide-react';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -94,6 +96,7 @@ interface GeneratedStrategy {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function DanielEstrategia() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const { createTask } = useAgentTasks();
   const { getHistory, saveMessage, clearHistory } = useAgentChat();
@@ -195,7 +198,9 @@ export default function DanielEstrategia() {
       if (data?.error) throw new Error(data.error);
       setResearchResult(data.research);
       await saveMessage('daniel', 'assistant', `Pesquisa para ${researchNiche}.`, { type: 'niche_research', research: data.research });
-      toast({ title: '🔍 Pesquisa concluída!', description: `${data.research?.content_briefs?.length || 0} pautas geradas.` });
+      const briefCount = data.research?.content_briefs?.length || 0;
+      const gapCount = data.research?.competitive_gaps?.length || 0;
+      toast({ title: '🔍 Pesquisa 2.0 concluída!', description: `${briefCount} pautas + ${gapCount} brechas identificadas.` });
     } catch (err: any) {
       setResearchError(err.message);
       toast({ title: 'Erro na pesquisa', description: err.message, variant: 'destructive' });
@@ -506,137 +511,304 @@ export default function DanielEstrategia() {
 
             {/* Results */}
             {researchResult && (
-              <div className="space-y-4">
+              <div className="space-y-5">
+
                 {/* Source badge */}
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground">Fonte dos dados:</span>
                   <Badge className={researchResult.data_source === 'apify_scraping'
                     ? 'border-emerald-500/30 bg-emerald-500/15 text-[10px] text-emerald-400'
-                    : 'border-amber-500/30 bg-amber-500/15 text-[10px] text-amber-400'}>
-                    {researchResult.data_source === 'apify_scraping' ? '✅ Dados reais (Apify)' : '🤖 Análise IA'}
+                    : 'border-blue-500/30 bg-blue-500/15 text-[10px] text-blue-400'}>
+                    {researchResult.data_source === 'apify_scraping' ? '✅ Dados reais (Apify)' : '🧠 Análise IA Profunda v2'}
                   </Badge>
+                  {researchResult.content_briefs?.length > 0 && (
+                    <Badge className="border-purple-500/30 bg-purple-500/15 text-[10px] text-purple-400">
+                      {researchResult.content_briefs.length} pautas
+                    </Badge>
+                  )}
+                  {researchResult.competitive_gaps?.length > 0 && (
+                    <Badge className="border-emerald-500/30 bg-emerald-500/15 text-[10px] text-emerald-400">
+                      {researchResult.competitive_gaps.length} brechas
+                    </Badge>
+                  )}
                 </div>
 
-                {/* Simplified — "O que fazer agora" */}
-                {viewMode === 'simplified' && researchResult.recommendation && (
-                  <div className="space-y-3 rounded-xl border border-purple-500/20 bg-gradient-to-br from-purple-500/8 to-transparent p-5">
-                    <p className="text-sm font-bold text-purple-400">🎯 O que fazer agora</p>
-                    <p className="text-sm leading-relaxed text-foreground">{researchResult.recommendation}</p>
-                    {researchResult.content_briefs?.length > 0 && (
-                      <div className="grid grid-cols-1 gap-3 pt-1 sm:grid-cols-2">
-                        {researchResult.content_briefs.slice(0, 3).map((brief: any) => (
-                          <div key={brief.id} className="space-y-2 rounded-lg border border-border/50 bg-card/60 p-3">
-                            <p className="text-xs font-semibold leading-snug text-foreground">{brief.title}</p>
-                            <p className="text-[11px] text-muted-foreground">{brief.hook}</p>
-                            <Button size="sm" variant="outline"
-                              className="h-7 w-full border-purple-500/30 text-[11px] text-purple-400 hover:bg-purple-500/10"
-                              onClick={() => { navigator.clipboard.writeText(`Título: ${brief.title}\nHook: ${brief.hook}\nCTA: ${brief.cta}`); toast({ title: 'Pauta copiada!', description: 'Cole no Paulo ou Davi.' }); }}>
-                              📋 Usar essa pauta
-                            </Button>
-                          </div>
-                        ))}
+                {/* ── SIMPLIFIED MODE ─────────────────────────────────────── */}
+                {viewMode === 'simplified' && (
+                  <>
+                    {/* Manifesto estratégico */}
+                    {researchResult.recommendation && (
+                      <div className="space-y-4 rounded-xl border border-purple-500/20 bg-gradient-to-br from-purple-500/8 to-blue-500/5 p-5">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-purple-500/20">
+                            <Brain className="h-3.5 w-3.5 text-purple-400" />
+                          </span>
+                          <p className="text-sm font-bold text-purple-400">🎯 Manifesto Estratégico</p>
+                        </div>
+                        <p className="text-sm leading-relaxed text-foreground">{researchResult.recommendation}</p>
                       </div>
                     )}
-                  </div>
-                )}
 
-                {/* Expert — strategic recommendation */}
-                {viewMode === 'expert' && researchResult.recommendation && (
-                  <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
-                    <p className="mb-1.5 text-xs font-semibold text-blue-400">💡 Recomendação estratégica</p>
-                    <p className="text-sm text-foreground">{researchResult.recommendation}</p>
-                  </div>
-                )}
-
-                {/* Expert — Trending topics */}
-                {viewMode === 'expert' && researchResult.trending_topics?.length > 0 && (
-                  <div>
-                    <h3 className="mb-3 text-sm font-semibold">🔥 Tópicos em alta</h3>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {researchResult.trending_topics.map((t: any, i: number) => (
-                        <div key={i} className="space-y-2 rounded-xl border border-border/50 bg-card/40 p-3.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm font-medium leading-snug text-foreground">{t.topic}</p>
-                            <Badge variant="outline" className={`shrink-0 text-[9px] ${
-                              t.engagement_potential === 'alto' ? 'border-emerald-500/40 text-emerald-400' :
-                              t.engagement_potential === 'médio' ? 'border-amber-500/40 text-amber-400' :
-                              'border-muted/40 text-muted-foreground'
-                            }`}>{t.engagement_potential}</Badge>
-                          </div>
-                          <p className="text-[11px] text-muted-foreground">{t.why_trending}</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            <span className="rounded bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">{t.best_format}</span>
-                            <span className="rounded bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">{t.best_platform}</span>
-                          </div>
+                    {/* Pautas prontas — até 5 no modo simplificado */}
+                    {researchResult.content_briefs?.length > 0 && (
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-semibold">📋 Pautas prontas para usar</h3>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {researchResult.content_briefs.slice(0, 5).map((brief: any) => (
+                            <div key={brief.id} className="space-y-2 rounded-lg border border-border/50 bg-card/60 p-3">
+                              {brief.angle && (
+                                <span className="inline-block rounded bg-blue-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-blue-400">
+                                  {brief.angle}
+                                </span>
+                              )}
+                              <p className="text-xs font-semibold leading-snug text-foreground">{brief.title}</p>
+                              <p className="text-[11px] text-muted-foreground line-clamp-2">{brief.hook}</p>
+                              <Button size="sm" variant="outline"
+                                className="h-7 w-full border-purple-500/30 text-[11px] text-purple-400 hover:bg-purple-500/10"
+                                onClick={() => { navigator.clipboard.writeText(`Título: ${brief.title}\nHook: ${brief.hook}\nCTA: ${brief.cta}`); toast({ title: 'Pauta copiada!', description: 'Cole no Paulo ou Davi.' }); }}>
+                                📋 Usar essa pauta
+                              </Button>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                      </div>
+                    )}
 
-                {/* Expert — Content briefs */}
-                {viewMode === 'expert' && researchResult.content_briefs?.length > 0 && (
-                  <div>
-                    <h3 className="mb-3 text-sm font-semibold">📋 Pautas prontas ({researchResult.content_briefs.length})</h3>
-                    <div className="space-y-3">
-                      {researchResult.content_briefs.map((brief: any) => (
-                        <div key={brief.id} className="space-y-3 rounded-xl border border-border/50 bg-card/40 p-4">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-semibold text-foreground">{brief.title}</p>
-                              <div className="mt-1 flex flex-wrap gap-1.5">
-                                <Badge variant="outline" className="text-[9px]">{brief.format}</Badge>
-                                <Badge variant="outline" className="text-[9px]">{brief.platform}</Badge>
-                                <Badge variant="outline" className={`text-[9px] ${brief.estimated_reach === 'alto' ? 'border-emerald-500/30 text-emerald-400' : 'text-muted-foreground'}`}>
-                                  🎯 {brief.estimated_reach}
-                                </Badge>
+                    {/* Pain Map — simplified */}
+                    {researchResult.pain_map?.length > 0 && (
+                      <div className="rounded-xl border border-red-500/20 bg-gradient-to-br from-red-500/5 to-transparent p-4">
+                        <div className="mb-3 flex items-center gap-2">
+                          <HeartCrack className="h-4 w-4 text-red-400" />
+                          <h3 className="text-sm font-semibold text-red-400">Mapa de Dores do Público</h3>
+                        </div>
+                        <div className="space-y-2">
+                          {researchResult.pain_map.slice(0, 3).map((pain: any, i: number) => (
+                            <div key={i} className="rounded-lg border border-red-500/15 bg-card/40 p-3">
+                              <div className="flex items-start gap-2">
+                                <span className="mt-0.5 text-red-400">⚡</span>
+                                <div>
+                                  <p className="text-xs font-semibold text-foreground">{pain.title}</p>
+                                  <p className="mt-0.5 text-[11px] text-muted-foreground">{pain.description}</p>
+                                </div>
                               </div>
                             </div>
-                            <Button size="sm" variant="outline" className="h-7 shrink-0 px-2 text-[10px]"
-                              onClick={() => { navigator.clipboard.writeText(`Título: ${brief.title}\nHook: ${brief.hook}\nPontos: ${brief.slides_or_points?.join(' | ')}\nCTA: ${brief.cta}\nHashtags: ${brief.hashtags?.map((h: string) => '#' + h).join(' ')}`); toast({ title: 'Pauta copiada!' }); }}>
-                              <Copy className="mr-1 h-3 w-3" />Copiar
-                            </Button>
-                          </div>
-                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2">
-                            <p className="text-[11px] font-medium text-blue-300">Hook: "{brief.hook}"</p>
-                          </div>
-                          {brief.slides_or_points?.length > 0 && (
-                            <div className="space-y-1">
-                              {brief.slides_or_points.map((point: string, j: number) => (
-                                <div key={j} className="flex items-start gap-2 text-xs text-muted-foreground">
-                                  <span className="shrink-0 font-mono text-blue-400">{j + 1}.</span>
-                                  <span>{point}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          <div className="flex flex-wrap gap-1">
-                            {brief.hashtags?.map((tag: string, j: number) => (
-                              <span key={j} className="text-[10px] text-blue-400/70">#{tag}</span>
-                            ))}
-                          </div>
-                          <p className="text-[10px] italic text-muted-foreground">💡 {brief.reason}</p>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      </div>
+                    )}
+
+                    {/* Viral formats */}
+                    {researchResult.viral_formats?.length > 0 && (
+                      <div>
+                        <h3 className="mb-3 text-sm font-semibold">⚡ Formatos virais no nicho</h3>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          {researchResult.viral_formats.map((f: any, i: number) => (
+                            <div key={i} className="space-y-1.5 rounded-xl border border-border/50 bg-card/40 p-3.5">
+                              <p className="text-sm font-semibold text-foreground">{f.format}</p>
+                              <p className="text-[11px] text-muted-foreground">{f.description}</p>
+                              <p className="text-[11px] italic text-blue-400/80">Ex: {f.example}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
 
-                {/* Viral formats (both modes) */}
-                {researchResult.viral_formats?.length > 0 && (
-                  <div>
-                    <h3 className="mb-3 text-sm font-semibold">⚡ Formatos virais no nicho</h3>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      {researchResult.viral_formats.map((f: any, i: number) => (
-                        <div key={i} className="space-y-1.5 rounded-xl border border-border/50 bg-card/40 p-3.5">
-                          <p className="text-sm font-semibold text-foreground">{f.format}</p>
-                          <p className="text-[11px] text-muted-foreground">{f.description}</p>
-                          <p className="text-[11px] italic text-blue-400/80">Ex: {f.example}</p>
+                {/* ── EXPERT MODE ─────────────────────────────────────────── */}
+                {viewMode === 'expert' && (
+                  <>
+                    {/* Manifesto */}
+                    {researchResult.recommendation && (
+                      <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-5">
+                        <p className="mb-2 text-xs font-semibold text-blue-400">💡 Manifesto Estratégico</p>
+                        <p className="text-sm leading-relaxed text-foreground">{researchResult.recommendation}</p>
+                      </div>
+                    )}
+
+                    {/* Pain Map */}
+                    {researchResult.pain_map?.length > 0 && (
+                      <div>
+                        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                          <HeartCrack className="h-4 w-4 text-red-400" />
+                          Mapa de Dores ({researchResult.pain_map.length} identificadas)
+                        </h3>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {researchResult.pain_map.map((pain: any, i: number) => (
+                            <div key={i} className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+                              <div className="mb-2 flex items-center justify-between">
+                                <p className="text-sm font-semibold text-foreground">{pain.title}</p>
+                                {pain.category && (
+                                  <Badge className="text-[9px] border-red-500/30 bg-red-500/10 text-red-400">{pain.category}</Badge>
+                                )}
+                              </div>
+                              <p className="text-[11px] leading-relaxed text-muted-foreground">{pain.description}</p>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      </div>
+                    )}
+
+                    {/* Trending Topics */}
+                    {researchResult.trending_topics?.length > 0 && (
+                      <div>
+                        <h3 className="mb-3 text-sm font-semibold">🔥 Tópicos em alta — 5 Ângulos de Ataque</h3>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {researchResult.trending_topics.map((t: any, i: number) => (
+                            <div key={i} className="space-y-2 rounded-xl border border-border/50 bg-card/40 p-3.5">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  {t.angle && (
+                                    <span className="mb-1 inline-block rounded bg-blue-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">
+                                      {t.angle}
+                                    </span>
+                                  )}
+                                  <p className="text-sm font-medium leading-snug text-foreground">{t.topic}</p>
+                                </div>
+                                <Badge variant="outline" className={`shrink-0 text-[9px] ${
+                                  t.engagement_potential === 'muito alto' || t.engagement_potential === 'alto' ? 'border-emerald-500/40 text-emerald-400' :
+                                  t.engagement_potential === 'médio' ? 'border-amber-500/40 text-amber-400' :
+                                  'border-muted/40 text-muted-foreground'
+                                }`}>{t.engagement_potential}</Badge>
+                              </div>
+                              <p className="text-[11px] leading-relaxed text-muted-foreground">{t.why_trending}</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                <span className="rounded bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">{t.best_format}</span>
+                                <span className="rounded bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">{t.best_platform}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Content Briefs */}
+                    {researchResult.content_briefs?.length > 0 && (
+                      <div>
+                        <h3 className="mb-3 text-sm font-semibold">📋 Pautas prontas ({researchResult.content_briefs.length})</h3>
+                        <div className="space-y-3">
+                          {researchResult.content_briefs.map((brief: any) => (
+                            <div key={brief.id} className="space-y-3 rounded-xl border border-border/50 bg-card/40 p-4">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="mb-1 flex flex-wrap gap-1.5">
+                                    {brief.angle && (
+                                      <Badge className="text-[9px] border-blue-500/30 bg-blue-500/10 text-blue-400">{brief.angle}</Badge>
+                                    )}
+                                    <Badge variant="outline" className="text-[9px]">{brief.format}</Badge>
+                                    <Badge variant="outline" className="text-[9px]">{brief.platform}</Badge>
+                                    <Badge variant="outline" className={`text-[9px] ${
+                                      brief.estimated_reach === 'viral' ? 'border-purple-500/30 text-purple-400' :
+                                      brief.estimated_reach === 'alto' ? 'border-emerald-500/30 text-emerald-400' : 'text-muted-foreground'
+                                    }`}>🎯 {brief.estimated_reach}</Badge>
+                                  </div>
+                                  <p className="text-sm font-semibold text-foreground">{brief.title}</p>
+                                </div>
+                                <Button size="sm" variant="outline" className="h-7 shrink-0 px-2 text-[10px]"
+                                  onClick={() => { navigator.clipboard.writeText(`Título: ${brief.title}\nHook: ${brief.hook}\nPontos:\n${brief.slides_or_points?.map((p: string, i: number) => `${i+1}. ${p}`).join('\n')}\nCTA: ${brief.cta}\nHashtags: ${brief.hashtags?.map((h: string) => '#' + h).join(' ')}`); toast({ title: 'Pauta copiada!' }); }}>
+                                  <Copy className="mr-1 h-3 w-3" />Copiar
+                                </Button>
+                              </div>
+                              <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+                                <p className="text-[11px] font-medium text-blue-300">🎣 Hook: "{brief.hook}"</p>
+                              </div>
+                              {brief.slides_or_points?.length > 0 && (
+                                <div className="space-y-2">
+                                  {brief.slides_or_points.map((point: string, j: number) => (
+                                    <div key={j} className="flex items-start gap-2 rounded-lg bg-muted/20 p-2.5 text-xs">
+                                      <span className="shrink-0 font-mono text-blue-400 font-bold">{j + 1}.</span>
+                                      <span className="leading-relaxed text-foreground/90">{point}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="flex flex-wrap gap-1">
+                                {brief.hashtags?.map((tag: string, j: number) => (
+                                  <span key={j} className="text-[10px] text-blue-400/70">#{tag}</span>
+                                ))}
+                              </div>
+                              <div className="rounded-lg border border-amber-500/15 bg-amber-500/5 px-3 py-2">
+                                <p className="text-[10px] text-amber-300/80">🧠 {brief.reason}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Content Calendar */}
+                    {researchResult.content_calendar?.length > 0 && (
+                      <div>
+                        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                          <Calendar className="h-4 w-4 text-emerald-400" />
+                          Calendário Editorial Sugerido — 7 Dias
+                        </h3>
+                        <div className="overflow-hidden rounded-xl border border-border/50 bg-card/40">
+                          <div className="grid grid-cols-5 gap-0 border-b border-border/40 bg-muted/20 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            <span>Dia</span><span>Formato</span><span className="col-span-2">Tema / Ângulo</span><span>Horário</span>
+                          </div>
+                          {researchResult.content_calendar.map((day: any, i: number) => (
+                            <div key={i} className={`grid grid-cols-5 gap-0 px-4 py-3 text-xs ${
+                              i % 2 === 0 ? 'bg-transparent' : 'bg-muted/10'
+                            } border-b border-border/20 last:border-0`}>
+                              <span className="font-semibold text-foreground">{day.day}</span>
+                              <span className="text-muted-foreground">{day.format}</span>
+                              <span className="col-span-2 text-foreground/80">{day.theme}</span>
+                              <span className="text-emerald-400">{day.best_time}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Competitive Gaps */}
+                    {researchResult.competitive_gaps?.length > 0 && (
+                      <div>
+                        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                          <Crosshair className="h-4 w-4 text-emerald-400" />
+                          Brechas da Concorrência — Oportunidades Inexploradas
+                        </h3>
+                        <div className="space-y-3">
+                          {researchResult.competitive_gaps.map((gap: any, i: number) => (
+                            <div key={i} className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                              <div className="mb-2 flex items-start gap-2">
+                                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-xs font-bold text-emerald-400">
+                                  {i + 1}
+                                </span>
+                                <p className="text-sm font-semibold text-foreground">{gap.title}</p>
+                              </div>
+                              <p className="mb-2 ml-7 text-[11px] leading-relaxed text-muted-foreground">{gap.why_empty}</p>
+                              {gap.content_type && (
+                                <div className="ml-7">
+                                  <Badge className="text-[9px] border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+                                    💡 {gap.content_type}
+                                  </Badge>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Viral Formats */}
+                    {researchResult.viral_formats?.length > 0 && (
+                      <div>
+                        <h3 className="mb-3 text-sm font-semibold">⚡ Formatos virais no nicho</h3>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          {researchResult.viral_formats.map((f: any, i: number) => (
+                            <div key={i} className="space-y-1.5 rounded-xl border border-border/50 bg-card/40 p-3.5">
+                              <p className="text-sm font-semibold text-foreground">{f.format}</p>
+                              <p className="text-[11px] text-muted-foreground">{f.description}</p>
+                              <p className="text-[11px] italic text-blue-400/80">Ex: {f.example}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
+
               </div>
             )}
           </TabsContent>
