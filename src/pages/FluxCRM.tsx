@@ -96,11 +96,17 @@ export default function FluxCRM() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 pb-2">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
-                <Sparkles className="h-6 w-6 text-purple-500" />
+                <Users className="h-5 w-5 text-purple-400" />
             </div>
             <div>
-                <h1 className="text-2xl font-bold text-white">CRM — Pipeline de Vendas</h1>
-                <p className="text-xs text-muted-foreground">Arraste os leads entre colunas conforme avançam no processo</p>
+              <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                Marcos
+                <span className="text-xs font-normal bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse inline-block" />
+                  CRM & Leads
+                </span>
+              </h1>
+              <p className="text-xs text-muted-foreground mt-0.5">Arraste os leads entre colunas conforme avançam no pipeline</p>
             </div>
           </div>
           <Button onClick={() => openNewLead()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2">
