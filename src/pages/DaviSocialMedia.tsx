@@ -834,7 +834,7 @@ ${pautasStr}`;
           const progressMsgId = addDaviMessage(`🎨 Construindo visual do Carrossel ${i + 1}/${pauloCarousels.length}: "${pauloCarousel.title}"...`);
 
           const slides = pauloCarousel.slides || [];
-          const isPersonal = clientImageUrl || selectedTemplate === 'personal_brand';
+          const isPersonal = attachedImages[0] || selectedTemplate === 'personal_brand';
           
           let visualSlides = [];
 
@@ -888,6 +888,7 @@ ${pautasStr}`;
             templateId: selectedTemplate,
             createdAt: new Date(),
             platform,
+            clientImages: attachedImages,
           };
 
           setMessages(prev => prev.map(m => m.id === progressMsgId ? {

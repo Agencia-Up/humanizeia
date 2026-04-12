@@ -367,9 +367,15 @@ Deno.serve(async (req) => {
     }
 
     // ── AI Analysis (OpenAI GPT-4o com fallback Anthropic) ──
+<<<<<<< Updated upstream
     const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
     const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     const AI_KEY = OPENAI_KEY || ANTHROPIC_KEY;
+=======
+    const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
+    const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    const AI_KEY = OPENAI_KEY || ANTHROPIC_KEY;
+>>>>>>> Stashed changes
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
     if (AI_KEY && enriched.length > 0) {
@@ -890,12 +896,12 @@ function buildSegmentContext(segment: any): string {
   const b = segment.benchmarks || {};
   if (Object.keys(b).length > 0) {
     lines.push("BENCHMARKS DO SEGMENTO (substituem os genéricos):");
-    if (b.cpl_otimo)          lines.push(`  • CPL: ótimo < R$${b.cpl_otimo}, bom R$${b.cpl_bom}, crítico > R$${b.cpl_critico}`);
-    if (b.ctr_fraco)          lines.push(`  • CTR: fraco < ${b.ctr_fraco}%, bom > ${b.ctr_bom}%, excelente > ${b.ctr_excelente}%`);
-    if (b.cpc_bom)            lines.push(`  • CPC: bom < R$${b.cpc_bom}, ótimo < R$${b.cpc_otimo}`);
-    if (b.frequencia_alerta)  lines.push(`  • Frequência: alertar apenas > ${b.frequencia_alerta}x`);
-    if (b.conversao_meta)     lines.push(`  • Conversão principal: ${b.conversao_meta}`);
-    if (b.objetivo_campanha)  lines.push(`  • Objetivo recomendado: ${b.objetivo_campanha}`);
+    if (b.cpl_otimo) lines.push(`  • CPL: ótimo < R$${b.cpl_otimo}, bom R$${b.cpl_bom}, crítico > R$${b.cpl_critico}`);
+    if (b.ctr_fraco) lines.push(`  • CTR: fraco < ${b.ctr_fraco}%, bom > ${b.ctr_bom}%, excelente > ${b.ctr_excelente}%`);
+    if (b.cpc_bom) lines.push(`  • CPC: bom < R$${b.cpc_bom}, ótimo < R$${b.cpc_otimo}`);
+    if (b.frequencia_alerta) lines.push(`  • Frequência: alertar apenas > ${b.frequencia_alerta}x`);
+    if (b.conversao_meta) lines.push(`  • Conversão principal: ${b.conversao_meta}`);
+    if (b.objetivo_campanha) lines.push(`  • Objetivo recomendado: ${b.objetivo_campanha}`);
   }
 
   // Regras do segmento
