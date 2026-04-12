@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -100,6 +101,7 @@ export default function DanielEstrategia() {
   const { toast } = useToast();
   const { createTask } = useAgentTasks();
   const { getHistory, saveMessage, clearHistory } = useAgentChat();
+  const navigate = useNavigate();
 
   const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
   const [activeTab, setActiveTab] = useState('estrategia');
@@ -565,7 +567,11 @@ export default function DanielEstrategia() {
                               <p className="text-[11px] text-muted-foreground line-clamp-2">{brief.hook}</p>
                               <Button size="sm" variant="outline"
                                 className="h-7 w-full border-purple-500/30 text-[11px] text-purple-400 hover:bg-purple-500/10"
-                                onClick={() => { navigator.clipboard.writeText(`Título: ${brief.title}\nHook: ${brief.hook}\nCTA: ${brief.cta}`); toast({ title: 'Pauta copiada!', description: 'Cole no Paulo ou Davi.' }); }}>
+                                onClick={() => {
+                                  localStorage.setItem('daniel_selected_brief', JSON.stringify(brief));
+                                  toast({ title: 'Enviando pauta...', description: 'Abrindo o Copywriter AI.' });
+                                  navigate('/copywriter');
+                                }}>
                                 📋 Usar essa pauta
                               </Button>
                             </div>
@@ -705,8 +711,12 @@ export default function DanielEstrategia() {
                                   <p className="text-sm font-semibold text-foreground">{brief.title}</p>
                                 </div>
                                 <Button size="sm" variant="outline" className="h-7 shrink-0 px-2 text-[10px]"
-                                  onClick={() => { navigator.clipboard.writeText(`Título: ${brief.title}\nHook: ${brief.hook}\nPontos:\n${brief.slides_or_points?.map((p: string, i: number) => `${i+1}. ${p}`).join('\n')}\nCTA: ${brief.cta}\nHashtags: ${brief.hashtags?.map((h: string) => '#' + h).join(' ')}`); toast({ title: 'Pauta copiada!' }); }}>
-                                  <Copy className="mr-1 h-3 w-3" />Copiar
+                                  onClick={() => {
+                                    localStorage.setItem('daniel_selected_brief', JSON.stringify(brief));
+                                    toast({ title: 'Enviando pauta...', description: 'Abrindo o Copywriter AI.' });
+                                    navigate('/copywriter');
+                                  }}>
+                                  📋 Usar essa pauta
                                 </Button>
                               </div>
                               <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2">

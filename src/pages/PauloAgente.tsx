@@ -15,6 +15,12 @@ import {
 import { useAgentChat } from '@/contexts/AgentChatContext';
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -220,6 +226,7 @@ export default function PauloAgente() {
   const [showImagePrompts, setShowImagePrompts] = useState<Record<string, boolean>>({});
   const [savedCarousels, setSavedCarousels] = useState<PauloCarousel[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
+  const [recentResearches, setRecentResearches] = useState<any[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -233,9 +240,10 @@ export default function PauloAgente() {
   useEffect(() => {
     loadClientContext();
     loadSavedCarousels();
+    loadRecentResearches();
   }, [user]);
 
-  // Welcome message
+  // Welcome & Import check
   useEffect(() => {
     setMessages([{
       id: 'welcome',
@@ -243,6 +251,31 @@ export default function PauloAgente() {
       content: '🎬 Oi! Sou o Paulo — seu Diretor Criativo de Carrosséis.\n\nImporte a pesquisa do Daniel ou me diga o tema, e eu crio o roteiro completo: slide a slide, com texto de impacto e prompt de imagem pronto para o Davi gerar o visual.\n\nVamos criar algo que para o scroll? 🚀',
       timestamp: new Date(),
     }]);
+
+    const briefStr = localStorage.getItem('daniel_selected_brief');
+    if (briefStr) {
+      try {
+        const brief = JSON.parse(briefStr);
+        let text = `Tema: ${brief.title}`;
+        if (brief.hook) text += `\nHook Sugerido: ${brief.hook}`;
+        if (brief.slides_or_points) {
+          text += `\nPontos:\n${brief.slides_or_points.map((p: string, i: number) => `${i+1}. ${p}`).join('\n')}`;
+        }
+        if (brief.cta) text += `\nCTA: ${brief.cta}`;
+        
+        setInput(text);
+        if (brief.angle) {
+          const matchedAngle = ANGLES.find(a => brief.angle.toLowerCase().includes(a.value))?.value || 'storytelling';
+          setAngle(matchedAngle as AngleType);
+        }
+        
+        toast({ title: 'Pauta importada!', description: 'Pauta do Daniel carregada. Clique em gerar!' });
+      } catch (e) {
+        console.error('Error parsing brief', e);
+      } finally {
+        localStorage.removeItem('daniel_selected_brief');
+      }
+    }
   }, []);
 
   const loadClientContext = async () => {
@@ -269,6 +302,20 @@ export default function PauloAgente() {
     } catch {
       setClientContext(DEMO_CLIENT);
       setIsDemo(true);
+    }
+  };
+
+  const loadRecentResearches = async () => {
+    try {
+      const history = await getHistory('daniel');
+      const researches = [...history]
+        .filter(m => m.metadata?.type === 'niche_research' && m.metadata?.research)
+        .reverse()
+        .slice(0, 5)
+        .map(m => ({ id: m.id, date: m.timestamp, research: m.metadata!.research }));
+      setRecentResearches(researches);
+    } catch {
+      setRecentResearches([]);
     }
   };
 
@@ -477,17 +524,15 @@ Mantenha o número de slides entre 4 e 8, ajustando ao tamanho natural da ideia.
     );
   };
 
-  const handleImportDaniel = async () => {
+  const handleImportDaniel = async (researchMsgId: string) => {
     if (loading) return;
     setLoading(true);
 
     try {
       const history = await getHistory('daniel');
-      const lastResearch = [...history].reverse().find(
-        m => m.metadata?.type === 'niche_research' && m.metadata?.research
-      );
-
-      if (!lastResearch?.metadata?.research) {
+      const researchMsg = history.find(m => m.id === researchMsgId);
+      
+      if (!researchMsg?.metadata?.research) {
         toast({
           title: 'Nenhuma pesquisa encontrada',
           description: 'Acesse o agente Daniel e gere uma pesquisa de tendências primeiro.',
@@ -497,7 +542,7 @@ Mantenha o número de slides entre 4 e 8, ajustando ao tamanho natural da ideia.
         return;
       }
 
-      const research = lastResearch.metadata.research;
+      const research = researchMsg.metadata.research;
       const niche = research.niche || 'nicho não identificado';
 
       // Build rich research context for Paulo
@@ -564,7 +609,7 @@ INSTRUÇÕES CRÍTICAS:
       const displayText = `🧠 Importando pesquisa do Daniel sobre "${niche}"...\nGerando 3 carrosséis distintos com roteiro completo + prompts de imagem.`;
 
       setLoading(false); // Reset before generateCarousels sets it again
-      await generateCarousels(displayText, fullPrompt, 'daniel_import', lastResearch.id);
+      await generateCarousels(displayText, fullPrompt, 'daniel_import', researchMsg.id);
 
     } catch (err: any) {
       toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
@@ -902,16 +947,36 @@ INSTRUÇÕES CRÍTICAS:
             <div className="px-4 py-2 border-t border-border/30 shrink-0">
               <div className="flex gap-2 pb-1 items-center overflow-x-auto">
                 {/* Import Daniel */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleImportDaniel}
-                  disabled={loading}
-                  className="flex shrink-0 items-center gap-1.5 h-8 px-3 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-[11px] font-semibold transition-colors"
-                >
-                  <Brain className="h-3.5 w-3.5" />
-                  Importar do Daniel
-                </Button>
+                {recentResearches.length > 0 ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" disabled={loading} className="flex shrink-0 items-center gap-1.5 h-8 px-3 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-[11px] font-semibold transition-colors">
+                        <Brain className="h-3.5 w-3.5" />
+                        Importar do Daniel <ChevronDown className="ml-1 h-3 w-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-[300px]">
+                      <div className="p-2 text-xs font-semibold text-muted-foreground">Últimas pesquisas</div>
+                      {recentResearches.map((r, idx) => (
+                        <DropdownMenuItem key={r.id} onClick={() => handleImportDaniel(r.id)} className="flex flex-col items-start gap-1 p-3 cursor-pointer">
+                          <span className="font-semibold text-sm truncate w-full">{r.research.niche}</span>
+                          <span className="text-[10px] text-muted-foreground">{new Date(r.date).toLocaleDateString()} - {r.research.content_briefs?.length || 0} pautas</span>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleImportDaniel('')}
+                    disabled={loading}
+                    className="flex shrink-0 items-center gap-1.5 h-8 px-3 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-[11px] font-semibold transition-colors"
+                  >
+                    <Brain className="h-3.5 w-3.5" />
+                    Importar do Daniel
+                  </Button>
+                )}
 
                 {/* Quick angle selectors */}
                 {ANGLES.map(a => (
