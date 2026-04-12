@@ -149,27 +149,18 @@ export default function SalomaoOrchestrator() {
       
       setIsLoadingTemplate(true);
       try {
-        // 1. Busca o histórico para encontrar a estratégia gerada no Quiz
-        const history = await getHistory('salomao');
-        const quizStrategy = [...history].reverse().find(
-          m => m.role === 'assistant' && 
-          m.metadata?.type === 'generated_prompt' && 
-          m.metadata?.source === 'quiz'
-        );
-
-        // 2. Busca o template base para servir de contexto para a IA
+        // 1. Busca o template base para servir de contexto para a IA
         let baseContent = '';
         const baseResp = await fetch('/docs/prompt_brieffing.md');
         if (baseResp.ok) baseContent = await baseResp.text();
 
-        // 3. Invoca o Agente de Montagem (Edge Function) para criar as perguntas dinâmicas
+        // 2. Invoca o Agente de Montagem (Edge Function) para criar as perguntas dinâmicas
         const { data: aiResponse, error } = await supabase.functions.invoke('prompt-generator-api', {
           body: { 
             action: 'build_questionnaire', 
             niche: storedNiche || 'Geral',
             base_template: baseContent,
-            ai_provider: aiProvider,
-            context: quizStrategy?.content || '' // Passa o briefing do quiz como contexto estratégico
+            ai_provider: aiProvider
           }
         });
 

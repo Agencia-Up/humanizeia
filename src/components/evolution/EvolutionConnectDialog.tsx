@@ -77,18 +77,21 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
   const generateSlug = (name: string) =>
     name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
+<<<<<<< HEAD
   // ========== UAZAPI FLOW (Managed Mode) ==========
   const handleCreateUazapiInstance = async (overrideSlug?: string) => {
     // Garantir que overrideSlug seja uma string (evita erro de circular structure se for evento)
     const activeOverride = typeof overrideSlug === 'string' ? overrideSlug : undefined;
     const slug = activeOverride || generateSlug(friendlyName || 'midas-instance');
+=======
+  // ========== EVOLUTION FLOW (simplified — no credentials needed) ==========
+  const handleCreateEvolutionInstance = async () => {
+    const slug = generateSlug(friendlyName || 'midas-instance');
+>>>>>>> origin/dev-aloan
     if (!slug) { toast.error('Informe um nome para a conexão'); return; }
-
     setIsCreating(true);
     setActiveSlug(slug);
     try {
-      // In Managed Mode, custom_api_url and custom_api_key are NOT sent from frontend
-      // The backend will use its own global secrets (EVOLUTION_API_URL/KEY)
       const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
         body: {
           provider: 'evolution',
@@ -129,9 +132,10 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao conectar Meta API');
       setStep('connected');
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
       queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
       onConnected?.();
-      toast.success(`Meta API conectada!`);
+      toast.success(`Meta API conectada! Número: ${data.phone_number || 'verificado'}`);
     } catch (err: any) {
       toast.error(err.message || 'Erro ao conectar Meta API');
     } finally {
@@ -167,7 +171,15 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
         });
         if (error) return;
         if (data?.connected) {
+<<<<<<< HEAD
           handleSuccess();
+=======
+          stopPolling();
+          setStep('connected');
+          queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
+          queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
+          onConnected?.();
+>>>>>>> origin/dev-aloan
         } else if (data?.qr_code) {
           setQrCode(data.qr_code);
         }
@@ -189,7 +201,13 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
         body: { user_id: user!.id, instance_name: activeSlug },
       });
       if (data?.connected) {
+<<<<<<< HEAD
         handleSuccess();
+=======
+        stopPolling(); setStep('connected');
+        queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
+        onConnected?.();
+>>>>>>> origin/dev-aloan
       } else if (data?.qr_code) {
         setQrCode(data.qr_code);
         toast.success('QR Code atualizado');
@@ -222,6 +240,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
           </DialogDescription>
         </DialogHeader>
 
+        {/* Step: Provider Selection */}
         {step === 'provider' && (
           <div className="space-y-3 py-2">
             <button
@@ -254,14 +273,16 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
           </div>
         )}
 
+        {/* Evolution: Just name + create */}
         {step === 'instance' && (
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Nome da conexão</Label>
               <Input value={friendlyName} onChange={e => setFriendlyName(e.target.value)} placeholder="Ex: Minha Empresa" />
-              <p className="text-[10px] text-muted-foreground">Este nome é apenas para sua organização interna.</p>
+              <p className="text-xs text-muted-foreground">
+                Esse nome é apenas para identificar a conexão dentro da plataforma.
+              </p>
             </div>
-
             <div className="flex gap-2 pt-2">
               <Button variant="outline" onClick={() => setStep('provider')} className="flex-1">Voltar</Button>
               <Button
@@ -276,6 +297,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
           </div>
         )}
 
+        {/* Meta: Credentials */}
         {step === 'meta_credentials' && (
           <div className="space-y-4">
             <div className="space-y-2">
@@ -285,6 +307,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
             <div className="space-y-2">
               <Label>Phone Number ID *</Label>
               <Input value={metaPhoneNumberId} onChange={e => setMetaPhoneNumberId(e.target.value)} placeholder="Ex: 123456789012345" />
+              <p className="text-xs text-muted-foreground">Encontrado no Meta Business Suite → WhatsApp → Configurações da API</p>
             </div>
             <div className="space-y-2">
               <Label>WABA ID (opcional)</Label>
@@ -292,13 +315,14 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
             </div>
             <div className="space-y-2">
               <Label>Access Token *</Label>
-              <Input type="password" value={metaAccessToken} onChange={e => setMetaAccessToken(e.target.value)} placeholder="Token de acesso" />
+              <Input type="password" value={metaAccessToken} onChange={e => setMetaAccessToken(e.target.value)} placeholder="Token de acesso permanente" />
+              <p className="text-xs text-muted-foreground">Use um System User Token de longa duração do Meta Business</p>
             </div>
             <div className="flex gap-2 pt-2">
               <Button variant="outline" onClick={() => setStep('provider')} className="flex-1">Voltar</Button>
               <Button
                 onClick={handleCreateMetaInstance}
-                disabled={isCreating}
+                disabled={isCreating || !metaPhoneNumberId || !metaAccessToken || !metaFriendlyName}
                 className="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
               >
                 {isCreating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Globe className="h-4 w-4 mr-2" />}
@@ -308,6 +332,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
           </div>
         )}
 
+        {/* QR Code */}
         {step === 'qrcode' && (
           <div className="space-y-4">
             <div className="flex flex-col items-center gap-4">
@@ -346,6 +371,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
           </div>
         )}
 
+        {/* Connected */}
         {step === 'connected' && (
           <div className="flex flex-col items-center gap-4 py-6">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500/20">
@@ -354,12 +380,12 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
             <div className="text-center">
               <p className="font-medium text-lg">WhatsApp conectado!</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Sua instância WhatsApp está pronta.
+                Sua instância {provider === 'meta' ? 'Meta API Oficial' : 'WhatsApp'} está pronta.
               </p>
             </div>
             <Button
               onClick={() => onOpenChange(false)}
-              className="mt-2"
+              className="mt-2 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
             >
               Fechar
             </Button>

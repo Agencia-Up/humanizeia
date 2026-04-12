@@ -1,12 +1,11 @@
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -88,25 +87,20 @@ serve(async (req: Request) => {
       });
     }
 
-    // Use global key for status/metadata as it often has higher privilege
-    const baseUrl = (apiUrl || evolutionApiUrl || '').replace(/\/$/, '');
-    const globalKey = evolutionApiKey || '';
-    const instKey = apiKey || globalKey; // Fallback to global if no instance key found
+    // Use env secrets as primary, fallback to DB values
+    const baseUrl = (evolutionApiUrl || apiUrl || '').replace(/\/$/, '');
+    const key = evolutionApiKey || apiKey || '';
 
-    if (!baseUrl || !globalKey) {
+    if (!baseUrl || !key) {
       return new Response(JSON.stringify({ success: false, error: 'Credenciais da Evolution API não encontradas' }), {
-        status: 200,
+        status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Check connection state using Global Key
-    console.log(`[get-evolution-qrcode] Checking state for ${instanceName} with Global Key...`);
+    // Check connection state
     const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instanceName}`, {
-      headers: { 
-        'apikey': globalKey,
-        'admintoken': globalKey
-      },
+      headers: { 'apikey': key },
     });
 
     let currentState = 'disconnected';
@@ -124,12 +118,12 @@ serve(async (req: Request) => {
       let phoneNumber = '';
       try {
         const infoRes = await fetch(`${baseUrl}/instance/fetchInstances`, {
-          headers: { 'apikey': globalKey, 'admintoken': globalKey },
+          headers: { 'apikey': key },
         });
         if (infoRes.ok) {
-          const fetchedInstances = await infoRes.json();
-          const inst = Array.isArray(fetchedInstances)
-            ? fetchedInstances.find((i: any) => i.instance?.instanceName === instanceName || i.instanceName === instanceName)
+          const instances = await infoRes.json();
+          const inst = Array.isArray(instances)
+            ? instances.find((i: any) => i.instance?.instanceName === instanceName || i.instanceName === instanceName)
             : null;
           phoneNumber = inst?.instance?.owner || inst?.owner || '';
           phoneNumber = phoneNumber.replace(/@.*$/, '');
@@ -142,7 +136,6 @@ serve(async (req: Request) => {
         .update({
           status: 'connected',
           is_active: true,
-          health_score: 100,
           phone_number: phoneNumber || '',
           updated_at: new Date().toISOString(),
         })
@@ -169,74 +162,27 @@ serve(async (req: Request) => {
       });
     }
 
-    // Fetch QR Code (Try Uazapi POST first with Instance Key, then GET with Global Key)
-    console.log(`[get-evolution-qrcode] Fetching QR for ${instanceName}...`);
-    let qrRes = await fetch(`${baseUrl}/instance/connect`, {
-        method: 'POST',
-        headers: {
-            'token': instKey,
-            'apikey': instKey,
-            'admintoken': globalKey,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({})
+    // Fetch QR Code
+    const qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
+      headers: { 'apikey': key },
     });
-    
-    // Fallback to standard Evolution GET if Uazapi POST fails
-    if (!qrRes.ok) {
-        console.log(`[get-evolution-qrcode] POST failed (${qrRes.status}), trying GET...`);
-        qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
-          method: 'GET',
-          headers: { 
-            'apikey': globalKey,
-            'admintoken': globalKey,
-            'Authorization': `Bearer ${globalKey}`
-          },
-        });
-    }
 
     const qrText = await qrRes.text();
-    console.log(`[get-evolution-qrcode] QR response status (${qrRes.status}) for ${instanceName}`);
-    console.log(`[get-evolution-qrcode] Response Detail:`, qrText.substring(0, 500));
+    console.log(`[get-evolution-qrcode] QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
 
     let qrCode: string | null = null;
     let connected = false;
 
     try {
       const qrData = JSON.parse(qrText);
-      // Uazapi structure check
-      qrCode = qrData?.base64 || 
-               qrData?.qrcode?.base64 || 
-               qrData?.instance?.qrcode?.base64 || 
-               qrData?.instance?.qrcode || 
-               qrData?.qrcode || 
-               null;
-      
-      const state = String(qrData?.state || qrData?.status || qrData?.instance?.state || qrData?.instance?.status || '').toLowerCase();
-      
-      // Robust connection check (V5.1)
-      connected = state === 'open' || 
-                  state === 'connected' || 
-                  state === 'connected_authenticated' || 
-                  qrData?.connected === true || 
-                  qrData?.instance?.connected === true || 
-                  qrData?.loggedIn === true || 
-                  qrData?.instance?.loggedIn === true;
-
-      console.log(`[get-evolution-qrcode] Evaluated connected state: ${connected} (${state})`);
-    } catch (e) {
-        console.error(`[get-evolution-qrcode] Parsing error:`, e);
-    }
+      qrCode = qrData?.base64 || qrData?.qrcode?.base64 || null;
+      connected = qrData?.state === 'open' || qrData?.instance?.state === 'open';
+    } catch {}
 
     if (connected) {
       await supabase
         .from('wa_instances')
-        .update({ 
-          status: 'connected', 
-          is_active: true, 
-          health_score: 100,
-          updated_at: new Date().toISOString() 
-        })
+        .update({ status: 'connected', is_active: true, updated_at: new Date().toISOString() })
         .eq('user_id', user_id)
         .eq('instance_name', instanceName);
 
@@ -250,15 +196,15 @@ serve(async (req: Request) => {
       success: true,
       connected,
       qr_code: qrCode,
-      raw_response: !qrCode ? qrText.substring(0, 1000) : null
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[get-evolution-qrcode] Error:', error);
-    return new Response(JSON.stringify({ success: false, error: error.message }), {
-      status: 200,
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ success: false, error: message }), {
+      status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

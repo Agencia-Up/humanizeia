@@ -74,117 +74,159 @@ serve(async (req) => {
   }
 });
 
-// ─── Design Codes Knowledge Base (Inspired by Freepik) ────────────────────────
-// ─── Design Kits Knowledge Base (Freepik Inspired) ────────────────────────
-const DESIGN_KITS = {
-  modern_bold: {
-    name: 'Modern Bold',
-    bg: '#000000', accent: '#FFEE00', text: '#FFFFFF', sub: '#CCCCCC',
-    style: 'Impactante, tipografia pesada, alto contraste, vibe automotiva de luxo ou tecnologia.'
-  },
-  minimal_luxury: {
-    name: 'Minimal Luxury',
-    bg: '#FFFFFF', accent: '#D4AF37', text: '#111111', sub: '#555555',
-    style: 'Elegante, clean, espaços em branco generosos, fontes serifadas ou minimalistas premium.'
-  },
-  cyber_neon: {
-    name: 'Cyber Neon',
-    bg: '#050510', accent: '#00F0FF', text: '#FFFFFF', sub: '#7BCFFF',
-    style: 'Futurista, elementos holográficos, gradientes neon, alta tecnologia e inovação.'
-  },
-  soft_brand: {
-    name: 'Soft Brand',
-    bg: '#FDFCFB', accent: '#FF6B6B', text: '#2D3436', sub: '#636E72',
-    style: 'Acolhedor, tons pastéis, arredondado, focado em marca pessoal ou lifestyle.'
-  },
-  executive_grid: {
-    name: 'Executive Grid',
-    bg: '#0D1B2A', accent: '#415A77', text: '#E0E1DD', sub: '#778DA9',
-    style: 'Sóbrio, estruturado em grids, azul marinho e prata, confiança e autoridade real.'
-  }
-};
-
 // ─── V2 Carousel Generator (Rich Page-Based Slides) ─────────────────────────
-// ─── V2 Carousel Generator (Multi-Agent Architecture) ──────────────────────
-// ─── V2 Carousel Generator (Multi-Agent Architecture - Fast Mode) ──────────
 async function generateCarouselV2(body: any, cors: Record<string, string>) {
   const {
     topic,
     audience,
+    tone = 'persuasivo',
     slide_count = 8,
+    include_cta = true,
     brand_name = 'Minha Empresa',
     carousel_type = 'educacional',
-    niche = 'Negócios',
-    objective = 'Engajamento e Vendas'
+    paul_copy = '',         // Copy importada do Paulo
+    trend_context = '',     // Contexto de tendências
   } = body;
 
   const openaiKey = Deno.env.get('OPENAI_API_KEY');
-  if (!openaiKey) throw new Error('OPENAI_API_KEY não configurada');
-
-  console.log(`[DAVI] Iniciando geração Bulletproof para: ${topic}`);
-
-  try {
-    // ── PHASE 1: STRATEGIST & DESIGNER (Consolidated) ───────────────────────
-    const phase1Res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: `Você é um CMO e Curador de Design do Freepik. Sua missão é definir a Estratégia Viral e o Estilo Visual (Design Kit) para um carrossel de alto impacto.
-          KITS DISPONÍVEIS: ${JSON.stringify(DESIGN_KITS)}` },
-          { role: 'user', content: `Tema: ${topic}\nPúblico: ${audience}\nNiche: ${niche}\nObjetivo: ${objective}\nSlides: ${slide_count}\n\nRetorne JSON: {"strategy_angle": "x", "hook_promise": "y", "selected_kit": "key_do_kit", "visual_guide": "atmosfera visual cinematográfica", "slides_visuals": [{"order": 1, "cue": "prompt de imagem 8k focado no objeto/cena, SEM NENHUM TEXTO ESCRITO"}]}` }
-        ],
-        response_format: { type: 'json_object' }
-      })
-    });
-    const p1 = JSON.parse((await phase1Res.json()).choices?.[0]?.message?.content || '{}');
-    const kitKey = (p1.selected_kit || 'modern_bold') as keyof typeof DESIGN_KITS;
-    const selectedKit = DESIGN_KITS[kitKey] || DESIGN_KITS.modern_bold;
-
-    // ── PHASE 2: COPYWRITER (Final Assembly) ────────────────────────────────
-    const copywriterSystem = `Você é o DAVI COPYWRITER. Escreva as headlines e o corpo dos slides.
-    ÂNGULO: ${p1.strategy_angle}\nESTILO: ${selectedKit.style}\nKIT: ${selectedKit.name}
-    
-    REGRAS DE OURO:
-    1. Headlines: Máximo 6 palavras. IMPACTANTES.
-    2. Body: Curto (máx 150 caracteres).
-    3. Use EXATAMENTE ${slide_count} slides.`;
-
-    const phase2Res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: copywriterSystem },
-          { role: 'user', content: `Tema: "${topic}". Público: "${audience}". Slides: ${slide_count}. Marca: ${brand_name}.
-          Retorne JSON: {"cover_headline": "...", "caption": "...", "hashtags": [], "slides": [{"order": 1, "headline": "...", "sub_headline": "...", "body": "...", "bullets": [], "accent_word": "...", "layout": "centered"}]}` }
-        ],
-        response_format: { type: 'json_object' }
-      })
-    });
-    const carousel = JSON.parse((await phase2Res.json()).choices?.[0]?.message?.content || '{}');
-
-    // Mesclar design e visual_cue
-    carousel.slides = carousel.slides.map((s: any, i: number) => ({
-      ...s,
-      visual_cue: p1.slides_visuals?.[i]?.cue || `${topic} visual`,
-      visual_config: {
-        bg: selectedKit.bg,
-        accent: selectedKit.accent,
-        text: selectedKit.text,
-        sub: selectedKit.sub,
-        theme: kitKey
-      }
-    }));
-
-    return new Response(JSON.stringify({ carousel }), { headers: { ...cors, 'Content-Type': 'application/json' } });
-
-  } catch (err: any) {
-    console.error("[DAVI ERROR]:", err);
-    throw err;
+  if (!openaiKey) {
+    return new Response(JSON.stringify({
+      carousel: buildMockCarouselV2(topic, audience, slide_count, brand_name, include_cta, carousel_type),
+    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
   }
+
+  const typeInstructions: Record<string, string> = {
+    educacional: `Formato EDUCACIONAL: ensina algo valioso ao público. Cada slide = um conceito claro.
+      Slide 1 (CAPA): Promessa poderosa que justifica o arraste. Ex: "O que nenhum [NICHO] te contou sobre X"
+      Slides 2-${slide_count - 2}: Um insight profundo por slide, com dado ou exemplo concreto
+      Slide ${slide_count - 1} (CONCLUSÃO): Recapitula o valor entregue
+      Slide ${slide_count} (CTA): Ação clara e irresistível`,
+
+    lista: `Formato LISTA: título provoca curiosidade, cada slide revela um item numerado.
+      Slide 1 (CAPA): "X [coisas/erros/formas/razões] que [resultado impactante]"
+      Slides 2-${slide_count - 1}: Cada item da lista — NUMERADO, com headline direta e explicação curta
+      Slide ${slide_count} (CTA): Ação relacionada ao tema da lista`,
+
+    storytelling: `Formato STORYTELLING: narrativa com começo, meio, fim e virada.
+      Slide 1 (CAPA): Apresenta o protagonista e o conflito
+      Slides 2-4: O problema e as tentativas fracassadas (tensão)
+      Slides 5-6: A virada / descoberta / solução
+      Slide 7: O resultado conquistado (prova)
+      Slide ${slide_count} (CTA): "Quer o mesmo resultado? [ação]"`,
+
+    mitos: `Formato MITOS vs VERDADES: derruba crenças populares.
+      Slide 1 (CAPA): "X mitos sobre [tema] que estão sabotando você"
+      Slides pares: MITO — em vermelho ou destaque negativo
+      Slides ímpares: VERDADE — revelação que surpreende
+      Slide ${slide_count} (CTA): Posiciona a marca como detentora da verdade`,
+
+    passoapasso: `Formato PASSO A PASSO: guia prático com etapas sequenciais.
+      Slide 1 (CAPA): Promete o resultado final do processo
+      Slides 2-${slide_count - 1}: PASSO [N] — ação específica com orientação clara
+      Slide ${slide_count} (CTA): "Salve este post e comece agora"`,
+
+    polemica: `Formato POLÊMICO: gera debate e compartilhamento.
+      Slide 1 (CAPA): Afirmação provocativa e contrária ao senso comum
+      Slides 2-5: Argumentos que sustentam a posição, com dados
+      Slide 6: Antecipa e derruba a principal objeção
+      Slide 7: Convida ao debate nos comentários
+      Slide ${slide_count} (CTA): "Concorda ou discorda? Comenta aqui"`,
+  };
+
+  const pauloContext = paul_copy
+    ? `\n\nESTRATÉGIA DO COPYWRITER PAULO (use como base e expanda visualmente):\n${paul_copy.slice(0, 800)}`
+    : '';
+
+  const trendContext = trend_context
+    ? `\n\nCONTEXTO DE TENDÊNCIAS ATUAL:\n${trend_context.slice(0, 400)}`
+    : '';
+
+  const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
+Você pensa em PÁGINAS VISUAIS SEPARADAS — cada slide é uma página completa como um slide de PowerPoint/Canva.
+
+REGRAS ABSOLUTAS DE DESIGN:
+- headline: TÍTULO PODEROSO (máximo 5-7 palavras, impacto imediato, maiúsculas quando for necessário)
+- sub_headline: complemento ou numeração (ex: "Dica 1 de 5", "Passo 2", "O Erro Mais Comum")  
+- body: texto de apoio curto (máximo 120 caracteres — pois é um slide visual, não um artigo)
+- bullets: lista de até 3 itens quando o slide for do tipo lista (máximo 45 chars cada)
+- visual_cue: descrição precisa do elemento visual ideal para aquele slide (imagem, ícone, símbolo)
+- layout: como o conteúdo se organiza na página (centered/left/split/minimal/full_bleed)
+- accent_word: uma palavra-chave do headline que deve ganhar cor de destaque
+
+O carrossel deve ter RITMO: capa forte → conteúdo valioso → CTA irresistível.
+Retorne APENAS JSON válido sem markdown.`;
+
+  const userPrompt = `Crie um carrossel Instagram sobre "${topic}" para "${audience}".
+Tom: ${tone}. Slides: ${slide_count}. Marca: ${brand_name}. CTA: ${include_cta ? 'sim' : 'não'}.
+Tipo: ${carousel_type}.${pauloContext}${trendContext}
+
+${typeInstructions[carousel_type] || typeInstructions.educacional}
+
+Retorne este JSON:
+{
+  "carousel_type": "${carousel_type}",
+  "cover_headline": "headline da capa (max 7 palavras)",
+  "hook_promise": "o que o leitor vai aprender/ganhar com este carrossel",
+  "caption": "legenda completa do post para Instagram (max 2200 chars, com emojis estratégicos e quebras de linha)",
+  "hashtags": ["hashtag1", "hashtag2" ... (20 hashtags sem #, mix de nicho + trend)],
+  "slides": [
+    {
+      "order": 1,
+      "type": "cover",
+      "headline": "título dominante da capa",
+      "sub_headline": "frase secundária que amplifica o headline",
+      "body": "contexto ou promessa adicional (opcional na capa)",
+      "bullets": null,
+      "visual_cue": "descrição do elemento visual ideal",
+      "layout": "centered",
+      "accent_word": "palavra do headline para destacar"
+    }
+  ]
+}
+
+REGRAS DOS TIPOS DE SLIDE:
+- "cover": capa principal — headline impactante, sub_headline forte, sem body longo
+- "content": slide de conteúdo — headline direto, body explicando, visual_cue relevante
+- "list": slide de lista — sub_headline com numeração, bullets com 2-3 itens
+- "quote": citação poderosa — headline como a citação entre aspas, body com atribuição
+- "cta": slide final — headline como chamada para ação, body com instrução clara`;
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${openaiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.85,
+      max_tokens: 3500,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`OpenAI API: ${res.status} — ${err}`);
+  }
+
+  const aiData = await res.json();
+  const rawContent = aiData.choices?.[0]?.message?.content || '{}';
+
+  let carousel;
+  try {
+    carousel = JSON.parse(rawContent);
+  } catch {
+    throw new Error('Resposta da IA inválida — tente novamente');
+  }
+
+  return new Response(JSON.stringify({ carousel }), {
+    headers: { ...cors, 'Content-Type': 'application/json' },
+  });
 }
 
 // ─── Fetch Trends Brief ──────────────────────────────────────────────────────
