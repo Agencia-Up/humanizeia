@@ -4,9 +4,6 @@ import { CarouselSlide } from '@/hooks/useSocialMedia';
 import { Button } from '@/components/ui/button';
 import { generateNativeCarousel } from './CarouselNativeRenderer';
 
-<<<<<<< HEAD
-export interface CarouselPageViewerProps {
-=======
 // ── Template definitions ──────────────────────────────────────────────────────
 export const CAROUSEL_TEMPLATES = [
   // ── FUTURISTA IA (Model 1 reference) ─────────────────────────────────────
@@ -728,7 +725,6 @@ function SlidePageInner({ slide, tpl, brandName, total, clientImageUrl }: {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 interface CarouselPageViewerProps {
->>>>>>> origin/dev-aloan
   slides: CarouselSlide[];
   templateId: string;
   onTemplateChange: (t: string) => void;

@@ -367,15 +367,9 @@ Deno.serve(async (req) => {
     }
 
     // ── AI Analysis (OpenAI GPT-4o com fallback Anthropic) ──
-<<<<<<< Updated upstream
-    const OPENAI_KEY    = Deno.env.get("OPENAI_API_KEY");
-    const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-    const AI_KEY        = OPENAI_KEY || ANTHROPIC_KEY;
-=======
     const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
     const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     const AI_KEY = OPENAI_KEY || ANTHROPIC_KEY;
->>>>>>> Stashed changes
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
     if (AI_KEY && enriched.length > 0) {

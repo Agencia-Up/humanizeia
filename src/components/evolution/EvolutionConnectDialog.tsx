@@ -77,17 +77,11 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
   const generateSlug = (name: string) =>
     name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-<<<<<<< HEAD
   // ========== UAZAPI FLOW (Managed Mode) ==========
   const handleCreateUazapiInstance = async (overrideSlug?: string) => {
     // Garantir que overrideSlug seja uma string (evita erro de circular structure se for evento)
     const activeOverride = typeof overrideSlug === 'string' ? overrideSlug : undefined;
     const slug = activeOverride || generateSlug(friendlyName || 'midas-instance');
-=======
-  // ========== EVOLUTION FLOW (simplified — no credentials needed) ==========
-  const handleCreateEvolutionInstance = async () => {
-    const slug = generateSlug(friendlyName || 'midas-instance');
->>>>>>> origin/dev-aloan
     if (!slug) { toast.error('Informe um nome para a conexão'); return; }
     setIsCreating(true);
     setActiveSlug(slug);
@@ -171,15 +165,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
         });
         if (error) return;
         if (data?.connected) {
-<<<<<<< HEAD
           handleSuccess();
-=======
-          stopPolling();
-          setStep('connected');
-          queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
-          queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
-          onConnected?.();
->>>>>>> origin/dev-aloan
         } else if (data?.qr_code) {
           setQrCode(data.qr_code);
         }
@@ -201,13 +187,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
         body: { user_id: user!.id, instance_name: activeSlug },
       });
       if (data?.connected) {
-<<<<<<< HEAD
         handleSuccess();
-=======
-        stopPolling(); setStep('connected');
-        queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
-        onConnected?.();
->>>>>>> origin/dev-aloan
       } else if (data?.qr_code) {
         setQrCode(data.qr_code);
         toast.success('QR Code atualizado');
