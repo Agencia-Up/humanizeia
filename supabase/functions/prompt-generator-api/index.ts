@@ -39,36 +39,27 @@ serve(async (req) => {
 
     if (action === 'build_questionnaire') {
       const provider = body.ai_provider || 'openai';
-      const context = body.context || '';
-      const prompt = `Você é o Arquiteto Estratégico do Salomão na HumanizeIA (Agência de Marketing de Elite).
-Sua missão é criar um questionário de briefing de alto nível para o Dono do Negócio (Empresário) no nicho: "${niche}".
+      const prompt = `Você é o Arquiteto de Briefing do Salomão. Sua tarefa é criar um questionário de briefing estratégico e direto para o nicho: "${niche}".
 
-ESTRUTURA DE PENSAMENTO:
-- Use modelos como Business Model Canvas, Matriz SWOT e Círculo de Ouro (Simon Sinek).
-- O interlocutor é o DONO DA EMPRESA. Pergunte sobre a operação, metas de faturamento, diferenciais e público ideal.
-- NUNCA faça perguntas ao consumidor final (ex: "que carro quer comprar?"). 
-- O foco é extrair inteligência para configurar uma IA que agirá em nome da empresa.
+Diretrizes:
+1. Tenha TOTAL LIBERDADE para adaptar as questões, mas mantenha-as simples e extremamente relevantes.
+2. Evite perguntas complexas ou burocráticas. Foque no que realmente importa para vender e atender bem nesse nicho.
+3. Use a estrutura base abaixo como inspiração para as seções, mas sinta-se livre para criar novas ou remover seções que não fazem sentido.
+4. O objetivo é extrair informações para treinar um Agente de IA de Vendas de elite.
 
-ÁREAS OBRIGATÓRIAS PARA EXPLORAR:
-1. PERFIL E DIFERENCIAL (O que torna a empresa única?)
-2. PRODUTOS E OFERTA (Quais os 'best-sellers', ticket médio e garantias?)
-3. PÚBLICO E PERSONA (Quem é o cliente ideal e qual a maior dor que a empresa resolve?)
-4. PROCESSO DE VENDA (Como o cliente chega e como a venda é fechada?)
-5. TOM DE VOZ (Como a marca quer ser percebida? Sóbria, agressiva, acolhedora?)
+ESTRUTURA BASE DE INSPIRAÇÃO:
+${base_template || 'Negócio, Público, Oferta, Comunicação'}
 
-CONTEXTO JÁ COLETADO (Se houver, use para ser mais específico e não repetir perguntas):
-${context}
-
-Retorne APENAS um objeto JSON puro (sem markdown) no formato:
+Retorne APENAS um objeto JSON puro (sem markdown ou blocos de código) no formato:
 {
   "sections": [
     {
-      "title": "Título Profissional da Seção",
+      "title": "Título da Seção (Ex: Perfil do Negócio)",
       "fields": [
         { 
-          "label": "Pergunta estratégica e profunda", 
-          "hint": "Exemplo de resposta esperada para orientar o empresário", 
-          "key": "chave_unica_snake_case" 
+          "label": "Pergunta (Ex: Qual seu principal diferencial?)", 
+          "hint": "Exemplo curto (Ex: Atendimento 24h, preço)", 
+          "key": "chave_unica_em_snake_case" 
         }
       ]
     }

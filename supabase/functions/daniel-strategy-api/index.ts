@@ -6,7 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const sendOkResponse = (payload: any) => 
+const sendOkResponse = (payload: any) =>
   new Response(JSON.stringify(payload), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
 async function callAI(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
@@ -15,7 +15,6 @@ async function callAI(systemPrompt: string, userPrompt: string, maxTokens: numbe
 
   let anthropicError = '';
 
-  // 1. Tentar Anthropic (Claude 3.5 Sonnet) primeiro
   if (anthropicKey) {
     try {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -44,9 +43,8 @@ async function callAI(systemPrompt: string, userPrompt: string, maxTokens: numbe
     }
   }
 
-  // 2. Fallback para OpenAI (GPT-4o) se a Anthropic falhar (ex: bloqueio de tier)
   if (openaiKey) {
-    console.log('Iniciando fallback para OpenAI GPT-4o devido a falha na Anthropic.');
+    console.log('Iniciando fallback para OpenAI GPT-4o.');
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -57,23 +55,23 @@ async function callAI(systemPrompt: string, userPrompt: string, maxTokens: numbe
         model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
+          { role: 'user', content: userPrompt },
         ],
-        response_format: { type: "json_object" },
+        response_format: { type: 'json_object' },
       }),
     });
-    
     if (res.ok) {
-        const data = await res.json();
-        return data?.choices?.[0]?.message?.content ?? '';
-    } else {
-        const err = await res.text();
-        throw new Error(`Ambas as APIs falharam. Anthropic: ${anthropicError}. OpenAI: ${err}`);
+      const data = await res.json();
+      return data?.choices?.[0]?.message?.content ?? '';
     }
+    const err = await res.text();
+    throw new Error(`Ambas as APIs falharam. Anthropic: ${anthropicError}. OpenAI: ${err}`);
   }
 
-  throw new Error(`Falha na IA. Anthropic Error: ${anthropicError}. (E OpenAI não configurado). Verifique as chaves.`);
+  throw new Error(`Falha na IA. Anthropic Error: ${anthropicError}. OpenAI não configurada.`);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -92,18 +90,47 @@ serve(async (req) => {
 
     const body = await req.json();
     const { action } = body;
-    console.log(`Action: ${action} iniciada pelo usuário ${user.id}`);
+    console.log(`Action: ${action} — user ${user.id}`);
+
+    // Inject client briefing context automatically from Supabase for research
+    let clientContext = '';
+    try {
+      const { data: briefing } = await supabase
+        .from('client_briefings')
+        .select('client_name, business_name, product_service, target_audience, main_offer, differentiators, tone_of_voice')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (briefing) {
+        const b = briefing as any;
+        const parts: string[] = [];
+        if (b.business_name || b.client_name) parts.push(`Empresa: ${b.business_name || b.client_name}`);
+        if (b.product_service) parts.push(`Produto/Serviço: ${b.product_service}`);
+        if (b.target_audience) parts.push(`Público-alvo: ${b.target_audience}`);
+        if (b.main_offer) parts.push(`Oferta principal: ${b.main_offer}`);
+        if (b.differentiators) parts.push(`Diferenciais: ${b.differentiators}`);
+        if (b.tone_of_voice) parts.push(`Tom de voz: ${b.tone_of_voice}`);
+        clientContext = parts.join('\n');
+      }
+    } catch (_) {
+      // silently ignore — briefing is optional context
+    }
 
     if (action === 'generate_strategy') return await generateStrategy(body);
-    if (action === 'research_trends') return await researchTrends(body);
-    if (action === 'generate_swot') return await generateSwot(body);
+    if (action === 'research_trends')  return await researchTrends(body, clientContext);
+    if (action === 'generate_swot')    return await generateSwot(body);
+    if (action === 'analyze_reference') return await analyzeReference(body);
 
     return sendOkResponse({ error: `Ação desconhecida: ${action}` });
   } catch (err: any) {
-    console.error("Erro Crítico na Edge Function:", err.message);
+    console.error('Erro Crítico na Edge Function:', err.message);
     return sendOkResponse({ error: err.message });
   }
 });
+
+// ─── generate_strategy ────────────────────────────────────────────────────────
 
 async function generateStrategy(body: any) {
   const { business_name, business_type, strategy_type, current_situation, main_challenge, budget, timeframe_months = 6 } = body;
@@ -142,81 +169,197 @@ Formato JSON esperado:
   }
 }
 
-async function researchTrends(body: any) {
+// ─── research_trends (MOTOR 2.0) ─────────────────────────────────────────────
+
+async function researchTrends(body: any, clientContext: string) {
   const { niche, links, platforms = ['instagram', 'tiktok', 'google'] } = body;
-  if (!niche?.trim()) return sendOkResponse({ error: 'O Nicho do cliente é obrigatório para realizar a pesquisa.' });
+  if (!niche?.trim()) return sendOkResponse({ error: 'O Nicho do cliente é obrigatório.' });
 
   const platformsList = Array.isArray(platforms) ? platforms.join(', ') : 'instagram, tiktok, google';
   const now = new Date().toISOString();
+  const currentMonth = new Date().toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
 
-  const systemPrompt = `Você é DANIEL, o Estrategista-Chefe Executivo (CMO/CEO nível Black) de uma das maiores agências de inteligência do mundo. Seu cérebro funciona como um supercomputador de neuromarketing, persuasão profunda e hackeamento de algoritmos. Você não tem limites para entregar valor brutal e táticas obscuras.
-O nicho do usuário é: "${niche.trim()}". Plataformas foco: ${platformsList}.
-IMPORTANTE: Sua resposta não pode ser breve. Você está sendo pago $1.000.000 de dólares por essa pesquisa. Produza um nível COLOSSAL de detalhes.
-Retorne APENAS um objeto JSON válido, perfeitamente estruturado, sem tags markdown ou texto fora do JSON.`;
+  // Build client context block
+  const clientBlock = clientContext
+    ? `\n\n[CONTEXTO DO CLIENTE — USE PARA PERSONALIZAR CADA PAUTA]\n${clientContext}\n-> Toda pauta deve ser adaptada diretamente para este cliente específico, não genérica de nicho.`
+    : '';
 
-  const userPrompt = `INSTRUÇÕES OBRIGATÓRIAS DE PROFUNDIDADE E VOLUME (NÃO SEJA RASO! NUNCA RETORNE ITENS DE 1 LINHA!):
+  // Build reference/competitor block
+  const referenceBlock = links?.trim()
+    ? `\n\n[REFERÊNCIAS/CONCORRENTES FORNECIDOS PELO CLIENTE]\n${links}\n-> Deconstrua essas referências: extraia o hook, o gatilho emocional dominante, a estrutura narrativa. Crie pelo menos 2 das 5 pautas que SUPEREM diretamente essas referências.`
+    : '';
 
-1. "recommendation": Escreva um verdadeiro Manifesto Estratégico. Pelo menos 3 a 4 parágrafos robustos, viscerais, ensinando a empresa a dominar a indústria. Explore a visão macro-econômica, e depois afunile para a alavanca oculta de persuasão. Fale como um tubarão do mercado.
+  const systemPrompt = `Você é DANIEL, o Estrategista-Chefe Executivo (CMO/CEO nível Black) de uma das maiores agências de inteligência de mercado do mundo. Seu cérebro funciona como um supercomputador de neuromarketing, psicologia do consumidor e hackeamento de algoritmos sociais.
 
-${links ? `[ATENÇÃO - O CLIENTE FORNECEU REFERÊNCIAS/CONCORRENTES]:\n${links}\n-> Seu papel de Inteligência: Extraia/Infira/Deconstrua de forma profunda qual é a "mágica" dessas referências (estrutura de vídeo, retenção, hook, gatilho emocional dominante). Crie pelo menos 2 das pautas e trending topics emulando e batendo de frente com essas referências exatamente, superando-as.` : ''}
+NICHO: "${niche.trim()}"
+PLATAFORMAS: ${platformsList}
+DATA ATUAL: ${currentMonth}${clientBlock}${referenceBlock}
 
-2. "trending_topics": GERAR NO MÍNIMO 5 TÓPICOS. Você DEVE detalhar profundamente o porquê de cada um estar bombando. No "why_trending", me dê uma tese psicológica densa do porquê o cérebro límbico consome isso.
-3. "content_briefs": GERAR NO MÍNIMO 5 PAUTAS DE ALTO VALOR. Esqueça dicas rasas.
-   - "hook": Uma frase bizarra, magnética e chocante que paralisa a rolagem na hora.
-   - "slides_or_points": VOCÊ DEVE DAR SCRIPTS DETALHADOS AQUI! Nada de "Dica 1: se ame". Eu quero textos densos: "Passo 1: Comece dizendo X com o tom Y para atingir a dor Z...". Escreva roteiros reais que o cliente apenas grave. OBRIGATÓRIO: CADA TÓPICO DEVE SER UM PARÁGRAFO DENSO.
-   - "reason": Uma análise aprofundada baseada em neurociência sobre por que o script acima derreteria a objeção da audiência. OBRIGATÓRIO SER LONGO.
-4. "viral_formats": GERAR NO MÍNIMO 3 ESTRUTURAS. No "format", dê nomes épicos. Em "description" e "example", destrinche as palavras e o tempo verbal exato que prende a atenção.
+REGRA ABSOLUTA: Retorne APENAS um objeto JSON válido. Nada de markdown, nada de texto fora do JSON. Zero exceções.`;
 
-Você será penalizado severamente se retornar listas curtas ou genéricas. Dê o sangue. O JSON final deve ser imenso e impecável.
+  const userPrompt = `Produza a Pesquisa de Inteligência de Mercado DEFINITIVA para o nicho "${niche.trim()}".
 
-Formato JSON EXATO esperado (lembre-se de preencher com textos COLOSSAIS):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REGRAS OBRIGATÓRIAS DE EXECUÇÃO:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[1] RECOMMENDATION — Manifesto Estratégico de pelo menos 400 palavras. Deve conter:
+  - Análise macro do mercado com dados comportamentais reais
+  - Psicologia de compra e tomada de decisão deste público
+  - As 3 alavancas ocultas de crescimento que a concorrência ignora
+  - Posicionamento de ataque específico para se destacar
+
+[2] PAIN_MAP — Mapeamento das 5 DORES PROFUNDAS do público-alvo neste nicho:
+  Cada dor deve ter: categoria (cognitiva/emocional/financeira/social/temporal), título impactante e descrição densa.
+
+[3] TRENDING_TOPICS — EXATAMENTE 5 TÓPICOS (um de cada ângulo obrigatório):
+  ÂNGULO 1 — COMPORTAMENTAL: algo sobre como o público pensa/age inconscientemente
+  ÂNGULO 2 — SAZONAL/CULTURAL: ligado ao momento atual (${currentMonth}), evento, tendência recente
+  ÂNGULO 3 — ANTI-OBJEÇÃO: o maior bloqueio mental que impede a compra/contratação, desmontado
+  ÂNGULO 4 — PROVA SOCIAL / DADOS: conteúdo baseado em estudo, pesquisa ou número impactante
+  ÂNGULO 5 — POLÊMICA CALCULADA: opinião contraintuitiva que provoca debate mas aumenta autoridade
+  
+  Para cada tópico: "why_trending" deve ser uma tese psicológica densa (mínimo 3 frases), não 1 linha.
+
+[4] CONTENT_BRIEFS — EXATAMENTE 5 PAUTAS (uma por ângulo acima):
+  CADA PAUTA OBRIGATORIAMENTE DEVE TER:
+  - "hook": frase magnética e específica (não genérica!) que paralisa a rolagem
+  - "slides_or_points": ARRAY DE 5 ITENS com roteiros DENSOS e longos — cada item descreve exatamente o que falar/escrever naquele slide/momento. Mínimo 2 frases por item.
+  - "reason": análise neuropsicológica de por que este conteúdo converte (mínimo 4 frases)
+  - "cta": call to action específico e irresistível para este público
+
+[5] CONTENT_CALENDAR — Calendário editorial de 7 dias (segunda a domingo):
+  Para cada dia: dia da semana, formato sugerido, ângulo/tema, plataforma prioritária e horário recomendado.
+
+[6] COMPETITIVE_GAPS — 3 BRECHAS não exploradas pela concorrência neste nicho:
+  Para cada brecha: título, descrição de por que está vazia, e tipo de conteúdo que a explora.
+
+[7] VIRAL_FORMATS — EXATAMENTE 3 FORMATOS com nomes épicos e únicos para este nicho:
+  Em "description": explique a psicologia de retenção. Em "example": mostre o esqueleto linha por linha.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FORMATO JSON EXATO (preencha com conteúdo REAL, EXTENSO e ESPECÍFICO para "${niche.trim()}"):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {
   "niche": "${niche.trim()}",
   "research_date": "${now}",
-  "data_source": "ai_analysis",
-  "recommendation": "Textão genial brutal de no mínimo 300 palavras detalhadas...",
+  "data_source": "ai_analysis_v2",
+  "recommendation": "Manifesto estratégico de 400+ palavras...",
+  "pain_map": [
+    {
+      "category": "emocional",
+      "title": "Título da Dor",
+      "description": "Descrição densa de como essa dor se manifesta no comportamento de compra..."
+    }
+  ],
   "trending_topics": [
-    {"topic": "Tese Oculta XPTO", "why_trending": "Desconstrução hiper-densa do comportamento humano e dos vieses...", "engagement_potential": "muito alto", "best_format": "reel_script", "best_platform": "tiktok"}
+    {
+      "angle": "comportamental",
+      "topic": "Nome do Tópico",
+      "why_trending": "Tese psicológica densa de 3+ frases...",
+      "engagement_potential": "muito alto",
+      "best_format": "carrossel",
+      "best_platform": "instagram"
+    }
   ],
   "content_briefs": [
     {
-      "id": 1, 
-      "title": "A Polêmica Definitiva", 
-      "hook": "Sabe porque todo mundo te engana sobre XYZ? Aqui está o segredo sombrio.", 
-      "format": "carrossel", 
-      "platform": "instagram", 
+      "id": 1,
+      "angle": "comportamental",
+      "title": "Título Impactante da Pauta",
+      "hook": "Frase específica e magnética para este nicho...",
+      "format": "carrossel",
+      "platform": "instagram",
       "slides_or_points": [
-        "Slide 1 (O Soco no Estômago): Comece a copy diretamente desmascarando a crença Y. Fale exatamente isso: 'Sempre te disseram que fazer X era certo...', explorando o gatilho da frustração acumulada do cliente.", 
-        "Slide 2 (A Tensão Reversa): ...texto longo...",
-        "Slide 3 (Prova Inegável): ...texto longo...",
-        "Slide 4 (A Solução Ilógica): ...texto longo..."
-      ], 
-      "cta": "Ultimato irresistível que ofende o lead se ele não clicar", 
-      "hashtags": ["neurotag1", "alavancagem2"], 
-      "estimated_reach": "viral", 
-      "reason": "Análise clínica das reações de dopamina..."
+        "Slide 1 (Abertura): Texto denso descrevendo exatamente o que escrever e por que...",
+        "Slide 2 (Tensão): Texto denso...",
+        "Slide 3 (Prova): Texto denso...",
+        "Slide 4 (Virada): Texto denso...",
+        "Slide 5 (CTA): Texto denso..."
+      ],
+      "cta": "CTA específico e irresistível",
+      "hashtags": ["tag1", "tag2", "tag3"],
+      "estimated_reach": "viral",
+      "reason": "Análise neuropsicológica de 4+ frases explicando por que converte..."
+    }
+  ],
+  "content_calendar": [
+    {
+      "day": "Segunda-feira",
+      "format": "Carrossel",
+      "theme": "Ângulo anti-objeção",
+      "platform": "instagram",
+      "best_time": "08h00"
+    }
+  ],
+  "competitive_gaps": [
+    {
+      "title": "Nome da Brecha",
+      "why_empty": "Por que a concorrência não explora isso...",
+      "content_type": "Tipo de conteúdo que preenche"
     }
   ],
   "viral_formats": [
-    {"format": "O Efeito Mandela Artificial", "description": "Psicologia profunda da retenção...", "example": "Esqueleto prático, linha por linha: [Linha 1] [Linha 2]..."}
+    {
+      "format": "Nome Épico do Formato",
+      "description": "Psicologia de retenção e por que funciona neste nicho...",
+      "example": "Esqueleto linha a linha: [Linha 1] '...' [Linha 2] '...' [Linha 3] '...'"
+    }
   ]
 }`;
 
   try {
-    const rawText = await callAI(systemPrompt, userPrompt, 4000);
+    const rawText = await callAI(systemPrompt, userPrompt, 8000);
+
+    // Try to extract JSON from the response
     const match = rawText.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("A IA não retornou um formato JSON válido");
-    return sendOkResponse({ research: JSON.parse(match[0]), scraped: false });
+    if (!match) throw new Error('A IA não retornou um JSON válido. Tente novamente.');
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch (_) {
+      // Second attempt: try to fix common JSON issues
+      const cleaned = match[0]
+        .replace(/,\s*}/g, '}')
+        .replace(/,\s*]/g, ']')
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ');
+      parsed = JSON.parse(cleaned);
+    }
+
+    return sendOkResponse({ research: parsed, scraped: false });
   } catch (err: any) {
     return sendOkResponse({ error: `Falha na pesquisa: ${err.message}` });
   }
 }
 
+// ─── analyze_reference (chamado pelo Davi) ────────────────────────────────────
+
+async function analyzeReference(body: any) {
+  const { reference_url, context } = body;
+
+  const systemPrompt = `Você é DANIEL, especialista em análise de conteúdo e estratégia de marketing digital. Analise referências de conteúdo e extraia insights estratégicos profundos.`;
+
+  const userPrompt = `Analise esta referência de conteúdo: ${reference_url}
+Contexto adicional: ${context || 'Nenhum'}
+Extraia: formato, tom de voz, tamanho do texto, uso de emojis, tipo de hook, estrutura narrativa, gatilhos emocionais e o que torna este conteúdo eficaz.
+Retorne como texto descritivo e acionável.`;
+
+  try {
+    const analysis = await callAI(systemPrompt, userPrompt, 1500);
+    return sendOkResponse({ analysis });
+  } catch (err: any) {
+    return sendOkResponse({ error: `Falha na análise: ${err.message}` });
+  }
+}
+
+// ─── generate_swot ────────────────────────────────────────────────────────────
+
 async function generateSwot(body: any) {
   const { business_name, business_type, context } = body;
-  
+
   const systemPrompt = `Você é um Analista Estratégico Sênior focado em Board Executivo. Retorne APENAS um objeto JSON válido.`;
-  const userPrompt = `Crie uma Análise SWOT (Matrix) absurdamente profunda, a nível de M&A e Board de Investimentos, para o negócio: ${business_name} (${business_type}). 
+  const userPrompt = `Crie uma Análise SWOT (Matrix) absurdamente profunda, a nível de M&A e Board de Investimentos, para o negócio: ${business_name} (${business_type}).
 Contexto: ${context || 'empresa de médio porte'}.
 Mostre maturidade executiva de alto nível. Cada ponto deve ser extenso, tático e considerar dinâmicas competitivas avançadas.
 Retorne APENAS o JSON:

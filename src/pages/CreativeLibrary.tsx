@@ -173,11 +173,31 @@ export default function CreativeLibrary({ embedded = false }: { embedded?: boole
           {/* TAB: Meta Ads */}
           <TabsContent value="meta-ads" className="mt-6">
             {!isConnected && !isLoadingConn && allAds.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-4 py-20">
-                <LinkIcon className="h-12 w-12 text-muted-foreground" />
-                <h2 className="text-xl font-semibold">Conecte seu Meta Ads</h2>
-                <p className="text-muted-foreground text-center max-w-md">Para ver seus criativos do Meta, conecte sua conta.</p>
-                <Button onClick={() => navigate('/settings')} className="gradient-primary">Ir para Configurações</Button>
+              <div className="space-y-4">
+                {/* Onboarding card */}
+                <div className="rounded-xl border border-blue-500/30 bg-blue-500/8 p-5">
+                  <p className="text-sm font-semibold text-blue-400 mb-1">📸 O que é a aba Meta Ads?</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Aqui você vê todos os <strong>anúncios ativos e pausados</strong> da sua conta do Facebook/Instagram. A IA analisa cada criativo e pode sugerir variações de texto para melhorar seus resultados.
+                  </p>
+                </div>
+                {/* Steps */}
+                <div className="rounded-xl border border-border/50 bg-card/50 p-5 space-y-3">
+                  <p className="text-sm font-semibold text-foreground">Como conectar:</p>
+                  {[
+                    { step: '1', text: 'Vá em Configurações → aba "Sincronização"' },
+                    { step: '2', text: 'Clique em "Conectar Meta Ads" e faça login com sua conta do Facebook' },
+                    { step: '3', text: 'Volte aqui — seus criativos aparecerão automaticamente' },
+                  ].map(({ step, text }) => (
+                    <div key={step} className="flex items-center gap-3">
+                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">{step}</div>
+                      <p className="text-sm text-muted-foreground">{text}</p>
+                    </div>
+                  ))}
+                  <Button onClick={() => navigate('/settings?tab=sync')} className="gradient-primary mt-2 w-full sm:w-auto">
+                    <LinkIcon className="mr-2 h-4 w-4" /> Ir para Configurações
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="space-y-6">

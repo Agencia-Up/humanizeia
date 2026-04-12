@@ -97,6 +97,7 @@ export interface ApolloCronConfig {
   send_whatsapp_on_critical: boolean;
   whatsapp_report_number: string | null;
   send_daily_report: boolean;
+  active_segment_slug: string | null;
   last_run_at?: string | null;
   next_run_at?: string | null;
 }

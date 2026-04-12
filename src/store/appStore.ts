@@ -64,7 +64,7 @@ export const useAppStore = create<AppState>()(
       // Sidebar
       sidebarOpen: true,
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
-      openSidebarGroups: ['🏠 Início', '🤖 Agentes IA', '⚙️ Configurações'],
+      openSidebarGroups: ['🏠 Dashboard', '🤖 Agentes IA', '💬 WhatsApp & CRM', '🔗 Integrações', '⚙️ Sistema'],
       toggleSidebarGroup: (label) =>
         set((state) => ({
           openSidebarGroups: state.openSidebarGroups.includes(label)

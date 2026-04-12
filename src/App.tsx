@@ -40,6 +40,8 @@ const WhatsAppAnalytics = lazy(() => import("./pages/WhatsAppAnalytics"));
 const WhatsAppAutomations = lazy(() => import("./pages/WhatsAppAutomations"));
 const WhatsAppInstances = lazy(() => import("./pages/WhatsAppInstances"));
 const WhatsAppAIAgent = lazy(() => import("./pages/WhatsAppAIAgent"));
+const WhatsAppCampaigns = lazy(() => import("./pages/WhatsAppCampaigns"));
+const WhatsAppGroups = lazy(() => import("./pages/WhatsAppGroups"));
 const MetaPixels = lazy(() => import("./pages/MetaPixels"));
 const MetaAudiences = lazy(() => import("./pages/MetaAudiences"));
 const WhatsAppCAPI = lazy(() => import("./pages/WhatsAppCAPI"));
@@ -92,7 +94,6 @@ const App = () => (
                 <Route path="/metrics" element={<ProtectedRoute><MetricsDashboard /></ProtectedRoute>} />
                 <Route path="/connect-accounts" element={<ProtectedRoute><ConnectAccounts /></ProtectedRoute>} />
                 <Route path="/copywriter" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
-                <Route path="/paulo" element={<ProtectedRoute><PauloAgente /></ProtectedRoute>} />
                 <Route path="/creative-studio" element={<ProtectedRoute><AICreativeStudio /></ProtectedRoute>} />
                 <Route path="/optimizer" element={<ProtectedRoute><CampaignOptimizer /></ProtectedRoute>} />
                 <Route path="/budget" element={<ProtectedRoute><BudgetAllocator /></ProtectedRoute>} />
@@ -113,6 +114,8 @@ const App = () => (
                 <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
                 <Route path="/whatsapp/instances" element={<ProtectedRoute><WhatsAppInstances /></ProtectedRoute>} />
                 <Route path="/whatsapp/ai-agent" element={<ProtectedRoute><WhatsAppAIAgent /></ProtectedRoute>} />
+                <Route path="/whatsapp/campaigns" element={<ProtectedRoute><WhatsAppCampaigns /></ProtectedRoute>} />
+                <Route path="/whatsapp/groups" element={<ProtectedRoute><WhatsAppGroups /></ProtectedRoute>} />
                 <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
                 <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
                 <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />

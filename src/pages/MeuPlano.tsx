@@ -58,9 +58,44 @@ function buildChartData(transactions: any[]) {
 
 /* ── Plan comparison card ───────────────────────────────────────────── */
 const PLAN_FEATURES: Record<PlanId, string[]> = {
-  basico: ['Dashboard essencial', 'Copywriting IA', '1 rede social', 'Funil WhatsApp (1 funil)', 'Design básico IA'],
-  pro: ['Dashboard avançado', 'Copywriting estratégico', '3 redes sociais', 'CRM de leads integrado', 'Design criativo (vídeo)', 'Gestão de usuários'],
-  enterprise: ['Tudo do Pro sem limites', 'IA adaptativa', 'Suporte SLA dedicado', 'Consultoria trimestral', 'Integrações ERP/CRM', 'Relatórios executivos'],
+  basico: [
+    'Dashboard de métricas essenciais',
+    'Copywriting IA inteligente',
+    '1 rede social',
+    'Funil WhatsApp simplificado (1 funil)',
+    'Até 5 instâncias de WhatsApp',
+    'Geração de imagens até 300/mês',
+    '1 conta de Instagram conectada',
+    '1 perfil de Facebook conectado',
+    '4 pesquisas/mês com Agente Estratégico',
+    'Design básico IA',
+  ],
+  pro: [
+    'Dashboard avançado com insights preditivos',
+    'Copywriting estratégico IA',
+    'Até 3 redes sociais',
+    'Funil WhatsApp + CRM de leads integrado',
+    'Até 10 instâncias de WhatsApp',
+    'Geração de imagens até 500/mês',
+    '2 contas de Instagram conectadas',
+    '2 perfis de Facebook conectados',
+    '8 pesquisas/mês com Agente Estratégico',
+    'Design criativo (imagens + vídeo IA)',
+    'Gestão de múltiplos usuários',
+  ],
+  enterprise: [
+    'Tudo do Pro sem restrições de volume',
+    'Até 20 instâncias de WhatsApp',
+    'Geração de imagens até 800/mês',
+    '5 contas de Instagram conectadas',
+    '5 perfis de Facebook conectados',
+    '20 pesquisas/mês com Agente Estratégico',
+    'IA adaptativa com aprendizado contínuo',
+    'Suporte SLA + gerente exclusivo',
+    'Consultoria estratégica trimestral',
+    'Integrações ERP/CRM customizadas',
+    'Relatórios executivos customizáveis',
+  ],
 };
 
 /* ════════════════════════════════════════════════════════════════════ */

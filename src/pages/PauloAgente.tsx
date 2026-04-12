@@ -15,6 +15,12 @@ import {
 import { useAgentChat } from '@/contexts/AgentChatContext';
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -220,6 +226,7 @@ export default function PauloAgente() {
   const [showImagePrompts, setShowImagePrompts] = useState<Record<string, boolean>>({});
   const [savedCarousels, setSavedCarousels] = useState<PauloCarousel[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
+  const [recentResearches, setRecentResearches] = useState<any[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -233,16 +240,42 @@ export default function PauloAgente() {
   useEffect(() => {
     loadClientContext();
     loadSavedCarousels();
+    loadRecentResearches();
   }, [user]);
 
-  // Welcome message
+  // Welcome & Import check
   useEffect(() => {
     setMessages([{
       id: 'welcome',
       role: 'assistant',
-      content: '🎬 Oi! Sou o **Paulo — seu Diretor Criativo Máster**.\n\nPronto para transformar a pesquisa do Daniel em um carrossel de elite? Importe a pesquisa ou me diga o seu tema que eu arquitetarei uma obra-prima de persuasão para o Davi gerar no visual. 🚀',
+      content: '🎬 Oi! Sou o Paulo — seu Diretor Criativo de Carrosséis.\n\nImporte a pesquisa do Daniel ou me diga o tema, e eu crio o roteiro completo: slide a slide, com texto de impacto e prompt de imagem pronto para o Davi gerar o visual.\n\nVamos criar algo que para o scroll? 🚀',
       timestamp: new Date(),
     }]);
+
+    const briefStr = localStorage.getItem('daniel_selected_brief');
+    if (briefStr) {
+      try {
+        const brief = JSON.parse(briefStr);
+        let text = `Tema: ${brief.title}`;
+        if (brief.hook) text += `\nHook Sugerido: ${brief.hook}`;
+        if (brief.slides_or_points) {
+          text += `\nPontos:\n${brief.slides_or_points.map((p: string, i: number) => `${i+1}. ${p}`).join('\n')}`;
+        }
+        if (brief.cta) text += `\nCTA: ${brief.cta}`;
+        
+        setInput(text);
+        if (brief.angle) {
+          const matchedAngle = ANGLES.find(a => brief.angle.toLowerCase().includes(a.value))?.value || 'storytelling';
+          setAngle(matchedAngle as AngleType);
+        }
+        
+        toast({ title: 'Pauta importada!', description: 'Pauta do Daniel carregada. Clique em gerar!' });
+      } catch (e) {
+        console.error('Error parsing brief', e);
+      } finally {
+        localStorage.removeItem('daniel_selected_brief');
+      }
+    }
   }, []);
 
   const loadClientContext = async () => {
@@ -269,6 +302,20 @@ export default function PauloAgente() {
     } catch {
       setClientContext(DEMO_CLIENT);
       setIsDemo(true);
+    }
+  };
+
+  const loadRecentResearches = async () => {
+    try {
+      const history = await getHistory('daniel');
+      const researches = [...history]
+        .filter(m => m.metadata?.type === 'niche_research' && m.metadata?.research)
+        .reverse()
+        .slice(0, 5)
+        .map(m => ({ id: m.id, date: m.timestamp, research: m.metadata!.research }));
+      setRecentResearches(researches);
+    } catch {
+      setRecentResearches([]);
     }
   };
 
@@ -394,9 +441,7 @@ export default function PauloAgente() {
           stream: false,
           task_id: taskId,
           config: {
-            product: clientContext?.produto,
-            objective: clientContext?.oferta || 'Conversão e Vendas',
-            description: `${clientContext?.publico}. Diferenciais: ${clientContext?.diferencial}`,
+            description: systemPrompt,
             creativity: 0.85,
           },
         },
@@ -454,27 +499,6 @@ export default function PauloAgente() {
     }
   };
 
-  const deleteCarousel = async (id: string, msgId: string) => {
-    try {
-      const { error } = await supabase.from('paulo_carousels' as any).delete().eq('id', id);
-      if (error) throw error;
-
-      setSavedCarousels(prev => prev.filter(c => c.id !== id));
-      
-      // Also remove from the message display if it's there
-      setMessages(prev => prev.map(m => {
-        if (m.id === msgId && m.carousels) {
-          return { ...m, carousels: m.carousels.filter(c => c.id !== id) };
-        }
-        return m;
-      }));
-
-      toast({ title: 'Carrossel excluído' });
-    } catch (err: any) {
-      toast({ title: 'Erro ao excluir', description: err.message, variant: 'destructive' });
-    }
-  };
-
   const handleSend = async () => {
     if (!input.trim() || loading) return;
     const topic = input.trim();
@@ -500,17 +524,15 @@ Mantenha o número de slides entre 4 e 8, ajustando ao tamanho natural da ideia.
     );
   };
 
-  const handleImportDaniel = async () => {
+  const handleImportDaniel = async (researchMsgId: string) => {
     if (loading) return;
     setLoading(true);
 
     try {
       const history = await getHistory('daniel');
-      const lastResearch = [...history].reverse().find(
-        m => m.metadata?.type === 'niche_research' && m.metadata?.research
-      );
-
-      if (!lastResearch?.metadata?.research) {
+      const researchMsg = history.find(m => m.id === researchMsgId);
+      
+      if (!researchMsg?.metadata?.research) {
         toast({
           title: 'Nenhuma pesquisa encontrada',
           description: 'Acesse o agente Daniel e gere uma pesquisa de tendências primeiro.',
@@ -520,7 +542,7 @@ Mantenha o número de slides entre 4 e 8, ajustando ao tamanho natural da ideia.
         return;
       }
 
-      const research = lastResearch.metadata.research;
+      const research = researchMsg.metadata.research;
       const niche = research.niche || 'nicho não identificado';
 
       // Build rich research context for Paulo
@@ -565,32 +587,29 @@ Mantenha o número de slides entre 4 e 8, ajustando ao tamanho natural da ideia.
 
       const angleLabel = ANGLES.find(a => a.value === angle)?.label || angle;
 
-      const fullPrompt = `VOCÊ É PAULO, DIRETOR CRIATIVO E COPYWRITER MASTER. POUPE O USUÁRIO DE COISAS GENÉRICAS. 
-Sua missão agora é pegar TODA a pesquisa do Daniel abaixo e transformá-la em 1 ÚNICO CARROSSEL DE ELITE (Masterpiece).
-
-REGRAS DE OURO:
-1. NÃO COPIE O TEXTO DO DANIEL. O Daniel é o seu estagiário de pesquisa. Você é o Gênio Criativo. 
-2. Use os dados dele para criar uma NARRATIVA NOVA, ganchos emocionais e ganchos psicológicos.
-3. Se o Daniel sugeriu uma pauta sobre "Como emagrecer", você deve criar algo como "O Segredo Oculto nas Células que impede você de secar". Transforme o óbvio em MAGNÉTICO.
-4. Gere entre 7 e 10 SLIDES. Queremos profundidade, densidade e valor real.
-5. Cada slide deve ser uma obra de arte: Headline curta, Body denso e persuasivo, e uma Direção de Arte (Image Prompt) impecável em inglês.
+      const fullPrompt = `Você é Paulo, Diretor Criativo de Carrosséis. Analise TODA a pesquisa do Daniel abaixo e gere 3 carrosséis DISTINTOS e COMPLEMENTARES. Cada um com um ângulo narrativo diferente, explorando diferentes facetas do nicho.
 
 ${researchContext}
 
-DADOS DO CLIENTE PARA PERSONALIZAÇÃO:
 CLIENTE: ${clientContext?.clientName || 'Demo'}
 PRODUTO: ${clientContext?.produto || 'Produto'}
 PÚBLICO: ${clientContext?.publico || 'Público geral'}
 OFERTA: ${clientContext?.oferta || ''}
 DIFERENCIAL: ${clientContext?.diferencial || ''}
 
-ESTRUTURA DE RESPOSTA:
-Gere 1 único carrossel denso no formato JSON que o Davi entenda. Abuse da sua criatividade. Busque conhecimento nos maiores copywriters do mundo (Gary Halbert, Eugene Schwartz).`;
+INSTRUÇÕES CRÍTICAS:
+1. Gere exatamente 3 carrosséis
+2. Cada carrossel deve usar um ângulo diferente (storytelling, lista, provocação, mito, passo a passo, polêmico)
+3. Explore diferentes tendências/dores da pesquisa em cada carrossel — não repita temas
+4. Cada slide deve ter headline impactante + prompt de imagem cinematográfico detalhado em inglês
+5. Entre 4 e 8 slides por carrossel — ajuste ao tamanho natural da ideia
+6. Qualidade de diretor criativo sênior. Nada genérico.
+7. JSON puro e válido. Sem texto fora do JSON.`;
 
-      const displayText = `🧠 **DIRETOR CRIATIVO ATIVADO**\nAnalisando pesquisa do Daniel sobre "${niche}" e arquitetando 1 Carrossel de Elite com profundidade máxima...`;
+      const displayText = `🧠 Importando pesquisa do Daniel sobre "${niche}"...\nGerando 3 carrosséis distintos com roteiro completo + prompts de imagem.`;
 
       setLoading(false); // Reset before generateCarousels sets it again
-      await generateCarousels(displayText, fullPrompt, 'daniel_import', lastResearch.id);
+      await generateCarousels(displayText, fullPrompt, 'daniel_import', researchMsg.id);
 
     } catch (err: any) {
       toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
@@ -683,15 +702,6 @@ Gere 1 único carrossel denso no formato JSON que o Davi entenda. Abuse da sua c
               title={showPrompts ? 'Ocultar prompts' : 'Ver prompts de imagem'}
             >
               {showPrompts ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-destructive transition-colors"
-              onClick={() => carousel.id && deleteCarousel(carousel.id, msgId)}
-              title="Excluir carrossel"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="ghost"
@@ -937,16 +947,36 @@ Gere 1 único carrossel denso no formato JSON que o Davi entenda. Abuse da sua c
             <div className="px-4 py-2 border-t border-border/30 shrink-0">
               <div className="flex gap-2 pb-1 items-center overflow-x-auto">
                 {/* Import Daniel */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleImportDaniel}
-                  disabled={loading}
-                  className="flex shrink-0 items-center gap-1.5 h-8 px-3 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-[11px] font-semibold transition-colors"
-                >
-                  <Brain className="h-3.5 w-3.5" />
-                  Importar do Daniel
-                </Button>
+                {recentResearches.length > 0 ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" disabled={loading} className="flex shrink-0 items-center gap-1.5 h-8 px-3 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-[11px] font-semibold transition-colors">
+                        <Brain className="h-3.5 w-3.5" />
+                        Importar do Daniel <ChevronDown className="ml-1 h-3 w-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-[300px]">
+                      <div className="p-2 text-xs font-semibold text-muted-foreground">Últimas pesquisas</div>
+                      {recentResearches.map((r, idx) => (
+                        <DropdownMenuItem key={r.id} onClick={() => handleImportDaniel(r.id)} className="flex flex-col items-start gap-1 p-3 cursor-pointer">
+                          <span className="font-semibold text-sm truncate w-full">{r.research.niche}</span>
+                          <span className="text-[10px] text-muted-foreground">{new Date(r.date).toLocaleDateString()} - {r.research.content_briefs?.length || 0} pautas</span>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleImportDaniel('')}
+                    disabled={loading}
+                    className="flex shrink-0 items-center gap-1.5 h-8 px-3 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-[11px] font-semibold transition-colors"
+                  >
+                    <Brain className="h-3.5 w-3.5" />
+                    Importar do Daniel
+                  </Button>
+                )}
 
                 {/* Quick angle selectors */}
                 {ANGLES.map(a => (

@@ -23,7 +23,7 @@ interface ClaudeChatConfig {
   swipeFileExamples?: string;
 }
 
-type ContextType = 'copywriter' | 'assistant' | 'optimizer' | 'insights' | 'creative' | 'midas';
+type ContextType = 'copywriter' | 'assistant' | 'optimizer' | 'insights' | 'creative' | 'midas' | 'jose';
 
 interface UseClaudeChatOptions {
   context: ContextType;

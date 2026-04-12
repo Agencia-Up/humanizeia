@@ -219,13 +219,46 @@ export default function WhatsAppAutomations() {
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : automations.length === 0 ? (
-            <Card>
-              <CardContent className="py-12 text-center text-muted-foreground">
-                <Zap className="h-10 w-10 mx-auto mb-3 opacity-40" />
-                <p>Nenhuma automação criada ainda.</p>
-                <p className="text-sm">Configure regras para automatizar ações quando leads responderem.</p>
-              </CardContent>
-            </Card>
+            <div className="space-y-4">
+              {/* Onboarding explanation */}
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-5 flex gap-3">
+                <span className="text-2xl shrink-0">⚡</span>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-foreground">O que são automações?</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Automações executam ações automaticamente quando algo acontece. Por exemplo: quando um lead responder "sim", o sistema pode notificar sua equipe por e-mail ou adicionar uma tag ao contato — sem você precisar fazer nada.
+                  </p>
+                </div>
+              </div>
+              {/* Example ideas */}
+              <p className="text-sm font-semibold text-foreground">Exemplos de automações populares:</p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  { emoji: '📧', trigger: 'Lead demonstrou interesse', action: 'Notificar equipe por e-mail', triggerVal: 'lead_interested', actionVal: 'send_email' },
+                  { emoji: '🏷️', trigger: 'Lead fez uma pergunta', action: 'Adicionar tag "Qualificado"', triggerVal: 'lead_question', actionVal: 'add_tag' },
+                  { emoji: '📋', trigger: 'Campanha concluída', action: 'Mover para lista de follow-up', triggerVal: 'campaign_completed', actionVal: 'move_to_list' },
+                ].map(ex => (
+                  <button
+                    key={ex.emoji}
+                    onClick={() => {
+                      resetForm();
+                      setFormName(`${ex.trigger} → ${ex.action}`);
+                      setFormTrigger(ex.triggerVal);
+                      setFormAction(ex.actionVal);
+                      setDialogOpen(true);
+                    }}
+                    className="group flex flex-col gap-2 rounded-lg border border-border/40 bg-background/50 p-4 text-left transition-all hover:border-primary/40 hover:bg-primary/5"
+                  >
+                    <span className="text-2xl">{ex.emoji}</span>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Quando: <strong className="text-foreground">{ex.trigger}</strong></p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Ação: <strong className="text-foreground">{ex.action}</strong></p>
+                    </div>
+                    <span className="text-xs text-primary font-medium opacity-0 group-hover:opacity-100 transition-opacity">Usar este modelo →</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : (
             automations.map(auto => (
               <Card key={auto.id} className={`transition-opacity ${!auto.is_active ? 'opacity-60' : ''}`}>

@@ -43,9 +43,10 @@ serve(async (req) => {
     if (!userText.trim()) return new Response('Empty text', { headers: corsHeaders });
 
     // 1. Achar o agente atrelado a essa instância ativa
+    // Procuramos na tabela wa_instances para pegar o ID local
     const { data: waInstance } = await supabaseClient
       .from('wa_instances')
-      .select('id, user_id, api_key_encrypted, api_url')
+      .select('id, user_id, api_key, server_url')
       .eq('instance_name', instance)
       .single();
 
@@ -54,20 +55,14 @@ serve(async (req) => {
       return new Response('Instance not found', { headers: corsHeaders });
     }
 
-    // Adaptando nomes para o restante do código
-    const instanceData = {
-      ...waInstance,
-      api_key: waInstance.api_key_encrypted,
-      server_url: waInstance.api_url
-    };
-
     // Achar o Agente (Pedro) que está ativo e atrelado a essa instância
+    // Pode ser que o agent tenha a instance no array instance_ids
     const { data: agents } = await supabaseClient
       .from('wa_ai_agents')
       .select('*')
-      .eq('user_id', instanceData.user_id)
+      .eq('user_id', waInstance.user_id)
       .eq('is_active', true)
-      .contains('instance_ids', [instanceData.id]);
+      .contains('instance_ids', [waInstance.id]);
 
     // Se o array estiver vazio, tenta achar o agente genérico (array vazio atende todos)
     let agent = agents && agents.length > 0 ? agents[0] : null;
@@ -181,10 +176,10 @@ serve(async (req) => {
     // 6. Enviar a Mensagem de Volta para o WhatsApp (via Uazapi)
     // Se o cliente definiu o Uazapi API KEY pelo server_url, usamos.
     // Senão, assumimos o painel global (isso varia conforme o deploy do app)
-    const uazapiUrl = instanceData.server_url || Deno.env.get('EVOLUTION_API_URL') || `https://${instance}.uazapi.com`;
-    const uazapiToken = instanceData.api_key || Deno.env.get('EVOLUTION_API_KEY') || Deno.env.get('UAZAPI_GLOBAL_TOKEN');
+    const uazapiUrl = waInstance.server_url || `https://${instance}.uazapi.com`;
+    const uazapiToken = waInstance.api_key || Deno.env.get('UAZAPI_GLOBAL_TOKEN');
 
-    const sendResp = await fetch(`${uazapiUrl!}/message/sendText/${instance}`, {
+    const sendResp = await fetch(`${uazapiUrl}/message/sendText/${instance}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

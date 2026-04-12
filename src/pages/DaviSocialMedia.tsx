@@ -155,17 +155,11 @@ export default function DaviSocialMedia() {
   const [autoModeRunning, setAutoModeRunning] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('futurista_ia');
   const [carouselType, setCarouselType] = useState<CarouselTypeValue>('educacional');
-  const [clientContext, setClientContext] = useState<{ 
-    name: string; 
-    produto: string; 
-    publico: string;
-    business_name?: string;
-    main_offer?: string;
-    differentiators?: string;
-  } | null>(null);
+  const [clientContext, setClientContext] = useState<{ name: string; produto: string; publico: string } | null>(null);
   const [briefingAlerta, setBriefingAlerta] = useState(false);
   const [clientImageUrl, setClientImageUrl] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [pendingPauloCarousels, setPendingPauloCarousels] = useState<number>(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -225,9 +219,6 @@ export default function DaviSocialMedia() {
             name: (data as any).client_name || (data as any).business_name || 'Cliente',
             produto: (data as any).product_service || (data as any).produto || '',
             publico: (data as any).target_audience || (data as any).publico || '',
-            business_name: (data as any).business_name,
-            main_offer: (data as any).main_offer,
-            differentiators: (data as any).differentiators,
           });
           setBriefingAlerta(false);
         } else {
@@ -240,10 +231,27 @@ export default function DaviSocialMedia() {
     load();
   }, [user]);
 
-  // ─── Load posts ──────────────────────────────────────────────────────────
+  // ─── Load posts & Paulo queue ────────────────────────────────────────────────
   useEffect(() => {
     fetchPosts();
-  }, []);
+    checkPauloQueue();
+    const interval = setInterval(checkPauloQueue, 15000);
+    return () => clearInterval(interval);
+  }, [user]);
+
+  const checkPauloQueue = async () => {
+    if (!user) return;
+    try {
+      const { data, error, count } = await supabase
+        .from('paulo_carousels' as any)
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('status', 'ready_for_davi');
+      if (!error && count !== null) {
+        setPendingPauloCarousels(count);
+      }
+    } catch { }
+  };
 
   // ─── Auto-scroll ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -531,8 +539,6 @@ export default function DaviSocialMedia() {
             slide_count: 7,
             include_cta: true,
             brand_name: clientContext?.name,
-            niche: clientContext?.business_name,
-            objective: clientContext?.main_offer,
           });
           if (carousel) {
             pauloContent = carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.join(' ') : '');
@@ -794,35 +800,58 @@ ${pautasStr}`;
           const pauloCarousel = pauloCarousels[i] as any;
           const progressMsgId = addDaviMessage(`🎨 Construindo visual do Carrossel ${i + 1}/${pauloCarousels.length}: "${pauloCarousel.title}"...`);
 
-          // Build a rich topic from the Paulo structured data
           const slides = pauloCarousel.slides || [];
-          const coverSlide = slides.find((s: any) => s.type === 'cover') || slides[0];
-          const topic = `${pauloCarousel.title}. Ângulo: ${pauloCarousel.angle}. Cover: "${coverSlide?.headline || pauloCarousel.title}"`;
-          const paulCopy = slides.map((s: any) => `Slide ${s.slide_number}: ${s.headline}${s.subtext ? ' — ' + s.subtext : ''}`).join('\n');
+          const isPersonal = clientImageUrl || selectedTemplate === 'personal_brand';
+          
+          let visualSlides = [];
 
-          const carousel = await generateCarouselV2({
-            topic,
-            audience: clientContext?.publico || 'empreendedores digitais',
-            tone: 'persuasivo e direto',
-            slide_count: Math.min(Math.max(slides.length, 4), 8),
-            include_cta: true,
-            brand_name: clientContext?.name,
-            carousel_type: carouselType,
-            paul_copy: paulCopy,
-          });
+          // Generate images directly for each slide based on Paulo's image_prompt
+          for (let j = 0; j < slides.length; j++) {
+            const slide = slides[j];
+            setMessages(prev => prev.map(m => m.id === progressMsgId ? { ...m, content: `⏳ **Gerando imagem ${j+1} de ${slides.length}...** (${pauloCarousel.title})` } : m));
+            
+            let bgImageUrlRaw = '';
+            // Use Paulo's explicit image prompt or fallback to headline
+            const imgContext = slide.image_prompt || slide.headline || 'professional business photography';
+            
+            if (isPersonal) {
+              const visualPrompt = encodeURIComponent(`${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`);
+              const seed = ((slide.headline?.length || 10) * slide.slide_number * 43) % 9999;
+              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}`;
+            } else {
+              const visualPrompt = encodeURIComponent(`${imgContext}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece, no text`);
+              const seed = (slide.headline?.length || 10) * (slide.slide_number || (j+1)) * 42;
+              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
+            }
 
-          if (!carousel) {
-            setMessages(prev => prev.map(m => m.id === progressMsgId ? { ...m, content: `❌ Falha ao gerar o visual do Carrossel ${i + 1}.` } : m));
-            continue;
+            try {
+              await new Promise((resolve) => {
+                const img = new window.Image();
+                img.onload = () => resolve(true);
+                img.onerror = () => resolve(false); 
+                img.src = bgImageUrlRaw;
+              });
+            } catch { /* silent fallback */ }
+
+            visualSlides.push({
+              order: slide.slide_number || (j+1),
+              type: slide.type || (j === 0 ? 'cover' : j === slides.length - 1 ? 'cta' : 'content'),
+              headline: slide.headline,
+              body: slide.subtext || slide.body || '',
+              cta: slide.type === 'cta' ? (slide.cta || 'Toque no link da bio') : '',
+              image_prompt: slide.image_prompt,
+              visual_cue: imgContext,
+              image_url: bgImageUrlRaw, // Using the image_url field if available in CarouselPageViewer
+            });
           }
 
           const generated: GeneratedContent = {
             id: Date.now().toString() + i,
             type: 'carousel',
             title: `${pauloCarousel.title} — ${typeLabel}`,
-            preview: carousel.cover_headline || carousel.slides[0]?.headline || topic.slice(0, 80),
-            fullContent: carousel.caption + (carousel.hashtags?.length ? '\n\n' + carousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
-            slides: carousel.slides,
+            preview: slides[0]?.headline || pauloCarousel.title,
+            fullContent: pauloCarousel.caption + (pauloCarousel.hashtags?.length ? '\n\n' + pauloCarousel.hashtags.map((h: string) => `#${h}`).join(' ') : ''),
+            slides: visualSlides,
             templateId: selectedTemplate,
             createdAt: new Date(),
             platform,
@@ -1112,6 +1141,29 @@ ${pautasStr}`;
           {/* Chat Area */}
           <ScrollArea className="flex-1 px-6 py-4">
             <div className="space-y-4 max-w-3xl">
+              {/* Notificação de Carrosséis do Paulo */}
+              {pendingPauloCarousels > 0 && (
+                <div className="bg-gradient-to-r from-violet-500/20 to-fuchsia-500/20 border border-violet-500/40 rounded-xl p-4 flex items-center justify-between mb-4 shadow-lg shadow-violet-500/10">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-violet-500/20 p-2 rounded-lg">
+                      <PenTool className="h-5 w-5 text-violet-400" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-foreground">
+                        {pendingPauloCarousels} {pendingPauloCarousels === 1 ? 'Carrossel aprovado' : 'Carrosséis aprovados'} pelo Paulo!
+                      </h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">O diretor criativo enviou novos roteiros. Quer gerar as imagens agora?</p>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={handleImportPaulo}
+                    disabled={loading || autoModeRunning}
+                    className="shrink-0 bg-violet-600 hover:bg-violet-700 text-white font-semibold text-xs border border-violet-500 px-4 h-9 shadow-[0_0_15px_rgba(139,92,246,0.3)] transition-all"
+                  >
+                    Gerar Visual Agora
+                  </Button>
+                </div>
+              )}
               {messages.map(message => (
                 <div key={message.id}>
                   {/* User message */}

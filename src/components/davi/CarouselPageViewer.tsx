@@ -151,24 +151,6 @@ export const CAROUSEL_TEMPLATES = [
     borderStyle: '1px solid rgba(251,113,133,0.4)',
     layoutMode: 'standard',
   },
-  // ── MAGNUM (Dynamic Engine) ──────────────────────────────────────────────
-  {
-    id: 'magnum',
-    name: 'Magnum AI',
-    emoji: '💎',
-    bg: '#FAFAF8',
-    bgGradient: '#FFFFFF',
-    bgPattern: '',
-    bgSize: '100% 100%',
-    accent: '#E60000', // Default RED
-    accentGlow: 'rgba(230,0,0,0.2)',
-    text: '#111111',
-    sub: '#555555',
-    muted: '#F0F0F0',
-    fontWeight: '800',
-    borderStyle: '1px solid #E5E5E5',
-    layoutMode: 'dynamic',
-  },
 ] as const;
 
 export type TemplateId = typeof CAROUSEL_TEMPLATES[number]['id'];
@@ -192,47 +174,28 @@ function HighlightHeadline({ text, accentWord, color }: { text: string; accentWo
   );
 }
 
-// ── Lazy Image Queuing Hook with Retry & Fallback ────────────────────────────
+// ── Lazy Image Queuing Hook to prevent HTTP 429 ──────────────────────────────
 const POLLINATIONS_CACHE = new Map<string, string>();
-const imgQueue: { url: string; retryCount: number }[] = [];
+const imgQueue: string[] = [];
 let isProcessingQueue = false;
 
 const processQueue = async () => {
   if (isProcessingQueue) return;
   isProcessingQueue = true;
   while (imgQueue.length > 0) {
-    const item = imgQueue[0];
-    const { url, retryCount } = item;
-    
+    const url = imgQueue[0];
     if (!POLLINATIONS_CACHE.has(url)) {
       try {
         const res = await fetch(url, { cache: 'force-cache' });
         if (res.ok) {
           const blob = await res.blob();
           POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
-        } else if (res.status >= 400) {
-           // Fallback logic: if Flux fails, try standard model
-           if (retryCount < 2) {
-             console.log(`Pollinations retry ${retryCount + 1} for ${url}`);
-             imgQueue.push({ url, retryCount: retryCount + 1 });
-           } else if (retryCount === 2 && url.includes('model=flux')) {
-             const fallbackUrl = url.replace('&model=flux', '').replace('?model=flux', '');
-             console.log(`Pollinations FALLBACK to standard for ${url}`);
-             imgQueue.push({ url: fallbackUrl, retryCount: 0 });
-             // Map original URL to fallback result to satisfy listeners
-             window.addEventListener('pollinations_loaded', (e: any) => {
-               if (e.detail === fallbackUrl) {
-                 POLLINATIONS_CACHE.set(url, POLLINATIONS_CACHE.get(fallbackUrl)!);
-                 window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
-               }
-             }, { once: true });
-           }
         }
       } catch (e) {
         console.warn('Queue fetch failed', e);
       }
-      // Increased delay to prevent rate limits from Pollinations
-      await new Promise(r => setTimeout(r, 2000));
+      // Delay mandatory to prevent Pollinations from blocking the IP
+      await new Promise(r => setTimeout(r, 1200));
     }
     imgQueue.shift();
     window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
@@ -241,12 +204,8 @@ const processQueue = async () => {
 };
 
 export function usePollinationsImage(prompt: string, width: number, height: number, seed: number) {
-  // Deep clean prompt: remove characters that break Pollinations and limit length
-  const cleanPrompt = encodeURIComponent(
-    String(prompt)
-      .replace(/[^\w\s\-,.]/gi, '')
-      .substring(0, 180)
-  );
+  // Truncate prompt to prevent URL Too Long errors from giant copywriter prompts
+  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 250));
   const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
   
   const [localUrl, setLocalUrl] = React.useState<string | null>(POLLINATIONS_CACHE.get(url) || null);
@@ -256,9 +215,8 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
       setLocalUrl(POLLINATIONS_CACHE.get(url)!);
       return;
     }
-    const inQueue = imgQueue.some(item => item.url === url);
-    if (!inQueue) {
-      imgQueue.push({ url, retryCount: 0 });
+    if (!imgQueue.includes(url)) {
+      imgQueue.push(url);
       processQueue();
     }
     const listener = (e: any) => {
@@ -273,21 +231,6 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
   return localUrl;
 }
 
-function getHeadlineFontSize(text: string, isCover: boolean) {
-  const len = text?.length || 0;
-  if (isCover) {
-    if (len > 80) return 18;
-    if (len > 50) return 22;
-    if (len > 30) return 28;
-    return 34; // Reduced from 44
-  } else {
-    if (len > 80) return 14;
-    if (len > 50) return 18;
-    if (len > 30) return 22;
-    return 26; // Reduced from 32
-  }
-}
-
 // ── FUTURISTA IA SLIDE ────────────────────────────────────────────────────────
 function FuturistaSlide({ slide, tpl, brandName, total }: {
   slide: CarouselSlide;
@@ -298,17 +241,6 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta = slide.type === 'cta' || slide.order === total;
 
-  // Configuration for Magnum Dynamic Engine
-  const visualConfig = (slide as any).visual_config || {
-    bg: tpl.bg,
-    accent: tpl.accent,
-    text: tpl.text,
-    sub: tpl.sub
-  };
-  const accentColor = visualConfig.accent || tpl.accent || '#E60000';
-  const textColor = visualConfig.text || tpl.text;
-  const bgColor = visualConfig.bg || tpl.bg;
-
   const visualPrompt = `${slide.visual_cue || slide.image_prompt || slide.headline}, cinematic dark AI scene, neon holographic elements, 3D floating objects, dramatic lighting, ultra realistic, 8K, no text overlay`;
   const seed = ((slide.headline?.length || 10) * slide.order * 57) % 9999;
   const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 730, seed);
@@ -316,7 +248,7 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
   return (
     <div style={{
       width: '100%', height: '100%',
-      background: bgColor || tpl.bgGradient || tpl.bg,
+      background: tpl.bgGradient,
       display: 'flex', flexDirection: 'column',
       fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
       position: 'relative', overflow: 'hidden',
@@ -324,116 +256,102 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
       {/* TOP — Cinematic image (55%) */}
       <div style={{
         flex: '0 0 55%',
-        backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : `linear-gradient(135deg, ${bgColor}, ${accentColor}30)`,
+        backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
         backgroundSize: 'cover',
         backgroundPosition: 'center top',
         position: 'relative',
         overflow: 'hidden',
-      }} className={!bgImgUrl ? "animate-pulse flex items-center justify-center" : ""}>
+      }} className={!bgImgUrl ? "animate-pulse bg-slate-900 flex items-center justify-center" : ""}>
         {!bgImgUrl && (
-          <div className="flex flex-col items-center gap-2 opacity-40">
+          <div className="flex flex-col items-center gap-2 opacity-50">
             <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
-            <span className="text-[10px] font-bold uppercase tracking-widest">Sintetizando...</span>
+            <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Renderizando IA...</span>
           </div>
         )}
         {/* Gradient fade bottom */}
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%',
-          background: `linear-gradient(to bottom, transparent, ${bgColor})`,
+          background: `linear-gradient(to bottom, transparent, ${tpl.bg})`,
         }} />
+        {/* Brand top-left */}
+        <div style={{
+          position: 'absolute', top: 14, left: 14, zIndex: 2,
+          fontSize: 9, fontWeight: 800, letterSpacing: '0.15em',
+          color: '#fff', textTransform: 'uppercase',
+          background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(255,255,255,0.15)', padding: '4px 10px', borderRadius: 6,
+        }}>
+          {brandName}
+        </div>
+        {/* Slide counter */}
+        <div style={{
+          position: 'absolute', top: 14, right: 14, zIndex: 2,
+          fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.7)',
+          background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)',
+          padding: '3px 8px', borderRadius: 6,
+        }}>
+          {slide.order}/{total}
+        </div>
       </div>
 
       {/* BOTTOM — Text area (45%) */}
       <div style={{
-        flex: '1',
-        padding: '16px 24px 12px',
-        display: 'flex', flexDirection: 'column', justifyContent: 'center',
+        flex: '0 0 45%',
+        background: tpl.bgGradient,
+        padding: '16px 20px 14px',
+        display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
         position: 'relative',
-        overflow: 'hidden',
-        minHeight: 0,
-        background: bgColor || tpl.bgGradient || tpl.bg,
       }}>
         {/* Top accent bar */}
         <div style={{
-          position: 'absolute', top: 0, left: 24, right: 24, height: 3,
-          background: `linear-gradient(90deg, ${accentColor}, transparent)`,
+          position: 'absolute', top: 0, left: 20, right: 20, height: 2,
+          background: `linear-gradient(90deg, ${tpl.accent}, transparent)`,
         }} />
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {/* Sub-label */}
           {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
             <div style={{
-              fontSize: 10, fontWeight: 800, color: accentColor,
+              fontSize: 12, fontWeight: 800, color: tpl.accent,
               letterSpacing: '0.15em', textTransform: 'uppercase',
-              marginBottom: 2
             }}>
               {slide.sub_headline}
             </div>
           )}
           {/* Big headline */}
           <div style={{
-            fontSize: getHeadlineFontSize(slide.headline, isCover), 
-            fontWeight: 950, 
-            color: textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF') ? '#FFFFFF' : textColor,
-            lineHeight: 1.1, 
-            letterSpacing: '-0.03em',
-            textTransform: 'uppercase',
-            textShadow: (textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF')) ? `0 4px 16px rgba(0,0,0,0.9)` : 'none',
-            marginBottom: 4,
-            display: '-webkit-box',
-            WebkitLineClamp: isCover ? 4 : 3,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            wordBreak: 'break-word',
-            hyphens: 'auto'
+            fontSize: isCover ? 32 : 25, fontWeight: 900, color: '#fff',
+            lineHeight: 1.1, letterSpacing: '-0.02em',
+            textShadow: `0 2px 12px rgba(0,0,0,0.8)`,
           }}>
-            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
+            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
           </div>
           {/* Accent line */}
-          <div style={{ width: 40, height: 4, background: accentColor, borderRadius: 2, boxShadow: `0 0 16px ${accentColor}66`, marginTop: 2, marginBottom: 6 }} />
+          <div style={{ width: 44, height: 4, background: tpl.accent, borderRadius: 2, boxShadow: `0 0 12px ${tpl.accentGlow}`, marginTop: 4, marginBottom: 4 }} />
           {/* Body */}
           {typeof slide.body === 'string' && slide.body.trim() && (
-            <div style={{ 
-              fontSize: isCover ? 15 : 14, 
-              fontWeight: 600, 
-              color: textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF') ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.7)',
-              lineHeight: 1.25,
-              display: '-webkit-box',
-              WebkitLineClamp: isCover ? 3 : 4,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden'
-            }}>
+            <div style={{ fontSize: 15, color: 'rgba(255,255,255,0.9)', lineHeight: 1.5, maxWidth: '100%', fontWeight: 500 }}>
               {slide.body}
             </div>
           )}
-          
           {/* Bullets */}
           {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
-              {slide.bullets.slice(0, 3).map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-                  <span style={{ color: accentColor, fontSize: 13, flexShrink: 0, marginTop: 0 }}>✓</span>
-                  <span style={{ 
-                    fontSize: 12, 
-                    color: textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF') ? '#FFFFFF' : '#333', 
-                    lineHeight: 1.3, 
-                    fontWeight: 500,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}>{typeof b === 'string' ? b : ''}</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+              {slide.bullets.map((b, i) => (
+                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <span style={{ color: tpl.accent, fontSize: 16, flexShrink: 0, marginTop: 0 }}>✓</span>
+                  <span style={{ fontSize: 14, color: '#fff', lineHeight: 1.45, fontWeight: 500 }}>{typeof b === 'string' ? b : ''}</span>
                 </div>
               ))}
             </div>
           )}
-
           {/* CTA button */}
           {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
             <div style={{
               marginTop: 10, padding: '14px 24px',
-              background: accentColor, color: '#fff', borderRadius: 28,
+              background: tpl.accent, color: '#fff', borderRadius: 28,
               fontWeight: 900, fontSize: 15, textAlign: 'center',
-              boxShadow: `0 6px 24px ${accentColor}66`,
+              boxShadow: `0 6px 24px ${tpl.accentGlow}`,
               textTransform: 'uppercase', letterSpacing: '0.05em'
             }}>
               {slide.cta}
@@ -444,9 +362,7 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
         {/* Swipe hint */}
         {!isCta && (
           <div style={{
-            marginTop: 8,
-            fontSize: 9, 
-            color: textColor === '#FFFFFF' || (bgColor && bgColor !== '#FFFFFF') ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)',
+            fontSize: 9, color: 'rgba(255,255,255,0.35)',
             fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em',
             textAlign: 'right',
           }}>
@@ -457,7 +373,6 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
     </div>
   );
 }
-
 
 // ── PERSONAL BRAND SLIDE ──────────────────────────────────────────────────────
 function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
@@ -481,21 +396,10 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
   const initial = (brandName || 'MC').charAt(0).toUpperCase();
   const showAvatar = !!(clientImageUrl && !avatarError);
 
-  // Configuration for Magnum Dynamic Engine
-  const visualConfig = (slide as any).visual_config || {
-    bg: tpl.bg,
-    accent: tpl.accent,
-    text: tpl.text,
-    sub: tpl.sub
-  };
-  const accentColor = visualConfig.accent || tpl.accent || '#E60000';
-  const textColor = visualConfig.text || tpl.text;
-  const bgColor = visualConfig.bg || tpl.bg;
-
   return (
     <div style={{
       width: '100%', height: '100%',
-      background: bgColor || '#FFFFFF',
+      background: '#FFFFFF',
       display: 'flex', flexDirection: 'column',
       fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
       position: 'relative', overflow: 'hidden',
@@ -563,49 +467,25 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
         )}
         {/* Main text */}
         <div style={
-          { fontSize: isCover ? 22 : 18, lineHeight: 1.4, color: '#111', fontWeight: 600, overflow: 'hidden' }
+          { fontSize: isCover ? 18 : 15, lineHeight: 1.6, color: '#111', fontWeight: 500, overflow: 'hidden' }
         }>
           {isCover ? (
-            <div style={{
-              fontWeight: 900,
-              fontSize: getHeadlineFontSize(slide.headline || '', true), 
-              lineHeight: 1.1,
-              letterSpacing: '-0.03em',
-              textTransform: 'uppercase',
-              display: '-webkit-box',
-              WebkitLineClamp: (slide.headline?.length || 0) > 40 ? 4 : 3,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-              wordBreak: 'break-word'
-            }}>{slide.headline}</div>
+            <span style={{ fontWeight: 800, fontSize: 30, lineHeight: 1.15, letterSpacing: '-0.02em' }}>{slide.headline}</span>
           ) : (
             <>
               {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-                <div style={{ fontWeight: 900, marginBottom: 6, color: accentColor, fontSize: 14, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{slide.sub_headline}</div>
+                <div style={{ fontWeight: 800, marginBottom: 8, color: '#000', fontSize: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>
               )}
-              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 6, fontSize: 14, lineHeight: 1.35, fontWeight: 500, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{slide.body}</div>}
-              {Array.isArray(slide.bullets) && slide.bullets.slice(0, 3).map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                  <span style={{ color: '#1D9BF0', fontWeight: 900, fontSize: 18, lineHeight: 1 }}>•</span>
-                  <span style={{ fontWeight: 600, fontSize: 13, lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{typeof b === 'string' ? b : ''}</span>
+              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 6, fontSize: 15, lineHeight: 1.5 }}>{slide.body}</div>}
+              {Array.isArray(slide.bullets) && slide.bullets.map((b, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <span style={{ color: '#1D9BF0', fontWeight: 800, fontSize: 18, lineHeight: 1 }}>•</span>
+                  <span style={{ fontWeight: 500, fontSize: 14, lineHeight: 1.45 }}>{typeof b === 'string' ? b : ''}</span>
                 </div>
               ))}
               {slide.headline && (
-                <div style={{ 
-                  fontWeight: 900, 
-                  marginTop: 6, 
-                  color: '#000', 
-                  fontSize: getHeadlineFontSize(slide.headline, false), 
-                  lineHeight: 1.1, 
-                  letterSpacing: '-0.02em', 
-                  textTransform: 'uppercase',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                  wordBreak: 'break-word'
-                }}>
-                  <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
+                <div style={{ fontWeight: 800, marginTop: 10, color: '#000', fontSize: 22, lineHeight: 1.15 }}>
+                  <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color='#1D9BF0' />
                 </div>
               )}
             </>
@@ -635,12 +515,12 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
         borderRadius: 10,
         overflow: 'hidden',
         position: 'relative',
-        background: bottomImg ? 'none' : `linear-gradient(45deg, #eee, ${accentColor}20)`, 
-      }} className={!bottomImg ? "animate-pulse flex items-center justify-center" : ""}>
+        background: '#f0f0f0', 
+      }} className={!bottomImg ? "animate-pulse flex items-center justify-center bg-gray-200" : ""}>
         {!bottomImg && (
-          <div className="flex flex-col items-center gap-2 opacity-40">
+          <div className="flex flex-col items-center gap-2 opacity-60">
             <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
-            <span className="text-[9px] font-bold uppercase tracking-widest">Design...</span>
+            <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Carregando Cena...</span>
           </div>
         )}
         {bottomImg && (
@@ -672,20 +552,9 @@ function StandardSlide({ slide, tpl, brandName, total }: {
 }) {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta = slide.type === 'cta' || slide.order === total;
-  
-  // Configuration for Magnum Dynamic Engine
-  const visualConfig = (slide as any).visual_config || {
-    bg: tpl.bg,
-    accent: tpl.accent,
-    text: tpl.text,
-    sub: tpl.sub
-  };
-  const accentColor = visualConfig.accent || tpl.accent || '#E60000';
-  const bgColor = visualConfig.bg || tpl.bg;
-
-  const isLight = (bgColor as string) === '#FAFAFA' || (bgColor as string) === '#FFFFFF' || (bgColor as string) === '#FAFAF8';
-  const textColor = visualConfig.text || (isLight ? tpl.text : '#ffffff');
-  const subColor = visualConfig.sub || (isLight ? tpl.sub : 'rgba(255,255,255,0.85)');
+  const isLight = (tpl.bg as string) === '#FAFAFA' || (tpl.bg as string) === '#FFFFFF' || (tpl.bg as string) === '#FAFAF8';
+  const textColor = isLight ? tpl.text : '#ffffff';
+  const subColor = isLight ? tpl.sub : 'rgba(255,255,255,0.85)';
 
   const visualPrompt = `${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`;
   const seed = (slide.headline?.length || 10) * slide.order * 42;
@@ -710,19 +579,7 @@ function StandardSlide({ slide, tpl, brandName, total }: {
               {slide.sub_headline}
             </div>
           )}
-          <div style={{ 
-            fontSize: isCover ? 32 : 24, 
-            fontWeight: 900, 
-            color: textColor, 
-            lineHeight: 1.1, 
-            textShadow: '0 4px 20px rgba(0,0,0,0.6)',
-            display: '-webkit-box',
-            WebkitLineClamp: 4,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            wordBreak: 'break-word',
-            hyphens: 'auto'
-          }}>
+          <div style={{ fontSize: isCover ? 32 : 28, fontWeight: 900, color: textColor, lineHeight: 1.15, textShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
             <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
           </div>
           {typeof slide.body === 'string' && slide.body.trim() && (
@@ -753,20 +610,7 @@ function StandardSlide({ slide, tpl, brandName, total }: {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 1 }}>
           <div style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(16px)', border: `1px solid ${tpl.accent}50`, borderRadius: 20, padding: 28, display: 'flex', flexDirection: 'column', gap: 12, width: '100%', boxShadow: `0 20px 40px rgba(0,0,0,0.5)` }}>
             {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && <div style={{ fontSize: 10, fontWeight: 800, color: tpl.accent, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>}
-            <div style={{
-              fontSize: (slide.headline?.length || 0) > 40 ? 28 : 34,
-              fontWeight: 900,
-              lineHeight: 1.1,
-              color: '#fff',
-              textTransform: 'uppercase',
-              letterSpacing: '-0.02em',
-              display: '-webkit-box',
-              WebkitLineClamp: 3,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-              wordBreak: 'break-word',
-              hyphens: 'auto'
-            }}>
+            <div style={{ fontSize: isCover ? 26 : 22, fontWeight: 900, color: textColor, lineHeight: 1.2 }}>
               <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
             </div>
             <div style={{ height: 3, background: tpl.accent, width: 40, borderRadius: 2 }} />
@@ -844,7 +688,12 @@ function StandardSlide({ slide, tpl, brandName, total }: {
         </div>
       )}
       <div style={{ height: 4, background: `linear-gradient(90deg, ${tpl.accent}, transparent)`, width: '100%', flexShrink: 0, zIndex: 2 }} />
-      {/* Floating labels removed for clean look */}
+      <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 2, fontSize: 10, fontWeight: 800, letterSpacing: '0.15em', color: '#fff', textTransform: 'uppercase', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: 6 }}>
+        {brandName}
+      </div>
+      <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 2, fontSize: 11, fontWeight: 800, color: subColor, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', padding: '3px 8px', borderRadius: 6, fontFeatureSettings: '"tnum"' }}>
+        {slide.order}/{total}
+      </div>
       {renderContent()}
       {!isCta && (
         <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 2, fontSize: 10, color: subColor, display: 'flex', alignItems: 'center', gap: 4, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em' }}>

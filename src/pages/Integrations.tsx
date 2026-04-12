@@ -32,15 +32,33 @@ export default function Integrations() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="connections">
+          <TabsContent value="connections" className="space-y-4">
+            <div className="rounded-lg border border-border/40 bg-card/40 p-4 flex gap-3">
+              <span className="text-lg shrink-0">🔌</span>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                <strong className="text-foreground">Conexões</strong> — Conecte suas contas de anúncios (Meta Ads, Google Ads, TikTok) e o WhatsApp Business. Depois de conectar, seus dados aparecem automaticamente nos dashboards e relatórios.
+              </p>
+            </div>
             <ConnectionsTab />
           </TabsContent>
 
-          <TabsContent value="other">
+          <TabsContent value="other" className="space-y-4">
+            <div className="rounded-lg border border-border/40 bg-card/40 p-4 flex gap-3">
+              <span className="text-lg shrink-0">🔧</span>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                <strong className="text-foreground">Outras Integrações</strong> — Conecte ferramentas externas como Zapier, n8n, webhooks personalizados ou sua loja Shopify para automatizar fluxos de dados.
+              </p>
+            </div>
             <IntegrationsTab />
           </TabsContent>
 
-          <TabsContent value="capture">
+          <TabsContent value="capture" className="space-y-4">
+            <div className="rounded-lg border border-border/40 bg-card/40 p-4 flex gap-3">
+              <span className="text-lg shrink-0">📋</span>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                <strong className="text-foreground">Captura de Leads</strong> — Crie formulários para coletar leads diretamente no WhatsApp ou em páginas externas. Os contatos capturados entram automaticamente no seu CRM.
+              </p>
+            </div>
             <LeadCaptureTab />
           </TabsContent>
         </Tabs>

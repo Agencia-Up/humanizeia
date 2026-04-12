@@ -1,11 +1,8 @@
-import { useState } from 'react';
 import {
-  Home,
   LayoutDashboard,
   Brain,
   PenTool,
   Palette,
-  BarChart3,
   Plug,
   Settings,
   Sparkles,
@@ -13,29 +10,26 @@ import {
   Sun,
   X,
   LogOut,
-  Contact,
+  MessageCircle,
   Send,
   Inbox,
   Zap,
   Smartphone,
-  Bot,
-  Activity,
   Radar,
-  Target,
-  Users,
   Instagram,
   CreditCard,
-  FileCode2,
+  Kanban,
+  FileText,
+  Bot,
   ChevronDown,
-  Layers,
-  MessageCircle,
+  Mail,
+  Users,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
 import { useAuth } from '@/hooks/useAuth';
-import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
 import { NavLink } from '@/components/NavLink';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -52,277 +46,130 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
+import { useState } from 'react';
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
-
-type NavItem = {
-  title: string;
-  url: string;
-  icon: React.ComponentType<{ className?: string }>;
-  badge?: number;
-  subItems?: Omit<NavItem, 'subItems'>[];
-};
-
-type NavGroupConfig = {
-  label: string;
-  items: NavItem[];
-  triggerIcon: React.ComponentType<{ className?: string }>;
-  dataTour?: string;
-};
-
-// ─── Dados de navegação ───────────────────────────────────────────────────────
-
-// 🏠 Início
-const dashboardItems: NavItem[] = [
-  { title: 'Dashboard',        url: '/dashboard',   icon: LayoutDashboard },
-  { title: 'Métricas',         url: '/metrics',     icon: BarChart3 },
-  { title: 'Performance 360°', url: '/performance', icon: Activity },
+// ── Agentes ───────────────────────────────────────────────────────────────────
+const agentItems = [
+  { title: 'Salomão', subtitle: 'Orquestrador', url: '/salomao',         icon: Sparkles,  emoji: '👑' },
+  { title: 'José',    subtitle: 'Tráfego Pago',  url: '/jose',           icon: Radar,     emoji: '🎯' },
+  { title: 'Paulo',   subtitle: 'Copywriter',    url: '/copywriter',     icon: PenTool,   emoji: '✍️' },
+  { title: 'Maria',   subtitle: 'Design',        url: '/creative-studio',icon: Palette,   emoji: '🎨' },
+  { title: 'Davi',    subtitle: 'Social Media',  url: '/davi',           icon: Instagram, emoji: '📱' },
+  { title: 'João',    subtitle: 'E-mail',        url: '/joao',           icon: Mail,      emoji: '📧' },
+  { title: 'Daniel',  subtitle: 'Estratégia',    url: '/daniel',            icon: Brain,  emoji: '🧠' },
+  { title: 'Marcos',  subtitle: 'CRM & Leads',   url: '/crm',               icon: Users,  emoji: '🤝' },
+  { title: 'Pedro',   subtitle: 'WhatsApp IA',   url: '/whatsapp/ai-agent', icon: Bot,    emoji: '💬' },
 ];
 
-// 🤖 Agentes IA — Marcos tem sub-itens do WhatsApp integrados
-const agentItems: NavItem[] = [
-  { title: 'Salomão — Orquestrador',     url: '/salomao',        icon: Sparkles },
-  { title: 'Daniel — Estrategista',      url: '/daniel',         icon: Brain },
-  { title: 'Paulo — Copywriter',         url: '/copywriter',     icon: PenTool },
-  { title: 'Maria — Design',             url: '/creative-studio',icon: Palette },
-  { title: 'Davi — Social Media',        url: '/davi',           icon: Instagram },
-  { title: 'João — Email Marketing',     url: '/joao',           icon: Send },
-  { title: 'José — Tráfego Pago',        url: '/jose',           icon: Radar },
-  { title: 'Lucas — Funil de Vendas',    url: '/lucas',          icon: Layers },
-  {
-    title: 'Marcos — Leads & WhatsApp',
-    url: '/leads',
-    icon: Users,
-    // WhatsApp integrado diretamente como sub-itens do Marcos
-    subItems: [
-      { title: 'Instâncias',         url: '/whatsapp/instances',   icon: Smartphone },
-      { title: 'Inbox',              url: '/whatsapp/inbox',        icon: Inbox },
-      { title: 'Disparo em Massa',   url: '/whatsapp/broadcast',    icon: Send },
-      { title: 'Analytics',          url: '/whatsapp/analytics',    icon: BarChart3 },
-      { title: 'Automações',         url: '/whatsapp/automations',  icon: Zap },
-      { title: 'Agente Pedro',       url: '/whatsapp/ai-agent',     icon: Bot },  // IA de atendimento
-      { title: 'Extrator de Leads',  url: '/whatsapp/contacts',     icon: Contact },
-      { title: 'CAPI Tracking',      url: '/whatsapp/capi',         icon: Activity },
-    ],
-  },
+// ── WhatsApp & CRM ────────────────────────────────────────────────────────────
+const whatsappItems = [
+  { title: 'CRM',             url: '/crm',                    icon: Kanban },
+  { title: 'Inbox',           url: '/whatsapp/inbox',         icon: Inbox },
+  { title: 'Disparo em Massa',url: '/whatsapp/broadcast',     icon: Send },
+  { title: 'Instâncias',      url: '/whatsapp/instances',     icon: Smartphone },
+  { title: 'Automações',      url: '/whatsapp/automations',   icon: Zap },
 ];
 
-// ⚙️ Configurações — Ferramentas + Integrações + Sistema consolidados
-const configItems: NavItem[] = [
-  { title: 'Inteligência Criativa',   url: '/creative-intelligence', icon: Target },
-  { title: 'Radar de Concorrentes',   url: '/competitor-radar',      icon: Radar },
-  { title: 'Gerador de Prompt IA',    url: '/gerador-prompt',        icon: FileCode2 },
-  { title: 'Integrações',             url: '/integrations',          icon: Plug },
-  { title: 'Meu Plano & Tokens',      url: '/meu-plano',             icon: CreditCard },
-  { title: 'Configurações',           url: '/settings',              icon: Settings },
+// ── Sistema ───────────────────────────────────────────────────────────────────
+const systemItems = [
+  { title: 'Meu Plano',        url: '/meu-plano',     icon: CreditCard },
+  { title: 'Integrações',      url: '/integrations',  icon: Plug },
+  { title: 'Tutoriais',        url: '/tutorials',     icon: FileText },
+  { title: 'Configurações',    url: '/settings',      icon: Settings },
 ];
 
-// ─── NavItemRenderer — renderiza item simples ou com sub-itens ───────────────
-
-function NavItemRenderer({
-  item,
-  collapsed,
+// ── NavItem simples ────────────────────────────────────────────────────────────
+function NavItem({
+  item, collapsed,
 }: {
-  item: NavItem;
+  item: { title: string; url: string; icon: React.ComponentType<{ className?: string }>; badge?: number };
   collapsed?: boolean;
 }) {
-  const [subOpen, setSubOpen] = useState(false);
-
-  // Item SEM sub-itens — renderização simples
-  if (!item.subItems || item.subItems.length === 0) {
-    return (
-      <SidebarMenuItem key={item.title}>
-        <SidebarMenuButton asChild tooltip={item.title}>
-          <NavLink
-            to={item.url}
-            end={item.url === '/'}
-            className="relative text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
-            activeClassName="bg-primary/10 text-primary font-medium"
-          >
-            <item.icon className="h-4 w-4 shrink-0" />
-            {!collapsed && <span className="flex-1 truncate">{item.title}</span>}
-            {(item.badge || 0) > 0 && (
-              <Badge className="ml-auto h-5 min-w-5 rounded-full px-1.5 text-[10px] gradient-primary border-0 flex items-center justify-center text-primary-foreground">
-                {item.badge}
-              </Badge>
-            )}
-          </NavLink>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    );
-  }
-
-  // Item COM sub-itens — colapsável (ex: Marcos + WhatsApp)
-  if (collapsed) {
-    // Sidebar colapsada: mostra apenas o ícone pai como trigger dos sub-itens
-    return (
-      <Collapsible open={subOpen} onOpenChange={setSubOpen}>
-        <SidebarMenuItem>
-          <CollapsibleTrigger asChild>
-            <SidebarMenuButton
-              tooltip={`${item.title} (WhatsApp)`}
-              className="relative text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-            >
-              <item.icon className="h-4 w-4 shrink-0" />
-              {/* Badge verde indicando que o WhatsApp está integrado */}
-              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-emerald-500 border border-background" />
-            </SidebarMenuButton>
-          </CollapsibleTrigger>
-        </SidebarMenuItem>
-        <CollapsibleContent>
-          {item.subItems.map((sub) => (
-            <SidebarMenuItem key={sub.title}>
-              <SidebarMenuButton asChild tooltip={sub.title}>
-                <NavLink
-                  to={sub.url}
-                  className="text-muted-foreground/80 hover:bg-accent hover:text-accent-foreground transition-colors"
-                  activeClassName="bg-primary/10 text-primary font-medium"
-                >
-                  <sub.icon className="h-4 w-4 shrink-0" />
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </CollapsibleContent>
-      </Collapsible>
-    );
-  }
-
-  // Sidebar expandida: item pai + sub-itens com indentação e ícone toggle
   return (
-    <Collapsible open={subOpen} onOpenChange={setSubOpen}>
-      {/* Item pai (Marcos) */}
-      <SidebarMenuItem>
-        <div className="flex w-full items-center gap-1">
-          {/* Link para a página do Marcos */}
-          <SidebarMenuButton asChild className="flex-1" tooltip={item.title}>
-            <NavLink
-              to={item.url}
-              className="relative text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground"
-              activeClassName="bg-primary/10 text-primary font-medium"
-            >
-              <item.icon className="h-4 w-4 shrink-0" />
-              <span className="flex-1 truncate">{item.title}</span>
-              {/* Badge WhatsApp */}
-              <span className="mr-1 flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400">
-                <MessageCircle className="h-2.5 w-2.5" />
-                WA
-              </span>
-            </NavLink>
-          </SidebarMenuButton>
-          {/* Botão toggle dos sub-itens */}
-          <CollapsibleTrigger asChild>
-            <button
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 hover:bg-accent hover:text-accent-foreground transition-colors"
-              title={subOpen ? 'Recolher WhatsApp' : 'Expandir WhatsApp'}
-            >
-              <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${subOpen ? 'rotate-180' : ''}`} />
-            </button>
-          </CollapsibleTrigger>
-        </div>
-      </SidebarMenuItem>
-
-      {/* Sub-itens WhatsApp — com linha guia vertical e indentação */}
-      <CollapsibleContent>
-        <div className="relative ml-3 mt-0.5 pb-1">
-          {/* Linha guia vertical */}
-          <div className="absolute left-0 top-0 h-full w-px bg-emerald-500/20" />
-          <SidebarMenu className="pl-3">
-            {item.subItems.map((sub) => (
-              <SidebarMenuItem key={sub.title}>
-                <SidebarMenuButton asChild tooltip={sub.title} className="h-8">
-                  <NavLink
-                    to={sub.url}
-                    className="text-xs text-muted-foreground/70 hover:bg-accent hover:text-accent-foreground transition-colors"
-                    activeClassName="bg-emerald-500/10 text-emerald-400 font-medium"
-                  >
-                    <sub.icon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="flex-1 truncate">{sub.title}</span>
-                    {/* Destaque especial para o Agente Pedro */}
-                    {sub.title === 'Agente Pedro' && (
-                      <span className="rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-blue-400 border border-blue-500/20">
-                        IA
-                      </span>
-                    )}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild tooltip={item.title}>
+        <NavLink
+          to={item.url}
+          end={item.url === '/dashboard'}
+          className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/60 hover:text-foreground"
+          activeClassName="bg-primary/10 text-primary font-medium border-l-2 border-primary pl-[9px]"
+        >
+          <item.icon className="h-4 w-4 shrink-0" />
+          {!collapsed && <span className="flex-1 truncate">{item.title}</span>}
+          {!collapsed && (item.badge || 0) > 0 && (
+            <Badge className="ml-auto h-4 min-w-4 rounded-full px-1 text-[9px] bg-primary text-primary-foreground border-0">
+              {item.badge}
+            </Badge>
+          )}
+        </NavLink>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
 
-// ─── NavGroup — renderiza um grupo de navegação ───────────────────────────────
-
-function NavGroup({
-  label, items, collapsed, isOpen, onToggle, triggerIcon: TriggerIcon, dataTour,
+// ── NavAgent (com emoji + subtitle) ───────────────────────────────────────────
+function NavAgent({
+  item, collapsed,
 }: {
-  label: string;
-  items: NavItem[];
+  item: typeof agentItems[0];
   collapsed?: boolean;
-  isOpen?: boolean;
-  onToggle?: () => void;
-  triggerIcon: React.ComponentType<{ className?: string }>;
-  dataTour?: string;
 }) {
-  const groupBadge = items.reduce((sum, item) => sum + (item.badge || 0), 0);
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild tooltip={`${item.title} — ${item.subtitle}`}>
+        <NavLink
+          to={item.url}
+          className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/60 hover:text-foreground"
+          activeClassName="bg-primary/10 text-primary font-medium border-l-2 border-primary pl-[9px]"
+        >
+          {collapsed ? (
+            <span className="text-base leading-none">{item.emoji}</span>
+          ) : (
+            <>
+              <span className="text-sm leading-none w-5 text-center">{item.emoji}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium leading-tight truncate">{item.title}</p>
+                <p className="text-[10px] text-muted-foreground/70 leading-tight">{item.subtitle}</p>
+              </div>
+            </>
+          )}
+        </NavLink>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
 
-  // ── Sidebar COLAPSADA (só ícones) ──
+// ── NavGroup colapsável ────────────────────────────────────────────────────────
+function NavGroup({
+  label, children, defaultOpen = true, collapsed,
+}: {
+  label: string; children: React.ReactNode; defaultOpen?: boolean; collapsed?: boolean;
+}) {
+  const { openSidebarGroups, toggleSidebarGroup } = useAppStore();
+  const isOpen = openSidebarGroups.includes(label);
+
   if (collapsed) {
     return (
-      <Collapsible open={isOpen} onOpenChange={onToggle} {...(dataTour ? { 'data-tour': dataTour } : {})}>
-        <div className={`rounded-md transition-colors duration-200 ${isOpen ? 'bg-muted/40' : ''}`}>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <CollapsibleTrigger asChild>
-                <SidebarMenuButton
-                  tooltip={label}
-                  className="relative text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                >
-                  <TriggerIcon className="h-4 w-4" />
-                  {groupBadge > 0 && (
-                    <Badge className="absolute -right-1 -top-1 h-4 w-4 rounded-full p-0 text-[9px] gradient-primary border-0 flex items-center justify-center">
-                      {groupBadge}
-                    </Badge>
-                  )}
-                </SidebarMenuButton>
-              </CollapsibleTrigger>
-            </SidebarMenuItem>
-            <CollapsibleContent>
-              {items.map((item) => (
-                <NavItemRenderer key={item.title} item={item} collapsed={collapsed} />
-              ))}
-            </CollapsibleContent>
-          </SidebarMenu>
-        </div>
-      </Collapsible>
+      <SidebarGroup className="py-1">
+        <SidebarGroupContent>
+          <SidebarMenu>{children}</SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
     );
   }
 
-  // ── Sidebar EXPANDIDA ──
   return (
-    <Collapsible open={isOpen} onOpenChange={onToggle} {...(dataTour ? { 'data-tour': dataTour } : {})}>
-      <SidebarGroup>
+    <Collapsible open={isOpen} onOpenChange={() => toggleSidebarGroup(label)}>
+      <SidebarGroup className="py-0.5">
         <CollapsibleTrigger asChild>
-          <SidebarGroupLabel className="text-xs uppercase tracking-wider text-muted-foreground/70 cursor-pointer hover:text-muted-foreground transition-colors">
+          <SidebarGroupLabel className="flex items-center justify-between px-2 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50 cursor-pointer hover:text-muted-foreground transition-colors select-none">
             {label}
-            {groupBadge > 0 && (
-              <Badge className="ml-2 h-4 min-w-4 rounded-full px-1 text-[9px] gradient-primary border-0 flex items-center justify-center text-primary-foreground">
-                {groupBadge}
-              </Badge>
-            )}
+            <ChevronDown className={`h-3 w-3 transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`} />
           </SidebarGroupLabel>
         </CollapsibleTrigger>
         <CollapsibleContent>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {items.map((item) => (
-                <NavItemRenderer key={item.title} item={item} collapsed={collapsed} />
-              ))}
-            </SidebarMenu>
+            <SidebarMenu>{children}</SidebarMenu>
           </SidebarGroupContent>
         </CollapsibleContent>
       </SidebarGroup>
@@ -330,12 +177,10 @@ function NavGroup({
   );
 }
 
-// ─── AppSidebar ───────────────────────────────────────────────────────────────
-
+// ── Main Sidebar ───────────────────────────────────────────────────────────────
 export function AppSidebar() {
-  const { isDarkMode, toggleDarkMode, openSidebarGroups, toggleSidebarGroup } = useAppStore();
+  const { isDarkMode, toggleDarkMode } = useAppStore();
   const { signOut } = useAuth();
-  const { unreadCount } = useCampaignNotifications();
   const navigate = useNavigate();
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === 'collapsed';
@@ -345,107 +190,94 @@ export function AppSidebar() {
     navigate('/auth');
   };
 
-  const dashboardWithBadges = dashboardItems.map((item) => ({
-    ...item,
-    badge: item.url === '/' ? unreadCount : 0,
-  }));
-
-  // ── 3 grupos no lugar de 6 ──────────────────────────────────────────────────
-  const groups: NavGroupConfig[] = [
-    {
-      label: '🏠 Início',
-      items: dashboardWithBadges,
-      triggerIcon: Home,
-    },
-    {
-      label: '🤖 Agentes IA',
-      items: agentItems,
-      triggerIcon: Bot,
-      dataTour: 'sidebar-agents',
-    },
-    {
-      label: '⚙️ Configurações',
-      items: configItems,
-      triggerIcon: Settings,
-    },
-  ];
-
   return (
-    <Sidebar collapsible="icon" className="border-r border-border/50">
-      {/* ── Header ── */}
-      <SidebarHeader className="border-b border-border/50 p-4">
+    <Sidebar collapsible="icon" className="border-r border-border/40">
+
+      {/* ── Logo ── */}
+      <SidebarHeader className="border-b border-border/40 p-3">
         {collapsed ? (
           <div className="flex justify-center">
             <button
               onClick={toggleSidebar}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl hover:bg-accent/50 transition-colors"
+              className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-accent/50 transition-colors"
             >
-              <LogosIAIcon size={30} />
+              <LogosIAIcon size={28} />
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <LogosIALogo size="sm" showText className="" />
-              <span className="text-[10px] text-muted-foreground tracking-wider uppercase">
-                Marketing & IA
-              </span>
-            </div>
+            <LogosIALogo size="sm" showText />
             <button
               onClick={toggleSidebar}
-              className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-accent transition-colors"
+              className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-accent transition-colors"
             >
-              <X className="h-4 w-4 text-muted-foreground" />
+              <X className="h-3.5 w-3.5 text-muted-foreground" />
             </button>
           </div>
         )}
       </SidebarHeader>
 
-      {/* ── Navegação ── */}
-      <SidebarContent className={collapsed ? 'px-0 items-center pt-4' : 'px-2'}>
-        {groups.map((group) => (
-          <NavGroup
-            key={group.label}
-            label={group.label}
-            items={group.items}
-            collapsed={collapsed}
-            isOpen={openSidebarGroups.includes(group.label)}
-            onToggle={() => toggleSidebarGroup(group.label)}
-            triggerIcon={group.triggerIcon}
-            dataTour={group.dataTour}
-          />
-        ))}
+      <SidebarContent className={`py-2 ${collapsed ? 'px-1' : 'px-2'}`}>
+
+        {/* ── Dashboard ── */}
+        <NavGroup label="Painel" collapsed={collapsed}>
+          <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+        </NavGroup>
+
+        {/* ── Agentes ── */}
+        <NavGroup label="Agentes IA" collapsed={collapsed}>
+          {agentItems.map(item => (
+            <NavAgent key={item.url} item={item} collapsed={collapsed} />
+          ))}
+        </NavGroup>
+
+        {/* ── WhatsApp & CRM ── */}
+        <NavGroup label="WhatsApp & CRM" defaultOpen={false} collapsed={collapsed}>
+          {whatsappItems.map(item => (
+            <NavItem key={item.url} item={item} collapsed={collapsed} />
+          ))}
+        </NavGroup>
+
+        {/* ── Sistema ── */}
+        <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
+          {systemItems.map(item => (
+            <NavItem key={item.url} item={item} collapsed={collapsed} />
+          ))}
+        </NavGroup>
+
       </SidebarContent>
 
       {/* ── Footer ── */}
-      <SidebarFooter className={`border-t border-border/50 p-2 ${collapsed ? 'items-center' : ''}`}>
+      <SidebarFooter className={`border-t border-border/40 p-2 ${collapsed ? 'items-center' : ''}`}>
         {!collapsed && (
           <div className="px-1 pb-1">
             <TokenWidgetCompact />
           </div>
         )}
         <SidebarMenu>
-          <SidebarMenuItem data-tour="dark-mode">
+          <SidebarMenuItem>
             <SidebarMenuButton
               tooltip={isDarkMode ? 'Modo Claro' : 'Modo Escuro'}
               onClick={toggleDarkMode}
+              className="text-muted-foreground hover:text-foreground"
             >
               {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              <span>{isDarkMode ? 'Modo Claro' : 'Modo Escuro'}</span>
+              {!collapsed && <span className="text-sm">{isDarkMode ? 'Modo Claro' : 'Modo Escuro'}</span>}
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               tooltip="Sair"
               onClick={handleLogout}
-              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
             >
               <LogOut className="h-4 w-4" />
-              <span>Sair</span>
+              {!collapsed && <span className="text-sm">Sair</span>}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
+
     </Sidebar>
   );
 }

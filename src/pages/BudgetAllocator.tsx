@@ -76,6 +76,7 @@ export default function BudgetAllocator() {
   });
 
   const [budgetSliders, setBudgetSliders] = useState<Record<string, number>>({});
+  const [viewMode, setViewMode] = useState<'simplified' | 'expert'>('simplified');
 
   const activeCampaigns = useMemo(
     () => campaigns.filter((c: any) => c.effective_status === 'ACTIVE' && c.daily_budget),
@@ -393,11 +394,26 @@ export default function BudgetAllocator() {
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h1 className="text-2xl font-bold lg:text-3xl flex items-center gap-2">
-              <DollarSign className="h-7 w-7 text-primary" /> Budget Allocator
+              <DollarSign className="h-7 w-7 text-primary" /> Distribuição de Verba
             </h1>
-            <p className="text-muted-foreground">Distribuição inteligente de orçamento baseada em performance</p>
+            <p className="text-muted-foreground">Distribua seu investimento entre campanhas de forma inteligente</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Toggle Simplificado / Especialista */}
+            <div className="flex h-9 overflow-hidden rounded-xl border border-border/60 bg-muted/30 text-xs">
+              <button
+                onClick={() => setViewMode('simplified')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'simplified' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                💰 Simplificado
+              </button>
+              <button
+                onClick={() => setViewMode('expert')}
+                className={`h-full px-3.5 font-medium transition-all ${viewMode === 'expert' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                ⚙️ Especialista
+              </button>
+            </div>
             {totalBudget > 0 && (
               <Badge variant="outline" className="text-lg px-4 py-1.5 border-primary/30">
                 Total: {fmtCurrency(totalBudget)}/dia
@@ -408,6 +424,125 @@ export default function BudgetAllocator() {
             </Button>
           </div>
         </div>
+
+        {/* ── MODO SIMPLIFICADO ── */}
+        {viewMode === 'simplified' && (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+              <p className="text-sm font-medium text-foreground">💡 Como funciona?</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Escolha uma estratégia abaixo e o sistema redistribui automaticamente o seu orçamento entre as campanhas ativas. Você aprova antes de aplicar.
+              </p>
+            </div>
+
+            {!hasData ? (
+              <Card className="border-border/50 bg-card/50">
+                <CardContent className="py-10 text-center text-muted-foreground">
+                  <DollarSign className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                  <p className="font-medium">Nenhuma campanha ativa encontrada</p>
+                  <p className="text-sm mt-1">Conecte sua conta Meta Ads para ver sugestões de distribuição.</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                <div>
+                  <h2 className="text-lg font-semibold mb-1">Escolha uma estratégia</h2>
+                  <p className="text-sm text-muted-foreground mb-4">Selecione como quer distribuir o investimento de <strong>{fmtCurrency(totalBudget)}/dia</strong></p>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    {[
+                      {
+                        id: 'performance',
+                        emoji: '🎯',
+                        title: 'Focar no que traz resultado',
+                        description: 'Coloca mais verba nas campanhas que já estão convertendo melhor. Ideal para quem quer aumentar as vendas.',
+                        tag: 'Recomendado',
+                        tagColor: 'bg-emerald-500/20 text-emerald-400',
+                      },
+                      {
+                        id: 'ctr_weighted',
+                        emoji: '📈',
+                        title: 'Focar em mais cliques',
+                        description: 'Prioriza campanhas que estão atraindo mais pessoas. Bom para aumentar o tráfego no seu site.',
+                        tag: 'Engajamento',
+                        tagColor: 'bg-blue-500/20 text-blue-400',
+                      },
+                      {
+                        id: 'equal',
+                        emoji: '⚖️',
+                        title: 'Dividir igualmente',
+                        description: 'Distribui o orçamento de forma igual entre todas as campanhas ativas. Simples e seguro.',
+                        tag: 'Conservador',
+                        tagColor: 'bg-amber-500/20 text-amber-400',
+                      },
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        onClick={() => { applyStrategy(opt.id as Strategy); setActiveStrategy(opt.id as Strategy); }}
+                        className={`group flex flex-col gap-3 rounded-xl border p-5 text-left transition-all hover:shadow-md ${activeStrategy === opt.id ? 'border-primary bg-primary/5 shadow-sm' : 'border-border/50 bg-card/60 hover:border-primary/40'}`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-3xl">{opt.emoji}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${opt.tagColor}`}>{opt.tag}</span>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-sm text-foreground">{opt.title}</p>
+                          <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{opt.description}</p>
+                        </div>
+                        {activeStrategy === opt.id && (
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Estratégia selecionada
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Preview da distribuição */}
+                {enriched.length > 0 && (
+                  <Card className="border-border/50 bg-card/50">
+                    <CardContent className="pt-5 space-y-3">
+                      <p className="text-sm font-semibold">Como ficaria a distribuição:</p>
+                      {enriched.slice(0, 5).map((c) => {
+                        const pct = budgetSliders[c.id] ?? 0;
+                        const newBudget = (totalBudget * pct) / 100;
+                        return (
+                          <div key={c.id} className="space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="truncate max-w-[60%] text-foreground font-medium">{c.name}</span>
+                              <span className="text-muted-foreground">{fmtCurrency(newBudget)}/dia <span className="text-primary font-semibold">({pct.toFixed(0)}%)</span></span>
+                            </div>
+                            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {enriched.length > 5 && <p className="text-xs text-muted-foreground">+ {enriched.length - 5} outras campanhas</p>}
+                      <Button className="w-full gradient-primary mt-2" onClick={handleApplyBudgets}>
+                        <Play className="mr-2 h-4 w-4" /> Aplicar esta distribuição
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            )}
+
+            <div className="rounded-xl border border-border/50 bg-card/50 p-4 text-center space-y-2">
+              <p className="text-sm font-medium">Quer controle total com sliders e simulações?</p>
+              <p className="text-xs text-muted-foreground">Ajuste manualmente cada campanha, simule cenários e use IA avançada.</p>
+              <button
+                onClick={() => setViewMode('expert')}
+                className="mt-1 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors"
+              >
+                ⚙️ Abrir modo especialista
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODO ESPECIALISTA ── */}
+        {viewMode === 'expert' && (<>
 
         {/* Manual mode banner */}
         {showManualMode && (
@@ -779,6 +914,7 @@ export default function BudgetAllocator() {
             )}
           </TabsContent>
         </Tabs>
+        </>)}
       </div>
     </MainLayout>
   );

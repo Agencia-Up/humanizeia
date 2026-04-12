@@ -16,7 +16,7 @@ import { motion } from 'framer-motion';
 import {
   Code2, Copy, CheckCircle, Activity, Bug, Zap,
   Monitor, ShoppingCart, FileText, MousePointerClick,
-  Eye, UserPlus, CreditCard, Target
+  Eye, UserPlus, CreditCard, Target, Clock, Sparkles
 } from 'lucide-react';
 
 const STANDARD_EVENTS = [
@@ -145,6 +145,24 @@ export default function UnifiedPixel() {
   return (
     <MainLayout>
       <div className="space-y-6">
+        {/* Em breve banner */}
+        <div className="flex flex-col gap-2 rounded-xl border border-amber-500/30 bg-amber-500/8 p-4 sm:flex-row sm:items-start sm:gap-4">
+          <Clock className="h-5 w-5 shrink-0 text-amber-400 mt-0.5" />
+          <div className="flex-1 space-y-1">
+            <div className="flex items-center gap-2">
+              <p className="font-semibold text-amber-400">Funcionalidade em desenvolvimento</p>
+              <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400">Em breve</span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Os dados e eventos exibidos abaixo são <strong className="text-amber-400/80">demonstrativos</strong>. A configuração real do Pixel Unificado ainda está em desenvolvimento — conecte seus pixels diretamente pelas plataformas enquanto isso.
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-400 shrink-0">
+            <Sparkles className="h-3.5 w-3.5" />
+            Preview
+          </div>
+        </div>
+
         <div>
           <h1 className="text-2xl font-bold lg:text-3xl flex items-center gap-3">
             <Code2 className="h-7 w-7 text-primary" />

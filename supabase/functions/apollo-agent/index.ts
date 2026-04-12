@@ -31,21 +31,39 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
-    }
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const token = authHeader.replace("Bearer ", "");
 
     const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      serviceKey
     );
+
+    // ── Detect cron call (jose-cron-runner passes service role key + x-apollo-cron header) ──
+    const isCronCall = req.headers.get("x-apollo-cron") === "true";
+    const cronUserId = req.headers.get("x-user-id");
+
+    let userId: string;
+
+    if (isCronCall && cronUserId && token === serviceKey) {
+      // Cron call — trust x-user-id header (validated by service role key match)
+      userId = cronUserId;
+    } else {
+      // Normal user call — validate JWT
+      const supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_ANON_KEY")!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      }
+      userId = user.id;
+    }
+
+    // Expose as user object for backward compat with rest of code
+    const user = { id: userId };
 
     const body = await req.json().catch(() => ({}));
     const {
@@ -289,6 +307,24 @@ Deno.serve(async (req) => {
 
     const currencySymbol = currency === "USD" ? "US$" : "R$";
 
+    // ── Load active segment profile ──
+    let segmentContext = "";
+    try {
+      const { data: cronConf } = await admin
+        .from("apollo_cron_config")
+        .select("active_segment_slug")
+        .eq("user_id", user.id)
+        .single();
+      if (cronConf?.active_segment_slug) {
+        const { data: seg } = await admin
+          .from("jose_segment_profiles")
+          .select("*")
+          .eq("slug", cronConf.active_segment_slug)
+          .single();
+        if (seg) segmentContext = buildSegmentContext(seg);
+      }
+    } catch { /* segment optional — ignore errors */ }
+
     // ── Fetch all data in parallel ──
     const [campaigns, insights, adSetInsights, historicalSnapshots, pastOutcomes] = await Promise.all([
       fetchMetaCampaigns(accessToken, accountId),
@@ -330,12 +366,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Claude AI Analysis ──
+    // ── AI Analysis (OpenAI GPT-4o com fallback Anthropic) ──
+    const OPENAI_KEY    = Deno.env.get("OPENAI_API_KEY");
     const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    const AI_KEY        = OPENAI_KEY || ANTHROPIC_KEY;
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
-    if (ANTHROPIC_KEY && enriched.length > 0) {
-      aiResult = await runApolloAI(ANTHROPIC_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext);
+    if (AI_KEY && enriched.length > 0) {
+      aiResult = await runApolloAI(AI_KEY, !!OPENAI_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext, segmentContext);
     }
 
     // ── Validate & fix campaign IDs in actions (AI sometimes returns slugs instead of numeric IDs) ──
@@ -839,12 +877,121 @@ function detectPortfolioOpportunities(enriched: any[], currencySymbol: string): 
   return insights.join("\n");
 }
 
-// ── Claude AI Analysis ────────────────────────────────────────────────────────
+// ── Segment Context Builder ───────────────────────────────────────────────────
+
+function buildSegmentContext(segment: any): string {
+  const lines: string[] = [
+    `🏭 SEGMENTO DE NEGÓCIO ATIVO: ${segment.icon || ""} ${segment.name}`,
+    segment.description || "",
+    "",
+  ];
+
+  // Benchmarks específicos
+  const b = segment.benchmarks || {};
+  if (Object.keys(b).length > 0) {
+    lines.push("BENCHMARKS DO SEGMENTO (substituem os genéricos):");
+    if (b.cpl_otimo)          lines.push(`  • CPL: ótimo < R$${b.cpl_otimo}, bom R$${b.cpl_bom}, crítico > R$${b.cpl_critico}`);
+    if (b.ctr_fraco)          lines.push(`  • CTR: fraco < ${b.ctr_fraco}%, bom > ${b.ctr_bom}%, excelente > ${b.ctr_excelente}%`);
+    if (b.cpc_bom)            lines.push(`  • CPC: bom < R$${b.cpc_bom}, ótimo < R$${b.cpc_otimo}`);
+    if (b.frequencia_alerta)  lines.push(`  • Frequência: alertar apenas > ${b.frequencia_alerta}x`);
+    if (b.conversao_meta)     lines.push(`  • Conversão principal: ${b.conversao_meta}`);
+    if (b.objetivo_campanha)  lines.push(`  • Objetivo recomendado: ${b.objetivo_campanha}`);
+  }
+
+  // Regras do segmento
+  const rules: string[] = segment.rules || [];
+  if (rules.length > 0) {
+    lines.push("", "REGRAS DO SEGMENTO (aplicar rigorosamente):");
+    rules.forEach((r: string) => lines.push(`  ⚙️ ${r}`));
+  }
+
+  // Sazonalidade relevante para hoje
+  const seasonal: any[] = segment.seasonal_insights || [];
+  if (seasonal.length > 0) {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const relevant = seasonal.filter((s: any) => {
+      const p = s.period;
+      if (p === "fim_mes" && day >= 25) return true;
+      if (p === "jan-feb" && (month === 1 || month === 2)) return true;
+      if (p === "mar" && month === 3) return true;
+      if (p === "apr-may" && (month === 4 || month === 5)) return true;
+      if (p === "jun-jul" && (month === 6 || month === 7)) return true;
+      if (p === "sep" && month === 9) return true;
+      if (p === "oct-nov" && (month === 10 || month === 11)) return true;
+      if (p === "dec" && month === 12) return true;
+      return false;
+    });
+    if (relevant.length > 0) {
+      lines.push("", "SAZONALIDADE DO SEGMENTO (CONTEXTO DE HOJE):");
+      relevant.forEach((s: any) => lines.push(`  ${s.insight}`));
+    }
+  }
+
+  // Knowledge base personalizado (configurado pelo usuário)
+  const kb = segment.knowledge_base || {};
+  if (Object.keys(kb).length > 0) {
+    lines.push("", "REGRAS PERSONALIZADAS DO GESTOR (prioridade máxima):");
+
+    // CPL/CPA targets override
+    if (kb.cpl_min !== undefined || kb.cpl_max !== undefined) {
+      lines.push(`  💰 CPL alvo: mín R$${kb.cpl_min ?? 0}, ótimo R$${kb.cpl_optimal ?? '?'}, máx R$${kb.cpl_max ?? '?'}`);
+    }
+    if (kb.cpa_max !== undefined) {
+      lines.push(`  💰 CPA alvo: ótimo R$${kb.cpa_optimal ?? '?'}, máx R$${kb.cpa_max}`);
+    }
+
+    // Geo rules
+    if (kb.geo_type && kb.geo_type !== 'country') {
+      if (kb.geo_type === 'radius' && kb.geo_center_city) {
+        lines.push(`  📍 Segmentação geográfica: raio de ${kb.geo_radius_km ?? 50}km em torno de ${kb.geo_center_city}`);
+      } else if (kb.geo_type === 'cities' && kb.geo_cities?.length) {
+        lines.push(`  📍 Cidades alvo: ${kb.geo_cities.join(', ')}`);
+      } else if (kb.geo_type === 'states' && kb.geo_states?.length) {
+        lines.push(`  📍 Estados alvo: ${kb.geo_states.join(', ')}`);
+      }
+      if (kb.geo_exclude_cities?.length) {
+        lines.push(`  🚫 Regiões excluídas: ${kb.geo_exclude_cities.join(', ')}`);
+      }
+      lines.push(`  ⚠️ NUNCA expandir segmentação geográfica além do definido acima`);
+    }
+
+    // Audience
+    if (kb.age_min || kb.age_max) {
+      lines.push(`  👥 Público: ${kb.age_min ?? 18}-${kb.age_max ?? 65} anos, gênero: ${kb.gender === 'male' ? 'masculino' : kb.gender === 'female' ? 'feminino' : 'todos'}`);
+    }
+    if (kb.interests?.length) {
+      lines.push(`  🎯 Interesses validados: ${kb.interests.slice(0, 8).join(', ')}`);
+    }
+    if (kb.behaviors?.length) {
+      lines.push(`  🧠 Comportamentos: ${kb.behaviors.slice(0, 5).join(', ')}`);
+    }
+
+    // Creative rules
+    if (kb.creative_rotation_days) {
+      lines.push(`  🔄 Trocar criativos a cada ${kb.creative_rotation_days} dias`);
+    }
+    if (kb.max_frequency) {
+      lines.push(`  ⚠️ Alertar frequência > ${kb.max_frequency}x (configurado pelo gestor)`);
+    }
+
+    // Custom rules
+    if (kb.custom_rules?.length) {
+      lines.push("", "  REGRAS PERSONALIZADAS:");
+      (kb.custom_rules as string[]).forEach((r: string) => lines.push(`    → ${r}`));
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// ── AI Analysis (OpenAI GPT-4o / Anthropic fallback) ─────────────────────────
 
 async function runApolloAI(
-  apiKey: string, campaigns: any[], currency: string, currencySymbol: string,
+  apiKey: string, useOpenAI: boolean, campaigns: any[], currency: string, currencySymbol: string,
   datePreset: string, trendContext: string, learningContext: string,
-  seasonalContext: string, portfolioContext: string
+  seasonalContext: string, portfolioContext: string, segmentContext = ""
 ) {
   const periodLabel: Record<string, string> = {
     today: "hoje", yesterday: "ontem", last_7d: "últimos 7 dias",
@@ -896,6 +1043,12 @@ ${seasonalContext}
 
 ANÁLISE DE PORTFÓLIO:
 ${portfolioContext}
+${segmentContext ? `
+══════════════════════════════════════════
+${segmentContext}
+══════════════════════════════════════════
+INSTRUÇÃO CRÍTICA: O segmento acima está ativo. Substitua os benchmarks genéricos pelos do segmento. Aplique TODAS as regras do segmento na análise e nas recomendações.
+` : ""}
 
 REGRAS DE DECISÃO AUTOMÁTICA (auto_safe=true):
 1. Pausar campanha: CTR < 0.5% E frequência > 4 (fadiga confirmada) E gasto > ${currencySymbol}${currency === "USD" ? "20" : "50"}
@@ -951,33 +1104,57 @@ Responda EXCLUSIVAMENTE em JSON válido:
   ]
 }`;
 
+  const userMessage = `Analise estas ${campaigns.length} campanhas (período: ${periodLabel[datePreset] || datePreset}):\n\n${campaignSummary}\n\nGere análise profunda NÍVEL 6 considerando: histórico WoW, aprendizado acumulado, fadiga criativa, sazonalidade e oportunidades de portfólio.`;
+
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-3-5-sonnet-20241022",
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [{
-          role: "user",
-          content: `Analise estas ${campaigns.length} campanhas (período: ${periodLabel[datePreset] || datePreset}):\n\n${campaignSummary}\n\nGere análise profunda NÍVEL 6 considerando: histórico WoW, aprendizado acumulado, fadiga criativa, sazonalidade e oportunidades de portfólio.`
-        }]
-      }),
-    });
+    let res: Response;
+
+    if (useOpenAI) {
+      // ── OpenAI GPT-4o ──
+      res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          max_tokens: 4000,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user",   content: userMessage },
+          ],
+        }),
+      });
+    } else {
+      // ── Anthropic Claude 3.5 Sonnet (fallback) ──
+      res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-3-5-sonnet-20241022",
+          max_tokens: 4000,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userMessage }],
+        }),
+      });
+    }
 
     if (!res.ok) {
       const errText = await res.text();
-      console.error("[apollo-agent] Claude error:", res.status, errText);
+      console.error("[apollo-agent] AI error:", res.status, errText);
       return { analysis: null, actions: [], health_score: null, summary: null };
     }
 
     const data = await res.json();
-    const content = data.content?.[0]?.text || "";
+    // OpenAI: choices[0].message.content  |  Anthropic: content[0].text
+    const content = useOpenAI
+      ? (data.choices?.[0]?.message?.content || "")
+      : (data.content?.[0]?.text || "");
 
     try {
       const parsed = JSON.parse(content.trim());
@@ -1003,7 +1180,7 @@ Responda EXCLUSIVAMENTE em JSON válido:
       return { analysis: content, actions: [], health_score: null, summary: null };
     }
   } catch (err: any) {
-    console.error("[apollo-agent] Claude call error:", err);
+    console.error("[apollo-agent] AI call error:", err);
     return { analysis: null, actions: [], health_score: null, summary: null };
   }
 }
@@ -1098,51 +1275,61 @@ async function scheduleOutcomeChecks(admin: any, userId: string, executionLog: a
 // ── WhatsApp notifications ────────────────────────────────────────────────────
 
 async function sendCriticalWhatsApp(admin: any, userId: string, aiResult: any, enriched: any[], currencySymbol: string) {
-  const { data: waCfg } = await admin
-    .from("whatsapp_config")
-    .select("*")
+  // Busca instância WhatsApp ativa do usuário (wa_instances = Evolution API)
+  const { data: instance } = await admin
+    .from("wa_instances")
+    .select("api_url, instance_name, api_key_encrypted")
     .eq("user_id", userId)
-    .eq("is_active", true)
+    .eq("status", "connected")
+    .order("created_at", { ascending: false })
+    .limit(1)
     .single();
 
-  if (!waCfg?.phone_number || !waCfg?.api_url) return;
+  if (!instance?.api_url || !instance?.instance_name) return;
 
+  // Busca número destino e preferências do cron config
   const { data: cronCfg } = await admin
     .from("apollo_cron_config")
-    .select("send_whatsapp_on_critical")
+    .select("send_whatsapp_on_critical, whatsapp_report_number")
     .eq("user_id", userId)
     .single();
 
-  if (cronCfg && !cronCfg.send_whatsapp_on_critical) return;
+  if (!cronCfg?.send_whatsapp_on_critical) return;
+  if (!cronCfg?.whatsapp_report_number) return;
+
+  const destPhone = cronCfg.whatsapp_report_number.replace(/\D/g, '');
+  if (destPhone.length < 10) return;
+  const intlPhone = destPhone.startsWith('55') ? destPhone : `55${destPhone}`;
 
   const criticals = (aiResult.actions || []).filter((a: any) => a.priority === "critical");
   const score = aiResult.health_score;
 
   const lines = [
-    `🔴 *Apollo — Alerta Crítico*`,
+    `🔴 *JOSÉ — Alerta Crítico*`,
     `📊 Score Geral: ${score ?? "??"}/100`,
     ``,
     `⚠️ *Ações Críticas Detectadas:*`,
     ...criticals.map((a: any) => `• ${a.campaign_name}: ${a.reason}`),
     ``,
-    `📈 Abra o Apollo para aprovar as ações recomendadas.`,
+    `📈 Abra o JOSÉ para aprovar as ações recomendadas.`,
   ];
 
   try {
-    await fetch(`${waCfg.api_url}/message/sendText/${waCfg.instance_name || "default"}`, {
+    const apiUrl = (instance.api_url as string).replace(/\/+$/, "");
+    await fetch(`${apiUrl}/message/sendText/${instance.instance_name}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "apikey": waCfg.api_key || "",
+        "apikey": instance.api_key_encrypted || "",
       },
       body: JSON.stringify({
-        number: waCfg.phone_number,
+        number: intlPhone,
         options: { delay: 1200, presence: "composing" },
         textMessage: { text: lines.join("\n") },
       }),
     });
   } catch (err) {
-    console.error("[apollo-agent] WhatsApp notify error:", err);
+    console.error("[apollo-agent] WhatsApp critical alert error:", err);
   }
 }
 
@@ -1654,7 +1841,7 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
   const {
     run_hour, run_minute, timezone, date_preset, auto_execute,
     send_whatsapp_on_critical, send_daily_report, whatsapp_report_number,
-    is_enabled,
+    is_enabled, active_segment_slug,
   } = body;
 
   // Compute next_run_at
@@ -1675,6 +1862,7 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
       send_whatsapp_on_critical: send_whatsapp_on_critical ?? true,
       send_daily_report: send_daily_report ?? true,
       whatsapp_report_number: whatsapp_report_number || null,
+      active_segment_slug: active_segment_slug || null,
       next_run_at: nextRun.toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
@@ -1750,12 +1938,14 @@ async function sendDailyReport(
   // Format phone to international (55 + DDD + number)
   const intlPhone = phone.startsWith('55') ? phone : `55${phone}`;
 
-  // Get WhatsApp API config
+  // Busca instância WhatsApp ativa (wa_instances = Evolution API)
   const { data: waCfg } = await admin
-    .from("whatsapp_config")
-    .select("*")
+    .from("wa_instances")
+    .select("api_url, instance_name, api_key_encrypted")
     .eq("user_id", userId)
-    .eq("is_active", true)
+    .eq("status", "connected")
+    .order("created_at", { ascending: false })
+    .limit(1)
     .single();
 
   if (!waCfg?.api_url) return;
@@ -1859,11 +2049,12 @@ async function sendDailyReport(
   lines.push(`🤖 _Gerado por JOSÉ Governador — LogosIA_`);
 
   try {
-    await fetch(`${waCfg.api_url}/message/sendText/${waCfg.instance_name || "default"}`, {
+    const apiUrl = (waCfg.api_url as string).replace(/\/+$/, "");
+    await fetch(`${apiUrl}/message/sendText/${waCfg.instance_name}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "apikey": waCfg.api_key || "",
+        "apikey": waCfg.api_key_encrypted || "",
       },
       body: JSON.stringify({
         number: intlPhone,

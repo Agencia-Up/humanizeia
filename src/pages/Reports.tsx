@@ -219,13 +219,63 @@ export default function Reports() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold lg:text-3xl">Reports</h1>
-            <p className="text-muted-foreground">Crie, agende e envie relatórios automatizados via WhatsApp</p>
+            <h1 className="text-2xl font-bold lg:text-3xl">Relatórios Automáticos</h1>
+            <p className="text-muted-foreground">Crie e envie relatórios dos seus anúncios direto no WhatsApp</p>
           </div>
           <Button className="gradient-primary" onClick={() => setCreateOpen(true)}>
             <Plus className="mr-2 h-4 w-4" /> Novo Template
           </Button>
         </div>
+
+        {/* ── Início Rápido ── */}
+        {templates.length === 0 && !templatesLoading && (
+          <div className="rounded-xl border border-border/50 bg-card/50 p-5 space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-foreground mb-1">🚀 Comece com um modelo pronto</p>
+              <p className="text-xs text-muted-foreground">Clique em um modelo abaixo para criar seu primeiro relatório em segundos</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {[
+                {
+                  emoji: '📅',
+                  label: 'Relatório Diário',
+                  description: 'Resumo rápido do dia: gasto, cliques e CPC',
+                  nome: 'Relatório Diário',
+                  metricas: AVAILABLE_METRICS.filter(m => ['spend', 'clicks', 'cpc'].includes(m.tipo)),
+                },
+                {
+                  emoji: '📊',
+                  label: 'Relatório Semanal',
+                  description: 'Visão completa da semana com compras e ROAS',
+                  nome: 'Relatório Semanal',
+                  metricas: AVAILABLE_METRICS.filter(m => ['spend', 'purchases', 'roas', 'cpa'].includes(m.tipo)),
+                },
+                {
+                  emoji: '📈',
+                  label: 'Relatório Mensal',
+                  description: 'Análise completa do mês com todas as métricas',
+                  nome: 'Relatório Mensal Completo',
+                  metricas: AVAILABLE_METRICS.filter(m => ['spend', 'purchases', 'revenue', 'roas', 'cpa', 'ctr', 'campaign_breakdown'].includes(m.tipo)),
+                },
+              ].map((tpl) => (
+                <button
+                  key={tpl.label}
+                  onClick={() => {
+                    setFormNome(tpl.nome);
+                    setFormMetricas(tpl.metricas);
+                    setCreateOpen(true);
+                  }}
+                  className="group flex flex-col gap-2 rounded-lg border border-border/40 bg-background/50 p-4 text-left transition-all hover:border-primary/40 hover:bg-primary/5"
+                >
+                  <span className="text-2xl">{tpl.emoji}</span>
+                  <p className="text-sm font-semibold text-foreground">{tpl.label}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{tpl.description}</p>
+                  <span className="mt-1 text-xs text-primary font-medium opacity-0 group-hover:opacity-100 transition-opacity">Usar este modelo →</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {!whatsappConfigured && (
           <Alert variant="destructive" className="border-orange-500/50 bg-orange-500/10 text-orange-200">

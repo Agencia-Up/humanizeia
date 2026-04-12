@@ -19,7 +19,7 @@ import {
   Layers, Megaphone, Bot, Brain, Lock, CheckCircle, Users,
   FileCode2, Zap, Copy, Check, Loader2, ChevronRight,
   ShoppingBag, Target, MessageSquare, Shield, TrendingUp,
-  Globe, Share2, BrainCircuit, Bot as BotIcon,
+  Globe, Share2, BrainCircuit, Bot as BotIcon, X, ArrowRight,
 } from 'lucide-react';
 import { useAgentTasks } from '@/contexts/AgentTasksContext';
 import { useAgentChat } from '@/contexts/AgentChatContext';
@@ -27,14 +27,12 @@ import { useAgentChat } from '@/contexts/AgentChatContext';
 /* ── Agent definitions ──────────────────────────────────────────────── */
 const AGENTS = [
   { id: 'salomao', name: 'SALOMÃO', role: 'Orquestrador', icon: Sparkles, description: 'Coordena todos os agentes. Recebe o briefing do cliente e distribui tarefas.', status: 'active', color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20', url: '/salomao' },
-  { id: 'jose', name: 'JOSÉ', role: 'Tráfego Pago', icon: Radar, description: 'Gerencia Meta Ads, Google Ads e TikTok com autonomia total. Analisa, otimiza, pausa e escala campanhas.', status: 'coming', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', url: null },
+  { id: 'jose', name: 'JOSÉ', role: 'Tráfego Pago', icon: Radar, description: 'Gerencia Meta Ads e Google Ads com autonomia total. Analisa, otimiza, pausa e escala campanhas automaticamente.', status: 'active', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', url: '/jose' },
   { id: 'paulo', name: 'PAULO', role: 'Copywriter', icon: PenTool, description: 'Escreve headlines, body copy, CTAs, scripts de vídeo e sequências de email que convertem.', status: 'active', color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20', url: '/copywriter' },
   { id: 'maria', name: 'MARIA', role: 'Designer', icon: Palette, description: 'Cria imagens, banners e criativos com IA. Remove fundo, redimensiona e gera variações.', status: 'active', color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20', url: '/creative-studio' },
   { id: 'daniel', name: 'DANIEL', role: 'Estrategista', icon: Brain, description: 'Analisa mercado, concorrentes e posicionamento. Define personas, ângulos e plano de 90 dias.', status: 'active', color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20', url: '/daniel' },
   { id: 'davi', name: 'DAVI', role: 'Social Media', icon: Send, description: 'Cria calendário editorial, escreve legendas e publica automaticamente no melhor horário.', status: 'active', color: 'text-pink-400', bg: 'bg-pink-500/10 border-pink-500/20', url: '/davi' },
-  { id: 'lucas', name: 'LUCAS', role: 'Gestor de Funil', icon: Layers, description: 'Mapeia e otimiza toda a jornada do cliente: anúncio → landing page → checkout → retenção.', status: 'coming', color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20', url: null },
   { id: 'joao', name: 'JOÃO', role: 'Email Marketing', icon: Megaphone, description: 'Cria sequências de nutrição, segmenta listas e envia campanhas no timing certo.', status: 'active', color: 'text-indigo-400', bg: 'bg-indigo-500/10 border-indigo-500/20', url: '/joao' },
-  { id: 'marcos', name: 'MARCOS', role: 'Gestor de Leads', icon: Users, description: 'Gerencia leads, funil de vendas e conversões. Mini-CRM integrado com WhatsApp.', status: 'active', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-400/20', url: '/leads' },
   { id: 'pedro', name: 'PEDRO', role: 'SDR & Atendimento', icon: Bot, description: 'Qualifica leads, agenda reuniões e responde clientes 24/7 via WhatsApp com inteligência humana.', status: 'active', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-500/20', url: '/whatsapp/ai-agent' },
 ];
 
@@ -127,6 +125,7 @@ export default function SalomaoOrchestrator() {
   const { getHistory, saveMessage, clearHistory } = useAgentChat();
 
   const [tab, setTab] = useState<'equipe' | 'gerador' | 'pipeline' | 'fluxo' | 'conhecimento'>('gerador');
+  const [showGuide, setShowGuide] = useState(() => localStorage.getItem('salomao_guide_dismissed') !== 'true');
   const [activeBriefingId, setActiveBriefingId] = useState<string | null>(null);
   const [activeClientName, setActiveClientName] = useState('Selecione um cliente');
   const [aiProvider, setAiProvider] = useState('openai');
@@ -150,27 +149,18 @@ export default function SalomaoOrchestrator() {
       
       setIsLoadingTemplate(true);
       try {
-        // 1. Busca o histórico para encontrar a estratégia gerada no Quiz
-        const history = await getHistory('salomao');
-        const quizStrategy = [...history].reverse().find(
-          m => m.role === 'assistant' && 
-          m.metadata?.type === 'generated_prompt' && 
-          m.metadata?.source === 'quiz'
-        );
-
-        // 2. Busca o template base para servir de contexto para a IA
+        // 1. Busca o template base para servir de contexto para a IA
         let baseContent = '';
         const baseResp = await fetch('/docs/prompt_brieffing.md');
         if (baseResp.ok) baseContent = await baseResp.text();
 
-        // 3. Invoca o Agente de Montagem (Edge Function) para criar as perguntas dinâmicas
+        // 2. Invoca o Agente de Montagem (Edge Function) para criar as perguntas dinâmicas
         const { data: aiResponse, error } = await supabase.functions.invoke('prompt-generator-api', {
           body: { 
             action: 'build_questionnaire', 
             niche: storedNiche || 'Geral',
             base_template: baseContent,
-            ai_provider: aiProvider,
-            context: quizStrategy?.content || '' // Passa o briefing do quiz como contexto estratégico
+            ai_provider: aiProvider
           }
         });
 
@@ -291,28 +281,33 @@ export default function SalomaoOrchestrator() {
     <MainLayout>
       <div className="space-y-6 p-6 max-w-6xl mx-auto">
         {/* ── Header ────────────────────────────────────────────────── */}
-        <div className="text-center space-y-3 py-4">
-          <div className="flex items-center justify-center gap-3">
-            <Sparkles className="h-8 w-8 text-yellow-400" />
-            <h1 className="text-3xl font-bold tracking-tight">SALOMÃO</h1>
-            <Sparkles className="h-8 w-8 text-yellow-400" />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-yellow-500/10">
+                <Sparkles className="h-6 w-6 text-yellow-400" />
+              </div>
+              Salomão
+              <Badge className="text-xs bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse inline-block mr-1" />
+                Orquestrador
+              </Badge>
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Treine seus agentes e gerencie sua equipe de IA
+            </p>
           </div>
-          <p className="text-muted-foreground">A Agência de Marketing Digital do Futuro</p>
-          <div className="flex items-center justify-center gap-3 pt-1 flex-wrap">
-            <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-1">
-              <CheckCircle className="h-3.5 w-3.5 mr-1.5" />{activeCount} agentes ativos
-            </Badge>
-          </div>
+          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-1.5 w-fit">
+            <CheckCircle className="h-3.5 w-3.5 mr-1.5" />{activeCount} agentes ativos
+          </Badge>
         </div>
 
         {/* ── Tabs ──────────────────────────────────────────────────── */}
         <div className="flex gap-1 rounded-xl bg-muted/50 p-1 w-fit mx-auto">
           {([
-            { key: 'equipe', label: '🤖 Equipe' },
-            { key: 'gerador', label: '⚡ Gerador' },
-            { key: 'conhecimento', label: '🧠 Agentes' },
-            { key: 'pipeline', label: '🚀 Etapas' },
-            { key: 'fluxo', label: '🗺️ Funil' },
+            { key: 'equipe', label: '🤖 Minha Equipe' },
+            { key: 'gerador', label: '⚡ Treinar Agentes' },
+            { key: 'conhecimento', label: '🧠 Base de Conhecimento' },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -327,6 +322,82 @@ export default function SalomaoOrchestrator() {
         {/* ══════════════════════ TAB: EQUIPE ══════════════════════ */}
         {tab === 'equipe' && (
           <div className="space-y-6">
+
+            {/* ── Por onde começar ── */}
+            {showGuide && (
+              <div className="relative rounded-2xl border border-yellow-500/30 bg-gradient-to-br from-yellow-500/8 to-amber-500/5 p-6">
+                <button
+                  onClick={() => { setShowGuide(false); localStorage.setItem('salomao_guide_dismissed', 'true'); }}
+                  className="absolute right-4 top-4 rounded-lg p-1 text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+
+                <div className="flex items-center gap-2 mb-4">
+                  <Sparkles className="h-5 w-5 text-yellow-400" />
+                  <h2 className="text-lg font-bold text-foreground">Por onde começar?</h2>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-3 mb-5">
+                  {[
+                    {
+                      step: '1',
+                      emoji: '📋',
+                      title: 'Cadastre seu negócio',
+                      description: 'Responda algumas perguntas sobre sua empresa. O Salomão cria um prompt completo para todos os agentes.',
+                      action: () => setTab('gerador'),
+                      cta: 'Ir para o Gerador',
+                    },
+                    {
+                      step: '2',
+                      emoji: '🤖',
+                      title: 'Escolha um agente',
+                      description: 'Cada agente tem uma especialidade. Paulo escreve, Maria cria imagens, José gerencia seus anúncios.',
+                      action: null,
+                      cta: 'Role para ver os agentes',
+                    },
+                    {
+                      step: '3',
+                      emoji: '📊',
+                      title: 'Acompanhe os resultados',
+                      description: 'Veja as métricas dos seus anúncios, leads capturados e performance em tempo real.',
+                      action: () => navigate('/metrics'),
+                      cta: 'Ver Dashboard',
+                    },
+                  ].map((item) => (
+                    <div key={item.step} className="flex flex-col gap-3 rounded-xl border border-border/40 bg-background/50 p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-yellow-500/20 text-sm font-bold text-yellow-400">
+                          {item.step}
+                        </div>
+                        <span className="text-xl">{item.emoji}</span>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-sm text-foreground">{item.title}</p>
+                        <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{item.description}</p>
+                      </div>
+                      {item.action && (
+                        <button
+                          onClick={item.action}
+                          className="flex items-center gap-1.5 text-xs font-semibold text-yellow-400 hover:text-yellow-300 transition-colors mt-auto"
+                        >
+                          {item.cta} <ArrowRight className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <Button
+                  onClick={() => setTab('gerador')}
+                  className="bg-yellow-500 hover:bg-yellow-400 text-black font-bold"
+                >
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Começar agora — Configurar meus agentes
+                </Button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {AGENTS.map((agent) => {
                 const Icon = agent.icon;
@@ -394,7 +465,6 @@ export default function SalomaoOrchestrator() {
                       { color: 'text-cyan-400', name: '├── DANIEL', role: 'Estratégia' },
                       { color: 'text-pink-400', name: '├── DAVI', role: 'Social' },
                       { color: 'text-indigo-400', name: '├── JOÃO', role: 'Email' },
-                      { color: 'text-teal-400', name: '├── MARCOS', role: 'Leads' },
                       { color: 'text-teal-400', name: '└── PEDRO', role: 'SDR' },
                     ].map(a => (
                       <div key={a.name} className="space-y-0.5 border border-white/5 p-2 rounded bg-white/5">

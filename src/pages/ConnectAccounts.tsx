@@ -288,6 +288,17 @@ export default function ConnectAccounts() {
                       </p>
                     </div>
 
+                    {/* Dica: por onde começar */}
+                    <div className="flex items-start gap-3 rounded-xl border border-blue-500/30 bg-blue-500/8 p-3">
+                      <span className="text-xl shrink-0">👆</span>
+                      <div>
+                        <p className="text-xs font-semibold text-blue-400">Por onde começar?</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Se você anuncia no <strong className="text-foreground">Facebook ou Instagram</strong>, comece pelo <strong className="text-foreground">Meta Ads</strong>. É o mais completo e dá acesso a mais recursos da plataforma.
+                        </p>
+                      </div>
+                    </div>
+
                     {/* Visual example */}
                     <div className="rounded-xl border border-dashed border-primary/30 bg-primary/5 p-4 space-y-3">
                       <p className="text-xs font-medium text-primary flex items-center gap-1.5">

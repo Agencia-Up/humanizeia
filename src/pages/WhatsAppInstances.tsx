@@ -204,9 +204,9 @@ export default function WhatsAppInstances() {
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold lg:text-3xl">Instâncias WhatsApp</h1>
+            <h1 className="text-2xl font-bold lg:text-3xl">Números de WhatsApp</h1>
             <p className="text-muted-foreground">
-              Gerencie seus números de WhatsApp conectados para disparo em massa
+              Conecte seus chips de WhatsApp para enviar campanhas em massa
             </p>
           </div>
           <div className="flex gap-2">
@@ -268,32 +268,56 @@ export default function WhatsAppInstances() {
           </Card>
         </div>
 
+        {/* Health score legend */}
+        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-500 inline-block" /> Saúde 80–100 = Ótimo</span>
+          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-yellow-500 inline-block" /> Saúde 50–79 = Monitorar</span>
+          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500 inline-block" /> Saúde &lt;50 = Atenção</span>
+        </div>
+
         {/* Instance List */}
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         ) : instances.length === 0 ? (
-          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-            <CardContent className="flex flex-col items-center gap-4 py-16">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                <Smartphone className="h-8 w-8 text-muted-foreground" />
-              </div>
-              <div className="text-center">
-                <p className="text-lg font-medium">Nenhuma instância conectada</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Conecte seu primeiro número de WhatsApp para começar a usar o disparo em massa
+          <div className="space-y-4">
+            {/* Onboarding explanation */}
+            <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-5 flex gap-3">
+              <span className="text-2xl shrink-0">📱</span>
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-foreground">O que são instâncias / números?</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Cada <strong>"instância"</strong> é um número de WhatsApp conectado à plataforma. Você precisa de pelo menos um número para enviar campanhas em massa, responder leads pelo Inbox e usar o Agente IA.
                 </p>
+                <div className="space-y-1 pt-1">
+                  {[
+                    '📲 Você vai escanear um QR Code com o WhatsApp do seu celular',
+                    '✅ Após conectar, o número fica disponível para campanhas',
+                    '💡 Recomendamos usar chips dedicados (não seu número pessoal)',
+                  ].map(tip => <p key={tip} className="text-xs text-muted-foreground">{tip}</p>)}
+                </div>
               </div>
-              <Button
-                onClick={() => setConnectOpen(true)}
-                className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Conectar Número
-              </Button>
-            </CardContent>
-          </Card>
+            </div>
+            <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+              <CardContent className="flex flex-col items-center gap-4 py-12">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500/10">
+                  <Smartphone className="h-8 w-8 text-green-500" />
+                </div>
+                <div className="text-center">
+                  <p className="text-lg font-medium">Nenhum número conectado ainda</p>
+                  <p className="text-sm text-muted-foreground mt-1">Clique no botão abaixo e escaneie o QR Code com seu WhatsApp</p>
+                </div>
+                <Button
+                  onClick={() => setConnectOpen(true)}
+                  className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Conectar Meu Número
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {instances.map(instance => {
