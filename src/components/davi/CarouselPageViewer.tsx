@@ -194,8 +194,8 @@ const processQueue = async () => {
       } catch (e) {
         console.warn('Queue fetch failed', e);
       }
-      // Delay mandatory to prevent Pollinations from blocking the IP
-      await new Promise(r => setTimeout(r, 1200));
+      // Reduced delay to allow faster parallel-like feeling while still avoiding hard rate limits
+      await new Promise(r => setTimeout(r, 100));
     }
     imgQueue.shift();
     window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
@@ -204,8 +204,8 @@ const processQueue = async () => {
 };
 
 export function usePollinationsImage(prompt: string, width: number, height: number, seed: number) {
-  // Truncate prompt to prevent URL Too Long errors from giant copywriter prompts
-  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 250));
+  // Use a longer character limit to preserve Paulo's detailed prompts
+  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 1000));
   const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
   
   const [localUrl, setLocalUrl] = React.useState<string | null>(POLLINATIONS_CACHE.get(url) || null);
@@ -241,9 +241,13 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta = slide.type === 'cta' || slide.order === total;
 
-  const visualPrompt = `${slide.visual_cue || slide.image_prompt || slide.headline}, cinematic dark AI scene, neon holographic elements, 3D floating objects, dramatic lighting, ultra realistic, 8K, no text overlay`;
+  // Fidelity: Use Paulo's prompt directly + high-quality photographic modifiers (user choice)
+  const promptBase = slide.image_prompt || slide.visual_cue || slide.headline || 'premium professional scene';
+  const visualPrompt = `${promptBase}, high fidelity photography, cinematic business professional, realistic lighting, sharp focus, 8k, masterpiece, no text overlay`;
   const seed = ((slide.headline?.length || 10) * slide.order * 57) % 9999;
-  const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 730, seed);
+  
+  // Reuse existing image_url if provided by handleImportPaulo
+  const bgImgUrl = slide.image_url || usePollinationsImage(visualPrompt, 1080, 730, seed);
 
   return (
     <div style={{
@@ -388,9 +392,9 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
 
   // Use image_prompt > visual_cue > headline for the bottom editorial image
   const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'professional business photography';
-  const visualPrompt = `${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`;
+  const visualPrompt = `${imgContext}, real editorial photography, authentic business professional, warm natural lighting, widescreen composition, sharp focus, no text, 8K ultra detail`;
   const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
-  const bottomImg = usePollinationsImage(visualPrompt, 1200, 600, seed);
+  const bottomImg = slide.image_url || usePollinationsImage(visualPrompt, 1200, 600, seed);
 
   // Initial for avatar placeholder
   const initial = (brandName || 'MC').charAt(0).toUpperCase();
@@ -556,9 +560,9 @@ function StandardSlide({ slide, tpl, brandName, total }: {
   const textColor = isLight ? tpl.text : '#ffffff';
   const subColor = isLight ? tpl.sub : 'rgba(255,255,255,0.85)';
 
-  const visualPrompt = `${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`;
+  const visualPrompt = `${slide.image_prompt || slide.visual_cue || slide.headline || 'creative photography'}, highly detailed photography, cinematic realistic, 4k resolution, professional, masterpiece`;
   const seed = (slide.headline?.length || 10) * slide.order * 42;
-  const bgImageUrl = usePollinationsImage(visualPrompt, 1080, 1350, seed);
+  const bgImageUrl = slide.image_url || usePollinationsImage(visualPrompt, 1080, 1350, seed);
 
   let layout = slide.layout || 'left';
   if ((layout as string) === 'left' || (layout as string) === 'default') {

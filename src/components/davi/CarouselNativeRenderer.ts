@@ -58,12 +58,18 @@ export async function generateNativeCarousel({
       return loadedAttachedImages[i % loadedAttachedImages.length];
     }
     
-    // Fallback to lightning fast Picsum API instead of 500-prone Pollinations
-    const picsumUrl = `https://picsum.photos/1080/1350?random=${Date.now() + i}`;
+    // Use Pollinations AI for contextual background (much better than random landcapes)
+    const promptBase = slide.image_prompt || slide.headline || 'professional photography context';
+    const visualPrompt = encodeURIComponent(`${promptBase}, highly detailed photography, cinematic lighting, professional, realistic, masterpiece, no text overlay`);
+    const seed = ((slide.headline?.length || 10) * (i + 1) * 42) % 9999;
+    
+    // Using Flux model via Pollinations for high fidelity
+    const pollinationUrl = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}&model=flux`;
+    
     try {
-      return await loadImage(picsumUrl);
+      return await loadImage(pollinationUrl);
     } catch (e) {
-      console.warn('Could not fetch auto background:', e);
+      console.warn('Could not fetch pollination background:', e);
       return null;
     }
   });

@@ -848,13 +848,13 @@ ${pautasStr}`;
             const imgContext = slide.image_prompt || slide.headline || 'professional business photography';
             
             if (isPersonal) {
-              const visualPrompt = encodeURIComponent(`${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`);
-              const seed = ((slide.headline?.length || 10) * slide.slide_number * 43) % 9999;
-              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}`;
+              const visualPrompt = encodeURIComponent(`${imgContext}, real editorial photography, authentic business professional, warm natural lighting, sharp focus, no text, 8K ultra detail`);
+              const seed = ((slide.headline?.length || 10) * (slide.slide_number || (j+1)) * 43) % 9999;
+              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}&model=flux`;
             } else {
-              const visualPrompt = encodeURIComponent(`${imgContext}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece, no text`);
+              const visualPrompt = encodeURIComponent(`${imgContext}, highly detailed photography, cinematic realistic, 4k resolution, professional, masterpiece, no text`);
               const seed = (slide.headline?.length || 10) * (slide.slide_number || (j+1)) * 42;
-              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
+              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}&model=flux`;
             }
 
             try {
