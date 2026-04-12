@@ -179,6 +179,23 @@ const POLLINATIONS_CACHE = new Map<string, string>();
 const imgQueue: string[] = [];
 let isProcessingQueue = false;
 
+const fetchWithRetry = async (url: string, retries = 3, backoff = 1000): Promise<Response> => {
+  try {
+    const res = await fetch(url, { cache: 'force-cache' });
+    if (res.status === 429 && retries > 0) {
+      await new Promise(r => setTimeout(r, backoff));
+      return fetchWithRetry(url, retries - 1, backoff * 2);
+    }
+    return res;
+  } catch (e) {
+    if (retries > 0) {
+      await new Promise(r => setTimeout(r, backoff));
+      return fetchWithRetry(url, retries - 1, backoff * 2);
+    }
+    throw e;
+  }
+};
+
 const processQueue = async () => {
   if (isProcessingQueue) return;
   isProcessingQueue = true;
@@ -186,16 +203,16 @@ const processQueue = async () => {
     const url = imgQueue[0];
     if (!POLLINATIONS_CACHE.has(url)) {
       try {
-        const res = await fetch(url, { cache: 'force-cache' });
+        const res = await fetchWithRetry(url);
         if (res.ok) {
           const blob = await res.blob();
           POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
         }
       } catch (e) {
-        console.warn('Queue fetch failed', e);
+        console.warn('Queue fetch failed after retries', e);
       }
-      // Reduced delay to allow faster parallel-like feeling while still avoiding hard rate limits
-      await new Promise(r => setTimeout(r, 100));
+      // Balanced delay: faster than 1.2s, safer than 100ms (avoids 429)
+      await new Promise(r => setTimeout(r, 400));
     }
     imgQueue.shift();
     window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
@@ -231,6 +248,24 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
   return localUrl;
 }
 
+function SlideLoading() {
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, 
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,0.1)', backdropFilter: 'blur(4px)',
+      zIndex: 1
+    }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+        <Loader2 className="animate-spin" style={{ width: 32, height: 32, color: 'rgba(255,255,255,0.8)' }} />
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+          Gerando Visual...
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ── FUTURISTA IA SLIDE ────────────────────────────────────────────────────────
 function FuturistaSlide({ slide, tpl, brandName, total }: {
   slide: CarouselSlide;
@@ -251,13 +286,15 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
   const bgImgUrl = slide.image_url || usePollinationsImage(visualPrompt, 1080, 730, seed);
 
   return (
-    <div style={{
-      width: '100%', height: '100%',
-      background: tpl.bgGradient,
-      display: 'flex', flexDirection: 'column',
-      fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
-      position: 'relative', overflow: 'hidden',
-    }}>
+      <div style={{
+        width: '100%', height: '100%',
+        background: tpl.bgGradient,
+        display: 'flex', flexDirection: 'column',
+        fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
+        position: 'relative', overflow: 'hidden',
+      }}>
+        {/* Individual slide loading indicator */}
+        {!bgImgUrl && <SlideLoading />}
       {/* TOP — Cinematic image (55%) */}
       <div style={{
         flex: '0 0 55%',
@@ -409,6 +446,8 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
       fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
       position: 'relative', overflow: 'hidden',
     }}>
+      {/* Individual slide loading indicator for bottom image */}
+      {!bottomImg && <SlideLoading />}
       {/* TOP — Creator avatar + name */}
       <div style={{
         padding: '18px 20px 0',

@@ -26,6 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogDescription,
 } from "@/components/ui/dialog";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -836,37 +837,48 @@ ${pautasStr}`;
 
           const isPersonal = attachedImages[0] || selectedTemplate === 'personal_brand';
           
-          const visualSlides = await Promise.all(slides.map(async (slide: any, j: number) => {
-            const order = slide.slide_number || (j + 1);
-            const imgContext = slide.image_prompt || slide.headline || 'professional photography';
-            const seed = ((slide.headline?.length || 10) * order * 42) % 100000;
+          const visualSlides: any[] = [];
+          
+          // Process in batches of 3 to avoid 429 (Too Many Requests) and 406 (Network limits)
+          for (let j = 0; j < slides.length; j += 3) {
+            const batch = slides.slice(j, j + 3);
+            const batchResults = await Promise.all(batch.map(async (slide: any, idx: number) => {
+              const slideIdx = j + idx;
+              const order = slide.slide_number || (slideIdx + 1);
+              const imgContext = slide.image_prompt || slide.headline || 'professional photography';
+              const seed = ((slide.headline?.length || 10) * order * 42) % 100000;
+              
+              let bgImageUrlRaw = '';
+              if (isPersonal) {
+                const visualPrompt = encodeURIComponent(`${imgContext}, real editorial photography, authentic business professional, warm natural lighting, sharp focus, no text, 8K ultra detail`);
+                bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}&model=flux`;
+              } else {
+                const visualPrompt = encodeURIComponent(`${imgContext}, highly detailed photography, cinematic realistic, 4k resolution, professional, masterpiece, no text`);
+                bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}&model=flux`;
+              }
+
+              // Prefetch
+              try {
+                const img = new Image();
+                img.src = bgImageUrlRaw;
+              } catch (e) {}
+
+              return {
+                order,
+                type: slide.type || (slideIdx === 0 ? 'cover' : slideIdx === slides.length - 1 ? 'cta' : 'content'),
+                headline: slide.headline,
+                body: slide.subtext || slide.body || '',
+                cta: slide.type === 'cta' ? (slide.cta || 'Toque no link da bio') : '',
+                image_prompt: slide.image_prompt,
+                visual_cue: imgContext,
+                image_url: bgImageUrlRaw,
+              };
+            }));
+            visualSlides.push(...batchResults);
             
-            let bgImageUrlRaw = '';
-            if (isPersonal) {
-              const visualPrompt = encodeURIComponent(`${imgContext}, real editorial photography, authentic business professional, warm natural lighting, sharp focus, no text, 8K ultra detail`);
-              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}&model=flux`;
-            } else {
-              const visualPrompt = encodeURIComponent(`${imgContext}, highly detailed photography, cinematic realistic, 4k resolution, professional, masterpiece, no text`);
-              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}&model=flux`;
-            }
-
-            // Prefetch in parallel
-            try {
-              const img = new Image();
-              img.src = bgImageUrlRaw;
-            } catch (e) {}
-
-            return {
-              order,
-              type: slide.type || (j === 0 ? 'cover' : j === slides.length - 1 ? 'cta' : 'content'),
-              headline: slide.headline,
-              body: slide.subtext || slide.body || '',
-              cta: slide.type === 'cta' ? (slide.cta || 'Toque no link da bio') : '',
-              image_prompt: slide.image_prompt,
-              visual_cue: imgContext,
-              image_url: bgImageUrlRaw,
-            };
-          }));
+            // Small safety delay between batches if not the last one
+            if (j + 3 < slides.length) await new Promise(r => setTimeout(r, 600));
+          }
 
           const generated: GeneratedContent = {
             id: Date.now().toString() + i,
@@ -1517,6 +1529,7 @@ ${pautasStr}`;
                       <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40 p-6 flex flex-col items-center max-h-[90vh] overflow-hidden">
                         <DialogHeader className="w-full text-center mb-2">
                           <DialogTitle className="text-sm font-bold">{item.title}</DialogTitle>
+                          <DialogDescription className="sr-only">Visualize e gerencie os slides do seu carrossel.</DialogDescription>
                         </DialogHeader>
                         <CarouselPageViewer
                           slides={item.slides}
