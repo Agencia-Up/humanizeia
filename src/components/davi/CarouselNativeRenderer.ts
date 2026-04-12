@@ -61,7 +61,7 @@ export async function generateNativeCarousel({
     // Use Pollinations AI for contextual background (much better than random landcapes)
     const promptBase = slide.image_prompt || slide.headline || 'professional photography context';
     const visualPrompt = encodeURIComponent(`${promptBase}, highly detailed photography, cinematic lighting, professional, realistic, masterpiece, no text overlay`);
-    const seed = ((slide.headline?.length || 10) * (i + 1) * 42) % 9999;
+    const seed = ((slide.headline?.length || 10) * (i + 1) * 42) % 100000;
     
     // Using Flux model via Pollinations for high fidelity
     const pollinationUrl = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}&model=flux`;

@@ -244,7 +244,8 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
   // Fidelity: Use Paulo's prompt directly + high-quality photographic modifiers (user choice)
   const promptBase = slide.image_prompt || slide.visual_cue || slide.headline || 'premium professional scene';
   const visualPrompt = `${promptBase}, high fidelity photography, cinematic business professional, realistic lighting, sharp focus, 8k, masterpiece, no text overlay`;
-  const seed = ((slide.headline?.length || 10) * slide.order * 57) % 9999;
+  // Standardized seed for browser cache consistency across components
+  const seed = ((slide.headline?.length || 10) * slide.order * 42) % 100000;
   
   // Reuse existing image_url if provided by handleImportPaulo
   const bgImgUrl = slide.image_url || usePollinationsImage(visualPrompt, 1080, 730, seed);
@@ -393,7 +394,7 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
   // Use image_prompt > visual_cue > headline for the bottom editorial image
   const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'professional business photography';
   const visualPrompt = `${imgContext}, real editorial photography, authentic business professional, warm natural lighting, widescreen composition, sharp focus, no text, 8K ultra detail`;
-  const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
+  const seed = ((slide.headline?.length || 10) * slide.order * 42) % 100000;
   const bottomImg = slide.image_url || usePollinationsImage(visualPrompt, 1200, 600, seed);
 
   // Initial for avatar placeholder
@@ -561,7 +562,7 @@ function StandardSlide({ slide, tpl, brandName, total }: {
   const subColor = isLight ? tpl.sub : 'rgba(255,255,255,0.85)';
 
   const visualPrompt = `${slide.image_prompt || slide.visual_cue || slide.headline || 'creative photography'}, highly detailed photography, cinematic realistic, 4k resolution, professional, masterpiece`;
-  const seed = (slide.headline?.length || 10) * slide.order * 42;
+  const seed = ((slide.headline?.length || 10) * slide.order * 42) % 100000;
   const bgImageUrl = slide.image_url || usePollinationsImage(visualPrompt, 1080, 1350, seed);
 
   let layout = slide.layout || 'left';
