@@ -121,6 +121,27 @@ function extractHashtags(text: string): string[] {
   return matches ? matches.slice(0, 10) : [];
 }
 
+/**
+ * Enaltece o prompt original com palavras-chave de fotografia profissional
+ * para garantir que o Pollinations (Flux) gere algo de nível premium.
+ */
+function enrichVisualPrompt(prompt: string, isPersonal: boolean = false): string {
+  const promptLower = prompt.toLowerCase();
+  
+  // Se já for um prompt denso e detalhado (vindo do novo Paulo), adicionamos menos coisas
+  const isDetailed = prompt.length > 150;
+  
+  const baseModifiers = "cinematic lighting, high-end commercial photography, extremely detailed, photorealistic, 8k, sharp focus, no text on image";
+  const polish = "vibrant colors, minimalist luxury aesthetic, masterpiece quality, incredible textures";
+  
+  if (isPersonal) {
+    return `${prompt}, authentic business branding, editorial style, warm natural sunlight, soft bokeh background, Fujifilm GFX 100, 85mm lens, ${baseModifiers}, ${polish}`;
+  }
+  
+  const ambient = isDetailed ? "" : "global illumination, volumetric shadows, studio lighting, clean composition, shot on Sony A7R IV, ";
+  return `${prompt}, ${ambient}${baseModifiers}, ${polish}`;
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function DaviSocialMedia() {
@@ -803,6 +824,7 @@ ${pautasStr}`;
           const slides = pauloCarousel.slides || [];
           const isPersonal = clientImageUrl || selectedTemplate === 'personal_brand';
           
+<<<<<<< Updated upstream
           let visualSlides = [];
 
           // Generate images directly for each slide based on Paulo's image_prompt
@@ -836,14 +858,49 @@ ${pautasStr}`;
             visualSlides.push({
               order: slide.slide_number || (j+1),
               type: slide.type || (j === 0 ? 'cover' : j === slides.length - 1 ? 'cta' : 'content'),
+=======
+          // Paralelismo Total (Todos os slides gerados de uma vez)
+          addDaviMessage(`🎨 Criando visual para **${slides.length} slides** simultaneamente...`);
+
+          const visualSlides = await Promise.all(slides.map(async (slide: any, slideIdx: number) => {
+            const order = slide.slide_number || (slideIdx + 1);
+            const imgContext = slide.image_prompt || slide.headline || 'professional photography';
+            const seed = ((slide.headline?.length || 10) * order * 42) % 100000;
+            
+            // Aplica o Enriquecimento de Prompt (Efeito ChatGPT)
+            const enrichedPrompt = enrichVisualPrompt(imgContext, isPersonal);
+            const visualPrompt = encodeURIComponent(enrichedPrompt);
+            
+            const width = isPersonal ? 1200 : 1080;
+            const height = isPersonal ? 600 : 1350;
+            
+            // Pollinations Flux
+            const bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
+
+            // Prefetch invisível
+            try {
+              const img = new Image();
+              img.src = bgImageUrlRaw;
+            } catch (e) {}
+
+            return {
+              order,
+              type: slide.type || (slideIdx === 0 ? 'cover' : slideIdx === slides.length - 1 ? 'cta' : 'content'),
+>>>>>>> Stashed changes
               headline: slide.headline,
               body: slide.subtext || slide.body || '',
               cta: slide.type === 'cta' ? (slide.cta || 'Toque no link da bio') : '',
               image_prompt: slide.image_prompt,
               visual_cue: imgContext,
+<<<<<<< Updated upstream
               image_url: bgImageUrlRaw, // Using the image_url field if available in CarouselPageViewer
             });
           }
+=======
+              image_url: bgImageUrlRaw,
+            };
+          }));
+>>>>>>> Stashed changes
 
           const generated: GeneratedContent = {
             id: Date.now().toString() + i,

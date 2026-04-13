@@ -186,6 +186,7 @@ const processQueue = async () => {
     const url = imgQueue[0];
     if (!POLLINATIONS_CACHE.has(url)) {
       try {
+<<<<<<< Updated upstream
         const res = await fetch(url, { cache: 'force-cache' });
         if (res.ok) {
           const blob = await res.blob();
@@ -196,9 +197,28 @@ const processQueue = async () => {
       }
       // Delay mandatory to prevent Pollinations from blocking the IP
       await new Promise(r => setTimeout(r, 1200));
+=======
+        // Tentativa de carregar em paralelo (limitado a pequenas rajadas)
+        const batch = imgQueue.splice(0, 3); // Processa até 3 por vez
+        await Promise.all(batch.map(async (qUrl) => {
+          if (POLLINATIONS_CACHE.has(qUrl)) return;
+          const res = await fetchWithRetry(qUrl);
+          if (res.ok) {
+            const blob = await res.blob();
+            POLLINATIONS_CACHE.set(qUrl, URL.createObjectURL(blob));
+            window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: qUrl }));
+          }
+        }));
+      } catch (e) {
+        console.warn('Batch fetch failed', e);
+      }
+      // Delay mínimo para evitar 429 agressivo, mas muito mais rápido que antes
+      await new Promise(r => setTimeout(r, 50));
+    } else {
+      imgQueue.shift();
+      window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
+>>>>>>> Stashed changes
     }
-    imgQueue.shift();
-    window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
   }
   isProcessingQueue = false;
 };
@@ -231,6 +251,50 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
   return localUrl;
 }
 
+<<<<<<< Updated upstream
+=======
+function SlideLoading() {
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, 
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(5, 8, 22, 0.8)',
+      backdropFilter: 'blur(12px)',
+      zIndex: 10
+    }}>
+      <div style={{ 
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+        padding: '24px', borderRadius: '24px', background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+      }}>
+        <div style={{ position: 'relative' }}>
+          <Loader2 className="animate-spin" style={{ width: 40, height: 40, color: '#6366F1' }} />
+          <div style={{ 
+            position: 'absolute', inset: -4, borderRadius: '50%', 
+            border: '2px solid #6366F1', opacity: 0.3,
+            animation: 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite'
+          }} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+          <span style={{ 
+            fontSize: 11, fontWeight: 900, color: '#fff', 
+            textTransform: 'uppercase', letterSpacing: '0.2em',
+            background: 'linear-gradient(90deg, #fff, #6366F1)',
+            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
+          }}>
+            Davi está Criando
+          </span>
+          <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
+            Visual Cinematográfico IA
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+>>>>>>> Stashed changes
 // ── FUTURISTA IA SLIDE ────────────────────────────────────────────────────────
 function FuturistaSlide({ slide, tpl, brandName, total }: {
   slide: CarouselSlide;
