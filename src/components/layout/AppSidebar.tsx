@@ -57,8 +57,8 @@ const agentItems = [
   { title: 'Davi',    subtitle: 'Social Media',  url: '/davi',           icon: Instagram, emoji: '📱' },
   { title: 'João',    subtitle: 'E-mail',        url: '/joao',           icon: Mail,      emoji: '📧' },
   { title: 'Daniel',  subtitle: 'Estratégia',    url: '/daniel',            icon: Brain,  emoji: '🧠' },
-  { title: 'Marcos',  subtitle: 'CRM & Leads',   url: '/crm',               icon: Users,  emoji: '🤝' },
-  { title: 'Pedro',   subtitle: 'WhatsApp IA',   url: '/whatsapp/ai-agent', icon: Bot,    emoji: '💬' },
+  { title: 'Marcos',  subtitle: 'CRM & WhatsApp', url: '/marcos',            icon: Users,  emoji: '🤝' },
+  { title: 'Pedro',   subtitle: 'Atendimento IA', url: '/whatsapp/ai-agent', icon: Bot,    emoji: '💬' },
 ];
 
 // ── WhatsApp & CRM ────────────────────────────────────────────────────────────
@@ -231,12 +231,6 @@ export function AppSidebar() {
           ))}
         </NavGroup>
 
-        {/* ── WhatsApp & CRM ── */}
-        <NavGroup label="WhatsApp & CRM" defaultOpen={false} collapsed={collapsed}>
-          {whatsappItems.map(item => (
-            <NavItem key={item.url} item={item} collapsed={collapsed} />
-          ))}
-        </NavGroup>
 
         {/* ── Sistema ── */}
         <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
