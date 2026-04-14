@@ -12,7 +12,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useSocialMedia } from '@/hooks/useSocialMedia';
 import { useAgentChat } from '@/contexts/AgentChatContext';
-import { CarouselPageViewer, TemplateId, CAROUSEL_TEMPLATES } from '@/components/davi/CarouselPageViewer';
+import { CarouselPageViewer } from '@/components/davi/CarouselPageViewer';
 import {
   Instagram, Zap, Loader2, Clock, CheckCircle2, XCircle, ChevronRight,
   Copy, Trash2, FolderOpen, Layers, Send, Link, Palette, Eye,
@@ -174,7 +174,7 @@ export default function DaviSocialMedia() {
     localStorage.setItem('daviLibrary', JSON.stringify(library));
   }, [library]);
   const [autoModeRunning, setAutoModeRunning] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('futurista_ia');
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('futurista_ia');
   const [carouselType, setCarouselType] = useState<CarouselTypeValue>('educacional');
   const [clientContext, setClientContext] = useState<{ name: string; produto: string; publico: string } | null>(null);
   const [briefingAlerta, setBriefingAlerta] = useState(false);
@@ -313,7 +313,7 @@ export default function DaviSocialMedia() {
     setLibrary(prev => [content, ...prev]);
   };
 
-  const updateContentCardTemplate = (msgId: string, templateId: TemplateId) => {
+  const updateContentCardTemplate = (msgId: string, templateId: string) => {
     setMessages(prev => prev.map(m => {
       if (m.id !== msgId || !m.contentCard) return m;
       return { ...m, contentCard: { ...m.contentCard, templateId } };
@@ -824,30 +824,12 @@ ${pautasStr}`;
           const slides = pauloCarousel.slides || [];
           const isPersonal = clientImageUrl || selectedTemplate === 'personal_brand';
           
-          // Paralelismo Total (Todos os slides gerados de uma vez)
-          addDaviMessage(`🎨 Criando visual para **${slides.length} slides** simultaneamente...`);
+          addDaviMessage(`🎨 Preparando estrutura para **${slides.length} slides**... O motor visual fará a renderização em tempo real na tela!`);
 
-          const visualSlides = await Promise.all(slides.map(async (slide: any, slideIdx: number) => {
+          const visualSlides = slides.map((slide: any, slideIdx: number) => {
             const order = slide.slide_number || (slideIdx + 1);
             const imgContext = slide.image_prompt || slide.headline || 'professional photography';
-            const seed = ((slide.headline?.length || 10) * order * 42) % 100000;
             
-            // Aplica o Enriquecimento de Prompt (Efeito ChatGPT)
-            const enrichedPrompt = enrichVisualPrompt(imgContext, isPersonal);
-            const visualPrompt = encodeURIComponent(enrichedPrompt);
-            
-            const width = isPersonal ? 1200 : 1080;
-            const height = isPersonal ? 600 : 1350;
-            
-            // Pollinations Flux
-            const bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
-
-            // Prefetch invisível
-            try {
-              const img = new Image();
-              img.src = bgImageUrlRaw;
-            } catch (e) {}
-
             return {
               order,
               type: slide.type || (slideIdx === 0 ? 'cover' : slideIdx === slides.length - 1 ? 'cta' : 'content'),
@@ -856,9 +838,8 @@ ${pautasStr}`;
               cta: slide.type === 'cta' ? (slide.cta || 'Toque no link da bio') : '',
               image_prompt: slide.image_prompt,
               visual_cue: imgContext,
-              image_url: bgImageUrlRaw,
             };
-          }));
+          });
 
           const generated: GeneratedContent = {
             id: Date.now().toString() + i,
@@ -1312,8 +1293,6 @@ ${pautasStr}`;
                           {message.contentCard.slides && message.contentCard.slides.length > 0 ? (
                             <CarouselPageViewer
                               slides={message.contentCard.slides}
-                              templateId={(message.contentCard.templateId as TemplateId) ?? 'futurista_ia'}
-                              onTemplateChange={(tid) => updateContentCardTemplate(message.id, tid)}
                               brandName={clientContext?.name || 'Minha Marca'}
                               clientImageUrl={clientImageUrl ?? undefined}
                             />
@@ -1498,13 +1477,6 @@ ${pautasStr}`;
                         </DialogHeader>
                         <CarouselPageViewer
                           slides={item.slides}
-                          templateId={(item.templateId as TemplateId) ?? 'futurista_ia'}
-                          onTemplateChange={(tid) => {
-                            // Update template in library item
-                            setLibrary(prev => prev.map(l => l.id === item.id ? { ...l, templateId: tid } : l));
-                            // Also update the message card if it exists
-                            setMessages(prev => prev.map(m => m.contentCard?.id === item.id ? { ...m, contentCard: { ...m.contentCard, templateId: tid } } : m));
-                          }}
                           brandName={clientContext?.name || 'Minha Marca'}
                           clientImageUrl={clientImageUrl ?? undefined}
                         />

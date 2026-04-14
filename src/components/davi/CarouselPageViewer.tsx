@@ -1,159 +1,8 @@
-import React, { useState, useRef, useCallback, useEffect, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useState, useRef, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import html2canvas from 'html2canvas';
-import { ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import { CarouselSlide } from '@/hooks/useSocialMedia';
 import { Button } from '@/components/ui/button';
-
-// ── Template definitions ──────────────────────────────────────────────────────
-export const CAROUSEL_TEMPLATES = [
-  // ── FUTURISTA IA (Model 1 reference) ─────────────────────────────────────
-  {
-    id: 'futurista_ia',
-    name: 'Futurista IA',
-    emoji: '🤖',
-    bg: '#050816',
-    bgGradient: 'linear-gradient(180deg, #050816 0%, #0a1628 100%)',
-    bgPattern: 'radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.25) 0%, transparent 60%)',
-    bgSize: '100% 100%',
-    accent: '#6366F1',
-    accentGlow: 'rgba(99,102,241,0.45)',
-    text: '#FFFFFF',
-    sub: 'rgba(255,255,255,0.75)',
-    muted: '#1e2a4a',
-    fontWeight: '900',
-    borderStyle: '1px solid rgba(99,102,241,0.3)',
-    // Specific layout hint for this template
-    layoutMode: 'image_top_text_bottom',
-  },
-  // ── PERSONAL BRAND (Model 2 reference) ────────────────────────────────────
-  {
-    id: 'personal_brand',
-    name: 'Personal Brand',
-    emoji: '👤',
-    bg: '#FAFAF8',
-    bgGradient: '#FFFFFF',
-    bgPattern: '',
-    bgSize: '100% 100%',
-    accent: '#111111',
-    accentGlow: 'rgba(0,0,0,0.1)',
-    text: '#111111',
-    sub: '#555555',
-    muted: '#E5E5E5',
-    fontWeight: '400',
-    borderStyle: '1px solid #E5E5E5',
-    layoutMode: 'avatar_text_image',
-  },
-  // ── DARK PRO ──────────────────────────────────────────────────────────────
-  {
-    id: 'dark_pro',
-    name: 'Dark Pro',
-    emoji: '🖤',
-    bg: '#0A0A0A',
-    bgGradient: 'linear-gradient(135deg, #0A0A0A 0%, #1A1A2E 100%)',
-    bgPattern: 'radial-gradient(circle at 10% 20%, rgba(124,58,237,0.15) 0%, transparent 50%)',
-    bgSize: '100% 100%',
-    accent: '#7C3AED',
-    accentGlow: 'rgba(124,58,237,0.3)',
-    text: '#FFFFFF',
-    sub: '#A1A1AA',
-    muted: '#3F3F46',
-    fontWeight: '800',
-    borderStyle: '2px solid rgba(124,58,237,0.4)',
-    layoutMode: 'standard',
-  },
-  // ── GOLD ELITE ────────────────────────────────────────────────────────────
-  {
-    id: 'gold',
-    name: 'Gold Elite',
-    emoji: '✨',
-    bg: '#0D0900',
-    bgGradient: '#0D0900',
-    bgPattern: 'linear-gradient(45deg, rgba(212,160,23,0.03) 25%, transparent 25%, transparent 50%, rgba(212,160,23,0.03) 50%, rgba(212,160,23,0.03) 75%, transparent 75%, transparent)',
-    bgSize: '24px 24px',
-    accent: '#D4A017',
-    accentGlow: 'rgba(212,160,23,0.3)',
-    text: '#FFFFFF',
-    sub: '#C9A84C',
-    muted: '#3A2D00',
-    fontWeight: '800',
-    borderStyle: '2px solid rgba(212,160,23,0.4)',
-    layoutMode: 'standard',
-  },
-  // ── EDITORIAL ─────────────────────────────────────────────────────────────
-  {
-    id: 'editorial',
-    name: 'Editorial',
-    emoji: '📰',
-    bg: '#0D1B2A',
-    bgGradient: 'linear-gradient(160deg, #0D1B2A 0%, #1B2838 100%)',
-    bgPattern: 'linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)',
-    bgSize: '20px 20px',
-    accent: '#00B4D8',
-    accentGlow: 'rgba(0,180,216,0.25)',
-    text: '#E8F4FD',
-    sub: '#90CAE4',
-    muted: '#1E3A4C',
-    fontWeight: '700',
-    borderStyle: '1px solid rgba(0,180,216,0.3)',
-    layoutMode: 'standard',
-  },
-  // ── NEON ──────────────────────────────────────────────────────────────────
-  {
-    id: 'neon',
-    name: 'Neon',
-    emoji: '⚡',
-    bg: '#050510',
-    bgGradient: '#050510',
-    bgPattern: 'radial-gradient(circle at 50% -20%, rgba(0,255,136,0.25) 0%, transparent 60%)',
-    bgSize: '100% 100%',
-    accent: '#00FF88',
-    accentGlow: 'rgba(0,255,136,0.25)',
-    text: '#FFFFFF',
-    sub: '#7EFFC5',
-    muted: '#1A1A3E',
-    fontWeight: '900',
-    borderStyle: '1px solid rgba(0,255,136,0.4)',
-    layoutMode: 'standard',
-  },
-  // ── CLEAN LIGHT ───────────────────────────────────────────────────────────
-  {
-    id: 'clean_light',
-    name: 'Clean Light',
-    emoji: '☀️',
-    bg: '#FAFAFA',
-    bgGradient: '#FFFFFF',
-    bgPattern: 'radial-gradient(rgba(99,102,241,0.15) 1.5px, transparent 1.5px)',
-    bgSize: '16px 16px',
-    accent: '#6366F1',
-    accentGlow: 'rgba(99,102,241,0.15)',
-    text: '#111827',
-    sub: '#6B7280',
-    muted: '#E5E7EB',
-    fontWeight: '800',
-    borderStyle: '2px solid rgba(99,102,241,0.2)',
-    layoutMode: 'standard',
-  },
-  // ── ROSE GOLD ─────────────────────────────────────────────────────────────
-  {
-    id: 'rose',
-    name: 'Rose Gold',
-    emoji: '🌹',
-    bg: '#120008',
-    bgGradient: '#120008',
-    bgPattern: 'radial-gradient(ellipse at center, rgba(251,113,133,0.15) 0%, transparent 70%)',
-    bgSize: '100% 100%',
-    accent: '#FB7185',
-    accentGlow: 'rgba(251,113,133,0.3)',
-    text: '#FFF0F3',
-    sub: '#FCA5B4',
-    muted: '#3D001A',
-    fontWeight: '800',
-    borderStyle: '1px solid rgba(251,113,133,0.4)',
-    layoutMode: 'standard',
-  },
-] as const;
-
-export type TemplateId = typeof CAROUSEL_TEMPLATES[number]['id'];
 
 // ── Accent word highlight ─────────────────────────────────────────────────────
 function HighlightHeadline({ text, accentWord, color }: { text: string; accentWord?: string; color: string }) {
@@ -186,34 +35,27 @@ const processQueue = async () => {
     const url = imgQueue[0];
     if (!POLLINATIONS_CACHE.has(url)) {
       try {
-        // Tentativa de carregar em paralelo (limitado a pequenas rajadas)
-        const batch = imgQueue.splice(0, 3); // Processa até 3 por vez
-        await Promise.all(batch.map(async (qUrl) => {
-          if (POLLINATIONS_CACHE.has(qUrl)) return;
-          const res = await fetchWithRetry(qUrl);
-          if (res.ok) {
-            const blob = await res.blob();
-            POLLINATIONS_CACHE.set(qUrl, URL.createObjectURL(blob));
-            window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: qUrl }));
-          }
-        }));
+        const res = await fetch(url, { cache: 'force-cache' });
+        if (res.ok) {
+          const blob = await res.blob();
+          POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
+        }
       } catch (e) {
-        console.warn('Batch fetch failed', e);
+        console.warn('Queue fetch failed', e);
       }
-      // Delay mínimo para evitar 429 agressivo, mas muito mais rápido que antes
-      await new Promise(r => setTimeout(r, 50));
-    } else {
-      imgQueue.shift();
-      window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
+      // Speed optimized
+      await new Promise(r => setTimeout(r, 600));
     }
+    imgQueue.shift();
+    window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
   }
   isProcessingQueue = false;
 };
 
 export function usePollinationsImage(prompt: string, width: number, height: number, seed: number) {
-  // Truncate prompt to prevent URL Too Long errors from giant copywriter prompts
-  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 250));
-  const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
+  // Speed optimized Pollinations (Turbo mode automatically by removing model=flux)
+  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 300));
+  const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}`;
   
   const [localUrl, setLocalUrl] = React.useState<string | null>(POLLINATIONS_CACHE.get(url) || null);
 
@@ -238,565 +80,232 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
   return localUrl;
 }
 
-function SlideLoading() {
-  return (
-    <div style={{
-      position: 'absolute', inset: 0, 
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(5, 8, 22, 0.8)',
-      backdropFilter: 'blur(12px)',
-      zIndex: 10
-    }}>
-      <div style={{ 
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
-        padding: '24px', borderRadius: '24px', background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
-      }}>
-        <div style={{ position: 'relative' }}>
-          <Loader2 className="animate-spin" style={{ width: 40, height: 40, color: '#6366F1' }} />
-          <div style={{ 
-            position: 'absolute', inset: -4, borderRadius: '50%', 
-            border: '2px solid #6366F1', opacity: 0.3,
-            animation: 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite'
-          }} />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-          <span style={{ 
-            fontSize: 11, fontWeight: 900, color: '#fff', 
-            textTransform: 'uppercase', letterSpacing: '0.2em',
-            background: 'linear-gradient(90deg, #fff, #6366F1)',
-            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
-          }}>
-            Davi está Criando
-          </span>
-          <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
-            Visual Cinematográfico IA
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── FUTURISTA IA SLIDE ────────────────────────────────────────────────────────
-function FuturistaSlide({ slide, tpl, brandName, total }: {
+// ── DYNAMIC FREEPIK SLIDE ────────────────────────────────────────────────────────
+// Este componente decide aleatoriamente um layout de revista/editorial para cada slide
+function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
   slide: CarouselSlide;
-  tpl: typeof CAROUSEL_TEMPLATES[number];
-  brandName: string;
-  total: number;
-}) {
-  const isCover = slide.type === 'cover' || slide.order === 1;
-  const isCta = slide.type === 'cta' || slide.order === total;
-
-  const visualPrompt = `${slide.visual_cue || slide.image_prompt || slide.headline}, cinematic dark AI scene, neon holographic elements, 3D floating objects, dramatic lighting, ultra realistic, 8K, no text overlay`;
-  const seed = ((slide.headline?.length || 10) * slide.order * 57) % 9999;
-  const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 730, seed);
-
-  return (
-    <div style={{
-      width: '100%', height: '100%',
-      background: tpl.bgGradient,
-      display: 'flex', flexDirection: 'column',
-      fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
-      position: 'relative', overflow: 'hidden',
-    }}>
-      {/* TOP — Cinematic image (55%) */}
-      <div style={{
-        flex: '0 0 55%',
-        backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
-        backgroundSize: 'cover',
-        backgroundPosition: 'center top',
-        position: 'relative',
-        overflow: 'hidden',
-      }} className={!bgImgUrl ? "animate-pulse bg-slate-900 flex items-center justify-center" : ""}>
-        {!bgImgUrl && (
-          <div className="flex flex-col items-center gap-2 opacity-50">
-            <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
-            <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Renderizando IA...</span>
-          </div>
-        )}
-        {/* Gradient fade bottom */}
-        <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%',
-          background: `linear-gradient(to bottom, transparent, ${tpl.bg})`,
-        }} />
-        {/* Brand top-left */}
-        <div style={{
-          position: 'absolute', top: 14, left: 14, zIndex: 2,
-          fontSize: 9, fontWeight: 800, letterSpacing: '0.15em',
-          color: '#fff', textTransform: 'uppercase',
-          background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(255,255,255,0.15)', padding: '4px 10px', borderRadius: 6,
-        }}>
-          {brandName}
-        </div>
-        {/* Slide counter */}
-        <div style={{
-          position: 'absolute', top: 14, right: 14, zIndex: 2,
-          fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.7)',
-          background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)',
-          padding: '3px 8px', borderRadius: 6,
-        }}>
-          {slide.order}/{total}
-        </div>
-      </div>
-
-      {/* BOTTOM — Text area (45%) */}
-      <div style={{
-        flex: '0 0 45%',
-        background: tpl.bgGradient,
-        padding: '16px 20px 14px',
-        display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-        position: 'relative',
-      }}>
-        {/* Top accent bar */}
-        <div style={{
-          position: 'absolute', top: 0, left: 20, right: 20, height: 2,
-          background: `linear-gradient(90deg, ${tpl.accent}, transparent)`,
-        }} />
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {/* Sub-label */}
-          {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-            <div style={{
-              fontSize: 12, fontWeight: 800, color: tpl.accent,
-              letterSpacing: '0.15em', textTransform: 'uppercase',
-            }}>
-              {slide.sub_headline}
-            </div>
-          )}
-          {/* Big headline */}
-          <div style={{
-            fontSize: isCover ? 32 : 25, fontWeight: 900, color: '#fff',
-            lineHeight: 1.1, letterSpacing: '-0.02em',
-            textShadow: `0 2px 12px rgba(0,0,0,0.8)`,
-          }}>
-            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
-          </div>
-          {/* Accent line */}
-          <div style={{ width: 44, height: 4, background: tpl.accent, borderRadius: 2, boxShadow: `0 0 12px ${tpl.accentGlow}`, marginTop: 4, marginBottom: 4 }} />
-          {/* Body */}
-          {typeof slide.body === 'string' && slide.body.trim() && (
-            <div style={{ fontSize: 15, color: 'rgba(255,255,255,0.9)', lineHeight: 1.5, maxWidth: '100%', fontWeight: 500 }}>
-              {slide.body}
-            </div>
-          )}
-          {/* Bullets */}
-          {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-              {slide.bullets.map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <span style={{ color: tpl.accent, fontSize: 16, flexShrink: 0, marginTop: 0 }}>✓</span>
-                  <span style={{ fontSize: 14, color: '#fff', lineHeight: 1.45, fontWeight: 500 }}>{typeof b === 'string' ? b : ''}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {/* CTA button */}
-          {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
-            <div style={{
-              marginTop: 10, padding: '14px 24px',
-              background: tpl.accent, color: '#fff', borderRadius: 28,
-              fontWeight: 900, fontSize: 15, textAlign: 'center',
-              boxShadow: `0 6px 24px ${tpl.accentGlow}`,
-              textTransform: 'uppercase', letterSpacing: '0.05em'
-            }}>
-              {slide.cta}
-            </div>
-          )}
-        </div>
-
-        {/* Swipe hint */}
-        {!isCta && (
-          <div style={{
-            fontSize: 9, color: 'rgba(255,255,255,0.35)',
-            fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em',
-            textAlign: 'right',
-          }}>
-            ARRASTA PRO LADO ›››
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── PERSONAL BRAND SLIDE ──────────────────────────────────────────────────────
-function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
-  slide: CarouselSlide;
-  tpl: typeof CAROUSEL_TEMPLATES[number];
   brandName: string;
   total: number;
   clientImageUrl?: string;
 }) {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta = slide.type === 'cta' || slide.order === total;
-  const [avatarError, setAvatarError] = React.useState(false);
 
-  // Use image_prompt > visual_cue > headline for the bottom editorial image
-  const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'professional business photography';
-  const visualPrompt = `${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`;
-  const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
-  const bottomImg = usePollinationsImage(visualPrompt, 1200, 600, seed);
+  // Decide dynamically the accent color and layout style based on slide.order/seed
+  const seedNum = (slide.headline?.length || 10) * slide.order * 61;
+  const layouts = ['split_modern', 'glass_overlay', 'magazine', 'circle_cut'];
+  const colors = ['#6366F1', '#10B981', '#F43F5E', '#F59E0B', '#3B82F6', '#8B5CF6'];
+  
+  // Capa sempre tenta um layout mais limpo, CTA também. Meios variam.
+  const layout = isCover ? 'glass_overlay' : isCta ? 'glass_overlay' : layouts[seedNum % layouts.length];
+  const accentColor = colors[seedNum % colors.length];
 
-  // Initial for avatar placeholder
-  const initial = (brandName || 'MC').charAt(0).toUpperCase();
-  const showAvatar = !!(clientImageUrl && !avatarError);
+  // Motor Veloz: Prompt turbinado com DALL-E style
+  const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'abstract minimalist background';
+  const visualPrompt = `${imgContext}, cinematic aesthetic, 8k resolution, photorealistic, professional editorial photography, clean composition, dark moody lighting, masterpiece, no text`;
+  const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 1350, seedNum);
 
-  return (
+  const AvatarIcon = () => (
     <div style={{
-      width: '100%', height: '100%',
-      background: '#FFFFFF',
-      display: 'flex', flexDirection: 'column',
-      fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
-      position: 'relative', overflow: 'hidden',
+      position: 'absolute', top: 16, left: 16, zIndex: 10,
+      display: 'flex', alignItems: 'center', gap: 8,
+      background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(10px)',
+      padding: clientImageUrl ? '4px 12px 4px 4px' : '6px 12px', borderRadius: 20, border: '1px solid rgba(255,255,255,0.1)'
     }}>
-      {/* TOP — Creator avatar + name */}
-      <div style={{
-        padding: '18px 20px 0',
-        display: 'flex', alignItems: 'center', gap: 12,
-        flexShrink: 0,
-      }}>
-        {/* Avatar */}
-        <div style={{
-          width: 50, height: 50, borderRadius: '50%',
-          overflow: 'hidden', flexShrink: 0,
-          border: '2px solid #E5E5E5',
-          background: '#F0F0F0',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          position: 'relative',
-        }}>
-          {showAvatar ? (
-            <img
-              src={clientImageUrl}
-              alt={brandName}
-              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-              onError={() => setAvatarError(true)}
-              crossOrigin="anonymous"
-            />
-          ) : (
-            <div style={{
-              width: '100%', height: '100%',
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <span style={{ fontSize: 20, fontWeight: 800, color: '#fff' }}>{initial}</span>
-            </div>
-          )}
-        </div>
-        {/* Name + handle */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#111', lineHeight: 1 }}>{brandName}</span>
-            {/* Verified badge */}
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="12" fill="#1D9BF0" />
-              <path d="M9 12l2 2 4-4" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <span style={{ fontSize: 10, color: '#888' }}>
-            @{brandName.toLowerCase().replace(/\s+/g, '')}
-          </span>
-        </div>
-      </div>
-
-      {/* MIDDLE — Narrative text (flex: 1 to fill remaining space) */}
-      <div style={{
-        flex: 1, padding: '16px 22px 10px',
-        display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 10,
-        overflow: 'hidden', minHeight: 0,
-      }}>
-        {/* Sub label on cover */}
-        {isCover && typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#555', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-            {slide.sub_headline}
-          </div>
-        )}
-        {/* Main text */}
-        <div style={
-          { fontSize: isCover ? 18 : 15, lineHeight: 1.6, color: '#111', fontWeight: 500, overflow: 'hidden' }
-        }>
-          {isCover ? (
-            <span style={{ fontWeight: 800, fontSize: 30, lineHeight: 1.15, letterSpacing: '-0.02em' }}>{slide.headline}</span>
-          ) : (
-            <>
-              {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-                <div style={{ fontWeight: 800, marginBottom: 8, color: '#000', fontSize: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>
-              )}
-              {typeof slide.body === 'string' && slide.body.trim() && <div style={{ marginBottom: 6, fontSize: 15, lineHeight: 1.5 }}>{slide.body}</div>}
-              {Array.isArray(slide.bullets) && slide.bullets.map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                  <span style={{ color: '#1D9BF0', fontWeight: 800, fontSize: 18, lineHeight: 1 }}>•</span>
-                  <span style={{ fontWeight: 500, fontSize: 14, lineHeight: 1.45 }}>{typeof b === 'string' ? b : ''}</span>
-                </div>
-              ))}
-              {slide.headline && (
-                <div style={{ fontWeight: 800, marginTop: 10, color: '#000', fontSize: 22, lineHeight: 1.15 }}>
-                  <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color='#1D9BF0' />
-                </div>
-              )}
-            </>
-          )}
-        </div>
-        {/* "Continua 👇" for non-last slides */}
-        {!isCta && (
-          <div style={{ fontSize: 13, color: '#777', fontWeight: 700, marginTop: 'auto', paddingTop: 6, textAlign: 'center' }}>CONTINUA ››</div>
-        )}
-        {/* CTA */}
-        {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
-          <div style={{
-            marginTop: 10, padding: '12px 0',
-            fontWeight: 800, fontSize: 16, color: '#fff', background: '#1D9BF0',
-            borderRadius: 8, textAlign: 'center', boxShadow: '0 4px 14px rgba(29, 155, 240, 0.4)'
-          }}>
-            {slide.cta}
-          </div>
-        )}
-      </div>
-
-      {/* BOTTOM — Widescreen editorial image (fixed height) */}
-      <div style={{
-        flexShrink: 0,
-        height: '38%',
-        margin: '0 16px 14px',
-        borderRadius: 10,
-        overflow: 'hidden',
-        position: 'relative',
-        background: '#f0f0f0', 
-      }} className={!bottomImg ? "animate-pulse flex items-center justify-center bg-gray-200" : ""}>
-        {!bottomImg && (
-          <div className="flex flex-col items-center gap-2 opacity-60">
-            <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
-            <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Carregando Cena...</span>
-          </div>
-        )}
-        {bottomImg && (
-          <div
-            style={{
-              position: 'absolute', inset: 0,
-              backgroundImage: `url("${bottomImg}")`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-            }}
-          />
-        )}
-        {/* Subtle gradient overlay bottom */}
-        <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0, height: '30%',
-          background: 'linear-gradient(to bottom, transparent, rgba(0,0,0,0.15))',
-        }} />
-      </div>
+      {clientImageUrl ? (
+        <img src={clientImageUrl} alt="Brand Avatar" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} crossOrigin="anonymous" />
+      ) : (
+        <div style={{ width: 14, height: 14, borderRadius: '50%', background: accentColor }} />
+      )}
+      <span style={{ fontSize: 10, fontWeight: 800, color: '#fff', letterSpacing: '0.1em' }}>{brandName}</span>
     </div>
   );
-}
 
-// ── STANDARD DARK SLIDE ───────────────────────────────────────────────────────
-function StandardSlide({ slide, tpl, brandName, total }: {
-  slide: CarouselSlide;
-  tpl: typeof CAROUSEL_TEMPLATES[number];
-  brandName: string;
-  total: number;
-}) {
-  const isCover = slide.type === 'cover' || slide.order === 1;
-  const isCta = slide.type === 'cta' || slide.order === total;
-  const isLight = (tpl.bg as string) === '#FAFAFA' || (tpl.bg as string) === '#FFFFFF' || (tpl.bg as string) === '#FAFAF8';
-  const textColor = isLight ? tpl.text : '#ffffff';
-  const subColor = isLight ? tpl.sub : 'rgba(255,255,255,0.85)';
+  const PageCounter = () => (
+    <div style={{
+      position: 'absolute', top: 16, right: 16, zIndex: 10,
+      fontSize: 10, fontWeight: 900, color: '#fff',
+      background: accentColor, borderRadius: '50%',
+      width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center'
+    }}>
+      {slide.order}
+    </div>
+  );
 
-  const visualPrompt = `${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`;
-  const seed = (slide.headline?.length || 10) * slide.order * 42;
-  const bgImageUrl = usePollinationsImage(visualPrompt, 1080, 1350, seed);
+  const commonTextShadow = '0px 2px 12px rgba(0,0,0,0.8)';
+  const bgLoading = !bgImgUrl ? "animate-pulse flex items-center justify-center bg-zinc-900" : "";
 
-  let layout = slide.layout || 'left';
-  if ((layout as string) === 'left' || (layout as string) === 'default') {
-    if (isCover) layout = 'centered';
-    else if (isCta) layout = 'centered';
-    else {
-      const cadence: Array<'minimal' | 'centered' | 'left'> = ['minimal', 'centered', 'left'];
-      layout = cadence[(slide.order - 2 + cadence.length) % cadence.length];
-    }
-  }
-
-  const renderContent = () => {
-    if (layout === 'centered') {
-      return (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', zIndex: 1, gap: 12 }}>
-          {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-            <div style={{ fontSize: 11, fontWeight: 700, color: tpl.accent, letterSpacing: '0.1em', textTransform: 'uppercase', textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>
-              {slide.sub_headline}
-            </div>
-          )}
-          <div style={{ fontSize: isCover ? 32 : 28, fontWeight: 900, color: textColor, lineHeight: 1.15, textShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
-            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
-          </div>
-          {typeof slide.body === 'string' && slide.body.trim() && (
-            <div style={{ fontSize: 13, color: subColor, lineHeight: 1.5, marginTop: 8, maxWidth: '90%', textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>
-              {slide.body}
-            </div>
-          )}
-          {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, alignItems: 'center' }}>
+  // 1. GLASS OVERLAY
+  if (layout === 'glass_overlay') {
+    return (
+      <div style={{
+        width: '100%', height: '100%', position: 'relative', overflow: 'hidden',
+        backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
+        backgroundSize: 'cover', backgroundPosition: 'center',
+        fontFamily: "'Inter', sans-serif"
+      }} className={bgLoading}>
+        {!bgImgUrl && <Loader2 className="w-8 h-8 animate-spin text-white/30" />}
+        <AvatarIcon />
+        <PageCounter />
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.3) 50%, rgba(0,0,0,0.1) 100%)'
+        }} />
+        <div style={{
+          position: 'absolute', bottom: 30, left: 24, right: 24,
+          background: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(24px)',
+          border: '1px solid rgba(255,255,255,0.15)', borderRadius: 20,
+          padding: '28px 24px', display: 'flex', flexDirection: 'column', gap: 10
+        }}>
+          {slide.sub_headline && <span style={{ color: accentColor, fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{slide.sub_headline}</span>}
+          <h1 style={{ color: '#fff', fontSize: isCover ? 32 : 26, fontWeight: 900, lineHeight: 1.15, textShadow: commonTextShadow }}>
+            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
+          </h1>
+          {slide.body && <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, lineHeight: 1.5, marginTop: 4 }}>{slide.body}</p>}
+          {slide.bullets && slide.bullets.length > 0 && (
+            <ul style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {slide.bullets.map((b, i) => (
-                <div key={i} style={{ fontSize: 12, color: textColor, background: tpl.accent + '30', backdropFilter: 'blur(8px)', padding: '6px 14px', borderRadius: 12, border: `1px solid ${tpl.accent}50`, textShadow: '0 1px 5px rgba(0,0,0,0.5)' }}>
-                  {typeof b === 'string' ? b : ''}
-                </div>
+                <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: '#fff', fontSize: 13, fontWeight: 500 }}>
+                  <span style={{ color: accentColor }}>✦</span> {b}
+                </li>
               ))}
-            </div>
+            </ul>
           )}
-          {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
-            <div style={{ marginTop: 24, padding: '14px 28px', background: tpl.accent, color: '#fff', borderRadius: 30, fontWeight: 900, fontSize: 15, boxShadow: `0 8px 32px ${tpl.accentGlow}` }}>
+          {isCta && slide.cta && (
+            <div style={{ marginTop: 16, background: accentColor, color: '#fff', padding: '12px 24px', borderRadius: 10, textAlign: 'center', fontWeight: 800, fontSize: 15, textTransform: 'uppercase' }}>
               {slide.cta}
             </div>
           )}
         </div>
-      );
-    }
-
-    if (layout === 'minimal') {
-      return (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 1 }}>
-          <div style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(16px)', border: `1px solid ${tpl.accent}50`, borderRadius: 20, padding: 28, display: 'flex', flexDirection: 'column', gap: 12, width: '100%', boxShadow: `0 20px 40px rgba(0,0,0,0.5)` }}>
-            {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && <div style={{ fontSize: 10, fontWeight: 800, color: tpl.accent, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{slide.sub_headline}</div>}
-            <div style={{ fontSize: isCover ? 26 : 22, fontWeight: 900, color: textColor, lineHeight: 1.2 }}>
-              <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
-            </div>
-            <div style={{ height: 3, background: tpl.accent, width: 40, borderRadius: 2 }} />
-            {typeof slide.body === 'string' && slide.body.trim() && <div style={{ fontSize: 14, color: subColor, lineHeight: 1.5 }}>{slide.body}</div>}
-            {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6 }}>
-                {slide.bullets.map((b, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                    <span style={{ color: tpl.accent, fontSize: 14 }}>✦</span>
-                    <span style={{ fontSize: 13, color: textColor, fontWeight: 500 }}>{typeof b === 'string' ? b : ''}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
-              <div style={{ marginTop: 12, padding: '12px', background: textColor, color: '#000', borderRadius: 10, fontWeight: 900, fontSize: 13, textAlign: 'center' }}>
-                {slide.cta}
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    // Default: left
-    return (
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: '40px 24px 40px', zIndex: 1, gap: 10 }}>
-        {typeof slide.sub_headline === 'string' && slide.sub_headline.trim() && (
-          <div style={{ fontSize: 12, fontWeight: 800, color: tpl.accent, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 2, textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>
-            {slide.sub_headline}
-          </div>
-        )}
-        <div style={{ fontSize: isCover ? 30 : 26, fontWeight: 900, color: textColor, lineHeight: 1.15, letterSpacing: '-0.02em', textShadow: '0 4px 20px rgba(0,0,0,0.8)' }}>
-          <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={tpl.accent} />
-        </div>
-        <div style={{ width: 40, height: 4, background: tpl.accent, borderRadius: 2, marginTop: 4, marginBottom: 4, boxShadow: `0 0 10px ${tpl.accentGlow}` }} />
-        {typeof slide.body === 'string' && slide.body.trim() && (
-          <div style={{ fontSize: 14, color: subColor, lineHeight: 1.55, maxWidth: '95%', textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>
-            {slide.body}
-          </div>
-        )}
-        {Array.isArray(slide.bullets) && slide.bullets.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
-            {slide.bullets.map((b, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: tpl.accent, marginTop: 6, flexShrink: 0, boxShadow: `0 0 8px ${tpl.accent}` }} />
-                <span style={{ fontSize: 13, color: textColor, lineHeight: 1.4, fontWeight: 500, textShadow: '0 1px 8px rgba(0,0,0,0.8)' }}>{typeof b === 'string' ? b : ''}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        {isCta && typeof slide.cta === 'string' && slide.cta.trim() && (
-          <div style={{ marginTop: 16, padding: '12px 24px', background: tpl.accent, color: '#000', borderRadius: 10, fontWeight: 900, fontSize: 14, display: 'inline-block', width: 'fit-content', boxShadow: `0 8px 30px ${tpl.accentGlow}` }}>
-            {slide.cta}
-          </div>
-        )}
       </div>
     );
-  };
+  }
 
+  // 2. SPLIT MODERN
+  if (layout === 'split_modern') {
+    return (
+      <div style={{
+        width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+        background: '#0a0a0a', fontFamily: "'Inter', sans-serif", position: 'relative'
+      }}>
+        <AvatarIcon />
+        <PageCounter />
+        <div style={{
+          height: '45%', backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
+          backgroundSize: 'cover', backgroundPosition: 'center',
+          position: 'relative', borderBottom: `2px solid ${accentColor}`
+        }} className={bgLoading}>
+          {!bgImgUrl && <Loader2 className="w-8 h-8 animate-spin text-white/30" />}
+        </div>
+        <div style={{ height: '55%', padding: '30px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {slide.sub_headline && <span style={{ color: accentColor, fontSize: 11, fontWeight: 900, letterSpacing: '0.15em', textTransform: 'uppercase' }}>{slide.sub_headline}</span>}
+          <h1 style={{ color: '#fff', fontSize: 24, fontWeight: 900, lineHeight: 1.2 }}>
+            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
+          </h1>
+          <div style={{ width: 40, height: 4, background: accentColor, borderRadius: 2, margin: '8px 0' }} />
+          {slide.body && <p style={{ color: '#A1A1AA', fontSize: 15, lineHeight: 1.5, fontWeight: 500 }}>{slide.body}</p>}
+          {slide.bullets && slide.bullets.length > 0 && (
+            <ul style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
+               {slide.bullets.map((b, i) => (
+                <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '8px 12px', borderRadius: 8, color: '#e5e5e5', fontSize: 13, fontWeight: 600 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: accentColor }} /> {b}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 3. MAGAZINE EDITORIAL
+  if (layout === 'magazine') {
+    return (
+      <div style={{
+        width: '100%', height: '100%', position: 'relative', background: '#f4f4f5',
+        fontFamily: "'Inter', sans-serif"
+      }}>
+        <AvatarIcon />
+        <PageCounter />
+        <div style={{
+          position: 'absolute', top: 0, right: 0, width: '40%', height: '100%',
+          backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
+          backgroundSize: 'cover', backgroundPosition: 'center'
+        }} className={bgLoading} />
+        <div style={{
+          position: 'absolute', top: 0, left: 0, width: '70%', height: '100%',
+          clipPath: 'polygon(0 0, 100% 0, 80% 100%, 0% 100%)',
+          background: '#18181b', padding: '60px 30px 40px 24px',
+          display: 'flex', flexDirection: 'column', justifyContent: 'center'
+        }}>
+          {slide.sub_headline && <span style={{ color: accentColor, fontSize: 13, fontWeight: 900, textTransform: 'uppercase' }}>{slide.sub_headline}</span>}
+          <h1 style={{ color: '#fff', fontSize: 28, fontWeight: 900, lineHeight: 1.1, marginTop: 12 }}>
+            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
+          </h1>
+          {slide.body && <p style={{ color: '#a1a1aa', fontSize: 15, lineHeight: 1.6, marginTop: 16 }}>{slide.body}</p>}
+          {slide.bullets && slide.bullets.length > 0 && (
+            <ul style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {slide.bullets.map((b, i) => (
+                <li key={i} style={{ color: '#e4e4e7', fontSize: 14, fontWeight: 500, display: 'flex', gap: 8 }}>
+                  <span style={{ color: accentColor, fontWeight: 900 }}>{i+1}.</span> {b}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 4. CIRCLE CUT
   return (
     <div style={{
-      width: '100%', height: '100%', backgroundColor: bgImageUrl ? '#000' : tpl.bg,
-      backgroundImage: bgImageUrl 
-        ? `linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.6) 40%, rgba(0,0,0,0.2) 100%), url("${bgImageUrl}")`
-        : 'none',
-      backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat',
-      display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden',
-      fontFamily: "'Inter', 'Segoe UI', sans-serif",
-    }} className={!bgImageUrl ? "animate-pulse" : ""}>
-      {!bgImageUrl && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center opacity-30 pointer-events-none z-0">
-          <Loader2 className={`w-12 h-12 animate-spin mb-3 ${isLight ? 'text-gray-400' : 'text-white'}`} />
-          <span className={`text-xs font-bold uppercase tracking-widest ${isLight ? 'text-gray-500' : 'text-gray-300'}`}>Gerando Fundo...</span>
-        </div>
-      )}
-      <div style={{ height: 4, background: `linear-gradient(90deg, ${tpl.accent}, transparent)`, width: '100%', flexShrink: 0, zIndex: 2 }} />
-      <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 2, fontSize: 10, fontWeight: 800, letterSpacing: '0.15em', color: '#fff', textTransform: 'uppercase', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: 6 }}>
-        {brandName}
+      width: '100%', height: '100%', background: '#09090b', fontFamily: "'Inter', sans-serif",
+      display: 'flex', flexDirection: 'column', padding: 24, position: 'relative'
+    }}>
+      <AvatarIcon />
+      <PageCounter />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginTop: 40 }}>
+        <div style={{
+          width: 200, height: 200, borderRadius: '50%', overflow: 'hidden',
+          border: `4px solid ${accentColor}`, boxShadow: `0 0 40px ${accentColor}40`,
+          backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
+          backgroundSize: 'cover', backgroundPosition: 'center',
+          flexShrink: 0, marginBottom: 30
+        }} className={bgLoading} />
+        
+        <h1 style={{ color: '#fff', fontSize: 26, fontWeight: 900, textAlign: 'center', lineHeight: 1.2 }}>
+            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
+        </h1>
+        {slide.body && <p style={{ color: '#a1a1aa', fontSize: 14, textAlign: 'center', marginTop: 12, lineHeight: 1.5 }}>{slide.body}</p>}
+        {slide.bullets && slide.bullets.length > 0 && (
+          <div style={{ background: '#18181b', borderRadius: 16, padding: '16px 20px', width: '100%', marginTop: 20 }}>
+            <ul style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {slide.bullets.map((b, i) => (
+                <li key={i} style={{ color: '#d4d4d8', fontSize: 13, borderBottom: '1px solid #27272a', paddingBottom: 8, display: 'flex', alignItems: 'center', gap: 8}}>
+                  <div style={{width:4, height:4, background:accentColor, borderRadius:'50%'}}/> {b}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
-      <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 2, fontSize: 11, fontWeight: 800, color: subColor, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', padding: '3px 8px', borderRadius: 6, fontFeatureSettings: '"tnum"' }}>
-        {slide.order}/{total}
-      </div>
-      {renderContent()}
-      {!isCta && (
-        <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 2, fontSize: 10, color: subColor, display: 'flex', alignItems: 'center', gap: 4, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-          Arraste →
-        </div>
-      )}
-      <div style={{ height: 3, background: `linear-gradient(90deg, transparent, ${tpl.accent}80)`, flexShrink: 0, zIndex: 2 }} />
     </div>
   );
-}
-
-// ── Main SlidePage dispatcher ─────────────────────────────────────────────────
-function SlidePageInner({ slide, tpl, brandName, total, clientImageUrl }: {
-  slide: CarouselSlide;
-  tpl: typeof CAROUSEL_TEMPLATES[number];
-  brandName: string;
-  total: number;
-  clientImageUrl?: string;
-}) {
-  const mode = (tpl as any).layoutMode || 'standard';
-  if (mode === 'image_top_text_bottom') {
-    return <FuturistaSlide slide={slide} tpl={tpl} brandName={brandName} total={total} />;
-  }
-  if (mode === 'avatar_text_image') {
-    return <PersonalBrandSlide slide={slide} tpl={tpl} brandName={brandName} total={total} clientImageUrl={clientImageUrl} />;
-  }
-  return <StandardSlide slide={slide} tpl={tpl} brandName={brandName} total={total} />;
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
 interface CarouselPageViewerProps {
   slides: CarouselSlide[];
-  templateId: TemplateId;
-  onTemplateChange: (id: TemplateId) => void;
   brandName?: string;
-  caption?: string;
   clientImageUrl?: string;
 }
 
 export function CarouselPageViewerInner({
-  slides, templateId, onTemplateChange, brandName = 'Minha Marca', caption, clientImageUrl
+  slides, brandName = 'Minha Marca'
 }: CarouselPageViewerProps) {
   const [exporting, setExporting] = useState(false);
-  const [loadingImages, setLoadingImages] = useState(true);
-  const [loadedCount, setLoadedCount] = useState(0);
-
   const containerRef = useRef<HTMLDivElement>(null);
-  const tpl = CAROUSEL_TEMPLATES.find(t => t.id === templateId) ?? CAROUSEL_TEMPLATES[0];
-
-  // O preload principal agora é gerenciado globalmente pelo Queue Hook nos Slides
-  useEffect(() => {
-    // Apenas marca como carregado instantaneamente para exibir a galeria,
-    // já que as imagens têm seus próprios Skeletons e Controllers
-    setLoadingImages(false);
-  }, []);
 
   const handleExportAll = async () => {
     if (!containerRef.current) return;
@@ -807,7 +316,7 @@ export function CarouselPageViewerInner({
         const el = slideElements[i] as HTMLElement;
         const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: null, logging: false });
         const link = document.createElement('a');
-        link.download = `slide-${String(i + 1).padStart(2, '0')}-${tpl.name.toLowerCase().replace(/\s/g, '-')}.png`;
+        link.download = `slide-${String(i + 1).padStart(2, '0')}-davi.png`;
         link.href = canvas.toDataURL('image/png');
         link.click();
         await new Promise(res => setTimeout(res, 500)); 
@@ -827,36 +336,18 @@ export function CarouselPageViewerInner({
       {/* Header Actions */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 px-2 shrink-0 gap-4 border-b border-white/5 pb-4">
         <div>
-          <h2 className="text-xl font-black text-white w-full sm:w-auto mt-2">Galeria de Slides</h2>
+          <h2 className="text-xl font-black text-white w-full sm:w-auto mt-2">Davi Studio (Dynamic Layouts)</h2>
           <p className="text-xs text-muted-foreground mt-1">
-            {slides.length} páginas geradas {loadingImages ? `(Carregando cenários ${loadedCount}/${slides.length}...)` : ''}
+            {slides.length} páginas geradas velozmente
           </p>
         </div>
         
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
-          {/* Template picker - Filtramos as cores antigas */}
-          <div className="flex items-center gap-2 justify-center bg-black/40 px-4 py-2 rounded-xl border border-white/10 shadow-inner">
-            <span className="text-[10px] text-muted-foreground/80 mr-1 font-bold uppercase tracking-widest hidden sm:inline">Tema:</span>
-            {CAROUSEL_TEMPLATES.filter(t => t.id === 'futurista_ia' || t.id === 'personal_brand').map(t => (
-              <button key={t.id} onClick={() => onTemplateChange(t.id as TemplateId)} title={t.name}
-                style={{ 
-                  width: 30, height: 30, borderRadius: '50%', 
-                  background: t.id === 'personal_brand' ? '#1f2023' : '#6366F1', 
-                  border: t.id === templateId ? '2px solid white' : '2px solid transparent', 
-                  cursor: 'pointer', transform: t.id === templateId ? 'scale(1.15)' : 'scale(1)', transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)', 
-                  boxShadow: t.id === templateId ? `0 0 16px ${(t as any).accentGlow}` : 'none', fontSize: 13, 
-                  display: 'flex', alignItems: 'center', justifyContent: 'center' 
-                }}>
-                {t.id === 'futurista_ia' ? '🤖' : '👤'}
-              </button>
-            ))}
-          </div>
-
           <Button 
             size="icon" 
             variant="outline"
             onClick={handleExportAll} 
-            disabled={exporting || loadingImages} 
+            disabled={exporting} 
             className="h-10 w-10 rounded-xl bg-white/5 border-white/10 hover:bg-white/10 hover:text-white transition-all shrink-0"
             title="Salvar Carrossel"
           >
@@ -879,12 +370,11 @@ export function CarouselPageViewerInner({
                   width: DISPLAY_W, 
                   height: DISPLAY_H, 
                   borderRadius: 12, 
-                  overflow: 'hidden', 
-                  border: tpl.borderStyle, 
-                  boxShadow: `0 8px 40px ${tpl.accentGlow}, 0 2px 8px rgba(0,0,0,0.4)` 
+                  overflow: 'hidden',
+                  boxShadow: `0 8px 40px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.5)` 
                 }}
               >
-                <SlidePageInner slide={slide} tpl={tpl} brandName={brandName} total={slides.length} clientImageUrl={clientImageUrl} />
+                <DynamicFreepikSlide slide={slide} brandName={brandName} total={slides.length} clientImageUrl={clientImageUrl} />
               </div>
             </div>
           ))}
