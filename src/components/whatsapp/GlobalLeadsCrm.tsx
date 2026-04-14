@@ -93,8 +93,17 @@ export function GlobalLeadsCrm() {
     fetchAll();
 
     const channel = supabase.channel('crm-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads' }, () => fetchAll())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers' }, () => fetchAll())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` }, (payload) => {
+        fetchAll();
+        if (payload.eventType === 'INSERT') {
+          const newLead = payload.new as any;
+          toast({
+            title: '🆕 Novo lead recebido!',
+            description: `${newLead.lead_name || newLead.remote_jid} entrou no CRM.`,
+          });
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${user.id}` }, () => fetchAll())
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
