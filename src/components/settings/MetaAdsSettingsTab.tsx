@@ -55,6 +55,7 @@ export function MetaAdsSettingsTab() {
     if (!accessToken.trim()) return;
     const result = await connectWithToken(accessToken.trim(), accountId.trim() || undefined);
     if (result.success && !result.needsSelection) {
+      setAppId('');
       setAccessToken('');
       setAccountId('');
       setShowAddAnother(false);
