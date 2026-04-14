@@ -14,7 +14,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, BookOpen } from 'lucide-react';
+import { KnowledgeBaseManager } from './KnowledgeBaseManager';
 
 interface Instance {
   id: string;
@@ -317,6 +318,11 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
               <TabsTrigger value="integrations" className="flex-1 gap-1.5">
                 <Webhook className="h-3.5 w-3.5" /> n8n
               </TabsTrigger>
+              {agent && (
+                <TabsTrigger value="knowledge" className="flex-1 gap-1.5">
+                  <BookOpen className="h-3.5 w-3.5" /> Conhecimento
+                </TabsTrigger>
+              )}
             </TabsList>
 
             {/* ── Tab: General ── */}
@@ -571,6 +577,13 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                 )}
               </div>
             </TabsContent>
+
+            {/* ── Tab: Knowledge Base ── */}
+            {agent && (
+              <TabsContent value="knowledge" className="mt-0">
+                <KnowledgeBaseManager agentId={agent.id} userId={user!.id} />
+              </TabsContent>
+            )}
           </Tabs>
         </ScrollArea>
 
