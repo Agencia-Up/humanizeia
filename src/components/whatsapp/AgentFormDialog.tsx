@@ -16,6 +16,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, BookOpen, UserPlus, Trash2, Phone } from 'lucide-react';
 import { KnowledgeBaseManager } from './KnowledgeBaseManager';
+import { AgentCrmEquipeTab } from './AgentCrmEquipeTab';
 
 interface Instance {
   id: string;
@@ -57,6 +58,7 @@ interface AgentFormDialogProps {
   onOpenChange: (open: boolean) => void;
   agent: AIAgent | null;
   instances: Instance[];
+  agents?: AIAgent[];
   onSaved: () => void;
 }
 
@@ -102,7 +104,7 @@ const AGENT_TYPES = [
   { value: 'sales', label: '💰 Vendas' },
 ];
 
-export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved }: AgentFormDialogProps) {
+export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, onSaved }: AgentFormDialogProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -126,7 +128,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [companyName, setCompanyName] = useState('');
   const [services, setServices] = useState('');
   const [address, setAddress] = useState('');
-  const [sellerContacts, setSellerContacts] = useState<{name: string; phone: string}[]>([]);
+  const [humanWhatsapp, setHumanWhatsapp] = useState('');
   const [n8nWebhookUrl, setN8nWebhookUrl] = useState('');
   const [sdrGoal, setSdrGoal] = useState('');
   const [qualificationStr, setQualificationStr] = useState('');
@@ -149,17 +151,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       setCompanyName(agent.company_name || '');
       setServices(agent.services || '');
       setAddress(agent.address || '');
-      // Parse seller contacts from human_whatsapp JSON or legacy single string
-      try {
-        const parsed = agent.human_whatsapp ? JSON.parse(agent.human_whatsapp) : [];
-        if (Array.isArray(parsed)) {
-          setSellerContacts(parsed.slice(0, 10));
-        } else {
-          setSellerContacts(agent.human_whatsapp ? [{ name: 'Vendedor 1', phone: agent.human_whatsapp }] : []);
-        }
-      } catch {
-        setSellerContacts(agent.human_whatsapp ? [{ name: 'Vendedor 1', phone: agent.human_whatsapp }] : []);
-      }
+      setHumanWhatsapp(agent.human_whatsapp || '');
       setN8nWebhookUrl(agent.n8n_webhook_url || '');
       setSdrGoal(agent.sdr_goal || '');
       setQualificationStr((agent.qualification_questions || []).join('\n'));
@@ -180,7 +172,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       setCompanyName('');
       setServices('');
       setAddress('');
-      setSellerContacts([]);
+      setHumanWhatsapp('');
       setN8nWebhookUrl('');
       setSdrGoal('');
       setQualificationStr('');
@@ -218,7 +210,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
     company_name: companyName,
     services,
     address,
-    human_whatsapp: JSON.stringify(sellerContacts.filter(c => c.phone.trim())),
+    human_whatsapp: humanWhatsapp,
     n8n_webhook_url: n8nWebhookUrl,
     sdr_goal: sdrGoal,
     qualification_questions: qualificationStr.split('\n').map(q => q.trim()).filter(Boolean),
@@ -312,27 +304,28 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
 
         <ScrollArea className="max-h-[65vh] pr-4">
           <Tabs defaultValue="general" className="space-y-4">
-            <TabsList className="w-full">
-              <TabsTrigger value="general" className="flex-1 gap-1.5">
-                <Brain className="h-3.5 w-3.5" /> Geral
+            <TabsList className="w-full flex flex-wrap h-auto gap-1 bg-muted/40 p-1">
+              <TabsTrigger value="general" className="flex-1 gap-1.5 text-xs">
+                <Brain className="h-3 w-3" /> Geral
               </TabsTrigger>
-              <TabsTrigger value="business" className="flex-1 gap-1.5 hidden sm:flex">
-                <Building2 className="h-3.5 w-3.5" /> Empresa
+              <TabsTrigger value="business" className="flex-1 gap-1.5 text-xs">
+                <Building2 className="h-3 w-3" /> Empresa
               </TabsTrigger>
-              <TabsTrigger value="sdr" className="flex-1 gap-1.5">
-                <Target className="h-3.5 w-3.5" /> Funil SDR
+              <TabsTrigger value="sdr" className="flex-1 gap-1.5 text-xs">
+                <Target className="h-3 w-3" /> SDR
               </TabsTrigger>
-              <TabsTrigger value="settings" className="flex-1 gap-1.5 hidden sm:flex">
-                <Settings2 className="h-3.5 w-3.5" /> Modelo
+              <TabsTrigger value="settings" className="flex-1 gap-1.5 text-xs">
+                <Settings2 className="h-3 w-3" /> Modelo
               </TabsTrigger>
-              <TabsTrigger value="integrations" className="flex-1 gap-1.5">
-                <Webhook className="h-3.5 w-3.5" /> n8n
+              <TabsTrigger value="knowledge" className="flex-1 gap-1.5 text-xs">
+                <BookOpen className="h-3 w-3" /> Base
               </TabsTrigger>
-              {agent && (
-                <TabsTrigger value="knowledge" className="flex-1 gap-1.5">
-                  <BookOpen className="h-3.5 w-3.5" /> Conhecimento
-                </TabsTrigger>
-              )}
+              <TabsTrigger value="vendedores" className="flex-1 gap-1.5 text-xs">
+                <UserPlus className="h-3 w-3" /> Vendedores
+              </TabsTrigger>
+              <TabsTrigger value="integrations" className="flex-1 gap-1.5 text-xs">
+                <Webhook className="h-3 w-3" /> n8n
+              </TabsTrigger>
             </TabsList>
 
             {/* ── Tab: General ── */}
@@ -473,62 +466,14 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                   <Input value={address} onChange={e => setAddress(e.target.value)} placeholder="Ex: Rua Exemplo, 123 - São Paulo/SP" />
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2">
                   <Label className="flex items-center gap-2">
-                    <UserCheck className="h-4 w-4" /> Contatos dos Vendedores (máx. 10)
+                    <UserCheck className="h-4 w-4" /> WhatsApp do contato humano
                   </Label>
+                  <Input value={humanWhatsapp} onChange={e => setHumanWhatsapp(e.target.value)} placeholder="Ex: 5511999999999" />
                   <p className="text-xs text-muted-foreground">
-                    Vendedores que receberão leads qualificados em rodízio automático.
+                    Número para onde o agente encaminha quando precisa de um humano.
                   </p>
-
-                  <div className="space-y-2">
-                    {sellerContacts.map((contact, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <Input
-                          value={contact.name}
-                          onChange={e => {
-                            const updated = [...sellerContacts];
-                            updated[idx] = { ...updated[idx], name: e.target.value };
-                            setSellerContacts(updated);
-                          }}
-                          placeholder="Nome do vendedor"
-                          className="flex-1 h-9 text-sm"
-                        />
-                        <Input
-                          value={contact.phone}
-                          onChange={e => {
-                            const updated = [...sellerContacts];
-                            updated[idx] = { ...updated[idx], phone: e.target.value.replace(/\D/g, '') };
-                            setSellerContacts(updated);
-                          }}
-                          placeholder="5511999999999"
-                          className="flex-1 h-9 text-sm font-mono"
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-9 w-9 p-0 text-red-400 hover:text-red-500 shrink-0"
-                          onClick={() => setSellerContacts(prev => prev.filter((_, i) => i !== idx))}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-
-                  {sellerContacts.length < 10 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-full gap-2"
-                      onClick={() => setSellerContacts(prev => [...prev, { name: '', phone: '' }])}
-                    >
-                      <UserPlus className="h-4 w-4" />
-                      Adicionar Vendedor ({sellerContacts.length}/10)
-                    </Button>
-                  )}
                 </div>
               </div>
             </TabsContent>
@@ -596,6 +541,11 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                 <Label className="text-xs">Delay antes de responder: {(replyDelay / 1000).toFixed(1)}s</Label>
                 <Slider value={[replyDelay]} onValueChange={([v]) => setReplyDelay(v)} min={1000} max={15000} step={500} />
               </div>
+            </TabsContent>
+
+            {/* ── Tab: Vendedores ── */}
+            <TabsContent value="vendedores" className="mt-0">
+              <AgentCrmEquipeTab agentId={agent?.id || null} userId={user!.id} />
             </TabsContent>
 
             {/* ── Tab: n8n Integration ── */}
