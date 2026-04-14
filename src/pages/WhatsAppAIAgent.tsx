@@ -127,18 +127,23 @@ export default function WhatsAppAIAgent() {
       <div className="space-y-6 max-w-5xl">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Bot className="h-7 w-7 text-primary" />
-              Agentes IA WhatsApp
-            </h1>
-            <p className="text-muted-foreground text-sm mt-1">
-              Crie múltiplos agentes com funções distintas para atender seus leads automaticamente
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+              <Bot className="h-5 w-5 text-emerald-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                Pedro
+                <span className="text-xs font-normal bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                  WhatsApp IA
+                </span>
+              </h1>
+              <p className="text-xs text-muted-foreground mt-0.5">Crie múltiplos agentes para atender seus leads automaticamente no WhatsApp</p>
+            </div>
           </div>
-          <Button onClick={() => { setEditingAgent(null); setDialogOpen(true); }}>
-            <Plus className="h-4 w-4 mr-2" />
-            Novo Agente
+          <Button onClick={() => { setEditingAgent(null); setDialogOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2">
+            <Plus className="h-4 w-4" /> Novo Agente
           </Button>
         </div>
 
