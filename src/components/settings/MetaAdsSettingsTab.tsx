@@ -172,9 +172,37 @@ export function MetaAdsSettingsTab() {
               {/* Manual Token Fields */}
               <div className="space-y-4">
                 <div className="space-y-2">
+                  <Label htmlFor="meta-app-id" className="flex items-center gap-2">
+                    <Hash className="h-4 w-4" />
+                    App ID (ID do Aplicativo)
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      id="meta-app-id"
+                      type={showAppId ? 'text' : 'password'}
+                      placeholder="Cole o ID do seu App Meta aqui..."
+                      value={appId}
+                      onChange={(e) => setAppId(e.target.value)}
+                      disabled={isConnecting}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAppId(!showAppId)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showAppId ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Encontre em <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">developers.facebook.com/apps</a> → Configurações → Básico
+                  </p>
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="meta-token" className="flex items-center gap-2">
                     <KeyRound className="h-4 w-4" />
-                    Access Token
+                    Token de Usuário (Access Token)
                   </Label>
                   <div className="relative">
                     <Input
