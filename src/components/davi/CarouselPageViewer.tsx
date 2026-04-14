@@ -102,8 +102,9 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
   return localUrl;
 }
 
-// ── DYNAMIC FREEPIK SLIDE ────────────────────────────────────────────────────────
-// Este componente decide aleatoriamente um layout de revista/editorial para cada slide
+// ── CINEMATIC AESTHETIC SLIDE (ChatGPT Reference Style) ───────────────────────
+// Este layout utiliza imagens de fundo em tela cheia com tipografia limpa, elegante e legível,
+// imitando as superproduções geradas pelo DALL-E 3 / Midjourney.
 function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
   slide: CarouselSlide;
   brandName: string;
@@ -113,205 +114,162 @@ function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta = slide.type === 'cta' || slide.order === total;
 
-  // Decide dynamically the accent color and layout style based on slide.order/seed
-  const seedNum = (slide.headline?.length || 10) * slide.order * 61;
-  const layouts = ['split_modern', 'glass_overlay', 'magazine', 'circle_cut'];
-  const colors = ['#6366F1', '#10B981', '#F43F5E', '#F59E0B', '#3B82F6', '#8B5CF6'];
-  
-  // Capa sempre tenta um layout mais limpo, CTA também. Meios variam.
-  const layout = isCover ? 'glass_overlay' : isCta ? 'glass_overlay' : layouts[seedNum % layouts.length];
-  const accentColor = colors[seedNum % colors.length];
-
-  // Motor Veloz: Prompt respeitando a genialidade do Paulo
+  // Usa prompts detalhados do Paulo (nossa 'Direção de Arte')
   const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'abstract minimalist background';
-  const visualPrompt = slide.image_prompt ? imgContext : `${imgContext}, cinematic aesthetic, 8k resolution, photorealistic, premium editorial photography, masterpiece, no text`;
+  
+  // Como o ChatGPT faz imagens hiper-realistas, vamos forçar fotorealismo e proporção 1080x1350
+  const visualPrompt = slide.image_prompt 
+    ? imgContext 
+    : `${imgContext}, cinematic aesthetic, 8k resolution, photorealistic, luxury editorial photography, masterpiece, no text`;
+    
+  // A semente é a ordem para manter consistência
+  const seedNum = (slide.headline?.length || 10) * slide.order * 61;
   const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 1350, seedNum);
 
+  const bgLoading = !bgImgUrl ? "animate-pulse" : "";
+
+  // Elementos comuns
   const AvatarIcon = () => (
     <div style={{
-      position: 'absolute', top: 16, left: 16, zIndex: 10,
-      display: 'flex', alignItems: 'center', gap: 8,
-      background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(10px)',
-      padding: clientImageUrl ? '4px 12px 4px 4px' : '6px 12px', borderRadius: 20, border: '1px solid rgba(255,255,255,0.1)'
+      position: 'absolute', top: 20, right: 20, zIndex: 10,
+      display: 'flex', alignItems: 'center', gap: 6,
+      background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)',
+      padding: clientImageUrl ? '4px 12px 4px 4px' : '4px 10px', 
+      borderRadius: 20, border: '1px solid rgba(255,255,255,0.1)'
     }}>
-      {clientImageUrl ? (
-        <img src={clientImageUrl} alt="Brand Avatar" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} crossOrigin="anonymous" />
-      ) : (
-        <div style={{ width: 14, height: 14, borderRadius: '50%', background: accentColor }} />
-      )}
-      <span style={{ fontSize: 10, fontWeight: 800, color: '#fff', letterSpacing: '0.1em' }}>{brandName}</span>
+      {clientImageUrl && <img src={clientImageUrl} alt="Brand" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover' }} crossOrigin="anonymous" />}
+      <span style={{ fontSize: 9, fontWeight: 700, color: '#fff', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{brandName}</span>
     </div>
   );
 
   const PageCounter = () => (
     <div style={{
-      position: 'absolute', top: 16, right: 16, zIndex: 10,
-      fontSize: 10, fontWeight: 900, color: '#fff',
-      background: accentColor, borderRadius: '50%',
-      width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center'
+      position: 'absolute', top: 20, right: clientImageUrl ? 110 : 90, zIndex: 10,
+      fontSize: 10, fontWeight: 600, color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,0.8)'
     }}>
-      {slide.order}
+      {slide.order}/{total}
     </div>
   );
 
-  const commonTextShadow = '0px 2px 12px rgba(0,0,0,0.8)';
-  const bgLoading = !bgImgUrl ? "animate-pulse flex items-center justify-center bg-zinc-900" : "";
+  // Variação inteligente do layout baseado no tipo de slide para não ficar repetitivo
+  // Mas sempre mantendo a imagem full-bleed.
+  const gradientOverlay = isCover 
+    ? 'linear-gradient(to right, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, rgba(0,0,0,0) 100%)' // Gradiente lateral para capa
+    : isCta 
+      ? 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.3) 100%)' // Gradiente fundo escuro para fechar
+      : 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 40%, rgba(0,0,0,0.1) 100%)'; // Content padrão
 
-  // 1. GLASS OVERLAY
-  if (layout === 'glass_overlay') {
-    return (
-      <div style={{
-        width: '100%', height: '100%', position: 'relative', overflow: 'hidden',
-        backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
-        backgroundSize: 'cover', backgroundPosition: 'center',
-        fontFamily: "'Inter', sans-serif"
-      }} className={bgLoading}>
-        {!bgImgUrl && <Loader2 className="w-8 h-8 animate-spin text-white/30" />}
-        <AvatarIcon />
-        <PageCounter />
-        <div style={{
-          position: 'absolute', inset: 0,
-          background: 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.3) 50%, rgba(0,0,0,0.1) 100%)'
-        }} />
-        <div style={{
-          position: 'absolute', bottom: 30, left: 24, right: 24,
-          background: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(24px)',
-          border: '1px solid rgba(255,255,255,0.15)', borderRadius: 20,
-          padding: '28px 24px', display: 'flex', flexDirection: 'column', gap: 10
-        }}>
-          {slide.sub_headline && <span style={{ color: accentColor, fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{slide.sub_headline}</span>}
-          <h1 style={{ color: '#fff', fontSize: isCover ? 32 : 26, fontWeight: 900, lineHeight: 1.15, textShadow: commonTextShadow }}>
-            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
-          </h1>
-          {slide.body && <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, lineHeight: 1.5, marginTop: 4 }}>{slide.body}</p>}
-          {slide.bullets && slide.bullets.length > 0 && (
-            <ul style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {slide.bullets.map((b, i) => (
-                <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: '#fff', fontSize: 13, fontWeight: 500 }}>
-                  <span style={{ color: accentColor }}>✦</span> {b}
-                </li>
-              ))}
-            </ul>
-          )}
-          {isCta && slide.cta && (
-            <div style={{ marginTop: 16, background: accentColor, color: '#fff', padding: '12px 24px', borderRadius: 10, textAlign: 'center', fontWeight: 800, fontSize: 15, textTransform: 'uppercase' }}>
-              {slide.cta}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
+  const textAlignment = isCover ? 'flex-start' : 'flex-start';
+  const textContainerMargin = isCover ? 'auto 30px' : 'auto 30px 40px 30px';
 
-  // 2. SPLIT MODERN
-  if (layout === 'split_modern') {
-    return (
-      <div style={{
-        width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-        background: '#0a0a0a', fontFamily: "'Inter', sans-serif", position: 'relative'
-      }}>
-        <AvatarIcon />
-        <PageCounter />
-        <div style={{
-          height: '45%', backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
-          backgroundSize: 'cover', backgroundPosition: 'center',
-          position: 'relative', borderBottom: `2px solid ${accentColor}`
-        }} className={bgLoading}>
-          {!bgImgUrl && <Loader2 className="w-8 h-8 animate-spin text-white/30" />}
-        </div>
-        <div style={{ height: '55%', padding: '30px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {slide.sub_headline && <span style={{ color: accentColor, fontSize: 11, fontWeight: 900, letterSpacing: '0.15em', textTransform: 'uppercase' }}>{slide.sub_headline}</span>}
-          <h1 style={{ color: '#fff', fontSize: 24, fontWeight: 900, lineHeight: 1.2 }}>
-            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
-          </h1>
-          <div style={{ width: 40, height: 4, background: accentColor, borderRadius: 2, margin: '8px 0' }} />
-          {slide.body && <p style={{ color: '#A1A1AA', fontSize: 15, lineHeight: 1.5, fontWeight: 500 }}>{slide.body}</p>}
-          {slide.bullets && slide.bullets.length > 0 && (
-            <ul style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
-               {slide.bullets.map((b, i) => (
-                <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '8px 12px', borderRadius: 8, color: '#e5e5e5', fontSize: 13, fontWeight: 600 }}>
-                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: accentColor }} /> {b}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // 3. MAGAZINE EDITORIAL
-  if (layout === 'magazine') {
-    return (
-      <div style={{
-        width: '100%', height: '100%', position: 'relative', background: '#f4f4f5',
-        fontFamily: "'Inter', sans-serif"
-      }}>
-        <AvatarIcon />
-        <PageCounter />
-        <div style={{
-          position: 'absolute', top: 0, right: 0, width: '40%', height: '100%',
-          backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
-          backgroundSize: 'cover', backgroundPosition: 'center'
-        }} className={bgLoading} />
-        <div style={{
-          position: 'absolute', top: 0, left: 0, width: '70%', height: '100%',
-          clipPath: 'polygon(0 0, 100% 0, 80% 100%, 0% 100%)',
-          background: '#18181b', padding: '60px 30px 40px 24px',
-          display: 'flex', flexDirection: 'column', justifyContent: 'center'
-        }}>
-          {slide.sub_headline && <span style={{ color: accentColor, fontSize: 13, fontWeight: 900, textTransform: 'uppercase' }}>{slide.sub_headline}</span>}
-          <h1 style={{ color: '#fff', fontSize: 28, fontWeight: 900, lineHeight: 1.1, marginTop: 12 }}>
-            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
-          </h1>
-          {slide.body && <p style={{ color: '#a1a1aa', fontSize: 15, lineHeight: 1.6, marginTop: 16 }}>{slide.body}</p>}
-          {slide.bullets && slide.bullets.length > 0 && (
-            <ul style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {slide.bullets.map((b, i) => (
-                <li key={i} style={{ color: '#e4e4e7', fontSize: 14, fontWeight: 500, display: 'flex', gap: 8 }}>
-                  <span style={{ color: accentColor, fontWeight: 900 }}>{i+1}.</span> {b}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // 4. CIRCLE CUT
   return (
     <div style={{
-      width: '100%', height: '100%', background: '#09090b', fontFamily: "'Inter', sans-serif",
-      display: 'flex', flexDirection: 'column', padding: 24, position: 'relative'
-    }}>
-      <AvatarIcon />
-      <PageCounter />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginTop: 40 }}>
-        <div style={{
-          width: 200, height: 200, borderRadius: '50%', overflow: 'hidden',
-          border: `4px solid ${accentColor}`, boxShadow: `0 0 40px ${accentColor}40`,
-          backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
-          backgroundSize: 'cover', backgroundPosition: 'center',
-          flexShrink: 0, marginBottom: 30
-        }} className={bgLoading} />
-        
-        <h1 style={{ color: '#fff', fontSize: 26, fontWeight: 900, textAlign: 'center', lineHeight: 1.2 }}>
-            <HighlightHeadline text={slide.headline} accentWord={slide.accent_word} color={accentColor} />
-        </h1>
-        {slide.body && <p style={{ color: '#a1a1aa', fontSize: 14, textAlign: 'center', marginTop: 12, lineHeight: 1.5 }}>{slide.body}</p>}
-        {slide.bullets && slide.bullets.length > 0 && (
-          <div style={{ background: '#18181b', borderRadius: 16, padding: '16px 20px', width: '100%', marginTop: 20 }}>
-            <ul style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {slide.bullets.map((b, i) => (
-                <li key={i} style={{ color: '#d4d4d8', fontSize: 13, borderBottom: '1px solid #27272a', paddingBottom: 8, display: 'flex', alignItems: 'center', gap: 8}}>
-                  <div style={{width:4, height:4, background:accentColor, borderRadius:'50%'}}/> {b}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+      width: '100%', height: '100%', position: 'relative', overflow: 'hidden',
+      backgroundColor: '#111', fontFamily: "'Inter', sans-serif"
+    }} className={bgLoading}>
+      
+      {/* Background Image */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
+        backgroundSize: 'cover', backgroundPosition: 'center', zIndex: 1
+      }}>
+        {!bgImgUrl && <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-900 border border-white/5"><Loader2 className="w-8 h-8 animate-spin text-white/30" /></div>}
       </div>
+
+      {/* Cinematic Gradient Overlay */}
+      {bgImgUrl && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: gradientOverlay,
+          zIndex: 2
+        }} />
+      )}
+
+      {/* Header Info */}
+      <div style={{ position: 'relative', zIndex: 10, width: '100%' }}>
+        <AvatarIcon />
+        <PageCounter />
+      </div>
+
+      {/* Content Container */}
+      {bgImgUrl && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 10,
+          display: 'flex', flexDirection: 'column', justifyContent: isCover ? 'flex-start' : 'flex-end',
+          padding: isCover ? '60px 40px' : '40px 30px',
+        }}>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: textAlignment, maxWidth: '90%' }}>
+            {/* Tagline / Subtext */}
+            {slide.sub_headline && (
+              <span style={{ 
+                color: '#E2E8F0', fontSize: 13, fontWeight: 700, 
+                textTransform: 'uppercase', letterSpacing: '0.12em', 
+                background: 'rgba(255,255,255,0.1)', padding: '6px 12px', borderRadius: 4, backdropFilter: 'blur(4px)'
+              }}>
+                {slide.sub_headline}
+              </span>
+            )}
+            
+            {/* Headline */}
+            <h1 style={{ 
+              color: '#fff', 
+              fontSize: isCover ? 38 : 32, 
+              fontWeight: 900, 
+              lineHeight: 1.1, 
+              textShadow: '0 4px 12px rgba(0,0,0,0.6)',
+              marginBottom: 8
+            }}>
+              {slide.headline}
+            </h1>
+
+            {/* Body */}
+            {slide.body && (
+              <p style={{ 
+                color: 'rgba(255,255,255,0.9)', 
+                fontSize: 16, 
+                lineHeight: 1.4, 
+                fontWeight: 500,
+                textShadow: '0 2px 8px rgba(0,0,0,0.8)'
+              }}>
+                {slide.body}
+              </p>
+            )}
+
+            {/* Bullets (Minimalist Icons) */}
+            {slide.bullets && slide.bullets.length > 0 && (
+              <ul style={{ 
+                marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12, width: '100%' 
+              }}>
+                {slide.bullets.map((b, i) => (
+                  <li key={i} style={{ 
+                    display: 'flex', gap: 12, alignItems: 'flex-start', 
+                    color: '#F8FAFC', fontSize: 14, fontWeight: 600, 
+                    textShadow: '0 2px 6px rgba(0,0,0,0.8)'
+                  }}>
+                    <span style={{ color: '#fff', fontSize: 16, marginTop: -2 }}>✓</span>
+                    <span style={{ lineHeight: 1.4 }}>{b}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* CTA Button */}
+            {isCta && slide.cta && (
+              <div style={{ 
+                marginTop: 30, background: '#fff', color: '#000', 
+                padding: '14px 32px', borderRadius: 30, 
+                fontWeight: 800, fontSize: 14, textTransform: 'uppercase',
+                display: 'flex', alignItems: 'center', gap: 8,
+                boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
+              }}>
+                {slide.cta} →
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
