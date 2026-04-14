@@ -125,7 +125,15 @@ async function generateCarouselV2(body: any, cors: Record<string, string>) {
       Slides 2-${slide_count - 1}: PASSO [N] — ação específica com orientação clara
       Slide ${slide_count} (CTA): "Salve este post e comece agora"`,
 
-    polemica: `Formato POLÊM  const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
+    polemica: `Formato POLÊMICO: gera debate e compartilhamento.
+      Slide 1 (CAPA): Afirmação provocativa e contrária ao senso comum
+      Slides 2-5: Argumentos que sustentam a posição, com dados
+      Slide 6: Antecipa e derruba a principal objeção
+      Slide 7: Convida ao debate nos comentários
+      Slide ${slide_count} (CTA): "Concorda ou discorda? Comenta aqui"`,
+  };
+
+  const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
 Você pensa em PÁGINAS VISUAIS SEPARADAS — cada slide é uma página completa como um slide de PowerPoint/Canva.
 Se recebeu uma ESTRATÉGIA DO PAULO, você DEVE preservar e expandir a visão DELE.
 
