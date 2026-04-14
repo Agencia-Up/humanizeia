@@ -37,7 +37,7 @@ interface TransferStats {
 
 export function GlobalLeadsCrm() {
   const { user } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [leads, setLeads] = useState<any[]>([]);
   const [transfers, setTransfers] = useState<any[]>([]);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
@@ -47,7 +47,7 @@ export function GlobalLeadsCrm() {
   const { toast } = useToast();
 
   const fetchAll = useCallback(async () => {
-    if (!user) return;
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     try {
       // Fetch leads

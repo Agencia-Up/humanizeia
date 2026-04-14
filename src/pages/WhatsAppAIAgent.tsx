@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Component, ReactNode } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,7 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   Bot, Plus, Loader2, MessageSquare, Sparkles, Trash2, Edit2, Copy, Webhook,
   Brain, Zap, BookOpen, Shield, Globe, ChevronRight, MoreVertical,
-  Activity, Users, Clock, CheckCircle2, XCircle, Database,
+  Activity, Users, Clock, CheckCircle2, XCircle, Database, AlertTriangle,
 } from 'lucide-react';
 import { AgentFormDialog } from '@/components/whatsapp/AgentFormDialog';
 import {
@@ -16,6 +16,37 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { GlobalLeadsCrm } from '@/components/whatsapp/GlobalLeadsCrm';
+
+// Error boundary to prevent CRM tab from crashing the whole page
+class CrmErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error?: string }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message };
+  }
+  componentDidCatch(error: Error) {
+    console.error('[CrmErrorBoundary] Caught error:', error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+          <AlertTriangle className="h-10 w-10 text-yellow-400" />
+          <div>
+            <h3 className="font-semibold text-lg">Erro ao carregar o CRM</h3>
+            <p className="text-sm text-muted-foreground mt-1 max-w-sm">{this.state.error || 'Tente recarregar a página.'}</p>
+          </div>
+          <Button variant="outline" onClick={() => this.setState({ hasError: false })}>
+            Tentar novamente
+          </Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface AIAgent {
   id: string;
@@ -360,7 +391,9 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
           </div>
 
           <TabsContent value="crm" className="mt-0 outline-none">
-            <GlobalLeadsCrm />
+            <CrmErrorBoundary>
+              <GlobalLeadsCrm />
+            </CrmErrorBoundary>
           </TabsContent>
 
           <TabsContent value="agentes" className="space-y-8 mt-0 outline-none">
