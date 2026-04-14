@@ -1216,7 +1216,89 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
       return;
     }
 
-    let replyText = aiData.choices?.[0]?.message?.content?.trim();
+    let replyText = aiData.choices?.[0]?.message?.content?.trim() || "";
+    const aiMessage = aiData.choices?.[0]?.message;
+
+    // ===== Handle CRM Tool Calls (Lead Qualification & Transfer) =====
+    if (aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
+      const toolCall = aiMessage.tool_calls.find((t: any) => t.function?.name === "atualizar_etapa_crm");
+      if (toolCall) {
+        try {
+          const args = JSON.parse(toolCall.function.arguments);
+          console.log(`[ai-agent-crm] Lead ${phone} → status: ${args.status}`);
+
+          // Update CRM lead status
+          const { data: existingLead } = await supabase
+            .from("ai_crm_leads")
+            .select("id")
+            .eq("agent_id", agent.id)
+            .eq("remote_jid", phone)
+            .maybeSingle();
+
+          if (existingLead) {
+            await supabase.from("ai_crm_leads").update({
+              status: args.status,
+              summary: args.resumo,
+              last_interaction_at: new Date().toISOString(),
+            }).eq("id", existingLead.id);
+          } else {
+            await supabase.from("ai_crm_leads").insert({
+              user_id: instance.user_id,
+              agent_id: agent.id,
+              instance_id: instance.id,
+              remote_jid: phone,
+              lead_name: pushName || phone,
+              status: args.status,
+              summary: args.resumo,
+              last_interaction_at: new Date().toISOString(),
+            });
+          }
+
+          // ===== TRANSFER TO SELLER (Round-Robin) when QUALIFICADO =====
+          if (args.status === "qualificado") {
+            await transferLeadToSeller(supabase, instance, agent, phone, pushName, args.resumo, historyMessages);
+
+            // Handoff message to client
+            const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
+            replyText = handoffMsg;
+          }
+
+          // If AI only called tool without text, request a follow-up response
+          if (!replyText && args.status !== "qualificado") {
+            console.log("[ai-agent-crm] No text response, requesting follow-up...");
+            // Make a second call to get the text response
+            const followUpMessages = [
+              { role: "system", content: systemPrompt },
+              ...historyMessages.slice(-14),
+              { role: "user", content },
+              aiMessage,
+              { role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ success: true, status: args.status }) },
+            ];
+
+            const followUpRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: "google/gemini-2.5-flash",
+                messages: followUpMessages,
+                temperature: effectiveTemp,
+                max_tokens: maxTokensValue,
+              }),
+            });
+
+            if (followUpRes.ok) {
+              const followUpData = await followUpRes.json();
+              replyText = followUpData.choices?.[0]?.message?.content?.trim() || "";
+            }
+          }
+        } catch (err) {
+          console.error("[ai-agent-crm] Tool call processing error:", err);
+        }
+      }
+    }
 
     if (!replyText) {
       console.log("[ai-agent] Empty AI response, skipping");
