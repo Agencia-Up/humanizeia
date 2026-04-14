@@ -154,19 +154,19 @@ Diferencial: ${ctx.diferencial}
 ## ÂNGULO SOLICITADO
 ${ANGLES.find(a => a.value === angle)?.label || angle}: ${ANGLES.find(a => a.value === angle)?.desc || ''}
 
-## PROMPTS DE IMAGEM — NÍVEL DIRETOR DE ARTE
-Cada slide deve ter um prompt de imagem cinematográfico e detalhado em INGLÊS.
-Pense como um diretor de cinema ao escrever o prompt:
-- Composição da cena (plano aberto, close, plano médio)
-- Iluminação (luz natural, golden hour, estúdio, néon)
-- Ambiente e atmosfera (moderno, industrial, minimalista, futurista)
-- Mood emocional (urgente, tranquilo, inspirador, tenso)
-- Estilo fotográfico (editorial, documentary, cinematic, lifestyle)
-- Cores dominantes e paleta
-- Detalhes específicos que tornam a imagem única
+## PROMPTS DE IMAGEM — NÍVEL DIRETOR DE ARTE (O MAIS IMPORTANTE)
+Cada slide deve ter um prompt de imagem cinematográfico, denso e detalhado em INGLÊS.
+Você deve agir como um fotógrafo premiado e um diretor de arte de agência de luxo.
 
-Exemplo de prompt ruim: "A person working in a factory"
-Exemplo de prompt bom: "Cinematic wide shot of a Toyota assembly line at night, warm industrial lighting casting orange shadows on chrome car parts, a lone worker in orange uniform reaching toward a large red emergency stop button, shallow depth of field, photorealistic, 8K, shot with Sony A7R IV 24mm f/1.8"
+**Estrutura obrigatória de cada prompt:**
+1. **Sujeito e Ação**: Detalhe exatamente quem/o que está na cena.
+2. **Ambiente e Composição**: Use termos como "ultra-wide angle", "macro close-up", "low angle shot".
+3. **Iluminação**: Detalhe a luz: "volumetric lighting", "golden hour", "soft studio box", "cinematic moody shadows".
+4. **Equipamento e Estilo**: Cite câmeras: "shot on Fujifilm GFX 100", "85mm lens", "f/1.2 bokeh".
+5. **Atmosfera**: Adicione "minimalist luxury", "vibrant commercial photography", "hyper-realistic textures".
+
+Exemplo de prompt RUIM: "A person working in a factory"
+Exemplo de prompt PAULO (Obrigatório): "Cinematic side-profile shot of a high-tech robotic assembly line at night, volumetric blue laser lighting cutting through subtle fog, soft amber glow from sparks, shallow depth of field, minimalist industrial aesthetic, 8K resolution, photorealistic, premium corporate photography style, no text on image"
 
 ## FORMATO DE SAÍDA OBRIGATÓRIO
 Responda APENAS com JSON válido, sem texto antes ou depois, sem markdown (sem \`\`\`):

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Download, Loader2 } from 'lucide-react';
+import React, { useState, useRef, useCallback, useEffect, Component, ErrorInfo, ReactNode } from 'react';
+import html2canvas from 'html2canvas';
+import { ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
 import { CarouselSlide } from '@/hooks/useSocialMedia';
 import { Button } from '@/components/ui/button';
-import { generateNativeCarousel } from './CarouselNativeRenderer';
 
 // ── Template definitions ──────────────────────────────────────────────────────
 export const CAROUSEL_TEMPLATES = [
@@ -179,23 +179,6 @@ const POLLINATIONS_CACHE = new Map<string, string>();
 const imgQueue: string[] = [];
 let isProcessingQueue = false;
 
-const fetchWithRetry = async (url: string, retries = 3, backoff = 1000): Promise<Response> => {
-  try {
-    const res = await fetch(url, { cache: 'force-cache' });
-    if (res.status === 429 && retries > 0) {
-      await new Promise(r => setTimeout(r, backoff));
-      return fetchWithRetry(url, retries - 1, backoff * 2);
-    }
-    return res;
-  } catch (e) {
-    if (retries > 0) {
-      await new Promise(r => setTimeout(r, backoff));
-      return fetchWithRetry(url, retries - 1, backoff * 2);
-    }
-    throw e;
-  }
-};
-
 const processQueue = async () => {
   if (isProcessingQueue) return;
   isProcessingQueue = true;
@@ -203,26 +186,33 @@ const processQueue = async () => {
     const url = imgQueue[0];
     if (!POLLINATIONS_CACHE.has(url)) {
       try {
-        const res = await fetchWithRetry(url);
-        if (res.ok) {
-          const blob = await res.blob();
-          POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
-        }
+        // Tentativa de carregar em paralelo (limitado a pequenas rajadas)
+        const batch = imgQueue.splice(0, 3); // Processa até 3 por vez
+        await Promise.all(batch.map(async (qUrl) => {
+          if (POLLINATIONS_CACHE.has(qUrl)) return;
+          const res = await fetchWithRetry(qUrl);
+          if (res.ok) {
+            const blob = await res.blob();
+            POLLINATIONS_CACHE.set(qUrl, URL.createObjectURL(blob));
+            window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: qUrl }));
+          }
+        }));
       } catch (e) {
-        console.warn('Queue fetch failed after retries', e);
+        console.warn('Batch fetch failed', e);
       }
-      // Balanced delay: faster than 1.2s, safer than 100ms (avoids 429)
-      await new Promise(r => setTimeout(r, 400));
+      // Delay mínimo para evitar 429 agressivo, mas muito mais rápido que antes
+      await new Promise(r => setTimeout(r, 50));
+    } else {
+      imgQueue.shift();
+      window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
     }
-    imgQueue.shift();
-    window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
   }
   isProcessingQueue = false;
 };
 
 export function usePollinationsImage(prompt: string, width: number, height: number, seed: number) {
-  // Use a longer character limit to preserve Paulo's detailed prompts
-  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 1000));
+  // Truncate prompt to prevent URL Too Long errors from giant copywriter prompts
+  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 250));
   const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
   
   const [localUrl, setLocalUrl] = React.useState<string | null>(POLLINATIONS_CACHE.get(url) || null);
@@ -253,14 +243,37 @@ function SlideLoading() {
     <div style={{
       position: 'absolute', inset: 0, 
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(0,0,0,0.1)', backdropFilter: 'blur(4px)',
-      zIndex: 1
+      background: 'rgba(5, 8, 22, 0.8)',
+      backdropFilter: 'blur(12px)',
+      zIndex: 10
     }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-        <Loader2 className="animate-spin" style={{ width: 32, height: 32, color: 'rgba(255,255,255,0.8)' }} />
-        <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-          Gerando Visual...
-        </span>
+      <div style={{ 
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+        padding: '24px', borderRadius: '24px', background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+      }}>
+        <div style={{ position: 'relative' }}>
+          <Loader2 className="animate-spin" style={{ width: 40, height: 40, color: '#6366F1' }} />
+          <div style={{ 
+            position: 'absolute', inset: -4, borderRadius: '50%', 
+            border: '2px solid #6366F1', opacity: 0.3,
+            animation: 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite'
+          }} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+          <span style={{ 
+            fontSize: 11, fontWeight: 900, color: '#fff', 
+            textTransform: 'uppercase', letterSpacing: '0.2em',
+            background: 'linear-gradient(90deg, #fff, #6366F1)',
+            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
+          }}>
+            Davi está Criando
+          </span>
+          <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
+            Visual Cinematográfico IA
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -276,25 +289,18 @@ function FuturistaSlide({ slide, tpl, brandName, total }: {
   const isCover = slide.type === 'cover' || slide.order === 1;
   const isCta = slide.type === 'cta' || slide.order === total;
 
-  // Fidelity: Use Paulo's prompt directly + high-quality photographic modifiers (user choice)
-  const promptBase = slide.image_prompt || slide.visual_cue || slide.headline || 'premium professional scene';
-  const visualPrompt = `${promptBase}, high fidelity photography, cinematic business professional, realistic lighting, sharp focus, 8k, masterpiece, no text overlay`;
-  // Standardized seed for browser cache consistency across components
-  const seed = ((slide.headline?.length || 10) * slide.order * 42) % 100000;
-  
-  // Reuse existing image_url if provided by handleImportPaulo
-  const bgImgUrl = slide.image_url || usePollinationsImage(visualPrompt, 1080, 730, seed);
+  const visualPrompt = `${slide.visual_cue || slide.image_prompt || slide.headline}, cinematic dark AI scene, neon holographic elements, 3D floating objects, dramatic lighting, ultra realistic, 8K, no text overlay`;
+  const seed = ((slide.headline?.length || 10) * slide.order * 57) % 9999;
+  const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 730, seed);
 
   return (
-      <div style={{
-        width: '100%', height: '100%',
-        background: tpl.bgGradient,
-        display: 'flex', flexDirection: 'column',
-        fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
-        position: 'relative', overflow: 'hidden',
-      }}>
-        {/* Individual slide loading indicator */}
-        {!bgImgUrl && <SlideLoading />}
+    <div style={{
+      width: '100%', height: '100%',
+      background: tpl.bgGradient,
+      display: 'flex', flexDirection: 'column',
+      fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
+      position: 'relative', overflow: 'hidden',
+    }}>
       {/* TOP — Cinematic image (55%) */}
       <div style={{
         flex: '0 0 55%',
@@ -430,9 +436,9 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
 
   // Use image_prompt > visual_cue > headline for the bottom editorial image
   const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'professional business photography';
-  const visualPrompt = `${imgContext}, real editorial photography, authentic business professional, warm natural lighting, widescreen composition, sharp focus, no text, 8K ultra detail`;
-  const seed = ((slide.headline?.length || 10) * slide.order * 42) % 100000;
-  const bottomImg = slide.image_url || usePollinationsImage(visualPrompt, 1200, 600, seed);
+  const visualPrompt = `${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`;
+  const seed = ((slide.headline?.length || 10) * slide.order * 43) % 9999;
+  const bottomImg = usePollinationsImage(visualPrompt, 1200, 600, seed);
 
   // Initial for avatar placeholder
   const initial = (brandName || 'MC').charAt(0).toUpperCase();
@@ -446,8 +452,6 @@ function PersonalBrandSlide({ slide, tpl, brandName, total, clientImageUrl }: {
       fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
       position: 'relative', overflow: 'hidden',
     }}>
-      {/* Individual slide loading indicator for bottom image */}
-      {!bottomImg && <SlideLoading />}
       {/* TOP — Creator avatar + name */}
       <div style={{
         padding: '18px 20px 0',
@@ -600,9 +604,9 @@ function StandardSlide({ slide, tpl, brandName, total }: {
   const textColor = isLight ? tpl.text : '#ffffff';
   const subColor = isLight ? tpl.sub : 'rgba(255,255,255,0.85)';
 
-  const visualPrompt = `${slide.image_prompt || slide.visual_cue || slide.headline || 'creative photography'}, highly detailed photography, cinematic realistic, 4k resolution, professional, masterpiece`;
-  const seed = ((slide.headline?.length || 10) * slide.order * 42) % 100000;
-  const bgImageUrl = slide.image_url || usePollinationsImage(visualPrompt, 1080, 1350, seed);
+  const visualPrompt = `${slide.visual_cue || slide.headline || 'creative photography'}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece`;
+  const seed = (slide.headline?.length || 10) * slide.order * 42;
+  const bgImageUrl = usePollinationsImage(visualPrompt, 1080, 1350, seed);
 
   let layout = slide.layout || 'left';
   if ((layout as string) === 'left' || (layout as string) === 'default') {
@@ -770,127 +774,152 @@ function SlidePageInner({ slide, tpl, brandName, total, clientImageUrl }: {
 // ── Main component ─────────────────────────────────────────────────────────────
 interface CarouselPageViewerProps {
   slides: CarouselSlide[];
-  templateId: string;
-  onTemplateChange: (t: string) => void;
+  templateId: TemplateId;
+  onTemplateChange: (id: TemplateId) => void;
   brandName?: string;
-  clientImages?: string[];
+  caption?: string;
+  clientImageUrl?: string;
 }
 
-export function CarouselPageViewer({ slides, templateId, onTemplateChange, brandName = 'Minha Empresa', clientImages = [] }: CarouselPageViewerProps) {
-  const [renderedImages, setRenderedImages] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+export function CarouselPageViewerInner({
+  slides, templateId, onTemplateChange, brandName = 'Minha Marca', caption, clientImageUrl
+}: CarouselPageViewerProps) {
   const [exporting, setExporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadingImages, setLoadingImages] = useState(true);
+  const [loadedCount, setLoadedCount] = useState(0);
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const tpl = CAROUSEL_TEMPLATES.find(t => t.id === templateId) ?? CAROUSEL_TEMPLATES[0];
+
+  // O preload principal agora é gerenciado globalmente pelo Queue Hook nos Slides
   useEffect(() => {
-    let mounted = true;
-    
-    async function renderAll() {
-      setLoading(true);
-      setError(null);
-      try {
-        const images = await generateNativeCarousel({
-          slides,
-          attachedImages: clientImages,
-          theme: templateId || 'icom',
-          brandName
-        });
-        if (mounted) {
-          setRenderedImages(images);
-          setLoading(false);
-        }
-      } catch (err: any) {
-        console.error('Failed to generate native carousel slides', err);
-        if (mounted) {
-          setError(err.message || 'Erro ao gerar carrossel.');
-          setLoading(false);
-        }
-      }
-    }
-
-    renderAll();
-
-    return () => { mounted = false; };
-  }, [slides, templateId, brandName, clientImages]);
+    // Apenas marca como carregado instantaneamente para exibir a galeria,
+    // já que as imagens têm seus próprios Skeletons e Controllers
+    setLoadingImages(false);
+  }, []);
 
   const handleExportAll = async () => {
+    if (!containerRef.current) return;
     setExporting(true);
     try {
-      for (let i = 0; i < renderedImages.length; i++) {
-        const a = document.createElement('a');
-        a.href = renderedImages[i];
-        a.download = `Slide_${String(i + 1).padStart(2, '0')}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        // Small delay to allow browser to process downloads
-        await new Promise(r => setTimeout(r, 300));
+      const slideElements = containerRef.current.querySelectorAll('.davi-slide-node');
+      for (let i = 0; i < slideElements.length; i++) {
+        const el = slideElements[i] as HTMLElement;
+        const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: null, logging: false });
+        const link = document.createElement('a');
+        link.download = `slide-${String(i + 1).padStart(2, '0')}-${tpl.name.toLowerCase().replace(/\s/g, '-')}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        await new Promise(res => setTimeout(res, 500)); 
       }
-    } catch (err) {
-      console.error('Download error:', err);
+    } catch (e) {
+      console.error('Export failed:', e);
     } finally {
       setExporting(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center p-12 text-center h-full w-full">
-        <Loader2 className="w-8 h-8 text-emerald-500 animate-spin mb-4" />
-        <p className="text-sm text-emerald-100/70">Renderizando Canvas Nativamente (Pollinations AI)...</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6 bg-red-900/20 border border-red-500/30 rounded-xl text-center">
-        <p className="text-red-400 font-medium">Erro ao gerar slides nativos</p>
-        <p className="text-xs text-red-300 mt-2">{error}</p>
-      </div>
-    );
-  }
+  const DISPLAY_W = 380;
+  const DISPLAY_H = Math.round(DISPLAY_W * (1350 / 1080));
 
   return (
-    <div className="flex flex-col h-full max-h-[85vh] bg-[#0a0f1d]/50 p-4 rounded-xl border border-white/5 w-full">
-      <div className="flex justify-between items-center bg-black/40 backdrop-blur-md rounded-2xl p-2 px-4 shadow-lg border border-white/10 mb-4 sticky top-0 z-10">
-        <div className="flex items-center gap-3">
-          <h3 className="text-sm font-semibold text-white tracking-tight">Galeria de Slides</h3>
-          <span className="text-[10px] uppercase font-bold tracking-widest text-[#a1a1aa] bg-[#27272a]/50 px-2.5 py-0.5 rounded-full border border-white/5">
-            {renderedImages.length} páginas (Native)
-          </span>
+    <div className="flex flex-col w-full h-full max-h-[80vh]">
+      {/* Header Actions */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 px-2 shrink-0 gap-4 border-b border-white/5 pb-4">
+        <div>
+          <h2 className="text-xl font-black text-white w-full sm:w-auto mt-2">Galeria de Slides</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            {slides.length} páginas geradas {loadingImages ? `(Carregando cenários ${loadedCount}/${slides.length}...)` : ''}
+          </p>
         </div>
         
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+          {/* Template picker - Filtramos as cores antigas */}
+          <div className="flex items-center gap-2 justify-center bg-black/40 px-4 py-2 rounded-xl border border-white/10 shadow-inner">
+            <span className="text-[10px] text-muted-foreground/80 mr-1 font-bold uppercase tracking-widest hidden sm:inline">Tema:</span>
+            {CAROUSEL_TEMPLATES.filter(t => t.id === 'futurista_ia' || t.id === 'personal_brand').map(t => (
+              <button key={t.id} onClick={() => onTemplateChange(t.id as TemplateId)} title={t.name}
+                style={{ 
+                  width: 30, height: 30, borderRadius: '50%', 
+                  background: t.id === 'personal_brand' ? '#1f2023' : '#6366F1', 
+                  border: t.id === templateId ? '2px solid white' : '2px solid transparent', 
+                  cursor: 'pointer', transform: t.id === templateId ? 'scale(1.15)' : 'scale(1)', transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)', 
+                  boxShadow: t.id === templateId ? `0 0 16px ${(t as any).accentGlow}` : 'none', fontSize: 13, 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                }}>
+                {t.id === 'futurista_ia' ? '🤖' : '👤'}
+              </button>
+            ))}
+          </div>
+
           <Button 
             size="icon" 
             variant="outline"
             onClick={handleExportAll} 
-            disabled={exporting} 
-            className="h-10 w-10 rounded-xl bg-white/5 border-white/10 hover:bg-emerald-500/20 hover:text-emerald-400 hover:border-emerald-500/30 transition-all shrink-0"
-            title="Salvar Carrossel Nativamente"
+            disabled={exporting || loadingImages} 
+            className="h-10 w-10 rounded-xl bg-white/5 border-white/10 hover:bg-white/10 hover:text-white transition-all shrink-0"
+            title="Salvar Carrossel"
           >
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           </Button>
         </div>
       </div>
 
-      <div className="overflow-y-auto pr-2 pb-8 flex-1">
+      {/* Grid of All Slides */}
+      <div className="overflow-y-auto pr-2 pb-8 flex-1" ref={containerRef}>
         <div className="flex flex-wrap justify-center gap-6 pb-6">
-          {renderedImages.map((imgBase64, i) => (
+          {slides.map((slide, i) => (
             <div key={i} className="flex flex-col items-center gap-2">
-              <span className="text-xs font-bold text-emerald-500/80 w-full text-left pl-1">
+              <span className="text-xs font-bold text-muted-foreground w-full text-left pl-1">
                 Slide {i + 1}
               </span>
-              <img 
-                src={imgBase64} 
-                className="w-full max-w-[280px] h-auto object-cover rounded-xl shadow-xl border border-white/10"
-                alt={`Slide ${i + 1} Gerado`}
-              />
+              <div 
+                className="davi-slide-node shrink-0" 
+                style={{ 
+                  width: DISPLAY_W, 
+                  height: DISPLAY_H, 
+                  borderRadius: 12, 
+                  overflow: 'hidden', 
+                  border: tpl.borderStyle, 
+                  boxShadow: `0 8px 40px ${tpl.accentGlow}, 0 2px 8px rgba(0,0,0,0.4)` 
+                }}
+              >
+                <SlidePageInner slide={slide} tpl={tpl} brandName={brandName} total={slides.length} clientImageUrl={clientImageUrl} />
+              </div>
             </div>
           ))}
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Error Boundary ─────────────────────────────────────────────────────────────
+class CarouselErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null; info: ErrorInfo | null }> {
+  constructor(props: { children: ReactNode }) { super(props); this.state = { hasError: false, error: null, info: null }; }
+  static getDerivedStateFromError(error: Error) { return { hasError: true, error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error("Carousel Rendering Crash:", error, info); this.setState({ error, info }); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center p-6 gap-3 min-h-[400px] w-full bg-red-950/40 border border-red-500/50 rounded-xl text-center shadow-2xl backdrop-blur-md">
+          <div className="text-4xl mb-2">🚨</div>
+          <h3 className="text-red-400 font-bold text-lg tracking-tight uppercase">Erro no Carrossel</h3>
+          <p className="text-red-300 text-xs max-w-sm mb-2 font-medium">O Davi encontrou um problema ao renderizar este slide.</p>
+          <div className="bg-black/60 p-4 rounded-lg w-full text-left border border-red-500/30 text-[11px] text-red-100 font-mono">
+            {this.state.error?.toString()}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function CarouselPageViewer(props: CarouselPageViewerProps) {
+  return (
+    <CarouselErrorBoundary>
+      <CarouselPageViewerInner {...props} />
+    </CarouselErrorBoundary>
   );
 }
