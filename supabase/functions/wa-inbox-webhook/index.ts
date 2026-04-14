@@ -1058,7 +1058,51 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
       ? `\nNome do cliente: ${clientName} (use o nome com moderação, não em toda mensagem)`
       : `\nNome do cliente: desconhecido (não pergunte o nome a menos que seja necessário para o atendimento)`;
 
-    const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction;
+    const crmToolInstruction = `
+
+FERRAMENTA DE CRM - QUALIFICAÇÃO DE LEADS:
+Você tem acesso a uma ferramenta chamada "atualizar_etapa_crm" que deve ser usada para classificar o status do lead durante a conversa.
+
+USE esta ferramenta quando:
+- O cliente demonstrar interesse real no produto/serviço → status: "interessado"
+- O cliente pedir preço, condições, ou quiser avançar → status: "qualificado"  
+- O cliente disser que não tem interesse → status: "encerrado"
+- No início da conversa → status: "novo"
+
+IMPORTANTE: Quando o status for "qualificado", você DEVE:
+1. Chamar a ferramenta com status "qualificado" e um resumo detalhado da conversa
+2. O resumo deve incluir: nome do cliente, o que ele procura, principais dúvidas, orçamento mencionado, e qualquer informação relevante
+3. Após qualificar, responda ao cliente informando que um especialista vai entrar em contato
+`;
+
+    const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction + crmToolInstruction;
+
+    // CRM Tool definition for function calling
+    const crmTools = [
+      {
+        type: "function",
+        function: {
+          name: "atualizar_etapa_crm",
+          description: "Atualiza o status do lead no CRM e registra um resumo da conversa. Use quando identificar mudança de etapa do cliente.",
+          parameters: {
+            type: "object",
+            properties: {
+              status: {
+                type: "string",
+                enum: ["novo", "interessado", "qualificado", "encerrado"],
+                description: "Status atual do lead baseado na conversa"
+              },
+              resumo: {
+                type: "string",
+                description: "Resumo detalhado da conversa com o cliente incluindo: nome, interesse, dúvidas, orçamento, e informações captadas"
+              }
+            },
+            required: ["status", "resumo"],
+            additionalProperties: false
+          }
+        }
+      }
+    ];
 
     const maxTokensValue = agent.max_tokens || 500;
     const effectiveTemp = Math.max(parseFloat(agent.temperature) || 0.7, 0.75);
