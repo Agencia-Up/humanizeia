@@ -15,6 +15,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
 
 /* ------------------------------------------------------------------ */
 /*  Platform definitions                                                */
@@ -200,6 +201,7 @@ const COMING_SOON_PLATFORMS = [
 
 export function ConnectionsTab() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const meta = useMetaConnection();
   const google = useGoogleAdsConnection();
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
@@ -321,8 +323,8 @@ export function ConnectionsTab() {
   const handleConnect = async (platformId: string) => {
     switch (platformId) {
       case 'meta':
-        await meta.startOAuth();
-        break;
+        navigate('/integrations/meta');
+        return;
       case 'google_ads':
         try {
           await google.startOAuth();
@@ -562,7 +564,7 @@ export function ConnectionsTab() {
                         variant="outline"
                         size="sm"
                         className="flex-1 text-xs"
-                        onClick={() => setSelectedPlatform(platform.id)}
+                        onClick={() => platform.id === 'meta' ? navigate('/integrations/meta') : setSelectedPlatform(platform.id)}
                       >
                         Detalhes
                       </Button>
@@ -594,7 +596,7 @@ export function ConnectionsTab() {
                         variant="outline"
                         size="sm"
                         className="text-xs"
-                        onClick={() => setSelectedPlatform(platform.id)}
+                        onClick={() => platform.id === 'meta' ? navigate('/integrations/meta') : setSelectedPlatform(platform.id)}
                       >
                         Como fazer?
                       </Button>
