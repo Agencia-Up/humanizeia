@@ -32,41 +32,40 @@ serve(async (req) => {
     const openaiKey = Deno.env.get('OPENAI_API_KEY');
     const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
 
-    let content = '';
-
-    // ── Attempt 1: Anthropic Claude (highest quality) ───────────────────────
-    if (anthropicKey) {
-      try {
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'x-api-key': anthropicKey,
-            'anthropic-version': '2023-06-01',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'claude-3-5-sonnet-20241022',
-            max_tokens: 8000,
-            system: system_prompt,
-            messages: [{ role: 'user', content: prompt }],
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          content = data?.content?.[0]?.text ?? '';
-          console.log('Paulo gerou via Anthropic Claude.');
-        } else {
-          console.warn('Anthropic falhou:', await res.text());
-        }
-      } catch (e: any) {
-        console.warn('Erro Anthropic:', e.message);
-      }
+    if (!openaiKey) {
+      throw new Error('OPENAI_API_KEY não configurada no Supabase.');
     }
 
-    // ── Attempt 2: OpenAI GPT-4o (fallback) ────────────────────────────────
-    if (!content && openaiKey) {
-      console.log('Tentando OpenAI GPT-4o...');
+    // Helper to call AI (prefers Anthropic if available and not forced to JSON, otherwise OpenAI)
+    async function callAI(sys: string, userPrompt: string, maxTokens: number, forceJson = false): Promise<string> {
+      // For JSON extraction, OpenAI is usually more reliable and faster
+      if (!forceJson && anthropicKey) {
+        try {
+          const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'x-api-key': anthropicKey,
+              'anthropic-version': '2023-06-01',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'claude-3-5-sonnet-20241022',
+              max_tokens: maxTokens,
+              system: sys,
+              messages: [{ role: 'user', content: userPrompt }],
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            return data?.content?.[0]?.text ?? '';
+          }
+          console.warn('Anthropic falhou, tentando fallback OpenAI...', await res.text());
+        } catch (e: any) {
+          console.warn('Erro Anthropic:', e.message);
+        }
+      }
+
+      // OpenAI Fallback / JSON Extractor
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -76,29 +75,84 @@ serve(async (req) => {
         body: JSON.stringify({
           model: 'gpt-4o',
           messages: [
-            { role: 'system', content: system_prompt },
-            { role: 'user', content: prompt },
+            { role: 'system', content: sys },
+            { role: 'user', content: userPrompt },
           ],
-          temperature: 0.88,
-          max_tokens: 6000,
+          temperature: forceJson ? 0 : 0.88,
+          max_tokens: maxTokens,
+          ...(forceJson ? { response_format: { type: 'json_object' } } : {}),
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        content = data?.choices?.[0]?.message?.content ?? '';
-        console.log('Paulo gerou via OpenAI GPT-4o.');
-      } else {
+      if (!res.ok) {
         const err = await res.text();
-        throw new Error(`OpenAI falhou: ${res.status} — ${err}`);
+        throw new Error(`OpenAI API Error: ${res.status} — ${err}`);
+      }
+
+      const data = await res.json();
+      return data?.choices?.[0]?.message?.content ?? '';
+    }
+
+    // ── STEP 1: Creative Director (Markdown Manifesto) ───────────────────────
+    console.log('Paulo: Gerando Manifesto Criativo...');
+    const manifesto = await callAI(system_prompt, prompt, 8000, false);
+
+    if (!manifesto) {
+      throw new Error('Falha ao gerar o manifesto criativo.');
+    }
+
+    // ── STEP 2: JSON Extraction ──────────────────────────────────────────────
+    console.log('Paulo: Extraindo para JSON...');
+    const EXTRACTION_PROMPT = `Você é o Arquiteto de Estruturas JSON da HumanizeIA. 
+Sua única missão é pegar um Manifesto Criativo em Markdown e extrair TODAS as informações para o formato JSON abaixo, sem resumir, sem omitir e sem alterar a alma do texto. 
+Mantenha os prompts de imagem técnicos e as legendas longas e persuasivas.
+
+SCHEMA OBRIGATÓRIO:
+{
+  "carousels": [
+    {
+      "title": "Título",
+      "niche": "Nicho",
+      "angle": "ângulo",
+      "caption": "Legenda completa (manter todo o texto)",
+      "hashtags": ["tag1", "tag2"],
+      "slides": [
+        {
+          "slide_number": 1,
+          "type": "cover",
+          "headline": "headline",
+          "subtext": "sub_headline",
+          "body": "texto descritivo profundo original (NÃO RESUMA)",
+          "bullets": ["bullet1", "bullet2"],
+          "image_prompt": "prompt em inglês"
+        }
+      ]
+    }
+  ]
+}`;
+
+    const rawJson = await callAI(
+      EXTRACTION_PROMPT,
+      `Converta o seguinte manifesto em JSON rigorosamente dentro do schema especificado:\n\n${manifesto}`,
+      8000,
+      true
+    );
+
+    let parsed;
+    try {
+      parsed = JSON.parse(rawJson);
+    } catch {
+      // Tentar match se gpt-4o enviar texto markdown em volta
+      const match = rawJson.match(/\{[\s\S]*\}/);
+      if (match) {
+        parsed = JSON.parse(match[0]);
+      } else {
+        throw new Error('A IA não retornou um JSON válido na extração.');
       }
     }
 
-    if (!content) {
-      throw new Error('Nenhum provedor de IA disponível. Verifique as chaves de API no Supabase.');
-    }
-
-    return new Response(JSON.stringify({ content }), {
+    // Retorna o JSON como string (o frontend parseia)
+    return new Response(JSON.stringify({ content: JSON.stringify(parsed) }), {
       status: 200,
       headers: { ...cors, 'Content-Type': 'application/json' },
     });
