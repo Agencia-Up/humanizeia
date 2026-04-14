@@ -87,7 +87,9 @@ const DEMO_CLIENT: ClientContext = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function parseCarouselsFromResponse(text: string): PauloCarousel[] {
+function parseCarouselsFromResponse(text: string | undefined | null): PauloCarousel[] {
+  if (!text || typeof text !== 'string') return [];
+
   // Try to extract JSON from the response
   const jsonMatch = text.match(/```json\s*([\s\S]*?)```/) ||
                     text.match(/\{[\s\S]*"carousels"[\s\S]*\}/) ||
@@ -446,10 +448,17 @@ export default function PauloAgente() {
         source,
       });
 
-      // Step 1: Creative Creation (Markdown)
+      // Combined: Creative + Structured in a single call.
+      // claude-chat does NOT support role:'system' in messages array,
+      // so we embed extraction instructions in the user message.
+      const combinedPrompt = `${fullPrompt}
+
+---
+${EXTRACTION_SYSTEM_PROMPT}`;
+
       const res1 = await supabase.functions.invoke('claude-chat', {
         body: {
-          messages: [{ role: 'user', content: fullPrompt }],
+          messages: [{ role: 'user', content: combinedPrompt }],
           context: 'paulo',
           stream: false,
           task_id: taskId,
@@ -460,31 +469,19 @@ export default function PauloAgente() {
         },
       });
 
-      if (res1.error) throw new Error(res1.error.message || 'Erro no Passo 1 (Criação)');
-      const creativeManifesto = res1.data?.choices?.[0]?.message?.content;
-      if (!creativeManifesto) throw new Error('O Paulo não conseguiu gerar o manifesto criativo.');
+      if (res1.error) throw new Error(res1.error.message || 'Erro ao gerar carrosséis');
 
-      // Notify progress in the UI if possible, or just proceed to extract
-      // (The user said "apenas os titulos de cada etapa, ja ta otimo")
-      
-      // Step 2: Structural Extraction (JSON)
-      const res2 = await supabase.functions.invoke('claude-chat', {
-        body: {
-          messages: [
-            { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
-            { role: 'user', content: `Converta este manifesto criativo em JSON:\n\n${creativeManifesto}` }
-          ],
-          context: 'paulo',
-          config: {
-            description: "Extração estruturada de carrossel",
-            creativity: 0, // Deterministic
-          },
-        },
-      });
+      const rawContent: string | undefined =
+        res1.data?.choices?.[0]?.message?.content ||
+        res1.data?.content?.[0]?.text ||
+        (typeof res1.data === 'string' ? res1.data : undefined);
 
-      if (res2.error) throw new Error(res2.error.message || 'Erro no Passo 2 (Extração)');
-      const rawContent = res2.data?.choices?.[0]?.message?.content;
+      if (!rawContent) {
+        throw new Error('A IA não retornou conteúdo. Verifique sua conexão e tente novamente.');
+      }
+
       const carousels = parseCarouselsFromResponse(rawContent);
+
 
       if (carousels.length === 0) {
         throw new Error(`A IA não retornou JSON válido. Resposta bruta: ${rawContent.slice(0, 200)}`);
