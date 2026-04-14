@@ -323,7 +323,7 @@ export default function PauloAgente() {
         .filter(m => m.metadata?.type === 'niche_research' && m.metadata?.research)
         .reverse()
         .slice(0, 5)
-        .map(m => ({ id: m.id, date: m.timestamp, research: m.metadata!.research }));
+        .map(m => ({ id: m.id, date: m.created_at, research: m.metadata!.research }));
       setRecentResearches(researches);
     } catch {
       setRecentResearches([]);

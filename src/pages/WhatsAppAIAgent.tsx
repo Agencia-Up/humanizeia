@@ -494,7 +494,7 @@ export default function WhatsAppAIAgent() {
         onOpenChange={setDialogOpen}
         agent={editingAgent}
         instances={instances}
-        agents={agents}
+        
         onSaved={() => { setDialogOpen(false); fetchData(); }}
       />
     </MainLayout>
