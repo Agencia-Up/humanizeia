@@ -18,7 +18,7 @@ const agents = [
   { name: 'Maria', role: 'Design', icon: Palette, color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA', active: true },
   { name: 'Davi', role: 'Social Media', icon: Instagram, color: '#60a5fa', url: '/davi', desc: 'Gestão de redes sociais e conteúdo', active: true },
   { name: 'João', role: 'Email', icon: Mail, color: '#a78bfa', url: '/joao', desc: 'Email marketing e automações', active: true },
-  { name: 'Marcos', role: 'CRM & Leads', icon: Users, color: '#a855f7', url: '/crm', desc: 'Pipeline de vendas e gestão de leads', active: true },
+  { name: 'Marcos', role: 'CRM & WhatsApp', icon: Users, color: '#a855f7', url: '/marcos', desc: 'CRM, leads e toda estrutura WhatsApp', active: true },
   { name: 'Pedro', role: 'WhatsApp IA', icon: Bot, color: '#34d399', url: '/whatsapp/ai-agent', desc: 'Atendimento automatizado no WhatsApp', active: true },
   { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', desc: 'Planejamento e análise estratégica', active: true },
 ];
