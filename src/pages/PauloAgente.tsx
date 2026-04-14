@@ -442,45 +442,34 @@ export default function PauloAgente() {
     try {
       const systemPrompt = buildPauloSystemPrompt(clientContext || DEMO_CLIENT, angle);
       
-      const taskId = await createTask('paulo', 'generate_carousel', {
+      await createTask('paulo', 'generate_carousel', {
         input: fullPrompt,
         angle,
         source,
       });
 
-      // Combined: Creative + Structured in a single call.
-      // claude-chat does NOT support role:'system' in messages array,
-      // so we embed extraction instructions in the user message.
-      const combinedPrompt = `${fullPrompt}
-
----
-${EXTRACTION_SYSTEM_PROMPT}`;
-
-      const res1 = await supabase.functions.invoke('claude-chat', {
+      // Call the dedicated Paulo Edge Function (uses OpenAI directly — no Lovable credits)
+      const res = await supabase.functions.invoke('paulo-carousel-api', {
         body: {
-          messages: [{ role: 'user', content: combinedPrompt }],
-          context: 'paulo',
-          stream: false,
-          task_id: taskId,
-          config: {
-            description: systemPrompt,
-            creativity: 0.9,
-          },
+          action: 'generate_carousels',
+          prompt: fullPrompt,
+          system_prompt: systemPrompt,
+          angle,
         },
       });
 
-      if (res1.error) throw new Error(res1.error.message || 'Erro ao gerar carrosséis');
+      // paulo-carousel-api wraps errors in data.error (Supabase Edge Function pattern)
+      if (res.error) throw new Error(res.error.message || 'Erro ao gerar carrosséis');
+      if (res.data?.error) throw new Error(res.data.error);
 
-      const rawContent: string | undefined =
-        res1.data?.choices?.[0]?.message?.content ||
-        res1.data?.content?.[0]?.text ||
-        (typeof res1.data === 'string' ? res1.data : undefined);
+      const rawContent: string | undefined = res.data?.content;
 
       if (!rawContent) {
         throw new Error('A IA não retornou conteúdo. Verifique sua conexão e tente novamente.');
       }
 
       const carousels = parseCarouselsFromResponse(rawContent);
+
 
 
       if (carousels.length === 0) {
