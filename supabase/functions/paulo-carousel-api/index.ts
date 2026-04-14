@@ -103,9 +103,8 @@ serve(async (req) => {
 
     // ── STEP 2: JSON Extraction ──────────────────────────────────────────────
     console.log('Paulo: Extraindo para JSON...');
-    const EXTRACTION_PROMPT = `Você é o Arquiteto de Estruturas JSON da HumanizeIA. 
-Sua única missão é pegar um Manifesto Criativo em Markdown e extrair TODAS as informações para o formato JSON abaixo, sem resumir, sem omitir e sem alterar a alma do texto. 
-Mantenha os prompts de imagem técnicos e as legendas longas e persuasivas.
+    const EXTRACTION_PROMPT = `Você é o Arquiteto de Estruturas JSON. 
+Sua missão é extrair os dados do Manifesto Criativo (que segue um template específico com chaves como text_headline, image_prompt, etc.) para o objeto JSON rigoroso abaixo. Mantenha os textos IGUAIS ao original.
 
 SCHEMA OBRIGATÓRIO:
 {
@@ -114,26 +113,31 @@ SCHEMA OBRIGATÓRIO:
       "title": "Título",
       "niche": "Nicho",
       "angle": "ângulo",
-      "caption": "Legenda completa (manter todo o texto)",
-      "hashtags": ["tag1", "tag2"],
+      "caption": "Legenda gerada completa (manter todo o texto)",
+      "hashtags": ["tag1"],
       "slides": [
         {
           "slide_number": 1,
           "type": "cover",
-          "headline": "headline",
-          "subtext": "sub_headline",
-          "body": "texto descritivo profundo original (NÃO RESUMA)",
-          "bullets": ["bullet1", "bullet2"],
-          "image_prompt": "prompt em inglês"
+          "headline": "text_headline original",
+          "subtext": "text_sub_headline original (se houver)",
+          "body": "text_body original",
+          "bullets": ["bullet 1"],
+          "image_prompt": "image_prompt original completo (em inglês)",
+          "visual_cue": "visual_cue original"
         }
       ]
     }
   ]
-}`;
+}
+
+- Não extraia chaves que não existam.
+- Se algum campo for opcional (ex: subtext, visual_cue, bullets) e não estiver no markdown, envie vazio.
+- O campo 'body' no json equivale a 'text_body' no markdown.`;
 
     const rawJson = await callAI(
       EXTRACTION_PROMPT,
-      `Converta o seguinte manifesto em JSON rigorosamente dentro do schema especificado:\n\n${manifesto}`,
+      `Converta o seguinte roteiro em JSON rigorosamente dentro do schema especificado:\n\n${manifesto}`,
       8000,
       true
     );

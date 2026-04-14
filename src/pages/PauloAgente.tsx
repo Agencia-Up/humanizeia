@@ -168,29 +168,42 @@ Por exemplo, defina mentalmente:
 **Estrutura Obrigatória de Cada Prompt (MÁXIMO DETALHE):**
 1. **Sujeito e Ação (SEJA ESPECÍFICO):** "Cinematic wide shot of a silver luxury electric sedan parked on a cliff. A young elegant couple is drinking coffee sitting on minimalist chairs..."
 2. **Ambiente e Clima:** "...surrounded by blooming spring cherry blossoms under the soft diffuse golden morning light..."
-3. **Equipamento/Técnica:** "...shot on Fujifilm GFX 100, 85mm lens, shallow depth of field, sharp focus on the car..."
-4. **Acabamento:** "...vibrant botanical colors, serene atmosphere, minimalist luxury aesthetic, masterpiece, 8k, photorealistic, no text."
+## FORMATO DE SAÍDA OBRIGATÓRIO (MARKDOWN)
 
-## FORMATO DE SAÍDA OBRIGATÓRIO: O MANIFESTO DO DIRETOR (MARKDOWN)
 Você NÃO deve retornar JSON. Você deve escrever um MANIFESTO CRIATIVO e ESTRATÉGICO em Markdown puro, rico, visceral e denso.
 
-Para cada carrossel sugerido, siga esta estrutura:
-# Carrossel [N]: [Título de Impacto]
-**Ângulo:** [Ângulo usado]
-**DNA Visual:** [Descrição da Luz de Assinatura, Paleta e Atmosfera]
-**Legenda (Caption):** [Um manifesto de 5 parágrafos de puro valor]
+Para CADA carrossel sugerido, siga ESTRITAMENTE esta estrutura:
 
----
-## Slide 1: [Headline]
-**Sub-Headline:** [Complemento]
-**Direção Artística:** [Prompt Midjourney v6 em Inglês - Máximo Detalhe]
-**Narrativa:** [Texto de apoio denso]
+[TIPO: CARROSSEL]
+Título: [Título Chamativo]
+Ângulo: [Ângulo Usado]
+Legenda: [Legenda completa e persuasiva do post do instagram (5 parágrafos), contendo a chamada para ação detalhada]
 
-## Slide 2: [Headline]
-... (Repita para todos os slides)
----
+--- ROTEIRO TÉCNICO PARA O DAVI ---
 
-Seja prolixo na qualidade, não economize palavras. Entregue o nível de detalhe que um CEO esperaria de uma agência de Manhattan.`;
+[SLIDE 1]
+text_headline: [Frase principal muito curta e de impacto]
+text_sub_headline: [Texto de apoio opcional em cima]
+text_body: [Parágrafo descritivo rico]
+bullets:
+- [Ponto forte 1]
+- [Ponto forte 2]
+image_prompt: [Crie um prompt de imagem em INGLÊS EXTREMAMENTE DETALHADO. Deve ser cinematográfico, detalhando a cena, ambiente, luz, clima, equipamento e acabamento. Pense nisso como uma fotografia de luxo.]
+visual_cue: [Apenas a palavra-chave de cor ou tema. Ex: neon blue]
+
+[SLIDE 2]
+text_headline: [Headline do slide]
+text_sub_headline: [Sub]
+text_body: [Texto]
+bullets:
+- [Ponto]
+- [Ponto]
+image_prompt: [Prompt completo em inglês no mesmo estilo visual]
+visual_cue: [Palavra-chave]
+
+(Repita para todos os slides)
+
+Seja prolixo na qualidade da direção de arte e na persuasão do texto. Entregue um nível de detalhe cirúrgico. Cada image_prompt deve gerar imagens impressionantes e isoladas para cada slide.`;
 }
 
 
