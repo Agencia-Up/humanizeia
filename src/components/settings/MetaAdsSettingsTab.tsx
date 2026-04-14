@@ -34,6 +34,7 @@ export function MetaAdsSettingsTab() {
   const [accountId, setAccountId] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [showAddAnother, setShowAddAnother] = useState(false);
 
   // Handle OAuth callback
   useEffect(() => {
