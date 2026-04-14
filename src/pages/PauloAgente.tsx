@@ -175,35 +175,33 @@ Você NÃO deve retornar JSON. Você deve escrever um MANIFESTO CRIATIVO e ESTRA
 Para CADA carrossel sugerido, siga ESTRITAMENTE esta estrutura:
 
 [TIPO: CARROSSEL]
-Título: [Título Chamativo]
-Ângulo: [Ângulo Usado]
-Legenda: [Legenda completa e persuasiva do post do instagram (5 parágrafos), contendo a chamada para ação detalhada]
+Título: ESCREVA O TÍTULO REAL CHAMATIVO AQUI
+Ângulo: ÂNGULO USADO
+Legenda: Escreva a legenda do post do instagram (mínimo de 4 parágrafos focados em retenção). Inclua CTA forte e hashtags.
 
 --- ROTEIRO TÉCNICO PARA O DAVI ---
 
 [SLIDE 1]
-text_headline: [Frase principal muito curta e de impacto]
-text_sub_headline: [Texto de apoio opcional em cima]
-text_body: [Parágrafo descritivo rico]
+text_headline: Escreva a headline principal, muito curta e de impacto.
+text_sub_headline: Escreva uma frase curta de apoio motivacional. (Não coloque colchetes).
+text_body: Escreva um parágrafo descritivo, rico e altamente persuasivo.
 bullets:
-- [Ponto forte 1]
-- [Ponto forte 2]
-image_prompt: [Crie um prompt de imagem em INGLÊS EXTREMAMENTE DETALHADO. Deve ser cinematográfico, detalhando a cena, ambiente, luz, clima, equipamento e acabamento. Pense nisso como uma fotografia de luxo.]
-visual_cue: [Apenas a palavra-chave de cor ou tema. Ex: neon blue]
+- Escreva o primeiro ponto forte genial.
+- Escreva o segundo ponto forte incontestável.
+image_prompt: Escreva um prompt de imagem em INGLÊS EXTREMAMENTE DETALHADO. Deve ser cinematográfico, detalhando a cena, ambiente, luz, clima, equipamento e acabamento.
+visual_cue: neon blue
 
 [SLIDE 2]
-text_headline: [Headline do slide]
-text_sub_headline: [Sub]
-text_body: [Texto]
+text_headline: Headline de continuação.
+text_sub_headline: Sub-headline opcional.
+text_body: Desenvolvimento da dor/solução.
 bullets:
-- [Ponto]
-- [Ponto]
-image_prompt: [Prompt completo em inglês no mesmo estilo visual]
-visual_cue: [Palavra-chave]
+- Ponto de impacto 1
+- Ponto de impacto 2
+image_prompt: Descrição visual impecável mantendo o cenário e personagens base.
+visual_cue: cold lighting
 
-(Repita para todos os slides)
-
-Seja prolixo na qualidade da direção de arte e na persuasão do texto. Entregue um nível de detalhe cirúrgico. Cada image_prompt deve gerar imagens impressionantes e isoladas para cada slide.`;
+Obrigatório: Crie entre 4 a 8 slides por carrossel. Seja prolixo, entregue textos gigantes e valiosos. NUNCA DEVOLVA TEXTOS COMO "Texto de apoio opcional aqui", escreva o copy real!`;
 }
 
 

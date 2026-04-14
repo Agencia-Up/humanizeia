@@ -151,21 +151,19 @@ function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
     </div>
   );
 
-  // Variação inteligente do layout baseado no tipo de slide para não ficar repetitivo
-  // Mas sempre mantendo a imagem full-bleed.
+  // Variação inteligente do layout baseado no tipo de slide
   const gradientOverlay = isCover 
-    ? 'linear-gradient(to right, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, rgba(0,0,0,0) 100%)' // Gradiente lateral para capa
+    ? 'linear-gradient(to right, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.5) 60%, rgba(0,0,0,0) 100%)' 
     : isCta 
-      ? 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.3) 100%)' // Gradiente fundo escuro para fechar
-      : 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 40%, rgba(0,0,0,0.1) 100%)'; // Content padrão
+      ? 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 100%)' 
+      : 'linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.6) 40%, rgba(0,0,0,0.15) 100%)';
 
-  const textAlignment = isCover ? 'flex-start' : 'flex-start';
-  const textContainerMargin = isCover ? 'auto 30px' : 'auto 30px 40px 30px';
+  const textAlignment = 'flex-start';
 
   return (
     <div style={{
       width: '100%', height: '100%', position: 'relative', overflow: 'hidden',
-      backgroundColor: '#111', fontFamily: "'Inter', sans-serif"
+      backgroundColor: '#0a0a0a', fontFamily: "'Inter', sans-serif"
     }} className={bgLoading}>
       
       {/* Background Image */}
@@ -174,7 +172,7 @@ function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
         backgroundImage: bgImgUrl ? `url("${bgImgUrl}")` : 'none',
         backgroundSize: 'cover', backgroundPosition: 'center', zIndex: 1
       }}>
-        {!bgImgUrl && <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-900 border border-white/5"><Loader2 className="w-8 h-8 animate-spin text-white/30" /></div>}
+        {!bgImgUrl && <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-950 border border-white/5"><Loader2 className="w-8 h-8 animate-spin text-white/20" /></div>}
       </div>
 
       {/* Cinematic Gradient Overlay */}
@@ -187,7 +185,7 @@ function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
       )}
 
       {/* Header Info */}
-      <div style={{ position: 'relative', zIndex: 10, width: '100%' }}>
+      <div style={{ position: 'relative', zIndex: 10, width: '100%', padding: '24px' }}>
         <AvatarIcon />
         <PageCounter />
       </div>
@@ -196,17 +194,18 @@ function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
       {bgImgUrl && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 10,
-          display: 'flex', flexDirection: 'column', justifyContent: isCover ? 'flex-start' : 'flex-end',
-          padding: isCover ? '60px 40px' : '40px 30px',
+          display: 'flex', flexDirection: 'column', justifyContent: isCover ? 'center' : 'flex-end',
+          padding: '40px 32px', paddingBottom: isCta ? '60px' : '40px'
         }}>
           
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: textAlignment, maxWidth: '90%' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, alignItems: textAlignment, width: '100%' }}>
             {/* Tagline / Subtext */}
-            {slide.sub_headline && (
+            {slide.sub_headline && slide.sub_headline !== '[Texto de apoio opcional em cima]' && (
               <span style={{ 
                 color: '#E2E8F0', fontSize: 13, fontWeight: 700, 
-                textTransform: 'uppercase', letterSpacing: '0.12em', 
-                background: 'rgba(255,255,255,0.1)', padding: '6px 12px', borderRadius: 4, backdropFilter: 'blur(4px)'
+                textTransform: 'uppercase', letterSpacing: '0.1em', 
+                background: 'rgba(255,255,255,0.12)', padding: '6px 14px', borderRadius: 6, backdropFilter: 'blur(8px)',
+                display: 'inline-block', marginBottom: isCover ? 8 : 4
               }}>
                 {slide.sub_headline}
               </span>
@@ -215,40 +214,43 @@ function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
             {/* Headline */}
             <h1 style={{ 
               color: '#fff', 
-              fontSize: isCover ? 38 : 32, 
+              fontSize: isCover ? '2.4rem' : '1.8rem', 
               fontWeight: 900, 
-              lineHeight: 1.1, 
-              textShadow: '0 4px 12px rgba(0,0,0,0.6)',
-              marginBottom: 8
+              lineHeight: 1.15, 
+              letterSpacing: '-0.02em',
+              textShadow: '0 4px 20px rgba(0,0,0,0.8), 0 2px 4px rgba(0,0,0,0.8)',
+              textWrap: 'balance',
+              width: '100%',
+              margin: 0
             }}>
               {slide.headline}
             </h1>
 
             {/* Body */}
-            {slide.body && (
+            {slide.body && slide.body !== '[Texto]' && slide.body !== '[Parágrafo descritivo rico]' && (
               <p style={{ 
-                color: 'rgba(255,255,255,0.9)', 
-                fontSize: 16, 
-                lineHeight: 1.4, 
+                color: 'rgba(255,255,255,0.92)', 
+                fontSize: 15, 
+                lineHeight: 1.5, 
                 fontWeight: 500,
-                textShadow: '0 2px 8px rgba(0,0,0,0.8)'
+                textShadow: '0 2px 8px rgba(0,0,0,0.9)'
               }}>
                 {slide.body}
               </p>
             )}
 
             {/* Bullets (Minimalist Icons) */}
-            {slide.bullets && slide.bullets.length > 0 && (
+            {slide.bullets && slide.bullets.length > 0 && slide.bullets[0] !== '[Ponto]' && slide.bullets[0] !== '[Ponto forte 1]' && (
               <ul style={{ 
-                marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12, width: '100%' 
+                marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10, width: '100%' 
               }}>
                 {slide.bullets.map((b, i) => (
                   <li key={i} style={{ 
-                    display: 'flex', gap: 12, alignItems: 'flex-start', 
+                    display: 'flex', gap: 10, alignItems: 'flex-start', 
                     color: '#F8FAFC', fontSize: 14, fontWeight: 600, 
-                    textShadow: '0 2px 6px rgba(0,0,0,0.8)'
+                    textShadow: '0 2px 8px rgba(0,0,0,0.9)'
                   }}>
-                    <span style={{ color: '#fff', fontSize: 16, marginTop: -2 }}>✓</span>
+                    <span style={{ color: '#38bdf8', fontSize: 16, marginTop: -2 }}>✦</span>
                     <span style={{ lineHeight: 1.4 }}>{b}</span>
                   </li>
                 ))}
@@ -258,11 +260,13 @@ function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
             {/* CTA Button */}
             {isCta && slide.cta && (
               <div style={{ 
-                marginTop: 30, background: '#fff', color: '#000', 
-                padding: '14px 32px', borderRadius: 30, 
+                marginTop: 24, background: '#fff', color: '#000', 
+                padding: '16px 32px', borderRadius: 12, 
                 fontWeight: 800, fontSize: 14, textTransform: 'uppercase',
-                display: 'flex', alignItems: 'center', gap: 8,
-                boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
+                display: 'flex', alignItems: 'center', gap: 10,
+                boxShadow: '0 10px 40px rgba(0,0,0,0.6), 0 4px 10px rgba(0,0,0,0.4)',
+                alignSelf: 'center',
+                letterSpacing: '0.05em'
               }}>
                 {slide.cta} →
               </div>

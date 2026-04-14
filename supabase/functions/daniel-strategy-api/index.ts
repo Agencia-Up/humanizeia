@@ -204,38 +204,30 @@ REGRAS OBRIGATÓRIAS DE EXECUÇÃO (MÁXIMA DENSIDADE):
 PROIBIDO usar frases vagas como "entenda seu público", "agregue valor" ou "poste com consistência".
 SEJA TÉCNICO. Use vieses cognitivos reais, neurociência, termos acadêmicos/teóricos práticos da área e mostre ESTRATÉGIAS SECRETAS que apenas diretores de agências de NY conhecem.
 
-[1] RECOMMENDATION — Manifesto Estratégico Visceral (Mínimo de 800 palavras). Deve destrinchar:
-  - Análise macroeconômica do nicho e dados comportamentais não-óbvios.
-  - A psicologia subconsciente e os vieses cognitivos da decisão de compra desse público.
-  - As 3 alavancas obscuras de growth (Oceano Azul) que a concorrência ignora.
-
-[2] PAIN_MAP — Mapeamento de 5 DORES OCULTAS (As dores que o cliente tem vergonha de admitir).
-[3] TRENDING_TOPICS — 5 TÓPICOS DE ALTA PERFORMANCE (Ângulos controversos, polarizadores ou altamente contraintuitivos).
-[4] CONTENT_BRIEFS — 5 PAUTAS COMPLEXAS com roteiros de conteúdo completos, magnéticos e persuasivos.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FORMATO DE SAÍDA OBRIGATÓRIO: O MANIFESTO DO ESTRATEGISTA (MARKDOWN)
+[1] RECOMMENDATION — Manifesto Estratégico Visceral (Mínimo deFORMATO DE SAÍDA OBRIGATÓRIO: O MANIFESTO DO ESTRATEGISTA (MARKDOWN)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Você NÃO deve retornar JSON. Escreva um MANIFESTO DE INTELIGÊNCIA em Markdown puro, visceral e denso.
 
 Estrutura esperada:
 # Pesquisa: [Nicho]
 ## Manifesto Estratégico
-[Seu texto de 600+ palavras aqui]
+[Seu texto de 800+ palavras aqui]
 
-## Mapeamento de Dores
-## Tópicos Tendência (Trending Topics)
-## Pautas de Conteúdo (Content Briefs)
-## Calendário Editorial & Brechas de Mercado`;
+## Mapeamento de Dores (GERAR EXATAMENTE 5 ITENS COMPLETOS)
+## Tópicos Tendência (GERAR EXATAMENTE 5 ITENS COMPLETOS)
+## Pautas de Conteúdo (GERAR EXATAMENTE 5 PAUTAS DIÁRIAS)
+## Calendário Editorial & Brechas de Mercado (GERAR EXATAMENTE 5 ITENS)`;
 
   const extractionPrompt = `Você é o Arquiteto de Dados da HumanizeIA. Extraia TODAS as informações do manifesto estratégico e organize-as no formato JSON.
+ATENÇÃO: Mantenha TODO o conteúdo textual denso intacto. NÃO RESUMA NADA.
+ATENÇÃO: Em cada array ("pain_map", "trending_topics", etc) extraia EXATAMENTE O MESMO NÚMERO DE ITENS QUE FOI GERADO (geralmente 5). NUNCA DEVOLVA APENAS 1 ITEM SE HOUVER MAIS NO TEXTO.
 
 FORMATO JSON EXATO:
 {
   "niche": "${niche.trim()}",
   "research_date": "${now}",
   "data_source": "ai_analysis_v2",
-  "recommendation": "texto do manifesto",
+  "recommendation": "texto do manifesto. NÃO CORTE PELA METADE.",
   "pain_map": [{"category": "...", "title": "...", "description": "..."}],
   "trending_topics": [{"angle": "...", "topic": "...", "why_trending": "...", "engagement_potential": "...", "best_format": "...", "best_platform": "..."}],
   "content_briefs": [{"id": 1, "angle": "...", "title": "...", "hook": "...", "format": "...", "platform": "...", "slides_or_points": ["slide 1 denso", "..."], "cta": "...", "hashtags": ["tag1"], "reason": "..."}],
@@ -249,7 +241,7 @@ FORMATO JSON EXATO:
     const manifesto = await callAI(systemPrompt, userPrompt, 8000);
 
     // PASS 2: Extract JSON from Manifesto
-    const rawJson = await callAI("Você é um arquiteto de dados. Extraia o JSON do texto fornecido seguinto o schema solicitado.",
+    const rawJson = await callAI("Você é um arquiteto de dados. Extraia todo o JSON sem encurtar arrays ou resumir os textos.",
       `${extractionPrompt}\n\nMANIFESTO:\n${manifesto}`, 8000);
 
     // Try to extract JSON from the response
