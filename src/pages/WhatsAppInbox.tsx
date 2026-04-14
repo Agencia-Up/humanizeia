@@ -81,7 +81,7 @@ function formatMessageTime(dateStr: string) {
   return format(date, 'dd/MM', { locale: ptBR });
 }
 
-export default function WhatsAppInbox() {
+export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -351,8 +351,10 @@ export default function WhatsAppInbox() {
 
   const selectedConv = conversations.find(c => c.phone === selectedPhone);
 
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+
   return (
-    <MainLayout>
+    <Wrapper>
       <div className="h-[calc(100vh-4rem)] flex flex-col">
         {/* Header */}
         <div className="p-4 border-b flex items-center gap-3">
@@ -616,6 +618,6 @@ export default function WhatsAppInbox() {
           </div>
         </div>
       </div>
-    </MainLayout>
+    </Wrapper>
   );
 }

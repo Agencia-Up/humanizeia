@@ -79,7 +79,7 @@ function getHealthBg(score: number | null) {
   return 'bg-red-500';
 }
 
-export default function WhatsAppInstances() {
+export default function WhatsAppInstances({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [instances, setInstances] = useState<WaInstance[]>([]);
@@ -207,8 +207,10 @@ export default function WhatsAppInstances() {
     ? Math.round(instances.reduce((s, i) => s + (i.health_score ?? 0), 0) / instances.length)
     : 0;
 
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+
   return (
-    <MainLayout>
+    <Wrapper>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -498,6 +500,6 @@ export default function WhatsAppInstances() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </MainLayout>
+    </Wrapper>
   );
 }

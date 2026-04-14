@@ -44,7 +44,7 @@ const ACTION_OPTIONS = [
   { value: 'notify_webhook', label: 'Chamar webhook externo', icon: Zap },
 ];
 
-export default function WhatsAppAutomations() {
+export default function WhatsAppAutomations({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [automations, setAutomations] = useState<Automation[]>([]);
@@ -131,8 +131,10 @@ export default function WhatsAppAutomations() {
   const getTriggerLabel = (val: string) => TRIGGER_OPTIONS.find(t => t.value === val)?.label || val;
   const getActionLabel = (val: string) => ACTION_OPTIONS.find(a => a.value === val)?.label || val;
 
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+
   return (
-    <MainLayout>
+    <Wrapper>
       <div className="space-y-6 p-4 md:p-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -300,6 +302,6 @@ export default function WhatsAppAutomations() {
           )}
         </div>
       </div>
-    </MainLayout>
+    </Wrapper>
   );
 }

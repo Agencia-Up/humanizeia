@@ -268,7 +268,7 @@ function AgentCard({
   );
 }
 
-export default function WhatsAppAIAgent() {
+export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
@@ -328,8 +328,11 @@ export default function WhatsAppAIAgent() {
   };
 
   if (loading) {
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+
+  if (loading) {
     return (
-      <MainLayout>
+      <Wrapper>
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>

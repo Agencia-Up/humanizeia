@@ -46,7 +46,7 @@ interface WAInstance {
   status: string;
 }
 
-export default function WhatsAppBroadcast() {
+export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [campaigns, setCampaigns] = useState<WACampaign[]>([]);
@@ -252,8 +252,10 @@ Não numere as variações. Não inclua explicações adicionais.`
     }
   };
 
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+
   return (
-    <MainLayout>
+    <Wrapper>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -507,6 +509,6 @@ Não numere as variações. Não inclua explicações adicionais.`
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </MainLayout>
+    </Wrapper>
   );
 }
