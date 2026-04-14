@@ -146,16 +146,18 @@ Você pensa em PÁGINAS VISUAIS SEPARADAS — cada slide é uma página completa
 Se recebeu uma ESTRATÉGIA DO PAULO, você DEVE preservar e expandir a visão DELE.
 
 REGRAS ABSOLUTAS DE DESIGN (TEXTO):
-- headline: TÍTULO PODEROSO (máximo 5-7 palavras, impacto imediato)
-- sub_headline: complemento ou numeração
-- body: texto de apoio curto (máximo 120 caracteres)
+- headline: TÍTULO PODEROSO E MAGNÉTICO
+- sub_headline: complemento intrigante
+- body: UMA EXPLICAÇÃO DENSA e FASCINANTE. Descreva o conceito em profundidade ou forneça dados reais. NÃO FAÇA frases genéricas! Traga ouro.
+- bullets: Array de strings contendo 3 fatos/dados extremamente descritivos. (Obrigatório em slides do meio).
 
 REGRAS DE ARTE (VITAL):
 - Você atua como Diretor de Arte Nível Midjourney v6.
 - O carrossel INTEIRO deve ter uma COESÃO VISUAL INQUEBRÁVEL (DNA Visual).
-- Mantenha uma "Luz de Assinatura" constante em todos os slides e defina uma Paleta de Cores e Sujeito reconhecíveis em vários ângulos.
+- Mantenha uma "Luz de Assinatura" constante em todos os slides e defina uma Paleta de Cores fixa.
+- O Sujeito Âncora: Mostre humanos em ações específicas e ricas! Em vez de "um carro", diga "um casal jovem em roupas de piquenique bebendo vinho encostado no carro".
 - image_prompt: O prompt GERAÇÃO DA IMAGEM deve ser DENSO, em INGLÊS.
-  Estrutura: [Sujeito detalhado] + [Ambiente/Clima] + [Luz da Assinatura: Golden Hour, etc] + [Câmera e Lente] + [Atmosfera: cinematic, 8k, no text].
+  Estrutura: [Humanos/Sujeito em ação profunda] + [Ambiente/Clima] + [Luz da Assinatura: Golden Hour] + [Câmera e Lente] + [Atmosfera: cinematic, photorealistic, no text].
 
 O formato DEVE ser um JSON válido da interface \`GeneratedCarousel\`:`;
 
@@ -176,11 +178,15 @@ Retorne este JSON:
     {
       "order": 1,
       "type": "cover",
-      "headline": "título dominante da capa",
-      "sub_headline": "frase secundária",
-      "body": "contexto ou promessa adicional",
-      "image_prompt": "Cinematic wide shot of a silver luxury sedan driving on a coastal road during beautiful golden hour spring light, sharp focus, 85mm lens, highly detailed, photorealistic, premium editorial photography style, no text",
-      "visual_cue": "elemento visual complementar",
+      "headline": "O SEGREDO REVELADO",
+      "sub_headline": "A verdade obscura",
+      "body": "Por que 99% das pessoas quebram nessa fase? A explicação magnética vai aqui, sendo mais longa e detalhada.",
+      "bullets": [
+        "Economia comprovada de 40% em 3 meses",
+        "Menos desgaste físico e mental para a equipe"
+      ],
+      "image_prompt": "Cinematic wide shot of a young elegant couple enjoying a premium picnic...",
+      "visual_cue": "casal no picnic",
       "layout": "centered"
       "accent_word": "palavra do headline para destacar"
     }

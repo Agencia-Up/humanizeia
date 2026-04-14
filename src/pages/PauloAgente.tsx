@@ -158,20 +158,20 @@ ${ANGLES.find(a => a.value === angle)?.label || angle}: ${ANGLES.find(a => a.val
 Você é o Fotógrafo Premiado da Campanha. Cada slide requer um prompt de imagem VISUAL, DENSO e EXTREMAMENTE ESPECÍFICO em INGLÊS, seguindo a diretiva "Nível Midjourney v6".
 
 **A REGRA DO DNA VISUAL (COESÃO):**
-O carrossel NÃO PODE TER imagens soltas e desconexas. Você deve criar um "Fio Condutor Visual".
+O carrossel NÃO PODE TER imagens soltas e genéricas. Você deve criar um "Fio Condutor Visual".
 Por exemplo, defina mentalmente:
 - A "Luz da Assinatura": Golden hour? Neon cyberpunk? Luz fria de estúdio? (Mantenha a mesma luz em todos os slides).
-- O Sujeito Âncora: O mesmo modelo de carro, ou a mesma paleta de cores cerâmica, a mesma modelo usando a mesma cor de roupa. Mostre o sujeito em planos diferentes (close-up, plano aberto, focado num detalhe), mas ele deve ser reconhecível.
+- O Sujeito Âncora: Mostre humanos em ações específicas! Nunca apenas "um carro". Faça: "um casal jovem elegante num piquenique em frente ao carro com o porta-malas aberto mostrando duas bicicletas".
 
 **Estrutura Obrigatória de Cada Prompt (MÁXIMO DETALHE):**
-1. **O que é (Sujeito e Ação):** "Cinematic wide shot of a silver luxury electric sedan driving on a coastal road..."
+1. **Sujeito e Ação (SEJA ESPECÍFICO):** "Cinematic wide shot of a silver luxury electric sedan parked on a cliff. A young elegant couple is drinking coffee sitting on minimalist chairs..."
 2. **Ambiente e Clima:** "...surrounded by blooming spring cherry blossoms under the soft diffuse golden morning light..."
 3. **Equipamento/Técnica:** "...shot on Fujifilm GFX 100, 85mm lens, shallow depth of field, sharp focus on the car..."
 4. **Acabamento:** "...vibrant botanical colors, serene atmosphere, minimalist luxury aesthetic, masterpiece, 8k, photorealistic, no text."
 
-Exemplo de Prompt BRILHANTE (Slide 2 - Detalhe): "Macro close-up shot of the charging port of the same silver ceramic luxury electric sedan, premium connector smoothly plugged in. The signature golden morning light highlights the brushed metal texture and a soft pulsing green LED. Extremely shallow depth of field with blurred fresh spring foliage in the background, signaling a home integration with nature. Hyper-realistic, 8k, no text."
-## FORMATO DE SAÍDA OBRIGATÓRIO
-Responda APENAS com JSON válido, sem texto antes ou depois, sem markdown (sem \`\`\`):
+## FORMATO DE SAÍDA OBRIGATÓRIO (PROFUNDIDADE EXTREMA NO TEXTO)
+Você deve gerar textos PROFUNDOS. Esqueça frases curtas e genéricas! Forneça dados, listas (bullets) e exemplos práticos.
+Responda APENAS com JSON válido:
 
 {
   "carousels": [
@@ -179,22 +179,29 @@ Responda APENAS com JSON válido, sem texto antes ou depois, sem markdown (sem \
       "title": "Título interno para identificação",
       "niche": "Nicho específico do conteúdo",
       "angle": "storytelling",
-      "caption": "Legenda completa para o Instagram. Primeira frase = hook do caption. Depois desenvolva. Termina com CTA claro e hashtags separados abaixo.",
+      "caption": "Legenda completa para o Instagram. Manifesto persuasivo de 5 parágrafos de puro valor, terminando com CTA.",
       "hashtags": ["hashtag1", "hashtag2", "hashtag3"],
       "slides": [
         {
           "slide_number": 1,
           "type": "cover",
-          "headline": "Texto do slide — direto, bold, curto. Máx 2 linhas.",
-          "subtext": "Texto de apoio opcional. Uma linha.",
-          "image_prompt": "Prompt detalhado em inglês para geração de imagem AI"
+          "headline": "TEXTO CURTO IMPACTANTE E MAGNÉTICO",
+          "subtext": "Promessa que faz o usuário querer arrastar.",
+          "body": "Breve instigação verbal",
+          "bullets": null,
+          "image_prompt": "Cinematic wide shot of a futuristic data center..."
         },
         {
           "slide_number": 2,
           "type": "content",
-          "headline": "Desenvolvimento da narrativa",
-          "subtext": "Detalhe ou dado que reforça o headline",
-          "image_prompt": "Prompt específico para este slide"
+          "headline": "O SEGREDO REVELADO EM NÚMEROS REAIS",
+          "subtext": "Dados ou fatos inegáveis.",
+          "body": "Um parágrafo de 3 a 4 linhas bem denso com uma explicação magistral, profunda, usando dados e ciência, sem papo furado genérico de motivacional. Entregue OURO puro.",
+          "bullets": [
+            "Fato específico 1 muito bem detalhado",
+            "Métrica específica 2 (ex: economize até 40% em impostos)"
+          ],
+          "image_prompt": "Macro shot of a busy businessman..."
         }
       ]
     }
