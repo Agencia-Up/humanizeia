@@ -263,7 +263,7 @@ export function MetaAdsSettingsTab() {
           <CardHeader>
             <CardTitle className="text-lg">📋 Como conectar</CardTitle>
             <CardDescription>
-              Use o botão "Login com Facebook" acima — é a forma mais rápida e segura. Ou siga o guia manual abaixo.
+              Siga os passos abaixo para conectar sua conta Meta Ads.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-0">
@@ -273,9 +273,26 @@ export function MetaAdsSettingsTab() {
                 <div className="w-px flex-1 bg-border/50 mt-2" />
               </div>
               <div className="pt-1 pb-2">
-                <p className="font-medium text-sm">Abra o Graph API Explorer</p>
+                <p className="font-medium text-sm">Crie ou acesse seu App no Meta for Developers</p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Selecione seu app e marque as permissões: <code className="bg-muted px-1 rounded text-xs">ads_read</code>, <code className="bg-muted px-1 rounded text-xs">ads_management</code>, <code className="bg-muted px-1 rounded text-xs">read_insights</code>, <code className="bg-muted px-1 rounded text-xs">business_management</code>
+                  Vá em <strong>Configurações → Básico</strong> e copie o <strong>ID do Aplicativo</strong>.
+                </p>
+                <Button variant="link" className="p-0 h-auto mt-1 text-xs" asChild>
+                  <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
+                    Abrir Meta for Developers <ExternalLink className="h-3 w-3" />
+                  </a>
+                </Button>
+              </div>
+            </div>
+            <div className="flex gap-4 pb-6 relative">
+              <div className="flex flex-col items-center">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">2</div>
+                <div className="w-px flex-1 bg-border/50 mt-2" />
+              </div>
+              <div className="pt-1 pb-2">
+                <p className="font-medium text-sm">Gere o Token de Usuário</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  No <strong>Graph API Explorer</strong>, selecione seu app e marque as permissões: <code className="bg-muted px-1 rounded text-xs">ads_read</code>, <code className="bg-muted px-1 rounded text-xs">ads_management</code>, <code className="bg-muted px-1 rounded text-xs">read_insights</code>, <code className="bg-muted px-1 rounded text-xs">business_management</code>
                 </p>
                 <Button variant="link" className="p-0 h-auto mt-1 text-xs" asChild>
                   <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
@@ -286,10 +303,10 @@ export function MetaAdsSettingsTab() {
             </div>
             <div className="flex gap-4 relative">
               <div className="flex flex-col items-center">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">2</div>
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">3</div>
               </div>
               <div className="pt-1">
-                <p className="font-medium text-sm">Gere e cole o Token acima</p>
+                <p className="font-medium text-sm">Cole o App ID e o Token acima</p>
                 <p className="text-sm text-muted-foreground mt-1">
                   Nós detectamos automaticamente suas contas de anúncios, pixels e páginas.
                 </p>
