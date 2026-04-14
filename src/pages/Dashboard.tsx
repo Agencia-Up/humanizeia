@@ -125,7 +125,7 @@ export default function Dashboard() {
   const reach   = performanceSummary?.totalReach || 0;
 
   /* ── Saúde geral (simples) ── */
-  const healthScore = anomalies.length === 0 ? 'good' : anomalies.some(a => a.severity === 'high') ? 'bad' : 'warn';
+  const healthScore = anomalies.length === 0 ? 'good' : anomalies.some(a => a.type === 'danger') ? 'bad' : 'warn';
   const healthConfig = {
     good: { label: 'Tudo funcionando bem', color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20', dot: 'bg-green-400', emoji: '🟢' },
     warn: { label: 'Há pontos de atenção', color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20', dot: 'bg-yellow-400', emoji: '🟡' },
