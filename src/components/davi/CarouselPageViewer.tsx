@@ -302,7 +302,7 @@ interface CarouselPageViewerProps {
 }
 
 export function CarouselPageViewerInner({
-  slides, brandName = 'Minha Marca'
+  slides, brandName = 'Minha Marca', clientImageUrl
 }: CarouselPageViewerProps) {
   const [exporting, setExporting] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
