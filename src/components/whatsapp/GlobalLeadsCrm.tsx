@@ -90,6 +90,8 @@ export function GlobalLeadsCrm() {
   }, [user]);
 
   useEffect(() => {
+    if (!user) return;
+
     fetchAll();
 
     const channel = supabase.channel('crm-realtime')
@@ -107,7 +109,7 @@ export function GlobalLeadsCrm() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [fetchAll]);
+  }, [fetchAll, user]);
 
   // Transfer stats calculation
   const transferStats = useMemo((): TransferStats[] => {
