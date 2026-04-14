@@ -34,6 +34,7 @@ export function MetaAdsSettingsTab() {
   const [accountId, setAccountId] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [showAddAnother, setShowAddAnother] = useState(false);
 
   // Handle OAuth callback
   useEffect(() => {
@@ -54,12 +55,14 @@ export function MetaAdsSettingsTab() {
     if (result.success && !result.needsSelection) {
       setAccessToken('');
       setAccountId('');
+      setShowAddAnother(false);
     }
   };
 
   const handleSelectFromList = (account: any) => {
     setSelectedAccountId(account.id);
     selectAccount(account);
+    setShowAddAnother(false);
   };
 
   const hasDetectedAssets = availableAccounts.length > 0 || pixels.length > 0 || pages.length > 0 || businesses.length > 0;
@@ -97,7 +100,7 @@ export function MetaAdsSettingsTab() {
           </div>
         </CardHeader>
         <CardContent>
-          {connectedAccount ? (
+          {connectedAccount && !showAddAnother ? (
             <div className="space-y-4">
               <div className="rounded-lg bg-muted/50 p-4 space-y-2">
                 <div className="flex items-center justify-between text-sm">
@@ -119,10 +122,16 @@ export function MetaAdsSettingsTab() {
                   </div>
                 )}
               </div>
-              <Button variant="destructive" size="sm" onClick={disconnect}>
-                <LogOut className="h-4 w-4 mr-2" />
-                Desconectar
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="destructive" size="sm" onClick={disconnect}>
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Desconectar
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setShowAddAnother(true)}>
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Conectar outra conta
+                </Button>
+              </div>
             </div>
           ) : hasDetectedAssets ? (
             <DetectedAssetsView
