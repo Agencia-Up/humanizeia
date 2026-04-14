@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, BookOpen } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, BookOpen, UserPlus, Trash2, Phone } from 'lucide-react';
 import { KnowledgeBaseManager } from './KnowledgeBaseManager';
 
 interface Instance {
@@ -126,7 +126,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
   const [companyName, setCompanyName] = useState('');
   const [services, setServices] = useState('');
   const [address, setAddress] = useState('');
-  const [humanWhatsapp, setHumanWhatsapp] = useState('');
+  const [sellerContacts, setSellerContacts] = useState<{name: string; phone: string}[]>([]);
   const [n8nWebhookUrl, setN8nWebhookUrl] = useState('');
   const [sdrGoal, setSdrGoal] = useState('');
   const [qualificationStr, setQualificationStr] = useState('');
@@ -149,7 +149,17 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       setCompanyName(agent.company_name || '');
       setServices(agent.services || '');
       setAddress(agent.address || '');
-      setHumanWhatsapp(agent.human_whatsapp || '');
+      // Parse seller contacts from human_whatsapp JSON or legacy single string
+      try {
+        const parsed = agent.human_whatsapp ? JSON.parse(agent.human_whatsapp) : [];
+        if (Array.isArray(parsed)) {
+          setSellerContacts(parsed.slice(0, 10));
+        } else {
+          setSellerContacts(agent.human_whatsapp ? [{ name: 'Vendedor 1', phone: agent.human_whatsapp }] : []);
+        }
+      } catch {
+        setSellerContacts(agent.human_whatsapp ? [{ name: 'Vendedor 1', phone: agent.human_whatsapp }] : []);
+      }
       setN8nWebhookUrl(agent.n8n_webhook_url || '');
       setSdrGoal(agent.sdr_goal || '');
       setQualificationStr((agent.qualification_questions || []).join('\n'));
@@ -170,7 +180,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
       setCompanyName('');
       setServices('');
       setAddress('');
-      setHumanWhatsapp('');
+      setSellerContacts([]);
       setN8nWebhookUrl('');
       setSdrGoal('');
       setQualificationStr('');
@@ -208,7 +218,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
     company_name: companyName,
     services,
     address,
-    human_whatsapp: humanWhatsapp,
+    human_whatsapp: JSON.stringify(sellerContacts.filter(c => c.phone.trim())),
     n8n_webhook_url: n8nWebhookUrl,
     sdr_goal: sdrGoal,
     qualification_questions: qualificationStr.split('\n').map(q => q.trim()).filter(Boolean),
@@ -463,14 +473,62 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, onSaved 
                   <Input value={address} onChange={e => setAddress(e.target.value)} placeholder="Ex: Rua Exemplo, 123 - São Paulo/SP" />
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <Label className="flex items-center gap-2">
-                    <UserCheck className="h-4 w-4" /> WhatsApp do contato humano
+                    <UserCheck className="h-4 w-4" /> Contatos dos Vendedores (máx. 10)
                   </Label>
-                  <Input value={humanWhatsapp} onChange={e => setHumanWhatsapp(e.target.value)} placeholder="Ex: 5511999999999" />
                   <p className="text-xs text-muted-foreground">
-                    Número para onde o agente encaminha quando precisa de um humano.
+                    Vendedores que receberão leads qualificados em rodízio automático.
                   </p>
+
+                  <div className="space-y-2">
+                    {sellerContacts.map((contact, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <Input
+                          value={contact.name}
+                          onChange={e => {
+                            const updated = [...sellerContacts];
+                            updated[idx] = { ...updated[idx], name: e.target.value };
+                            setSellerContacts(updated);
+                          }}
+                          placeholder="Nome do vendedor"
+                          className="flex-1 h-9 text-sm"
+                        />
+                        <Input
+                          value={contact.phone}
+                          onChange={e => {
+                            const updated = [...sellerContacts];
+                            updated[idx] = { ...updated[idx], phone: e.target.value.replace(/\D/g, '') };
+                            setSellerContacts(updated);
+                          }}
+                          placeholder="5511999999999"
+                          className="flex-1 h-9 text-sm font-mono"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-9 w-9 p-0 text-red-400 hover:text-red-500 shrink-0"
+                          onClick={() => setSellerContacts(prev => prev.filter((_, i) => i !== idx))}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {sellerContacts.length < 10 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full gap-2"
+                      onClick={() => setSellerContacts(prev => [...prev, { name: '', phone: '' }])}
+                    >
+                      <UserPlus className="h-4 w-4" />
+                      Adicionar Vendedor ({sellerContacts.length}/10)
+                    </Button>
+                  )}
                 </div>
               </div>
             </TabsContent>
