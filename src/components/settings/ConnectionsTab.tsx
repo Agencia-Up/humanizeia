@@ -325,6 +325,9 @@ export function ConnectionsTab() {
       case 'meta':
         navigate('/integrations/meta');
         return;
+      case 'instagram_publisher':
+        navigate('/integrations/instagram');
+        return;
       case 'google_ads':
         try {
           await google.startOAuth();
@@ -564,7 +567,7 @@ export function ConnectionsTab() {
                         variant="outline"
                         size="sm"
                         className="flex-1 text-xs"
-                        onClick={() => platform.id === 'meta' ? navigate('/integrations/meta') : setSelectedPlatform(platform.id)}
+                        onClick={() => (platform.id === 'meta' || platform.id === 'instagram_publisher') ? navigate(`/integrations/${platform.id === 'meta' ? 'meta' : 'instagram'}`) : setSelectedPlatform(platform.id)}
                       >
                         Detalhes
                       </Button>
@@ -596,7 +599,7 @@ export function ConnectionsTab() {
                         variant="outline"
                         size="sm"
                         className="text-xs"
-                        onClick={() => platform.id === 'meta' ? navigate('/integrations/meta') : setSelectedPlatform(platform.id)}
+                        onClick={() => (platform.id === 'meta' || platform.id === 'instagram_publisher') ? navigate(`/integrations/${platform.id === 'meta' ? 'meta' : 'instagram'}`) : setSelectedPlatform(platform.id)}
                       >
                         Como fazer?
                       </Button>
