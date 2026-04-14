@@ -133,94 +133,121 @@ async function generateCarouselV2(body: any, cors: Record<string, string>) {
       Slide ${slide_count} (CTA): "Concorda ou discorda? Comenta aqui"`,
   };
 
-  const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
-Você pensa em PÁGINAS VISUAIS SEPARADAS — cada slide é uma página completa como um slide de PowerPoint/Canva.
-Se recebeu uma ESTRATÉGIA DO PAULO, você DEVE preservar e expandir a visão DELE.
+  const pauloContext = paul_copy
+    ? `\n\nESTRATÉGIA DO COPYWRITER PAULO (use como base e expanda visualmente. RESPEITE TODAS AS ESPECIFICAÇÕES DO PAULO):\n${paul_copy.slice(0, 15000)}`
+    : '';
 
-REGRA DE OURO (ESTILO):
-Você NÃO deve retornar JSON agora. Você vai escrever a "BÍBLIA DA CAMPANHA" em Markdown.
-Entregue profundidade CEO, narrativa épica e prompts de imagem Midjourney v6 densos.
+  const trendContext = trend_context
+    ? `\n\nCONTEXTO DE TENDÊNCIAS ATUAL:\n${trend_context.slice(0, 2000)}`
+    : '';
+
+  // ── STEP 1: Creative Director (Bíblia da Campanha em Markdown) ───────────────
+  const bibleSystemPrompt = `Você é DAVI, o Diretor Criativo Executivo mais premiado do Brasil. Você pensa em campanhas, não em posts.
+Você foi contratado para criar a BÍBLIA CRIATIVA de um carrossel de Instagram que vai parar o scroll e gerar compartilhamentos.
+Se recebeu a estratégia do PAULO, você DEVE respeitar e expandir visualmente a visão dele.
+
+REGRA ABSOLUTA: Você NÃO vai retornar JSON agora. Escreva a BÍBLIA DA CAMPANHA em Markdown puro, denso e prolixo.
 
 ESTRUTURA DA BÍBLIA:
-# Campanha: [Tema]
-## Direção de Arte (DNA Visual)
-- **Luz de Assinatura:** [ex: Golden Hour]
-- **Paleta de Cores:** [ex: Brancos cerâmicos e Ouro]
-- **Sujeito Âncora:** [ex: Casal jovem em ação num piquenique]
+# Campanha: [Título Estratégico]
+**Marca:** ${brand_name} | **Tipo:** ${carousel_type} | **Slides:** ${slide_count}
 
-## Carrossel (Slides)
-### Slide 1: [Headline]
-... [descrição detalhada de cada slide com prompt MJ em inglês]
+## DNA Visual da Campanha
+- **Luz de Assinatura:** [Uma luz que define toda a campanha — Golden Hour, Neon Noturno, Luz Fria de Estúdio etc.]
+- **Paleta Cromática:** [3-4 cores HEX e quando usar cada uma]
+- **Sujeito Âncora:** [O protagonista humano específico que aparece em cada slide — nunca genérico]
+- **Textura/Atmosfera:** [O "mood" visual — cinematic, editorial, raw, luxury etc.]
+
+## Legenda do Post (Caption)
+[Um manifesto de 5 parágrafos de puro valor. Mínimo 400 palavras. Tom: ${tone}.]
+
 ---
-## Legenda (Caption)
-[Manifesto de 5 parágrafos]`;
+${Array.from({ length: slide_count }, (_, i) => `## Slide ${i + 1}: [Headline do Slide ${i + 1}]
+**Sub-Headline:** [Complemento intrigante]
+**Corpo/Narrativa:** [Explicação densa e fascinante — mínimo 3 parágrafos. Use dados, metáforas, neurociência. NUNCA seja genérico.]
+**Bullets de Impacto:** [3 fatos/dados específicos e verificáveis]
+**Prompt Midjourney v6 (INGLÊS):** [Sujeito específico em ação rica] + [Ambiente e clima] + [${brand_name} brand, Golden Hour / Assinatura de Luz] + [câmera: Sony A7IV, 85mm, f/1.8] + [cinematic, photorealistic, 8k, no text, no watermark]`).join('\n\n---\n')}`;
 
-  const userPrompt = `Crie a estratégia definitiva para um carrossel sobre "${topic}" para "${audience}".
-Tom: ${tone}. Slides: ${slide_count}. Marca: ${brand_name}. CTA: ${include_cta ? 'sim' : 'não'}.
-Tipo: ${carousel_type}.${pauloContext}${trendContext}
+  const bibleUserPrompt = `Crie a Bíblia da Campanha para um carrossel sobre "${topic}" direcionado para "${audience}".
+Tom: ${tone}. Slides: ${slide_count}. Marca: ${brand_name}. CTA: ${include_cta ? 'Sim — slide final com call-to-action poderoso' : 'Não'}.
+Tipo de carrossel: ${carousel_type}.${pauloContext}${trendContext}
 
+Instruções do tipo:
 ${typeInstructions[carousel_type] || typeInstructions.educacional}
 
-Seja prolixo na qualidade literária e artística.`;
+Seja IMENSAMENTE detalhado. Cada slide deve ter conteúdo suficiente para transformar a vida de quem ler.`;
 
-  const extractionPrompt = `Você é o Arquiteto de Estruturas da HumanizeIA. 
-Sua missão é converter a "Bíblia da Campanha" abaixo no formato JSON OBRIGATÓRIO.
-Mantenha toda a densidade dos prompts de imagem e das explicações. NÃO RESUMA NADA.
-
-FORMATO JSON:
-{
-  "carousel_type": "${carousel_type}",
-  "cover_headline": "...",
-  "hook_promise": "...",
-  "caption": "...",
-  "hashtags": ["tag1", "tag2"],
-  "slides": [
-    {
-      "order": 1,
-      "type": "cover/content/list/quote/cta",
-      "headline": "...",
-      "sub_headline": "...",
-      "body": "texto denso",
-      "bullets": ["b1", "b2"],
-      "image_prompt": "prompt em inglês",
-      "visual_cue": "...",
-      "layout": "...",
-      "accent_word": "..."
-    }
-  ]
-}`;
-
-  // STEP 1: Creative Creation (Bible)
   const res1 = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'gpt-4o',
-      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      messages: [
+        { role: 'system', content: bibleSystemPrompt },
+        { role: 'user', content: bibleUserPrompt },
+      ],
       temperature: 0.9,
+      max_tokens: 4000,
     }),
   });
 
-  if (!res1.ok) throw new Error(`OpenAI API (Bíblia): ${res1.status}`);
+  if (!res1.ok) {
+    const err = await res1.text();
+    throw new Error(`OpenAI API (Bíblia): ${res1.status} — ${err}`);
+  }
   const data1 = await res1.json();
-  const bible = data1.choices?.[0]?.message?.content;
+  const bible = data1.choices?.[0]?.message?.content || '';
 
-  // STEP 2: Structural Extraction (JSON)
+  // ── STEP 2: Data Architect (Extração JSON determinística) ────────────────────
+  const extractionSystemPrompt = `Você é o Arquiteto de Estruturas da HumanizeIA.
+Sua ÚNICA missão: converter a "Bíblia da Campanha" em JSON EXATO e COMPLETO.
+NÃO RESUMA. NÃO OMITA. Preserve TODA a densidade dos textos, prompts de imagem e bullets.
+Retorne APENAS o objeto JSON, sem texto fora do JSON.
+
+SCHEMA OBRIGATÓRIO:
+{
+  "carousel_type": "${carousel_type}",
+  "cover_headline": "headline da capa (max 7 palavras, impactante)",
+  "hook_promise": "o que o leitor vai aprender/ganhar",
+  "caption": "legenda completa do post (extensa, persuasiva, mínimo 400 palavras)",
+  "hashtags": ["hashtag1", "hashtag2"],
+  "slides": [
+    {
+      "order": 1,
+      "type": "cover",
+      "headline": "HEADLINE DO SLIDE",
+      "sub_headline": "sub-headline complementar",
+      "body": "texto denso e completo do slide — NÃO RESUMIR",
+      "bullets": ["bullet 1 detalhado", "bullet 2 detalhado", "bullet 3 detalhado"],
+      "image_prompt": "full midjourney v6 style prompt in english — dense and specific",
+      "visual_cue": "descrição curta do visual",
+      "layout": "centered ou left",
+      "accent_word": "palavra do headline a destacar"
+    }
+  ]
+}
+
+Tipos de slide: "cover", "content", "list", "quote", "cta"`;
+
   const res2 = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'gpt-4o',
       messages: [
-        { role: 'system', content: extractionPrompt },
-        { role: 'user', content: `Converta esta Bíblia em JSON:\n\n${bible}` }
+        { role: 'system', content: extractionSystemPrompt },
+        { role: 'user', content: `Converta esta Bíblia da Campanha no JSON do schema:\n\n${bible}` },
       ],
       temperature: 0,
+      max_tokens: 4000,
       response_format: { type: 'json_object' },
     }),
   });
 
-  if (!res2.ok) throw new Error(`OpenAI API (JSON): ${res2.status}`);
+  if (!res2.ok) {
+    const err = await res2.text();
+    throw new Error(`OpenAI API (Extração JSON): ${res2.status} — ${err}`);
+  }
 
   const aiData = await res2.json();
   const rawContent = aiData.choices?.[0]?.message?.content || '{}';
@@ -229,7 +256,7 @@ FORMATO JSON:
   try {
     carousel = JSON.parse(rawContent);
   } catch {
-    throw new Error('Falha na extração do carrossel — tente novamente');
+    throw new Error('Resposta da IA inválida — tente novamente');
   }
 
   return new Response(JSON.stringify({ carousel }), {

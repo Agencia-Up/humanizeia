@@ -1058,7 +1058,51 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
       ? `\nNome do cliente: ${clientName} (use o nome com moderação, não em toda mensagem)`
       : `\nNome do cliente: desconhecido (não pergunte o nome a menos que seja necessário para o atendimento)`;
 
-    const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction;
+    const crmToolInstruction = `
+
+FERRAMENTA DE CRM - QUALIFICAÇÃO DE LEADS:
+Você tem acesso a uma ferramenta chamada "atualizar_etapa_crm" que deve ser usada para classificar o status do lead durante a conversa.
+
+USE esta ferramenta quando:
+- O cliente demonstrar interesse real no produto/serviço → status: "interessado"
+- O cliente pedir preço, condições, ou quiser avançar → status: "qualificado"  
+- O cliente disser que não tem interesse → status: "encerrado"
+- No início da conversa → status: "novo"
+
+IMPORTANTE: Quando o status for "qualificado", você DEVE:
+1. Chamar a ferramenta com status "qualificado" e um resumo detalhado da conversa
+2. O resumo deve incluir: nome do cliente, o que ele procura, principais dúvidas, orçamento mencionado, e qualquer informação relevante
+3. Após qualificar, responda ao cliente informando que um especialista vai entrar em contato
+`;
+
+    const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction + crmToolInstruction;
+
+    // CRM Tool definition for function calling
+    const crmTools = [
+      {
+        type: "function",
+        function: {
+          name: "atualizar_etapa_crm",
+          description: "Atualiza o status do lead no CRM e registra um resumo da conversa. Use quando identificar mudança de etapa do cliente.",
+          parameters: {
+            type: "object",
+            properties: {
+              status: {
+                type: "string",
+                enum: ["novo", "interessado", "qualificado", "encerrado"],
+                description: "Status atual do lead baseado na conversa"
+              },
+              resumo: {
+                type: "string",
+                description: "Resumo detalhado da conversa com o cliente incluindo: nome, interesse, dúvidas, orçamento, e informações captadas"
+              }
+            },
+            required: ["status", "resumo"],
+            additionalProperties: false
+          }
+        }
+      }
+    ];
 
     const maxTokensValue = agent.max_tokens || 500;
     const effectiveTemp = Math.max(parseFloat(agent.temperature) || 0.7, 0.75);
@@ -1127,10 +1171,12 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
         { role: "user", content },
       ];
 
-      const aiPayload = {
+      const aiPayload: any = {
         model: selectedModel,
         messages: aiMessages,
         temperature: effectiveTemp,
+        tools: crmTools,
+        tool_choice: "auto",
         ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
       };
 
@@ -1170,7 +1216,89 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
       return;
     }
 
-    let replyText = aiData.choices?.[0]?.message?.content?.trim();
+    let replyText = aiData.choices?.[0]?.message?.content?.trim() || "";
+    const aiMessage = aiData.choices?.[0]?.message;
+
+    // ===== Handle CRM Tool Calls (Lead Qualification & Transfer) =====
+    if (aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
+      const toolCall = aiMessage.tool_calls.find((t: any) => t.function?.name === "atualizar_etapa_crm");
+      if (toolCall) {
+        try {
+          const args = JSON.parse(toolCall.function.arguments);
+          console.log(`[ai-agent-crm] Lead ${phone} → status: ${args.status}`);
+
+          // Update CRM lead status
+          const { data: existingLead } = await supabase
+            .from("ai_crm_leads")
+            .select("id")
+            .eq("agent_id", agent.id)
+            .eq("remote_jid", phone)
+            .maybeSingle();
+
+          if (existingLead) {
+            await supabase.from("ai_crm_leads").update({
+              status: args.status,
+              summary: args.resumo,
+              last_interaction_at: new Date().toISOString(),
+            }).eq("id", existingLead.id);
+          } else {
+            await supabase.from("ai_crm_leads").insert({
+              user_id: instance.user_id,
+              agent_id: agent.id,
+              instance_id: instance.id,
+              remote_jid: phone,
+              lead_name: pushName || phone,
+              status: args.status,
+              summary: args.resumo,
+              last_interaction_at: new Date().toISOString(),
+            });
+          }
+
+          // ===== TRANSFER TO SELLER (Round-Robin) when QUALIFICADO =====
+          if (args.status === "qualificado") {
+            await transferLeadToSeller(supabase, instance, agent, phone, pushName, args.resumo, historyMessages);
+
+            // Handoff message to client
+            const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
+            replyText = handoffMsg;
+          }
+
+          // If AI only called tool without text, request a follow-up response
+          if (!replyText && args.status !== "qualificado") {
+            console.log("[ai-agent-crm] No text response, requesting follow-up...");
+            // Make a second call to get the text response
+            const followUpMessages = [
+              { role: "system", content: systemPrompt },
+              ...historyMessages.slice(-14),
+              { role: "user", content },
+              aiMessage,
+              { role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ success: true, status: args.status }) },
+            ];
+
+            const followUpRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: "google/gemini-2.5-flash",
+                messages: followUpMessages,
+                temperature: effectiveTemp,
+                max_tokens: maxTokensValue,
+              }),
+            });
+
+            if (followUpRes.ok) {
+              const followUpData = await followUpRes.json();
+              replyText = followUpData.choices?.[0]?.message?.content?.trim() || "";
+            }
+          }
+        } catch (err) {
+          console.error("[ai-agent-crm] Tool call processing error:", err);
+        }
+      }
+    }
 
     if (!replyText) {
       console.log("[ai-agent] Empty AI response, skipping");
@@ -1309,6 +1437,152 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
     }
   } catch (err) {
     console.error("[ai-agent] Auto-reply error:", err);
+  }
+}
+
+// ====================== LEAD TRANSFER TO SELLER (Round-Robin) ======================
+
+async function transferLeadToSeller(
+  supabase: any,
+  instance: any,
+  agent: any,
+  phone: string,
+  pushName: string | null,
+  summary: string,
+  historyMessages: { role: string; content: string }[],
+) {
+  try {
+    // 1. Get active sellers for this agent
+    const { data: sellers } = await supabase
+      .from("ai_team_members")
+      .select("*")
+      .eq("agent_id", agent.id)
+      .eq("is_active", true)
+      .order("last_lead_received_at", { ascending: true, nullsFirst: true });
+
+    if (!sellers || sellers.length === 0) {
+      console.log("[transfer] No active sellers found for agent:", agent.id);
+      return;
+    }
+
+    // 2. Round-Robin: pick seller with fewest leads OR oldest last_lead_received_at
+    const selectedSeller = sellers[0]; // Already sorted by last_lead_received_at ASC (oldest first)
+    console.log(`[transfer] Selected seller: ${selectedSeller.name} (${selectedSeller.whatsapp_number})`);
+
+    // 3. Build detailed conversation summary for the seller
+    const conversationText = historyMessages
+      .slice(-10)
+      .map((m) => `${m.role === "user" ? "Cliente" : "Agente IA"}: ${m.content}`)
+      .join("\n");
+
+    const sellerMsg = `🚨 *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*
+
+👤 *Nome do Cliente:* ${pushName || "Não informado"}
+📱 *Contato:* ${phone}
+🤖 *Agente IA:* ${agent.name}
+🏢 *Empresa:* ${agent.company_name || "—"}
+
+━━━━━━━━━━━━━━━━━━━━
+
+📝 *Resumo do Atendimento pela IA:*
+${summary}
+
+━━━━━━━━━━━━━━━━━━━━
+
+💬 *Últimas mensagens da conversa:*
+${conversationText}
+
+━━━━━━━━━━━━━━━━━━━━
+
+👉 *Atender agora:* https://wa.me/${phone.replace(/\D/g, "")}
+
+⚡ O cliente está esperando! Ele já foi informado que um especialista entrará em contato.`;
+
+    // 4. Send message to selected seller via WhatsApp
+    let sellerPhone = selectedSeller.whatsapp_number.replace(/\D/g, "");
+    if (sellerPhone.length === 10 || sellerPhone.length === 11) {
+      sellerPhone = `55${sellerPhone}`;
+    }
+
+    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+
+    const { data: instanceData } = await supabase
+      .from("wa_instances")
+      .select("instance_name, provider, api_url, api_key_encrypted, meta_config")
+      .eq("id", instance.id)
+      .single();
+
+    if (instanceData) {
+      if (instanceData.provider === "evolution") {
+        const apiUrl = (evolutionApiUrl || instanceData.api_url).replace(/\/+$/, "");
+        const apiKey = evolutionApiKey || instanceData.api_key_encrypted;
+
+        await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: apiKey },
+          body: JSON.stringify({ number: sellerPhone, text: sellerMsg }),
+        });
+        console.log(`[transfer] Message sent to seller ${selectedSeller.name} at ${sellerPhone}`);
+      } else if (instanceData.provider === "meta") {
+        const metaConfig = instanceData.meta_config || {};
+        const phoneNumberId = metaConfig.phone_number_id;
+        const accessToken = metaConfig.access_token_encrypted || instanceData.api_key_encrypted;
+
+        if (phoneNumberId && accessToken) {
+          await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              to: sellerPhone,
+              type: "text",
+              text: { body: sellerMsg },
+            }),
+          });
+        }
+      }
+    }
+
+    // 5. Update seller's stats (round-robin tracking)
+    await supabase.from("ai_team_members").update({
+      last_lead_received_at: new Date().toISOString(),
+      total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
+    }).eq("id", selectedSeller.id);
+
+    // 6. Record transfer in ai_lead_transfers
+    const { data: leadData } = await supabase
+      .from("ai_crm_leads")
+      .select("id")
+      .eq("agent_id", agent.id)
+      .eq("remote_jid", phone)
+      .maybeSingle();
+
+    if (leadData) {
+      await supabase.from("ai_lead_transfers").insert({
+        user_id: instance.user_id,
+        lead_id: leadData.id,
+        from_agent_id: agent.id,
+        to_member_id: selectedSeller.id,
+        transfer_reason: summary,
+        notes: `Transferido automaticamente para ${selectedSeller.name} via round-robin`,
+      });
+
+      // Update lead with transfer info
+      await supabase.from("ai_crm_leads").update({
+        status: "transferido",
+        assigned_to_member_id: selectedSeller.id,
+        transferred_at: new Date().toISOString(),
+        transfer_reason: `Encaminhado para ${selectedSeller.name}`,
+      }).eq("id", leadData.id);
+    }
+
+    console.log(`[transfer] Lead ${phone} transferred to ${selectedSeller.name} successfully`);
+  } catch (err) {
+    console.error("[transfer] Error transferring lead:", err);
   }
 }
 

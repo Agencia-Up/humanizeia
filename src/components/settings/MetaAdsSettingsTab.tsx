@@ -30,10 +30,13 @@ export function MetaAdsSettingsTab() {
     connectWithToken,
   } = useMetaConnection();
 
+  const [appId, setAppId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [accountId, setAccountId] = useState('');
   const [showToken, setShowToken] = useState(false);
+  const [showAppId, setShowAppId] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [showAddAnother, setShowAddAnother] = useState(false);
 
   // Handle OAuth callback
   useEffect(() => {
@@ -52,14 +55,17 @@ export function MetaAdsSettingsTab() {
     if (!accessToken.trim()) return;
     const result = await connectWithToken(accessToken.trim(), accountId.trim() || undefined);
     if (result.success && !result.needsSelection) {
+      setAppId('');
       setAccessToken('');
       setAccountId('');
+      setShowAddAnother(false);
     }
   };
 
   const handleSelectFromList = (account: any) => {
     setSelectedAccountId(account.id);
     selectAccount(account);
+    setShowAddAnother(false);
   };
 
   const hasDetectedAssets = availableAccounts.length > 0 || pixels.length > 0 || pages.length > 0 || businesses.length > 0;
@@ -97,7 +103,7 @@ export function MetaAdsSettingsTab() {
           </div>
         </CardHeader>
         <CardContent>
-          {connectedAccount ? (
+          {connectedAccount && !showAddAnother ? (
             <div className="space-y-4">
               <div className="rounded-lg bg-muted/50 p-4 space-y-2">
                 <div className="flex items-center justify-between text-sm">
@@ -119,10 +125,16 @@ export function MetaAdsSettingsTab() {
                   </div>
                 )}
               </div>
-              <Button variant="destructive" size="sm" onClick={disconnect}>
-                <LogOut className="h-4 w-4 mr-2" />
-                Desconectar
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="destructive" size="sm" onClick={disconnect}>
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Desconectar
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setShowAddAnother(true)}>
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Conectar outra conta
+                </Button>
+              </div>
             </div>
           ) : hasDetectedAssets ? (
             <DetectedAssetsView
@@ -160,9 +172,37 @@ export function MetaAdsSettingsTab() {
               {/* Manual Token Fields */}
               <div className="space-y-4">
                 <div className="space-y-2">
+                  <Label htmlFor="meta-app-id" className="flex items-center gap-2">
+                    <Hash className="h-4 w-4" />
+                    App ID (ID do Aplicativo)
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      id="meta-app-id"
+                      type={showAppId ? 'text' : 'password'}
+                      placeholder="Cole o ID do seu App Meta aqui..."
+                      value={appId}
+                      onChange={(e) => setAppId(e.target.value)}
+                      disabled={isConnecting}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAppId(!showAppId)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showAppId ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Encontre em <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">developers.facebook.com/apps</a> → Configurações → Básico
+                  </p>
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="meta-token" className="flex items-center gap-2">
                     <KeyRound className="h-4 w-4" />
-                    Access Token
+                    Token de Usuário (Access Token)
                   </Label>
                   <div className="relative">
                     <Input
@@ -223,7 +263,7 @@ export function MetaAdsSettingsTab() {
           <CardHeader>
             <CardTitle className="text-lg">📋 Como conectar</CardTitle>
             <CardDescription>
-              Use o botão "Login com Facebook" acima — é a forma mais rápida e segura. Ou siga o guia manual abaixo.
+              Siga os passos abaixo para conectar sua conta Meta Ads.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-0">
@@ -233,9 +273,26 @@ export function MetaAdsSettingsTab() {
                 <div className="w-px flex-1 bg-border/50 mt-2" />
               </div>
               <div className="pt-1 pb-2">
-                <p className="font-medium text-sm">Abra o Graph API Explorer</p>
+                <p className="font-medium text-sm">Crie ou acesse seu App no Meta for Developers</p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Selecione seu app e marque as permissões: <code className="bg-muted px-1 rounded text-xs">ads_read</code>, <code className="bg-muted px-1 rounded text-xs">ads_management</code>, <code className="bg-muted px-1 rounded text-xs">read_insights</code>, <code className="bg-muted px-1 rounded text-xs">business_management</code>
+                  Vá em <strong>Configurações → Básico</strong> e copie o <strong>ID do Aplicativo</strong>.
+                </p>
+                <Button variant="link" className="p-0 h-auto mt-1 text-xs" asChild>
+                  <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
+                    Abrir Meta for Developers <ExternalLink className="h-3 w-3" />
+                  </a>
+                </Button>
+              </div>
+            </div>
+            <div className="flex gap-4 pb-6 relative">
+              <div className="flex flex-col items-center">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">2</div>
+                <div className="w-px flex-1 bg-border/50 mt-2" />
+              </div>
+              <div className="pt-1 pb-2">
+                <p className="font-medium text-sm">Gere o Token de Usuário</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  No <strong>Graph API Explorer</strong>, selecione seu app e marque as permissões: <code className="bg-muted px-1 rounded text-xs">ads_read</code>, <code className="bg-muted px-1 rounded text-xs">ads_management</code>, <code className="bg-muted px-1 rounded text-xs">read_insights</code>, <code className="bg-muted px-1 rounded text-xs">business_management</code>
                 </p>
                 <Button variant="link" className="p-0 h-auto mt-1 text-xs" asChild>
                   <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
@@ -246,10 +303,10 @@ export function MetaAdsSettingsTab() {
             </div>
             <div className="flex gap-4 relative">
               <div className="flex flex-col items-center">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">2</div>
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">3</div>
               </div>
               <div className="pt-1">
-                <p className="font-medium text-sm">Gere e cole o Token acima</p>
+                <p className="font-medium text-sm">Cole o App ID e o Token acima</p>
                 <p className="text-sm text-muted-foreground mt-1">
                   Nós detectamos automaticamente suas contas de anúncios, pixels e páginas.
                 </p>

@@ -63,6 +63,9 @@ const JoseTrafego = lazy(() => import('./pages/JoseTrafego'));
 const NicheQuiz = lazy(() => import("./pages/NicheQuiz"));
 const BriefingDetails = lazy(() => import("./pages/BriefingDetails"));
 const SupportDashboard = lazy(() => import("./pages/SupportDashboard"));
+const MarcosLeads = lazy(() => import("./pages/MarcosLeads"));
+const MetaAdsConnect = lazy(() => import("./pages/MetaAdsConnect"));
+const InstagramConnect = lazy(() => import("./pages/InstagramConnect"));
 
 
 const queryClient = new QueryClient();
@@ -106,6 +109,8 @@ const App = () => (
                 <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                 <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
                 <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
+                <Route path="/integrations/meta" element={<ProtectedRoute><MetaAdsConnect /></ProtectedRoute>} />
+                <Route path="/integrations/instagram" element={<ProtectedRoute><InstagramConnect /></ProtectedRoute>} />
                 <Route path="/tutorials" element={<ProtectedRoute><Tutorials /></ProtectedRoute>} />
                 <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
                 <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />
@@ -121,6 +126,7 @@ const App = () => (
                 <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
                 <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
                 <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
+                <Route path="/marcos" element={<ProtectedRoute><MarcosLeads /></ProtectedRoute>} />
                 <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
                 <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
                 <Route path="/competitor-radar" element={<ProtectedRoute><CompetitorRadar /></ProtectedRoute>} />

@@ -1471,15 +1471,21 @@ ${pautasStr}`;
                           <Eye className="h-3 w-3" /> Ver Carrossel Visual
                         </Button>
                       </DialogTrigger>
-                      <DialogContent className="max-w-md bg-background/95 backdrop-blur-xl border-border/40 p-6 flex flex-col items-center">
-                        <DialogHeader className="w-full text-center mb-2">
-                          <DialogTitle className="text-sm font-bold">{item.title}</DialogTitle>
+                      <DialogContent className="max-w-[95vw] md:max-w-[1200px] h-[90vh] bg-[#050505]/95 backdrop-blur-2xl border-white/10 p-0 flex flex-col overflow-hidden shadow-2xl">
+                        <DialogHeader className="w-full text-center p-6 border-b border-white/5 bg-black/40">
+                          <DialogTitle className="text-xl font-black tracking-tight text-white">{item.title}</DialogTitle>
+                          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Modo Apresentação — Full Bleed Cinematic</p>
                         </DialogHeader>
-                        <CarouselPageViewer
-                          slides={item.slides}
-                          brandName={clientContext?.name || 'Minha Marca'}
-                          clientImageUrl={clientImageUrl ?? undefined}
-                        />
+                        <div className="flex-1 overflow-auto bg-grid-white/[0.02] relative p-6">
+                            <div className="absolute inset-0 bg-[#050505] [mask-image:radial-gradient(ellipse_at_center,transparent_20%,black)] pointer-events-none"></div>
+                            <div className="relative z-10 w-full h-full">
+                              <CarouselPageViewer
+                                slides={item.slides}
+                                brandName={clientContext?.name || 'Minha Marca'}
+                                clientImageUrl={clientImageUrl ?? undefined}
+                              />
+                            </div>
+                        </div>
                       </DialogContent>
                     </Dialog>
                   ) : null}

@@ -87,7 +87,9 @@ const DEMO_CLIENT: ClientContext = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function parseCarouselsFromResponse(text: string): PauloCarousel[] {
+function parseCarouselsFromResponse(text: string | undefined | null): PauloCarousel[] {
+  if (!text || typeof text !== 'string') return [];
+
   // Try to extract JSON from the response
   const jsonMatch = text.match(/```json\s*([\s\S]*?)```/) ||
                     text.match(/\{[\s\S]*"carousels"[\s\S]*\}/) ||
@@ -158,67 +160,50 @@ ${ANGLES.find(a => a.value === angle)?.label || angle}: ${ANGLES.find(a => a.val
 Você é o Fotógrafo Premiado da Campanha. Cada slide requer um prompt de imagem VISUAL, DENSO e EXTREMAMENTE ESPECÍFICO em INGLÊS, seguindo a diretiva "Nível Midjourney v6".
 
 **A REGRA DO DNA VISUAL (COESÃO):**
-O carrossel NÃO PODE TER imagens soltas e genéricas. Você deve criar um "Fio Condutor Visual".
+O carrossel NÃO PODE TER imagens soltas, exageradas ou irreais. Você deve criar um "Fio Condutor Visual" baseado em FOTOGRAFIA REAL, documentário luxuoso ou cena cotidiana hiper-realista. NADA de "filme de ficção científica", "neons cibernéticos" ou futurismo exagerado. As imagens precisam parecer FOTOS DE ALTA QUALIDADE TIRADAS COM CÂMERA PROFISSIONAL.
 Por exemplo, defina mentalmente:
-- A "Luz da Assinatura": Golden hour? Neon cyberpunk? Luz fria de estúdio? (Mantenha a mesma luz em todos os slides).
-- O Sujeito Âncora: Mostre humanos em ações específicas! Nunca apenas "um carro". Faça: "um casal jovem elegante num piquenique em frente ao carro com o porta-malas aberto mostrando duas bicicletas".
+- A "Luz da Assinatura": Luz natural da manhã? Golden hour suave? Luz sutil de estúdio? (Mantenha a mesma luz realista em todos).
+- O Sujeito Âncora: Mostre humanos normais (e atraentes) em ações específicas! "Um casal jovem bem vestido tomando café em uma sacada de vidro em um dia nublado". NADA DE ROBÔS OU HOLOGRAMAS.
 
-**Estrutura Obrigatória de Cada Prompt (MÁXIMO DETALHE):**
-1. **Sujeito e Ação (SEJA ESPECÍFICO):** "Cinematic wide shot of a silver luxury electric sedan parked on a cliff. A young elegant couple is drinking coffee sitting on minimalist chairs..."
-2. **Ambiente e Clima:** "...surrounded by blooming spring cherry blossoms under the soft diffuse golden morning light..."
-3. **Equipamento/Técnica:** "...shot on Fujifilm GFX 100, 85mm lens, shallow depth of field, sharp focus on the car..."
-4. **Acabamento:** "...vibrant botanical colors, serene atmosphere, minimalist luxury aesthetic, masterpiece, 8k, photorealistic, no text."
+**Estrutura Obrigatória de Cada Prompt (MÁXIMO DETALHE, 100% REALISTA):**
+1. **Sujeito e Ação (SEJA ESPECÍFICO):** "Photorealistic ultra-detailed candid shot taken with 35mm lens. A real elegant woman looking at her smartphone in a bright modern cozy living room..."
+2. **Ambiente e Clima:** "...natural soft morning light sweeping through large windows, highly relatable lifestyle photography..."
+## FORMATO DE SAÍDA OBRIGATÓRIO (MARKDOWN)
 
-## FORMATO DE SAÍDA OBRIGATÓRIO: O MANIFESTO DO DIRETOR (MARKDOWN)
-Você NÃO deve retornar JSON agora. Você deve escrever um MANIFESTO CRIATIVO e ESTRATÉGICO em Markdown puro, rico, visceral e denso.
+Você NÃO deve retornar JSON. Você deve escrever um MANIFESTO CRIATIVO e ESTRATÉGICO em Markdown puro, rico, visceral e denso.
 
-Para cada carrossel sugerido, siga esta estrutura:
-# Carrossel [N]: [Título de Impacto]
-**Ângulo:** [Ângulo usado]
-**DNA Visual:** [Descrição da Luz de Assinatura, Paleta e Atmosfera]
-**Legenda (Caption):** [Um manifesto de 5 parágrafos de puro valor]
+Para CADA carrossel sugerido, siga ESTRITAMENTE esta estrutura:
 
----
-## Slide 1: [Headline]
-**Sub-Headline:** [Complemento]
-**Direção Artística:** [Prompt Midjourney v6 em Inglês - Máximo Detalhe]
-**Narrativa:** [Texto de apoio denso]
+[TIPO: CARROSSEL]
+Título: ESCREVA O TÍTULO REAL CHAMATIVO AQUI
+Ângulo: ÂNGULO USADO
+Legenda: Escreva a legenda do post do instagram (mínimo de 4 parágrafos focados em retenção). Inclua CTA forte e hashtags.
 
-## Slide 2: [Headline]
-... (Repita para todos os slides)
----
+--- ROTEIRO TÉCNICO PARA O DAVI ---
 
-Seja prolixo na qualidade, não economize palavras. Entregue o nível de detalhe que um CEO esperaria de uma agência de Manhattan.`;
+[SLIDE 1]
+text_headline: Escreva a headline principal, muito curta e de impacto.
+text_sub_headline: Escreva uma frase curta de apoio motivacional. (Não coloque colchetes).
+text_body: Escreva um parágrafo descritivo, rico e altamente persuasivo.
+bullets:
+- Escreva o primeiro ponto forte genial.
+- Escreva o segundo ponto forte incontestável.
+image_prompt: Escreva um prompt de imagem em INGLÊS EXTREMAMENTE DETALHADO MAS 100% REALISTA (Estilo fotografia de banco de imagens premium, pessoas de verdade, cenários do dia-a-dia de luxo). Sem elementos futuristas. Sem texto na imagem.
+visual_cue: clean bright daytime
+
+[SLIDE 2]
+text_headline: Headline de continuação.
+text_sub_headline: Sub-headline opcional.
+text_body: Desenvolvimento da dor/solução.
+bullets:
+- Ponto de impacto 1
+- Ponto de impacto 2
+image_prompt: Descrição visual impecável mantendo o cenário e personagens base.
+visual_cue: cold lighting
+
+Obrigatório: Crie entre 4 a 8 slides por carrossel. Seja prolixo, entregue textos gigantes e valiosos. NUNCA DEVOLVA TEXTOS COMO "Texto de apoio opcional aqui", escreva o copy real!`;
 }
 
-const EXTRACTION_SYSTEM_PROMPT = `Você é o Arquiteto de Estruturas JSON da HumanizeIA. 
-Sua única missão é pegar um Manifesto Criativo em Markdown e extrair TODAS as informações para o formato JSON abaixo, sem resumir, sem omitir e sem alterar a alma do texto. 
-Mantenha os prompts de imagem técnicos e as legendas longas e persuasivas.
-
-Retorne APENAS o JSON no formato:
-{
-  "carousels": [
-    {
-      "title": "Título",
-      "niche": "Nicho",
-      "angle": "ângulo",
-      "caption": "Legenda completa",
-      "hashtags": ["tag1", "tag2"],
-      "slides": [
-        {
-          "slide_number": 1,
-          "type": "cover/content/cta",
-          "headline": "headline",
-          "subtext": "sub_headline",
-          "body": "texto descritivo profundo",
-          "bullets": ["bullet1", "bullet2"],
-          "image_prompt": "prompt em inglês"
-        }
-      ]
-    }
-  ]
-}`;
-}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -324,7 +309,7 @@ export default function PauloAgente() {
         .filter(m => m.metadata?.type === 'niche_research' && m.metadata?.research)
         .reverse()
         .slice(0, 5)
-        .map(m => ({ id: m.id, date: m.timestamp, research: m.metadata!.research }));
+        .map(m => ({ id: m.id, date: m.created_at, research: m.metadata!.research }));
       setRecentResearches(researches);
     } catch {
       setRecentResearches([]);
@@ -440,51 +425,35 @@ export default function PauloAgente() {
     try {
       const systemPrompt = buildPauloSystemPrompt(clientContext || DEMO_CLIENT, angle);
       
-      const taskId = await createTask('paulo', 'generate_carousel', {
+      await createTask('paulo', 'generate_carousel', {
         input: fullPrompt,
         angle,
         source,
       });
 
-      // Step 1: Creative Creation (Markdown)
-      const res1 = await supabase.functions.invoke('claude-chat', {
+      // Call the dedicated Paulo Edge Function (uses OpenAI directly — no Lovable credits)
+      const res = await supabase.functions.invoke('paulo-carousel-api', {
         body: {
-          messages: [{ role: 'user', content: fullPrompt }],
-          context: 'paulo',
-          stream: false,
-          task_id: taskId,
-          config: {
-            description: systemPrompt,
-            creativity: 0.9,
-          },
+          action: 'generate_carousels',
+          prompt: fullPrompt,
+          system_prompt: systemPrompt,
+          angle,
         },
       });
 
-      if (res1.error) throw new Error(res1.error.message || 'Erro no Passo 1 (Criação)');
-      const creativeManifesto = res1.data?.choices?.[0]?.message?.content;
-      if (!creativeManifesto) throw new Error('O Paulo não conseguiu gerar o manifesto criativo.');
+      // paulo-carousel-api wraps errors in data.error (Supabase Edge Function pattern)
+      if (res.error) throw new Error(res.error.message || 'Erro ao gerar carrosséis');
+      if (res.data?.error) throw new Error(res.data.error);
 
-      // Notify progress in the UI if possible, or just proceed to extract
-      // (The user said "apenas os titulos de cada etapa, ja ta otimo")
-      
-      // Step 2: Structural Extraction (JSON)
-      const res2 = await supabase.functions.invoke('claude-chat', {
-        body: {
-          messages: [
-            { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
-            { role: 'user', content: `Converta este manifesto criativo em JSON:\n\n${creativeManifesto}` }
-          ],
-          context: 'paulo',
-          config: {
-            description: "Extração estruturada de carrossel",
-            creativity: 0, // Deterministic
-          },
-        },
-      });
+      const rawContent: string | undefined = res.data?.content;
 
-      if (res2.error) throw new Error(res2.error.message || 'Erro no Passo 2 (Extração)');
-      const rawContent = res2.data?.choices?.[0]?.message?.content;
+      if (!rawContent) {
+        throw new Error('A IA não retornou conteúdo. Verifique sua conexão e tente novamente.');
+      }
+
       const carousels = parseCarouselsFromResponse(rawContent);
+
+
 
       if (carousels.length === 0) {
         throw new Error(`A IA não retornou JSON válido. Resposta bruta: ${rawContent.slice(0, 200)}`);

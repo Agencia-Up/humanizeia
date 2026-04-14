@@ -341,21 +341,43 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
         console.log(`[CRM] Lead ${phoneNumber} movido para: ${args.status}`);
 
-        // 2. Alertar vendedores APENAS SE status for 'qualificado' (Transbordo Humano)
+        // 2. Alertar vendedor via Round-Robin SE status for 'qualificado'
         if (args.status === 'qualificado') {
-          const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true);
+          const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
           if (sellers && sellers.length > 0) {
-            for (const seller of sellers) {
-              let sellerNum = seller.whatsapp_number.replace(/\D/g, '');
-              if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
-              
-              const sellerMsg = `🚨 *LEAD QUALIFICADO*\n\n*Agente IA:* ${agent.name}\n*Nome:* ${pushName}\n*Contato:* ${phoneNumber}\n\n📝 *Resumo do Atendimento:*\n${args.resumo}\n\n👉 *Atender Lead:* https://wa.me/${phoneNumber}`;
-              await fetch(`${baseUrl}/send/text`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'token': instKey },
-                body: JSON.stringify({ number: sellerNum, text: sellerMsg })
+            // Round-robin: pick seller with oldest last_lead_received_at
+            const selectedSeller = sellers[0];
+            let sellerNum = selectedSeller.whatsapp_number.replace(/\D/g, '');
+            if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
+            
+            const sellerMsg = `🚨 *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*\n\n👤 *Nome do Cliente:* ${pushName}\n📱 *Contato:* ${phoneNumber}\n🤖 *Agente IA:* ${agent.name}\n\n━━━━━━━━━━━━━━━━━━━━\n\n📝 *Resumo do Atendimento pela IA:*\n${args.resumo}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n⚡ O cliente está esperando!`;
+            await fetch(`${baseUrl}/send/text`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'token': instKey },
+              body: JSON.stringify({ number: sellerNum, text: sellerMsg })
+            });
+
+            // Update seller stats
+            await supabase.from('ai_team_members').update({
+              last_lead_received_at: new Date().toISOString(),
+              total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
+            }).eq('id', selectedSeller.id);
+
+            // Record transfer
+            const { data: leadData } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
+            if (leadData) {
+              await supabase.from('ai_lead_transfers').insert({
+                user_id: agent.user_id, lead_id: leadData.id, from_agent_id: agent.id,
+                to_member_id: selectedSeller.id, transfer_reason: args.resumo,
+                notes: `Transferido para ${selectedSeller.name} via round-robin`,
               });
+              await supabase.from('ai_crm_leads').update({
+                status: 'transferido', assigned_to_member_id: selectedSeller.id,
+                transferred_at: new Date().toISOString(), transfer_reason: `Encaminhado para ${selectedSeller.name}`,
+              }).eq('id', leadData.id);
             }
+
+            console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
           }
           // Se qualificou, substituir a resposta para a de Handoff
           aiResponse = handoffMsg;

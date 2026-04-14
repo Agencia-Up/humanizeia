@@ -10,7 +10,7 @@ import LeadDetailModal from '@/features/orchestrator/components/LeadDetailModal'
 import { useFluxCRM, type CRMLead } from '@/hooks/useFluxCRM';
 import { Card } from '@/components/ui/card';
 
-export default function FluxCRM() {
+export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
   const { stages, leads, loading, addLead, updateLead, deleteLead, moveLead, getLeadsByStage, totalValue } = useFluxCRM();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -89,8 +89,10 @@ export default function FluxCRM() {
   const wonLeads = leads.filter((l) => l.won_at);
   const wonValue = wonLeads.reduce((s, l) => s + (l.value || 0), 0);
 
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+
   return (
-    <MainLayout>
+    <Wrapper>
       <div className="flex flex-col h-full bg-[#0a0a0b]">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 pb-2">
@@ -208,7 +210,7 @@ export default function FluxCRM() {
         stages={stages}
         defaultStageId={defaultStageId}
       />
-    </MainLayout>
+    </Wrapper>
   );
 }
 

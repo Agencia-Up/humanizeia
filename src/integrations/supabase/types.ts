@@ -254,6 +254,78 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_crm_leads: {
+        Row: {
+          agent_id: string | null
+          assigned_to_member_id: string | null
+          created_at: string
+          id: string
+          instance_id: string | null
+          last_interaction_at: string | null
+          lead_name: string | null
+          message_count: number
+          remote_jid: string
+          sentiment: string | null
+          status: string
+          summary: string | null
+          transfer_reason: string | null
+          transferred_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          agent_id?: string | null
+          assigned_to_member_id?: string | null
+          created_at?: string
+          id?: string
+          instance_id?: string | null
+          last_interaction_at?: string | null
+          lead_name?: string | null
+          message_count?: number
+          remote_jid: string
+          sentiment?: string | null
+          status?: string
+          summary?: string | null
+          transfer_reason?: string | null
+          transferred_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          agent_id?: string | null
+          assigned_to_member_id?: string | null
+          created_at?: string
+          id?: string
+          instance_id?: string | null
+          last_interaction_at?: string | null
+          lead_name?: string | null
+          message_count?: number
+          remote_jid?: string
+          sentiment?: string | null
+          status?: string
+          summary?: string | null
+          transfer_reason?: string | null
+          transferred_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_crm_leads_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "wa_ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_crm_leads_assigned_to_member_id_fkey"
+            columns: ["assigned_to_member_id"]
+            isOneToOne: false
+            referencedRelation: "ai_team_members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_insights: {
         Row: {
           action_date: string | null
@@ -354,6 +426,61 @@ export type Database = {
           },
         ]
       }
+      ai_lead_transfers: {
+        Row: {
+          created_at: string
+          from_agent_id: string | null
+          id: string
+          lead_id: string
+          notes: string | null
+          to_member_id: string
+          transfer_reason: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          from_agent_id?: string | null
+          id?: string
+          lead_id: string
+          notes?: string | null
+          to_member_id: string
+          transfer_reason?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          from_agent_id?: string | null
+          id?: string
+          lead_id?: string
+          notes?: string | null
+          to_member_id?: string
+          transfer_reason?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_lead_transfers_from_agent_id_fkey"
+            columns: ["from_agent_id"]
+            isOneToOne: false
+            referencedRelation: "wa_ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_lead_transfers_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "ai_crm_leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_lead_transfers_to_member_id_fkey"
+            columns: ["to_member_id"]
+            isOneToOne: false
+            referencedRelation: "ai_team_members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_learnings: {
         Row: {
           applicable_to: Json | null
@@ -408,6 +535,45 @@ export type Database = {
           subcategory?: string | null
           updated_at?: string | null
           user_id?: string
+        }
+        Relationships: []
+      }
+      ai_team_members: {
+        Row: {
+          agent_id: string | null
+          created_at: string
+          id: string
+          is_active: boolean
+          last_lead_received_at: string | null
+          name: string
+          total_leads_received: number
+          updated_at: string
+          user_id: string
+          whatsapp_number: string
+        }
+        Insert: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          last_lead_received_at?: string | null
+          name: string
+          total_leads_received?: number
+          updated_at?: string
+          user_id: string
+          whatsapp_number: string
+        }
+        Update: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          last_lead_received_at?: string | null
+          name?: string
+          total_leads_received?: number
+          updated_at?: string
+          user_id?: string
+          whatsapp_number?: string
         }
         Relationships: []
       }
