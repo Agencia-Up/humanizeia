@@ -564,7 +564,7 @@ export function ConnectionsTab() {
                         variant="outline"
                         size="sm"
                         className="flex-1 text-xs"
-                        onClick={() => setSelectedPlatform(platform.id)}
+                        onClick={() => platform.id === 'meta' ? navigate('/integrations/meta') : setSelectedPlatform(platform.id)}
                       >
                         Detalhes
                       </Button>
@@ -596,7 +596,7 @@ export function ConnectionsTab() {
                         variant="outline"
                         size="sm"
                         className="text-xs"
-                        onClick={() => setSelectedPlatform(platform.id)}
+                        onClick={() => platform.id === 'meta' ? navigate('/integrations/meta') : setSelectedPlatform(platform.id)}
                       >
                         Como fazer?
                       </Button>
