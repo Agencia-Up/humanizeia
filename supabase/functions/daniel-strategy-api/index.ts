@@ -119,8 +119,8 @@ serve(async (req) => {
     }
 
     if (action === 'generate_strategy') return await generateStrategy(body);
-    if (action === 'research_trends')  return await researchTrends(body, clientContext);
-    if (action === 'generate_swot')    return await generateSwot(body);
+    if (action === 'research_trends') return await researchTrends(body, clientContext);
+    if (action === 'generate_swot') return await generateSwot(body);
     if (action === 'analyze_reference') return await analyzeReference(body);
 
     return sendOkResponse({ error: `Ação desconhecida: ${action}` });
@@ -244,9 +244,9 @@ FORMATO JSON EXATO:
   try {
     // PASS 1: Generate Deep Markdown Manifesto
     const manifesto = await callAI(systemPrompt, userPrompt, 8000);
-    
+
     // PASS 2: Extract JSON from Manifesto
-    const rawJson = await callAI("Você é um arquiteto de dados. Extraia o JSON do texto fornecido seguinto o schema solicitado.", 
+    const rawJson = await callAI("Você é um arquiteto de dados. Extraia o JSON do texto fornecido seguinto o schema solicitado.",
       `${extractionPrompt}\n\nMANIFESTO:\n${manifesto}`, 8000);
 
     // Try to extract JSON from the response
