@@ -30,9 +30,11 @@ export function MetaAdsSettingsTab() {
     connectWithToken,
   } = useMetaConnection();
 
+  const [appId, setAppId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [accountId, setAccountId] = useState('');
   const [showToken, setShowToken] = useState(false);
+  const [showAppId, setShowAppId] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAddAnother, setShowAddAnother] = useState(false);
 
