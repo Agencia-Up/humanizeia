@@ -1171,10 +1171,12 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
         { role: "user", content },
       ];
 
-      const aiPayload = {
+      const aiPayload: any = {
         model: selectedModel,
         messages: aiMessages,
         temperature: effectiveTemp,
+        tools: crmTools,
+        tool_choice: "auto",
         ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
       };
 
