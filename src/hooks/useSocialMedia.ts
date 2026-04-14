@@ -36,6 +36,7 @@ export interface CarouselSlide {
   layout?: 'centered' | 'left' | 'split' | 'minimal' | 'full_bleed';
   accent_word?: string;
   image_url?: string;
+  visual_config?: { bg?: string; text?: string; accent?: string };
 }
 
 export interface PostInsights {

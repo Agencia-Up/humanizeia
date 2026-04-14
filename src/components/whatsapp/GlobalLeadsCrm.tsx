@@ -33,8 +33,8 @@ export function GlobalLeadsCrm() {
   const fetchLeads = useCallback(async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('ai_crm_leads')
+      const { data, error } = await (supabase
+        .from('ai_crm_leads' as any))
         .select(`
           *,
           agent:wa_ai_agents(name),
@@ -74,8 +74,8 @@ export function GlobalLeadsCrm() {
       // Optimistic update
       setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
       
-      const { error } = await supabase
-        .from('ai_crm_leads')
+      const { error } = await (supabase
+        .from('ai_crm_leads' as any))
         .update({ status: newStatus })
         .eq('id', leadId);
 
