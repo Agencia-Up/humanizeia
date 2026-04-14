@@ -327,16 +327,20 @@ export function CarouselPageViewerInner({
   slides, brandName = 'Minha Marca', clientImageUrl
 }: CarouselPageViewerProps) {
   const [exporting, setExporting] = useState(false);
-  const [progress, setProgress] = useState({ total: 0, loaded: 0 });
+  const [progress, setProgress] = useState(() => ({ total: totalRequested, loaded: totalLoaded }));
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Zero progress on mount if we're dealing with new slides
-    if (totalRequested === totalLoaded && totalRequested > 0) {
-      // already done with previous batch, reset for safety if we are rendering brand new ones
+    // Zero progress on mount if we're dealing with new slides AND it's already done
+    if (totalRequested > 0 && totalRequested === totalLoaded) {
       totalRequested = 0;
       totalLoaded = 0;
+      setProgress({ total: 0, loaded: 0 });
+    } else {
+      // Catch up any progress missed between render and effect
+      setProgress({ total: totalRequested, loaded: totalLoaded });
     }
+    
     const listener = (e: any) => setProgress(e.detail);
     window.addEventListener('pollinations_progress', listener);
     return () => window.removeEventListener('pollinations_progress', listener);
@@ -394,7 +398,7 @@ export function CarouselPageViewerInner({
       </div>
 
       {/* Progress Tracker */}
-      {isGenerating && (
+      {isGenerating && progress.total > 0 && (
         <div className="w-full bg-black/40 rounded-full h-1.5 mb-4 overflow-hidden shadow-inner border border-white/5 relative">
           <div 
             className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-300 ease-out"

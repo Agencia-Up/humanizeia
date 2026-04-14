@@ -134,27 +134,30 @@ async function generateCarouselV2(body: any, cors: Record<string, string>) {
   };
 
   const pauloContext = paul_copy
-    ? `\n\nESTRATÉGIA DO COPYWRITER PAULO (use como base e expanda visualmente):\n${paul_copy.slice(0, 800)}`
+    ? `\n\nESTRATÉGIA DO COPYWRITER PAULO (use como base e expanda visualmente. RESPEITE TODAS AS ESPECIFICAÇÕES DO PAULO, PRINCIPALMENTE OS PROMPTS VISUAIS):\n${paul_copy.slice(0, 15000)}`
     : '';
 
   const trendContext = trend_context
-    ? `\n\nCONTEXTO DE TENDÊNCIAS ATUAL:\n${trend_context.slice(0, 400)}`
+    ? `\n\nCONTEXTO DE TENDÊNCIAS ATUAL:\n${trend_context.slice(0, 2000)}`
     : '';
 
   const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
 Você pensa em PÁGINAS VISUAIS SEPARADAS — cada slide é uma página completa como um slide de PowerPoint/Canva.
+Se recebeu uma ESTRATÉGIA DO PAULO, você DEVE preservar e expandir a visão DELE.
 
-REGRAS ABSOLUTAS DE DESIGN:
-- headline: TÍTULO PODEROSO (máximo 5-7 palavras, impacto imediato, maiúsculas quando for necessário)
-- sub_headline: complemento ou numeração (ex: "Dica 1 de 5", "Passo 2", "O Erro Mais Comum")  
-- body: texto de apoio curto (máximo 120 caracteres — pois é um slide visual, não um artigo)
-- bullets: lista de até 3 itens quando o slide for do tipo lista (máximo 45 chars cada)
-- visual_cue: descrição precisa do elemento visual ideal para aquele slide (imagem, ícone, símbolo)
-- layout: como o conteúdo se organiza na página (centered/left/split/minimal/full_bleed)
-- accent_word: uma palavra-chave do headline que deve ganhar cor de destaque
+REGRAS ABSOLUTAS DE DESIGN (TEXTO):
+- headline: TÍTULO PODEROSO (máximo 5-7 palavras, impacto imediato)
+- sub_headline: complemento ou numeração
+- body: texto de apoio curto (máximo 120 caracteres)
 
-O carrossel deve ter RITMO: capa forte → conteúdo valioso → CTA irresistível.
-Retorne APENAS JSON válido sem markdown.`;
+REGRAS DE ARTE (VITAL):
+- Você atua como Diretor de Arte Nível Midjourney v6.
+- O carrossel INTEIRO deve ter uma COESÃO VISUAL INQUEBRÁVEL (DNA Visual).
+- Mantenha uma "Luz de Assinatura" constante em todos os slides e defina uma Paleta de Cores e Sujeito reconhecíveis em vários ângulos.
+- image_prompt: O prompt GERAÇÃO DA IMAGEM deve ser DENSO, em INGLÊS.
+  Estrutura: [Sujeito detalhado] + [Ambiente/Clima] + [Luz da Assinatura: Golden Hour, etc] + [Câmera e Lente] + [Atmosfera: cinematic, 8k, no text].
+
+O formato DEVE ser um JSON válido da interface \`GeneratedCarousel\`:`;
 
   const userPrompt = `Crie um carrossel Instagram sobre "${topic}" para "${audience}".
 Tom: ${tone}. Slides: ${slide_count}. Marca: ${brand_name}. CTA: ${include_cta ? 'sim' : 'não'}.
@@ -167,18 +170,18 @@ Retorne este JSON:
   "carousel_type": "${carousel_type}",
   "cover_headline": "headline da capa (max 7 palavras)",
   "hook_promise": "o que o leitor vai aprender/ganhar com este carrossel",
-  "caption": "legenda completa do post para Instagram (max 2200 chars, com emojis estratégicos e quebras de linha)",
-  "hashtags": ["hashtag1", "hashtag2" ... (20 hashtags sem #, mix de nicho + trend)],
+  "caption": "legenda completa do post para Instagram (max 2200 chars, extensa, persuasiva)",
+  "hashtags": ["hashtag1", "hashtag2" ... (20 hashtags sem #)],
   "slides": [
     {
       "order": 1,
       "type": "cover",
       "headline": "título dominante da capa",
-      "sub_headline": "frase secundária que amplifica o headline",
-      "body": "contexto ou promessa adicional (opcional na capa)",
-      "bullets": null,
-      "visual_cue": "descrição do elemento visual ideal",
-      "layout": "centered",
+      "sub_headline": "frase secundária",
+      "body": "contexto ou promessa adicional",
+      "image_prompt": "Cinematic wide shot of a silver luxury sedan driving on a coastal road during beautiful golden hour spring light, sharp focus, 85mm lens, highly detailed, photorealistic, premium editorial photography style, no text",
+      "visual_cue": "elemento visual complementar",
+      "layout": "centered"
       "accent_word": "palavra do headline para destacar"
     }
   ]
