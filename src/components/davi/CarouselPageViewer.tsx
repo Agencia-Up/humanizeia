@@ -335,15 +335,9 @@ export function CarouselPageViewerInner({
   const DISPLAY_H = Math.round(DISPLAY_W * (1350 / 1080));
 
   return (
-    <div className="flex flex-col w-full h-full max-h-[80vh]">
+    <div className="flex flex-col w-full h-full gap-4">
       {/* Header Actions */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 px-2 shrink-0 gap-4 border-b border-white/5 pb-4">
-        <div>
-          <h2 className="text-xl font-black text-white w-full sm:w-auto mt-2">Davi Studio (Dynamic Layouts)</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            {slides.length} páginas geradas velozmente
-          </p>
-        </div>
+      <div className="flex justify-end items-center px-4 shrink-0">
         
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
           <Button 
