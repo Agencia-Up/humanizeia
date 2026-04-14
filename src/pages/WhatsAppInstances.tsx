@@ -165,11 +165,14 @@ export default function WhatsAppInstances() {
   }, [user]);
 
   const handleDelete = async () => {
-    if (!deleteId) return;
+    if (!deleteId || !user) return;
     setIsDeleting(true);
     try {
-      const { error } = await supabase.from('wa_instances').delete().eq('id', deleteId);
+      const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
+        body: { instance_id: deleteId, user_id: user.id },
+      });
       if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Erro ao remover instância');
       toast({ title: 'Instância removida com sucesso' });
       setInstances(prev => prev.filter(i => i.id !== deleteId));
     } catch (err: any) {
