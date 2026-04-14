@@ -154,20 +154,22 @@ Diferencial: ${ctx.diferencial}
 ## ÂNGULO SOLICITADO
 ${ANGLES.find(a => a.value === angle)?.label || angle}: ${ANGLES.find(a => a.value === angle)?.desc || ''}
 
-## PROMPTS DE IMAGEM — NÍVEL DIRETOR DE ARTE (O MAIS IMPORTANTE)
-Cada slide deve ter um prompt de imagem cinematográfico, denso e detalhado em INGLÊS.
-Você deve agir como um fotógrafo premiado e um diretor de arte de agência de luxo.
+## PROMPTS DE IMAGEM — NÍVEL DIRETOR DE ARTE EXTREMO (VITAL)
+Você é o Fotógrafo Premiado da Campanha. Cada slide requer um prompt de imagem VISUAL, DENSO e EXTREMAMENTE ESPECÍFICO em INGLÊS, seguindo a diretiva "Nível Midjourney v6".
 
-**Estrutura obrigatória de cada prompt:**
-1. **Sujeito e Ação**: Detalhe exatamente quem/o que está na cena.
-2. **Ambiente e Composição**: Use termos como "ultra-wide angle", "macro close-up", "low angle shot".
-3. **Iluminação**: Detalhe a luz: "volumetric lighting", "golden hour", "soft studio box", "cinematic moody shadows".
-4. **Equipamento e Estilo**: Cite câmeras: "shot on Fujifilm GFX 100", "85mm lens", "f/1.2 bokeh".
-5. **Atmosfera**: Adicione "minimalist luxury", "vibrant commercial photography", "hyper-realistic textures".
+**A REGRA DO DNA VISUAL (COESÃO):**
+O carrossel NÃO PODE TER imagens soltas e desconexas. Você deve criar um "Fio Condutor Visual".
+Por exemplo, defina mentalmente:
+- A "Luz da Assinatura": Golden hour? Neon cyberpunk? Luz fria de estúdio? (Mantenha a mesma luz em todos os slides).
+- O Sujeito Âncora: O mesmo modelo de carro, ou a mesma paleta de cores cerâmica, a mesma modelo usando a mesma cor de roupa. Mostre o sujeito em planos diferentes (close-up, plano aberto, focado num detalhe), mas ele deve ser reconhecível.
 
-Exemplo de prompt RUIM: "A person working in a factory"
-Exemplo de prompt PAULO (Obrigatório): "Cinematic side-profile shot of a high-tech robotic assembly line at night, volumetric blue laser lighting cutting through subtle fog, soft amber glow from sparks, shallow depth of field, minimalist industrial aesthetic, 8K resolution, photorealistic, premium corporate photography style, no text on image"
+**Estrutura Obrigatória de Cada Prompt (MÁXIMO DETALHE):**
+1. **O que é (Sujeito e Ação):** "Cinematic wide shot of a silver luxury electric sedan driving on a coastal road..."
+2. **Ambiente e Clima:** "...surrounded by blooming spring cherry blossoms under the soft diffuse golden morning light..."
+3. **Equipamento/Técnica:** "...shot on Fujifilm GFX 100, 85mm lens, shallow depth of field, sharp focus on the car..."
+4. **Acabamento:** "...vibrant botanical colors, serene atmosphere, minimalist luxury aesthetic, masterpiece, 8k, photorealistic, no text."
 
+Exemplo de Prompt BRILHANTE (Slide 2 - Detalhe): "Macro close-up shot of the charging port of the same silver ceramic luxury electric sedan, premium connector smoothly plugged in. The signature golden morning light highlights the brushed metal texture and a soft pulsing green LED. Extremely shallow depth of field with blurred fresh spring foliage in the background, signaling a home integration with nature. Hyper-realistic, 8k, no text."
 ## FORMATO DE SAÍDA OBRIGATÓRIO
 Responda APENAS com JSON válido, sem texto antes ou depois, sem markdown (sem \`\`\`):
 

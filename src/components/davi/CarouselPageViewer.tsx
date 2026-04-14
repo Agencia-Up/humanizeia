@@ -27,6 +27,12 @@ function HighlightHeadline({ text, accentWord, color }: { text: string; accentWo
 const POLLINATIONS_CACHE = new Map<string, string>();
 const imgQueue: string[] = [];
 let isProcessingQueue = false;
+let totalRequested = 0;
+let totalLoaded = 0;
+
+const emitProgress = () => {
+  window.dispatchEvent(new CustomEvent('pollinations_progress', { detail: { total: totalRequested, loaded: totalLoaded } }));
+};
 
 const processQueue = async () => {
   if (isProcessingQueue) return;
@@ -34,19 +40,32 @@ const processQueue = async () => {
   while (imgQueue.length > 0) {
     const url = imgQueue[0];
     if (!POLLINATIONS_CACHE.has(url)) {
-      try {
-        const res = await fetch(url, { cache: 'force-cache' });
-        if (res.ok) {
-          const blob = await res.blob();
-          POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
+      let success = false;
+      let retries = 0;
+      while (!success && retries < 3) {
+        try {
+          const res = await fetch(url, { cache: 'force-cache' });
+          if (res.ok) {
+            const blob = await res.blob();
+            POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
+            success = true;
+          } else {
+            console.warn(`Pollinations HTTP ${res.status}. Retrying...`);
+            if (res.status === 429 || res.status === 406) {
+              await new Promise(r => setTimeout(r, 2000 * (retries + 1))); // backoff
+            }
+          }
+        } catch (e) {
+          console.warn('Queue fetch network failed', e);
         }
-      } catch (e) {
-        console.warn('Queue fetch failed', e);
+        retries++;
       }
-      // Speed optimized
-      await new Promise(r => setTimeout(r, 600));
+      // Speed optimized pacing between successful loads
+      if (success) await new Promise(r => setTimeout(r, 600));
     }
     imgQueue.shift();
+    totalLoaded++;
+    emitProgress();
     window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
   }
   isProcessingQueue = false;
@@ -54,7 +73,8 @@ const processQueue = async () => {
 
 export function usePollinationsImage(prompt: string, width: number, height: number, seed: number) {
   // Speed optimized Pollinations (Turbo mode automatically by removing model=flux)
-  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 300));
+  // Permite até 1000 caracteres para suportar o super-prompt do Paulo
+  const cleanPrompt = encodeURIComponent(String(prompt).substring(0, 1000));
   const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&nologo=true&seed=${seed}`;
   
   const [localUrl, setLocalUrl] = React.useState<string | null>(POLLINATIONS_CACHE.get(url) || null);
@@ -65,6 +85,8 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
       return;
     }
     if (!imgQueue.includes(url)) {
+      totalRequested++;
+      emitProgress();
       imgQueue.push(url);
       processQueue();
     }
@@ -100,9 +122,9 @@ function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
   const layout = isCover ? 'glass_overlay' : isCta ? 'glass_overlay' : layouts[seedNum % layouts.length];
   const accentColor = colors[seedNum % colors.length];
 
-  // Motor Veloz: Prompt turbinado com DALL-E style
+  // Motor Veloz: Prompt respeitando a genialidade do Paulo
   const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'abstract minimalist background';
-  const visualPrompt = `${imgContext}, cinematic aesthetic, 8k resolution, photorealistic, professional editorial photography, clean composition, dark moody lighting, masterpiece, no text`;
+  const visualPrompt = slide.image_prompt ? imgContext : `${imgContext}, cinematic aesthetic, 8k resolution, photorealistic, premium editorial photography, masterpiece, no text`;
   const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 1350, seedNum);
 
   const AvatarIcon = () => (
@@ -305,7 +327,22 @@ export function CarouselPageViewerInner({
   slides, brandName = 'Minha Marca', clientImageUrl
 }: CarouselPageViewerProps) {
   const [exporting, setExporting] = useState(false);
+  const [progress, setProgress] = useState({ total: 0, loaded: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Zero progress on mount if we're dealing with new slides
+    if (totalRequested === totalLoaded && totalRequested > 0) {
+      // already done with previous batch, reset for safety if we are rendering brand new ones
+      totalRequested = 0;
+      totalLoaded = 0;
+    }
+    const listener = (e: any) => setProgress(e.detail);
+    window.addEventListener('pollinations_progress', listener);
+    return () => window.removeEventListener('pollinations_progress', listener);
+  }, []);
+
+  const isGenerating = progress.total > 0 && progress.loaded < progress.total;
 
   const handleExportAll = async () => {
     if (!containerRef.current) return;
@@ -355,6 +392,21 @@ export function CarouselPageViewerInner({
           </Button>
         </div>
       </div>
+
+      {/* Progress Tracker */}
+      {isGenerating && (
+        <div className="w-full bg-black/40 rounded-full h-1.5 mb-4 overflow-hidden shadow-inner border border-white/5 relative">
+          <div 
+            className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-300 ease-out"
+            style={{ width: `${Math.max(10, (progress.loaded / progress.total) * 100)}%` }}
+          />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-[9px] font-black tracking-widest text-white/50 drop-shadow-md">
+              RENDERIZANDO {progress.loaded}/{progress.total}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Grid of All Slides */}
       <div className="overflow-y-auto pr-2 pb-8 flex-1" ref={containerRef}>
