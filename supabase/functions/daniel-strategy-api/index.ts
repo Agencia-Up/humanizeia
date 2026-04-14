@@ -195,20 +195,23 @@ NICHO: "${niche.trim()}"
 PLATAFORMAS: ${platformsList}
 DATA ATUAL: ${currentMonth}${clientBlock}${referenceBlock}`;
 
-  const userPrompt = `Produza a Pesquisa de Inteligência de Mercado DEFINITIVA para o nicho "${niche.trim()}".
+const userPrompt = `Aviso: Você está prestes a ser demitido se entregar uma pesquisa genérica, rasa ou com clichês de marketing.
+Sua missão é produzir uma Pesquisa de Inteligência de Mercado CIRÚRGICA, PROFUNDA e DEFINITIVA para o nicho "${niche.trim()}".
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-REGRAS OBRIGATÓRIAS DE EXECUÇÃO:
+REGRAS OBRIGATÓRIAS DE EXECUÇÃO (MÁXIMA DENSIDADE):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROIBIDO usar frases vagas como "entenda seu público", "agregue valor" ou "poste com consistência".
+SEJA TÉCNICO. Use vieses cognitivos reais, neurociência, termos acadêmicos/teóricos práticos da área e mostre ESTRATÉGIAS SECRETAS que apenas diretores de agências de NY conhecem.
 
-[1] RECOMMENDATION — Manifesto Estratégico de pelo menos 600 palavras. Deve conter:
-  - Análise macro do mercado com dados comportamentais reais
-  - Psicologia de compra e tomada de decisão deste público
-  - As 3 alavancas ocultas de crescimento que a concorrência ignora
+[1] RECOMMENDATION — Manifesto Estratégico Visceral (Mínimo de 800 palavras). Deve destrinchar:
+  - Análise macroeconômica do nicho e dados comportamentais não-óbvios.
+  - A psicologia subconsciente e os vieses cognitivos da decisão de compra desse público.
+  - As 3 alavancas obscuras de growth (Oceano Azul) que a concorrência ignora.
 
-[2] PAIN_MAP — Mapeamento de 5 DORES PROFUNDAS.
-[3] TRENDING_TOPICS — 5 TÓPICOS por ângulos variados.
-[4] CONTENT_BRIEFS — 5 PAUTAS com roteiros de slides DENSOS.
+[2] PAIN_MAP — Mapeamento de 5 DORES OCULTAS (As dores que o cliente tem vergonha de admitir).
+[3] TRENDING_TOPICS — 5 TÓPICOS DE ALTA PERFORMANCE (Ângulos controversos, polarizadores ou altamente contraintuitivos).
+[4] CONTENT_BRIEFS — 5 PAUTAS COMPLEXAS com roteiros de conteúdo completos, magnéticos e persuasivos.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FORMATO DE SAÍDA OBRIGATÓRIO: O MANIFESTO DO ESTRATEGISTA (MARKDOWN)

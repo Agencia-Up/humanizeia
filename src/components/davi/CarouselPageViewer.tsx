@@ -327,7 +327,7 @@ export function CarouselPageViewerInner({
     }
   };
 
-  const DISPLAY_W = 380;
+  const DISPLAY_W = 480;
   const DISPLAY_H = Math.round(DISPLAY_W * (1350 / 1080));
 
   return (
