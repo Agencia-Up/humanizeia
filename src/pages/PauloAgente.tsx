@@ -171,56 +171,37 @@ Por exemplo, defina mentalmente:
 3. **Equipamento/Técnica:** "...shot on Fujifilm GFX 100, 85mm lens, shallow depth of field, sharp focus on the car..."
 4. **Acabamento:** "...vibrant botanical colors, serene atmosphere, minimalist luxury aesthetic, masterpiece, 8k, photorealistic, no text."
 
-## FORMATO DE SAÍDA OBRIGATÓRIO: O MANIFESTO DO DIRETOR (MARKDOWN)
-Você NÃO deve retornar JSON agora. Você deve escrever um MANIFESTO CRIATIVO e ESTRATÉGICO em Markdown puro, rico, visceral e denso.
+## FORMATO DE SAÍDA OBRIGATÓRIO (JSON PURO)
+Você deve atuar como Arquiteto de Estruturas ao mesmo tempo em que mantém a alma do Diretor Criativo.
+Retorne APENAS um objeto JSON válido, seguindo o schema abaixo. NÃO inclua textos antes ou depois do JSON. NÃO use marcação markdown (como \`\`\`json).
 
-Para cada carrossel sugerido, siga esta estrutura:
-# Carrossel [N]: [Título de Impacto]
-**Ângulo:** [Ângulo usado]
-**DNA Visual:** [Descrição da Luz de Assinatura, Paleta e Atmosfera]
-**Legenda (Caption):** [Um manifesto de 5 parágrafos de puro valor]
-
----
-## Slide 1: [Headline]
-**Sub-Headline:** [Complemento]
-**Direção Artística:** [Prompt Midjourney v6 em Inglês - Máximo Detalhe]
-**Narrativa:** [Texto de apoio denso]
-
-## Slide 2: [Headline]
-... (Repita para todos os slides)
----
-
-Seja prolixo na qualidade, não economize palavras. Entregue o nível de detalhe que um CEO esperaria de uma agência de Manhattan.`;
-}
-
-const EXTRACTION_SYSTEM_PROMPT = `Você é o Arquiteto de Estruturas JSON da HumanizeIA. 
-Sua única missão é pegar um Manifesto Criativo em Markdown e extrair TODAS as informações para o formato JSON abaixo, sem resumir, sem omitir e sem alterar a alma do texto. 
-Mantenha os prompts de imagem técnicos e as legendas longas e persuasivas.
-
-Retorne APENAS o JSON no formato:
+SCHEMA OBRIGATÓRIO:
 {
   "carousels": [
     {
-      "title": "Título",
-      "niche": "Nicho",
-      "angle": "ângulo",
-      "caption": "Legenda completa",
-      "hashtags": ["tag1", "tag2"],
+      "title": "[Título de Impacto]",
+      "niche": "[Nicho]",
+      "angle": "[Ângulo usado]",
+      "caption": "[Um manifesto de 5 parágrafos de puro valor, denso e persuasivo]",
+      "hashtags": ["tag1", "tag2\u0022],
       "slides": [
         {
           "slide_number": 1,
-          "type": "cover/content/cta",
-          "headline": "headline",
-          "subtext": "sub_headline",
-          "body": "texto descritivo profundo",
-          "bullets": ["bullet1", "bullet2"],
-          "image_prompt": "prompt em inglês"
+          "type": "cover",
+          "headline": "[Headline agressivo/curioso]",
+          "subtext": "[Complemento]",
+          "body": "[Texto descritivo profundo e denso, no mínimo 3 parágrafos. Use dados, fatos, neurociência]",
+          "bullets": ["[Fato específico 1]", "[Fato específico 2]"],
+          "image_prompt": "[Prompt Midjourney v6 em Inglês - Máximo Detalhe]"
         }
       ]
     }
   ]
 }
-`;
+
+Seja prolixo na qualidade, não economize palavras dentro dos campos do JSON. Entregue o nível de detalhe que um CEO esperaria de uma agência de Manhattan.`;
+}
+
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
