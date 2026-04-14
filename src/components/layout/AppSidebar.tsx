@@ -10,7 +10,7 @@ import {
   Sun,
   X,
   LogOut,
-  MessageCircle,
+  
   Radar,
   Instagram,
   CreditCard,
