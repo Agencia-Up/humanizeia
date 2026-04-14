@@ -125,112 +125,103 @@ async function generateCarouselV2(body: any, cors: Record<string, string>) {
       Slides 2-${slide_count - 1}: PASSO [N] — ação específica com orientação clara
       Slide ${slide_count} (CTA): "Salve este post e comece agora"`,
 
-    polemica: `Formato POLÊMICO: gera debate e compartilhamento.
-      Slide 1 (CAPA): Afirmação provocativa e contrária ao senso comum
-      Slides 2-5: Argumentos que sustentam a posição, com dados
-      Slide 6: Antecipa e derruba a principal objeção
-      Slide 7: Convida ao debate nos comentários
-      Slide ${slide_count} (CTA): "Concorda ou discorda? Comenta aqui"`,
-  };
-
-  const pauloContext = paul_copy
-    ? `\n\nESTRATÉGIA DO COPYWRITER PAULO (use como base e expanda visualmente. RESPEITE TODAS AS ESPECIFICAÇÕES DO PAULO, PRINCIPALMENTE OS PROMPTS VISUAIS):\n${paul_copy.slice(0, 15000)}`
-    : '';
-
-  const trendContext = trend_context
-    ? `\n\nCONTEXTO DE TENDÊNCIAS ATUAL:\n${trend_context.slice(0, 2000)}`
-    : '';
-
-  const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
+    polemica: `Formato POLÊM  const systemPrompt = `Você é DAVI, o mestre absoluto de carrosséis virais para Instagram em português brasileiro.
 Você pensa em PÁGINAS VISUAIS SEPARADAS — cada slide é uma página completa como um slide de PowerPoint/Canva.
 Se recebeu uma ESTRATÉGIA DO PAULO, você DEVE preservar e expandir a visão DELE.
 
-REGRAS ABSOLUTAS DE DESIGN (TEXTO):
-- headline: TÍTULO PODEROSO E MAGNÉTICO
-- sub_headline: complemento intrigante
-- body: UMA EXPLICAÇÃO DENSA e FASCINANTE. Descreva o conceito em profundidade ou forneça dados reais. NÃO FAÇA frases genéricas! Traga ouro.
-- bullets: Array de strings contendo 3 fatos/dados extremamente descritivos. (Obrigatório em slides do meio).
+REGRA DE OURO (ESTILO):
+Você NÃO deve retornar JSON agora. Você vai escrever a "BÍBLIA DA CAMPANHA" em Markdown.
+Entregue profundidade CEO, narrativa épica e prompts de imagem Midjourney v6 densos.
 
-REGRAS DE ARTE (VITAL):
-- Você atua como Diretor de Arte Nível Midjourney v6.
-- O carrossel INTEIRO deve ter uma COESÃO VISUAL INQUEBRÁVEL (DNA Visual).
-- Mantenha uma "Luz de Assinatura" constante em todos os slides e defina uma Paleta de Cores fixa.
-- O Sujeito Âncora: Mostre humanos em ações específicas e ricas! Em vez de "um carro", diga "um casal jovem em roupas de piquenique bebendo vinho encostado no carro".
-- image_prompt: O prompt GERAÇÃO DA IMAGEM deve ser DENSO, em INGLÊS.
-  Estrutura: [Humanos/Sujeito em ação profunda] + [Ambiente/Clima] + [Luz da Assinatura: Golden Hour] + [Câmera e Lente] + [Atmosfera: cinematic, photorealistic, no text].
+ESTRUTURA DA BÍBLIA:
+# Campanha: [Tema]
+## Direção de Arte (DNA Visual)
+- **Luz de Assinatura:** [ex: Golden Hour]
+- **Paleta de Cores:** [ex: Brancos cerâmicos e Ouro]
+- **Sujeito Âncora:** [ex: Casal jovem em ação num piquenique]
 
-O formato DEVE ser um JSON válido da interface \`GeneratedCarousel\`:`;
+## Carrossel (Slides)
+### Slide 1: [Headline]
+... [descrição detalhada de cada slide com prompt MJ em inglês]
+---
+## Legenda (Caption)
+[Manifesto de 5 parágrafos]`;
 
-  const userPrompt = `Crie um carrossel Instagram sobre "${topic}" para "${audience}".
+  const userPrompt = `Crie a estratégia definitiva para um carrossel sobre "${topic}" para "${audience}".
 Tom: ${tone}. Slides: ${slide_count}. Marca: ${brand_name}. CTA: ${include_cta ? 'sim' : 'não'}.
 Tipo: ${carousel_type}.${pauloContext}${trendContext}
 
 ${typeInstructions[carousel_type] || typeInstructions.educacional}
 
-Retorne este JSON:
+Seja prolixo na qualidade literária e artística.`;
+
+  const extractionPrompt = `Você é o Arquiteto de Estruturas da HumanizeIA. 
+Sua missão é converter a "Bíblia da Campanha" abaixo no formato JSON OBRIGATÓRIO.
+Mantenha toda a densidade dos prompts de imagem e das explicações. NÃO RESUMA NADA.
+
+FORMATO JSON:
 {
   "carousel_type": "${carousel_type}",
-  "cover_headline": "headline da capa (max 7 palavras)",
-  "hook_promise": "o que o leitor vai aprender/ganhar com este carrossel",
-  "caption": "legenda completa do post para Instagram (max 2200 chars, extensa, persuasiva)",
-  "hashtags": ["hashtag1", "hashtag2" ... (20 hashtags sem #)],
+  "cover_headline": "...",
+  "hook_promise": "...",
+  "caption": "...",
+  "hashtags": ["tag1", "tag2"],
   "slides": [
     {
       "order": 1,
-      "type": "cover",
-      "headline": "O SEGREDO REVELADO",
-      "sub_headline": "A verdade obscura",
-      "body": "Por que 99% das pessoas quebram nessa fase? A explicação magnética vai aqui, sendo mais longa e detalhada.",
-      "bullets": [
-        "Economia comprovada de 40% em 3 meses",
-        "Menos desgaste físico e mental para a equipe"
-      ],
-      "image_prompt": "Cinematic wide shot of a young elegant couple enjoying a premium picnic...",
-      "visual_cue": "casal no picnic",
-      "layout": "centered"
-      "accent_word": "palavra do headline para destacar"
+      "type": "cover/content/list/quote/cta",
+      "headline": "...",
+      "sub_headline": "...",
+      "body": "texto denso",
+      "bullets": ["b1", "b2"],
+      "image_prompt": "prompt em inglês",
+      "visual_cue": "...",
+      "layout": "...",
+      "accent_word": "..."
     }
   ]
-}
+}`;
 
-REGRAS DOS TIPOS DE SLIDE:
-- "cover": capa principal — headline impactante, sub_headline forte, sem body longo
-- "content": slide de conteúdo — headline direto, body explicando, visual_cue relevante
-- "list": slide de lista — sub_headline com numeração, bullets com 2-3 itens
-- "quote": citação poderosa — headline como a citação entre aspas, body com atribuição
-- "cta": slide final — headline como chamada para ação, body com instrução clara`;
-
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  // STEP 1: Creative Creation (Bible)
+  const res1 = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${openaiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      temperature: 0.9,
+    }),
+  });
+
+  if (!res1.ok) throw new Error(`OpenAI API (Bíblia): ${res1.status}`);
+  const data1 = await res1.json();
+  const bible = data1.choices?.[0]?.message?.content;
+
+  // STEP 2: Structural Extraction (JSON)
+  const res2 = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'gpt-4o',
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
+        { role: 'system', content: extractionPrompt },
+        { role: 'user', content: `Converta esta Bíblia em JSON:\n\n${bible}` }
       ],
-      temperature: 0.85,
-      max_tokens: 3500,
+      temperature: 0,
       response_format: { type: 'json_object' },
     }),
   });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`OpenAI API: ${res.status} — ${err}`);
-  }
+  if (!res2.ok) throw new Error(`OpenAI API (JSON): ${res2.status}`);
 
-  const aiData = await res.json();
+  const aiData = await res2.json();
   const rawContent = aiData.choices?.[0]?.message?.content || '{}';
 
   let carousel;
   try {
     carousel = JSON.parse(rawContent);
   } catch {
-    throw new Error('Resposta da IA inválida — tente novamente');
+    throw new Error('Falha na extração do carrossel — tente novamente');
   }
 
   return new Response(JSON.stringify({ carousel }), {

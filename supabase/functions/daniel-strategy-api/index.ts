@@ -186,16 +186,14 @@ async function researchTrends(body: any, clientContext: string) {
 
   // Build reference/competitor block
   const referenceBlock = links?.trim()
-    ? `\n\n[REFERÊNCIAS/CONCORRENTES FORNECIDOS PELO CLIENTE]\n${links}\n-> Deconstrua essas referências: extraia o hook, o gatilho emocional dominante, a estrutura narrativa. Crie pelo menos 2 das 5 pautas que SUPEREM diretamente essas referências.`
+    ? `\n\n[REFERÊNCIAS/CONCORRENTES FORNECIDOS PELO CLIENTE]\n${links}\n-> Deconstrua essas referências: extraia o hook, o gatilho emocional dominante, a estrutura narrativa.`
     : '';
 
   const systemPrompt = `Você é DANIEL, o Estrategista-Chefe Executivo (CMO/CEO nível Black) de uma das maiores agências de inteligência de mercado do mundo. Seu cérebro funciona como um supercomputador de neuromarketing, psicologia do consumidor e hackeamento de algoritmos sociais.
 
 NICHO: "${niche.trim()}"
 PLATAFORMAS: ${platformsList}
-DATA ATUAL: ${currentMonth}${clientBlock}${referenceBlock}
-
-REGRA ABSOLUTA: Retorne APENAS um objeto JSON válido. Nada de markdown, nada de texto fora do JSON. Zero exceções.`;
+DATA ATUAL: ${currentMonth}${clientBlock}${referenceBlock}`;
 
   const userPrompt = `Produza a Pesquisa de Inteligência de Mercado DEFINITIVA para o nicho "${niche.trim()}".
 
@@ -203,117 +201,57 @@ REGRA ABSOLUTA: Retorne APENAS um objeto JSON válido. Nada de markdown, nada de
 REGRAS OBRIGATÓRIAS DE EXECUÇÃO:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-[1] RECOMMENDATION — Manifesto Estratégico de pelo menos 400 palavras. Deve conter:
+[1] RECOMMENDATION — Manifesto Estratégico de pelo menos 600 palavras. Deve conter:
   - Análise macro do mercado com dados comportamentais reais
   - Psicologia de compra e tomada de decisão deste público
   - As 3 alavancas ocultas de crescimento que a concorrência ignora
-  - Posicionamento de ataque específico para se destacar
 
-[2] PAIN_MAP — Mapeamento das 5 DORES PROFUNDAS do público-alvo neste nicho:
-  Cada dor deve ter: categoria (cognitiva/emocional/financeira/social/temporal), título impactante e descrição densa.
-
-[3] TRENDING_TOPICS — EXATAMENTE 5 TÓPICOS (um de cada ângulo obrigatório):
-  ÂNGULO 1 — COMPORTAMENTAL: algo sobre como o público pensa/age inconscientemente
-  ÂNGULO 2 — SAZONAL/CULTURAL: ligado ao momento atual (${currentMonth}), evento, tendência recente
-  ÂNGULO 3 — ANTI-OBJEÇÃO: o maior bloqueio mental que impede a compra/contratação, desmontado
-  ÂNGULO 4 — PROVA SOCIAL / DADOS: conteúdo baseado em estudo, pesquisa ou número impactante
-  ÂNGULO 5 — POLÊMICA CALCULADA: opinião contraintuitiva que provoca debate mas aumenta autoridade
-  
-  Para cada tópico: "why_trending" deve ser uma tese psicológica densa (mínimo 3 frases), não 1 linha.
-
-[4] CONTENT_BRIEFS — EXATAMENTE 5 PAUTAS (uma por ângulo acima):
-  CADA PAUTA OBRIGATORIAMENTE DEVE TER:
-  - "hook": frase magnética e específica (não genérica!) que paralisa a rolagem
-  - "slides_or_points": ARRAY DE 5 ITENS com roteiros DENSOS e longos — cada item descreve exatamente o que falar/escrever naquele slide/momento. Mínimo 2 frases por item.
-  - "reason": análise neuropsicológica de por que este conteúdo converte (mínimo 4 frases)
-  - "cta": call to action específico e irresistível para este público
-
-[5] CONTENT_CALENDAR — Calendário editorial de 7 dias (segunda a domingo):
-  Para cada dia: dia da semana, formato sugerido, ângulo/tema, plataforma prioritária e horário recomendado.
-
-[6] COMPETITIVE_GAPS — 3 BRECHAS não exploradas pela concorrência neste nicho:
-  Para cada brecha: título, descrição de por que está vazia, e tipo de conteúdo que a explora.
-
-[7] VIRAL_FORMATS — EXATAMENTE 3 FORMATOS com nomes épicos e únicos para este nicho:
-  Em "description": explique a psicologia de retenção. Em "example": mostre o esqueleto linha por linha.
+[2] PAIN_MAP — Mapeamento de 5 DORES PROFUNDAS.
+[3] TRENDING_TOPICS — 5 TÓPICOS por ângulos variados.
+[4] CONTENT_BRIEFS — 5 PAUTAS com roteiros de slides DENSOS.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FORMATO JSON EXATO (preencha com conteúdo REAL, EXTENSO e ESPECÍFICO para "${niche.trim()}"):
+FORMATO DE SAÍDA OBRIGATÓRIO: O MANIFESTO DO ESTRATEGISTA (MARKDOWN)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Você NÃO deve retornar JSON. Escreva um MANIFESTO DE INTELIGÊNCIA em Markdown puro, visceral e denso.
+
+Estrutura esperada:
+# Pesquisa: [Nicho]
+## Manifesto Estratégico
+[Seu texto de 600+ palavras aqui]
+
+## Mapeamento de Dores
+## Tópicos Tendência (Trending Topics)
+## Pautas de Conteúdo (Content Briefs)
+## Calendário Editorial & Brechas de Mercado`;
+
+  const extractionPrompt = `Você é o Arquiteto de Dados da HumanizeIA. Extraia TODAS as informações do manifesto estratégico e organize-as no formato JSON.
+
+FORMATO JSON EXATO:
 {
   "niche": "${niche.trim()}",
   "research_date": "${now}",
   "data_source": "ai_analysis_v2",
-  "recommendation": "Manifesto estratégico de 400+ palavras...",
-  "pain_map": [
-    {
-      "category": "emocional",
-      "title": "Título da Dor",
-      "description": "Descrição densa de como essa dor se manifesta no comportamento de compra..."
-    }
-  ],
-  "trending_topics": [
-    {
-      "angle": "comportamental",
-      "topic": "Nome do Tópico",
-      "why_trending": "Tese psicológica densa de 3+ frases...",
-      "engagement_potential": "muito alto",
-      "best_format": "carrossel",
-      "best_platform": "instagram"
-    }
-  ],
-  "content_briefs": [
-    {
-      "id": 1,
-      "angle": "comportamental",
-      "title": "Título Impactante da Pauta",
-      "hook": "Frase específica e magnética para este nicho...",
-      "format": "carrossel",
-      "platform": "instagram",
-      "slides_or_points": [
-        "Slide 1 (Abertura): Texto denso descrevendo exatamente o que escrever e por que...",
-        "Slide 2 (Tensão): Texto denso...",
-        "Slide 3 (Prova): Texto denso...",
-        "Slide 4 (Virada): Texto denso...",
-        "Slide 5 (CTA): Texto denso..."
-      ],
-      "cta": "CTA específico e irresistível",
-      "hashtags": ["tag1", "tag2", "tag3"],
-      "estimated_reach": "viral",
-      "reason": "Análise neuropsicológica de 4+ frases explicando por que converte..."
-    }
-  ],
-  "content_calendar": [
-    {
-      "day": "Segunda-feira",
-      "format": "Carrossel",
-      "theme": "Ângulo anti-objeção",
-      "platform": "instagram",
-      "best_time": "08h00"
-    }
-  ],
-  "competitive_gaps": [
-    {
-      "title": "Nome da Brecha",
-      "why_empty": "Por que a concorrência não explora isso...",
-      "content_type": "Tipo de conteúdo que preenche"
-    }
-  ],
-  "viral_formats": [
-    {
-      "format": "Nome Épico do Formato",
-      "description": "Psicologia de retenção e por que funciona neste nicho...",
-      "example": "Esqueleto linha a linha: [Linha 1] '...' [Linha 2] '...' [Linha 3] '...'"
-    }
-  ]
+  "recommendation": "texto do manifesto",
+  "pain_map": [{"category": "...", "title": "...", "description": "..."}],
+  "trending_topics": [{"angle": "...", "topic": "...", "why_trending": "...", "engagement_potential": "...", "best_format": "...", "best_platform": "..."}],
+  "content_briefs": [{"id": 1, "angle": "...", "title": "...", "hook": "...", "format": "...", "platform": "...", "slides_or_points": ["slide 1 denso", "..."], "cta": "...", "hashtags": ["tag1"], "reason": "..."}],
+  "content_calendar": [{"day": "...", "format": "...", "theme": "...", "platform": "...", "best_time": "..."}],
+  "competitive_gaps": [{"title": "...", "why_empty": "...", "content_type": "..."}],
+  "viral_formats": [{"format": "...", "description": "...", "example": "..."}]
 }`;
 
   try {
-    const rawText = await callAI(systemPrompt, userPrompt, 8000);
+    // PASS 1: Generate Deep Markdown Manifesto
+    const manifesto = await callAI(systemPrompt, userPrompt, 8000);
+    
+    // PASS 2: Extract JSON from Manifesto
+    const rawJson = await callAI("Você é um arquiteto de dados. Extraia o JSON do texto fornecido seguinto o schema solicitado.", 
+      `${extractionPrompt}\n\nMANIFESTO:\n${manifesto}`, 8000);
 
     // Try to extract JSON from the response
-    const match = rawText.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('A IA não retornou um JSON válido. Tente novamente.');
+    const match = rawJson.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('A IA não retornou um JSON válido de extração. Tente novamente.');
 
     let parsed: any;
     try {
@@ -329,7 +267,7 @@ FORMATO JSON EXATO (preencha com conteúdo REAL, EXTENSO e ESPECÍFICO para "${n
 
     return sendOkResponse({ research: parsed, scraped: false });
   } catch (err: any) {
-    return sendOkResponse({ error: `Falha na pesquisa: ${err.message}` });
+    return sendOkResponse({ error: `Falha na pesquisa estratégica: ${err.message}` });
   }
 }
 

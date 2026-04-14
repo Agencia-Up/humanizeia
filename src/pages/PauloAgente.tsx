@@ -169,52 +169,55 @@ Por exemplo, defina mentalmente:
 3. **Equipamento/Técnica:** "...shot on Fujifilm GFX 100, 85mm lens, shallow depth of field, sharp focus on the car..."
 4. **Acabamento:** "...vibrant botanical colors, serene atmosphere, minimalist luxury aesthetic, masterpiece, 8k, photorealistic, no text."
 
-## FORMATO DE SAÍDA OBRIGATÓRIO (PROFUNDIDADE EXTREMA NO TEXTO)
-Você deve gerar textos PROFUNDOS. Esqueça frases curtas e genéricas! Forneça dados, listas (bullets) e exemplos práticos.
-Responda APENAS com JSON válido:
+## FORMATO DE SAÍDA OBRIGATÓRIO: O MANIFESTO DO DIRETOR (MARKDOWN)
+Você NÃO deve retornar JSON agora. Você deve escrever um MANIFESTO CRIATIVO e ESTRATÉGICO em Markdown puro, rico, visceral e denso.
 
+Para cada carrossel sugerido, siga esta estrutura:
+# Carrossel [N]: [Título de Impacto]
+**Ângulo:** [Ângulo usado]
+**DNA Visual:** [Descrição da Luz de Assinatura, Paleta e Atmosfera]
+**Legenda (Caption):** [Um manifesto de 5 parágrafos de puro valor]
+
+---
+## Slide 1: [Headline]
+**Sub-Headline:** [Complemento]
+**Direção Artística:** [Prompt Midjourney v6 em Inglês - Máximo Detalhe]
+**Narrativa:** [Texto de apoio denso]
+
+## Slide 2: [Headline]
+... (Repita para todos os slides)
+---
+
+Seja prolixo na qualidade, não economize palavras. Entregue o nível de detalhe que um CEO esperaria de uma agência de Manhattan.`;
+}
+
+const EXTRACTION_SYSTEM_PROMPT = `Você é o Arquiteto de Estruturas JSON da HumanizeIA. 
+Sua única missão é pegar um Manifesto Criativo em Markdown e extrair TODAS as informações para o formato JSON abaixo, sem resumir, sem omitir e sem alterar a alma do texto. 
+Mantenha os prompts de imagem técnicos e as legendas longas e persuasivas.
+
+Retorne APENAS o JSON no formato:
 {
   "carousels": [
     {
-      "title": "Título interno para identificação",
-      "niche": "Nicho específico do conteúdo",
-      "angle": "storytelling",
-      "caption": "Legenda completa para o Instagram. Manifesto persuasivo de 5 parágrafos de puro valor, terminando com CTA.",
-      "hashtags": ["hashtag1", "hashtag2", "hashtag3"],
+      "title": "Título",
+      "niche": "Nicho",
+      "angle": "ângulo",
+      "caption": "Legenda completa",
+      "hashtags": ["tag1", "tag2"],
       "slides": [
         {
           "slide_number": 1,
-          "type": "cover",
-          "headline": "TEXTO CURTO IMPACTANTE E MAGNÉTICO",
-          "subtext": "Promessa que faz o usuário querer arrastar.",
-          "body": "Breve instigação verbal",
-          "bullets": null,
-          "image_prompt": "Cinematic wide shot of a futuristic data center..."
-        },
-        {
-          "slide_number": 2,
-          "type": "content",
-          "headline": "O SEGREDO REVELADO EM NÚMEROS REAIS",
-          "subtext": "Dados ou fatos inegáveis.",
-          "body": "Um parágrafo de 3 a 4 linhas bem denso com uma explicação magistral, profunda, usando dados e ciência, sem papo furado genérico de motivacional. Entregue OURO puro.",
-          "bullets": [
-            "Fato específico 1 muito bem detalhado",
-            "Métrica específica 2 (ex: economize até 40% em impostos)"
-          ],
-          "image_prompt": "Macro shot of a busy businessman..."
+          "type": "cover/content/cta",
+          "headline": "headline",
+          "subtext": "sub_headline",
+          "body": "texto descritivo profundo",
+          "bullets": ["bullet1", "bullet2"],
+          "image_prompt": "prompt em inglês"
         }
       ]
     }
   ]
-}
-
-REGRAS:
-1. Gere exatamente o número de carrosséis solicitado
-2. Cada carrossel deve ter de 4 a 8 slides (ajuste ao tamanho da ideia)
-3. O primeiro slide é sempre do tipo "cover"
-4. O último slide é sempre do tipo "cta"
-5. JSON deve ser 100% válido — sem vírgulas extras, sem caracteres especiais fora de strings
-6. NUNCA inclua texto fora do JSON`;
+}`;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -436,14 +439,15 @@ export default function PauloAgente() {
 
     try {
       const systemPrompt = buildPauloSystemPrompt(clientContext || DEMO_CLIENT, angle);
-
+      
       const taskId = await createTask('paulo', 'generate_carousel', {
         input: fullPrompt,
         angle,
         source,
       });
 
-      const { data, error } = await supabase.functions.invoke('claude-chat', {
+      // Step 1: Creative Creation (Markdown)
+      const res1 = await supabase.functions.invoke('claude-chat', {
         body: {
           messages: [{ role: 'user', content: fullPrompt }],
           context: 'paulo',
@@ -451,15 +455,35 @@ export default function PauloAgente() {
           task_id: taskId,
           config: {
             description: systemPrompt,
-            creativity: 0.85,
+            creativity: 0.9,
           },
         },
       });
 
-      if (error) throw new Error(error.message || 'Erro na Edge Function');
-      if (!data?.choices?.[0]?.message?.content) throw new Error('Resposta vazia da IA');
+      if (res1.error) throw new Error(res1.error.message || 'Erro no Passo 1 (Criação)');
+      const creativeManifesto = res1.data?.choices?.[0]?.message?.content;
+      if (!creativeManifesto) throw new Error('O Paulo não conseguiu gerar o manifesto criativo.');
 
-      const rawContent = data.choices[0].message.content;
+      // Notify progress in the UI if possible, or just proceed to extract
+      // (The user said "apenas os titulos de cada etapa, ja ta otimo")
+      
+      // Step 2: Structural Extraction (JSON)
+      const res2 = await supabase.functions.invoke('claude-chat', {
+        body: {
+          messages: [
+            { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+            { role: 'user', content: `Converta este manifesto criativo em JSON:\n\n${creativeManifesto}` }
+          ],
+          context: 'paulo',
+          config: {
+            description: "Extração estruturada de carrossel",
+            creativity: 0, // Deterministic
+          },
+        },
+      });
+
+      if (res2.error) throw new Error(res2.error.message || 'Erro no Passo 2 (Extração)');
+      const rawContent = res2.data?.choices?.[0]?.message?.content;
       const carousels = parseCarouselsFromResponse(rawContent);
 
       if (carousels.length === 0) {
