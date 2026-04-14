@@ -55,12 +55,14 @@ export function MetaAdsSettingsTab() {
     if (result.success && !result.needsSelection) {
       setAccessToken('');
       setAccountId('');
+      setShowAddAnother(false);
     }
   };
 
   const handleSelectFromList = (account: any) => {
     setSelectedAccountId(account.id);
     selectAccount(account);
+    setShowAddAnother(false);
   };
 
   const hasDetectedAssets = availableAccounts.length > 0 || pixels.length > 0 || pages.length > 0 || businesses.length > 0;
