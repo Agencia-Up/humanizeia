@@ -167,7 +167,8 @@ export function useMetaConnection() {
   const startOAuth = async () => {
     setIsConnecting(true);
     try {
-      const redirectUri = `${window.location.origin}/settings?meta_callback=true`;
+      const productionOrigin = 'https://humanizeia.lovable.app';
+      const redirectUri = `${productionOrigin}/settings?meta_callback=true`;
       const { data, error } = await supabase.functions.invoke('meta-oauth', {
         body: {
           action: 'authorize',
