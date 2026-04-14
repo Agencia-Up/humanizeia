@@ -63,6 +63,7 @@ const JoseTrafego = lazy(() => import('./pages/JoseTrafego'));
 const NicheQuiz = lazy(() => import("./pages/NicheQuiz"));
 const BriefingDetails = lazy(() => import("./pages/BriefingDetails"));
 const SupportDashboard = lazy(() => import("./pages/SupportDashboard"));
+const MarcosLeads = lazy(() => import("./pages/MarcosLeads"));
 
 
 const queryClient = new QueryClient();
@@ -121,6 +122,7 @@ const App = () => (
                 <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
                 <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
                 <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
+                <Route path="/marcos" element={<ProtectedRoute><MarcosLeads /></ProtectedRoute>} />
                 <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
                 <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
                 <Route path="/competitor-radar" element={<ProtectedRoute><CompetitorRadar /></ProtectedRoute>} />
