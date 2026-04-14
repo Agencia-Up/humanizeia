@@ -61,14 +61,6 @@ const agentItems = [
   { title: 'Pedro',   subtitle: 'Atendimento IA', url: '/whatsapp/ai-agent', icon: Bot,    emoji: '💬' },
 ];
 
-// ── WhatsApp & CRM ────────────────────────────────────────────────────────────
-const whatsappItems = [
-  { title: 'CRM',             url: '/crm',                    icon: Kanban },
-  { title: 'Inbox',           url: '/whatsapp/inbox',         icon: Inbox },
-  { title: 'Disparo em Massa',url: '/whatsapp/broadcast',     icon: Send },
-  { title: 'Instâncias',      url: '/whatsapp/instances',     icon: Smartphone },
-  { title: 'Automações',      url: '/whatsapp/automations',   icon: Zap },
-];
 
 // ── Sistema ───────────────────────────────────────────────────────────────────
 const systemItems = [
