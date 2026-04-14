@@ -173,11 +173,30 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     }, 5000);
   };
 
-  const handleSuccess = () => {
+  const handleSuccess = async () => {
     stopPolling();
     setStep('connected');
     queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
     onConnected?.();
+
+    // Auto-sync webhook URL with the Evolution/UAZAPI instance
+    if (activeSlug && user) {
+      try {
+        const { data: inst } = await supabase
+          .from('wa_instances')
+          .select('id')
+          .eq('instance_name', activeSlug)
+          .maybeSingle();
+        if (inst?.id) {
+          await supabase.functions.invoke('sync-evolution-webhook', {
+            body: { instance_id: inst.id, user_id: user.id },
+          });
+          console.log('[EvolutionConnect] Webhook sincronizado para', activeSlug);
+        }
+      } catch (e) {
+        console.warn('[EvolutionConnect] Falha ao sincronizar webhook:', e);
+      }
+    }
   };
 
   const handleRefreshQr = async () => {
