@@ -98,7 +98,7 @@ export function MetaAdsSettingsTab() {
           </div>
         </CardHeader>
         <CardContent>
-          {connectedAccount ? (
+          {connectedAccount && !showAddAnother ? (
             <div className="space-y-4">
               <div className="rounded-lg bg-muted/50 p-4 space-y-2">
                 <div className="flex items-center justify-between text-sm">
@@ -120,10 +120,16 @@ export function MetaAdsSettingsTab() {
                   </div>
                 )}
               </div>
-              <Button variant="destructive" size="sm" onClick={disconnect}>
-                <LogOut className="h-4 w-4 mr-2" />
-                Desconectar
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="destructive" size="sm" onClick={disconnect}>
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Desconectar
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setShowAddAnother(true)}>
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Conectar outra conta
+                </Button>
+              </div>
             </div>
           ) : hasDetectedAssets ? (
             <DetectedAssetsView
