@@ -1440,6 +1440,152 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
   }
 }
 
+// ====================== LEAD TRANSFER TO SELLER (Round-Robin) ======================
+
+async function transferLeadToSeller(
+  supabase: any,
+  instance: any,
+  agent: any,
+  phone: string,
+  pushName: string | null,
+  summary: string,
+  historyMessages: { role: string; content: string }[],
+) {
+  try {
+    // 1. Get active sellers for this agent
+    const { data: sellers } = await supabase
+      .from("ai_team_members")
+      .select("*")
+      .eq("agent_id", agent.id)
+      .eq("is_active", true)
+      .order("last_lead_received_at", { ascending: true, nullsFirst: true });
+
+    if (!sellers || sellers.length === 0) {
+      console.log("[transfer] No active sellers found for agent:", agent.id);
+      return;
+    }
+
+    // 2. Round-Robin: pick seller with fewest leads OR oldest last_lead_received_at
+    const selectedSeller = sellers[0]; // Already sorted by last_lead_received_at ASC (oldest first)
+    console.log(`[transfer] Selected seller: ${selectedSeller.name} (${selectedSeller.whatsapp_number})`);
+
+    // 3. Build detailed conversation summary for the seller
+    const conversationText = historyMessages
+      .slice(-10)
+      .map((m) => `${m.role === "user" ? "Cliente" : "Agente IA"}: ${m.content}`)
+      .join("\n");
+
+    const sellerMsg = `🚨 *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*
+
+👤 *Nome do Cliente:* ${pushName || "Não informado"}
+📱 *Contato:* ${phone}
+🤖 *Agente IA:* ${agent.name}
+🏢 *Empresa:* ${agent.company_name || "—"}
+
+━━━━━━━━━━━━━━━━━━━━
+
+📝 *Resumo do Atendimento pela IA:*
+${summary}
+
+━━━━━━━━━━━━━━━━━━━━
+
+💬 *Últimas mensagens da conversa:*
+${conversationText}
+
+━━━━━━━━━━━━━━━━━━━━
+
+👉 *Atender agora:* https://wa.me/${phone.replace(/\D/g, "")}
+
+⚡ O cliente está esperando! Ele já foi informado que um especialista entrará em contato.`;
+
+    // 4. Send message to selected seller via WhatsApp
+    let sellerPhone = selectedSeller.whatsapp_number.replace(/\D/g, "");
+    if (sellerPhone.length === 10 || sellerPhone.length === 11) {
+      sellerPhone = `55${sellerPhone}`;
+    }
+
+    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+
+    const { data: instanceData } = await supabase
+      .from("wa_instances")
+      .select("instance_name, provider, api_url, api_key_encrypted, meta_config")
+      .eq("id", instance.id)
+      .single();
+
+    if (instanceData) {
+      if (instanceData.provider === "evolution") {
+        const apiUrl = (evolutionApiUrl || instanceData.api_url).replace(/\/+$/, "");
+        const apiKey = evolutionApiKey || instanceData.api_key_encrypted;
+
+        await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: apiKey },
+          body: JSON.stringify({ number: sellerPhone, text: sellerMsg }),
+        });
+        console.log(`[transfer] Message sent to seller ${selectedSeller.name} at ${sellerPhone}`);
+      } else if (instanceData.provider === "meta") {
+        const metaConfig = instanceData.meta_config || {};
+        const phoneNumberId = metaConfig.phone_number_id;
+        const accessToken = metaConfig.access_token_encrypted || instanceData.api_key_encrypted;
+
+        if (phoneNumberId && accessToken) {
+          await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              to: sellerPhone,
+              type: "text",
+              text: { body: sellerMsg },
+            }),
+          });
+        }
+      }
+    }
+
+    // 5. Update seller's stats (round-robin tracking)
+    await supabase.from("ai_team_members").update({
+      last_lead_received_at: new Date().toISOString(),
+      total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
+    }).eq("id", selectedSeller.id);
+
+    // 6. Record transfer in ai_lead_transfers
+    const { data: leadData } = await supabase
+      .from("ai_crm_leads")
+      .select("id")
+      .eq("agent_id", agent.id)
+      .eq("remote_jid", phone)
+      .maybeSingle();
+
+    if (leadData) {
+      await supabase.from("ai_lead_transfers").insert({
+        user_id: instance.user_id,
+        lead_id: leadData.id,
+        from_agent_id: agent.id,
+        to_member_id: selectedSeller.id,
+        transfer_reason: summary,
+        notes: `Transferido automaticamente para ${selectedSeller.name} via round-robin`,
+      });
+
+      // Update lead with transfer info
+      await supabase.from("ai_crm_leads").update({
+        status: "transferido",
+        assigned_to_member_id: selectedSeller.id,
+        transferred_at: new Date().toISOString(),
+        transfer_reason: `Encaminhado para ${selectedSeller.name}`,
+      }).eq("id", leadData.id);
+    }
+
+    console.log(`[transfer] Lead ${phone} transferred to ${selectedSeller.name} successfully`);
+  } catch (err) {
+    console.error("[transfer] Error transferring lead:", err);
+  }
+}
+
 // ====================== OPT-IN/OPT-OUT CONFIRMATION MESSAGES ======================
 
 async function sendOptoutConfirmation(supabase: any, instance: any, phone: string, replyTarget?: string) {
