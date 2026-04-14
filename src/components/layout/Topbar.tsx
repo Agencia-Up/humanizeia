@@ -1,4 +1,4 @@
-import { Bell, Search, Moon, Sun, Menu, LogOut, CheckCheck } from 'lucide-react';
+import { Bell, Search, Moon, Sun, Menu, LogOut } from 'lucide-react';
 import { TokenWidget } from '@/components/subscription/TokenWidget';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,11 +7,9 @@ import { useNavigate } from 'react-router-dom';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Badge } from '@/components/ui/badge';
 import { useAppStore } from '@/store/appStore';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAuth } from '@/hooks/useAuth';
-import { ActivityCenter } from './ActivityCenter';
 
 export function Topbar() {
   const navigate = useNavigate();
@@ -39,7 +37,9 @@ export function Topbar() {
           {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
 
-        <ActivityCenter />
+        <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+          <Bell className="h-5 w-5" />
+        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -68,13 +68,4 @@ export function Topbar() {
       </div>
     </header>
   );
-}
-
-function formatTimeAgo(date: Date): string {
-  const now = new Date();
-  const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
-  if (diffInMinutes < 60) return `${diffInMinutes} min atrás`;
-  const diffInHours = Math.floor(diffInMinutes / 60);
-  if (diffInHours < 24) return `${diffInHours}h atrás`;
-  return `${Math.floor(diffInHours / 24)}d atrás`;
 }

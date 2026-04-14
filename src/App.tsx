@@ -6,8 +6,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Loader2 } from "lucide-react";
-import { AgentTasksProvider } from "@/contexts/AgentTasksContext";
-import { AgentChatProvider } from "@/contexts/AgentChatContext";
 
 // Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
@@ -80,10 +78,8 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <BrowserRouter>
-        <AgentTasksProvider>
-          <AgentChatProvider>
-            <Suspense fallback={<PageLoader />}>
-              <Routes>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/privacy" element={<PrivacyPolicy />} />
@@ -141,12 +137,10 @@ const App = () => (
                 <Route path="/jose" element={<ProtectedRoute><JoseTrafego /></ProtectedRoute>} />
                 <Route path="/performance" element={<ProtectedRoute><SupportDashboard /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-            <Toaster />
-            <Sonner />
-          </AgentChatProvider>
-        </AgentTasksProvider>
+          </Routes>
+        </Suspense>
+        <Toaster />
+        <Sonner />
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
