@@ -115,15 +115,14 @@ function DynamicFreepikSlide({ slide, brandName, total, clientImageUrl }: {
   const isCta = slide.type === 'cta' || slide.order === total;
 
   // Usa prompts detalhados do Paulo (nossa 'Direção de Arte')
-  const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'abstract minimalist background';
+  const imgContext = slide.image_prompt || slide.visual_cue || slide.headline || 'minimalist real life photography';
   
-  // Como o ChatGPT faz imagens hiper-realistas, vamos forçar fotorealismo e proporção 1080x1350
-  const visualPrompt = slide.image_prompt 
-    ? imgContext 
-    : `${imgContext}, cinematic aesthetic, 8k resolution, photorealistic, luxury editorial photography, masterpiece, no text`;
+  // Como o ChatGPT faz imagens hiper-realistas, vamos forçar fotorealismo e afastar ficção cientifica no nível do compilador
+  const absoluteModifiers = "hyper-realistic everyday photography, real life, 8k, unsplash premium, candid shot, no text, no sci-fi, no abstract forms";
+  const visualPrompt = `${imgContext}, ${absoluteModifiers}`;
     
   // A semente é a ordem para manter consistência
-  const seedNum = (slide.headline?.length || 10) * slide.order * 61;
+  const seedNum = (slide.headline?.length || 10) * slide.order * 64;
   const bgImgUrl = usePollinationsImage(visualPrompt, 1080, 1350, seedNum);
 
   const bgLoading = !bgImgUrl ? "animate-pulse" : "";
