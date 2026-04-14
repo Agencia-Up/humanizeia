@@ -65,6 +65,7 @@ const BriefingDetails = lazy(() => import("./pages/BriefingDetails"));
 const SupportDashboard = lazy(() => import("./pages/SupportDashboard"));
 const MarcosLeads = lazy(() => import("./pages/MarcosLeads"));
 const MetaAdsConnect = lazy(() => import("./pages/MetaAdsConnect"));
+const InstagramConnect = lazy(() => import("./pages/InstagramConnect"));
 
 
 const queryClient = new QueryClient();
@@ -109,6 +110,7 @@ const App = () => (
                 <Route path="/pixel" element={<ProtectedRoute><UnifiedPixel /></ProtectedRoute>} />
                 <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
                 <Route path="/integrations/meta" element={<ProtectedRoute><MetaAdsConnect /></ProtectedRoute>} />
+                <Route path="/integrations/instagram" element={<ProtectedRoute><InstagramConnect /></ProtectedRoute>} />
                 <Route path="/tutorials" element={<ProtectedRoute><Tutorials /></ProtectedRoute>} />
                 <Route path="/whatsapp/inbox" element={<ProtectedRoute><WhatsAppInbox /></ProtectedRoute>} />
                 <Route path="/whatsapp/contacts" element={<ProtectedRoute><WhatsAppContacts /></ProtectedRoute>} />

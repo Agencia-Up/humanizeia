@@ -325,6 +325,9 @@ export function ConnectionsTab() {
       case 'meta':
         navigate('/integrations/meta');
         return;
+      case 'instagram_publisher':
+        navigate('/integrations/instagram');
+        return;
       case 'google_ads':
         try {
           await google.startOAuth();
