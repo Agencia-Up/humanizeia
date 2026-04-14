@@ -824,41 +824,6 @@ ${pautasStr}`;
           const slides = pauloCarousel.slides || [];
           const isPersonal = clientImageUrl || selectedTemplate === 'personal_brand';
           
-<<<<<<< Updated upstream
-          let visualSlides = [];
-
-          // Generate images directly for each slide based on Paulo's image_prompt
-          for (let j = 0; j < slides.length; j++) {
-            const slide = slides[j];
-            setMessages(prev => prev.map(m => m.id === progressMsgId ? { ...m, content: `⏳ **Gerando imagem ${j+1} de ${slides.length}...** (${pauloCarousel.title})` } : m));
-            
-            let bgImageUrlRaw = '';
-            // Use Paulo's explicit image prompt or fallback to headline
-            const imgContext = slide.image_prompt || slide.headline || 'professional business photography';
-            
-            if (isPersonal) {
-              const visualPrompt = encodeURIComponent(`${imgContext}, editorial photography, business professional, warm cinematic lighting, widescreen composition, sharp focus, no text, 8K ultra detail`);
-              const seed = ((slide.headline?.length || 10) * slide.slide_number * 43) % 9999;
-              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1200&height=600&nologo=true&seed=${seed}`;
-            } else {
-              const visualPrompt = encodeURIComponent(`${imgContext}, highly detailed, cinematic photography, realistic, 4k resolution, professional, masterpiece, no text`);
-              const seed = (slide.headline?.length || 10) * (slide.slide_number || (j+1)) * 42;
-              bgImageUrlRaw = `https://image.pollinations.ai/prompt/${visualPrompt}?width=1080&height=1350&nologo=true&seed=${seed}`;
-            }
-
-            try {
-              await new Promise((resolve) => {
-                const img = new window.Image();
-                img.onload = () => resolve(true);
-                img.onerror = () => resolve(false); 
-                img.src = bgImageUrlRaw;
-              });
-            } catch { /* silent fallback */ }
-
-            visualSlides.push({
-              order: slide.slide_number || (j+1),
-              type: slide.type || (j === 0 ? 'cover' : j === slides.length - 1 ? 'cta' : 'content'),
-=======
           // Paralelismo Total (Todos os slides gerados de uma vez)
           addDaviMessage(`🎨 Criando visual para **${slides.length} slides** simultaneamente...`);
 
@@ -886,21 +851,14 @@ ${pautasStr}`;
             return {
               order,
               type: slide.type || (slideIdx === 0 ? 'cover' : slideIdx === slides.length - 1 ? 'cta' : 'content'),
->>>>>>> Stashed changes
               headline: slide.headline,
               body: slide.subtext || slide.body || '',
               cta: slide.type === 'cta' ? (slide.cta || 'Toque no link da bio') : '',
               image_prompt: slide.image_prompt,
               visual_cue: imgContext,
-<<<<<<< Updated upstream
-              image_url: bgImageUrlRaw, // Using the image_url field if available in CarouselPageViewer
-            });
-          }
-=======
               image_url: bgImageUrlRaw,
             };
           }));
->>>>>>> Stashed changes
 
           const generated: GeneratedContent = {
             id: Date.now().toString() + i,

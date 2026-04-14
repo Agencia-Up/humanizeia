@@ -186,18 +186,6 @@ const processQueue = async () => {
     const url = imgQueue[0];
     if (!POLLINATIONS_CACHE.has(url)) {
       try {
-<<<<<<< Updated upstream
-        const res = await fetch(url, { cache: 'force-cache' });
-        if (res.ok) {
-          const blob = await res.blob();
-          POLLINATIONS_CACHE.set(url, URL.createObjectURL(blob));
-        }
-      } catch (e) {
-        console.warn('Queue fetch failed', e);
-      }
-      // Delay mandatory to prevent Pollinations from blocking the IP
-      await new Promise(r => setTimeout(r, 1200));
-=======
         // Tentativa de carregar em paralelo (limitado a pequenas rajadas)
         const batch = imgQueue.splice(0, 3); // Processa até 3 por vez
         await Promise.all(batch.map(async (qUrl) => {
@@ -217,7 +205,6 @@ const processQueue = async () => {
     } else {
       imgQueue.shift();
       window.dispatchEvent(new CustomEvent('pollinations_loaded', { detail: url }));
->>>>>>> Stashed changes
     }
   }
   isProcessingQueue = false;
@@ -251,8 +238,6 @@ export function usePollinationsImage(prompt: string, width: number, height: numb
   return localUrl;
 }
 
-<<<<<<< Updated upstream
-=======
 function SlideLoading() {
   return (
     <div style={{
@@ -294,7 +279,6 @@ function SlideLoading() {
   );
 }
 
->>>>>>> Stashed changes
 // ── FUTURISTA IA SLIDE ────────────────────────────────────────────────────────
 function FuturistaSlide({ slide, tpl, brandName, total }: {
   slide: CarouselSlide;
