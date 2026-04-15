@@ -100,13 +100,20 @@ export function useSubscription() {
   const [loading, setLoading] = useState(true);
 
   const fetchSubscription = useCallback(async () => {
-    if (!user) return;
+    if (!user) {
+      setSubscription(null);
+      setTransactions([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
     try {
       const { data, error } = await (supabase as any)
         .from('user_subscriptions')
         .select('*')
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
       if (error || !data) {
         setSubscription(DEMO_SUBSCRIPTION);
@@ -142,7 +149,9 @@ export function useSubscription() {
     ? subscription.tokens_included + subscription.tokens_purchased
     : 0;
 
-  const usagePercent = tokensTotal > 0 ? Math.round((subscription!.tokens_used / tokensTotal) * 100) : 0;
+  const usagePercent = subscription && tokensTotal > 0
+    ? Math.round((subscription.tokens_used / tokensTotal) * 100)
+    : 0;
 
   const planInfo = subscription ? PLANS[subscription.plan_id] : PLANS.basico;
 

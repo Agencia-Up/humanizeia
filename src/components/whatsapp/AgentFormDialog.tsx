@@ -191,8 +191,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     );
   };
 
-  const buildPayload = () => ({
-    user_id: user!.id,
+  const buildPayload = (userId: string) => ({
+    user_id: userId,
     name: name.trim() || 'Agente IA',
     agent_type: agentType,
     system_prompt: prompt,
@@ -266,10 +266,13 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   };
 
   const handleSave = async () => {
-    if (!user) return;
+    if (!user) {
+      toast({ title: 'Sessao expirada', description: 'Faca login novamente para salvar o agente.', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
 
-    const payload = buildPayload();
+    const payload = buildPayload(user.id);
 
     let error;
     if (agent?.id) {
@@ -545,7 +548,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
             {/* ── Tab: Vendedores ── */}
             <TabsContent value="vendedores" className="mt-0">
-              <AgentCrmEquipeTab agentId={agent?.id || null} userId={user!.id} />
+              <AgentCrmEquipeTab agentId={agent?.id || null} userId={user?.id || ''} />
             </TabsContent>
 
             {/* ── Tab: n8n Integration ── */}
@@ -589,7 +592,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
             {/* ── Tab: Knowledge Base ── */}
             {agent && (
               <TabsContent value="knowledge" className="mt-0">
-                <KnowledgeBaseManager agentId={agent.id} userId={user!.id} />
+                <KnowledgeBaseManager agentId={agent.id} userId={user?.id || ''} />
               </TabsContent>
             )}
           </Tabs>

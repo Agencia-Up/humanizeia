@@ -310,15 +310,33 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
   const [editingAgent, setEditingAgent] = useState<AIAgent | null>(null);
 
   const fetchData = useCallback(async () => {
-    if (!user) return;
+    if (!user) {
+      setInstances([]);
+      setAgents([]);
+      setLoading(false);
+      return;
+    }
     if (isInitialMount.current) setLoading(true);
     try {
-      const [{ data: inst }, { data: agentsData }] = await Promise.all([
+      const [{ data: inst, error: instancesError }, { data: agentsData, error: agentsError }] = await Promise.all([
         supabase.from('wa_instances').select('id, friendly_name, instance_name, is_active, provider').eq('user_id', user.id),
         (supabase as any).from('wa_ai_agents').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
       ]);
+
+      if (instancesError) throw instancesError;
+      if (agentsError) throw agentsError;
+
       setInstances((inst as Instance[]) || []);
       setAgents((agentsData as unknown as AIAgent[]) || []);
+    } catch (error: any) {
+      console.error('Erro ao carregar agente Pedro:', error);
+      setInstances([]);
+      setAgents([]);
+      toast({
+        title: 'Erro ao carregar o Pedro',
+        description: error?.message || 'Nao foi possivel carregar os dados do agente.',
+        variant: 'destructive',
+      });
     } finally {
       setLoading(false);
       isInitialMount.current = false;
