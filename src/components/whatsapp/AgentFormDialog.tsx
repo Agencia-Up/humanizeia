@@ -235,25 +235,27 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   useEffect(() => {
     if (!open || !nicheData) return;
     
-    // Se for um agente novo ou se o prompt estiver vazio/default, ou se é a primeira vez que abrimos este agente específico
+    // O problema estava aqui: o hook sobrescrevia o prompt do banco de dados quando abria.
+    // Agora ele só aplica os templates (Baseados no Nicho, Nome e Tipo) se for um Agente NOVO.
     const isNewAgent = !agent?.id;
-    const isDefaultPrompt = prompt === DEFAULT_PROMPT;
     
-    // Resetar flag se mudou o ID do agente (para garantir que ao editar um novo agente o prompt atualize)
-    const currentAgentId = agent?.id || 'new';
-    
-    if (isNewAgent || isDefaultPrompt || promptInitializedRef.current !== currentAgentId) {
+    if (isNewAgent) {
       const template = PROMPT_TEMPLATES[agentType || 'generic'] || DEFAULT_PROMPT;
       let finalPrompt = template
         .replace(/{{NAME}}/g, name || 'Agente')
         .replace(/{{COMPANY}}/g, nicheData?.business || 'Sua Empresa')
         .replace(/{{NICHE}}/g, nicheData?.niche || 'Seu Nicho')
         .replace(/{{PRODUCT}}/g, nicheData?.product || 'Nossos Serviços');
-      
-      setPrompt(finalPrompt);
-      promptInitializedRef.current = currentAgentId;
+        
+      // Previne overwrite enquanto o usuário digita na criação do Novo Agente
+      // mas permite que mude se ele mudar o Tipo antes de editar livremente.
+      if (!prompt.includes(name) && !prompt.includes(nicheData?.niche || '')) {
+         setPrompt(finalPrompt);
+      } else if (prompt === DEFAULT_PROMPT || prompt === '') {
+         setPrompt(finalPrompt);
+      }
     }
-  }, [agentType, name, nicheData, open, agent?.id]);
+  }, [agentType, nicheData, open, agent?.id]);
 
   const generateSlug = (nameStr: string) =>
     nameStr.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
