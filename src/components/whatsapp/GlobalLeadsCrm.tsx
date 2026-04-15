@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { 
   Loader2, Users, Search, MoreVertical, ArrowRightLeft, Flag,
   TrendingUp, Calendar, CalendarDays, CalendarRange,
-  UserCheck, PhoneForwarded, BarChart3, MessageSquare
+  UserCheck, PhoneForwarded, BarChart3, MessageSquare, Trash2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -192,6 +192,21 @@ export function GlobalLeadsCrm() {
     }
   };
 
+  const handleDeleteLead = async (leadId: string) => {
+    if (!confirm('Deseja realmente remover este lead do CRM? Isso não apagará o histórico de conversas.')) return;
+    try {
+      const { error } = await (supabase as any)
+        .from('ai_crm_leads')
+        .delete()
+        .eq('id', leadId);
+      if (error) throw error;
+      toast({ title: 'Lead removido com sucesso!' });
+      setLeads(prev => prev.filter(l => l.id !== leadId));
+    } catch {
+      toast({ title: 'Erro ao remover lead', variant: 'destructive' });
+    }
+  };
+
   const filteredLeads = leads.filter(lead => {
     const matchSearch = (lead.lead_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (lead.remote_jid || '').includes(searchTerm) ||
@@ -267,6 +282,7 @@ export function GlobalLeadsCrm() {
                           activeMembers={activeMembers}
                           onUpdateStatus={handleUpdateStatus}
                           onTransfer={handleManualTransfer}
+                          onDelete={handleDeleteLead}
                         />
                       ))
                     )}
@@ -408,6 +424,7 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer }: {
   activeMembers: any[];
   onUpdateStatus: (id: string, status: string) => void;
   onTransfer: (leadId: string, memberId: string) => void;
+  onDelete: (id: string) => void;
 }) {
   return (
     <div className="relative group p-3 rounded-xl border bg-card shadow-sm hover:shadow-md hover:border-primary/40 transition-all cursor-default">
@@ -447,6 +464,11 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer }: {
                 ))}
               </>
             )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onDelete(lead.id)} className="text-xs gap-2 cursor-pointer text-red-500 focus:text-red-500 focus:bg-red-500/10">
+              <Trash2 className="h-3 w-3" />
+              Excluir Lead
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
