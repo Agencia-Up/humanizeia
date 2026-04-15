@@ -184,7 +184,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   let userMessageContentForOpenAi: any = finalUserText;
 
   // Process Media se houver
-  if (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image') {
+  if (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image' || msgType === 'documentMessage' || msgType === 'document') {
     let base64 = rawMsgObj?.base64 || rawMsgObj?.message?.base64 || '';
     
     // Se não veio base64, tentar download pela uazapi
@@ -205,7 +205,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       }
     }
 
-    if (base64) {
+    if (msgType.includes('document')) {
+       // Apenas informar o nome do arquivo para o GPT
+       const fileName = rawMsgObj?.fileName || rawMsgObj?.filename || msgObj?.documentMessage?.fileName || 'Arquivo';
+       finalUserText = `[Arquivo recebido: ${fileName}] ` + (finalUserText || '');
+       userMessageContentForOpenAi = finalUserText;
+    } else if (base64) {
       if (msgType.includes('audio') || msgType === 'ptt') {
         try {
           const blob = b64toBlob(base64, 'audio/ogg');
@@ -291,6 +296,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   let systemPrompt = agent.system_prompt || 'Você é um assistente prestativo.'
   if (agent.company_name) systemPrompt += `\n\nEmpresa: ${agent.company_name}`
   if (knowledgeContext) systemPrompt += `\n\n## BASE DE CONHECIMENTO:\n${knowledgeContext}`
+  
+  // Regra Anti-Alucinação para Arquivos/Mídia
+  systemPrompt += `\n\n[REGRAS DE CONDUTA ANTE MÍDIAS E ARQUIVOS]
+- Se o usuário enviar uma Imagem (será indicado com "[Imagem recebida]"), análise com precisão fotográfica se conseguir visualizar o anexo no seu array.
+- Se o usuário enviar Áudio, a transcrição é entregue como texto direto para você interpretar, lide naturalmente como se tivesse ouvido.
+- Se o usuário anexar Documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCÊ NÃO PODE ABRIR ARQUIVOS e NÃO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visão ou que não consegue abrir documentos, sugerindo que o cliente resuma o que há no arquivo ou envie as dúvidas em áudio/texto. Nunca dê respostas genéricas e nunca ofereça "mais informações" se não sabe o conteúdo.`
 
   let aiModel = agent.model || 'gpt-4o';
   // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
@@ -332,17 +343,30 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       try {
         const args = JSON.parse(toolCall.function.arguments);
         
+        // Anti-Duplicate Broadcast Lock (Concorrência webhook)
+        const { data: existingLead } = await supabase.from('ai_crm_leads')
+          .select('status, assigned_to_member_id')
+          .eq('agent_id', agent.id)
+          .eq('remote_jid', remoteJid)
+          .maybeSingle();
+
+        const alreadyTransferred = existingLead && (existingLead.status === 'transferido' || existingLead.status === 'qualificado' || existingLead.assigned_to_member_id);
+
         // 1. Atualizar banco de dados CRM (arrastar cartão para a coluna correta)
-        await supabase.from('ai_crm_leads').update({
+        await supabase.from('ai_crm_leads').upsert({
+          user_id: agent.user_id,
+          agent_id: agent.id,
+          remote_jid: remoteJid,
           status: args.status,
           summary: args.resumo,
-          last_interaction_at: new Date().toISOString()
-        }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
+          last_interaction_at: new Date().toISOString(),
+          lead_name: pushName
+        }, { onConflict: 'agent_id, remote_jid' });
 
-        console.log(`[CRM] Lead ${phoneNumber} movido para: ${args.status}`);
+        console.log(`[CRM] Lead ${phoneNumber} analisado. Status: ${args.status}`);
 
         // 2. Alertar vendedor via Round-Robin SE status for 'qualificado'
-        if (args.status === 'qualificado') {
+        if (args.status === 'qualificado' && !alreadyTransferred) {
           const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
           if (sellers && sellers.length > 0) {
             // Round-robin: pick seller with oldest last_lead_received_at

@@ -120,7 +120,8 @@ async function handleMetaWebhook(supabase: any, body: any) {
           }
         } else if (msg.type === "document") {
           messageType = "document";
-          content = msg.document?.filename || "";
+          const fileName = msg.document?.filename || "Arquivo";
+          content = `[Arquivo recebido: ${fileName}]`;
         } else if (msg.type === "sticker") {
           messageType = "sticker";
         }
@@ -351,7 +352,8 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     }
   } else if (message.documentMessage) {
     messageType = "document";
-    content = message.documentMessage.fileName || "";
+    const fileName = message.documentMessage.fileName || "Arquivo";
+    content = `[Arquivo recebido: ${fileName}]`;
     mediaUrl = message.documentMessage.url || null;
   } else if (message.stickerMessage) {
     messageType = "sticker";
@@ -1048,6 +1050,11 @@ REGRAS AVANÇADAS DE HUMANIZAÇÃO (PRIORIDADE MÁXIMA):
 - Nunca repita o nome do cliente em toda mensagem
 - Se precisar listar algo, faça de forma conversacional: "tem o plano X que custa Y, e tem também o Z que..."
 
+[REGRAS DE CONDUTA ANTE MÍDIAS E ARQUIVOS]
+- Se o usuário enviar uma Imagem (será indicado com "[Imagem recebida]"), análise com precisão fotográfica se conseguir visualizar o anexo no seu array.
+- Se o usuário enviar Áudio, a transcrição é entregue como texto direto para você interpretar, lide naturalmente como se tivesse ouvido.
+- Se o usuário anexar Documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCÊ NÃO PODE ABRIR ARQUIVOS e NÃO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visão ou que não consegue abrir documentos, sugerindo que o cliente resuma o que há no arquivo ou envie as dúvidas em áudio/texto. Nunca dê respostas genéricas e nunca ofereça "mais informações" se não sabe o conteúdo.
+
 RESPOSTAS ANTERIORES DO AGENTE (para NÃO repetir frases/aberturas):
 ${recentReplies.slice(0, 5).map((r, i) => `[${i+1}]: ${r.substring(0, 80)}`).join("\n")}
 Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e vocabulário.
@@ -1463,6 +1470,19 @@ async function transferLeadToSeller(
     if (!sellers || sellers.length === 0) {
       console.log("[transfer] No active sellers found for agent:", agent.id);
       return;
+    }
+
+    // 1.5. Prevent Duplicate Transfers via Concurrency Hook
+    const { data: existingLead } = await supabase
+      .from("ai_crm_leads")
+      .select("status, assigned_to_member_id")
+      .eq("agent_id", agent.id)
+      .eq("remote_jid", phone)
+      .maybeSingle();
+
+    if (existingLead && existingLead.assigned_to_member_id) {
+       console.log(`[transfer] Lead ${phone} already assigned to member ${existingLead.assigned_to_member_id}. Aborting duplicate broadcast.`);
+       return;
     }
 
     // 2. Round-Robin: pick seller with fewest leads OR oldest last_lead_received_at
