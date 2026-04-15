@@ -1264,14 +1264,10 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
           // ===== TRANSFER TO SELLER (Round-Robin) when QUALIFICADO =====
           if (args.status === "qualificado") {
             await transferLeadToSeller(supabase, instance, agent, phone, pushName, args.resumo, historyMessages);
-
-            // Handoff message to client
-            const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
-            replyText = handoffMsg;
           }
 
           // If AI only called tool without text, request a follow-up response
-          if (!replyText && args.status !== "qualificado") {
+          if (!replyText) {
             console.log("[ai-agent-crm] No text response, requesting follow-up...");
             // Make a second call to get the text response
             const followUpMessages = [
@@ -1538,12 +1534,16 @@ ${conversationText}
         const apiUrl = (evolutionApiUrl || instanceData.api_url).replace(/\/+$/, "");
         const apiKey = evolutionApiKey || instanceData.api_key_encrypted;
 
-        await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
+        const sRes = await fetch(`${apiUrl}/message/sendText/${instanceData.instance_name}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", apikey: apiKey },
           body: JSON.stringify({ number: sellerPhone, text: sellerMsg }),
         });
-        console.log(`[transfer] Message sent to seller ${selectedSeller.name} at ${sellerPhone}`);
+        if (!sRes.ok) {
+           console.error(`[transfer] Evolution Error sending to seller: ${sRes.status} - ${await sRes.text()}`);
+        } else {
+           console.log(`[transfer] Message sent to seller ${selectedSeller.name} at ${sellerPhone}`);
+        }
       } else if (instanceData.provider === "meta") {
         const metaConfig = instanceData.meta_config || {};
         const phoneNumberId = metaConfig.phone_number_id;

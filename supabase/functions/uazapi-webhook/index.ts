@@ -134,8 +134,6 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     last_interaction_at: new Date().toISOString()
   }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
 
-  const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
-
   // Tools
   const tools = [
     {
@@ -375,11 +373,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
             
             const sellerMsg = `🚨 *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*\n\n👤 *Nome do Cliente:* ${pushName}\n📱 *Contato:* ${phoneNumber}\n🤖 *Agente IA:* ${agent.name}\n\n━━━━━━━━━━━━━━━━━━━━\n\n📝 *Resumo do Atendimento pela IA:*\n${args.resumo}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n⚡ O cliente está esperando!`;
-            await fetch(`${baseUrl}/send/text`, {
+            const sellerRes = await fetch(`${baseUrl}/send/text`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'token': instKey },
               body: JSON.stringify({ number: sellerNum, text: sellerMsg })
             });
+            if (!sellerRes.ok) {
+               console.error(`[CRM] Fail send to seller: ${sellerRes.status} - ${await sellerRes.text()}`);
+            }
 
             // Update seller stats
             await supabase.from('ai_team_members').update({
@@ -403,10 +404,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
             console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
           }
-          // Se qualificou, substituir a resposta para a de Handoff
-          aiResponse = handoffMsg;
-        } else if (!aiResponse) {
-          // Se não é qualificado, e o GPT não retornou texto (só o tool_call), devemos devolver o resultado da tool e pedir o texto!
+        }
+        
+        if (!aiResponse) {
+          // Se o GPT não retornou texto (só o tool_call), devemos devolver o resultado da tool e pedir o texto!
           console.log(`[Webhook] IA apenas executou a tool sem texto. Solicitando resposta final...`);
           const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
