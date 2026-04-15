@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, Component, ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,7 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   Bot, Plus, Loader2, MessageSquare, Sparkles, Trash2, Edit2, Copy, Webhook,
   Brain, Zap, BookOpen, Shield, Globe, ChevronRight, MoreVertical,
-  Activity, Users, Clock, CheckCircle2, XCircle, Database, AlertTriangle,
+  Activity, Users, Clock, CheckCircle2, XCircle, Database,
 } from 'lucide-react';
 import { AgentFormDialog } from '@/components/whatsapp/AgentFormDialog';
 import {
@@ -16,37 +16,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { GlobalLeadsCrm } from '@/components/whatsapp/GlobalLeadsCrm';
-
-// Error boundary to prevent CRM tab from crashing the whole page
-class CrmErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error?: string }> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error: error.message };
-  }
-  componentDidCatch(error: Error) {
-    console.error('[CrmErrorBoundary] Caught error:', error);
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
-          <AlertTriangle className="h-10 w-10 text-yellow-400" />
-          <div>
-            <h3 className="font-semibold text-lg">Erro ao carregar o CRM</h3>
-            <p className="text-sm text-muted-foreground mt-1 max-w-sm">{this.state.error || 'Tente recarregar a página.'}</p>
-          </div>
-          <Button variant="outline" onClick={() => this.setState({ hasError: false })}>
-            Tentar novamente
-          </Button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 interface AIAgent {
   id: string;
@@ -299,7 +268,7 @@ function AgentCard({
   );
 }
 
-export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {}) {
+export default function WhatsAppAIAgent() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
@@ -322,10 +291,8 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
         supabase.from('wa_instances').select('id, friendly_name, instance_name, is_active, provider').eq('user_id', user.id),
         (supabase as any).from('wa_ai_agents').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
       ]);
-
       if (instancesError) throw instancesError;
       if (agentsError) throw agentsError;
-
       setInstances((inst as Instance[]) || []);
       setAgents((agentsData as unknown as AIAgent[]) || []);
     } catch (error: any) {
@@ -376,15 +343,13 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
     if (!error) fetchData();
   };
 
-  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
-
   if (loading) {
     return (
-      <Wrapper>
+      <MainLayout>
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-      </Wrapper>
+      </MainLayout>
     );
   }
 
@@ -392,7 +357,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
   const totalReplies = agents.reduce((s, a) => s + (a.total_replies || 0), 0);
 
   return (
-    <Wrapper>
+    <MainLayout>
       <div className="space-y-4 max-w-6xl">
         <Tabs defaultValue="agentes" className="w-full">
           <div className="px-1 mb-4 flex justify-between items-center w-full">
@@ -409,9 +374,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
           </div>
 
           <TabsContent value="crm" className="mt-0 outline-none">
-            <CrmErrorBoundary>
-              <GlobalLeadsCrm />
-            </CrmErrorBoundary>
+            <GlobalLeadsCrm />
           </TabsContent>
 
           <TabsContent value="agentes" className="space-y-8 mt-0 outline-none">
@@ -550,6 +513,6 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
         agents={agents}
         onSaved={() => { setDialogOpen(false); fetchData(); }}
       />
-    </Wrapper>
+    </MainLayout>
   );
 }
