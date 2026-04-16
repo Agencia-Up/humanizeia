@@ -93,6 +93,7 @@ export default function CrmAoVivo() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [isPortrait, setIsPortrait] = useState(() => window.innerHeight >= window.innerWidth);
   const [leads, setLeads] = useState<any[]>([]);
   const [transfers, setTransfers] = useState<any[]>([]);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
@@ -164,6 +165,15 @@ export default function CrmAoVivo() {
     };
   }, [fetchLiveData, user]);
 
+  useEffect(() => {
+    const handleResize = () => {
+      setIsPortrait(window.innerHeight >= window.innerWidth);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const activeMembers = useMemo(() => teamMembers.filter((member) => member.is_active), [teamMembers]);
   const memberStats = useMemo(() => getMemberStats(activeMembers, transfers), [activeMembers, transfers]);
   const nextSeller = useMemo(() => getNextInQueue(teamMembers, transfers), [teamMembers, transfers]);
@@ -171,10 +181,10 @@ export default function CrmAoVivo() {
     return Object.fromEntries(
       LIVE_COLUMNS.map((column) => [
         column.id,
-        leads.filter((lead) => (lead.status || 'novo') === column.id).slice(0, 6),
+        leads.filter((lead) => (lead.status || 'novo') === column.id).slice(0, isPortrait ? 4 : 6),
       ]),
     ) as Record<string, any[]>;
-  }, [leads]);
+  }, [isPortrait, leads]);
 
   const totalQualified = leads.filter((lead) => lead.status === 'qualificado' || lead.status === 'transferido').length;
   const attendedNow = leads.filter((lead) => lead.status === 'transferido').length;
@@ -204,8 +214,8 @@ export default function CrmAoVivo() {
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.28),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(251,191,36,0.16),_transparent_24%)]" />
       <div className="absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] [background-size:42px_42px]" />
 
-      <div className="relative z-10 p-6 xl:p-8">
-        <div className="flex flex-col gap-5">
+      <div className="relative z-10 p-4 sm:p-6 xl:p-8">
+        <div className={`mx-auto flex flex-col gap-5 ${isPortrait ? 'max-w-[720px]' : 'max-w-[1600px]'}`}>
           <div className="flex flex-col gap-4 rounded-[28px] border border-white/10 bg-slate-950/55 p-6 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div className="space-y-3">
@@ -222,7 +232,7 @@ export default function CrmAoVivo() {
 
                 <div>
                   <h1 className="font-heading text-4xl font-bold tracking-tight text-white xl:text-5xl">
-                    Central de Leads da Garagem
+                    Central de Leads
                   </h1>
                   <p className="mt-2 max-w-3xl text-base text-slate-300 xl:text-lg">
                     Um painel pensado para TV: fácil de ler à distância, com os leads chegando, o vendedor responsável por cada atendimento e o próximo da fila do Pedro.
@@ -246,7 +256,7 @@ export default function CrmAoVivo() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+            <div className={`grid gap-3 ${isPortrait ? 'grid-cols-2' : 'grid-cols-2 xl:grid-cols-5'}`}>
               <LiveMetricCard icon={<Users className="h-5 w-5" />} label="Leads no painel" value={leads.length} tone="blue" />
               <LiveMetricCard icon={<Flame className="h-5 w-5" />} label="Leads qualificados" value={totalQualified} tone="emerald" />
               <LiveMetricCard icon={<UserCheck className="h-5 w-5" />} label="Em atendimento" value={attendedNow} tone="amber" />
@@ -260,8 +270,8 @@ export default function CrmAoVivo() {
             </div>
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-[1.9fr_1fr]">
-            <div className="grid gap-4 md:grid-cols-2">
+          <div className={`grid gap-5 ${isPortrait ? 'grid-cols-1' : 'xl:grid-cols-[1.9fr_1fr]'}`}>
+            <div className={`grid gap-4 ${isPortrait ? 'grid-cols-1' : 'md:grid-cols-2'}`}>
               {LIVE_COLUMNS.map((column) => (
                 <section
                   key={column.id}
@@ -278,7 +288,7 @@ export default function CrmAoVivo() {
 
                     <div className="space-y-3">
                       {(leadsByColumn[column.id] || []).length === 0 ? (
-                        <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-white/10 bg-white/[0.03] text-center text-slate-400">
+                        <div className={`flex items-center justify-center rounded-2xl border border-dashed border-white/10 bg-white/[0.03] text-center text-slate-400 ${isPortrait ? 'min-h-[120px]' : 'min-h-[180px]'}`}>
                           Nenhum lead neste estágio
                         </div>
                       ) : (
@@ -304,7 +314,7 @@ export default function CrmAoVivo() {
                               </p>
                             )}
 
-                            <div className="mt-4 grid gap-2 text-sm text-slate-200 md:grid-cols-2">
+                            <div className={`mt-4 grid gap-2 text-sm text-slate-200 ${isPortrait ? 'grid-cols-1' : 'md:grid-cols-2'}`}>
                               <div className="rounded-xl border border-white/8 bg-black/20 px-3 py-2">
                                 <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Agente</p>
                                 <p className="mt-1 truncate font-medium">{lead.agent?.name || 'Pedro'}</p>
@@ -323,7 +333,7 @@ export default function CrmAoVivo() {
               ))}
             </div>
 
-            <div className="grid gap-4">
+            <div className={`grid gap-4 ${isPortrait ? 'grid-cols-1' : ''}`}>
               <section className="rounded-[26px] border border-cyan-400/15 bg-slate-950/80 p-5 shadow-[0_20px_50px_rgba(0,0,0,0.35)]">
                 <div className="flex items-center justify-between">
                   <div>
