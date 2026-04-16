@@ -1587,8 +1587,8 @@ ${conversationText}
         lead_id: leadData.id,
         from_agent_id: agent.id,
         to_member_id: selectedSeller.id,
-        transfer_reason: summary,
-        notes: `Transferido automaticamente para ${selectedSeller.name} via round-robin`,
+        transfer_reason: "round_robin",
+        notes: `Transferido automaticamente para ${selectedSeller.name} via round-robin. Resumo: ${summary}`,
       });
 
       // Update lead with transfer info

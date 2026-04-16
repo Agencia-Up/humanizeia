@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Loader2 } from "lucide-react";
+import { AgentTasksProvider } from "@/contexts/AgentTasksContext";
+import { AgentChatProvider } from "@/contexts/AgentChatContext";
 
 // Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
@@ -38,6 +40,7 @@ const WhatsAppAnalytics = lazy(() => import("./pages/WhatsAppAnalytics"));
 const WhatsAppAutomations = lazy(() => import("./pages/WhatsAppAutomations"));
 const WhatsAppInstances = lazy(() => import("./pages/WhatsAppInstances"));
 const WhatsAppAIAgent = lazy(() => import("./pages/WhatsAppAIAgent"));
+const CrmAoVivo = lazy(() => import("./pages/CrmAoVivo"));
 const WhatsAppCampaigns = lazy(() => import("./pages/WhatsAppCampaigns"));
 const WhatsAppGroups = lazy(() => import("./pages/WhatsAppGroups"));
 const MetaPixels = lazy(() => import("./pages/MetaPixels"));
@@ -78,8 +81,10 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <BrowserRouter>
-        <Suspense fallback={<PageLoader />}>
-          <Routes>
+        <AgentTasksProvider>
+          <AgentChatProvider>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/privacy" element={<PrivacyPolicy />} />
@@ -115,6 +120,7 @@ const App = () => (
                 <Route path="/whatsapp/automations" element={<ProtectedRoute><WhatsAppAutomations /></ProtectedRoute>} />
                 <Route path="/whatsapp/instances" element={<ProtectedRoute><WhatsAppInstances /></ProtectedRoute>} />
                 <Route path="/whatsapp/ai-agent" element={<ProtectedRoute><WhatsAppAIAgent /></ProtectedRoute>} />
+                <Route path="/whatsapp/crm-ao-vivo" element={<ProtectedRoute><CrmAoVivo /></ProtectedRoute>} />
                 <Route path="/whatsapp/campaigns" element={<ProtectedRoute><WhatsAppCampaigns /></ProtectedRoute>} />
                 <Route path="/whatsapp/groups" element={<ProtectedRoute><WhatsAppGroups /></ProtectedRoute>} />
                 <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
@@ -137,10 +143,12 @@ const App = () => (
                 <Route path="/jose" element={<ProtectedRoute><JoseTrafego /></ProtectedRoute>} />
                 <Route path="/performance" element={<ProtectedRoute><SupportDashboard /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Suspense>
-        <Toaster />
-        <Sonner />
+              </Routes>
+            </Suspense>
+            <Toaster />
+            <Sonner />
+          </AgentChatProvider>
+        </AgentTasksProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

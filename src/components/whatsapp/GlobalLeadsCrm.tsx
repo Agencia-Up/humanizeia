@@ -3,10 +3,11 @@ import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
+import { useNavigate } from 'react-router-dom';
 import { 
   Loader2, Users, Search, MoreVertical, ArrowRightLeft, Flag,
   TrendingUp, Calendar, CalendarDays, CalendarRange,
-  UserCheck, PhoneForwarded, BarChart3, MessageSquare, Trash2
+  UserCheck, PhoneForwarded, BarChart3, MessageSquare, Trash2, MonitorPlay, RefreshCw
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,7 @@ interface TransferStats {
 
 export function GlobalLeadsCrm() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [leads, setLeads] = useState<any[]>([]);
   const [transfers, setTransfers] = useState<any[]>([]);
@@ -229,6 +231,33 @@ export function GlobalLeadsCrm() {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
       <Tabs defaultValue="pipeline" className="w-full">
+        <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-primary/15 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-1">
+            <p className="text-[11px] uppercase tracking-[0.25em] text-primary/80">Novo modo de exibição</p>
+            <h2 className="text-lg font-semibold">CRM Ao Vivo para TV</h2>
+            <p className="text-sm text-muted-foreground">
+              Abra uma visualização em tela cheia com atualização automática, rodízio do Pedro e vendedor responsável em destaque.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              className="border-primary/20 bg-background/60 hover:bg-primary/10"
+              onClick={fetchAll}
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Atualizar CRM
+            </Button>
+            <Button
+              className="bg-primary hover:bg-primary/90"
+              onClick={() => window.open('/whatsapp/crm-ao-vivo', '_blank', 'noopener,noreferrer')}
+            >
+              <MonitorPlay className="mr-2 h-4 w-4" />
+              CRM Ao Vivo
+            </Button>
+          </div>
+        </div>
+
         <TabsList className="bg-card border mb-4">
           <TabsTrigger value="pipeline" className="gap-1.5 text-xs"><Users className="h-3.5 w-3.5" /> Pipeline</TabsTrigger>
           <TabsTrigger value="manager" className="gap-1.5 text-xs"><BarChart3 className="h-3.5 w-3.5" /> Visão Gerente</TabsTrigger>
@@ -250,15 +279,25 @@ export function GlobalLeadsCrm() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input placeholder="Pesquisar leads..." className="pl-9 h-9 bg-card text-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
             </div>
-            {agents.length > 1 && (
-              <Select value={agentFilter} onValueChange={setAgentFilter}>
-                <SelectTrigger className="w-48 h-9 text-xs"><SelectValue placeholder="Filtrar por agente" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos os agentes</SelectItem>
-                  {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            )}
+            <div className="flex flex-wrap gap-2">
+              {agents.length > 1 && (
+                <Select value={agentFilter} onValueChange={setAgentFilter}>
+                  <SelectTrigger className="w-48 h-9 text-xs"><SelectValue placeholder="Filtrar por agente" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos os agentes</SelectItem>
+                    {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+              <Button
+                variant="outline"
+                className="h-9 border-primary/20 bg-background/60 text-xs hover:bg-primary/10"
+                onClick={() => navigate('/whatsapp/crm-ao-vivo')}
+              >
+                <MonitorPlay className="mr-2 h-3.5 w-3.5" />
+                Abrir CRM Ao Vivo
+              </Button>
+            </div>
           </div>
 
           <div className="flex gap-3 overflow-x-auto pb-6 pt-1 h-[65vh] min-h-[450px] snap-x snap-mandatory scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent">
@@ -379,7 +418,7 @@ export function GlobalLeadsCrm() {
                     </div>
                     <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-0.5">
                       <span>Agente: {t.agent?.name || '—'}</span>
-                      <span>Motivo: {t.transfer_reason === 'manual' ? 'Manual' : t.transfer_reason === 'round_robin' ? 'Rodízio' : t.transfer_reason || '—'}</span>
+                      <span>Motivo: {getTransferReasonLabel(t)}</span>
                     </div>
                   </div>
                   <span className="text-[10px] text-muted-foreground shrink-0">
@@ -527,4 +566,12 @@ function getNextInQueue(members: any[], transfers: any[]): string {
   });
 
   return sorted[0]?.name || '—';
+}
+
+
+function getTransferReasonLabel(transfer: any) {
+  if (transfer?.transfer_reason === 'manual') return 'Manual';
+  if (transfer?.transfer_reason === 'round_robin') return 'Rod�zio';
+  if (String(transfer?.notes || '').toLowerCase().includes('round-robin')) return 'Rod�zio';
+  return transfer?.transfer_reason || '—';
 }
