@@ -219,6 +219,48 @@ function extractUazapiBase64(rawMsgObj: any) {
     '';
 }
 
+function extractUazapiMediaUrl(rawMsgObj: any) {
+  return rawMsgObj?.url ||
+    rawMsgObj?.mediaUrl ||
+    rawMsgObj?.downloadUrl ||
+    rawMsgObj?.fileUrl ||
+    rawMsgObj?.message?.url ||
+    rawMsgObj?.message?.mediaUrl ||
+    rawMsgObj?.message?.downloadUrl ||
+    rawMsgObj?.data?.url ||
+    rawMsgObj?.data?.mediaUrl ||
+    rawMsgObj?.data?.downloadUrl ||
+    '';
+}
+
+async function fetchMediaAsBase64(mediaUrl: string, instKey: string) {
+  if (!mediaUrl) return '';
+
+  try {
+    const res = await fetch(mediaUrl, {
+      headers: {
+        'token': instKey,
+        'apikey': instKey,
+      },
+    });
+    if (!res.ok) {
+      console.log(`[Webhook] Fetch media URL falhou: ${res.status}`);
+      return '';
+    }
+
+    const arrayBuffer = await res.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  } catch (err) {
+    console.error('[Webhook] Falha ao buscar mídia por URL:', err);
+    return '';
+  }
+}
+
 async function sendUazapiTextMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, text: string) {
   const attempts = [
     {
@@ -348,6 +390,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // Process Media se houver
   if (msgType === 'audio' || msgType === 'ptt' || msgType === 'image' || msgType === 'document' || msgType === 'video') {
     let base64 = extractUazapiBase64(rawMsgObj);
+    let mediaUrl = extractUazapiMediaUrl(rawMsgObj);
     
     // Se não veio base64, tentar download pela uazapi
     if (!base64 && messageId) {
@@ -360,14 +403,22 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         });
         if (dRes.ok) {
           const dData = await dRes.json();
-          base64 = dData.base64 || dData.file || '';
-          console.log(`[Webhook] Download de midia OK | base64: ${base64 ? 'sim' : 'nao'}`);
+          console.log(`[Webhook] Download de midia payload keys: ${Object.keys(dData || {}).join(', ')}`);
+          base64 = dData.base64 || dData.file || dData.data?.base64 || dData.data?.file || '';
+          mediaUrl = mediaUrl || dData.url || dData.downloadUrl || dData.fileUrl || dData.data?.url || dData.data?.downloadUrl || '';
+          console.log(`[Webhook] Download de midia OK | base64: ${base64 ? 'sim' : 'nao'} | mediaUrl: ${mediaUrl ? 'sim' : 'nao'}`);
         } else {
           console.log(`[Webhook] Download de midia falhou: ${dRes.status}`);
         }
       } catch (err) {
         console.error('[Webhook] Falha no download de mídia:', err);
       }
+    }
+
+    if (!base64 && mediaUrl) {
+      console.log('[Webhook] Tentando buscar mídia pela URL retornada');
+      base64 = await fetchMediaAsBase64(mediaUrl, instKey);
+      console.log(`[Webhook] Base64 via URL: ${base64 ? 'sim' : 'nao'}`);
     }
 
     if (msgType === 'document') {
