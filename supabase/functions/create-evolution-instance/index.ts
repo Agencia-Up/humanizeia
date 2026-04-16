@@ -7,6 +7,17 @@ const EVOLUTION_WEBHOOK_EVENTS = [
   "CONNECTION_UPDATE",
 ];
 
+function buildWebhookPayload(webhookUrl: string, instanceName?: string) {
+  return {
+    enabled: true,
+    url: webhookUrl,
+    webhook_by_events: false,
+    webhook_base64: false,
+    events: EVOLUTION_WEBHOOK_EVENTS,
+    ...(instanceName ? { instanceName } : {}),
+  };
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -221,19 +232,22 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const webhookUrl = `${supabaseUrl}/functions/v1/wa-inbox-webhook`;
   try {
-    await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
+    let webhookRes = await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: api_key },
       body: JSON.stringify({
-        webhook: {
-          url: webhookUrl,
-          enabled: true,
-          webhook_by_events: false,
-          webhook_base64: false,
-          events: EVOLUTION_WEBHOOK_EVENTS,
-        },
+        webhook: buildWebhookPayload(webhookUrl, instance_name),
       }),
     });
+    if (webhookRes.status === 405) {
+      await webhookRes.text().catch(() => "");
+      webhookRes = await fetch(`${baseUrl}/webhook/instance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: api_key },
+        body: JSON.stringify(buildWebhookPayload(webhookUrl, instance_name)),
+      });
+    }
+    console.log(`[create-evolution-instance] Webhook response: ${webhookRes.status}`);
     console.log(`[create-evolution-instance] Webhook set for ${instance_name}`);
   } catch (webhookErr) {
     console.warn('[create-evolution-instance] Failed to set webhook:', webhookErr);

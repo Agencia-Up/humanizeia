@@ -7,6 +7,17 @@ const EVOLUTION_WEBHOOK_EVENTS = [
   "CONNECTION_UPDATE",
 ];
 
+function buildWebhookPayload(webhookUrl: string, instanceName?: string) {
+  return {
+    enabled: true,
+    url: webhookUrl,
+    webhook_by_events: false,
+    webhook_base64: false,
+    events: EVOLUTION_WEBHOOK_EVENTS,
+    ...(instanceName ? { instanceName } : {}),
+  };
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -58,13 +69,7 @@ Deno.serve(async (req) => {
 
         // Try setting webhook - try v2 format first, then v1
         const webhookPayload = {
-          webhook: {
-            url: webhookUrl,
-            enabled: true,
-            webhook_by_events: false,
-            webhook_base64: false,
-            events: EVOLUTION_WEBHOOK_EVENTS,
-          },
+          webhook: buildWebhookPayload(webhookUrl, inst.instance_name),
         };
 
         let setRes = await fetch(`${baseUrl}/webhook/set/${inst.instance_name}`, {
@@ -79,13 +84,16 @@ Deno.serve(async (req) => {
           setRes = await fetch(`${baseUrl}/webhook/set/${inst.instance_name}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
-            body: JSON.stringify({
-              url: webhookUrl,
-              enabled: true,
-              webhook_by_events: false,
-              webhook_base64: false,
-              events: EVOLUTION_WEBHOOK_EVENTS,
-            }),
+            body: JSON.stringify(buildWebhookPayload(webhookUrl, inst.instance_name)),
+          });
+        }
+
+        if (setRes.status === 405) {
+          await setRes.text().catch(() => "");
+          setRes = await fetch(`${baseUrl}/webhook/instance`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
+            body: JSON.stringify(buildWebhookPayload(webhookUrl, inst.instance_name)),
           });
         }
 
