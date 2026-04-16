@@ -219,6 +219,55 @@ function extractUazapiBase64(rawMsgObj: any) {
     '';
 }
 
+async function sendUazapiTextMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, text: string) {
+  const attempts = [
+    {
+      label: 'send-text-number',
+      url: `${baseUrl}/send/text`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: { number: phoneNumber, text }
+    },
+    {
+      label: 'send-text-number-instance',
+      url: `${baseUrl}/send/text?instance=${instanceName}`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+      body: { number: phoneNumber, text }
+    },
+    {
+      label: 'send-text-remotejid',
+      url: `${baseUrl}/send/text`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: { remoteJid, text }
+    },
+    {
+      label: 'send-message-body',
+      url: `${baseUrl}/send/text`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: { number: phoneNumber, body: text }
+    }
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      console.log(`[Webhook] Tentando envio UAZAPI via ${attempt.label} para ${phoneNumber}`);
+      const res = await fetch(attempt.url, {
+        method: 'POST',
+        headers: attempt.headers as any,
+        body: JSON.stringify(attempt.body),
+      });
+      const responseText = await res.text().catch(() => '');
+      console.log(`[Webhook] UAZAPI ${attempt.label} -> ${res.status} | ${responseText.substring(0, 300)}`);
+      if (res.ok) {
+        return { ok: true, label: attempt.label, status: res.status, body: responseText };
+      }
+    } catch (err) {
+      console.error(`[Webhook] Falha no envio UAZAPI (${attempt.label}):`, err);
+    }
+  }
+
+  return { ok: false };
+}
+
 async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any) {
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 
@@ -573,6 +622,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders })
 
+  console.log(`[Webhook] Resposta final ao cliente: ${aiResponse.substring(0, 200)}`);
+
   // Salvar no histórico
   await supabase.from('wa_chat_history').insert({
     user_id: agent.user_id, agent_id: agent.id, instance_id: instanceName,
@@ -581,11 +632,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   // Enviar para o cliente final
   try {
-    await fetch(`${baseUrl}/send/text`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: JSON.stringify({ number: phoneNumber, text: aiResponse })
-    })
+    const sendResult = await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, aiResponse)
+    if (!sendResult.ok) {
+      console.error('[Webhook] Nenhuma tentativa de envio UAZAPI funcionou');
+    }
   } catch (e) {
     console.error('[Webhook] Erro ao enviar mensagem:', e)
   }
