@@ -93,7 +93,7 @@ async function handleMetaWebhook(supabase: any, body: any) {
           content = msg.text?.body || "";
         } else if (msg.type === "image") {
           messageType = "image";
-          content = msg.image?.caption || "";
+          content = buildImageContent(msg.image?.caption || "");
         } else if (msg.type === "video") {
           messageType = "video";
           content = msg.video?.caption || "";
@@ -108,15 +108,15 @@ async function handleMetaWebhook(supabase: any, body: any) {
                 content = transcription;
                 console.log(`[wa-inbox-webhook] Meta audio transcribed: ${content.substring(0, 80)}`);
               } else {
-                content = "[Mensagem de áudio recebida]";
+                content = buildAudioFallbackContent();
                 console.warn("[wa-inbox-webhook] Meta audio transcription returned null");
               }
             } catch (transcErr) {
-              content = "[Mensagem de áudio recebida]";
+              content = buildAudioFallbackContent();
               console.error("[wa-inbox-webhook] Meta audio transcription error:", transcErr);
             }
           } else {
-            content = "[Mensagem de áudio recebida]";
+            content = buildAudioFallbackContent();
           }
         } else if (msg.type === "document") {
           messageType = "document";
@@ -326,7 +326,7 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
               message.templateButtonReplyMessage.selectedId || "";
   } else if (message.imageMessage) {
     messageType = "image";
-    content = message.imageMessage.caption || "";
+    content = buildImageContent(message.imageMessage.caption || "");
     mediaUrl = message.imageMessage.url || null;
   } else if (message.videoMessage) {
     messageType = "video";
@@ -343,11 +343,11 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
         content = transcription;
         console.log(`[wa-inbox-webhook] Audio transcribed successfully: ${content.substring(0, 80)}`);
       } else {
-        content = "[Mensagem de áudio recebida]";
+        content = buildAudioFallbackContent();
         console.warn("[wa-inbox-webhook] Audio transcription returned null, using fallback content");
       }
     } catch (transcErr) {
-      content = "[Mensagem de áudio recebida]";
+      content = buildAudioFallbackContent();
       console.error("[wa-inbox-webhook] Audio transcription threw error:", transcErr);
     }
   } else if (message.documentMessage) {
@@ -490,6 +490,44 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
 
 function normalizePhone(value: string | null | undefined): string {
   return (value || "").replace(/\D/g, "");
+}
+
+function buildImageContent(caption: string | null | undefined): string {
+  const trimmedCaption = (caption || "").trim();
+  if (!trimmedCaption) {
+    return "[Imagem recebida sem legenda]";
+  }
+
+  return `[Imagem recebida]\nLegenda: ${trimmedCaption}`;
+}
+
+function buildAudioFallbackContent(): string {
+  return "[Mensagem de audio recebida sem transcricao]";
+}
+
+function shouldSkipAICategorization(content: string): boolean {
+  const normalized = (content || "").trim().toLowerCase();
+  return normalized.startsWith("[imagem recebida") ||
+    normalized.startsWith("[mensagem de audio recebida sem transcricao]") ||
+    normalized.startsWith("[arquivo recebido:");
+}
+
+function getMediaFallbackReply(content: string): string | null {
+  const normalized = (content || "").trim().toLowerCase();
+
+  if (normalized.startsWith("[mensagem de audio recebida sem transcricao]")) {
+    return "Recebi seu audio aqui, mas ele chegou sem transcricao pra mim. Se puder, me manda de novo ou escreve rapidinho o ponto principal que eu continuo com voce.";
+  }
+
+  if (normalized.startsWith("[imagem recebida sem legenda]")) {
+    return "Recebi sua imagem aqui. Me diz rapidinho o que voce quer que eu avalie nela que eu sigo com voce.";
+  }
+
+  if (normalized.startsWith("[arquivo recebido:")) {
+    return "Recebi seu arquivo aqui, mas por enquanto eu nao consigo abrir documentos direto. Se quiser, me resume o ponto principal em texto ou audio que eu te ajudo daqui.";
+  }
+
+  return null;
 }
 
 async function updateQueueStatusFromDeliverySignal(
@@ -652,7 +690,9 @@ async function categorizeAndAutomate(
       return;
     }
 
-    const aiCategory = await categorizeWithAI(content);
+    const aiCategory = shouldSkipAICategorization(content)
+      ? { category: "question", sentiment: "neutral" }
+      : await categorizeWithAI(content);
 
     await supabase
       .from("wa_inbox")
@@ -911,6 +951,8 @@ async function handleAIAgentReply(
   replyTarget?: string,
 ) {
   try {
+    const mediaFallbackReply = getMediaFallbackReply(content);
+
     // Find active AI agent for this instance or user
     // Supports multi-instance assignment via instance_ids array
     const { data: agents } = await supabase
@@ -995,11 +1037,11 @@ async function handleAIAgentReply(
     const rawModel = agent.model || "google/gemini-2.5-flash";
     const isAnthropicModel = rawModel.startsWith("anthropic/");
 
-    if (!isAnthropicModel && !LOVABLE_API_KEY) {
+    if (!mediaFallbackReply && !isAnthropicModel && !LOVABLE_API_KEY) {
       console.error("[ai-agent] LOVABLE_API_KEY not configured");
       return;
     }
-    if (isAnthropicModel && !ANTHROPIC_API_KEY) {
+    if (!mediaFallbackReply && isAnthropicModel && !ANTHROPIC_API_KEY) {
       console.error("[ai-agent] ANTHROPIC_API_KEY not configured for Anthropic model");
       return;
     }
@@ -1116,7 +1158,7 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
 
     let aiData: any = null;
 
-    if (isAnthropicModel) {
+    if (!mediaFallbackReply && isAnthropicModel) {
       // ── Direct Anthropic API call ──
       const anthropicModel = rawModel.replace("anthropic/", "");
       const anthropicMessages = [
@@ -1159,7 +1201,7 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
         const errBody = await res.text().catch(() => "");
         console.error(`[ai-agent] Anthropic error: ${res.status} - ${errBody}`);
       }
-    } else {
+    } else if (!mediaFallbackReply) {
       // ── Lovable AI Gateway call ──
       const modelMap: Record<string, string> = {
         "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
@@ -1218,16 +1260,16 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
       }
     }
 
-    if (!aiData) {
+    if (!mediaFallbackReply && !aiData) {
       console.error("[ai-agent] All AI models failed");
       return;
     }
 
-    let replyText = aiData.choices?.[0]?.message?.content?.trim() || "";
-    const aiMessage = aiData.choices?.[0]?.message;
+    let replyText = mediaFallbackReply || aiData?.choices?.[0]?.message?.content?.trim() || "";
+    const aiMessage = aiData?.choices?.[0]?.message;
 
     // ===== Handle CRM Tool Calls (Lead Qualification & Transfer) =====
-    if (aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
+    if (!mediaFallbackReply && aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
       const toolCall = aiMessage.tool_calls.find((t: any) => t.function?.name === "atualizar_etapa_crm");
       if (toolCall) {
         try {
@@ -2162,3 +2204,5 @@ function extractUTMParams(
 
   return params;
 }
+
+
