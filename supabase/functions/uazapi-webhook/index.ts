@@ -154,21 +154,24 @@ function inferUazapiMessageType(rawMsgObj: any) {
 
   const mimeType = String(rawMsgObj?.mimetype || rawMsgObj?.mimeType || '').toLowerCase();
 
-  if (
-    explicitType.includes('audio') ||
-    explicitType.includes('ptt') ||
-    explicitType.includes('voice') ||
-    mimeType.startsWith('audio/') ||
-    rawMsgObj?.audio ||
-    rawMsgObj?.audioMessage ||
-    rawMsgObj?.ptt
-  ) {
+  if (mimeType.startsWith('image/')) {
+    return 'image';
+  }
+
+  if (mimeType.startsWith('application/')) {
+    return 'document';
+  }
+
+  if (mimeType.startsWith('video/')) {
+    return 'video';
+  }
+
+  if (mimeType.startsWith('audio/')) {
     return 'audio';
   }
 
   if (
     explicitType.includes('image') ||
-    mimeType.startsWith('image/') ||
     rawMsgObj?.image ||
     rawMsgObj?.imageMessage
   ) {
@@ -178,7 +181,6 @@ function inferUazapiMessageType(rawMsgObj: any) {
   if (
     explicitType.includes('document') ||
     explicitType.includes('file') ||
-    mimeType.startsWith('application/') ||
     rawMsgObj?.document ||
     rawMsgObj?.documentMessage ||
     rawMsgObj?.fileName ||
@@ -189,11 +191,21 @@ function inferUazapiMessageType(rawMsgObj: any) {
 
   if (
     explicitType.includes('video') ||
-    mimeType.startsWith('video/') ||
     rawMsgObj?.video ||
     rawMsgObj?.videoMessage
   ) {
     return 'video';
+  }
+
+  if (
+    explicitType.includes('audio') ||
+    explicitType.includes('ptt') ||
+    explicitType.includes('voice') ||
+    rawMsgObj?.audio ||
+    rawMsgObj?.audioMessage ||
+    rawMsgObj?.ptt
+  ) {
+    return 'audio';
   }
 
   return explicitType;
@@ -250,6 +262,18 @@ function extractUazapiMediaUrl(rawMsgObj: any) {
     rawMsgObj?.data?.downloadURL ||
     rawMsgObj?.data?.fileURL ||
     '';
+}
+
+function extractUazapiMimeType(rawMsgObj: any) {
+  return rawMsgObj?.mimetype ||
+    rawMsgObj?.mimeType ||
+    rawMsgObj?.media?.mimetype ||
+    rawMsgObj?.media?.mimeType ||
+    rawMsgObj?.message?.mimetype ||
+    rawMsgObj?.message?.mimeType ||
+    rawMsgObj?.data?.mimetype ||
+    rawMsgObj?.data?.mimeType ||
+    'application/octet-stream';
 }
 
 async function fetchMediaAsBase64(mediaUrl: string, instKey: string) {
@@ -403,8 +427,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   let finalUserText = userText;
   let userMessageContentForOpenAi: any = finalUserText;
+  let mediaMimeType = extractUazapiMimeType(rawMsgObj);
 
-  console.log(`[Webhook] Tipo inferido: ${msgType || 'desconhecido'} | messageId: ${messageId || 'n/a'}`);
+  console.log(`[Webhook] Tipo inferido: ${msgType || 'desconhecido'} | mimeType: ${mediaMimeType || 'n/a'} | messageId: ${messageId || 'n/a'}`);
 
   // Process Media se houver
   if (msgType === 'audio' || msgType === 'ptt' || msgType === 'image' || msgType === 'document' || msgType === 'video') {
@@ -425,6 +450,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           console.log(`[Webhook] Download de midia payload keys: ${Object.keys(dData || {}).join(', ')}`);
           base64 = extractUazapiBase64(dData);
           mediaUrl = mediaUrl || extractUazapiMediaUrl(dData);
+          mediaMimeType = extractUazapiMimeType(dData) || mediaMimeType;
           console.log(`[Webhook] Download de midia OK | base64: ${base64 ? 'sim' : 'nao'} | mediaUrl: ${mediaUrl ? 'sim' : 'nao'}`);
         } else {
           console.log(`[Webhook] Download de midia falhou: ${dRes.status}`);
@@ -448,9 +474,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     } else if (base64) {
       if (msgType === 'audio' || msgType === 'ptt') {
         try {
-          const blob = b64toBlob(base64, 'audio/ogg');
+          const blob = b64toBlob(base64, mediaMimeType || 'audio/ogg');
           const formData = new FormData();
-          formData.append('file', blob, 'audio.ogg');
+          formData.append('file', blob, `audio.${(mediaMimeType || 'audio/ogg').split('/')[1] || 'ogg'}`);
           formData.append('model', 'whisper-1');
           
           console.log('[Webhook] Enviando para Whisper...');
@@ -474,11 +500,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           userMessageContentForOpenAi = finalUserText;
         }
       } else if (msgType === 'image') {
-        const mimeType = rawMsgObj?.mimetype || 'image/jpeg';
         finalUserText = finalUserText || '[Imagem recebida]';
+        console.log(`[Webhook] Encaminhando imagem para OpenAI Vision | mimeType: ${mediaMimeType}`);
         userMessageContentForOpenAi = [
           { type: "text", text: finalUserText },
-          { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
+          { type: "image_url", image_url: { url: `data:${mediaMimeType || 'image/jpeg'};base64,${base64}` } }
         ];
       } else {
         finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
