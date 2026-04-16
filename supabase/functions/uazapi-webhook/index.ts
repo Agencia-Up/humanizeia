@@ -141,6 +141,84 @@ function getUazapiMediaFallbackReply(content: string) {
   return null;
 }
 
+function inferUazapiMessageType(rawMsgObj: any) {
+  const explicitType = String(
+    rawMsgObj?.messageType ||
+    rawMsgObj?.type ||
+    rawMsgObj?.message_type ||
+    rawMsgObj?.mediaType ||
+    rawMsgObj?.mimeType ||
+    rawMsgObj?.mimetype ||
+    ''
+  ).toLowerCase();
+
+  const mimeType = String(rawMsgObj?.mimetype || rawMsgObj?.mimeType || '').toLowerCase();
+
+  if (
+    explicitType.includes('audio') ||
+    explicitType.includes('ptt') ||
+    explicitType.includes('voice') ||
+    mimeType.startsWith('audio/') ||
+    rawMsgObj?.audio ||
+    rawMsgObj?.audioMessage ||
+    rawMsgObj?.ptt
+  ) {
+    return 'audio';
+  }
+
+  if (
+    explicitType.includes('image') ||
+    mimeType.startsWith('image/') ||
+    rawMsgObj?.image ||
+    rawMsgObj?.imageMessage
+  ) {
+    return 'image';
+  }
+
+  if (
+    explicitType.includes('document') ||
+    explicitType.includes('file') ||
+    mimeType.startsWith('application/') ||
+    rawMsgObj?.document ||
+    rawMsgObj?.documentMessage ||
+    rawMsgObj?.fileName ||
+    rawMsgObj?.filename
+  ) {
+    return 'document';
+  }
+
+  if (
+    explicitType.includes('video') ||
+    mimeType.startsWith('video/') ||
+    rawMsgObj?.video ||
+    rawMsgObj?.videoMessage
+  ) {
+    return 'video';
+  }
+
+  return explicitType;
+}
+
+function extractUazapiMessageId(rawMsgObj: any) {
+  return rawMsgObj?.messageid ||
+    rawMsgObj?.messageId ||
+    rawMsgObj?.id?.id ||
+    rawMsgObj?.id ||
+    rawMsgObj?.key?.id ||
+    rawMsgObj?.msgId ||
+    '';
+}
+
+function extractUazapiBase64(rawMsgObj: any) {
+  return rawMsgObj?.base64 ||
+    rawMsgObj?.message?.base64 ||
+    rawMsgObj?.media?.base64 ||
+    rawMsgObj?.mediaBase64 ||
+    rawMsgObj?.file ||
+    rawMsgObj?.data?.base64 ||
+    '';
+}
+
 async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any) {
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 
@@ -204,8 +282,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Blob(byteArrays, {type: contentType});
   }
 
-  const msgType = rawMsgObj?.messageType || rawMsgObj?.type || '';
-  const messageId = rawMsgObj?.messageid || rawMsgObj?.id?.id || rawMsgObj?.key?.id || '';
+  const msgType = inferUazapiMessageType(rawMsgObj);
+  const messageId = extractUazapiMessageId(rawMsgObj);
 
   const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '')
   const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || ''
@@ -216,9 +294,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   let finalUserText = userText;
   let userMessageContentForOpenAi: any = finalUserText;
 
+  console.log(`[Webhook] Tipo inferido: ${msgType || 'desconhecido'} | messageId: ${messageId || 'n/a'}`);
+
   // Process Media se houver
-  if (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image' || msgType === 'documentMessage' || msgType === 'document') {
-    let base64 = rawMsgObj?.base64 || rawMsgObj?.message?.base64 || '';
+  if (msgType === 'audio' || msgType === 'ptt' || msgType === 'image' || msgType === 'document' || msgType === 'video') {
+    let base64 = extractUazapiBase64(rawMsgObj);
     
     // Se não veio base64, tentar download pela uazapi
     if (!base64 && messageId) {
@@ -232,19 +312,22 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         if (dRes.ok) {
           const dData = await dRes.json();
           base64 = dData.base64 || dData.file || '';
+          console.log(`[Webhook] Download de midia OK | base64: ${base64 ? 'sim' : 'nao'}`);
+        } else {
+          console.log(`[Webhook] Download de midia falhou: ${dRes.status}`);
         }
       } catch (err) {
         console.error('[Webhook] Falha no download de mídia:', err);
       }
     }
 
-    if (msgType.includes('document')) {
+    if (msgType === 'document') {
        // Apenas informar o nome do arquivo para o GPT
        const fileName = rawMsgObj?.fileName || rawMsgObj?.filename || rawMsgObj?.documentMessage?.fileName || 'Arquivo';
        finalUserText = `[Arquivo recebido: ${fileName}] ` + (finalUserText || '');
        userMessageContentForOpenAi = finalUserText;
     } else if (base64) {
-      if (msgType.includes('audio') || msgType === 'ptt') {
+      if (msgType === 'audio' || msgType === 'ptt') {
         try {
           const blob = b64toBlob(base64, 'audio/ogg');
           const formData = new FormData();
@@ -271,13 +354,16 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
           userMessageContentForOpenAi = finalUserText;
         }
-      } else if (msgType.includes('image')) {
+      } else if (msgType === 'image') {
         const mimeType = rawMsgObj?.mimetype || 'image/jpeg';
         finalUserText = finalUserText || '[Imagem recebida]';
         userMessageContentForOpenAi = [
           { type: "text", text: finalUserText },
           { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
         ];
+      } else {
+        finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
+        userMessageContentForOpenAi = finalUserText;
       }
     } else {
       finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
@@ -286,8 +372,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   }
 
   if (!finalUserText && typeof userMessageContentForOpenAi === 'string') {
-    console.log('[Webhook] Empty text after media processing');
-    return new Response('Empty text', { headers: corsHeaders });
+    finalUserText = '[Mensagem recebida sem conteudo legivel]';
+    userMessageContentForOpenAi = finalUserText;
+    console.log('[Webhook] Empty text after media processing, applying generic fallback');
   }
 
   console.log(`[Webhook] Salvando histórico e chamando OpenAI para: ${finalUserText}`);
