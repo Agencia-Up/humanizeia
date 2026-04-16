@@ -210,26 +210,45 @@ function extractUazapiMessageId(rawMsgObj: any) {
 }
 
 function extractUazapiBase64(rawMsgObj: any) {
-  return rawMsgObj?.base64 ||
+  const value = rawMsgObj?.base64 ||
+    rawMsgObj?.base64Data ||
     rawMsgObj?.message?.base64 ||
+    rawMsgObj?.message?.base64Data ||
     rawMsgObj?.media?.base64 ||
+    rawMsgObj?.media?.base64Data ||
     rawMsgObj?.mediaBase64 ||
     rawMsgObj?.file ||
     rawMsgObj?.data?.base64 ||
+    rawMsgObj?.data?.base64Data ||
     '';
+
+  if (typeof value === 'string' && value.startsWith('data:')) {
+    const parts = value.split(',');
+    return parts.length > 1 ? parts[1] : '';
+  }
+
+  return value;
 }
 
 function extractUazapiMediaUrl(rawMsgObj: any) {
   return rawMsgObj?.url ||
     rawMsgObj?.mediaUrl ||
+    rawMsgObj?.mediaURL ||
     rawMsgObj?.downloadUrl ||
+    rawMsgObj?.downloadURL ||
     rawMsgObj?.fileUrl ||
+    rawMsgObj?.fileURL ||
     rawMsgObj?.message?.url ||
     rawMsgObj?.message?.mediaUrl ||
+    rawMsgObj?.message?.mediaURL ||
     rawMsgObj?.message?.downloadUrl ||
+    rawMsgObj?.message?.downloadURL ||
     rawMsgObj?.data?.url ||
     rawMsgObj?.data?.mediaUrl ||
+    rawMsgObj?.data?.mediaURL ||
     rawMsgObj?.data?.downloadUrl ||
+    rawMsgObj?.data?.downloadURL ||
+    rawMsgObj?.data?.fileURL ||
     '';
 }
 
@@ -404,8 +423,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         if (dRes.ok) {
           const dData = await dRes.json();
           console.log(`[Webhook] Download de midia payload keys: ${Object.keys(dData || {}).join(', ')}`);
-          base64 = dData.base64 || dData.file || dData.data?.base64 || dData.data?.file || '';
-          mediaUrl = mediaUrl || dData.url || dData.downloadUrl || dData.fileUrl || dData.data?.url || dData.data?.downloadUrl || '';
+          base64 = extractUazapiBase64(dData);
+          mediaUrl = mediaUrl || extractUazapiMediaUrl(dData);
           console.log(`[Webhook] Download de midia OK | base64: ${base64 ? 'sim' : 'nao'} | mediaUrl: ${mediaUrl ? 'sim' : 'nao'}`);
         } else {
           console.log(`[Webhook] Download de midia falhou: ${dRes.status}`);
