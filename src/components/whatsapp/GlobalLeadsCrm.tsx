@@ -204,8 +204,13 @@ export function GlobalLeadsCrm() {
       if (error) throw error;
       toast({ title: 'Lead removido com sucesso!' });
       setLeads(prev => prev.filter(l => l.id !== leadId));
-    } catch {
-      toast({ title: 'Erro ao remover lead', variant: 'destructive' });
+    } catch (error: any) {
+      console.error('Erro ao remover lead manualmente:', error);
+      toast({
+        title: 'Erro ao remover lead',
+        description: error?.message || 'Nao foi possivel excluir este lead agora.',
+        variant: 'destructive'
+      });
     }
   };
 
@@ -457,7 +462,7 @@ function StatCell({ value, label, accent }: { value: number; label: string; acce
   );
 }
 
-function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer }: {
+function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onDelete }: {
   lead: any;
   column: typeof KANBAN_COLUMNS[0];
   activeMembers: any[];
