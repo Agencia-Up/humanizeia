@@ -106,6 +106,41 @@ serve(async (req) => {
   }
 })
 
+function buildUazapiMediaFallbackContent(msgType: string, currentText: string) {
+  const text = (currentText || '').trim();
+  const normalizedType = String(msgType || '').toLowerCase();
+
+  if (text) return text;
+  if (normalizedType.includes('audio') || normalizedType === 'ptt') {
+    return '[Mensagem de audio recebida sem transcricao]';
+  }
+  if (normalizedType.includes('image')) {
+    return '[Imagem recebida sem legenda]';
+  }
+  if (normalizedType.includes('document')) {
+    return '[Arquivo recebido sem leitura]';
+  }
+  return text;
+}
+
+function getUazapiMediaFallbackReply(content: string) {
+  const normalized = (content || '').trim().toLowerCase();
+
+  if (normalized.startsWith('[mensagem de audio recebida sem transcricao]')) {
+    return 'Recebi seu audio aqui, mas ele chegou sem transcricao pra mim. Se puder, me manda de novo ou escreve rapidinho o ponto principal que eu continuo com voce.';
+  }
+
+  if (normalized.startsWith('[imagem recebida sem legenda]')) {
+    return 'Recebi sua imagem aqui. Me diz rapidinho o que voce quer que eu avalie nela que eu sigo com voce.';
+  }
+
+  if (normalized.startsWith('[arquivo recebido sem leitura]') || normalized.startsWith('[arquivo recebido:')) {
+    return 'Recebi seu arquivo aqui, mas por enquanto eu nao consigo abrir documentos direto. Se quiser, me resume o ponto principal em texto ou audio que eu te ajudo daqui.';
+  }
+
+  return null;
+}
+
 async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any) {
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 
@@ -205,7 +240,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
     if (msgType.includes('document')) {
        // Apenas informar o nome do arquivo para o GPT
-       const fileName = rawMsgObj?.fileName || rawMsgObj?.filename || msgObj?.documentMessage?.fileName || 'Arquivo';
+       const fileName = rawMsgObj?.fileName || rawMsgObj?.filename || rawMsgObj?.documentMessage?.fileName || 'Arquivo';
        finalUserText = `[Arquivo recebido: ${fileName}] ` + (finalUserText || '');
        userMessageContentForOpenAi = finalUserText;
     } else if (base64) {
@@ -227,9 +262,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
              finalUserText = wData.text;
              userMessageContentForOpenAi = finalUserText;
              console.log('[Webhook] Transcrição (Whisper):', finalUserText);
+          } else {
+             finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
+             userMessageContentForOpenAi = finalUserText;
           }
         } catch(err) {
           console.error('[Webhook] Erro no Whisper:', err);
+          finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
+          userMessageContentForOpenAi = finalUserText;
         }
       } else if (msgType.includes('image')) {
         const mimeType = rawMsgObj?.mimetype || 'image/jpeg';
@@ -239,6 +279,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
         ];
       }
+    } else {
+      finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
+      userMessageContentForOpenAi = finalUserText;
     }
   }
 
@@ -310,32 +353,37 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     aiModel = 'gpt-4o-mini';
   }
 
-  const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
-    body: JSON.stringify({
-      model: aiModel,
-      messages: [{ role: 'system', content: systemPrompt }, ...chatHistory, { role: 'user', content: userMessageContentForOpenAi }],
-      temperature: agent.temperature || 0.7,
-      tools: tools,
-      tool_choice: "auto"
-    })
-  })
+  const mediaFallbackReply = getUazapiMediaFallbackReply(finalUserText);
+  let aiMessage: any = null;
+  let aiResponse = mediaFallbackReply || '';
 
-  if (!openaiRes.ok) {
-    const errText = await openaiRes.text();
-    console.error(`[Webhook] OpenAI Erro: ${openaiRes.status} - ${errText}`);
-    return new Response('OpenAI erro', { status: 500 });
+  if (!mediaFallbackReply) {
+    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+      body: JSON.stringify({
+        model: aiModel,
+        messages: [{ role: 'system', content: systemPrompt }, ...chatHistory, { role: 'user', content: userMessageContentForOpenAi }],
+        temperature: agent.temperature || 0.7,
+        tools: tools,
+        tool_choice: "auto"
+      })
+    })
+
+    if (!openaiRes.ok) {
+      const errText = await openaiRes.text();
+      console.error(`[Webhook] OpenAI Erro: ${openaiRes.status} - ${errText}`);
+      return new Response('OpenAI erro', { status: 500 });
+    }
+    const openaiData = await openaiRes.json()
+    aiMessage = openaiData.choices?.[0]?.message
+    aiResponse = aiMessage?.content || ''
   }
-  const openaiData = await openaiRes.json()
-  const aiMessage = openaiData.choices?.[0]?.message
   
   console.log(`[Webhook] Resposta da IA recebida. ToolCalls: ${aiMessage?.tool_calls?.length || 0}`);
 
-  let aiResponse = aiMessage?.content || ''
-
   // Verificar se o modelo decidiu chamar a função de CRM (atualizar_etapa_crm)
-  if (aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
+  if (!mediaFallbackReply && aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
     const toolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'atualizar_etapa_crm');
     if (toolCall) {
       try {
