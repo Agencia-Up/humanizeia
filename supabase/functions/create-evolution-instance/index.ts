@@ -1,5 +1,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+const EVOLUTION_WEBHOOK_EVENTS = [
+  "MESSAGES_UPSERT",
+  "MESSAGES_SET",
+  "MESSAGES_UPDATE",
+  "CONNECTION_UPDATE",
+];
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -223,7 +230,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
           enabled: true,
           webhook_by_events: false,
           webhook_base64: false,
-          events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"],
+          events: EVOLUTION_WEBHOOK_EVENTS,
         },
       }),
     });

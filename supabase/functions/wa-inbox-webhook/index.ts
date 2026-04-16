@@ -31,6 +31,9 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
+    console.log(
+      `[wa-inbox-webhook] Incoming request | object=${body?.object || "evolution"} | event=${body?.event || "n/a"} | instance=${body?.instance || "n/a"}`
+    );
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -232,11 +235,22 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   const instanceName = body.instance;
   const messageData = body.data;
 
+  console.log(
+    `[wa-inbox-webhook] Evolution event received: ${normalizedEvent || "unknown"} | instance: ${instanceName || "unknown"}`
+  );
+  if (messageData && typeof messageData === "object" && !Array.isArray(messageData)) {
+    console.log("[wa-inbox-webhook] Evolution data keys:", JSON.stringify(Object.keys(messageData)));
+  }
+
   if (normalizedEvent === "messages.update" && messageData) {
     return await handleEvolutionDeliveryStatus(supabase, instanceName, messageData);
   }
 
-  if (normalizedEvent !== "messages.upsert" || !messageData) {
+  const messageEntries = extractEvolutionMessageEntries(messageData);
+  const shouldProcessIncoming =
+    EVOLUTION_INCOMING_EVENTS.has(normalizedEvent) || messageEntries.length > 0;
+
+  if (!shouldProcessIncoming || messageEntries.length === 0) {
     return new Response(JSON.stringify({ ok: true, skipped: true, event }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -256,38 +270,53 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     });
   }
 
+  const processedInboxIds: string[] = [];
+
+  for (const entry of messageEntries) {
+    const inboxId = await processEvolutionIncomingMessage(supabase, instance, entry, instanceName);
+    if (inboxId) {
+      processedInboxIds.push(inboxId);
+    }
+  }
+
+  return new Response(
+    JSON.stringify({ ok: true, processed: processedInboxIds.length, inbox_ids: processedInboxIds }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+async function processEvolutionIncomingMessage(
+  supabase: any,
+  instance: any,
+  messageData: any,
+  instanceName: string,
+) {
   const message = messageData.message || messageData;
   const key = messageData.key || {};
 
-  // DEBUG: Log full messageData structure to understand LID format
-  console.log("[wa-inbox-webhook] Full messageData keys:", JSON.stringify(Object.keys(messageData)));
+  console.log("[wa-inbox-webhook] Full messageData keys:", JSON.stringify(Object.keys(messageData || {})));
   console.log("[wa-inbox-webhook] key:", JSON.stringify(key));
   if (messageData.pushName) console.log("[wa-inbox-webhook] pushName:", messageData.pushName);
   if (messageData.participant) console.log("[wa-inbox-webhook] participant:", messageData.participant);
   if (messageData.messageTimestamp) console.log("[wa-inbox-webhook] timestamp:", messageData.messageTimestamp);
 
   if (key.fromMe) {
-    return new Response(JSON.stringify({ ok: true, skipped: "outgoing" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return null;
   }
 
   const remoteJid = key.remoteJid || "";
   const remoteJidAlt = key.remoteJidAlt || "";
 
-  // contact phone used for DB/history; replyTarget used to send back via Evolution
   let phone = "";
   let replyTarget = "";
 
   const toDigits = (value: string) => value.replace(/\D/g, "");
 
   if (remoteJid.endsWith("@lid")) {
-    // Prefer real phone when Evolution provides remoteJidAlt
     if (remoteJidAlt.endsWith("@s.whatsapp.net")) {
       phone = toDigits(remoteJidAlt);
-      replyTarget = phone; // send using real phone number
+      replyTarget = phone;
     } else {
-      // Fallback: keep LID JID as destination (required for some LID-only contacts)
       phone = toDigits(remoteJid.replace("@lid", ""));
       replyTarget = remoteJid;
       console.warn(`[wa-inbox-webhook] LID without remoteJidAlt for ${remoteJid}; using LID as reply target`);
@@ -297,7 +326,6 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     replyTarget = phone;
   }
 
-  // Final fallback to avoid empty destination
   if (!phone) phone = toDigits(remoteJidAlt || remoteJid);
   if (!replyTarget) replyTarget = phone;
 
@@ -313,17 +341,16 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
   } else if (message.extendedTextMessage?.text) {
     content = message.extendedTextMessage.text;
   } else if (message.buttonsResponseMessage) {
-    // Interactive button response
     messageType = "text";
-    content = message.buttonsResponseMessage.selectedDisplayText || 
-              message.buttonsResponseMessage.selectedButtonId || "";
+    content = message.buttonsResponseMessage.selectedDisplayText ||
+      message.buttonsResponseMessage.selectedButtonId || "";
   } else if (message.listResponseMessage) {
     messageType = "text";
     content = message.listResponseMessage.title || message.listResponseMessage.singleSelectReply?.selectedRowId || "";
   } else if (message.templateButtonReplyMessage) {
     messageType = "text";
-    content = message.templateButtonReplyMessage.selectedDisplayText || 
-              message.templateButtonReplyMessage.selectedId || "";
+    content = message.templateButtonReplyMessage.selectedDisplayText ||
+      message.templateButtonReplyMessage.selectedId || "";
   } else if (message.imageMessage) {
     messageType = "image";
     content = buildImageContent(message.imageMessage.caption || "");
@@ -336,7 +363,6 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     messageType = "audio";
     mediaUrl = message.audioMessage.url || null;
     console.log(`[wa-inbox-webhook] Audio message detected from Evolution. mediaUrl: ${mediaUrl}, mimetype: ${message.audioMessage.mimetype}`);
-    // Transcribe audio to text
     try {
       const transcription = await transcribeAudioFromEvolution(supabase, instance, messageData, instanceName);
       if (transcription) {
@@ -359,60 +385,52 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     messageType = "sticker";
   }
 
-    // ===== Extract UTMs/fbclid from Evolution message text =====
-    const utmParams = extractUTMParams(content, null);
+  const utmParams = extractUTMParams(content, null);
 
-    const { data: contact } = await supabase
+  const { data: contact } = await supabase
+    .from("wa_contacts")
+    .select("id")
+    .eq("user_id", instance.user_id)
+    .eq("phone", phone)
+    .limit(1)
+    .maybeSingle();
+
+  if (contact?.id && Object.keys(utmParams).length > 0) {
+    await supabase
       .from("wa_contacts")
-      .select("id")
-      .eq("user_id", instance.user_id)
-      .eq("phone", phone)
-      .limit(1)
-      .maybeSingle();
+      .update(utmParams)
+      .eq("id", contact.id);
+    console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
+  }
 
-    // Update contact with UTM data if available
-    if (contact?.id && Object.keys(utmParams).length > 0) {
-      await supabase
-        .from("wa_contacts")
-        .update(utmParams)
-        .eq("id", contact.id);
-      console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
-    }
+  const { data: inboxMsg, error: insertErr } = await supabase
+    .from("wa_inbox")
+    .insert({
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      contact_id: contact?.id || null,
+      phone,
+      contact_name: pushName,
+      direction: "incoming",
+      message_type: messageType,
+      content,
+      media_url: mediaUrl,
+      remote_message_id: remoteMessageId,
+      is_read: false,
+    })
+    .select("id")
+    .single();
 
-    const { data: inboxMsg, error: insertErr } = await supabase
-      .from("wa_inbox")
-      .insert({
-        user_id: instance.user_id,
-        instance_id: instance.id,
-        contact_id: contact?.id || null,
-        phone,
-        contact_name: pushName,
-        direction: "incoming",
-        message_type: messageType,
-        content,
-        media_url: mediaUrl,
-        remote_message_id: remoteMessageId,
-        is_read: false,
-      })
-      .select("id")
-      .single();
+  if (insertErr) {
+    console.error("Insert inbox error:", insertErr);
+    return null;
+  }
 
-    if (insertErr) {
-      console.error("Insert inbox error:", insertErr);
-      return new Response(JSON.stringify({ error: "Failed to save message" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+  if (content && content.trim().length > 0) {
+    await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget);
+  }
 
-    if (content && content.trim().length > 0) {
-      await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget);
-    }
-
-  return new Response(
-    JSON.stringify({ ok: true, inbox_id: inboxMsg.id }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
+  return inboxMsg.id;
 }
 
 async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string, messageData: any) {
@@ -490,6 +508,28 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
 
 function normalizePhone(value: string | null | undefined): string {
   return (value || "").replace(/\D/g, "");
+}
+
+const EVOLUTION_INCOMING_EVENTS = new Set([
+  "messages.upsert",
+  "messages.set",
+  "message.upsert",
+  "message.set",
+  "messages.insert",
+]);
+
+function extractEvolutionMessageEntries(messageData: any): any[] {
+  if (!messageData) return [];
+
+  if (Array.isArray(messageData)) {
+    return messageData.filter(Boolean);
+  }
+
+  if (Array.isArray(messageData.messages)) {
+    return messageData.messages.filter(Boolean);
+  }
+
+  return [messageData];
 }
 
 function buildImageContent(caption: string | null | undefined): string {
