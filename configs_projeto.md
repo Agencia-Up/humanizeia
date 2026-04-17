@@ -84,3 +84,10 @@ Ao assumir este projeto:
 ---
 *Este documento é a "medula espinhal" do projeto. Mantenha-o sempre atualizado para o próximo agente.*
 
+
+### 4.4 Integração BNDV (Estoque Automotivo)
+- A guia **/integrations -> Outras Integrações** agora possui a integração **BNDV Estoque** para uso por cliente.
+- O token do cliente é salvo em `platform_integrations` com `platform = 'bndv'`.
+- **Edge Function nova:** `bndv-stock-search`.
+- Objetivo: permitir consulta segura de estoque/preço/versão por usuário, sem expor a chave no frontend.
+- O fluxo previsto para o Pedro é consumir essa Edge Function usando as credenciais salvas do próprio cliente.

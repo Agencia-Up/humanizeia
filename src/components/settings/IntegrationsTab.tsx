@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,9 +17,27 @@ interface IntegrationConfig {
   fields: { key: string; label: string; placeholder: string; type?: string }[];
   helpUrl?: string;
   helpText?: string;
+  helpSteps?: string[];
 }
 
 const INTEGRATIONS: IntegrationConfig[] = [
+  {
+    id: 'bndv',
+    name: 'BNDV Estoque',
+    icon: '🚗',
+    description: 'Permite ao Pedro consultar estoque, preço e versão dos veículos',
+    fields: [
+      { key: 'api_token', label: 'Bearer Token', placeholder: 'Cole aqui o token do BNDV...', type: 'password' },
+    ],
+    helpText:
+      'A integração é individual por cliente. O token salvo aqui será usado somente na conta logada para consultar o estoque automotivo desse cliente.',
+    helpSteps: [
+      'Acesse o painel ou suporte do BNDV e solicite o Bearer Token da API GraphQL do estoque.',
+      'Se existir um menu de API / Integrações / Tokens no painel, gere a chave por lá.',
+      'Cole o token abaixo e clique em "Testar Conexão".',
+      'Se o teste passar, clique em "Conectar e Salvar" para liberar a consulta de estoque no agente.',
+    ],
+  },
   {
     id: 'ga4',
     name: 'Google Analytics 4',
@@ -139,7 +157,7 @@ export function IntegrationsTab() {
   }, [fetchIntegrations]);
 
   const getStatus = (platformId: string) => {
-    return savedIntegrations.find((i) => i.platform === platformId && i.is_active);
+    return savedIntegrations.find((item) => item.platform === platformId && item.is_active);
   };
 
   const handleFieldChange = (platformId: string, fieldKey: string, value: string) => {
@@ -151,11 +169,11 @@ export function IntegrationsTab() {
 
   const handleTest = async (integration: IntegrationConfig) => {
     const credentials = formData[integration.id] || {};
-    const missingFields = integration.fields.filter((f) => !credentials[f.key]?.trim());
+    const missingFields = integration.fields.filter((field) => !credentials[field.key]?.trim());
     if (missingFields.length > 0) {
       toast({
         title: 'Campos obrigatórios',
-        description: `Preencha: ${missingFields.map((f) => f.label).join(', ')}`,
+        description: `Preencha: ${missingFields.map((field) => field.label).join(', ')}`,
         variant: 'destructive',
       });
       return;
@@ -185,19 +203,14 @@ export function IntegrationsTab() {
 
   const handleSave = async (integration: IntegrationConfig) => {
     const credentials = formData[integration.id] || {};
-    const missingFields = integration.fields
-      .filter((f) => !f.key.includes('opcional') && !f.label.includes('opcional'))
-      .filter((f) => !credentials[f.key]?.trim());
-    
-    // Filter only truly required fields (exclude ones with 'opcional' in label)
     const requiredMissing = integration.fields
-      .filter((f) => !f.label.toLowerCase().includes('opcional'))
-      .filter((f) => !credentials[f.key]?.trim());
+      .filter((field) => !field.label.toLowerCase().includes('opcional'))
+      .filter((field) => !credentials[field.key]?.trim());
 
     if (requiredMissing.length > 0) {
       toast({
         title: 'Campos obrigatórios',
-        description: `Preencha: ${requiredMissing.map((f) => f.label).join(', ')}`,
+        description: `Preencha: ${requiredMissing.map((field) => field.label).join(', ')}`,
         variant: 'destructive',
       });
       return;
@@ -265,9 +278,8 @@ export function IntegrationsTab() {
         const fields = formData[integration.id] || {};
 
         return (
-          <Card key={integration.id} className="border-border/50 bg-card/50 backdrop-blur-sm overflow-hidden">
+          <Card key={integration.id} className="overflow-hidden border-border/50 bg-card/50 backdrop-blur-sm">
             <CardContent className="p-0">
-              {/* Header */}
               <div className="flex items-center justify-between p-4">
                 <div className="flex items-center gap-3">
                   <div className="text-2xl">{integration.icon}</div>
@@ -279,19 +291,19 @@ export function IntegrationsTab() {
                 <div className="flex items-center gap-2">
                   {status ? (
                     <>
-                      <Badge className="bg-success/20 text-success border-success/30">
-                        <CheckCircle className="h-3 w-3 mr-1" />
+                      <Badge className="border-success/30 bg-success/20 text-success">
+                        <CheckCircle className="mr-1 h-3 w-3" />
                         Conectado
                       </Badge>
                       <Button variant="outline" size="sm" onClick={() => handleDisconnect(integration)}>
-                        <LogOut className="h-3 w-3 mr-1" />
+                        <LogOut className="mr-1 h-3 w-3" />
                         Desconectar
                       </Button>
                     </>
                   ) : (
                     <>
                       <Badge variant="secondary">
-                        <XCircle className="h-3 w-3 mr-1" />
+                        <XCircle className="mr-1 h-3 w-3" />
                         Não conectado
                       </Badge>
                       <Button
@@ -300,7 +312,7 @@ export function IntegrationsTab() {
                         className={isExpanded ? '' : 'gradient-primary'}
                         onClick={() => setExpandedId(isExpanded ? null : integration.id)}
                       >
-                        {isExpanded ? <ChevronUp className="h-3 w-3 mr-1" /> : <ChevronDown className="h-3 w-3 mr-1" />}
+                        {isExpanded ? <ChevronUp className="mr-1 h-3 w-3" /> : <ChevronDown className="mr-1 h-3 w-3" />}
                         {isExpanded ? 'Fechar' : 'Conectar'}
                       </Button>
                     </>
@@ -308,9 +320,8 @@ export function IntegrationsTab() {
                 </div>
               </div>
 
-              {/* Expanded Form */}
               {isExpanded && !status && (
-                <div className="border-t border-border/50 p-4 space-y-4 bg-muted/20">
+                <div className="space-y-4 border-t border-border/50 bg-muted/20 p-4">
                   {integration.fields.map((field) => (
                     <div key={field.key} className="space-y-1.5">
                       <Label htmlFor={`${integration.id}-${field.key}`} className="text-sm">
@@ -321,36 +332,39 @@ export function IntegrationsTab() {
                         type={field.type || 'text'}
                         placeholder={field.placeholder}
                         value={fields[field.key] || ''}
-                        onChange={(e) => handleFieldChange(integration.id, field.key, e.target.value)}
+                        onChange={(event) => handleFieldChange(integration.id, field.key, event.target.value)}
                       />
                     </div>
                   ))}
 
                   {integration.helpText && (
-                    <p className="text-xs text-muted-foreground">{integration.helpText}</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">{integration.helpText}</p>
+                  )}
+
+                  {integration.helpSteps && integration.helpSteps.length > 0 && (
+                    <div className="rounded-lg border border-border/50 bg-background/40 p-3">
+                      <p className="text-xs font-medium text-foreground">Como conseguir a chave</p>
+                      <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                        {integration.helpSteps.map((step, index) => (
+                          <li key={`${integration.id}-step-${index}`}>
+                            {index + 1}. {step}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
 
                   <div className="flex flex-wrap gap-2 pt-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleTest(integration)}
-                      disabled={testing === integration.id}
-                    >
-                      {testing === integration.id && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                    <Button size="sm" variant="outline" onClick={() => handleTest(integration)} disabled={testing === integration.id}>
+                      {testing === integration.id && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                       Testar Conexão
                     </Button>
-                    <Button
-                      size="sm"
-                      className="gradient-primary"
-                      onClick={() => handleSave(integration)}
-                      disabled={saving === integration.id}
-                    >
-                      {saving === integration.id && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                    <Button size="sm" className="gradient-primary" onClick={() => handleSave(integration)} disabled={saving === integration.id}>
+                      {saving === integration.id && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                       Conectar e Salvar
                     </Button>
                     {integration.helpUrl && (
-                      <Button variant="link" size="sm" className="p-0 h-auto" asChild>
+                      <Button variant="link" size="sm" className="h-auto p-0" asChild>
                         <a href={integration.helpUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs">
                           Ver documentação <ExternalLink className="h-3 w-3" />
                         </a>
