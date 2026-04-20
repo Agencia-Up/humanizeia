@@ -382,7 +382,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const webhookUrl = `${supabaseUrl}/functions/v1/wa-inbox-webhook`;
+  const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
   try {
     let webhookRes = await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
       method: 'POST',

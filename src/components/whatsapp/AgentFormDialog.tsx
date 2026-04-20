@@ -338,6 +338,14 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
     if (instId) {
         setSelectedInstanceIds([instId]); // Restringe a apenas uma
+        try {
+          await supabase.functions.invoke('sync-evolution-webhook', {
+            body: { instance_id: instId, user_id: user?.id }
+          });
+          console.log('[Connection] Webhook sincronizado automaticamente:', instId);
+        } catch (syncErr) {
+          console.warn('[Connection] Falha ao sincronizar webhook automaticamente:', syncErr);
+        }
     }
     toast({ title: "WhatsApp Conectado!", description: "Instância está online e pronta.", className: "bg-green-600 text-white" });
   };
