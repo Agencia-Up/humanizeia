@@ -24,6 +24,55 @@ function buildInstanceHeaders(instanceToken: string, adminToken?: string) {
   };
 }
 
+function extractQrCodeCandidate(value: unknown): string | null {
+  if (!value) return null;
+
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    if (!normalized) return null;
+    if (normalized.startsWith('data:image/')) return normalized;
+    if (normalized.length > 200 && /^[A-Za-z0-9+/=\r\n]+$/.test(normalized)) return normalized;
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractQrCodeCandidate(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const priorityKeys = [
+      'base64',
+      'qrcode',
+      'qrCode',
+      'qr_code',
+      'qr',
+      'code',
+      'pairingCode',
+      'pairing_code',
+      'connectionKey',
+    ];
+
+    for (const key of priorityKeys) {
+      if (key in record) {
+        const found = extractQrCodeCandidate(record[key]);
+        if (found) return found;
+      }
+    }
+
+    for (const nested of Object.values(record)) {
+      const found = extractQrCodeCandidate(nested);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -226,12 +275,9 @@ Deno.serve(async (req) => {
 
       try {
         const qrData = JSON.parse(qrText);
-        qrCode =
-          qrData?.base64 ||
-          qrData?.qrcode?.base64 ||
-          qrData?.qrcode ||
-          qrData?.instance?.qrcode?.base64 ||
-          qrCode;
+        console.log(`[get-evolution-qrcode] ${attempt.label} top-level keys: ${Object.keys(qrData || {}).join(', ')}`);
+        console.log(`[get-evolution-qrcode] ${attempt.label} instance keys: ${Object.keys(qrData?.instance || {}).join(', ')}`);
+        qrCode = extractQrCodeCandidate(qrData) || qrCode;
         connected =
           qrData?.state === 'open' ||
           qrData?.instance?.state === 'open' ||

@@ -388,9 +388,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         setQrCode(finalQrCode);
         startPolling(slug);
       } else {
+        startPolling(slug);
         toast({
             title: "Instância criada, mas o QR Code demorou",
-            description: "Verifique os logs do Supabase (create-evolution-instance) para ver a resposta da Uazapi.",
+            description: "A tela continuará tentando buscar o QR automaticamente por alguns segundos.",
             variant: "default"
         });
       }
