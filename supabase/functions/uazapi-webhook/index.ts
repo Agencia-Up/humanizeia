@@ -50,14 +50,22 @@ serve(async (req) => {
         msgObj = payload.messages[0]
       } else if (payload.message) {
         msgObj = payload.message
+      } else if (payload.data && payload.data.message) {
+        msgObj = payload.data.message
+      } else if (payload.chat && payload.chat.messages) {
+        msgObj = Array.isArray(payload.chat.messages) ? payload.chat.messages[0] : payload.chat.messages
+      } else if (payload.data && Array.isArray(payload.data) && payload.data.length > 0) {
+        msgObj = payload.data[0]
+      }
+        msgObj = payload.message
       }
       
-      if (!msgObj) return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
-      if (msgObj.fromMe === true) return new Response('Ignored fromMe', { headers: corsHeaders })
+      if (!msgObj) { console.log('[Webhook] msgObj is null! payload keys:', Object.keys(payload), 'chat:', !!payload.chat, 'messages:', !!payload.messages, 'message:', !!payload.message); return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders }); }
+      if (msgObj.fromMe === true) { console.log('[Webhook] Ignored fromMe'); return new Response('Ignored fromMe', { headers: corsHeaders }); }
       
       const remoteJid = msgObj.chatId || msgObj.chatid || msgObj.from || chat.id || chat.chatId || '';
       if (!remoteJid) { console.log('[Webhook] No remoteJid'); return new Response('No remoteJid', { headers: corsHeaders }); }
-      if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return new Response('Ignored group/broadcast', { headers: corsHeaders });
+      if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) { console.log('[Webhook] Ignored group/broadcast', remoteJid); return new Response('Ignored group/broadcast', { headers: corsHeaders }); }
 
       const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim();
       const pushName = msgObj.senderName || chat.name || msgObj.notifyName || msgObj.pushName || 'Lead';
