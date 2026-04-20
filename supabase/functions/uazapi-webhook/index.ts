@@ -127,7 +127,7 @@ serve(async (req) => {
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
 
   } catch (error: any) {
-    console.error("[Webhook] Erro CrÃ­tico:", error)
+    console.error("[Webhook] Erro critico:", error)
     return new Response(JSON.stringify({ error: error.message }), { headers: corsHeaders, status: 500 })
   }
 })
@@ -182,7 +182,34 @@ function bndvMatchesQuery(vehicle: any, query?: string | null) {
   return indexed.includes(normalizeBndvText(query));
 }
 
-async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
+function parseBndvPictures(rawPictureJs: any) {
+  if (!rawPictureJs) return [];
+
+  let parsed: any = rawPictureJs;
+  if (typeof rawPictureJs === 'string') {
+    try {
+      parsed = JSON.parse(rawPictureJs);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .map((item: any) => ({
+      url: String(item?.Link || item?.link || '').trim(),
+      principal: String(item?.Principal || item?.principal || '').toLowerCase() === 'true',
+    }))
+    .filter((item: any) => !!item.url)
+    .sort((left: any, right: any) => Number(right.principal) - Number(left.principal));
+}
+
+function buildBndvVehicleLabel(vehicle: any) {
+  return [vehicle?.markName, vehicle?.modelName, vehicle?.versionName].filter(Boolean).join(' ');
+}
+
+async function fetchBndvVehicles(supabase: any, userId: string, filters: any) {
   const BNDV_API_URL = 'https://api-estoque.azurewebsites.net/graphql';
 
   const { data: integration, error: integrationError } = await supabase
@@ -197,14 +224,14 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
   }
 
   if (!integration?.is_active) {
-    return { success: false, error: 'A integraÃ§Ã£o BNDV nÃ£o estÃ¡ conectada para este cliente.' };
+    return { success: false, error: 'A integracao BNDV nao esta conectada para este cliente.' };
   }
 
   const credentials = parseStoredIntegrationCredentials(integration.api_key_encrypted);
   const token = String(credentials?.api_token || '').trim();
 
   if (!token) {
-    return { success: false, error: 'O token do BNDV nÃ£o foi encontrado na integraÃ§Ã£o salva.' };
+    return { success: false, error: 'O token do BNDV nao foi encontrado na integracao salva.' };
   }
 
   const response = await fetch(BNDV_API_URL, {
@@ -226,6 +253,7 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
             fuelName
             transmissionName
             versionName
+            pictureJs
           }
         }
       `,
@@ -235,10 +263,7 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
   const payload = await response.json().catch(() => null);
 
   if (!response.ok) {
-    return {
-      success: false,
-      error: payload?.errors?.[0]?.message || payload?.message || `BNDV retornou status ${response.status}.`,
-    };
+    return { success: false, error: payload?.errors?.[0]?.message || payload?.message || `BNDV retornou status ${response.status}.` };
   }
 
   if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
@@ -288,7 +313,23 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
       return Number(right?.year || 0) - Number(left?.year || 0);
     });
 
-  const capped = filtered.slice(0, Number(limite || 8)).map((vehicle: any) => ({
+  return {
+    success: true,
+    total: filtered.length,
+    items: filtered,
+  };
+}
+
+async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
+  const result = await fetchBndvVehicles(supabase, userId, filters);
+  if (!result.success) return result;
+
+  const limite = filters?.limite;
+  const capped = (result.items || []).slice(0, Number(limite || 8)).map((vehicle: any) => {
+    const pictures = parseBndvPictures(vehicle?.pictureJs);
+    const principalImage = pictures.find((item: any) => item.principal)?.url || pictures[0]?.url || null;
+
+    return {
     marca: vehicle?.markName || null,
     modelo: vehicle?.modelName || null,
     versao: vehicle?.versionName || null,
@@ -298,13 +339,133 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     cor: vehicle?.color || null,
     combustivel: vehicle?.fuelName || null,
     cambio: vehicle?.transmissionName || null,
-    label: [vehicle?.markName, vehicle?.modelName, vehicle?.versionName].filter(Boolean).join(' '),
-  }));
+      label: buildBndvVehicleLabel(vehicle),
+      principal_image: principalImage,
+      images_count: pictures.length,
+    };
+  });
 
   return {
     success: true,
-    total: filtered.length,
+    total: result.total,
     items: capped,
+  };
+}
+
+async function sendUazapiImageMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption?: string) {
+  const attempts = [
+    {
+      label: 'send-image-image',
+      url: `${baseUrl}/send/image`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: { number: phoneNumber, image: imageUrl, caption: caption || '' }
+    },
+    {
+      label: 'send-image-url',
+      url: `${baseUrl}/send/image`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: { number: phoneNumber, url: imageUrl, caption: caption || '' }
+    },
+    {
+      label: 'send-image-media',
+      url: `${baseUrl}/send/image`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: { number: phoneNumber, media: imageUrl, mediatype: 'image', caption: caption || '' }
+    },
+    {
+      label: 'send-image-instance',
+      url: `${baseUrl}/send/image?instance=${instanceName}`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+      body: { number: phoneNumber, image: imageUrl, caption: caption || '' }
+    },
+    {
+      label: 'send-image-remotejid',
+      url: `${baseUrl}/send/image`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: { remoteJid, image: imageUrl, caption: caption || '' }
+    }
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      console.log(`[Webhook] Tentando envio de imagem UAZAPI via ${attempt.label}`);
+      const res = await fetch(attempt.url, {
+        method: 'POST',
+        headers: attempt.headers as any,
+        body: JSON.stringify(attempt.body),
+      });
+      const responseText = await res.text().catch(() => '');
+      console.log(`[Webhook] UAZAPI ${attempt.label} -> ${res.status} | ${responseText.substring(0, 300)}`);
+      if (res.ok) {
+        return { ok: true, label: attempt.label, status: res.status, body: responseText };
+      }
+    } catch (err) {
+      console.error(`[Webhook] Falha no envio de imagem UAZAPI (${attempt.label}):`, err);
+    }
+  }
+
+  return { ok: false };
+}
+
+async function enviarFotosBndv(supabase: any, userId: string, filters: any, delivery: any) {
+  const result = await fetchBndvVehicles(supabase, userId, filters);
+  if (!result.success) return result;
+
+  const vehicle = (result.items || []).find((item: any) => parseBndvPictures(item?.pictureJs).length > 0);
+  if (!vehicle) {
+    return {
+      success: false,
+      error: 'Nao encontrei fotos disponiveis para esse veiculo no estoque atual.',
+    };
+  }
+
+  const pictures = parseBndvPictures(vehicle.pictureJs);
+  const requestedCount = Math.max(1, Math.min(Number(filters?.quantidade_fotos || 3), 5));
+  const selectedPictures = pictures.slice(0, requestedCount);
+
+  if (selectedPictures.length === 0) {
+    return {
+      success: false,
+      error: 'Esse veiculo nao possui fotos disponiveis para envio agora.',
+    };
+  }
+
+  let sentCount = 0;
+  for (let index = 0; index < selectedPictures.length; index++) {
+    const picture = selectedPictures[index];
+    const caption = index === 0
+      ? `${buildBndvVehicleLabel(vehicle)}${vehicle?.year ? ` | ${vehicle.year}` : ''}${vehicle?.saleValue ? ` | R$ ${Number(vehicle.saleValue).toLocaleString('pt-BR')}` : ''}`
+      : '';
+    const sendResult = await sendUazapiImageMessage(
+      delivery.baseUrl,
+      delivery.instKey,
+      delivery.instanceName,
+      delivery.phoneNumber,
+      delivery.remoteJid,
+      picture.url,
+      caption
+    );
+
+    if (!sendResult.ok) {
+      return {
+        success: false,
+        error: 'Encontrei as fotos, mas nao consegui envia-las no WhatsApp pela Uazapi.',
+        vehicle: buildBndvVehicleLabel(vehicle),
+        attempted: selectedPictures.length,
+        sent: sentCount,
+      };
+    }
+
+    sentCount += 1;
+  }
+
+  return {
+    success: true,
+    sent: sentCount,
+    vehicle: buildBndvVehicleLabel(vehicle),
+    year: vehicle?.year || null,
+    price: vehicle?.saleValue || null,
+    principal_image: selectedPictures[0]?.url || null,
   };
 }
 
@@ -484,7 +645,7 @@ async function fetchMediaAsBase64(mediaUrl: string, instKey: string) {
     }
     return btoa(binary);
   } catch (err) {
-    console.error('[Webhook] Falha ao buscar mÃ­dia por URL:', err);
+    console.error('[Webhook] Falha ao buscar midia por URL:', err);
     return '';
   }
 }
@@ -581,12 +742,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "atualizar_etapa_crm",
-        description: "Atualiza o Kanban/CRM conforme a evoluÃ§Ã£o da conversa. Chame esta funÃ§Ã£o secretamente para categorizar o lead. Valores vÃ¡lidos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando nÃ£o quer comprar). OBS IMPORTANTE: Ao chamar esta funÃ§Ã£o para status 'interessado' ou 'encerrado', VOCÃŠ DEVE TAMBÃ‰M gerar uma mensagem normal para o cliente. SÃ³ encerre a conversa se for status 'qualificado'.",
+        description: "Atualiza o Kanban/CRM conforme a evolucao da conversa. Chame esta funcao secretamente para categorizar o lead. Valores validos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando nao quer comprar). OBS IMPORTANTE: Ao chamar esta funcao para status 'interessado' ou 'encerrado', VOCE DEVE TAMBEM gerar uma mensagem normal para o cliente. So encerre a conversa se for status 'qualificado'.",
         parameters: {
           type: "object",
           properties: {
             status: { type: "string", enum: ["interessado", "qualificado", "encerrado"], description: "A etapa atual do cliente." },
-            resumo: { type: "string", description: "O que o cliente deseja e as informaÃ§Ãµes que vocÃª coletou dele atÃ© o momento. Seja breve." }
+            resumo: { type: "string", description: "O que o cliente deseja e as informacoes que voce coletou dele ate o momento. Seja breve." }
           },
           required: ["status", "resumo"]
         }
@@ -596,22 +757,43 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "consultar_estoque_bndv",
-        description: "Consulta o estoque real de veÃ­culos do cliente integrado ao BNDV. Use quando o cliente perguntar por carro disponÃ­vel, preÃ§o, ano, versÃ£o, cÃ¢mbio, combustÃ­vel, cor ou faixa de valor. Nunca invente estoque sem usar esta ferramenta.",
+        description: "Consulta o estoque real de veiculos do cliente integrado ao BNDV. Use quando o cliente perguntar por carro disponivel, preco, ano, versao, cambio, combustivel, cor ou faixa de valor. Nunca invente estoque sem usar esta ferramenta.",
         parameters: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Busca livre do cliente, como 'nivus automÃ¡tico atÃ© 110 mil'." },
-            marca: { type: "string", description: "Marca do veÃ­culo, ex: Chevrolet, Jeep, Hyundai." },
-            modelo: { type: "string", description: "Modelo do veÃ­culo, ex: Onix, Renegade, Creta." },
-            versao: { type: "string", description: "VersÃ£o ou detalhe do veÃ­culo, ex: LTZ, EX, Touring." },
-            combustivel: { type: "string", description: "CombustÃ­vel desejado, ex: Flex, Diesel." },
-            cambio: { type: "string", description: "Tipo de cÃ¢mbio, ex: AutomÃ¡tico, Manual." },
+            query: { type: "string", description: "Busca livre do cliente, como 'nivus automatico ate 110 mil'." },
+            marca: { type: "string", description: "Marca do veiculo, ex: Chevrolet, Jeep, Hyundai." },
+            modelo: { type: "string", description: "Modelo do veiculo, ex: Onix, Renegade, Creta." },
+            versao: { type: "string", description: "Versao ou detalhe do veiculo, ex: LTZ, EX, Touring." },
+            combustivel: { type: "string", description: "Combustivel desejado, ex: Flex, Diesel." },
+            cambio: { type: "string", description: "Tipo de cambio, ex: Automatico, Manual." },
             cor: { type: "string", description: "Cor desejada, se o cliente pedir." },
-            ano_min: { type: "number", description: "Ano mÃ­nimo desejado." },
-            ano_max: { type: "number", description: "Ano mÃ¡ximo desejado." },
-            preco_max: { type: "number", description: "PreÃ§o mÃ¡ximo desejado pelo cliente." },
-            km_max: { type: "number", description: "Quilometragem mÃ¡xima desejada pelo cliente." },
-            limite: { type: "number", description: "Quantidade mÃ¡xima de veÃ­culos para retornar." }
+            ano_min: { type: "number", description: "Ano minimo desejado." },
+            ano_max: { type: "number", description: "Ano maximo desejado." },
+            preco_max: { type: "number", description: "Preco maximo desejado pelo cliente." },
+            km_max: { type: "number", description: "Quilometragem maxima desejada pelo cliente." },
+            limite: { type: "number", description: "Quantidade maxima de veiculos para retornar." }
+          },
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "enviar_fotos_bndv",
+        description: "Envia fotos reais de um veiculo do estoque BNDV pelo WhatsApp. Use quando o cliente pedir fotos, imagens, quiser ver o carro ou disser para mandar fotos.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Busca livre do cliente, como 'onix activ 2019'." },
+            marca: { type: "string", description: "Marca do veiculo." },
+            modelo: { type: "string", description: "Modelo do veiculo." },
+            versao: { type: "string", description: "Versao do veiculo." },
+            ano_min: { type: "number", description: "Ano minimo desejado." },
+            ano_max: { type: "number", description: "Ano maximo desejado." },
+            preco_max: { type: "number", description: "Preco maximo desejado." },
+            quantidade_fotos: { type: "number", description: "Quantidade maxima de fotos para enviar, entre 1 e 5." }
           },
           additionalProperties: false
         }
@@ -655,9 +837,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     let base64 = extractUazapiBase64(rawMsgObj);
     let mediaUrl = extractUazapiMediaUrl(rawMsgObj);
     
-    // Se nÃ£o veio base64, tentar download pela uazapi
+    // Se nao veio base64, tentar download pela uazapi
     if (!base64 && messageId) {
-      console.log(`[Webhook] Baixando mÃ­dia ID: ${messageId}`);
+      console.log(`[Webhook] Baixando midia ID: ${messageId}`);
       try {
         const dRes = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
           method: 'POST',
@@ -675,12 +857,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           console.log(`[Webhook] Download de midia falhou: ${dRes.status}`);
         }
       } catch (err) {
-        console.error('[Webhook] Falha no download de mÃ­dia:', err);
+        console.error('[Webhook] Falha no download de midia:', err);
       }
     }
 
     if (!base64 && mediaUrl) {
-      console.log('[Webhook] Tentando buscar mÃ­dia pela URL retornada');
+      console.log('[Webhook] Tentando buscar midia pela URL retornada');
       base64 = await fetchMediaAsBase64(mediaUrl, instKey);
       console.log(`[Webhook] Base64 via URL: ${base64 ? 'sim' : 'nao'}`);
     }
@@ -708,7 +890,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           if (wData.text) {
              finalUserText = wData.text;
              userMessageContentForOpenAi = finalUserText;
-             console.log('[Webhook] TranscriÃ§Ã£o (Whisper):', finalUserText);
+             console.log('[Webhook] Transcricao (Whisper):', finalUserText);
           } else {
              finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
              userMessageContentForOpenAi = finalUserText;
@@ -741,20 +923,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.log('[Webhook] Empty text after media processing, applying generic fallback');
   }
 
-  console.log(`[Webhook] Salvando histÃ³rico e chamando OpenAI para: ${finalUserText}`);
+  console.log(`[Webhook] Salvando historico e chamando OpenAI para: ${finalUserText}`);
 
-  // Salvar histÃ³rico
+  // Salvar historico
   await supabase.from('wa_chat_history').insert({
     user_id: agent.user_id,
     agent_id: agent.id,
     instance_id: instanceName,
     remote_jid: remoteJid,
     role: 'user',
-    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[MÃ­dia/Imagem]',
+    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[Midia/Imagem]',
     lead_name: pushName
   })
 
-  // Buscar histÃ³rico
+  // Buscar historico
   const { data: history } = await supabase.from('wa_chat_history')
     .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(10)
 
@@ -785,20 +967,23 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   } catch (err: any) {}
 
-  let systemPrompt = agent.system_prompt || 'VocÃª Ã© um assistente prestativo.'
+  let systemPrompt = agent.system_prompt || 'Voce e um assistente prestativo.'
   if (agent.company_name) systemPrompt += `\n\nEmpresa: ${agent.company_name}`
   if (knowledgeContext) systemPrompt += `\n\n## BASE DE CONHECIMENTO:\n${knowledgeContext}`
   
-  // Regra Anti-AlucinaÃ§Ã£o para Arquivos/MÃ­dia
-  systemPrompt += `\n\n[REGRAS DE CONDUTA ANTE MÃDIAS E ARQUIVOS]
-- Se o usuÃ¡rio enviar uma Imagem (serÃ¡ indicado com "[Imagem recebida]"), anÃ¡lise com precisÃ£o fotogrÃ¡fica se conseguir visualizar o anexo no seu array.
-- Se o usuÃ¡rio enviar Ãudio, a transcriÃ§Ã£o Ã© entregue como texto direto para vocÃª interpretar, lide naturalmente como se tivesse ouvido.
-- Se o usuÃ¡rio anexar Documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCÃŠ NÃƒO PODE ABRIR ARQUIVOS e NÃƒO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visÃ£o ou que nÃ£o consegue abrir documentos, sugerindo que o cliente resuma o que hÃ¡ no arquivo ou envie as dÃºvidas em Ã¡udio/texto. Nunca dÃª respostas genÃ©ricas e nunca ofereÃ§a "mais informaÃ§Ãµes" se nÃ£o sabe o conteÃºdo.`
+  // Regra anti-alucinacao para arquivos/midia
+  systemPrompt += `\n\n[REGRAS DE CONDUTA ANTE MIDIAS E ARQUIVOS]
+- Se o usuario enviar uma imagem (sera indicado com "[Imagem recebida]"), analise com precisao fotografica se conseguir visualizar o anexo no seu array.
+- Se o usuario enviar audio, a transcricao e entregue como texto direto para voce interpretar, lide naturalmente como se tivesse ouvido.
+- Se o usuario anexar documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCE NAO PODE ABRIR ARQUIVOS e NAO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visao ou que nao consegue abrir documentos, sugerindo que o cliente resuma o que ha no arquivo ou envie as duvidas em audio/texto. Nunca de respostas genericas e nunca ofereca "mais informacoes" se nao sabe o conteudo.`
   systemPrompt += `\n\n[CONSULTA DE ESTOQUE BNDV]
-- Quando o cliente pedir preÃ§o, disponibilidade, ano, versÃ£o, cÃ¢mbio, combustÃ­vel, quilometragem ou quiser saber se existe algum veÃ­culo no estoque, use a ferramenta "consultar_estoque_bndv".
-- Nunca invente veÃ­culos, preÃ§os ou disponibilidade sem consultar a ferramenta.
+- Quando o cliente pedir preco, disponibilidade, ano, versao, cambio, combustivel, quilometragem ou quiser saber se existe algum veiculo no estoque, use a ferramenta "consultar_estoque_bndv".
+- Nunca invente veiculos, precos ou disponibilidade sem consultar a ferramenta.
 - Depois de consultar, responda como vendedor consultivo: direto, claro e comercial.
-- Se a ferramenta nÃ£o retornar resultados, diga isso de forma transparente e ofereÃ§a alternativas prÃ³ximas.`
+- Se a ferramenta nao retornar resultados, diga isso de forma transparente e ofereca alternativas proximas.`
+
+  systemPrompt += `\n- Se o cliente pedir fotos, imagens ou quiser ver o carro, use a ferramenta "enviar_fotos_bndv".`
+  systemPrompt += `\n- Depois de enviar as fotos, confirme ao cliente que as imagens foram enviadas no WhatsApp e convide ele a continuar o atendimento.`
 
   let aiModel = agent.model || 'gpt-4o';
   // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
@@ -872,7 +1057,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
               let sellerNum = selectedSeller.whatsapp_number.replace(/\D/g, '');
               if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
 
-              const sellerMsg = `ðŸš¨ *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*\n\nðŸ‘¤ *Nome do Cliente:* ${pushName}\nðŸ“± *Contato:* ${phoneNumber}\nðŸ¤– *Agente IA:* ${agent.name}\n\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n\nðŸ“ *Resumo do Atendimento pela IA:*\n${args.resumo}\n\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n\nðŸ‘‰ *Atender agora:* https://wa.me/${phoneNumber}\n\nâš¡ O cliente estÃ¡ esperando!`;
+              const sellerMsg = `LEAD QUALIFICADO - ATENDIMENTO IMEDIATO\n\nNome do Cliente: ${pushName}\nContato: ${phoneNumber}\nAgente IA: ${agent.name}\n\n--------------------\n\nResumo do Atendimento pela IA:\n${args.resumo}\n\n--------------------\n\nAtender agora: https://wa.me/${phoneNumber}\n\nO cliente esta esperando!`;
               const sellerRes = await fetch(`${baseUrl}/send/text`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'token': instKey },
@@ -923,6 +1108,23 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             content: JSON.stringify(stockResult)
           });
         }
+
+        if (toolCall.function.name === 'enviar_fotos_bndv') {
+          const args = JSON.parse(toolCall.function.arguments || '{}');
+          const photoResult = await enviarFotosBndv(
+            supabase,
+            agent.user_id,
+            args,
+            { baseUrl, instKey, instanceName, phoneNumber, remoteJid }
+          );
+          console.log(`[BNDV] Envio de fotos executado | success: ${photoResult.success} | sent: ${photoResult.sent || 0}`);
+          toolMessages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: toolCall.function.name,
+            content: JSON.stringify(photoResult)
+          });
+        }
       } catch (err) {
         console.error(`[Webhook] Erro ao processar tool ${toolCall.function?.name}:`, err);
         toolMessages.push({
@@ -965,7 +1167,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   console.log(`[Webhook] Resposta final ao cliente: ${aiResponse.substring(0, 200)}`);
 
-  // Salvar no histÃ³rico
+  // Salvar no historico
   await supabase.from('wa_chat_history').insert({
     user_id: agent.user_id, agent_id: agent.id, instance_id: instanceName,
     remote_jid: remoteJid, role: 'assistant', content: aiResponse
@@ -983,3 +1185,4 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
 }
+

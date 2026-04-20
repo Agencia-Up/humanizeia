@@ -23,6 +23,7 @@ interface BndvVehicle {
   fuelName?: string | null;
   transmissionName?: string | null;
   versionName?: string | null;
+  pictureJs?: string | null;
 }
 
 async function getAuthenticatedUserId(req: Request) {
@@ -93,6 +94,25 @@ function sortVehicles(vehicles: BndvVehicle[]) {
     const rightYear = Number(right.year || 0);
     return rightYear - leftYear;
   });
+}
+
+function parseBndvPictures(rawPictureJs?: string | null) {
+  if (!rawPictureJs) return [];
+
+  try {
+    const parsed = JSON.parse(rawPictureJs);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item: any) => ({
+        url: String(item?.Link || item?.link || "").trim(),
+        principal: String(item?.Principal || item?.principal || "").toLowerCase() === "true",
+      }))
+      .filter((item: any) => !!item.url)
+      .sort((left: any, right: any) => Number(right.principal) - Number(left.principal));
+  } catch {
+    return [];
+  }
 }
 
 Deno.serve(async (req) => {
@@ -189,6 +209,7 @@ Deno.serve(async (req) => {
               fuelName
               transmissionName
               versionName
+              pictureJs
             }
           }
         `,
@@ -256,18 +277,25 @@ Deno.serve(async (req) => {
       JSON.stringify({
         success: true,
         total: filtered.length,
-        items: limited.map((vehicle: BndvVehicle) => ({
-          marca: vehicle.markName || null,
-          modelo: vehicle.modelName || null,
-          versao: vehicle.versionName || null,
-          ano: vehicle.year || null,
-          km: vehicle.km || null,
-          preco: vehicle.saleValue || null,
-          cor: vehicle.color || null,
-          combustivel: vehicle.fuelName || null,
-          cambio: vehicle.transmissionName || null,
-          label: [vehicle.markName, vehicle.modelName, vehicle.versionName].filter(Boolean).join(" "),
-        })),
+        items: limited.map((vehicle: BndvVehicle) => {
+          const pictures = parseBndvPictures(vehicle.pictureJs);
+          const principalImage = pictures.find((item: any) => item.principal)?.url || pictures[0]?.url || null;
+
+          return {
+            marca: vehicle.markName || null,
+            modelo: vehicle.modelName || null,
+            versao: vehicle.versionName || null,
+            ano: vehicle.year || null,
+            km: vehicle.km || null,
+            preco: vehicle.saleValue || null,
+            cor: vehicle.color || null,
+            combustivel: vehicle.fuelName || null,
+            cambio: vehicle.transmissionName || null,
+            label: [vehicle.markName, vehicle.modelName, vehicle.versionName].filter(Boolean).join(" "),
+            principal_image: principalImage,
+            images_count: pictures.length,
+          };
+        }),
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
