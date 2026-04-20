@@ -545,6 +545,168 @@ function buildAudioFallbackContent(): string {
   return "[Mensagem de audio recebida sem transcricao]";
 }
 
+function parseStoredIntegrationCredentials(raw: string | null) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return { api_token: raw };
+  }
+}
+
+function normalizeBndvText(value?: string | null) {
+  return String(value || "").toLowerCase().trim();
+}
+
+function bndvIncludes(haystack?: string | null, needle?: string | null) {
+  if (!needle || !String(needle).trim()) return true;
+  return normalizeBndvText(haystack).includes(normalizeBndvText(needle));
+}
+
+function bndvMatchesQuery(vehicle: any, query?: string | null) {
+  if (!query || !String(query).trim()) return true;
+
+  const indexed = [
+    vehicle?.markName,
+    vehicle?.modelName,
+    vehicle?.versionName,
+    vehicle?.color,
+    vehicle?.fuelName,
+    vehicle?.transmissionName,
+    vehicle?.year?.toString?.(),
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return indexed.includes(normalizeBndvText(query));
+}
+
+async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
+  const BNDV_API_URL = "https://api-estoque.azurewebsites.net/graphql";
+
+  const { data: integration, error: integrationError } = await supabase
+    .from("platform_integrations")
+    .select("api_key_encrypted, is_active")
+    .eq("user_id", userId)
+    .eq("platform", "bndv")
+    .maybeSingle();
+
+  if (integrationError) throw integrationError;
+
+  if (!integration?.is_active) {
+    return { success: false, error: "A integraÃ§Ã£o BNDV nÃ£o estÃ¡ conectada para este cliente." };
+  }
+
+  const credentials = parseStoredIntegrationCredentials(integration.api_key_encrypted);
+  const token = String(credentials?.api_token || "").trim();
+
+  if (!token) {
+    return { success: false, error: "O token do BNDV nÃ£o foi encontrado na integraÃ§Ã£o salva." };
+  }
+
+  const response = await fetch(BNDV_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      query: `
+        query BndvVehicles {
+          vehiclesBy {
+            modelName
+            markName
+            year
+            km
+            saleValue
+            color
+            fuelName
+            transmissionName
+            versionName
+          }
+        }
+      `,
+    }),
+  });
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    return {
+      success: false,
+      error: payload?.errors?.[0]?.message || payload?.message || `BNDV retornou status ${response.status}.`,
+    };
+  }
+
+  if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
+    return {
+      success: false,
+      error: payload.errors[0]?.message || "A API do BNDV retornou um erro.",
+    };
+  }
+
+  const {
+    query,
+    marca,
+    modelo,
+    versao,
+    combustivel,
+    cambio,
+    cor,
+    ano_min,
+    ano_max,
+    preco_max,
+    km_max,
+    limite,
+  } = filters || {};
+
+  const items = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
+  const filtered = items
+    .filter((vehicle: any) => {
+      const year = Number(vehicle?.year || 0);
+      const price = Number(vehicle?.saleValue || 0);
+      const mileage = Number(vehicle?.km || 0);
+
+      return (
+        bndvMatchesQuery(vehicle, query) &&
+        bndvIncludes(vehicle?.markName, marca) &&
+        bndvIncludes(vehicle?.modelName, modelo) &&
+        bndvIncludes(vehicle?.versionName, versao) &&
+        bndvIncludes(vehicle?.fuelName, combustivel) &&
+        bndvIncludes(vehicle?.transmissionName, cambio) &&
+        bndvIncludes(vehicle?.color, cor) &&
+        (!ano_min || year >= Number(ano_min)) &&
+        (!ano_max || year <= Number(ano_max)) &&
+        (!preco_max || price <= Number(preco_max)) &&
+        (!km_max || mileage <= Number(km_max))
+      );
+    })
+    .sort((left: any, right: any) => {
+      const leftPrice = Number(left?.saleValue || 0);
+      const rightPrice = Number(right?.saleValue || 0);
+      if (leftPrice !== rightPrice) return leftPrice - rightPrice;
+      return Number(right?.year || 0) - Number(left?.year || 0);
+    });
+
+  const capped = filtered.slice(0, Number(limite || 8)).map((vehicle: any) => ({
+    marca: vehicle?.markName || null,
+    modelo: vehicle?.modelName || null,
+    versao: vehicle?.versionName || null,
+    ano: vehicle?.year || null,
+    km: vehicle?.km || null,
+    preco: vehicle?.saleValue || null,
+    cor: vehicle?.color || null,
+    combustivel: vehicle?.fuelName || null,
+    cambio: vehicle?.transmissionName || null,
+    label: [vehicle?.markName, vehicle?.modelName, vehicle?.versionName].filter(Boolean).join(" "),
+  }));
+
+  return {
+    success: true,
+    total: filtered.length,
+    items: capped,
+  };
+}
+
 function shouldSkipAICategorization(content: string): boolean {
   const normalized = (content || "").trim().toLowerCase();
   return normalized.startsWith("[imagem recebida") ||
@@ -674,12 +836,12 @@ async function categorizeAndAutomate(
   try {
     // ===== Check for opt-in/opt-out button responses first =====
     const lowerContent = content.toLowerCase().trim();
-    const isOptoutButton = lowerContent.includes("não quero mais receber") ||
+    const isOptoutButton = lowerContent.includes("nÃ£o quero mais receber") ||
       lowerContent.includes("optout_stop") ||
-      lowerContent === "❌ não quero mais receber";
+      lowerContent === "âŒ nÃ£o quero mais receber";
     const isOptinButton = lowerContent.includes("quero continuar recebendo") ||
       lowerContent.includes("optout_continue") ||
-      lowerContent === "✅ quero continuar recebendo";
+      lowerContent === "âœ… quero continuar recebendo";
 
     if (isOptoutButton && contactId) {
       // Move to blacklist
@@ -1088,80 +1250,92 @@ async function handleAIAgentReply(
 
     const humanizationRules = `
 
-REGRAS AVANÇADAS DE HUMANIZAÇÃO (PRIORIDADE MÁXIMA):
+REGRAS AVANÃ‡ADAS DE HUMANIZAÃ‡ÃƒO (PRIORIDADE MÃXIMA):
 
-🎭 PERSONA:
-- Você é uma PESSOA REAL, não um chatbot. Nunca diga "sou uma IA" ou "como assistente virtual"
-- Tenha personalidade: seja caloroso, genuíno, autêntico
-- Responda como alguém que realmente se importa com o cliente
+ðŸŽ­ PERSONA:
+- VocÃª Ã© uma PESSOA REAL, nÃ£o um chatbot. Nunca diga "sou uma IA" ou "como assistente virtual"
+- Tenha personalidade: seja caloroso, genuÃ­no, autÃªntico
+- Responda como alguÃ©m que realmente se importa com o cliente
 
-💬 ESTILO DE ESCRITA (WhatsApp real):
+ðŸ’¬ ESTILO DE ESCRITA (WhatsApp real):
 - Escreva EXATAMENTE como uma pessoa digita no WhatsApp: frases curtas, informais, diretas
-- Use letras minúsculas quando natural (ex: "oi", "beleza", "show")
-- Abreviações naturais quando o tom permitir: "vc", "tb", "pq", "blz", "msg"
-- Máximo 3 linhas por mensagem — quebre em blocos se precisar explicar algo longo
-- NUNCA use formatação markdown (**negrito**, *itálico*, listas com •)
-- NUNCA use cabeçalhos, bullets ou formatação de documento
+- Use letras minÃºsculas quando natural (ex: "oi", "beleza", "show")
+- AbreviaÃ§Ãµes naturais quando o tom permitir: "vc", "tb", "pq", "blz", "msg"
+- MÃ¡ximo 3 linhas por mensagem â€” quebre em blocos se precisar explicar algo longo
+- NUNCA use formataÃ§Ã£o markdown (**negrito**, *itÃ¡lico*, listas com â€¢)
+- NUNCA use cabeÃ§alhos, bullets ou formataÃ§Ã£o de documento
 
-🎲 VARIAÇÃO OBRIGATÓRIA:
+ðŸŽ² VARIAÃ‡ÃƒO OBRIGATÃ“RIA:
 - NUNCA comece duas mensagens consecutivas da mesma forma
-- Alterne entre estilos: às vezes comece respondendo direto, às vezes com uma interjeição
-- Interjeições naturais: "Ahh", "Hmm", "Poxa", "Eita", "Show", "Massa", "Boa", "Olha só"
-- Evite SEMPRE: "Olá! Como posso ajudar?", "Estou aqui para ajudar", "Claro!", "Com certeza!"
-- Se já usou "oi" na última resposta, use outra coisa agora
-- Varie cumprimentos: "E aí", "Fala", "Opa", "Eii", "Oi oi"
+- Alterne entre estilos: Ã s vezes comece respondendo direto, Ã s vezes com uma interjeiÃ§Ã£o
+- InterjeiÃ§Ãµes naturais: "Ahh", "Hmm", "Poxa", "Eita", "Show", "Massa", "Boa", "Olha sÃ³"
+- Evite SEMPRE: "OlÃ¡! Como posso ajudar?", "Estou aqui para ajudar", "Claro!", "Com certeza!"
+- Se jÃ¡ usou "oi" na Ãºltima resposta, use outra coisa agora
+- Varie cumprimentos: "E aÃ­", "Fala", "Opa", "Eii", "Oi oi"
 
-🧠 CONSCIÊNCIA CONTEXTUAL:
-- Leia TODO o histórico antes de responder
+ðŸ§  CONSCIÃŠNCIA CONTEXTUAL:
+- Leia TODO o histÃ³rico antes de responder
 - Referencie coisas que o cliente disse antes naturalmente
-- Se o cliente já perguntou algo, não peça de novo
-- Adapte seu tom ao tom do cliente: formal → formal, descontraído → descontraído
-- Se o cliente mandou áudio (transcrito), responda naturalmente como se tivesse ouvido
+- Se o cliente jÃ¡ perguntou algo, nÃ£o peÃ§a de novo
+- Adapte seu tom ao tom do cliente: formal â†’ formal, descontraÃ­do â†’ descontraÃ­do
+- Se o cliente mandou Ã¡udio (transcrito), responda naturalmente como se tivesse ouvido
 
-😊 EMPATIA REAL:
-- Valide sentimentos: "Entendo sua preocupação", "faz total sentido"
-- Se o cliente está frustrado, reconheça antes de resolver
+ðŸ˜Š EMPATIA REAL:
+- Valide sentimentos: "Entendo sua preocupaÃ§Ã£o", "faz total sentido"
+- Se o cliente estÃ¡ frustrado, reconheÃ§a antes de resolver
 - Comemore conquistas do cliente: "Que legal!", "Show demais!"
 - Use humor leve quando apropriado
 
-⚠️ ANTI-ROBÔ (evite a todo custo):
-- Nunca liste benefícios com bullets ou numeração
-- Nunca use "Espero ter ajudado!" ou "Fico à disposição!"
-- Nunca responda com parágrafos longos e estruturados
+âš ï¸ ANTI-ROBÃ” (evite a todo custo):
+- Nunca liste benefÃ­cios com bullets ou numeraÃ§Ã£o
+- Nunca use "Espero ter ajudado!" ou "Fico Ã  disposiÃ§Ã£o!"
+- Nunca responda com parÃ¡grafos longos e estruturados
 - Nunca use linguagem corporativa engessada
 - Nunca repita o nome do cliente em toda mensagem
-- Se precisar listar algo, faça de forma conversacional: "tem o plano X que custa Y, e tem também o Z que..."
+- Se precisar listar algo, faÃ§a de forma conversacional: "tem o plano X que custa Y, e tem tambÃ©m o Z que..."
 
-[REGRAS DE CONDUTA ANTE MÍDIAS E ARQUIVOS]
-- Se o usuário enviar uma Imagem (será indicado com "[Imagem recebida]"), análise com precisão fotográfica se conseguir visualizar o anexo no seu array.
-- Se o usuário enviar Áudio, a transcrição é entregue como texto direto para você interpretar, lide naturalmente como se tivesse ouvido.
-- Se o usuário anexar Documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCÊ NÃO PODE ABRIR ARQUIVOS e NÃO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visão ou que não consegue abrir documentos, sugerindo que o cliente resuma o que há no arquivo ou envie as dúvidas em áudio/texto. Nunca dê respostas genéricas e nunca ofereça "mais informações" se não sabe o conteúdo.
+[REGRAS DE CONDUTA ANTE MÃDIAS E ARQUIVOS]
+- Se o usuÃ¡rio enviar uma Imagem (serÃ¡ indicado com "[Imagem recebida]"), anÃ¡lise com precisÃ£o fotogrÃ¡fica se conseguir visualizar o anexo no seu array.
+- Se o usuÃ¡rio enviar Ãudio, a transcriÃ§Ã£o Ã© entregue como texto direto para vocÃª interpretar, lide naturalmente como se tivesse ouvido.
+- Se o usuÃ¡rio anexar Documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCÃŠ NÃƒO PODE ABRIR ARQUIVOS e NÃƒO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visÃ£o ou que nÃ£o consegue abrir documentos, sugerindo que o cliente resuma o que hÃ¡ no arquivo ou envie as dÃºvidas em Ã¡udio/texto. Nunca dÃª respostas genÃ©ricas e nunca ofereÃ§a "mais informaÃ§Ãµes" se nÃ£o sabe o conteÃºdo.
 
-RESPOSTAS ANTERIORES DO AGENTE (para NÃO repetir frases/aberturas):
+RESPOSTAS ANTERIORES DO AGENTE (para NÃƒO repetir frases/aberturas):
 ${recentReplies.slice(0, 5).map((r, i) => `[${i+1}]: ${r.substring(0, 80)}`).join("\n")}
-Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e vocabulário.
+Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e vocabulÃ¡rio.
 `;
 
     const clientName = pushName || null;
     const nameInstruction = clientName 
-      ? `\nNome do cliente: ${clientName} (use o nome com moderação, não em toda mensagem)`
-      : `\nNome do cliente: desconhecido (não pergunte o nome a menos que seja necessário para o atendimento)`;
+      ? `\nNome do cliente: ${clientName} (use o nome com moderaÃ§Ã£o, nÃ£o em toda mensagem)`
+      : `\nNome do cliente: desconhecido (nÃ£o pergunte o nome a menos que seja necessÃ¡rio para o atendimento)`;
 
     const crmToolInstruction = `
 
-FERRAMENTA DE CRM - QUALIFICAÇÃO DE LEADS:
-Você tem acesso a uma ferramenta chamada "atualizar_etapa_crm" que deve ser usada para classificar o status do lead durante a conversa.
+FERRAMENTA DE CRM - QUALIFICAÃ‡ÃƒO DE LEADS:
+VocÃª tem acesso a uma ferramenta chamada "atualizar_etapa_crm" que deve ser usada para classificar o status do lead durante a conversa.
 
 USE esta ferramenta quando:
-- O cliente demonstrar interesse real no produto/serviço → status: "interessado"
-- O cliente pedir preço, condições, ou quiser avançar → status: "qualificado"  
-- O cliente disser que não tem interesse → status: "encerrado"
-- No início da conversa → status: "novo"
+- O cliente demonstrar interesse real no produto/serviÃ§o â†’ status: "interessado"
+- O cliente pedir preÃ§o, condiÃ§Ãµes, ou quiser avanÃ§ar â†’ status: "qualificado"  
+- O cliente disser que nÃ£o tem interesse â†’ status: "encerrado"
+- No inÃ­cio da conversa â†’ status: "novo"
 
-IMPORTANTE: Quando o status for "qualificado", você DEVE:
+IMPORTANTE: Quando o status for "qualificado", vocÃª DEVE:
 1. Chamar a ferramenta com status "qualificado" e um resumo detalhado da conversa
-2. O resumo deve incluir: nome do cliente, o que ele procura, principais dúvidas, orçamento mencionado, e qualquer informação relevante
-3. Após qualificar, responda ao cliente informando que um especialista vai entrar em contato
+2. O resumo deve incluir: nome do cliente, o que ele procura, principais dÃºvidas, orÃ§amento mencionado, e qualquer informaÃ§Ã£o relevante
+3. ApÃ³s qualificar, responda ao cliente informando que um especialista vai entrar em contato
+
+FERRAMENTA DE ESTOQUE BNDV:
+VocÃª tambÃ©m tem acesso a uma ferramenta chamada "consultar_estoque_bndv".
+USE esta ferramenta sempre que o cliente perguntar sobre:
+- carros disponÃ­veis no estoque
+- preÃ§o de veÃ­culo
+- ano, versÃ£o, cÃ¢mbio, combustÃ­vel, quilometragem ou cor
+- opÃ§Ãµes atÃ© um orÃ§amento especÃ­fico
+
+IMPORTANTE:
+- Nunca invente estoque ou preÃ§o sem consultar a ferramenta.
+- Se a ferramenta nÃ£o encontrar veÃ­culos, informe isso claramente e sugira alternativas prÃ³ximas.
 `;
 
     const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction + crmToolInstruction;
@@ -1172,7 +1346,7 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
         type: "function",
         function: {
           name: "atualizar_etapa_crm",
-          description: "Atualiza o status do lead no CRM e registra um resumo da conversa. Use quando identificar mudança de etapa do cliente.",
+          description: "Atualiza o status do lead no CRM e registra um resumo da conversa. Use quando identificar mudanÃ§a de etapa do cliente.",
           parameters: {
             type: "object",
             properties: {
@@ -1183,10 +1357,35 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
               },
               resumo: {
                 type: "string",
-                description: "Resumo detalhado da conversa com o cliente incluindo: nome, interesse, dúvidas, orçamento, e informações captadas"
+                description: "Resumo detalhado da conversa com o cliente incluindo: nome, interesse, dÃºvidas, orÃ§amento, e informaÃ§Ãµes captadas"
               }
             },
             required: ["status", "resumo"],
+            additionalProperties: false
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "consultar_estoque_bndv",
+          description: "Consulta o estoque real de veÃ­culos do cliente integrado ao BNDV. Use quando o cliente perguntar por carro disponÃ­vel, preÃ§o, ano, versÃ£o, cÃ¢mbio, combustÃ­vel, cor ou faixa de valor. Nunca invente estoque sem usar esta ferramenta.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Busca livre do cliente, como 'nivus automÃ¡tico atÃ© 110 mil'." },
+              marca: { type: "string", description: "Marca do veÃ­culo, ex: Chevrolet, Jeep, Hyundai." },
+              modelo: { type: "string", description: "Modelo do veÃ­culo, ex: Onix, Renegade, Creta." },
+              versao: { type: "string", description: "VersÃ£o ou detalhe do veÃ­culo, ex: LTZ, EX, Touring." },
+              combustivel: { type: "string", description: "CombustÃ­vel desejado, ex: Flex, Diesel." },
+              cambio: { type: "string", description: "Tipo de cÃ¢mbio, ex: AutomÃ¡tico, Manual." },
+              cor: { type: "string", description: "Cor desejada, se o cliente pedir." },
+              ano_min: { type: "number", description: "Ano mÃ­nimo desejado." },
+              ano_max: { type: "number", description: "Ano mÃ¡ximo desejado." },
+              preco_max: { type: "number", description: "PreÃ§o mÃ¡ximo desejado pelo cliente." },
+              km_max: { type: "number", description: "Quilometragem mÃ¡xima desejada pelo cliente." },
+              limite: { type: "number", description: "Quantidade mÃ¡xima de veÃ­culos para retornar." }
+            },
             additionalProperties: false
           }
         }
@@ -1199,7 +1398,7 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
     let aiData: any = null;
 
     if (!mediaFallbackReply && isAnthropicModel) {
-      // ── Direct Anthropic API call ──
+      // â”€â”€ Direct Anthropic API call â”€â”€
       const anthropicModel = rawModel.replace("anthropic/", "");
       const anthropicMessages = [
         ...historyMessages.slice(-14).map((m: any) => ({
@@ -1242,7 +1441,7 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
         console.error(`[ai-agent] Anthropic error: ${res.status} - ${errBody}`);
       }
     } else if (!mediaFallbackReply) {
-      // ── Lovable AI Gateway call ──
+      // â”€â”€ Lovable AI Gateway call â”€â”€
       const modelMap: Record<string, string> = {
         "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
         "gemini-3-flash-preview": "google/gemini-2.5-flash",
@@ -1307,49 +1506,104 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
 
     let replyText = mediaFallbackReply || aiData?.choices?.[0]?.message?.content?.trim() || "";
     const aiMessage = aiData?.choices?.[0]?.message;
-
-    // ===== Handle CRM Tool Calls (Lead Qualification & Transfer) =====
     if (!mediaFallbackReply && aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
-      const toolCall = aiMessage.tool_calls.find((t: any) => t.function?.name === "atualizar_etapa_crm");
-      if (toolCall) {
+      const toolMessages: any[] = [];
+
+      for (const toolCall of aiMessage.tool_calls) {
         try {
-          const args = JSON.parse(toolCall.function.arguments);
-          console.log(`[ai-agent-crm] Lead ${phone} → status: ${args.status}`);
+          if (toolCall.function?.name === "atualizar_etapa_crm") {
+            const args = JSON.parse(toolCall.function.arguments);
+            console.log(`[ai-agent-crm] Lead ${phone} → status: ${args.status}`);
 
-          // Update CRM lead status
-          const { data: existingLead } = await supabase
-            .from("ai_crm_leads")
-            .select("id")
-            .eq("agent_id", agent.id)
-            .eq("remote_jid", phone)
-            .maybeSingle();
+            const { data: existingLead } = await supabase
+              .from("ai_crm_leads")
+              .select("id")
+              .eq("agent_id", agent.id)
+              .eq("remote_jid", phone)
+              .maybeSingle();
 
-          if (existingLead) {
-            await supabase.from("ai_crm_leads").update({
-              status: args.status,
-              summary: args.resumo,
-              last_interaction_at: new Date().toISOString(),
-            }).eq("id", existingLead.id);
-          } else {
-            await supabase.from("ai_crm_leads").insert({
-              user_id: instance.user_id,
-              agent_id: agent.id,
-              instance_id: instance.id,
-              remote_jid: phone,
-              lead_name: pushName || phone,
-              status: args.status,
-              summary: args.resumo,
-              last_interaction_at: new Date().toISOString(),
+            if (existingLead) {
+              await supabase.from("ai_crm_leads").update({
+                status: args.status,
+                summary: args.resumo,
+                last_interaction_at: new Date().toISOString(),
+              }).eq("id", existingLead.id);
+            } else {
+              await supabase.from("ai_crm_leads").insert({
+                user_id: instance.user_id,
+                agent_id: agent.id,
+                instance_id: instance.id,
+                remote_jid: phone,
+                lead_name: pushName || phone,
+                status: args.status,
+                summary: args.resumo,
+                last_interaction_at: new Date().toISOString(),
+              });
+            }
+
+            if (args.status === "qualificado") {
+              await transferLeadToSeller(supabase, instance, agent, phone, pushName, args.resumo, historyMessages);
+            }
+
+            toolMessages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({ success: true, status: args.status }),
             });
           }
 
-          // ===== TRANSFER TO SELLER (Round-Robin) when QUALIFICADO =====
-          if (args.status === "qualificado") {
-            await transferLeadToSeller(supabase, instance, agent, phone, pushName, args.resumo, historyMessages);
+          if (toolCall.function?.name === "consultar_estoque_bndv") {
+            const args = JSON.parse(toolCall.function.arguments || "{}");
+            const stockResult = await consultarEstoqueBndv(supabase, instance.user_id, args);
+            console.log(`[ai-agent-bndv] Consulta executada | success: ${stockResult.success} | total: ${stockResult.total || 0}`);
+            toolMessages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify(stockResult),
+            });
           }
+        } catch (err) {
+          console.error(`[ai-agent] Tool call processing error (${toolCall.function?.name}):`, err);
+          toolMessages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Erro inesperado na ferramenta." }),
+          });
+        }
+      }
 
-          // If AI only called tool without text, request a follow-up response
-          if (!replyText) {
+      if (toolMessages.length > 0) {
+        console.log(`[ai-agent] Follow-up após ${toolMessages.length} tool(s)`);
+        const followUpMessages = [
+          { role: "system", content: systemPrompt },
+          ...historyMessages.slice(-14),
+          { role: "user", content },
+          aiMessage,
+          ...toolMessages,
+        ];
+
+        const followUpRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: followUpMessages,
+            temperature: effectiveTemp,
+            max_tokens: maxTokensValue,
+          }),
+        });
+
+        if (followUpRes.ok) {
+          const followUpData = await followUpRes.json();
+          replyText = followUpData.choices?.[0]?.message?.content?.trim() || replyText || "";
+        }
+      }
+    }
+
+    if (!replyText) {
             console.log("[ai-agent-crm] No text response, requesting follow-up...");
             // Make a second call to get the text response
             const followUpMessages = [
@@ -1394,7 +1648,7 @@ IMPORTANTE: Quando o status for "qualificado", você DEVE:
     replyText = replyText
       .replace(/\*\*(.*?)\*\*/g, "$1")  // Remove **bold**
       .replace(/\*(.*?)\*/g, "$1")      // Remove *italic*
-      .replace(/^[-•]\s/gm, "")         // Remove bullet points
+      .replace(/^[-â€¢]\s/gm, "")         // Remove bullet points
       .replace(/^\d+\.\s/gm, "")        // Remove numbered lists
       .replace(/^#+\s/gm, "")           // Remove headers
       .trim();
@@ -1573,28 +1827,28 @@ async function transferLeadToSeller(
       .map((m) => `${m.role === "user" ? "Cliente" : "Agente IA"}: ${m.content}`)
       .join("\n");
 
-    const sellerMsg = `🚨 *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*
+    const sellerMsg = `ðŸš¨ *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*
 
-👤 *Nome do Cliente:* ${pushName || "Não informado"}
-📱 *Contato:* ${phone}
-🤖 *Agente IA:* ${agent.name}
-🏢 *Empresa:* ${agent.company_name || "—"}
+ðŸ‘¤ *Nome do Cliente:* ${pushName || "NÃ£o informado"}
+ðŸ“± *Contato:* ${phone}
+ðŸ¤– *Agente IA:* ${agent.name}
+ðŸ¢ *Empresa:* ${agent.company_name || "â€”"}
 
-━━━━━━━━━━━━━━━━━━━━
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 
-📝 *Resumo do Atendimento pela IA:*
+ðŸ“ *Resumo do Atendimento pela IA:*
 ${summary}
 
-━━━━━━━━━━━━━━━━━━━━
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 
-💬 *Últimas mensagens da conversa:*
+ðŸ’¬ *Ãšltimas mensagens da conversa:*
 ${conversationText}
 
-━━━━━━━━━━━━━━━━━━━━
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 
-👉 *Atender agora:* https://wa.me/${phone.replace(/\D/g, "")}
+ðŸ‘‰ *Atender agora:* https://wa.me/${phone.replace(/\D/g, "")}
 
-⚡ O cliente está esperando! Ele já foi informado que um especialista entrará em contato.`;
+âš¡ O cliente estÃ¡ esperando! Ele jÃ¡ foi informado que um especialista entrarÃ¡ em contato.`;
 
     // 4. Send message to selected seller via WhatsApp
     let sellerPhone = selectedSeller.whatsapp_number.replace(/\D/g, "");
@@ -1692,7 +1946,7 @@ ${conversationText}
 
 async function sendOptoutConfirmation(supabase: any, instance: any, phone: string, replyTarget?: string) {
   try {
-    const confirmMsg = "✅ Sua solicitação foi processada. Você não receberá mais mensagens nossas. Caso mude de ideia, basta nos enviar uma mensagem. Obrigado! 🙏";
+    const confirmMsg = "âœ… Sua solicitaÃ§Ã£o foi processada. VocÃª nÃ£o receberÃ¡ mais mensagens nossas. Caso mude de ideia, basta nos enviar uma mensagem. Obrigado! ðŸ™";
     await sendAutoReply(supabase, instance, phone, confirmMsg, replyTarget);
   } catch (err) {
     console.error("[opt-out] Failed to send confirmation:", err);
@@ -1701,7 +1955,7 @@ async function sendOptoutConfirmation(supabase: any, instance: any, phone: strin
 
 async function sendOptinConfirmation(supabase: any, instance: any, phone: string, replyTarget?: string) {
   try {
-    const confirmMsg = "🎉 Que bom que você quer continuar! Vamos enviar apenas conteúdos relevantes para você. Obrigado pela confiança! 💚";
+    const confirmMsg = "ðŸŽ‰ Que bom que vocÃª quer continuar! Vamos enviar apenas conteÃºdos relevantes para vocÃª. Obrigado pela confianÃ§a! ðŸ’š";
     await sendAutoReply(supabase, instance, phone, confirmMsg, replyTarget);
   } catch (err) {
     console.error("[opt-in] Failed to send confirmation:", err);
@@ -1775,16 +2029,16 @@ async function categorizeWithAI(content: string): Promise<{ category: string; se
       messages: [
         {
           role: "system",
-          content: `Você é um classificador de mensagens de WhatsApp. Analise a mensagem e retorne APENAS um JSON com:
-- "category": uma das opções: "interested", "question", "opt-out", "positive", "negative", "neutral", "spam"
-- "sentiment": uma das opções: "positive", "negative", "neutral"
+          content: `VocÃª Ã© um classificador de mensagens de WhatsApp. Analise a mensagem e retorne APENAS um JSON com:
+- "category": uma das opÃ§Ãµes: "interested", "question", "opt-out", "positive", "negative", "neutral", "spam"
+- "sentiment": uma das opÃ§Ãµes: "positive", "negative", "neutral"
 
 Regras:
 - "opt-out": se a pessoa pede pra parar de receber mensagens
 - "interested": se demonstra interesse em comprar, saber mais
-- "question": se faz uma pergunta sobre o produto/serviço
+- "question": se faz uma pergunta sobre o produto/serviÃ§o
 - "positive": elogio ou feedback positivo
-- "negative": reclamação ou feedback negativo
+- "negative": reclamaÃ§Ã£o ou feedback negativo
 - "neutral": resposta neutra ou informativa
 - "spam": mensagem irrelevante
 
@@ -2045,7 +2299,7 @@ async function transcribeWithGemini(base64Audio: string, mimetype: string): Prom
                   },
                 },
                 {
-                  text: "Transcreva este áudio de forma precisa. Retorne APENAS o texto falado, sem comentários adicionais, formatação ou prefixos como 'Transcrição:'. Se o áudio estiver vazio ou inaudível, retorne exatamente: [áudio inaudível]",
+                  text: "Transcreva este Ã¡udio de forma precisa. Retorne APENAS o texto falado, sem comentÃ¡rios adicionais, formataÃ§Ã£o ou prefixos como 'TranscriÃ§Ã£o:'. Se o Ã¡udio estiver vazio ou inaudÃ­vel, retorne exatamente: [Ã¡udio inaudÃ­vel]",
                 },
               ],
             },
@@ -2067,7 +2321,7 @@ async function transcribeWithGemini(base64Audio: string, mimetype: string): Prom
     const data = await response.json();
     const transcription = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
-    if (!transcription || transcription === "[áudio inaudível]") {
+    if (!transcription || transcription === "[Ã¡udio inaudÃ­vel]") {
       console.log("[audio-transcribe] No transcription available");
       return null;
     }

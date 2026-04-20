@@ -101,7 +101,7 @@ serve(async (req) => {
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
 
   } catch (error: any) {
-    console.error("[Webhook] Erro Crítico:", error)
+    console.error("[Webhook] Erro CrÃ­tico:", error)
     return new Response(JSON.stringify({ error: error.message }), { headers: corsHeaders, status: 500 })
   }
 })
@@ -121,6 +121,165 @@ function buildUazapiMediaFallbackContent(msgType: string, currentText: string) {
     return '[Arquivo recebido sem leitura]';
   }
   return text;
+}
+
+function parseStoredIntegrationCredentials(raw: string | null) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return { api_token: raw };
+  }
+}
+
+function normalizeBndvText(value?: string | null) {
+  return String(value || '').toLowerCase().trim();
+}
+
+function bndvIncludes(haystack?: string | null, needle?: string | null) {
+  if (!needle || !String(needle).trim()) return true;
+  return normalizeBndvText(haystack).includes(normalizeBndvText(needle));
+}
+
+function bndvMatchesQuery(vehicle: any, query?: string | null) {
+  if (!query || !String(query).trim()) return true;
+  const indexed = [
+    vehicle?.markName,
+    vehicle?.modelName,
+    vehicle?.versionName,
+    vehicle?.color,
+    vehicle?.fuelName,
+    vehicle?.transmissionName,
+    vehicle?.year?.toString?.(),
+  ].filter(Boolean).join(' ').toLowerCase();
+  return indexed.includes(normalizeBndvText(query));
+}
+
+async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
+  const BNDV_API_URL = 'https://api-estoque.azurewebsites.net/graphql';
+
+  const { data: integration, error: integrationError } = await supabase
+    .from('platform_integrations')
+    .select('api_key_encrypted, is_active')
+    .eq('user_id', userId)
+    .eq('platform', 'bndv')
+    .maybeSingle();
+
+  if (integrationError) {
+    throw integrationError;
+  }
+
+  if (!integration?.is_active) {
+    return { success: false, error: 'A integraÃ§Ã£o BNDV nÃ£o estÃ¡ conectada para este cliente.' };
+  }
+
+  const credentials = parseStoredIntegrationCredentials(integration.api_key_encrypted);
+  const token = String(credentials?.api_token || '').trim();
+
+  if (!token) {
+    return { success: false, error: 'O token do BNDV nÃ£o foi encontrado na integraÃ§Ã£o salva.' };
+  }
+
+  const response = await fetch(BNDV_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      query: `
+        query BndvVehicles {
+          vehiclesBy {
+            modelName
+            markName
+            year
+            km
+            saleValue
+            color
+            fuelName
+            transmissionName
+            versionName
+          }
+        }
+      `,
+    }),
+  });
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    return {
+      success: false,
+      error: payload?.errors?.[0]?.message || payload?.message || `BNDV retornou status ${response.status}.`,
+    };
+  }
+
+  if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
+    return { success: false, error: payload.errors[0]?.message || 'A API do BNDV retornou um erro.' };
+  }
+
+  const {
+    query,
+    marca,
+    modelo,
+    versao,
+    combustivel,
+    cambio,
+    cor,
+    ano_min,
+    ano_max,
+    preco_max,
+    km_max,
+    limite,
+  } = filters || {};
+
+  const items = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
+  const filtered = items
+    .filter((vehicle: any) => {
+      const year = Number(vehicle?.year || 0);
+      const price = Number(vehicle?.saleValue || 0);
+      const mileage = Number(vehicle?.km || 0);
+
+      return (
+        bndvMatchesQuery(vehicle, query) &&
+        bndvIncludes(vehicle?.markName, marca) &&
+        bndvIncludes(vehicle?.modelName, modelo) &&
+        bndvIncludes(vehicle?.versionName, versao) &&
+        bndvIncludes(vehicle?.fuelName, combustivel) &&
+        bndvIncludes(vehicle?.transmissionName, cambio) &&
+        bndvIncludes(vehicle?.color, cor) &&
+        (!ano_min || year >= Number(ano_min)) &&
+        (!ano_max || year <= Number(ano_max)) &&
+        (!preco_max || price <= Number(preco_max)) &&
+        (!km_max || mileage <= Number(km_max))
+      );
+    })
+    .sort((left: any, right: any) => {
+      const leftPrice = Number(left?.saleValue || 0);
+      const rightPrice = Number(right?.saleValue || 0);
+      if (leftPrice !== rightPrice) return leftPrice - rightPrice;
+      return Number(right?.year || 0) - Number(left?.year || 0);
+    });
+
+  const capped = filtered.slice(0, Number(limite || 8)).map((vehicle: any) => ({
+    marca: vehicle?.markName || null,
+    modelo: vehicle?.modelName || null,
+    versao: vehicle?.versionName || null,
+    ano: vehicle?.year || null,
+    km: vehicle?.km || null,
+    preco: vehicle?.saleValue || null,
+    cor: vehicle?.color || null,
+    combustivel: vehicle?.fuelName || null,
+    cambio: vehicle?.transmissionName || null,
+    label: [vehicle?.markName, vehicle?.modelName, vehicle?.versionName].filter(Boolean).join(' '),
+  }));
+
+  return {
+    success: true,
+    total: filtered.length,
+    items: capped,
+  };
 }
 
 function getUazapiMediaFallbackReply(content: string) {
@@ -299,7 +458,7 @@ async function fetchMediaAsBase64(mediaUrl: string, instKey: string) {
     }
     return btoa(binary);
   } catch (err) {
-    console.error('[Webhook] Falha ao buscar mídia por URL:', err);
+    console.error('[Webhook] Falha ao buscar mÃ­dia por URL:', err);
     return '';
   }
 }
@@ -387,14 +546,39 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "atualizar_etapa_crm",
-        description: "Atualiza o Kanban/CRM conforme a evolução da conversa. Chame esta função secretamente para categorizar o lead. Valores válidos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando não quer comprar). OBS IMPORTANTE: Ao chamar esta função para status 'interessado' ou 'encerrado', VOCÊ DEVE TAMBÉM gerar uma mensagem normal para o cliente. Só encerre a conversa se for status 'qualificado'.",
+        description: "Atualiza o Kanban/CRM conforme a evoluÃ§Ã£o da conversa. Chame esta funÃ§Ã£o secretamente para categorizar o lead. Valores vÃ¡lidos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando nÃ£o quer comprar). OBS IMPORTANTE: Ao chamar esta funÃ§Ã£o para status 'interessado' ou 'encerrado', VOCÃŠ DEVE TAMBÃ‰M gerar uma mensagem normal para o cliente. SÃ³ encerre a conversa se for status 'qualificado'.",
         parameters: {
           type: "object",
           properties: {
             status: { type: "string", enum: ["interessado", "qualificado", "encerrado"], description: "A etapa atual do cliente." },
-            resumo: { type: "string", description: "O que o cliente deseja e as informações que você coletou dele até o momento. Seja breve." }
+            resumo: { type: "string", description: "O que o cliente deseja e as informaÃ§Ãµes que vocÃª coletou dele atÃ© o momento. Seja breve." }
           },
           required: ["status", "resumo"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "consultar_estoque_bndv",
+        description: "Consulta o estoque real de veÃ­culos do cliente integrado ao BNDV. Use quando o cliente perguntar por carro disponÃ­vel, preÃ§o, ano, versÃ£o, cÃ¢mbio, combustÃ­vel, cor ou faixa de valor. Nunca invente estoque sem usar esta ferramenta.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Busca livre do cliente, como 'nivus automÃ¡tico atÃ© 110 mil'." },
+            marca: { type: "string", description: "Marca do veÃ­culo, ex: Chevrolet, Jeep, Hyundai." },
+            modelo: { type: "string", description: "Modelo do veÃ­culo, ex: Onix, Renegade, Creta." },
+            versao: { type: "string", description: "VersÃ£o ou detalhe do veÃ­culo, ex: LTZ, EX, Touring." },
+            combustivel: { type: "string", description: "CombustÃ­vel desejado, ex: Flex, Diesel." },
+            cambio: { type: "string", description: "Tipo de cÃ¢mbio, ex: AutomÃ¡tico, Manual." },
+            cor: { type: "string", description: "Cor desejada, se o cliente pedir." },
+            ano_min: { type: "number", description: "Ano mÃ­nimo desejado." },
+            ano_max: { type: "number", description: "Ano mÃ¡ximo desejado." },
+            preco_max: { type: "number", description: "PreÃ§o mÃ¡ximo desejado pelo cliente." },
+            km_max: { type: "number", description: "Quilometragem mÃ¡xima desejada pelo cliente." },
+            limite: { type: "number", description: "Quantidade mÃ¡xima de veÃ­culos para retornar." }
+          },
+          additionalProperties: false
         }
       }
     }
@@ -436,9 +620,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     let base64 = extractUazapiBase64(rawMsgObj);
     let mediaUrl = extractUazapiMediaUrl(rawMsgObj);
     
-    // Se não veio base64, tentar download pela uazapi
+    // Se nÃ£o veio base64, tentar download pela uazapi
     if (!base64 && messageId) {
-      console.log(`[Webhook] Baixando mídia ID: ${messageId}`);
+      console.log(`[Webhook] Baixando mÃ­dia ID: ${messageId}`);
       try {
         const dRes = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
           method: 'POST',
@@ -456,12 +640,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           console.log(`[Webhook] Download de midia falhou: ${dRes.status}`);
         }
       } catch (err) {
-        console.error('[Webhook] Falha no download de mídia:', err);
+        console.error('[Webhook] Falha no download de mÃ­dia:', err);
       }
     }
 
     if (!base64 && mediaUrl) {
-      console.log('[Webhook] Tentando buscar mídia pela URL retornada');
+      console.log('[Webhook] Tentando buscar mÃ­dia pela URL retornada');
       base64 = await fetchMediaAsBase64(mediaUrl, instKey);
       console.log(`[Webhook] Base64 via URL: ${base64 ? 'sim' : 'nao'}`);
     }
@@ -489,7 +673,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           if (wData.text) {
              finalUserText = wData.text;
              userMessageContentForOpenAi = finalUserText;
-             console.log('[Webhook] Transcrição (Whisper):', finalUserText);
+             console.log('[Webhook] TranscriÃ§Ã£o (Whisper):', finalUserText);
           } else {
              finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
              userMessageContentForOpenAi = finalUserText;
@@ -522,20 +706,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.log('[Webhook] Empty text after media processing, applying generic fallback');
   }
 
-  console.log(`[Webhook] Salvando histórico e chamando OpenAI para: ${finalUserText}`);
+  console.log(`[Webhook] Salvando histÃ³rico e chamando OpenAI para: ${finalUserText}`);
 
-  // Salvar histórico
+  // Salvar histÃ³rico
   await supabase.from('wa_chat_history').insert({
     user_id: agent.user_id,
     agent_id: agent.id,
     instance_id: instanceName,
     remote_jid: remoteJid,
     role: 'user',
-    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[Mídia/Imagem]',
+    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[MÃ­dia/Imagem]',
     lead_name: pushName
   })
 
-  // Buscar histórico
+  // Buscar histÃ³rico
   const { data: history } = await supabase.from('wa_chat_history')
     .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(10)
 
@@ -566,15 +750,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   } catch (err: any) {}
 
-  let systemPrompt = agent.system_prompt || 'Você é um assistente prestativo.'
+  let systemPrompt = agent.system_prompt || 'VocÃª Ã© um assistente prestativo.'
   if (agent.company_name) systemPrompt += `\n\nEmpresa: ${agent.company_name}`
   if (knowledgeContext) systemPrompt += `\n\n## BASE DE CONHECIMENTO:\n${knowledgeContext}`
   
-  // Regra Anti-Alucinação para Arquivos/Mídia
-  systemPrompt += `\n\n[REGRAS DE CONDUTA ANTE MÍDIAS E ARQUIVOS]
-- Se o usuário enviar uma Imagem (será indicado com "[Imagem recebida]"), análise com precisão fotográfica se conseguir visualizar o anexo no seu array.
-- Se o usuário enviar Áudio, a transcrição é entregue como texto direto para você interpretar, lide naturalmente como se tivesse ouvido.
-- Se o usuário anexar Documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCÊ NÃO PODE ABRIR ARQUIVOS e NÃO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visão ou que não consegue abrir documentos, sugerindo que o cliente resuma o que há no arquivo ou envie as dúvidas em áudio/texto. Nunca dê respostas genéricas e nunca ofereça "mais informações" se não sabe o conteúdo.`
+  // Regra Anti-AlucinaÃ§Ã£o para Arquivos/MÃ­dia
+  systemPrompt += `\n\n[REGRAS DE CONDUTA ANTE MÃDIAS E ARQUIVOS]
+- Se o usuÃ¡rio enviar uma Imagem (serÃ¡ indicado com "[Imagem recebida]"), anÃ¡lise com precisÃ£o fotogrÃ¡fica se conseguir visualizar o anexo no seu array.
+- Se o usuÃ¡rio enviar Ãudio, a transcriÃ§Ã£o Ã© entregue como texto direto para vocÃª interpretar, lide naturalmente como se tivesse ouvido.
+- Se o usuÃ¡rio anexar Documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCÃŠ NÃƒO PODE ABRIR ARQUIVOS e NÃƒO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visÃ£o ou que nÃ£o consegue abrir documentos, sugerindo que o cliente resuma o que hÃ¡ no arquivo ou envie as dÃºvidas em Ã¡udio/texto. Nunca dÃª respostas genÃ©ricas e nunca ofereÃ§a "mais informaÃ§Ãµes" se nÃ£o sabe o conteÃºdo.`
+  systemPrompt += `\n\n[CONSULTA DE ESTOQUE BNDV]
+- Quando o cliente pedir preÃ§o, disponibilidade, ano, versÃ£o, cÃ¢mbio, combustÃ­vel, quilometragem ou quiser saber se existe algum veÃ­culo no estoque, use a ferramenta "consultar_estoque_bndv".
+- Nunca invente veÃ­culos, preÃ§os ou disponibilidade sem consultar a ferramenta.
+- Depois de consultar, responda como vendedor consultivo: direto, claro e comercial.
+- Se a ferramenta nÃ£o retornar resultados, diga isso de forma transparente e ofereÃ§a alternativas prÃ³ximas.`
 
   let aiModel = agent.model || 'gpt-4o';
   // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
@@ -613,105 +802,126 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   }
   
   console.log(`[Webhook] Resposta da IA recebida. ToolCalls: ${aiMessage?.tool_calls?.length || 0}`);
-
-  // Verificar se o modelo decidiu chamar a função de CRM (atualizar_etapa_crm)
   if (!mediaFallbackReply && aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
-    const toolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'atualizar_etapa_crm');
-    if (toolCall) {
+    const toolMessages: any[] = [];
+
+    for (const toolCall of aiMessage.tool_calls) {
       try {
-        const args = JSON.parse(toolCall.function.arguments);
-        
-        // Anti-Duplicate Broadcast Lock (Concorrência webhook)
-        const { data: existingLead } = await supabase.from('ai_crm_leads')
-          .select('status, assigned_to_member_id')
-          .eq('agent_id', agent.id)
-          .eq('remote_jid', remoteJid)
-          .maybeSingle();
+        if (toolCall.function.name === 'atualizar_etapa_crm') {
+          const args = JSON.parse(toolCall.function.arguments);
 
-        const alreadyTransferred = existingLead && (existingLead.status === 'transferido' || existingLead.status === 'qualificado' || existingLead.assigned_to_member_id);
+          const { data: existingLead } = await supabase.from('ai_crm_leads')
+            .select('status, assigned_to_member_id')
+            .eq('agent_id', agent.id)
+            .eq('remote_jid', remoteJid)
+            .maybeSingle();
 
-        // 1. Atualizar banco de dados CRM (arrastar cartão para a coluna correta)
-        await supabase.from('ai_crm_leads').upsert({
-          user_id: agent.user_id,
-          agent_id: agent.id,
-          remote_jid: remoteJid,
-          status: args.status,
-          summary: args.resumo,
-          last_interaction_at: new Date().toISOString(),
-          lead_name: pushName
-        }, { onConflict: 'agent_id, remote_jid' });
+          const alreadyTransferred = existingLead && (existingLead.status === 'transferido' || existingLead.status === 'qualificado' || existingLead.assigned_to_member_id);
 
-        console.log(`[CRM] Lead ${phoneNumber} analisado. Status: ${args.status}`);
+          await supabase.from('ai_crm_leads').upsert({
+            user_id: agent.user_id,
+            agent_id: agent.id,
+            remote_jid: remoteJid,
+            status: args.status,
+            summary: args.resumo,
+            last_interaction_at: new Date().toISOString(),
+            lead_name: pushName
+          }, { onConflict: 'agent_id, remote_jid' });
 
-        // 2. Alertar vendedor via Round-Robin SE status for 'qualificado'
-        if (args.status === 'qualificado' && !alreadyTransferred) {
-          const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
-          if (sellers && sellers.length > 0) {
-            // Round-robin: pick seller with oldest last_lead_received_at
-            const selectedSeller = sellers[0];
-            let sellerNum = selectedSeller.whatsapp_number.replace(/\D/g, '');
-            if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
-            
-            const sellerMsg = `🚨 *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*\n\n👤 *Nome do Cliente:* ${pushName}\n📱 *Contato:* ${phoneNumber}\n🤖 *Agente IA:* ${agent.name}\n\n━━━━━━━━━━━━━━━━━━━━\n\n📝 *Resumo do Atendimento pela IA:*\n${args.resumo}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n⚡ O cliente está esperando!`;
-            const sellerRes = await fetch(`${baseUrl}/send/text`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'token': instKey },
-              body: JSON.stringify({ number: sellerNum, text: sellerMsg })
-            });
-            if (!sellerRes.ok) {
-               console.error(`[CRM] Fail send to seller: ${sellerRes.status} - ${await sellerRes.text()}`);
-            }
+          console.log(`[CRM] Lead ${phoneNumber} analisado. Status: ${args.status}`);
 
-            // Update seller stats
-            await supabase.from('ai_team_members').update({
-              last_lead_received_at: new Date().toISOString(),
-              total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
-            }).eq('id', selectedSeller.id);
+          if (args.status === 'qualificado' && !alreadyTransferred) {
+            const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
+            if (sellers && sellers.length > 0) {
+              const selectedSeller = sellers[0];
+              let sellerNum = selectedSeller.whatsapp_number.replace(/\D/g, '');
+              if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
 
-            // Record transfer
-            const { data: leadData } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
-            if (leadData) {
-              await supabase.from('ai_lead_transfers').insert({
-                user_id: agent.user_id, lead_id: leadData.id, from_agent_id: agent.id,
-                to_member_id: selectedSeller.id, transfer_reason: args.resumo,
-                notes: `Transferido para ${selectedSeller.name} via round-robin`,
+              const sellerMsg = `ðŸš¨ *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*\n\nðŸ‘¤ *Nome do Cliente:* ${pushName}\nðŸ“± *Contato:* ${phoneNumber}\nðŸ¤– *Agente IA:* ${agent.name}\n\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n\nðŸ“ *Resumo do Atendimento pela IA:*\n${args.resumo}\n\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n\nðŸ‘‰ *Atender agora:* https://wa.me/${phoneNumber}\n\nâš¡ O cliente estÃ¡ esperando!`;
+              const sellerRes = await fetch(`${baseUrl}/send/text`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'token': instKey },
+                body: JSON.stringify({ number: sellerNum, text: sellerMsg })
               });
-              await supabase.from('ai_crm_leads').update({
-                status: 'transferido', assigned_to_member_id: selectedSeller.id,
-                transferred_at: new Date().toISOString(), transfer_reason: `Encaminhado para ${selectedSeller.name}`,
-              }).eq('id', leadData.id);
-            }
+              if (!sellerRes.ok) {
+                 console.error(`[CRM] Fail send to seller: ${sellerRes.status} - ${await sellerRes.text()}`);
+              }
 
-            console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
+              await supabase.from('ai_team_members').update({
+                last_lead_received_at: new Date().toISOString(),
+                total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
+              }).eq('id', selectedSeller.id);
+
+              const { data: leadData } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
+              if (leadData) {
+                await supabase.from('ai_lead_transfers').insert({
+                  user_id: agent.user_id, lead_id: leadData.id, from_agent_id: agent.id,
+                  to_member_id: selectedSeller.id, transfer_reason: args.resumo,
+                  notes: `Transferido para ${selectedSeller.name} via round-robin`,
+                });
+                await supabase.from('ai_crm_leads').update({
+                  status: 'transferido', assigned_to_member_id: selectedSeller.id,
+                  transferred_at: new Date().toISOString(), transfer_reason: `Encaminhado para ${selectedSeller.name}`,
+                }).eq('id', leadData.id);
+              }
+
+              console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
+            }
           }
-        }
-        
-        if (!aiResponse) {
-          // Se o GPT não retornou texto (só o tool_call), devemos devolver o resultado da tool e pedir o texto!
-          console.log(`[Webhook] IA apenas executou a tool sem texto. Solicitando resposta final...`);
-          const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
-            body: JSON.stringify({
-              model: aiModel,
-              messages: [
-                { role: 'system', content: systemPrompt }, 
-                ...chatHistory, 
-                { role: 'user', content: userMessageContentForOpenAi },
-                aiMessage,
-                { role: 'tool', tool_call_id: toolCall.id, name: toolCall.function.name, content: `{"success": true}` }
-              ],
-              temperature: agent.temperature || 0.7
-            })
+
+          toolMessages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: toolCall.function.name,
+            content: JSON.stringify({ success: true, status: args.status })
           });
-          if (secondRes.ok) {
-            const secondData = await secondRes.json();
-            aiResponse = secondData.choices?.[0]?.message?.content || '';
-            console.log(`[Webhook] Resposta final capturada: ${aiResponse}`);
-          }
+        }
+
+        if (toolCall.function.name === 'consultar_estoque_bndv') {
+          const args = JSON.parse(toolCall.function.arguments || '{}');
+          const stockResult = await consultarEstoqueBndv(supabase, agent.user_id, args);
+          console.log(`[BNDV] Consulta executada | success: ${stockResult.success} | total: ${stockResult.total || 0}`);
+          toolMessages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: toolCall.function.name,
+            content: JSON.stringify(stockResult)
+          });
         }
       } catch (err) {
-        console.error("[Webhook] Erro no Handoff/CRM", err)
+        console.error(`[Webhook] Erro ao processar tool ${toolCall.function?.name}:`, err);
+        toolMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          name: toolCall.function?.name || 'tool_error',
+          content: JSON.stringify({ success: false, error: err instanceof Error ? err.message : 'Erro inesperado na ferramenta.' })
+        });
+      }
+    }
+
+    if (toolMessages.length > 0) {
+      console.log(`[Webhook] Tool(s) executadas (${toolMessages.length}). Solicitando resposta final...`);
+      const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+        body: JSON.stringify({
+          model: aiModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            ...chatHistory,
+            { role: 'user', content: userMessageContentForOpenAi },
+            aiMessage,
+            ...toolMessages
+          ],
+          temperature: agent.temperature || 0.7
+        })
+      });
+      if (secondRes.ok) {
+        const secondData = await secondRes.json();
+        aiResponse = secondData.choices?.[0]?.message?.content || aiResponse || '';
+        console.log(`[Webhook] Resposta final capturada: ${aiResponse}`);
+      } else {
+        console.error(`[Webhook] Falha no follow-up das tools: ${secondRes.status} - ${await secondRes.text()}`);
       }
     }
   }
@@ -720,7 +930,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   console.log(`[Webhook] Resposta final ao cliente: ${aiResponse.substring(0, 200)}`);
 
-  // Salvar no histórico
+  // Salvar no histÃ³rico
   await supabase.from('wa_chat_history').insert({
     user_id: agent.user_id, agent_id: agent.id, instance_id: instanceName,
     remote_jid: remoteJid, role: 'assistant', content: aiResponse
