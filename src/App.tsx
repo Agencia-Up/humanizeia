@@ -67,6 +67,8 @@ const SupportDashboard = lazy(() => import("./pages/SupportDashboard"));
 const MarcosLeads = lazy(() => import("./pages/MarcosLeads"));
 const MetaAdsConnect = lazy(() => import("./pages/MetaAdsConnect"));
 const InstagramConnect = lazy(() => import("./pages/InstagramConnect"));
+const ConfirmEmail = lazy(() => import("./pages/ConfirmEmail"));
+const CRMAoVivo = lazy(() => import("./pages/CRMAoVivo"));
 
 
 const queryClient = new QueryClient();
@@ -86,6 +88,7 @@ const App = () => (
             <Suspense fallback={<PageLoader />}>
               <Routes>
                 <Route path="/auth" element={<Auth />} />
+                <Route path="/auth/confirm" element={<ConfirmEmail />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/privacy" element={<PrivacyPolicy />} />
                 <Route path="/terms" element={<TermsOfService />} />
@@ -126,6 +129,7 @@ const App = () => (
                 <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
                 <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
                 <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
+                <Route path="/whatsapp/crm-ao-vivo" element={<ProtectedRoute><CRMAoVivo /></ProtectedRoute>} />
                 <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
                 <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
                 <Route path="/marcos" element={<ProtectedRoute><MarcosLeads /></ProtectedRoute>} />
