@@ -374,16 +374,40 @@ async function sendUazapiImageMessage(baseUrl: string, instKey: string, instance
   const fileName = buildImageFileName(imageUrl, vehicleLabel);
   const attempts = [
     {
-      label: 'message-sendMedia-apikey',
+      label: 'message-sendMedia-uazapi',
       url: `${baseUrl}/message/sendMedia/${instanceName}`,
       headers: { 'Content-Type': 'application/json', 'apikey': instKey },
-      body: { number: phoneNumber, mediatype: 'image', mimetype: mimeType, media: imageUrl, fileName, caption: caption || '' }
+      body: {
+        number: phoneNumber,
+        mediaMessage: {
+          mediatype: 'image',
+          mimetype: mimeType,
+          fileName,
+          caption: caption || '',
+          media: imageUrl
+        },
+        options: {
+          delay: 200
+        }
+      }
     },
     {
-      label: 'message-sendMedia-both',
+      label: 'message-sendMedia-uazapi-both',
       url: `${baseUrl}/message/sendMedia/${instanceName}`,
       headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-      body: { number: phoneNumber, mediatype: 'image', mimetype: mimeType, media: imageUrl, fileName, caption: caption || '' }
+      body: {
+        number: phoneNumber,
+        mediaMessage: {
+          mediatype: 'image',
+          mimetype: mimeType,
+          fileName,
+          caption: caption || '',
+          media: imageUrl
+        },
+        options: {
+          delay: 200
+        }
+      }
     },
     {
       label: 'message-sendImage-apikey',
