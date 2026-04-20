@@ -373,8 +373,59 @@ async function sendUazapiImageMessage(baseUrl: string, instKey: string, instance
   const mimeType = inferImageMimeType(imageUrl);
   const fileName = buildImageFileName(imageUrl, vehicleLabel);
   const mediaBase64 = await fetchMediaAsBase64(imageUrl, instKey);
+  const mediaBlob = await fetchMediaBlob(imageUrl, instKey, mimeType);
   const mediaDataUrl = mediaBase64 ? `data:${mimeType};base64,${mediaBase64}` : '';
-  console.log(`[Webhook] BNDV image fetch -> base64: ${mediaBase64 ? 'sim' : 'nao'} | fileName: ${fileName}`);
+  console.log(`[Webhook] BNDV image fetch -> base64: ${mediaBase64 ? 'sim' : 'nao'} | blob: ${mediaBlob ? 'sim' : 'nao'} | fileName: ${fileName}`);
+
+  if (mediaBlob) {
+    const multipartAttempts = [
+      {
+        label: 'send-media-multipart-token',
+        url: `${baseUrl}/send/media`,
+        headers: { 'token': instKey }
+      },
+      {
+        label: 'send-media-multipart-both',
+        url: `${baseUrl}/send/media`,
+        headers: { 'token': instKey, 'apikey': instKey }
+      },
+      {
+        label: 'send-media-multipart-instance',
+        url: `${baseUrl}/send/media?instance=${instanceName}`,
+        headers: { 'token': instKey, 'apikey': instKey }
+      }
+    ];
+
+    for (const attempt of multipartAttempts) {
+      try {
+        const formData = new FormData();
+        formData.append('number', phoneNumber);
+        formData.append('remoteJid', remoteJid);
+        formData.append('caption', caption || '');
+        formData.append('text', caption || '');
+        formData.append('body', caption || '');
+        formData.append('mediatype', 'image');
+        formData.append('mimetype', mimeType);
+        formData.append('fileName', fileName);
+        formData.append('file', mediaBlob, fileName);
+
+        console.log(`[Webhook] Tentando envio de imagem UAZAPI via ${attempt.label}`);
+        const res = await fetch(attempt.url, {
+          method: 'POST',
+          headers: attempt.headers as any,
+          body: formData,
+        });
+        const responseText = await res.text().catch(() => '');
+        console.log(`[Webhook] UAZAPI ${attempt.label} -> ${res.status} | ${responseText.substring(0, 300)}`);
+        if (res.ok) {
+          return { ok: true, label: attempt.label, status: res.status, body: responseText };
+        }
+      } catch (err) {
+        console.error(`[Webhook] Falha no envio multipart UAZAPI (${attempt.label}):`, err);
+      }
+    }
+  }
+
   const attempts = [
     ...(mediaBase64 ? [
       {
@@ -394,22 +445,6 @@ async function sendUazapiImageMessage(baseUrl: string, instKey: string, instance
         }
       },
       {
-        label: 'message-sendMedia-dataurl-token-only',
-        url: `${baseUrl}/message/sendMedia`,
-        headers: { 'Content-Type': 'application/json', 'token': instKey },
-        body: {
-          number: phoneNumber,
-          mediaMessage: {
-            mediatype: 'image',
-            mimetype: mimeType,
-            fileName,
-            caption: caption || '',
-            media: mediaDataUrl,
-          },
-          options: { delay: 200 }
-        }
-      },
-      {
         label: 'message-sendMedia-base64-generic-both',
         url: `${baseUrl}/message/sendMedia`,
         headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
@@ -421,6 +456,22 @@ async function sendUazapiImageMessage(baseUrl: string, instKey: string, instance
             fileName,
             caption: caption || '',
             media: mediaBase64,
+          },
+          options: { delay: 200 }
+        }
+      },
+      {
+        label: 'message-sendMedia-dataurl-generic-both',
+        url: `${baseUrl}/message/sendMedia`,
+        headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+        body: {
+          number: phoneNumber,
+          mediaMessage: {
+            mediatype: 'image',
+            mimetype: mimeType,
+            fileName,
+            caption: caption || '',
+            media: mediaDataUrl,
           },
           options: { delay: 200 }
         }
@@ -443,15 +494,7 @@ async function sendUazapiImageMessage(baseUrl: string, instKey: string, instance
         label: 'send-image-base64-both',
         url: `${baseUrl}/send/image`,
         headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-        body: {
-          number: phoneNumber,
-          image: mediaBase64,
-          mediatype: 'image',
-          mimetype: mimeType,
-          fileName,
-          caption: caption || '',
-          text: caption || ''
-        }
+        body: { number: phoneNumber, image: mediaBase64, mediatype: 'image', mimetype: mimeType, fileName, caption: caption || '', text: caption || '' }
       },
       {
         label: 'send-image-dataurl-both',
@@ -963,6 +1006,29 @@ async function fetchMediaAsBase64(mediaUrl: string, instKey: string) {
   }
 }
 
+async function fetchMediaBlob(mediaUrl: string, instKey: string, mimeType?: string) {
+  if (!mediaUrl) return null;
+
+  try {
+    const res = await fetch(mediaUrl, {
+      headers: {
+        'token': instKey,
+        'apikey': instKey,
+      },
+    });
+    if (!res.ok) {
+      console.log(`[Webhook] Fetch media blob falhou: ${res.status}`);
+      return null;
+    }
+
+    const arrayBuffer = await res.arrayBuffer();
+    return new Blob([arrayBuffer], { type: mimeType || res.headers.get('content-type') || 'application/octet-stream' });
+  } catch (err) {
+    console.error('[Webhook] Falha ao buscar blob da midia:', err);
+    return null;
+  }
+}
+
 async function sendUazapiTextMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, text: string) {
   const attempts = [
     {
@@ -1294,6 +1360,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 - Nunca invente veiculos, precos ou disponibilidade sem consultar a ferramenta.
 - Depois de consultar, responda como vendedor consultivo: direto, claro e comercial.
 - Se a ferramenta nao retornar resultados, diga isso de forma transparente e ofereca alternativas proximas.`
+  systemPrompt += `\n\n[REGRA DE QUALIFICACAO E TRANSFERENCIA]
+- Se o cliente quiser falar com vendedor, humano, consultor, fechar compra, ver proposta, financiamento, visita, teste drive, negociar ou demonstrar clara intencao de compra, use imediatamente a ferramenta "atualizar_etapa_crm" com status "qualificado".
+- Quando o lead estiver qualificado, o sistema encaminha o contato para o vendedor salvo na lista e na fila. Nao deixe de acionar a ferramenta nesses casos.`
 
   systemPrompt += `\n- Se o cliente pedir fotos, imagens ou quiser ver o carro, use a ferramenta "enviar_fotos_bndv".`
   systemPrompt += `\n- Nunca use frases roboticas como "enviadas com sucesso", "fotos enviadas com sucesso para o WhatsApp" ou semelhantes.`
@@ -1369,38 +1438,45 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
             if (sellers && sellers.length > 0) {
               const selectedSeller = sellers[0];
-              let sellerNum = selectedSeller.whatsapp_number.replace(/\D/g, '');
+              let sellerNum = String(selectedSeller.whatsapp_number || '').replace(/\D/g, '');
               if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
+              if (sellerNum) {
+                const sellerMsg = `LEAD QUALIFICADO - ATENDIMENTO IMEDIATO\n\nNome do Cliente: ${pushName}\nContato: ${phoneNumber}\nAgente IA: ${agent.name}\n\n--------------------\n\nResumo do Atendimento pela IA:\n${args.resumo}\n\n--------------------\n\nAtender agora: https://wa.me/${phoneNumber}\n\nO cliente esta esperando!`;
+                const sellerSendResult = await sendUazapiTextMessage(
+                  baseUrl,
+                  instKey,
+                  instanceName,
+                  sellerNum,
+                  `${sellerNum}@s.whatsapp.net`,
+                  sellerMsg
+                );
 
-              const sellerMsg = `LEAD QUALIFICADO - ATENDIMENTO IMEDIATO\n\nNome do Cliente: ${pushName}\nContato: ${phoneNumber}\nAgente IA: ${agent.name}\n\n--------------------\n\nResumo do Atendimento pela IA:\n${args.resumo}\n\n--------------------\n\nAtender agora: https://wa.me/${phoneNumber}\n\nO cliente esta esperando!`;
-              const sellerRes = await fetch(`${baseUrl}/send/text`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'token': instKey },
-                body: JSON.stringify({ number: sellerNum, text: sellerMsg })
-              });
-              if (!sellerRes.ok) {
-                 console.error(`[CRM] Fail send to seller: ${sellerRes.status} - ${await sellerRes.text()}`);
+                if (!sellerSendResult.ok) {
+                  console.error(`[CRM] Falha ao enviar lead para vendedor ${selectedSeller.name} (${sellerNum}).`);
+                } else {
+                  await supabase.from('ai_team_members').update({
+                    last_lead_received_at: new Date().toISOString(),
+                    total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
+                  }).eq('id', selectedSeller.id);
+
+                  const { data: leadData } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
+                  if (leadData) {
+                    await supabase.from('ai_lead_transfers').insert({
+                      user_id: agent.user_id, lead_id: leadData.id, from_agent_id: agent.id,
+                      to_member_id: selectedSeller.id, transfer_reason: args.resumo,
+                      notes: `Transferido para ${selectedSeller.name} via round-robin`,
+                    });
+                    await supabase.from('ai_crm_leads').update({
+                      status: 'transferido', assigned_to_member_id: selectedSeller.id,
+                      transferred_at: new Date().toISOString(), transfer_reason: `Encaminhado para ${selectedSeller.name}`,
+                    }).eq('id', leadData.id);
+                  }
+
+                  console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
+                }
+              } else {
+                console.error(`[CRM] Vendedor ${selectedSeller.name} sem numero de WhatsApp configurado.`);
               }
-
-              await supabase.from('ai_team_members').update({
-                last_lead_received_at: new Date().toISOString(),
-                total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
-              }).eq('id', selectedSeller.id);
-
-              const { data: leadData } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
-              if (leadData) {
-                await supabase.from('ai_lead_transfers').insert({
-                  user_id: agent.user_id, lead_id: leadData.id, from_agent_id: agent.id,
-                  to_member_id: selectedSeller.id, transfer_reason: args.resumo,
-                  notes: `Transferido para ${selectedSeller.name} via round-robin`,
-                });
-                await supabase.from('ai_crm_leads').update({
-                  status: 'transferido', assigned_to_member_id: selectedSeller.id,
-                  transferred_at: new Date().toISOString(), transfer_reason: `Encaminhado para ${selectedSeller.name}`,
-                }).eq('id', leadData.id);
-              }
-
-              console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
             }
           }
 
