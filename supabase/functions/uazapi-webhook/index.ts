@@ -355,34 +355,46 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
 async function sendUazapiImageMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption?: string) {
   const attempts = [
     {
+      label: 'message-sendMedia',
+      url: `${baseUrl}/message/sendMedia/${instanceName}`,
+      headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+      body: { number: phoneNumber, mediatype: 'image', media: imageUrl, caption: caption || '' }
+    },
+    {
+      label: 'message-sendImage',
+      url: `${baseUrl}/message/sendImage/${instanceName}`,
+      headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+      body: { number: phoneNumber, mediatype: 'image', media: imageUrl, caption: caption || '' }
+    },
+    {
       label: 'send-image-image',
       url: `${baseUrl}/send/image`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
       body: { number: phoneNumber, image: imageUrl, caption: caption || '' }
     },
     {
       label: 'send-image-url',
       url: `${baseUrl}/send/image`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: { number: phoneNumber, url: imageUrl, caption: caption || '' }
+      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+      body: { number: phoneNumber, url: imageUrl, caption: caption || '', text: caption || '' }
     },
     {
       label: 'send-image-media',
       url: `${baseUrl}/send/image`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: { number: phoneNumber, media: imageUrl, mediatype: 'image', caption: caption || '' }
+      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+      body: { number: phoneNumber, media: imageUrl, mediatype: 'image', caption: caption || '', text: caption || '' }
     },
     {
       label: 'send-image-instance',
       url: `${baseUrl}/send/image?instance=${instanceName}`,
       headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-      body: { number: phoneNumber, image: imageUrl, caption: caption || '' }
+      body: { number: phoneNumber, image: imageUrl, caption: caption || '', text: caption || '' }
     },
     {
       label: 'send-image-remotejid',
       url: `${baseUrl}/send/image`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: { remoteJid, image: imageUrl, caption: caption || '' }
+      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+      body: { remoteJid, image: imageUrl, caption: caption || '', text: caption || '' }
     }
   ];
 
