@@ -588,6 +588,17 @@ async function sendUazapiCarouselMessage(baseUrl: string, instKey: string, phone
   return { ok: false };
 }
 
+function buildBndvPhotoLinksMessage(vehicleLabel: string, vehicle: any, pictures: Array<{ url: string }>) {
+  const intro = `Separei aqui as fotos do ${vehicleLabel}.`;
+  const details = [
+    vehicle?.year ? `Ano: ${vehicle.year}` : '',
+    vehicle?.saleValue ? `Preco: R$ ${Number(vehicle.saleValue).toLocaleString('pt-BR')}` : '',
+  ].filter(Boolean).join(' | ');
+  const urls = pictures.slice(0, 5).map((picture, index) => `Foto ${index + 1}: ${picture.url}`).join('\n');
+
+  return [intro, details, urls].filter(Boolean).join('\n\n');
+}
+
 async function enviarFotosBndv(supabase: any, userId: string, filters: any, delivery: any) {
   const result = await fetchBndvVehicles(supabase, userId, filters);
   if (!result.success) return result;
@@ -638,24 +649,48 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
         selectedPictures
       );
 
-      if (!carouselResult.ok) {
+      if (carouselResult.ok) {
         return {
-          success: false,
-          error: 'Encontrei as fotos, mas nao consegui envia-las no WhatsApp pela Uazapi.',
+          success: true,
+          sent: selectedPictures.length,
           vehicle: vehicleLabel,
-          attempted: selectedPictures.length,
-          sent: sentCount,
+          year: vehicle?.year || null,
+          price: vehicle?.saleValue || null,
+          principal_image: selectedPictures[0]?.url || null,
+          mode: 'carousel'
+        };
+      }
+
+      const linksMessage = buildBndvPhotoLinksMessage(vehicleLabel, vehicle, selectedPictures);
+      const linksResult = await sendUazapiTextMessage(
+        delivery.baseUrl,
+        delivery.instKey,
+        delivery.instanceName,
+        delivery.phoneNumber,
+        delivery.remoteJid,
+        linksMessage
+      );
+
+      if (linksResult.ok) {
+        return {
+          success: true,
+          sent: selectedPictures.length,
+          vehicle: vehicleLabel,
+          year: vehicle?.year || null,
+          price: vehicle?.saleValue || null,
+          principal_image: selectedPictures[0]?.url || null,
+          mode: 'links',
+          delivered_via_tool: true,
+          suppress_follow_up: true,
         };
       }
 
       return {
-        success: true,
-        sent: selectedPictures.length,
+        success: false,
+        error: 'Encontrei as fotos, mas nao consegui envia-las no WhatsApp pela Uazapi.',
         vehicle: vehicleLabel,
-        year: vehicle?.year || null,
-        price: vehicle?.saleValue || null,
-        principal_image: selectedPictures[0]?.url || null,
-        mode: 'carousel'
+        attempted: selectedPictures.length,
+        sent: sentCount,
       };
     }
 
@@ -1186,7 +1221,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 - Se a ferramenta nao retornar resultados, diga isso de forma transparente e ofereca alternativas proximas.`
 
   systemPrompt += `\n- Se o cliente pedir fotos, imagens ou quiser ver o carro, use a ferramenta "enviar_fotos_bndv".`
-  systemPrompt += `\n- Depois de enviar as fotos, confirme ao cliente que as imagens foram enviadas no WhatsApp e convide ele a continuar o atendimento.`
+  systemPrompt += `\n- Nunca use frases roboticas como "enviadas com sucesso", "fotos enviadas com sucesso para o WhatsApp" ou semelhantes.`
+  systemPrompt += `\n- Se a ferramenta de fotos ja entregar links ou imagens direto ao cliente, nao repita uma confirmacao tecnica; no maximo continue de forma humana e comercial.`
 
   let aiModel = agent.model || 'gpt-4o';
   // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
@@ -1227,6 +1263,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   console.log(`[Webhook] Resposta da IA recebida. ToolCalls: ${aiMessage?.tool_calls?.length || 0}`);
   if (!mediaFallbackReply && aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
     const toolMessages: any[] = [];
+    let suppressAssistantReply = false;
 
     for (const toolCall of aiMessage.tool_calls) {
       try {
@@ -1321,6 +1358,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             { baseUrl, instKey, instanceName, phoneNumber, remoteJid }
           );
           console.log(`[BNDV] Envio de fotos executado | success: ${photoResult.success} | sent: ${photoResult.sent || 0}`);
+          if (photoResult?.suppress_follow_up) {
+            suppressAssistantReply = true;
+          }
           toolMessages.push({
             role: 'tool',
             tool_call_id: toolCall.id,
@@ -1339,7 +1379,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       }
     }
 
-    if (toolMessages.length > 0) {
+    if (suppressAssistantReply) {
+      aiResponse = '';
+      console.log('[Webhook] Tool de fotos ja respondeu direto ao cliente. Pulando follow-up da IA.');
+    } else if (toolMessages.length > 0) {
       console.log(`[Webhook] Tool(s) executadas (${toolMessages.length}). Solicitando resposta final...`);
       const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -1366,7 +1409,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   }
 
-  if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders })
+  if (!aiResponse) {
+    return new Response(JSON.stringify({ success: true, delivered_via_tool: true }), { headers: corsHeaders, status: 200 });
+  }
 
   console.log(`[Webhook] Resposta final ao cliente: ${aiResponse.substring(0, 200)}`);
 
