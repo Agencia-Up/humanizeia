@@ -372,7 +372,102 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
 async function sendUazapiImageMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption?: string, vehicleLabel?: string) {
   const mimeType = inferImageMimeType(imageUrl);
   const fileName = buildImageFileName(imageUrl, vehicleLabel);
+  const mediaBase64 = await fetchMediaAsBase64(imageUrl, instKey);
+  const mediaDataUrl = mediaBase64 ? `data:${mimeType};base64,${mediaBase64}` : '';
+  console.log(`[Webhook] BNDV image fetch -> base64: ${mediaBase64 ? 'sim' : 'nao'} | fileName: ${fileName}`);
   const attempts = [
+    ...(mediaBase64 ? [
+      {
+        label: 'message-sendMedia-base64-token-only',
+        url: `${baseUrl}/message/sendMedia`,
+        headers: { 'Content-Type': 'application/json', 'token': instKey },
+        body: {
+          number: phoneNumber,
+          mediaMessage: {
+            mediatype: 'image',
+            mimetype: mimeType,
+            fileName,
+            caption: caption || '',
+            media: mediaBase64,
+          },
+          options: { delay: 200 }
+        }
+      },
+      {
+        label: 'message-sendMedia-dataurl-token-only',
+        url: `${baseUrl}/message/sendMedia`,
+        headers: { 'Content-Type': 'application/json', 'token': instKey },
+        body: {
+          number: phoneNumber,
+          mediaMessage: {
+            mediatype: 'image',
+            mimetype: mimeType,
+            fileName,
+            caption: caption || '',
+            media: mediaDataUrl,
+          },
+          options: { delay: 200 }
+        }
+      },
+      {
+        label: 'message-sendMedia-base64-generic-both',
+        url: `${baseUrl}/message/sendMedia`,
+        headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+        body: {
+          number: phoneNumber,
+          mediaMessage: {
+            mediatype: 'image',
+            mimetype: mimeType,
+            fileName,
+            caption: caption || '',
+            media: mediaBase64,
+          },
+          options: { delay: 200 }
+        }
+      },
+      {
+        label: 'send-media-base64-both',
+        url: `${baseUrl}/send/media`,
+        headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+        body: {
+          number: phoneNumber,
+          media: mediaBase64,
+          mediatype: 'image',
+          mimetype: mimeType,
+          fileName,
+          caption: caption || '',
+          text: caption || ''
+        }
+      },
+      {
+        label: 'send-image-base64-both',
+        url: `${baseUrl}/send/image`,
+        headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+        body: {
+          number: phoneNumber,
+          image: mediaBase64,
+          mediatype: 'image',
+          mimetype: mimeType,
+          fileName,
+          caption: caption || '',
+          text: caption || ''
+        }
+      },
+      {
+        label: 'send-image-dataurl-both',
+        url: `${baseUrl}/send/image`,
+        headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+        body: {
+          number: phoneNumber,
+          image: mediaDataUrl,
+          mediatype: 'image',
+          mimetype: mimeType,
+          fileName,
+          caption: caption || '',
+          text: caption || ''
+        }
+      }
+    ] : []),
     {
       label: 'message-sendMedia-token-only',
       url: `${baseUrl}/message/sendMedia`,
@@ -657,29 +752,7 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
           year: vehicle?.year || null,
           price: vehicle?.saleValue || null,
           principal_image: selectedPictures[0]?.url || null,
-          mode: 'carousel'
-        };
-      }
-
-      const linksMessage = buildBndvPhotoLinksMessage(vehicleLabel, vehicle, selectedPictures);
-      const linksResult = await sendUazapiTextMessage(
-        delivery.baseUrl,
-        delivery.instKey,
-        delivery.instanceName,
-        delivery.phoneNumber,
-        delivery.remoteJid,
-        linksMessage
-      );
-
-      if (linksResult.ok) {
-        return {
-          success: true,
-          sent: selectedPictures.length,
-          vehicle: vehicleLabel,
-          year: vehicle?.year || null,
-          price: vehicle?.saleValue || null,
-          principal_image: selectedPictures[0]?.url || null,
-          mode: 'links',
+          mode: 'carousel',
           delivered_via_tool: true,
           suppress_follow_up: true,
         };
@@ -704,6 +777,8 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
     year: vehicle?.year || null,
     price: vehicle?.saleValue || null,
     principal_image: selectedPictures[0]?.url || null,
+    delivered_via_tool: true,
+    suppress_follow_up: true,
   };
 }
 
