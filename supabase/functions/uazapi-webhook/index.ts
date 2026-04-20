@@ -209,6 +209,23 @@ function buildBndvVehicleLabel(vehicle: any) {
   return [vehicle?.markName, vehicle?.modelName, vehicle?.versionName].filter(Boolean).join(' ');
 }
 
+function inferImageMimeType(imageUrl: string) {
+  const normalized = String(imageUrl || '').toLowerCase();
+  if (normalized.includes('.png')) return 'image/png';
+  if (normalized.includes('.webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+
+function buildImageFileName(imageUrl: string, vehicleLabel?: string) {
+  const mimeType = inferImageMimeType(imageUrl);
+  const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+  const baseName = String(vehicleLabel || 'veiculo')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'veiculo';
+  return `${baseName}.${extension}`;
+}
+
 async function fetchBndvVehicles(supabase: any, userId: string, filters: any) {
   const BNDV_API_URL = 'https://api-estoque.azurewebsites.net/graphql';
 
@@ -352,19 +369,33 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
   };
 }
 
-async function sendUazapiImageMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption?: string) {
+async function sendUazapiImageMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption?: string, vehicleLabel?: string) {
+  const mimeType = inferImageMimeType(imageUrl);
+  const fileName = buildImageFileName(imageUrl, vehicleLabel);
   const attempts = [
     {
-      label: 'message-sendMedia',
+      label: 'message-sendMedia-apikey',
       url: `${baseUrl}/message/sendMedia/${instanceName}`,
-      headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-      body: { number: phoneNumber, mediatype: 'image', media: imageUrl, caption: caption || '' }
+      headers: { 'Content-Type': 'application/json', 'apikey': instKey },
+      body: { number: phoneNumber, mediatype: 'image', mimetype: mimeType, media: imageUrl, fileName, caption: caption || '' }
     },
     {
-      label: 'message-sendImage',
+      label: 'message-sendMedia-both',
+      url: `${baseUrl}/message/sendMedia/${instanceName}`,
+      headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+      body: { number: phoneNumber, mediatype: 'image', mimetype: mimeType, media: imageUrl, fileName, caption: caption || '' }
+    },
+    {
+      label: 'message-sendImage-apikey',
+      url: `${baseUrl}/message/sendImage/${instanceName}`,
+      headers: { 'Content-Type': 'application/json', 'apikey': instKey },
+      body: { number: phoneNumber, mediatype: 'image', mimetype: mimeType, media: imageUrl, fileName, caption: caption || '' }
+    },
+    {
+      label: 'message-sendImage-both',
       url: `${baseUrl}/message/sendImage/${instanceName}`,
       headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-      body: { number: phoneNumber, mediatype: 'image', media: imageUrl, caption: caption || '' }
+      body: { number: phoneNumber, mediatype: 'image', mimetype: mimeType, media: imageUrl, fileName, caption: caption || '' }
     },
     {
       label: 'send-image-image',
@@ -455,7 +486,8 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
       delivery.phoneNumber,
       delivery.remoteJid,
       picture.url,
-      caption
+      caption,
+      buildBndvVehicleLabel(vehicle)
     );
 
     if (!sendResult.ok) {
