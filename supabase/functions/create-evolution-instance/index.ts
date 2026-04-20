@@ -380,17 +380,20 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
   try {
-    const webhookPayload = buildWebhookPayload(webhookUrl, instance_name);
-    let webhookRes = await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
+    let webhookRes = await fetch(`${baseUrl}/webhook`, {
       method: 'POST',
-      headers: adminHeaders,
+      headers: buildInstanceHeaders(instanceToken || api_key, api_key),
       body: JSON.stringify({
-        ...webhookPayload,
+        enabled: true,
+        url: webhookUrl,
+        events: ['messages', 'connection'],
+        excludeMessages: ['wasSentByApi'],
       }),
     });
 
-    if (webhookRes.status === 405) {
+    if (!webhookRes.ok) {
       await webhookRes.text().catch(() => '');
+      const webhookPayload = buildWebhookPayload(webhookUrl, instance_name);
       webhookRes = await fetch(`${baseUrl}/webhook/instance`, {
         method: 'POST',
         headers: adminHeaders,
@@ -402,6 +405,17 @@ async function handleEvolutionProvider(supabase: any, body: any) {
           instanceName: instance_name,
         }),
       });
+
+      if (!webhookRes.ok) {
+        await webhookRes.text().catch(() => '');
+        webhookRes = await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
+          method: 'POST',
+          headers: adminHeaders,
+          body: JSON.stringify({
+            ...webhookPayload,
+          }),
+        });
+      }
     }
 
     console.log(`[create-evolution-instance] Webhook response: ${webhookRes.status}`);
