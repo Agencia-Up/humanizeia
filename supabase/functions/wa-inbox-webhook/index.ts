@@ -1604,42 +1604,6 @@ IMPORTANTE:
     }
 
     if (!replyText) {
-            console.log("[ai-agent-crm] No text response, requesting follow-up...");
-            // Make a second call to get the text response
-            const followUpMessages = [
-              { role: "system", content: systemPrompt },
-              ...historyMessages.slice(-14),
-              { role: "user", content },
-              aiMessage,
-              { role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ success: true, status: args.status }) },
-            ];
-
-            const followUpRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${LOVABLE_API_KEY}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                model: "google/gemini-2.5-flash",
-                messages: followUpMessages,
-                temperature: effectiveTemp,
-                max_tokens: maxTokensValue,
-              }),
-            });
-
-            if (followUpRes.ok) {
-              const followUpData = await followUpRes.json();
-              replyText = followUpData.choices?.[0]?.message?.content?.trim() || "";
-            }
-          }
-        } catch (err) {
-          console.error("[ai-agent-crm] Tool call processing error:", err);
-        }
-      }
-    }
-
-    if (!replyText) {
       console.log("[ai-agent] Empty AI response, skipping");
       return;
     }
