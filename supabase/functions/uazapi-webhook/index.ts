@@ -374,6 +374,54 @@ async function sendUazapiImageMessage(baseUrl: string, instKey: string, instance
   const fileName = buildImageFileName(imageUrl, vehicleLabel);
   const attempts = [
     {
+      label: 'message-sendMedia-token-only',
+      url: `${baseUrl}/message/sendMedia`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: {
+        number: phoneNumber,
+        mediaMessage: {
+          mediatype: 'image',
+          mimetype: mimeType,
+          fileName,
+          caption: caption || '',
+          media: imageUrl,
+        },
+        options: { delay: 200 }
+      }
+    },
+    {
+      label: 'message-sendMedia-generic-apikey',
+      url: `${baseUrl}/message/sendMedia`,
+      headers: { 'Content-Type': 'application/json', 'apikey': instKey },
+      body: {
+        number: phoneNumber,
+        mediaMessage: {
+          mediatype: 'image',
+          mimetype: mimeType,
+          fileName,
+          caption: caption || '',
+          media: imageUrl,
+        },
+        options: { delay: 200 }
+      }
+    },
+    {
+      label: 'message-sendMedia-generic-both',
+      url: `${baseUrl}/message/sendMedia`,
+      headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+      body: {
+        number: phoneNumber,
+        mediaMessage: {
+          mediatype: 'image',
+          mimetype: mimeType,
+          fileName,
+          caption: caption || '',
+          media: imageUrl,
+        },
+        options: { delay: 200 }
+      }
+    },
+    {
       label: 'message-sendMedia-uazapi',
       url: `${baseUrl}/message/sendMedia/${instanceName}`,
       headers: { 'Content-Type': 'application/json', 'apikey': instKey },
@@ -420,6 +468,34 @@ async function sendUazapiImageMessage(baseUrl: string, instKey: string, instance
       url: `${baseUrl}/message/sendImage/${instanceName}`,
       headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
       body: { number: phoneNumber, mediatype: 'image', mimetype: mimeType, media: imageUrl, fileName, caption: caption || '' }
+    },
+    {
+      label: 'send-media-token-only',
+      url: `${baseUrl}/send/media`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: {
+        number: phoneNumber,
+        media: imageUrl,
+        mediatype: 'image',
+        mimetype: mimeType,
+        fileName,
+        caption: caption || '',
+        text: caption || ''
+      }
+    },
+    {
+      label: 'send-media-both',
+      url: `${baseUrl}/send/media`,
+      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+      body: {
+        number: phoneNumber,
+        media: imageUrl,
+        mediatype: 'image',
+        mimetype: mimeType,
+        fileName,
+        caption: caption || '',
+        text: caption || ''
+      }
     },
     {
       label: 'send-image-image',
@@ -474,6 +550,44 @@ async function sendUazapiImageMessage(baseUrl: string, instKey: string, instance
   return { ok: false };
 }
 
+async function sendUazapiCarouselMessage(baseUrl: string, instKey: string, phoneNumber: string, vehicleLabel: string, pictures: Array<{ url: string }>) {
+  const carouselItems = pictures.slice(0, 5).map((picture, index) => ({
+    text: `${vehicleLabel}\nFoto ${index + 1}`,
+    image: picture.url,
+    buttons: [
+      {
+        id: `mais_detalhes_${index + 1}`,
+        text: 'Quero saber mais',
+        type: 'REPLY'
+      }
+    ]
+  }));
+
+  try {
+    console.log('[Webhook] Tentando envio de fotos UAZAPI via send-carousel');
+    const res = await fetch(`${baseUrl}/send/carousel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+      body: JSON.stringify({
+        number: phoneNumber,
+        text: `Separei as fotos do ${vehicleLabel} para voce.`,
+        carousel: carouselItems,
+        readchat: true,
+        delay: 0
+      }),
+    });
+    const responseText = await res.text().catch(() => '');
+    console.log(`[Webhook] UAZAPI send-carousel -> ${res.status} | ${responseText.substring(0, 300)}`);
+    if (res.ok) {
+      return { ok: true, status: res.status, body: responseText };
+    }
+  } catch (err) {
+    console.error('[Webhook] Falha no envio de carrossel UAZAPI:', err);
+  }
+
+  return { ok: false };
+}
+
 async function enviarFotosBndv(supabase: any, userId: string, filters: any, delivery: any) {
   const result = await fetchBndvVehicles(supabase, userId, filters);
   if (!result.success) return result;
@@ -498,10 +612,11 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
   }
 
   let sentCount = 0;
+  const vehicleLabel = buildBndvVehicleLabel(vehicle);
   for (let index = 0; index < selectedPictures.length; index++) {
     const picture = selectedPictures[index];
     const caption = index === 0
-      ? `${buildBndvVehicleLabel(vehicle)}${vehicle?.year ? ` | ${vehicle.year}` : ''}${vehicle?.saleValue ? ` | R$ ${Number(vehicle.saleValue).toLocaleString('pt-BR')}` : ''}`
+      ? `${vehicleLabel}${vehicle?.year ? ` | ${vehicle.year}` : ''}${vehicle?.saleValue ? ` | R$ ${Number(vehicle.saleValue).toLocaleString('pt-BR')}` : ''}`
       : '';
     const sendResult = await sendUazapiImageMessage(
       delivery.baseUrl,
@@ -511,16 +626,36 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
       delivery.remoteJid,
       picture.url,
       caption,
-      buildBndvVehicleLabel(vehicle)
+      vehicleLabel
     );
 
     if (!sendResult.ok) {
+      const carouselResult = await sendUazapiCarouselMessage(
+        delivery.baseUrl,
+        delivery.instKey,
+        delivery.phoneNumber,
+        vehicleLabel,
+        selectedPictures
+      );
+
+      if (!carouselResult.ok) {
+        return {
+          success: false,
+          error: 'Encontrei as fotos, mas nao consegui envia-las no WhatsApp pela Uazapi.',
+          vehicle: vehicleLabel,
+          attempted: selectedPictures.length,
+          sent: sentCount,
+        };
+      }
+
       return {
-        success: false,
-        error: 'Encontrei as fotos, mas nao consegui envia-las no WhatsApp pela Uazapi.',
-        vehicle: buildBndvVehicleLabel(vehicle),
-        attempted: selectedPictures.length,
-        sent: sentCount,
+        success: true,
+        sent: selectedPictures.length,
+        vehicle: vehicleLabel,
+        year: vehicle?.year || null,
+        price: vehicle?.saleValue || null,
+        principal_image: selectedPictures[0]?.url || null,
+        mode: 'carousel'
       };
     }
 
@@ -530,7 +665,7 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
   return {
     success: true,
     sent: sentCount,
-    vehicle: buildBndvVehicleLabel(vehicle),
+    vehicle: vehicleLabel,
     year: vehicle?.year || null,
     price: vehicle?.saleValue || null,
     principal_image: selectedPictures[0]?.url || null,
