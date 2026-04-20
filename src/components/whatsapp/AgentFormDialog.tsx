@@ -339,12 +339,26 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     if (instId) {
         setSelectedInstanceIds([instId]); // Restringe a apenas uma
         try {
-          await supabase.functions.invoke('sync-evolution-webhook', {
-            body: { instance_id: instId, user_id: user?.id }
+          const { data: { session } } = await supabase.auth.getSession();
+          const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
+            body: { instance_id: instId, user_id: user?.id },
+            headers: {
+              Authorization: `Bearer ${session?.access_token}`
+            }
           });
+
+          if (error || !data?.success) {
+            throw new Error(data?.error || error?.message || 'Erro ao sincronizar webhook');
+          }
+
           console.log('[Connection] Webhook sincronizado automaticamente:', instId);
         } catch (syncErr) {
           console.warn('[Connection] Falha ao sincronizar webhook automaticamente:', syncErr);
+          toast({
+            title: 'WhatsApp conectado, mas webhook falhou',
+            description: 'A conexão foi feita, mas a sincronização do webhook não terminou. Tente sincronizar manualmente na instância.',
+            variant: 'destructive'
+          });
         }
     }
     toast({ title: "WhatsApp Conectado!", description: "Instância está online e pronta.", className: "bg-green-600 text-white" });
