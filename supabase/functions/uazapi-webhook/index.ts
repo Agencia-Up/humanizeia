@@ -521,8 +521,17 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Response('Instance not found', { headers: corsHeaders })
   }
 
-  const { data: agent } = await supabase.from('wa_ai_agents')
-    .select('*').eq('user_id', waInstance.user_id).eq('is_active', true).contains('instance_ids', [waInstance.id]).maybeSingle()
+  const { data: agents } = await supabase.from('wa_ai_agents')
+    .select('*').eq('user_id', waInstance.user_id).eq('is_active', true)
+
+  const agent = agents?.find((a: any) => {
+    const ids = a.instance_ids || [];
+    return Array.isArray(ids) && ids.length > 0 && ids.includes(waInstance.id);
+  }) || agents?.find((a: any) => a.instance_id === waInstance.id)
+     || agents?.find((a: any) => {
+    const ids = a.instance_ids || [];
+    return (!ids || ids.length === 0) && !a.instance_id;
+  });
 
   if (!agent) {
     console.log(`[Webhook] No matching active agent for instanceId: ${waInstance.id}`);

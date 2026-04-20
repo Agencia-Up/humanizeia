@@ -1235,12 +1235,13 @@ async function handleAIAgentReply(
     // Generate AI reply
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
 
     const rawModel = agent.model || "google/gemini-2.5-flash";
     const isAnthropicModel = rawModel.startsWith("anthropic/");
 
-    if (!mediaFallbackReply && !isAnthropicModel && !LOVABLE_API_KEY) {
-      console.error("[ai-agent] LOVABLE_API_KEY not configured");
+    if (!mediaFallbackReply && !isAnthropicModel && !LOVABLE_API_KEY && !OPENAI_API_KEY) {
+      console.error("[ai-agent] LOVABLE_API_KEY and OPENAI_API_KEY not configured");
       return;
     }
     if (!mediaFallbackReply && isAnthropicModel && !ANTHROPIC_API_KEY) {

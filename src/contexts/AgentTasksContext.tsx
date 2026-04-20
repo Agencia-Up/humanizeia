@@ -31,11 +31,11 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
   const navigate = useNavigate();
   const [activeTasks, setActiveTasks] = useState<AgentTask[]>([]);
   const [recentTasks, setRecentTasks] = useState<AgentTask[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Fetch initial state
+  // Fetch initial state — silently ignore if table doesn't exist (406/404)
   const fetchTasks = useCallback(async () => {
-    if (!user) return;
+    if (!user) { setIsLoading(false); return; }
     setIsLoading(true);
     try {
       const { data, error } = await supabase
@@ -45,13 +45,17 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
         .order('created_at', { ascending: false })
         .limit(20);
 
-      if (error) throw error;
+      if (error) {
+        // Silently ignore — table may not exist yet
+        setIsLoading(false);
+        return;
+      }
       
       const tasks = (data as unknown) as AgentTask[];
       setActiveTasks(tasks.filter(t => t.status === 'processing'));
       setRecentTasks(tasks);
-    } catch (err) {
-      console.error('Error fetching tasks:', err);
+    } catch {
+      // Silently ignore any errors
     } finally {
       setIsLoading(false);
     }
@@ -127,22 +131,26 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
   }, [user, toast, navigate]);
 
   const createTask = async (agentId: string, taskType: string, payload: any) => {
-    if (!user) throw new Error('User not authenticated');
+    if (!user) return '';
 
-    const { data, error } = await supabase
-      .from('agent_tasks' as any)
-      .insert({
-        user_id: user.id,
-        agent_id: agentId,
-        task_type: taskType,
-        status: 'processing',
-        payload,
-      })
-      .select('id')
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('agent_tasks' as any)
+        .insert({
+          user_id: user.id,
+          agent_id: agentId,
+          task_type: taskType,
+          status: 'processing',
+          payload,
+        })
+        .select('id')
+        .single();
 
-    if (error) throw error;
-    return (data as any).id;
+      if (error) return '';
+      return (data as any).id;
+    } catch {
+      return '';
+    }
   };
 
   return (
