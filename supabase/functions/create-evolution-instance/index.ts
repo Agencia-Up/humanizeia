@@ -1,12 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const EVOLUTION_WEBHOOK_EVENTS = [
-  "MESSAGES_UPSERT",
-  "MESSAGES_SET",
-  "MESSAGES_UPDATE",
-  "CONNECTION_UPDATE",
-];
-
 function buildAdminHeaders(apiKey: string) {
   return {
     "Content-Type": "application/json",
@@ -79,9 +72,12 @@ function buildWebhookPayload(webhookUrl: string, instanceName?: string) {
   return {
     enabled: true,
     url: webhookUrl,
-    webhook_by_events: false,
-    webhook_base64: false,
-    events: EVOLUTION_WEBHOOK_EVENTS,
+    local_map: false,
+    STATUS_INSTANCE: true,
+    QRCODE_UPDATED: true,
+    MESSAGES_UPSERT: true,
+    MESSAGES_SET: true,
+    MESSAGES_UPDATE: true,
     ...(instanceName ? { instanceName } : {}),
   };
 }
@@ -384,11 +380,12 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
   try {
+    const webhookPayload = buildWebhookPayload(webhookUrl, instance_name);
     let webhookRes = await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
       method: 'POST',
       headers: adminHeaders,
       body: JSON.stringify({
-        webhook: buildWebhookPayload(webhookUrl, instance_name),
+        ...webhookPayload,
       }),
     });
 
@@ -397,7 +394,13 @@ async function handleEvolutionProvider(supabase: any, body: any) {
       webhookRes = await fetch(`${baseUrl}/webhook/instance`, {
         method: 'POST',
         headers: adminHeaders,
-        body: JSON.stringify(buildWebhookPayload(webhookUrl, instance_name)),
+        body: JSON.stringify({
+          enabled: true,
+          url: webhookUrl,
+          events: ["messages", "messages_update", "connection", "qrcode"],
+          excludeMessages: ["wasSentByApi"],
+          instanceName: instance_name,
+        }),
       });
     }
 
