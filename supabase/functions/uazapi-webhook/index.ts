@@ -57,8 +57,6 @@ serve(async (req) => {
       } else if (payload.data && Array.isArray(payload.data) && payload.data.length > 0) {
         msgObj = payload.data[0]
       }
-        msgObj = payload.message
-      }
       
       if (!msgObj) { console.log('[Webhook] msgObj is null! payload keys:', Object.keys(payload), 'chat:', !!payload.chat, 'messages:', !!payload.messages, 'message:', !!payload.message); return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders }); }
       if (msgObj.fromMe === true) { console.log('[Webhook] Ignored fromMe'); return new Response('Ignored fromMe', { headers: corsHeaders }); }
