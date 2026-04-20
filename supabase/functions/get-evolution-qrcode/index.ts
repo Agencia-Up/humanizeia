@@ -5,6 +5,25 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+function buildAdminHeaders(apiKey: string) {
+  return {
+    'Content-Type': 'application/json',
+    apikey: apiKey,
+    token: apiKey,
+    admintoken: apiKey,
+    Authorization: `Bearer ${apiKey}`,
+  };
+}
+
+function buildInstanceHeaders(instanceToken: string, adminToken?: string) {
+  return {
+    'Content-Type': 'application/json',
+    token: instanceToken,
+    apikey: instanceToken,
+    ...(adminToken ? { admintoken: adminToken } : {}),
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -14,12 +33,11 @@ Deno.serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-  // Read Evolution API credentials from environment
   const evolutionApiUrl = Deno.env.get('EVOLUTION_API_URL');
   const evolutionApiKey = Deno.env.get('EVOLUTION_API_KEY');
 
   try {
-    const { user_id, instance_id } = await req.json();
+    const { user_id, instance_id, instance_name } = await req.json();
 
     if (!user_id) {
       return new Response(JSON.stringify({ success: false, error: 'user_id obrigatório' }), {
@@ -28,7 +46,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Try wa_instances first (new multi-instance approach)
     let instanceName: string | null = null;
     let apiUrl: string | null = null;
     let apiKey: string | null = null;
@@ -46,8 +63,20 @@ Deno.serve(async (req) => {
         apiUrl = inst.api_url;
         apiKey = inst.api_key_encrypted;
       }
+    } else if (instance_name) {
+      const { data: inst } = await supabase
+        .from('wa_instances')
+        .select('instance_name, api_url, api_key_encrypted')
+        .eq('instance_name', instance_name)
+        .eq('user_id', user_id)
+        .maybeSingle();
+
+      if (inst) {
+        instanceName = inst.instance_name;
+        apiUrl = inst.api_url;
+        apiKey = inst.api_key_encrypted;
+      }
     } else {
-      // Get latest waiting_qr instance
       const { data: inst } = await supabase
         .from('wa_instances')
         .select('instance_name, api_url, api_key_encrypted')
@@ -65,7 +94,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fallback to whatsapp_config
     if (!instanceName) {
       const { data: config } = await supabase
         .from('whatsapp_config')
@@ -87,38 +115,38 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Use env secrets as primary, fallback to DB values
-    const baseUrl = (evolutionApiUrl || apiUrl || '').replace(/\/$/, '');
-    const key = evolutionApiKey || apiKey || '';
+    const baseUrl = (apiUrl || evolutionApiUrl || '').replace(/\/$/, '');
+    const instanceToken = apiKey || '';
+    const adminToken = evolutionApiKey || '';
 
-    if (!baseUrl || !key) {
+    if (!baseUrl || (!instanceToken && !adminToken)) {
       return new Response(JSON.stringify({ success: false, error: 'Credenciais da Evolution API não encontradas' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Check connection state
-    const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instanceName}`, {
-      headers: { 'apikey': key },
-    });
-
     let currentState = 'disconnected';
-    if (stateRes.ok) {
-      try {
-        const stateData = await stateRes.json();
-        currentState = stateData?.state || stateData?.instance?.state || 'disconnected';
-      } catch {}
+    if (adminToken || instanceToken) {
+      const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instanceName}`, {
+        headers: buildAdminHeaders(adminToken || instanceToken),
+      });
+
+      if (stateRes.ok) {
+        try {
+          const stateData = await stateRes.json();
+          currentState = stateData?.state || stateData?.instance?.state || 'disconnected';
+        } catch {}
+      }
     }
 
     console.log(`[get-evolution-qrcode] Instance ${instanceName} state: ${currentState}`);
 
-    // If connected, update DB and return
     if (currentState === 'open') {
       let phoneNumber = '';
       try {
         const infoRes = await fetch(`${baseUrl}/instance/fetchInstances`, {
-          headers: { 'apikey': key },
+          headers: buildAdminHeaders(adminToken || instanceToken),
         });
         if (infoRes.ok) {
           const instances = await infoRes.json();
@@ -130,7 +158,6 @@ Deno.serve(async (req) => {
         }
       } catch {}
 
-      // Update wa_instances
       await supabase
         .from('wa_instances')
         .update({
@@ -142,7 +169,6 @@ Deno.serve(async (req) => {
         .eq('user_id', user_id)
         .eq('instance_name', instanceName);
 
-      // Also update whatsapp_config for backward compat
       await supabase
         .from('whatsapp_config')
         .update({
@@ -162,22 +188,61 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch QR Code
-    const qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
-      headers: { 'apikey': key },
-    });
-
-    const qrText = await qrRes.text();
-    console.log(`[get-evolution-qrcode] QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
-
     let qrCode: string | null = null;
     let connected = false;
 
-    try {
-      const qrData = JSON.parse(qrText);
-      qrCode = qrData?.base64 || qrData?.qrcode?.base64 || null;
-      connected = qrData?.state === 'open' || qrData?.instance?.state === 'open';
-    } catch {}
+    const qrAttempts = [
+      {
+        label: 'get-connect-by-name-admin',
+        url: `${baseUrl}/instance/connect/${instanceName}`,
+        method: 'GET',
+        headers: buildAdminHeaders(adminToken || instanceToken),
+      },
+      ...(instanceToken ? [{
+        label: 'post-connect-instance-token',
+        url: `${baseUrl}/instance/connect`,
+        method: 'POST',
+        headers: buildInstanceHeaders(instanceToken, adminToken),
+        body: {},
+      }] : []),
+      ...(instanceToken ? [{
+        label: 'post-connect-instance-token-name',
+        url: `${baseUrl}/instance/connect`,
+        method: 'POST',
+        headers: buildInstanceHeaders(instanceToken, adminToken),
+        body: { instanceName },
+      }] : []),
+    ];
+
+    for (const attempt of qrAttempts) {
+      const qrRes = await fetch(attempt.url, {
+        method: attempt.method,
+        headers: attempt.headers,
+        body: attempt.body ? JSON.stringify(attempt.body) : undefined,
+      });
+
+      const qrText = await qrRes.text();
+      console.log(`[get-evolution-qrcode] ${attempt.label} QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
+
+      try {
+        const qrData = JSON.parse(qrText);
+        qrCode =
+          qrData?.base64 ||
+          qrData?.qrcode?.base64 ||
+          qrData?.qrcode ||
+          qrData?.instance?.qrcode?.base64 ||
+          qrCode;
+        connected =
+          qrData?.state === 'open' ||
+          qrData?.instance?.state === 'open' ||
+          qrData?.connected === true ||
+          qrData?.instance?.connected === true;
+      } catch {}
+
+      if (qrCode || connected) {
+        break;
+      }
+    }
 
     if (connected) {
       await supabase

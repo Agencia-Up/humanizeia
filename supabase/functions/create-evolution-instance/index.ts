@@ -17,6 +17,15 @@ function buildAdminHeaders(apiKey: string) {
   };
 }
 
+function buildInstanceHeaders(instanceToken: string, adminToken?: string) {
+  return {
+    "Content-Type": "application/json",
+    token: instanceToken,
+    apikey: instanceToken,
+    ...(adminToken ? { admintoken: adminToken } : {}),
+  };
+}
+
 function buildWebhookPayload(webhookUrl: string, instanceName?: string) {
   return {
     enabled: true,
@@ -265,6 +274,11 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     createData?.hash?.qrcode ||
     createData?.instance?.qrcode?.base64 ||
     null;
+  const instanceToken =
+    createData?.instance?.token ||
+    createData?.token ||
+    createData?.data?.token ||
+    null;
 
   if (!qrCode) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -279,13 +293,35 @@ async function handleEvolutionProvider(supabase: any, body: any) {
         url: `${baseUrl}/instance/connect`,
         method: 'POST',
         body: { instanceName: instance_name },
+        headers: adminHeaders,
       },
+      ...(instanceToken ? [{
+        label: 'post-connect-instance-token',
+        url: `${baseUrl}/instance/connect`,
+        method: 'POST',
+        body: {},
+        headers: buildInstanceHeaders(instanceToken, api_key),
+      }] : []),
+      ...(instanceToken ? [{
+        label: 'post-connect-instance-token-name',
+        url: `${baseUrl}/instance/connect`,
+        method: 'POST',
+        body: { instanceName: instance_name },
+        headers: buildInstanceHeaders(instanceToken, api_key),
+      }] : []),
+      ...(instanceToken ? [{
+        label: 'get-connect-instance-token-by-name',
+        url: `${baseUrl}/instance/connect/${encodeURIComponent(instance_name)}`,
+        method: 'GET',
+        headers: buildInstanceHeaders(instanceToken, api_key),
+      },
+      ] : []),
     ];
 
     for (const attempt of qrAttempts) {
       const qrRes = await fetch(attempt.url, {
         method: attempt.method,
-        headers: adminHeaders,
+        headers: attempt.headers,
         body: attempt.body ? JSON.stringify(attempt.body) : undefined,
       });
       const qrText = await qrRes.text();
@@ -335,7 +371,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     instance_name,
     friendly_name: friendly_name || instance_name,
     api_url: baseUrl,
-    api_key_encrypted: api_key,
+    api_key_encrypted: instanceToken || api_key,
     phone_number: '',
     status: 'waiting_qr',
     is_active: false,
@@ -353,7 +389,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     await supabase.from('whatsapp_config').upsert({
       user_id,
       api_url: baseUrl,
-      api_key: api_key,
+      api_key: instanceToken || api_key,
       instance_name,
       is_active: false,
       phone_number: '',
