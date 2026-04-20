@@ -21,7 +21,7 @@ export function LeadFormDialog({ open, onClose, onSave, onDelete, lead, stages, 
   const [form, setForm] = useState({
     name: '', email: '', phone: '', company: '', value: 0,
     source: '', notes: '', priority: 'medium', stage_id: defaultStageId || '',
-    tags: '', follow_up_date: '', utm_source: '', utm_campaign: ''
+    tags: '', follow_up_date: '', utm_source: '', utm_campaign: '', vendedor: ''
   });
 
   useEffect(() => {
@@ -31,11 +31,12 @@ export function LeadFormDialog({ open, onClose, onSave, onDelete, lead, stages, 
         company: lead.company || '', value: lead.value || 0, source: lead.source || '',
         notes: lead.notes || '', priority: lead.priority || 'medium',
         stage_id: lead.stage_id || '', tags: (lead.tags || []).join(', '),
-        follow_up_date: lead.follow_up_date ? lead.follow_up_date.split('T')[0] : '', 
-        utm_source: lead.utm_source || '', utm_campaign: lead.utm_campaign || ''
+        follow_up_date: lead.follow_up_date ? lead.follow_up_date.split('T')[0] : '',
+        utm_source: lead.utm_source || '', utm_campaign: lead.utm_campaign || '',
+        vendedor: (lead.custom_fields?.vendedor as string) || '',
       });
     } else {
-      setForm({ name: '', email: '', phone: '', company: '', value: 0, source: '', notes: '', priority: 'medium', stage_id: defaultStageId || '', tags: '', follow_up_date: '', utm_source: '', utm_campaign: '' });
+      setForm({ name: '', email: '', phone: '', company: '', value: 0, source: '', notes: '', priority: 'medium', stage_id: defaultStageId || '', tags: '', follow_up_date: '', utm_source: '', utm_campaign: '', vendedor: '' });
     }
   }, [lead, defaultStageId]);
 
@@ -56,6 +57,7 @@ export function LeadFormDialog({ open, onClose, onSave, onDelete, lead, stages, 
       follow_up_date: form.follow_up_date || null,
       utm_source: form.utm_source || null,
       utm_campaign: form.utm_campaign || null,
+      custom_fields: { ...(lead?.custom_fields || {}), vendedor: form.vendedor || null },
     });
     onClose();
   };
@@ -129,6 +131,10 @@ export function LeadFormDialog({ open, onClose, onSave, onDelete, lead, stages, 
             <div>
               <Label>UTM Campaign</Label>
               <Input value={form.utm_campaign} onChange={(e) => setForm({ ...form, utm_campaign: e.target.value })} placeholder="Ex: promo_agosto" />
+            </div>
+            <div>
+              <Label>Vendedor / Atendente</Label>
+              <Input value={form.vendedor} onChange={(e) => setForm({ ...form, vendedor: e.target.value })} placeholder="Ex: João Silva" />
             </div>
             <div className="col-span-2">
               <Label>Notas</Label>

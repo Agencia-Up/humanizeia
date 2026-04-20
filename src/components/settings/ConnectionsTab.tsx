@@ -85,13 +85,32 @@ const PLATFORMS: PlatformDef[] = [
     description: 'Facebook, Instagram e Messenger Ads',
     status: 'available',
     steps: [
-      { title: 'Clique em "Conectar"', description: 'Você será redirecionado para a página de login do Facebook.' },
-      { title: 'Faça login na sua conta', description: 'Use sua conta pessoal ou de administrador do Facebook.' },
-      { title: 'Autorize o acesso', description: 'O LogosIA solicitará permissão para ler dados de campanhas.' },
-      { title: 'Selecione a conta de anúncios', description: 'Escolha qual conta deseja gerenciar na plataforma.' },
-      { title: 'Pronto!', description: 'Suas campanhas e métricas serão importadas automaticamente.' },
+      {
+        title: '✅ Antes de começar',
+        description: 'Certifique-se de que você é ADMINISTRADOR da Conta de Anúncios no Facebook. Acesse business.facebook.com → Configurações → Usuários → confirme seu cargo.',
+      },
+      {
+        title: '🔐 Clique em "Conectar agora"',
+        description: 'Você será redirecionado automaticamente para o Facebook. Não precisa instalar nada.',
+      },
+      {
+        title: '👤 Faça login no Facebook',
+        description: 'Use a conta pessoal que é administradora da conta de anúncios. Se já estiver logado, o Facebook vai pular esta etapa.',
+      },
+      {
+        title: '☑️ Autorize o acesso — clique em "Continuar como [seu nome]"',
+        description: 'O Facebook listará as permissões solicitadas (leitura de campanhas, métricas e insights). Clique em "Continuar" e depois em "Ok" para confirmar.',
+      },
+      {
+        title: '🏦 Selecione a conta de anúncios',
+        description: 'Se você gerencia múltiplas contas, escolha qual delas deseja conectar ao LogosIA. Você pode repetir o processo para conectar outras contas depois.',
+      },
+      {
+        title: '🎉 Pronto! Conexão estabelecida',
+        description: 'Suas campanhas, conjuntos de anúncios e métricas (ROAS, CPL, CTR) serão importados automaticamente. O José começa a analisar em instantes.',
+      },
     ],
-    warning: 'Você precisa ser administrador da conta de anúncios no Facebook.',
+    warning: 'Você precisa ser Administrador da Conta de Anúncios. Perfis com acesso de Analista não têm permissão suficiente.',
   },
   {
     id: 'instagram_publisher',
@@ -101,13 +120,32 @@ const PLATFORMS: PlatformDef[] = [
     description: 'Publicar posts, reels e carrosséis no Instagram',
     status: 'available' as const,
     steps: [
-      { title: 'Clique em "Conectar"', description: 'Você será redirecionado para o Facebook.' },
-      { title: 'Faça login no Facebook', description: 'Use a conta pessoal que gerencia a Página.' },
-      { title: 'Autorize o acesso', description: 'Permita a publicação no Instagram Business.' },
-      { title: 'Página conectada ao Instagram', description: 'Sua Página do Facebook precisa estar vinculada a uma conta Instagram Business.' },
-      { title: 'Pronto!', description: 'Davi pode publicar automaticamente no seu Instagram.' },
+      {
+        title: '✅ Antes de começar — 2 requisitos obrigatórios',
+        description: '1) Sua conta Instagram precisa ser do tipo Business ou Creator (não conta pessoal). 2) Essa conta Instagram precisa estar vinculada a uma Página do Facebook. Confira em: Instagram → Configurações → Conta → Página vinculada.',
+      },
+      {
+        title: '🔐 Clique em "Conectar agora"',
+        description: 'Você será redirecionado para o Facebook (que gerencia permissões do Instagram Business).',
+      },
+      {
+        title: '👤 Faça login no Facebook',
+        description: 'Use a conta pessoal que administra a Página do Facebook vinculada ao seu Instagram.',
+      },
+      {
+        title: '☑️ Selecione a Página do Facebook correta',
+        description: 'O Facebook listará suas páginas. Selecione a que está vinculada ao Instagram que deseja conectar e clique em "Avançar".',
+      },
+      {
+        title: '📸 Autorize as permissões de publicação',
+        description: 'Marque todas as permissões listadas (publicar conteúdo, gerenciar comentários). Clique em "Concluído".',
+      },
+      {
+        title: '🎉 Pronto! O Davi pode publicar',
+        description: 'O agente Davi agora pode agendar e publicar posts, reels e carrosséis no seu Instagram automaticamente.',
+      },
     ],
-    warning: 'Sua conta Instagram precisa ser do tipo Business ou Creator e estar conectada a uma Página do Facebook.',
+    warning: 'Conta pessoal do Instagram NÃO funciona. Converta para Business em: Instagram → Configurações → Tipo de conta e ferramentas → Mudar para conta profissional.',
   },
   {
     id: 'google_ads',
@@ -117,13 +155,32 @@ const PLATFORMS: PlatformDef[] = [
     description: 'Pesquisa, Display, YouTube e Shopping',
     status: 'available',
     steps: [
-      { title: 'Clique em "Conectar"', description: 'Um botão simples — sem precisar instalar nada no seu computador.' },
-      { title: 'Faça login no Google', description: 'Use o mesmo e-mail e senha que você já usa no Google Ads. Nenhum código ou API é necessário.' },
-      { title: 'Permita o acesso (clique em "Permitir")', description: 'O Google vai perguntar se o LogosIA pode ver seus dados de anúncios. Basta clicar "Permitir". Suas senhas nunca são compartilhadas.' },
-      { title: 'Escolha sua conta de anúncios', description: 'Se você tem mais de uma conta no Google Ads, é só clicar na que deseja usar.' },
-      { title: '✅ Pronto! Tudo conectado', description: 'Suas campanhas, gastos e resultados aparecerão automaticamente no seu Dashboard.' },
+      {
+        title: '✅ Antes de começar',
+        description: 'Tenha em mãos o e-mail da conta Google que você usa para acessar ads.google.com. Você precisa ser Administrador ou ter acesso padrão na conta de anúncios.',
+      },
+      {
+        title: '🔐 Clique em "Conectar agora"',
+        description: 'Você será redirecionado para a tela de login do Google. Nenhuma instalação necessária.',
+      },
+      {
+        title: '👤 Faça login com sua conta Google',
+        description: 'Use o mesmo e-mail e senha que você acessa em ads.google.com. Se tiver múltiplas contas Google, certifique-se de escolher a correta.',
+      },
+      {
+        title: '☑️ Clique em "Permitir"',
+        description: 'O Google mostrará quais dados o LogosIA pode acessar (campanhas, métricas, orçamentos — somente leitura). Clique em "Permitir" para confirmar.',
+      },
+      {
+        title: '🏦 Escolha a conta de anúncios',
+        description: 'Se você tiver mais de uma conta no Google Ads (ex: conta de cliente em MCC), selecione qual deseja conectar. Pode ser repetido para outras contas.',
+      },
+      {
+        title: '🎉 Pronto! Google Ads conectado',
+        description: 'Campanhas de Pesquisa, Display, YouTube e Shopping aparecerão no seu dashboard. O José começa a analisar performance em instantes.',
+      },
     ],
-    warning: 'Você precisa ter uma conta ativa no Google Ads. Se não sabe qual é seu login, é o mesmo e-mail que você usa para acessar ads.google.com.',
+    warning: 'Se você usa uma conta MCC (gerenciadora), conecte pelo e-mail da conta MCC e selecione a conta-cliente desejada na próxima etapa.',
   },
   {
     id: 'google_analytics',
@@ -133,10 +190,11 @@ const PLATFORMS: PlatformDef[] = [
     description: 'Dados de tráfego, conversões e audiência',
     status: 'coming_soon',
     steps: [
-      { title: 'Clique em "Conectar"', description: 'Você será redirecionado para a página de login do Google.' },
-      { title: 'Autorize o acesso ao Analytics', description: 'O Google solicitará permissão para ler dados do GA4.' },
-      { title: 'Selecione a propriedade', description: 'Escolha o site/app que deseja monitorar.' },
-      { title: 'Pronto!', description: 'Dados de tráfego, conversões e audiência serão sincronizados.' },
+      { title: '✅ Antes de começar', description: 'Você precisa ter uma propriedade GA4 criada em analytics.google.com. Propriedades Universal Analytics (UA) não são mais suportadas pelo Google.' },
+      { title: '🔐 Clique em "Conectar"', description: 'Você será redirecionado para login do Google.' },
+      { title: '☑️ Autorize o acesso ao Analytics', description: 'Permita leitura de dados de tráfego, sessões e conversões do GA4.' },
+      { title: '🏠 Selecione a propriedade GA4', description: 'Escolha o site ou app que deseja monitorar.' },
+      { title: '🎉 Pronto!', description: 'Dados de tráfego, conversões e audiência serão sincronizados com o LogosIA.' },
     ],
   },
   {
@@ -147,10 +205,11 @@ const PLATFORMS: PlatformDef[] = [
     description: 'Gerencie tags e pixels de rastreamento',
     status: 'coming_soon',
     steps: [
-      { title: 'Clique em "Conectar"', description: 'Você será redirecionado para a página de login do Google.' },
-      { title: 'Autorize o acesso ao GTM', description: 'Permita a leitura dos seus containers e tags.' },
-      { title: 'Selecione o container', description: 'Escolha o container GTM do seu site.' },
-      { title: 'Pronto!', description: 'Visualize e gerencie tags diretamente pela plataforma.' },
+      { title: '✅ Antes de começar', description: 'Você precisa ter um container GTM criado em tagmanager.google.com e ser administrador dele.' },
+      { title: '🔐 Clique em "Conectar"', description: 'Você será redirecionado para login do Google.' },
+      { title: '☑️ Autorize o acesso ao GTM', description: 'Permita leitura dos seus containers e tags.' },
+      { title: '📦 Selecione o container', description: 'Escolha o container GTM do site que deseja gerenciar.' },
+      { title: '🎉 Pronto!', description: 'Visualize e gerencie tags de rastreamento diretamente pelo LogosIA.' },
     ],
   },
   {
@@ -161,13 +220,32 @@ const PLATFORMS: PlatformDef[] = [
     description: 'Anúncios em vídeo para audiência jovem',
     status: 'available',
     steps: [
-      { title: 'Clique em "Conectar"', description: 'Você será redirecionado para o TikTok Business.' },
-      { title: 'Faça login na sua conta', description: 'Use sua conta TikTok Business ou de anunciante.' },
-      { title: 'Autorize o acesso', description: 'O LogosIA solicitará permissão para ler campanhas.' },
-      { title: 'Selecione a conta de anúncios', description: 'Escolha o Advertiser ID que deseja gerenciar.' },
-      { title: 'Pronto!', description: 'Suas campanhas TikTok serão importadas automaticamente.' },
+      {
+        title: '✅ Antes de começar',
+        description: 'Você precisa de uma conta no TikTok Business Center (business.tiktok.com) com uma conta de anúncios ativa. Contas pessoais do TikTok não funcionam.',
+      },
+      {
+        title: '🔐 Clique em "Conectar agora"',
+        description: 'Você será redirecionado para o TikTok Business. Uma nova janela pode abrir — não a bloqueie.',
+      },
+      {
+        title: '👤 Faça login no TikTok Business',
+        description: 'Use o e-mail e senha da sua conta TikTok Business. Se já estiver logado, o TikTok pulará esta etapa.',
+      },
+      {
+        title: '☑️ Autorize o acesso — clique em "Confirm"',
+        description: 'O TikTok listará as permissões: leitura de campanhas, anúncios e métricas. Clique em "Confirm" para autorizar.',
+      },
+      {
+        title: '🏦 Selecione o Advertiser ID',
+        description: 'Se você gerencia múltiplas contas de anúncio, escolha o Advertiser correto na lista.',
+      },
+      {
+        title: '🎉 Pronto! TikTok Ads conectado',
+        description: 'Suas campanhas e métricas de vídeo serão importadas e exibidas no seu dashboard.',
+      },
     ],
-    warning: 'Você precisa de uma conta TikTok Business com acesso à API de anúncios.',
+    warning: 'Você precisa de uma conta TikTok Business ativa. Acesse business.tiktok.com para criar ou verificar sua conta antes de conectar.',
   },
   {
     id: 'linkedin',
@@ -177,13 +255,32 @@ const PLATFORMS: PlatformDef[] = [
     description: 'Anúncios B2B para profissionais e empresas',
     status: 'available',
     steps: [
-      { title: 'Clique em "Conectar"', description: 'Você será redirecionado para o LinkedIn.' },
-      { title: 'Faça login na sua conta', description: 'Use seu perfil pessoal ou conta de administrador.' },
-      { title: 'Autorize o acesso', description: 'O LogosIA solicitará permissão para gerenciar anúncios.' },
-      { title: 'Selecione a página da empresa', description: 'Escolha a Company Page que deseja gerenciar.' },
-      { title: 'Pronto!', description: 'Suas campanhas LinkedIn serão importadas.' },
+      {
+        title: '✅ Antes de começar',
+        description: 'Você precisa ser Administrador da Company Page no LinkedIn E ter acesso à conta de anúncios no LinkedIn Campaign Manager (campaignmanager.linkedin.com).',
+      },
+      {
+        title: '🔐 Clique em "Conectar agora"',
+        description: 'Uma janela pop-up do LinkedIn será aberta. Não bloqueie pop-ups nesta página.',
+      },
+      {
+        title: '👤 Faça login no LinkedIn',
+        description: 'Use seu perfil pessoal do LinkedIn (que tem acesso de admin à página da empresa).',
+      },
+      {
+        title: '☑️ Autorize o acesso — clique em "Allow"',
+        description: 'O LinkedIn listará as permissões solicitadas. Clique em "Allow" para confirmar. A janela fechará automaticamente.',
+      },
+      {
+        title: '🏢 Selecione a Company Page',
+        description: 'Escolha a página da empresa que deseja conectar. As campanhas vinculadas a ela serão importadas.',
+      },
+      {
+        title: '🎉 Pronto! LinkedIn Ads conectado',
+        description: 'Suas campanhas B2B, métricas e dados de audiência profissional estarão disponíveis no dashboard.',
+      },
     ],
-    warning: 'Você precisa ser administrador da página da empresa no LinkedIn.',
+    warning: 'Pop-ups precisam estar habilitados nesta página para a janela do LinkedIn abrir corretamente. Se bloquear, libere e tente novamente.',
   },
 ];
 
@@ -576,29 +673,19 @@ export function ConnectionsTab() {
                       </Button>
                     </>
                   ) : (
-                    <>
-                      <Button
-                        size="sm"
-                        className="flex-1 text-xs gradient-primary text-primary-foreground"
-                        onClick={() => handleConnect(platform.id)}
-                        disabled={status === 'connecting'}
-                      >
-                        {status === 'connecting' ? (
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <ExternalLink className="h-3 w-3 mr-1" />
-                        )}
-                        Conectar
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-xs"
-                        onClick={() => setSelectedPlatform(platform.id)}
-                      >
-                        Como fazer?
-                      </Button>
-                    </>
+                    <Button
+                      size="sm"
+                      className="w-full text-xs gradient-primary text-primary-foreground"
+                      onClick={() => setSelectedPlatform(platform.id)}
+                      disabled={status === 'connecting'}
+                    >
+                      {status === 'connecting' ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      ) : (
+                        <ExternalLink className="h-3 w-3 mr-1" />
+                      )}
+                      Conectar
+                    </Button>
                   )}
                 </div>
               </CardContent>
@@ -674,14 +761,27 @@ export function ConnectionsTab() {
 
             {activePlatform.status === 'available' && getConnectionStatus(activePlatform.id) !== 'connected' && (
               <Button
-                className="w-full gradient-primary text-primary-foreground"
+                className="w-full gradient-primary text-primary-foreground font-semibold"
                 onClick={() => {
                   setSelectedPlatform(null);
                   handleConnect(activePlatform.id);
                 }}
               >
                 <ExternalLink className="h-4 w-4 mr-2" />
-                Conectar {activePlatform.name}
+                Conectar agora — {activePlatform.name}
+              </Button>
+            )}
+
+            {activePlatform.status === 'available' && getConnectionStatus(activePlatform.id) === 'connected' && (
+              <Button
+                variant="outline"
+                className="w-full text-destructive hover:text-destructive"
+                onClick={() => {
+                  setSelectedPlatform(null);
+                  handleDisconnect(activePlatform.id);
+                }}
+              >
+                Desconectar {activePlatform.name}
               </Button>
             )}
 
