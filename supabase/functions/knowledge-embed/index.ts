@@ -72,6 +72,8 @@ async function generateEmbedding(text: string, apiKey: string): Promise<number[]
 }
 
 Deno.serve(async (req) => {
+  let sourceId: string | null = null;
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -91,6 +93,8 @@ Deno.serve(async (req) => {
     }
 
     const { source_id } = await req.json();
+    sourceId = source_id ?? null;
+
     if (!source_id) {
       return new Response(JSON.stringify({ error: 'source_id é obrigatório' }), {
         status: 400,
@@ -187,7 +191,7 @@ Deno.serve(async (req) => {
           kb_id: source.kb_id,
           user_id: source.user_id,
           content: chunk,
-          embedding: JSON.stringify(embedding), // pgvector aceita array como JSON
+          embedding: `[${embedding.join(',')}]`,
           chunk_index: i,
           metadata: {
             source_name: source.name,
@@ -235,6 +239,25 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('[knowledge-embed] Erro crítico:', error);
+    if (sourceId) {
+      try {
+        const supabase = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+        );
+
+        await supabase
+          .from('knowledge_sources')
+          .update({
+            status: 'error',
+            error_message: error.message || 'Erro interno ao processar embeddings',
+          })
+          .eq('id', sourceId);
+      } catch (updateErr) {
+        console.error('[knowledge-embed] Falha ao registrar erro da fonte:', updateErr);
+      }
+    }
+
     return new Response(
       JSON.stringify({ error: error.message || 'Erro interno' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -343,18 +343,52 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
   const embedSource = async (sourceId: string) => {
     try {
       console.log('[KB] Iniciando embedding para fonte:', sourceId);
-      const { error } = await supabase.functions.invoke('knowledge-embed', {
+      const { data, error } = await supabase.functions.invoke('knowledge-embed', {
         body: { source_id: sourceId },
       });
-      if (error) {
-        console.error('[KB] Erro no embedding:', error);
-      } else {
-        console.log('[KB] Embedding concluído para:', sourceId);
-        // Recarrega fontes para mostrar status atualizado
-        setTimeout(() => fetchSources(), 1000);
+
+      if (error || data?.error) {
+        const message = error?.message || data?.error || 'Falha ao iniciar processamento da base';
+        console.error('[KB] Erro no embedding:', message);
+        await (supabase as any)
+          .from('knowledge_sources')
+          .update({
+            status: 'error',
+            error_message: message,
+          })
+          .eq('id', sourceId);
+        toast({
+          title: 'Falha ao processar a fonte',
+          description: message,
+          variant: 'destructive',
+        });
+        await fetchSources();
+        return;
       }
+
+      console.log('[KB] Embedding concluído para:', sourceId);
+      // Recarrega fontes para mostrar status atualizado
+      setTimeout(() => fetchSources(), 1000);
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro inesperado ao processar a base.';
       console.warn('[KB] Falha ao chamar knowledge-embed:', err);
+      try {
+        await (supabase as any)
+          .from('knowledge_sources')
+          .update({
+            status: 'error',
+            error_message: message,
+          })
+          .eq('id', sourceId);
+      } catch (updateErr) {
+        console.warn('[KB] Não foi possível registrar erro da fonte:', updateErr);
+      }
+      toast({
+        title: 'Falha ao processar a fonte',
+        description: message,
+        variant: 'destructive',
+      });
+      await fetchSources();
     }
   };
 
