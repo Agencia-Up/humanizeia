@@ -68,7 +68,7 @@ const MarcosLeads = lazy(() => import("./pages/MarcosLeads"));
 const MetaAdsConnect = lazy(() => import("./pages/MetaAdsConnect"));
 const InstagramConnect = lazy(() => import("./pages/InstagramConnect"));
 const ConfirmEmail = lazy(() => import("./pages/ConfirmEmail"));
-const CRMAoVivo = lazy(() => import("./pages/CRMAoVivo"));
+const CRMAoVivo = lazy(() => import("./pages/CrmAoVivo"));
 const CrmFormularios = lazy(() => import("./pages/CrmFormularios"));
 const FormPublico = lazy(() => import("./pages/FormPublico"));
 
