@@ -248,7 +248,7 @@ export default function CrmAoVivo() {
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={() => navigate(-1)}>
+            <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={() => window.history.length > 1 ? navigate(-1) : navigate('/dashboard')}>
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Voltar
             </Button>
             <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={fetchLiveData}>
