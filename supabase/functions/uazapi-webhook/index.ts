@@ -128,7 +128,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // ── DETECÇÃO DE RESPOSTA DE VENDEDOR ────────────────────────────────
   // Se a mensagem vier do número de um vendedor, confirma o transfer pendente
   // e retorna sem deixar o Pedro responder ao vendedor.
-  const senderDigits = phoneNumber.replace(/\D/g, '').slice(-10); // últimos 10 dígitos
+  const senderDigits = remoteJid.replace(/\D/g, '').slice(-10); // últimos 10 dígitos
   const { data: senderSeller } = await supabase
     .from('ai_team_members')
     .select('id, name')
