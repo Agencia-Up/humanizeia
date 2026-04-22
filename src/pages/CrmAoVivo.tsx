@@ -6,6 +6,7 @@ import {
   Activity,
   ArrowLeft,
   Bell,
+  BellOff,
   CalendarClock,
   Crown,
   Expand,
@@ -17,6 +18,8 @@ import {
   TrendingUp,
   UserCheck,
   Users,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -98,19 +101,30 @@ function getMemberStats(members: any[], transfers: any[]) {
   })).sort((a, b) => b.todayCount - a.todayCount || b.totalCount - a.totalCount);
 }
 
-function playAlert() {
+function playBell(muted: boolean) {
+  if (muted) return;
   try {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    [523, 659, 784].forEach((freq, i) => {
-      const osc = ctx.createOscillator(); const g = ctx.createGain();
-      osc.connect(g); g.connect(ctx.destination);
-      osc.frequency.value = freq; osc.type = 'sine';
-      const s = ctx.currentTime + i * 0.12;
-      g.gain.setValueAtTime(0, s);
-      g.gain.linearRampToValueAtTime(0.35, s + 0.04);
-      g.gain.linearRampToValueAtTime(0, s + 0.2);
-      osc.start(s); osc.stop(s + 0.22);
-    });
+    const bellNote = (freq: number, startTime: number, vol = 0.45) => {
+      // inharmonic partials — characteristic of real bells
+      ([
+        [1.0, vol],
+        [2.756, vol * 0.45],
+        [5.404, vol * 0.18],
+      ] as [number, number][]).forEach(([mult, gain]) => {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.connect(g); g.connect(ctx.destination);
+        osc.frequency.value = freq * mult;
+        osc.type = 'sine';
+        g.gain.setValueAtTime(0, startTime);
+        g.gain.linearRampToValueAtTime(gain, startTime + 0.008);
+        g.gain.exponentialRampToValueAtTime(0.001, startTime + 1.8);
+        osc.start(startTime); osc.stop(startTime + 1.85);
+      });
+    };
+    bellNote(659, ctx.currentTime);        // "Ding" — Mi5
+    bellNote(494, ctx.currentTime + 0.65); // "Dong" — Si4
   } catch (_) {}
 }
 
@@ -127,6 +141,7 @@ export default function CrmAoVivo() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const [newLeadFlash, setNewLeadFlash] = useState(false);
   const [tick, setTick] = useState(false);
+  const [muted, setMuted] = useState(false);
   const prevCount = useRef<number | null>(null);
 
   useEffect(() => { const i = setInterval(() => setTick(p => !p), 900); return () => clearInterval(i); }, []);
@@ -155,10 +170,10 @@ export default function CrmAoVivo() {
     if (loading) return;
     if (prevCount.current === null) { prevCount.current = leads.length; return; }
     if (leads.length > prevCount.current) {
-      playAlert(); setNewLeadFlash(true); setTimeout(() => setNewLeadFlash(false), 3000);
+      playBell(muted); setNewLeadFlash(true); setTimeout(() => setNewLeadFlash(false), 3000);
     }
     prevCount.current = leads.length;
-  }, [leads.length, loading]);
+  }, [leads.length, loading, muted]);
 
   useEffect(() => {
     if (!user) return;
@@ -253,6 +268,21 @@ export default function CrmAoVivo() {
             </Button>
             <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={fetchLiveData}>
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Atualizar
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              title={muted ? 'Ativar campainha' : 'Silenciar campainha'}
+              style={{
+                borderColor: muted ? 'rgba(255,255,255,0.15)' : C.amber,
+                background: muted ? 'transparent' : C.amberBg,
+                color: muted ? '#64748B' : C.amberL,
+                fontSize: 13,
+              }}
+              onClick={() => setMuted(m => !m)}
+            >
+              {muted ? <VolumeX className="mr-1.5 h-3.5 w-3.5" /> : <Volume2 className="mr-1.5 h-3.5 w-3.5" />}
+              {muted ? 'Mudo' : 'Som ligado'}
             </Button>
             <Button size="sm" style={{ background: C.blue, color: '#fff', fontWeight: 700, fontSize: 13 }} onClick={handleFullscreen}>
               <Expand className="mr-1.5 h-3.5 w-3.5" /> Tela cheia
