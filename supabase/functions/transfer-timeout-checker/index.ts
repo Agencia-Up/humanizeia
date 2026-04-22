@@ -46,9 +46,31 @@ serve(async (req) => {
   );
 
   try {
+    // ── Janela de atendimento: 9h–20h (horário de Brasília, UTC-3) ──────────
+    const nowDate = new Date();
+    const utcMinutes = nowDate.getUTCHours() * 60 + nowDate.getUTCMinutes();
+    const brasiliaMinutes = ((utcMinutes - 180) + 1440) % 1440; // UTC-3
+    const brasiliaHour = Math.floor(brasiliaMinutes / 60);
+
+    const isWorkingHours = brasiliaHour >= 9 && brasiliaHour < 20;
+
+    if (!isWorkingHours) {
+      console.log(`[Timeout] Fora da janela de atendimento — ${brasiliaHour}h Brasília. Nenhum repasse feito.`);
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          processed: 0,
+          message: `Fora do horário de atendimento (9h–20h). Hora atual em Brasília: ${brasiliaHour}h`,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     const now = new Date().toISOString();
 
     // Busca todos os transfers pendentes que já expiraram
+    // (inclui os que expiraram durante a noite e ainda não foram processados)
     const { data: expired, error: fetchErr } = await supabase
       .from("ai_lead_transfers")
       .select(`
