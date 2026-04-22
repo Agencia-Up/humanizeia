@@ -1,13 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Users, UserPlus, Phone, Loader2, Trash2, MessagesSquare, CheckCircle2, PhoneForwarded } from 'lucide-react';
+import { Users, UserPlus, Phone, Loader2, Trash2, PhoneForwarded, Pencil, Check, X } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 
 interface AgentCrmEquipeTabProps {
@@ -17,7 +14,6 @@ interface AgentCrmEquipeTabProps {
 
 export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
   const { toast } = useToast();
-  const [activeSubTab, setActiveSubTab] = useState('crm');
   const [loading, setLoading] = useState(true);
 
   // Equipe State
@@ -26,8 +22,11 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
   const [newSellerPhone, setNewSellerPhone] = useState('');
   const [savingSeller, setSavingSeller] = useState(false);
 
-  // CRM State
-  const [leads, setLeads] = useState<any[]>([]);
+  // Estado de edição inline
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!agentId || !userId) {
@@ -37,7 +36,6 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
     
     setLoading(true);
     try {
-      // 1. Fetch Team
       const { data: teamData, error: teamErr } = await (supabase as any)
         .from('ai_team_members')
         .select('*')
@@ -47,21 +45,8 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
       if (teamErr) throw teamErr;
       setTeamMembers(teamData || []);
 
-      // 2. Fetch CRM Leads
-      const { data: leadsData, error: leadsErr } = await (supabase as any)
-        .from('ai_crm_leads')
-        .select(`
-          *,
-          assigned_to:ai_team_members(name)
-        `)
-        .eq('agent_id', agentId)
-        .order('last_interaction_at', { ascending: false });
-
-      if (leadsErr) throw leadsErr;
-      setLeads(leadsData || []);
-
     } catch (err: any) {
-      console.error('Erro ao carregar CRM/Equipe:', err);
+      console.error('Erro ao carregar Equipe:', err);
     } finally {
       setLoading(false);
     }
@@ -106,7 +91,7 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
       await (supabase as any).from('ai_team_members').update({ is_active: !currentStatus }).eq('id', id);
       setTeamMembers(prev => prev.map(m => m.id === id ? { ...m, is_active: !currentStatus } : m));
     } catch (err: any) {
-      toast({ title: 'Erro ao atualizar status', variant: 'destructive' });
+      toast({ title: 'Erro', variant: 'destructive' });
     }
   };
 
@@ -121,12 +106,40 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'qualificado': return <Badge className="bg-green-500/10 text-green-500 hover:bg-green-500/20">Qualificado</Badge>;
-      case 'em_atendimento': return <Badge className="bg-blue-500/10 text-blue-500 hover:bg-blue-500/20">Em Atendimento</Badge>;
-      case 'finalizado': return <Badge className="bg-muted text-muted-foreground">Finalizado</Badge>;
-      default: return <Badge variant="outline" className="opacity-70">Novo</Badge>;
+  const handleStartEdit = (member: any) => {
+    setEditingId(member.id);
+    setEditName(member.name);
+    setEditPhone(member.whatsapp_number);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setEditName('');
+    setEditPhone('');
+  };
+
+  const handleSaveEdit = async (id: string) => {
+    if (!editName.trim() || !editPhone.trim()) {
+      toast({ title: 'Aviso', description: 'Preencha nome e WhatsApp.' });
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const cleanPhone = editPhone.replace(/\D/g, '');
+      const { error } = await (supabase as any)
+        .from('ai_team_members')
+        .update({ name: editName.trim(), whatsapp_number: cleanPhone })
+        .eq('id', id);
+      if (error) throw error;
+      setTeamMembers(prev =>
+        prev.map(m => m.id === id ? { ...m, name: editName.trim(), whatsapp_number: cleanPhone } : m)
+      );
+      toast({ title: '✅ Vendedor atualizado!' });
+      handleCancelEdit();
+    } catch (err: any) {
+      toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -136,7 +149,7 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
         <Users className="h-8 w-8 text-muted-foreground mb-3 opacity-50" />
         <h3 className="text-sm font-semibold mb-1">Salve o agente primeiro</h3>
         <p className="text-xs text-muted-foreground max-w-[250px]">
-          Você precisa criar o agente antes de acessar o CRM e montar a equipe de vendedores.
+          Você precisa criar o agente antes de cadastrar a equipe de transbordo.
         </p>
       </div>
     );
@@ -147,141 +160,145 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300">
         <PhoneForwarded className="h-4 w-4 shrink-0 mt-0.5" />
         <div className="leading-relaxed">
-          <strong>Inteligência Comercial:</strong> O Pedro pode identificar clientes quentes, marcá-los como <strong>Qualificados</strong> no CRM e encaminhar automaticamente um resumo via WhatsApp para os seus vendedores disponíveis abaixo.
+          <strong>Inteligência Comercial:</strong> Quando o Pedro identificar clientes quentes e qualificá-los no CRM, ele automaticamente encaminhará o resumo da conversa via WhatsApp para os seus vendedores configurados nesta lista.
         </div>
       </div>
 
-      <Tabs value={activeSubTab} onValueChange={setActiveSubTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2 mb-4">
-          <TabsTrigger value="crm" className="gap-2 text-xs">
-            <MessagesSquare className="h-4 w-4" />
-            Leads / CRM
-          </TabsTrigger>
-          <TabsTrigger value="equipe" className="gap-2 text-xs">
-            <Users className="h-4 w-4" />
-            Equipe de Vendas
-          </TabsTrigger>
-        </TabsList>
+      <div className="space-y-4">
+        <div className="bg-muted/30 p-3 rounded-xl border border-border flex items-end gap-2">
+          <div className="flex-1 space-y-1">
+            <Label className="text-xs">Nome do Vendedor</Label>
+            <Input 
+              placeholder="Ex: João Silva" 
+              value={newSellerName} 
+              onChange={e => setNewSellerName(e.target.value)} 
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="flex-1 space-y-1">
+            <Label className="text-xs">Número WhatsApp</Label>
+            <Input 
+              placeholder="Ex: 5511999999999" 
+              value={newSellerPhone} 
+              onChange={e => setNewSellerPhone(e.target.value)} 
+              className="h-8 text-xs font-mono"
+            />
+          </div>
+          <Button size="sm" className="h-8 px-4 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={handleAddSeller} disabled={savingSeller}>
+            {savingSeller ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4 mr-1" />} 
+            Adicionar
+          </Button>
+        </div>
 
-        <TabsContent value="crm" className="space-y-4">
-          {leads.length === 0 ? (
-            <div className="text-center py-8 bg-muted/10 rounded-xl border border-dashed">
-              <p className="text-sm font-medium">Nenhum lead registrado</p>
-              <p className="text-xs text-muted-foreground mt-1">Quando a IA interagir com clientes, eles aparecerão aqui.</p>
+        <div className="space-y-2">
+          {teamMembers.length === 0 ? (
+            <div className="text-center py-6 text-xs text-muted-foreground">
+              Sua equipe de atendimento está vazia.<br/>Adicione membros para permitir o transbordo ("Handoff") do Agente de IA.
             </div>
           ) : (
-            <ScrollArea className="h-[350px] pr-4">
-              <div className="space-y-3">
-                {leads.map(lead => (
-                  <div key={lead.id} className="p-3 border rounded-xl bg-card hover:bg-muted/5 transition-colors">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <h4 className="text-sm font-bold">{lead.lead_name || 'Lead Anônimo'}</h4>
-                        <p className="text-xs text-muted-foreground font-mono">{lead.remote_jid.replace('@s.whatsapp.net', '')}</p>
-                      </div>
-                      <div className="flex flex-col items-end gap-1">
-                        {getStatusBadge(lead.status)}
-                        <span className="text-[10px] text-muted-foreground">
-                          {new Date(lead.last_interaction_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    </div>
-                    {lead.summary ? (
-                      <div className="bg-primary/5 p-2 rounded-lg text-xs leading-relaxed border border-primary/10 mt-2 line-clamp-2" title={lead.summary}>
-                        <strong>🔎 Resumo da IA:</strong> {lead.summary}
-                      </div>
-                    ) : (
-                      <div className="text-[11px] text-muted-foreground italic mt-2">Sem resumo ainda...</div>
-                    )}
-                    {lead.assigned_to && (
-                      <div className="mt-2 text-[10px] text-muted-foreground flex items-center gap-1">
-                        <CheckCircle2 className="h-3 w-3 text-green-500" /> Repassado para: <strong>{lead.assigned_to.name}</strong>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-          )}
-        </TabsContent>
+            teamMembers.map(member => {
+              const isEditing = editingId === member.id;
+              return (
+                <div key={member.id} className={`p-3 border rounded-lg bg-card transition-colors ${isEditing ? 'border-blue-500/60 bg-blue-500/5' : 'group hover:border-blue-500/30'}`}>
 
-        <TabsContent value="equipe" className="space-y-4">
-          <div className="bg-muted/30 p-3 rounded-xl border border-border flex items-end gap-2">
-            <div className="flex-1 space-y-1">
-              <Label className="text-xs">Nome do Vendedor</Label>
-              <Input 
-                placeholder="Ex: João Silva" 
-                value={newSellerName} 
-                onChange={e => setNewSellerName(e.target.value)} 
-                className="h-8 text-xs"
-              />
-            </div>
-            <div className="flex-1 space-y-1">
-              <Label className="text-xs">Número WhatsApp</Label>
-              <Input 
-                placeholder="Ex: 5511999999999" 
-                value={newSellerPhone} 
-                onChange={e => setNewSellerPhone(e.target.value)} 
-                className="h-8 text-xs font-mono"
-              />
-            </div>
-            <Button size="sm" className="h-8 px-4 shrink-0" onClick={handleAddSeller} disabled={savingSeller}>
-              {savingSeller ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4 mr-1" />} 
-              Adicionar
-            </Button>
-          </div>
-
-          <div className="space-y-2">
-            {teamMembers.length === 0 ? (
-              <div className="text-center py-6 text-xs text-muted-foreground">
-                Sua equipe de atendimento está vazia.<br/>Adicione membros para permitir o transbordo ("Handoff") do Agente de IA.
-              </div>
-            ) : (
-              teamMembers.map(member => (
-                <div key={member.id} className="flex items-center justify-between p-2.5 border rounded-lg bg-card group">
-                  <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                      <UserPlus className="h-4 w-4 text-primary" />
-                    </div>
-                    <div>
-                      <h5 className="text-sm font-semibold">{member.name}</h5>
-                      <span className="text-xs text-muted-foreground flex items-center gap-1 font-mono">
-                        <Phone className="h-3 w-3" /> {member.whatsapp_number}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-4">
+                  {isEditing ? (
+                    /* ── Modo edição inline ─────────────────────────── */
                     <div className="flex items-center gap-2">
-                      <Label className="text-[10px] uppercase text-muted-foreground cursor-pointer" htmlFor={`status-${member.id}`}>
-                        {member.is_active ? 'Disponível' : 'Ausente'}
-                      </Label>
-                      <Switch 
-                        id={`status-${member.id}`} 
-                        checked={member.is_active} 
-                        onCheckedChange={() => handleToggleSellerStatus(member.id, member.is_active)}
-                        className="scale-90"
+                      <div className="h-9 w-9 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
+                        <Pencil className="h-4 w-4 text-blue-500" />
+                      </div>
+                      <Input
+                        value={editName}
+                        onChange={e => setEditName(e.target.value)}
+                        placeholder="Nome"
+                        className="h-8 text-xs flex-1"
+                        autoFocus
+                        onKeyDown={e => e.key === 'Enter' && handleSaveEdit(member.id)}
                       />
+                      <Input
+                        value={editPhone}
+                        onChange={e => setEditPhone(e.target.value)}
+                        placeholder="Número WhatsApp"
+                        className="h-8 text-xs flex-1 font-mono"
+                        onKeyDown={e => e.key === 'Enter' && handleSaveEdit(member.id)}
+                      />
+                      <Button
+                        size="sm"
+                        className="h-8 w-8 p-0 bg-green-600 hover:bg-green-700 shrink-0"
+                        onClick={() => handleSaveEdit(member.id)}
+                        disabled={savingEdit}
+                        title="Salvar"
+                      >
+                        {savingEdit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground shrink-0"
+                        onClick={handleCancelEdit}
+                        title="Cancelar"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-7 w-7 p-0 text-destructive opacity-0 group-hover:opacity-100 transition-opacity" 
-                      onClick={() => handleDeleteSeller(member.id)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+                  ) : (
+                    /* ── Modo visualização ──────────────────────────── */
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
+                          <UserPlus className="h-4 w-4 text-blue-500" />
+                        </div>
+                        <div>
+                          <h5 className="text-sm font-semibold">{member.name}</h5>
+                          <span className="text-xs text-muted-foreground flex items-center gap-1 font-mono mt-0.5">
+                            <Phone className="h-3 w-3" /> {member.whatsapp_number}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <Label className="text-[10px] uppercase font-bold text-muted-foreground cursor-pointer" htmlFor={`status-${member.id}`}>
+                            {member.is_active ? 'Disponível' : 'Ausente'}
+                          </Label>
+                          <Switch
+                            id={`status-${member.id}`}
+                            checked={member.is_active}
+                            onCheckedChange={() => handleToggleSellerStatus(member.id, member.is_active)}
+                            className="scale-90"
+                          />
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-blue-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => handleStartEdit(member)}
+                          title="Editar nome e número"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-red-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => handleDeleteSeller(member.id)}
+                          title="Excluir vendedor"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))
-            )}
-          </div>
-        </TabsContent>
-      </Tabs>
+              );
+            })
+          )}
+        </div>
+      </div>
     </div>
   );
 }

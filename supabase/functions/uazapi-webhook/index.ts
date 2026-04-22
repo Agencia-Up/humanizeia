@@ -20,15 +20,12 @@ serve(async (req) => {
 
     const isUazapi = !!(payload.BaseUrl || payload.EventType || payload.instanceId)
     const isEvolution = !!(payload.event || payload.data)
-    console.log('[Webhook] isUazapi:', isUazapi, 'isEvolution:', isEvolution);
     
     // --- FORMATO UAZAPI ---
     if (isUazapi) {
       const eventType = String(payload.EventType || payload.eventType || '').toLowerCase()
-      console.log('[Webhook] eventType (Uazapi):', eventType);
 
       if (eventType === 'connection' || eventType === 'status' || eventType.includes('connect')) {
-        console.log('[Webhook] Ignorando evento de conexao (retornando silenciosamente)');
         const instanceName = payload.instance || payload.instanceName || payload.InstanceId || payload.instanceId || ''
         if (instanceName) {
           const state = String(payload.state || payload.status || '').toLowerCase()
@@ -42,7 +39,6 @@ serve(async (req) => {
       }
       
       if (eventType !== 'messages' && eventType !== 'message' && !eventType.includes('message')) {
-        console.log('[Webhook] Ignorando evento Uazapi que nao e messages:', eventType);
         return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
       }
 
@@ -54,44 +50,22 @@ serve(async (req) => {
         msgObj = payload.messages[0]
       } else if (payload.message) {
         msgObj = payload.message
-      } else if (payload.data && payload.data.message) {
-        msgObj = payload.data.message
-      } else if (payload.chat && payload.chat.messages) {
-        msgObj = Array.isArray(payload.chat.messages) ? payload.chat.messages[0] : payload.chat.messages
-      } else if (payload.data && Array.isArray(payload.data) && payload.data.length > 0) {
-        msgObj = payload.data[0]
       }
       
-      console.log('[Webhook] Extraiu msgObj?', !!msgObj);
-      if (!msgObj) {
-        console.log('[Webhook] Estrutura completa para inspecao:', JSON.stringify(payload).substring(0, 500));
-        return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
-      }
-      
-      if (msgObj.fromMe === true) {
-         console.log('[Webhook] Ignored fromMe');
-         return new Response('Ignored fromMe', { headers: corsHeaders });
-      }
+      if (!msgObj) return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
+      if (msgObj.fromMe === true) return new Response('Ignored fromMe', { headers: corsHeaders })
       
       const remoteJid = msgObj.chatId || msgObj.chatid || msgObj.from || chat.id || chat.chatId || '';
-      console.log('[Webhook] remoteJid extraido:', remoteJid);
-      
-      if (!remoteJid) {
-         console.log('[Webhook] No remoteJid, ignorando.');
-         return new Response('No remoteJid', { headers: corsHeaders });
-      }
-      
-      if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {
-         console.log('[Webhook] Ignored group/broadcast', remoteJid);
-         return new Response('Ignored group/broadcast', { headers: corsHeaders });
-      }
+      if (!remoteJid) { console.log('[Webhook] No remoteJid'); return new Response('No remoteJid', { headers: corsHeaders }); }
+      if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return new Response('Ignored group/broadcast', { headers: corsHeaders });
 
       const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim();
       const pushName = msgObj.senderName || chat.name || msgObj.notifyName || msgObj.pushName || 'Lead';
       
-      console.log(`[Webhook] Mensagem final a repassar -> Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
+      console.log(`[Webhook] Mensagem recebida [UAZAPI]. Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
       return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
     }
+
     // --- FORMATO EVOLUTION API ---
     const eventRaw = payload.event || ''
     const event = String(eventRaw).toLowerCase()
@@ -127,956 +101,10 @@ serve(async (req) => {
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
 
   } catch (error: any) {
-    console.error("[Webhook] Erro critico:", error)
+    console.error("[Webhook] Erro Crítico:", error)
     return new Response(JSON.stringify({ error: error.message }), { headers: corsHeaders, status: 500 })
   }
 })
-
-function buildUazapiMediaFallbackContent(msgType: string, currentText: string) {
-  const text = (currentText || '').trim();
-  const normalizedType = String(msgType || '').toLowerCase();
-
-  if (text) return text;
-  if (normalizedType.includes('audio') || normalizedType === 'ptt') {
-    return '[Mensagem de audio recebida sem transcricao]';
-  }
-  if (normalizedType.includes('image')) {
-    return '[Imagem recebida sem legenda]';
-  }
-  if (normalizedType.includes('document')) {
-    return '[Arquivo recebido sem leitura]';
-  }
-  return text;
-}
-
-function parseStoredIntegrationCredentials(raw: string | null) {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return { api_token: raw };
-  }
-}
-
-function normalizeBndvText(value?: string | null) {
-  return String(value || '').toLowerCase().trim();
-}
-
-function bndvIncludes(haystack?: string | null, needle?: string | null) {
-  if (!needle || !String(needle).trim()) return true;
-  return normalizeBndvText(haystack).includes(normalizeBndvText(needle));
-}
-
-function bndvMatchesQuery(vehicle: any, query?: string | null) {
-  if (!query || !String(query).trim()) return true;
-  const indexed = [
-    vehicle?.markName,
-    vehicle?.modelName,
-    vehicle?.versionName,
-    vehicle?.color,
-    vehicle?.fuelName,
-    vehicle?.transmissionName,
-    vehicle?.year?.toString?.(),
-  ].filter(Boolean).join(' ').toLowerCase();
-  return indexed.includes(normalizeBndvText(query));
-}
-
-function parseBndvPictures(rawPictureJs: any) {
-  if (!rawPictureJs) return [];
-
-  let parsed: any = rawPictureJs;
-  if (typeof rawPictureJs === 'string') {
-    try {
-      parsed = JSON.parse(rawPictureJs);
-    } catch {
-      return [];
-    }
-  }
-
-  if (!Array.isArray(parsed)) return [];
-
-  return parsed
-    .map((item: any) => ({
-      url: String(item?.Link || item?.link || '').trim(),
-      principal: String(item?.Principal || item?.principal || '').toLowerCase() === 'true',
-    }))
-    .filter((item: any) => !!item.url)
-    .sort((left: any, right: any) => Number(right.principal) - Number(left.principal));
-}
-
-function buildBndvVehicleLabel(vehicle: any) {
-  return [vehicle?.markName, vehicle?.modelName, vehicle?.versionName].filter(Boolean).join(' ');
-}
-
-function inferImageMimeType(imageUrl: string) {
-  const normalized = String(imageUrl || '').toLowerCase();
-  if (normalized.includes('.png')) return 'image/png';
-  if (normalized.includes('.webp')) return 'image/webp';
-  return 'image/jpeg';
-}
-
-function buildImageFileName(imageUrl: string, vehicleLabel?: string) {
-  const mimeType = inferImageMimeType(imageUrl);
-  const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
-  const baseName = String(vehicleLabel || 'veiculo')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'veiculo';
-  return `${baseName}.${extension}`;
-}
-
-async function fetchBndvVehicles(supabase: any, userId: string, filters: any) {
-  const BNDV_API_URL = 'https://api-estoque.azurewebsites.net/graphql';
-
-  const { data: integration, error: integrationError } = await supabase
-    .from('platform_integrations')
-    .select('api_key_encrypted, is_active')
-    .eq('user_id', userId)
-    .eq('platform', 'bndv')
-    .maybeSingle();
-
-  if (integrationError) {
-    throw integrationError;
-  }
-
-  if (!integration?.is_active) {
-    return { success: false, error: 'A integracao BNDV nao esta conectada para este cliente.' };
-  }
-
-  const credentials = parseStoredIntegrationCredentials(integration.api_key_encrypted);
-  const token = String(credentials?.api_token || '').trim();
-
-  if (!token) {
-    return { success: false, error: 'O token do BNDV nao foi encontrado na integracao salva.' };
-  }
-
-  const response = await fetch(BNDV_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      query: `
-        query BndvVehicles {
-          vehiclesBy {
-            modelName
-            markName
-            year
-            km
-            saleValue
-            color
-            fuelName
-            transmissionName
-            versionName
-            pictureJs
-          }
-        }
-      `,
-    }),
-  });
-
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    return { success: false, error: payload?.errors?.[0]?.message || payload?.message || `BNDV retornou status ${response.status}.` };
-  }
-
-  if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
-    return { success: false, error: payload.errors[0]?.message || 'A API do BNDV retornou um erro.' };
-  }
-
-  const {
-    query,
-    marca,
-    modelo,
-    versao,
-    combustivel,
-    cambio,
-    cor,
-    ano_min,
-    ano_max,
-    preco_max,
-    km_max,
-    limite,
-  } = filters || {};
-
-  const items = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
-  const filtered = items
-    .filter((vehicle: any) => {
-      const year = Number(vehicle?.year || 0);
-      const price = Number(vehicle?.saleValue || 0);
-      const mileage = Number(vehicle?.km || 0);
-
-      return (
-        bndvMatchesQuery(vehicle, query) &&
-        bndvIncludes(vehicle?.markName, marca) &&
-        bndvIncludes(vehicle?.modelName, modelo) &&
-        bndvIncludes(vehicle?.versionName, versao) &&
-        bndvIncludes(vehicle?.fuelName, combustivel) &&
-        bndvIncludes(vehicle?.transmissionName, cambio) &&
-        bndvIncludes(vehicle?.color, cor) &&
-        (!ano_min || year >= Number(ano_min)) &&
-        (!ano_max || year <= Number(ano_max)) &&
-        (!preco_max || price <= Number(preco_max)) &&
-        (!km_max || mileage <= Number(km_max))
-      );
-    })
-    .sort((left: any, right: any) => {
-      const leftPrice = Number(left?.saleValue || 0);
-      const rightPrice = Number(right?.saleValue || 0);
-      if (leftPrice !== rightPrice) return leftPrice - rightPrice;
-      return Number(right?.year || 0) - Number(left?.year || 0);
-    });
-
-  return {
-    success: true,
-    total: filtered.length,
-    items: filtered,
-  };
-}
-
-async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
-  const result = await fetchBndvVehicles(supabase, userId, filters);
-  if (!result.success) return result;
-
-  const limite = filters?.limite;
-  const capped = (result.items || []).slice(0, Number(limite || 8)).map((vehicle: any) => {
-    const pictures = parseBndvPictures(vehicle?.pictureJs);
-    const principalImage = pictures.find((item: any) => item.principal)?.url || pictures[0]?.url || null;
-
-    return {
-    marca: vehicle?.markName || null,
-    modelo: vehicle?.modelName || null,
-    versao: vehicle?.versionName || null,
-    ano: vehicle?.year || null,
-    km: vehicle?.km || null,
-    preco: vehicle?.saleValue || null,
-    cor: vehicle?.color || null,
-    combustivel: vehicle?.fuelName || null,
-    cambio: vehicle?.transmissionName || null,
-      label: buildBndvVehicleLabel(vehicle),
-      principal_image: principalImage,
-      images_count: pictures.length,
-    };
-  });
-
-  return {
-    success: true,
-    total: result.total,
-    items: capped,
-  };
-}
-
-async function sendUazapiImageMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption?: string, vehicleLabel?: string) {
-  const mimeType = inferImageMimeType(imageUrl);
-  const fileName = buildImageFileName(imageUrl, vehicleLabel);
-  const mediaBase64 = await fetchMediaAsBase64(imageUrl, instKey);
-  const mediaBlob = await fetchMediaBlob(imageUrl, instKey, mimeType);
-  const mediaDataUrl = mediaBase64 ? `data:${mimeType};base64,${mediaBase64}` : '';
-  console.log(`[Webhook] BNDV image fetch -> base64: ${mediaBase64 ? 'sim' : 'nao'} | blob: ${mediaBlob ? 'sim' : 'nao'} | fileName: ${fileName}`);
-
-  if (mediaBlob) {
-    const multipartAttempts = [
-      {
-        label: 'send-media-multipart-token',
-        url: `${baseUrl}/send/media`,
-        headers: { 'token': instKey }
-      },
-      {
-        label: 'send-media-multipart-both',
-        url: `${baseUrl}/send/media`,
-        headers: { 'token': instKey, 'apikey': instKey }
-      },
-      {
-        label: 'send-media-multipart-instance',
-        url: `${baseUrl}/send/media?instance=${instanceName}`,
-        headers: { 'token': instKey, 'apikey': instKey }
-      }
-    ];
-
-    for (const attempt of multipartAttempts) {
-      try {
-        const formData = new FormData();
-        formData.append('number', phoneNumber);
-        formData.append('remoteJid', remoteJid);
-        formData.append('caption', caption || '');
-        formData.append('text', caption || '');
-        formData.append('body', caption || '');
-        formData.append('mediatype', 'image');
-        formData.append('mimetype', mimeType);
-        formData.append('fileName', fileName);
-        formData.append('file', mediaBlob, fileName);
-
-        console.log(`[Webhook] Tentando envio de imagem UAZAPI via ${attempt.label}`);
-        const res = await fetch(attempt.url, {
-          method: 'POST',
-          headers: attempt.headers as any,
-          body: formData,
-        });
-        const responseText = await res.text().catch(() => '');
-        console.log(`[Webhook] UAZAPI ${attempt.label} -> ${res.status} | ${responseText.substring(0, 300)}`);
-        if (res.ok) {
-          return { ok: true, label: attempt.label, status: res.status, body: responseText };
-        }
-      } catch (err) {
-        console.error(`[Webhook] Falha no envio multipart UAZAPI (${attempt.label}):`, err);
-      }
-    }
-  }
-
-  const attempts = [
-    ...(mediaBase64 ? [
-      {
-        label: 'message-sendMedia-base64-token-only',
-        url: `${baseUrl}/message/sendMedia`,
-        headers: { 'Content-Type': 'application/json', 'token': instKey },
-        body: {
-          number: phoneNumber,
-          mediaMessage: {
-            mediatype: 'image',
-            mimetype: mimeType,
-            fileName,
-            caption: caption || '',
-            media: mediaBase64,
-          },
-          options: { delay: 200 }
-        }
-      },
-      {
-        label: 'message-sendMedia-base64-generic-both',
-        url: `${baseUrl}/message/sendMedia`,
-        headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-        body: {
-          number: phoneNumber,
-          mediaMessage: {
-            mediatype: 'image',
-            mimetype: mimeType,
-            fileName,
-            caption: caption || '',
-            media: mediaBase64,
-          },
-          options: { delay: 200 }
-        }
-      },
-      {
-        label: 'message-sendMedia-dataurl-generic-both',
-        url: `${baseUrl}/message/sendMedia`,
-        headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-        body: {
-          number: phoneNumber,
-          mediaMessage: {
-            mediatype: 'image',
-            mimetype: mimeType,
-            fileName,
-            caption: caption || '',
-            media: mediaDataUrl,
-          },
-          options: { delay: 200 }
-        }
-      },
-      {
-        label: 'send-media-base64-both',
-        url: `${baseUrl}/send/media`,
-        headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-        body: {
-          number: phoneNumber,
-          media: mediaBase64,
-          mediatype: 'image',
-          mimetype: mimeType,
-          fileName,
-          caption: caption || '',
-          text: caption || ''
-        }
-      },
-      {
-        label: 'send-image-base64-both',
-        url: `${baseUrl}/send/image`,
-        headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-        body: { number: phoneNumber, image: mediaBase64, mediatype: 'image', mimetype: mimeType, fileName, caption: caption || '', text: caption || '' }
-      },
-      {
-        label: 'send-image-dataurl-both',
-        url: `${baseUrl}/send/image`,
-        headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-        body: {
-          number: phoneNumber,
-          image: mediaDataUrl,
-          mediatype: 'image',
-          mimetype: mimeType,
-          fileName,
-          caption: caption || '',
-          text: caption || ''
-        }
-      }
-    ] : []),
-    {
-      label: 'message-sendMedia-token-only',
-      url: `${baseUrl}/message/sendMedia`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: {
-        number: phoneNumber,
-        mediaMessage: {
-          mediatype: 'image',
-          mimetype: mimeType,
-          fileName,
-          caption: caption || '',
-          media: imageUrl,
-        },
-        options: { delay: 200 }
-      }
-    },
-    {
-      label: 'message-sendMedia-generic-apikey',
-      url: `${baseUrl}/message/sendMedia`,
-      headers: { 'Content-Type': 'application/json', 'apikey': instKey },
-      body: {
-        number: phoneNumber,
-        mediaMessage: {
-          mediatype: 'image',
-          mimetype: mimeType,
-          fileName,
-          caption: caption || '',
-          media: imageUrl,
-        },
-        options: { delay: 200 }
-      }
-    },
-    {
-      label: 'message-sendMedia-generic-both',
-      url: `${baseUrl}/message/sendMedia`,
-      headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-      body: {
-        number: phoneNumber,
-        mediaMessage: {
-          mediatype: 'image',
-          mimetype: mimeType,
-          fileName,
-          caption: caption || '',
-          media: imageUrl,
-        },
-        options: { delay: 200 }
-      }
-    },
-    {
-      label: 'message-sendMedia-uazapi',
-      url: `${baseUrl}/message/sendMedia/${instanceName}`,
-      headers: { 'Content-Type': 'application/json', 'apikey': instKey },
-      body: {
-        number: phoneNumber,
-        mediaMessage: {
-          mediatype: 'image',
-          mimetype: mimeType,
-          fileName,
-          caption: caption || '',
-          media: imageUrl
-        },
-        options: {
-          delay: 200
-        }
-      }
-    },
-    {
-      label: 'message-sendMedia-uazapi-both',
-      url: `${baseUrl}/message/sendMedia/${instanceName}`,
-      headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-      body: {
-        number: phoneNumber,
-        mediaMessage: {
-          mediatype: 'image',
-          mimetype: mimeType,
-          fileName,
-          caption: caption || '',
-          media: imageUrl
-        },
-        options: {
-          delay: 200
-        }
-      }
-    },
-    {
-      label: 'message-sendImage-apikey',
-      url: `${baseUrl}/message/sendImage/${instanceName}`,
-      headers: { 'Content-Type': 'application/json', 'apikey': instKey },
-      body: { number: phoneNumber, mediatype: 'image', mimetype: mimeType, media: imageUrl, fileName, caption: caption || '' }
-    },
-    {
-      label: 'message-sendImage-both',
-      url: `${baseUrl}/message/sendImage/${instanceName}`,
-      headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-      body: { number: phoneNumber, mediatype: 'image', mimetype: mimeType, media: imageUrl, fileName, caption: caption || '' }
-    },
-    {
-      label: 'send-media-token-only',
-      url: `${baseUrl}/send/media`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: {
-        number: phoneNumber,
-        media: imageUrl,
-        mediatype: 'image',
-        mimetype: mimeType,
-        fileName,
-        caption: caption || '',
-        text: caption || ''
-      }
-    },
-    {
-      label: 'send-media-both',
-      url: `${baseUrl}/send/media`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-      body: {
-        number: phoneNumber,
-        media: imageUrl,
-        mediatype: 'image',
-        mimetype: mimeType,
-        fileName,
-        caption: caption || '',
-        text: caption || ''
-      }
-    },
-    {
-      label: 'send-image-image',
-      url: `${baseUrl}/send/image`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-      body: { number: phoneNumber, image: imageUrl, caption: caption || '' }
-    },
-    {
-      label: 'send-image-url',
-      url: `${baseUrl}/send/image`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-      body: { number: phoneNumber, url: imageUrl, caption: caption || '', text: caption || '' }
-    },
-    {
-      label: 'send-image-media',
-      url: `${baseUrl}/send/image`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-      body: { number: phoneNumber, media: imageUrl, mediatype: 'image', caption: caption || '', text: caption || '' }
-    },
-    {
-      label: 'send-image-instance',
-      url: `${baseUrl}/send/image?instance=${instanceName}`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-      body: { number: phoneNumber, image: imageUrl, caption: caption || '', text: caption || '' }
-    },
-    {
-      label: 'send-image-remotejid',
-      url: `${baseUrl}/send/image`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-      body: { remoteJid, image: imageUrl, caption: caption || '', text: caption || '' }
-    }
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      console.log(`[Webhook] Tentando envio de imagem UAZAPI via ${attempt.label}`);
-      const res = await fetch(attempt.url, {
-        method: 'POST',
-        headers: attempt.headers as any,
-        body: JSON.stringify(attempt.body),
-      });
-      const responseText = await res.text().catch(() => '');
-      console.log(`[Webhook] UAZAPI ${attempt.label} -> ${res.status} | ${responseText.substring(0, 300)}`);
-      if (res.ok) {
-        return { ok: true, label: attempt.label, status: res.status, body: responseText };
-      }
-    } catch (err) {
-      console.error(`[Webhook] Falha no envio de imagem UAZAPI (${attempt.label}):`, err);
-    }
-  }
-
-  return { ok: false };
-}
-
-async function sendUazapiCarouselMessage(baseUrl: string, instKey: string, phoneNumber: string, vehicleLabel: string, pictures: Array<{ url: string }>) {
-  const carouselItems = pictures.slice(0, 5).map((picture, index) => ({
-    text: `${vehicleLabel}\nFoto ${index + 1}`,
-    image: picture.url,
-    buttons: [
-      {
-        id: `mais_detalhes_${index + 1}`,
-        text: 'Quero saber mais',
-        type: 'REPLY'
-      }
-    ]
-  }));
-
-  try {
-    console.log('[Webhook] Tentando envio de fotos UAZAPI via send-carousel');
-    const res = await fetch(`${baseUrl}/send/carousel`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-      body: JSON.stringify({
-        number: phoneNumber,
-        text: `Separei as fotos do ${vehicleLabel} para voce.`,
-        carousel: carouselItems,
-        readchat: true,
-        delay: 0
-      }),
-    });
-    const responseText = await res.text().catch(() => '');
-    console.log(`[Webhook] UAZAPI send-carousel -> ${res.status} | ${responseText.substring(0, 300)}`);
-    if (res.ok) {
-      return { ok: true, status: res.status, body: responseText };
-    }
-  } catch (err) {
-    console.error('[Webhook] Falha no envio de carrossel UAZAPI:', err);
-  }
-
-  return { ok: false };
-}
-
-function buildBndvPhotoLinksMessage(vehicleLabel: string, vehicle: any, pictures: Array<{ url: string }>) {
-  const intro = `Separei aqui as fotos do ${vehicleLabel}.`;
-  const details = [
-    vehicle?.year ? `Ano: ${vehicle.year}` : '',
-    vehicle?.saleValue ? `Preco: R$ ${Number(vehicle.saleValue).toLocaleString('pt-BR')}` : '',
-  ].filter(Boolean).join(' | ');
-  const urls = pictures.slice(0, 5).map((picture, index) => `Foto ${index + 1}: ${picture.url}`).join('\n');
-
-  return [intro, details, urls].filter(Boolean).join('\n\n');
-}
-
-async function enviarFotosBndv(supabase: any, userId: string, filters: any, delivery: any) {
-  const result = await fetchBndvVehicles(supabase, userId, filters);
-  if (!result.success) return result;
-
-  const vehicle = (result.items || []).find((item: any) => parseBndvPictures(item?.pictureJs).length > 0);
-  if (!vehicle) {
-    return {
-      success: false,
-      error: 'Nao encontrei fotos disponiveis para esse veiculo no estoque atual.',
-    };
-  }
-
-  const pictures = parseBndvPictures(vehicle.pictureJs);
-  const requestedCount = Math.max(1, Math.min(Number(filters?.quantidade_fotos || 3), 5));
-  const selectedPictures = pictures.slice(0, requestedCount);
-
-  if (selectedPictures.length === 0) {
-    return {
-      success: false,
-      error: 'Esse veiculo nao possui fotos disponiveis para envio agora.',
-    };
-  }
-
-  let sentCount = 0;
-  const vehicleLabel = buildBndvVehicleLabel(vehicle);
-  for (let index = 0; index < selectedPictures.length; index++) {
-    const picture = selectedPictures[index];
-    const caption = index === 0
-      ? `${vehicleLabel}${vehicle?.year ? ` | ${vehicle.year}` : ''}${vehicle?.saleValue ? ` | R$ ${Number(vehicle.saleValue).toLocaleString('pt-BR')}` : ''}`
-      : '';
-    const sendResult = await sendUazapiImageMessage(
-      delivery.baseUrl,
-      delivery.instKey,
-      delivery.instanceName,
-      delivery.phoneNumber,
-      delivery.remoteJid,
-      picture.url,
-      caption,
-      vehicleLabel
-    );
-
-    if (!sendResult.ok) {
-      const carouselResult = await sendUazapiCarouselMessage(
-        delivery.baseUrl,
-        delivery.instKey,
-        delivery.phoneNumber,
-        vehicleLabel,
-        selectedPictures
-      );
-
-      if (carouselResult.ok) {
-        return {
-          success: true,
-          sent: selectedPictures.length,
-          vehicle: vehicleLabel,
-          year: vehicle?.year || null,
-          price: vehicle?.saleValue || null,
-          principal_image: selectedPictures[0]?.url || null,
-          mode: 'carousel',
-          delivered_via_tool: true,
-          suppress_follow_up: true,
-        };
-      }
-
-      return {
-        success: false,
-        error: 'Encontrei as fotos, mas nao consegui envia-las no WhatsApp pela Uazapi.',
-        vehicle: vehicleLabel,
-        attempted: selectedPictures.length,
-        sent: sentCount,
-      };
-    }
-
-    sentCount += 1;
-  }
-
-  return {
-    success: true,
-    sent: sentCount,
-    vehicle: vehicleLabel,
-    year: vehicle?.year || null,
-    price: vehicle?.saleValue || null,
-    principal_image: selectedPictures[0]?.url || null,
-    delivered_via_tool: true,
-    suppress_follow_up: true,
-  };
-}
-
-function getUazapiMediaFallbackReply(content: string) {
-  const normalized = (content || '').trim().toLowerCase();
-
-  if (normalized.startsWith('[mensagem de audio recebida sem transcricao]')) {
-    return 'Recebi seu audio aqui, mas ele chegou sem transcricao pra mim. Se puder, me manda de novo ou escreve rapidinho o ponto principal que eu continuo com voce.';
-  }
-
-  if (normalized.startsWith('[imagem recebida sem legenda]')) {
-    return 'Recebi sua imagem aqui. Me diz rapidinho o que voce quer que eu avalie nela que eu sigo com voce.';
-  }
-
-  if (normalized.startsWith('[arquivo recebido sem leitura]') || normalized.startsWith('[arquivo recebido:')) {
-    return 'Recebi seu arquivo aqui, mas por enquanto eu nao consigo abrir documentos direto. Se quiser, me resume o ponto principal em texto ou audio que eu te ajudo daqui.';
-  }
-
-  return null;
-}
-
-function inferUazapiMessageType(rawMsgObj: any) {
-  const explicitType = String(
-    rawMsgObj?.messageType ||
-    rawMsgObj?.type ||
-    rawMsgObj?.message_type ||
-    rawMsgObj?.mediaType ||
-    rawMsgObj?.mimeType ||
-    rawMsgObj?.mimetype ||
-    ''
-  ).toLowerCase();
-
-  const mimeType = String(rawMsgObj?.mimetype || rawMsgObj?.mimeType || '').toLowerCase();
-
-  if (mimeType.startsWith('image/')) {
-    return 'image';
-  }
-
-  if (mimeType.startsWith('application/')) {
-    return 'document';
-  }
-
-  if (mimeType.startsWith('video/')) {
-    return 'video';
-  }
-
-  if (mimeType.startsWith('audio/')) {
-    return 'audio';
-  }
-
-  if (
-    explicitType.includes('image') ||
-    rawMsgObj?.image ||
-    rawMsgObj?.imageMessage
-  ) {
-    return 'image';
-  }
-
-  if (
-    explicitType.includes('document') ||
-    explicitType.includes('file') ||
-    rawMsgObj?.document ||
-    rawMsgObj?.documentMessage ||
-    rawMsgObj?.fileName ||
-    rawMsgObj?.filename
-  ) {
-    return 'document';
-  }
-
-  if (
-    explicitType.includes('video') ||
-    rawMsgObj?.video ||
-    rawMsgObj?.videoMessage
-  ) {
-    return 'video';
-  }
-
-  if (
-    explicitType.includes('audio') ||
-    explicitType.includes('ptt') ||
-    explicitType.includes('voice') ||
-    rawMsgObj?.audio ||
-    rawMsgObj?.audioMessage ||
-    rawMsgObj?.ptt
-  ) {
-    return 'audio';
-  }
-
-  return explicitType;
-}
-
-function extractUazapiMessageId(rawMsgObj: any) {
-  return rawMsgObj?.messageid ||
-    rawMsgObj?.messageId ||
-    rawMsgObj?.id?.id ||
-    rawMsgObj?.id ||
-    rawMsgObj?.key?.id ||
-    rawMsgObj?.msgId ||
-    '';
-}
-
-function extractUazapiBase64(rawMsgObj: any) {
-  const value = rawMsgObj?.base64 ||
-    rawMsgObj?.base64Data ||
-    rawMsgObj?.message?.base64 ||
-    rawMsgObj?.message?.base64Data ||
-    rawMsgObj?.media?.base64 ||
-    rawMsgObj?.media?.base64Data ||
-    rawMsgObj?.mediaBase64 ||
-    rawMsgObj?.file ||
-    rawMsgObj?.data?.base64 ||
-    rawMsgObj?.data?.base64Data ||
-    '';
-
-  if (typeof value === 'string' && value.startsWith('data:')) {
-    const parts = value.split(',');
-    return parts.length > 1 ? parts[1] : '';
-  }
-
-  return value;
-}
-
-function extractUazapiMediaUrl(rawMsgObj: any) {
-  return rawMsgObj?.url ||
-    rawMsgObj?.mediaUrl ||
-    rawMsgObj?.mediaURL ||
-    rawMsgObj?.downloadUrl ||
-    rawMsgObj?.downloadURL ||
-    rawMsgObj?.fileUrl ||
-    rawMsgObj?.fileURL ||
-    rawMsgObj?.message?.url ||
-    rawMsgObj?.message?.mediaUrl ||
-    rawMsgObj?.message?.mediaURL ||
-    rawMsgObj?.message?.downloadUrl ||
-    rawMsgObj?.message?.downloadURL ||
-    rawMsgObj?.data?.url ||
-    rawMsgObj?.data?.mediaUrl ||
-    rawMsgObj?.data?.mediaURL ||
-    rawMsgObj?.data?.downloadUrl ||
-    rawMsgObj?.data?.downloadURL ||
-    rawMsgObj?.data?.fileURL ||
-    '';
-}
-
-function extractUazapiMimeType(rawMsgObj: any) {
-  return rawMsgObj?.mimetype ||
-    rawMsgObj?.mimeType ||
-    rawMsgObj?.media?.mimetype ||
-    rawMsgObj?.media?.mimeType ||
-    rawMsgObj?.message?.mimetype ||
-    rawMsgObj?.message?.mimeType ||
-    rawMsgObj?.data?.mimetype ||
-    rawMsgObj?.data?.mimeType ||
-    'application/octet-stream';
-}
-
-async function fetchMediaAsBase64(mediaUrl: string, instKey: string) {
-  if (!mediaUrl) return '';
-
-  try {
-    const res = await fetch(mediaUrl, {
-      headers: {
-        'token': instKey,
-        'apikey': instKey,
-      },
-    });
-    if (!res.ok) {
-      console.log(`[Webhook] Fetch media URL falhou: ${res.status}`);
-      return '';
-    }
-
-    const arrayBuffer = await res.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  } catch (err) {
-    console.error('[Webhook] Falha ao buscar midia por URL:', err);
-    return '';
-  }
-}
-
-async function fetchMediaBlob(mediaUrl: string, instKey: string, mimeType?: string) {
-  if (!mediaUrl) return null;
-
-  try {
-    const res = await fetch(mediaUrl, {
-      headers: {
-        'token': instKey,
-        'apikey': instKey,
-      },
-    });
-    if (!res.ok) {
-      console.log(`[Webhook] Fetch media blob falhou: ${res.status}`);
-      return null;
-    }
-
-    const arrayBuffer = await res.arrayBuffer();
-    return new Blob([arrayBuffer], { type: mimeType || res.headers.get('content-type') || 'application/octet-stream' });
-  } catch (err) {
-    console.error('[Webhook] Falha ao buscar blob da midia:', err);
-    return null;
-  }
-}
-
-async function sendUazapiTextMessage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, text: string) {
-  const attempts = [
-    {
-      label: 'send-text-number',
-      url: `${baseUrl}/send/text`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: { number: phoneNumber, text }
-    },
-    {
-      label: 'send-text-number-instance',
-      url: `${baseUrl}/send/text?instance=${instanceName}`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-      body: { number: phoneNumber, text }
-    },
-    {
-      label: 'send-text-remotejid',
-      url: `${baseUrl}/send/text`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: { remoteJid, text }
-    },
-    {
-      label: 'send-message-body',
-      url: `${baseUrl}/send/text`,
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: { number: phoneNumber, body: text }
-    }
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      console.log(`[Webhook] Tentando envio UAZAPI via ${attempt.label} para ${phoneNumber}`);
-      const res = await fetch(attempt.url, {
-        method: 'POST',
-        headers: attempt.headers as any,
-        body: JSON.stringify(attempt.body),
-      });
-      const responseText = await res.text().catch(() => '');
-      console.log(`[Webhook] UAZAPI ${attempt.label} -> ${res.status} | ${responseText.substring(0, 300)}`);
-      if (res.ok) {
-        return { ok: true, label: attempt.label, status: res.status, body: responseText };
-      }
-    } catch (err) {
-      console.error(`[Webhook] Falha no envio UAZAPI (${attempt.label}):`, err);
-    }
-  }
-
-  return { ok: false };
-}
 
 async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any) {
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
@@ -1087,17 +115,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Response('Instance not found', { headers: corsHeaders })
   }
 
-  const { data: agents } = await supabase.from('wa_ai_agents')
-    .select('*').eq('user_id', waInstance.user_id).eq('is_active', true)
-
-  const agent = agents?.find((a: any) => {
-    const ids = a.instance_ids || [];
-    return Array.isArray(ids) && ids.length > 0 && ids.includes(waInstance.id);
-  }) || agents?.find((a: any) => a.instance_id === waInstance.id)
-     || agents?.find((a: any) => {
-    const ids = a.instance_ids || [];
-    return (!ids || ids.length === 0) && !a.instance_id;
-  });
+  const { data: agent } = await supabase.from('wa_ai_agents')
+    .select('*').eq('user_id', waInstance.user_id).eq('is_active', true).contains('instance_ids', [waInstance.id]).maybeSingle()
 
   if (!agent) {
     console.log(`[Webhook] No matching active agent for instanceId: ${waInstance.id}`);
@@ -1105,6 +124,50 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   }
   
   console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
+
+  // ── DETECÇÃO DE RESPOSTA DE VENDEDOR ────────────────────────────────
+  // Se a mensagem vier do número de um vendedor, confirma o transfer pendente
+  // e retorna sem deixar o Pedro responder ao vendedor.
+  const senderDigits = phoneNumber.replace(/\D/g, '').slice(-10); // últimos 10 dígitos
+  const { data: senderSeller } = await supabase
+    .from('ai_team_members')
+    .select('id, name')
+    .eq('agent_id', agent.id)
+    .eq('is_active', true)
+    .ilike('whatsapp_number', `%${senderDigits}`)
+    .maybeSingle();
+
+  if (senderSeller) {
+    console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} — verificando transfer pendente`);
+    const now = new Date().toISOString();
+    const { data: pendingTransfer } = await supabase
+      .from('ai_lead_transfers')
+      .select('id')
+      .eq('to_member_id', senderSeller.id)
+      .eq('transfer_status', 'pending')
+      .eq('is_confirmed', false)
+      .gt('confirmation_timeout_at', now)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (pendingTransfer) {
+      await supabase.from('ai_lead_transfers').update({
+        transfer_status: 'confirmed',
+        is_confirmed: true,
+        confirmed_at: now,
+      }).eq('id', pendingTransfer.id);
+
+      await supabase.from('ai_team_members').update({
+        last_lead_received_at: now,
+      }).eq('id', senderSeller.id);
+
+      console.log(`[Transfer] ✅ Vendedor ${senderSeller.name} confirmou o lead`);
+    }
+    // Vendedor não recebe resposta do Pedro
+    return new Response(JSON.stringify({ ok: true, seller_ack: true }), { headers: corsHeaders });
+  }
+  // ────────────────────────────────────────────────────────────────────
 
   // Registrar Lead no CRM
   await supabase.from('ai_crm_leads').upsert({
@@ -1115,66 +178,22 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     last_interaction_at: new Date().toISOString()
   }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
 
+  const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
+
   // Tools
   const tools = [
     {
       type: "function",
       function: {
         name: "atualizar_etapa_crm",
-        description: "Atualiza o Kanban/CRM conforme a evolucao da conversa. Chame esta funcao secretamente para categorizar o lead. Valores validos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando nao quer comprar). OBS IMPORTANTE: Ao chamar esta funcao para status 'interessado' ou 'encerrado', VOCE DEVE TAMBEM gerar uma mensagem normal para o cliente. So encerre a conversa se for status 'qualificado'.",
+        description: "Atualiza o Kanban/CRM conforme a evolução da conversa. Chame esta função secretamente para categorizar o lead. Valores válidos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando não quer comprar). OBS IMPORTANTE: Ao chamar esta função para status 'interessado' ou 'encerrado', VOCÊ DEVE TAMBÉM gerar uma mensagem normal para o cliente. Só encerre a conversa se for status 'qualificado'.",
         parameters: {
           type: "object",
           properties: {
             status: { type: "string", enum: ["interessado", "qualificado", "encerrado"], description: "A etapa atual do cliente." },
-            resumo: { type: "string", description: "O que o cliente deseja e as informacoes que voce coletou dele ate o momento. Seja breve." }
+            resumo: { type: "string", description: "O que o cliente deseja e as informações que você coletou dele até o momento. Seja breve." }
           },
           required: ["status", "resumo"]
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "consultar_estoque_bndv",
-        description: "Consulta o estoque real de veiculos do cliente integrado ao BNDV. Use quando o cliente perguntar por carro disponivel, preco, ano, versao, cambio, combustivel, cor ou faixa de valor. Nunca invente estoque sem usar esta ferramenta.",
-        parameters: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "Busca livre do cliente, como 'nivus automatico ate 110 mil'." },
-            marca: { type: "string", description: "Marca do veiculo, ex: Chevrolet, Jeep, Hyundai." },
-            modelo: { type: "string", description: "Modelo do veiculo, ex: Onix, Renegade, Creta." },
-            versao: { type: "string", description: "Versao ou detalhe do veiculo, ex: LTZ, EX, Touring." },
-            combustivel: { type: "string", description: "Combustivel desejado, ex: Flex, Diesel." },
-            cambio: { type: "string", description: "Tipo de cambio, ex: Automatico, Manual." },
-            cor: { type: "string", description: "Cor desejada, se o cliente pedir." },
-            ano_min: { type: "number", description: "Ano minimo desejado." },
-            ano_max: { type: "number", description: "Ano maximo desejado." },
-            preco_max: { type: "number", description: "Preco maximo desejado pelo cliente." },
-            km_max: { type: "number", description: "Quilometragem maxima desejada pelo cliente." },
-            limite: { type: "number", description: "Quantidade maxima de veiculos para retornar." }
-          },
-          additionalProperties: false
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "enviar_fotos_bndv",
-        description: "Envia fotos reais de um veiculo do estoque BNDV pelo WhatsApp. Use quando o cliente pedir fotos, imagens, quiser ver o carro ou disser para mandar fotos.",
-        parameters: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "Busca livre do cliente, como 'onix activ 2019'." },
-            marca: { type: "string", description: "Marca do veiculo." },
-            modelo: { type: "string", description: "Modelo do veiculo." },
-            versao: { type: "string", description: "Versao do veiculo." },
-            ano_min: { type: "number", description: "Ano minimo desejado." },
-            ano_max: { type: "number", description: "Ano maximo desejado." },
-            preco_max: { type: "number", description: "Preco maximo desejado." },
-            quantidade_fotos: { type: "number", description: "Quantidade maxima de fotos para enviar, entre 1 e 5." }
-          },
-          additionalProperties: false
         }
       }
     }
@@ -1196,8 +215,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Blob(byteArrays, {type: contentType});
   }
 
-  const msgType = inferUazapiMessageType(rawMsgObj);
-  const messageId = extractUazapiMessageId(rawMsgObj);
+  const msgType = rawMsgObj?.messageType || rawMsgObj?.type || '';
+  const messageId = rawMsgObj?.messageid || rawMsgObj?.id?.id || rawMsgObj?.key?.id || '';
 
   const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '')
   const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || ''
@@ -1207,18 +226,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   let finalUserText = userText;
   let userMessageContentForOpenAi: any = finalUserText;
-  let mediaMimeType = extractUazapiMimeType(rawMsgObj);
-
-  console.log(`[Webhook] Tipo inferido: ${msgType || 'desconhecido'} | mimeType: ${mediaMimeType || 'n/a'} | messageId: ${messageId || 'n/a'}`);
 
   // Process Media se houver
-  if (msgType === 'audio' || msgType === 'ptt' || msgType === 'image' || msgType === 'document' || msgType === 'video') {
-    let base64 = extractUazapiBase64(rawMsgObj);
-    let mediaUrl = extractUazapiMediaUrl(rawMsgObj);
+  if (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image') {
+    let base64 = rawMsgObj?.base64 || rawMsgObj?.message?.base64 || '';
     
-    // Se nao veio base64, tentar download pela uazapi
+    // Se não veio base64, tentar download pela uazapi
     if (!base64 && messageId) {
-      console.log(`[Webhook] Baixando midia ID: ${messageId}`);
+      console.log(`[Webhook] Baixando mídia ID: ${messageId}`);
       try {
         const dRes = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
           method: 'POST',
@@ -1227,36 +242,19 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         });
         if (dRes.ok) {
           const dData = await dRes.json();
-          console.log(`[Webhook] Download de midia payload keys: ${Object.keys(dData || {}).join(', ')}`);
-          base64 = extractUazapiBase64(dData);
-          mediaUrl = mediaUrl || extractUazapiMediaUrl(dData);
-          mediaMimeType = extractUazapiMimeType(dData) || mediaMimeType;
-          console.log(`[Webhook] Download de midia OK | base64: ${base64 ? 'sim' : 'nao'} | mediaUrl: ${mediaUrl ? 'sim' : 'nao'}`);
-        } else {
-          console.log(`[Webhook] Download de midia falhou: ${dRes.status}`);
+          base64 = dData.base64 || dData.file || '';
         }
       } catch (err) {
-        console.error('[Webhook] Falha no download de midia:', err);
+        console.error('[Webhook] Falha no download de mídia:', err);
       }
     }
 
-    if (!base64 && mediaUrl) {
-      console.log('[Webhook] Tentando buscar midia pela URL retornada');
-      base64 = await fetchMediaAsBase64(mediaUrl, instKey);
-      console.log(`[Webhook] Base64 via URL: ${base64 ? 'sim' : 'nao'}`);
-    }
-
-    if (msgType === 'document') {
-       // Apenas informar o nome do arquivo para o GPT
-       const fileName = rawMsgObj?.fileName || rawMsgObj?.filename || rawMsgObj?.documentMessage?.fileName || 'Arquivo';
-       finalUserText = `[Arquivo recebido: ${fileName}] ` + (finalUserText || '');
-       userMessageContentForOpenAi = finalUserText;
-    } else if (base64) {
-      if (msgType === 'audio' || msgType === 'ptt') {
+    if (base64) {
+      if (msgType.includes('audio') || msgType === 'ptt') {
         try {
-          const blob = b64toBlob(base64, mediaMimeType || 'audio/ogg');
+          const blob = b64toBlob(base64, 'audio/ogg');
           const formData = new FormData();
-          formData.append('file', blob, `audio.${(mediaMimeType || 'audio/ogg').split('/')[1] || 'ogg'}`);
+          formData.append('file', blob, 'audio.ogg');
           formData.append('model', 'whisper-1');
           
           console.log('[Webhook] Enviando para Whisper...');
@@ -1269,53 +267,41 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           if (wData.text) {
              finalUserText = wData.text;
              userMessageContentForOpenAi = finalUserText;
-             console.log('[Webhook] Transcricao (Whisper):', finalUserText);
-          } else {
-             finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
-             userMessageContentForOpenAi = finalUserText;
+             console.log('[Webhook] Transcrição (Whisper):', finalUserText);
           }
         } catch(err) {
           console.error('[Webhook] Erro no Whisper:', err);
-          finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
-          userMessageContentForOpenAi = finalUserText;
         }
-      } else if (msgType === 'image') {
+      } else if (msgType.includes('image')) {
+        const mimeType = rawMsgObj?.mimetype || 'image/jpeg';
         finalUserText = finalUserText || '[Imagem recebida]';
-        console.log(`[Webhook] Encaminhando imagem para OpenAI Vision | mimeType: ${mediaMimeType}`);
         userMessageContentForOpenAi = [
           { type: "text", text: finalUserText },
-          { type: "image_url", image_url: { url: `data:${mediaMimeType || 'image/jpeg'};base64,${base64}` } }
+          { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
         ];
-      } else {
-        finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
-        userMessageContentForOpenAi = finalUserText;
       }
-    } else {
-      finalUserText = buildUazapiMediaFallbackContent(msgType, finalUserText);
-      userMessageContentForOpenAi = finalUserText;
     }
   }
 
   if (!finalUserText && typeof userMessageContentForOpenAi === 'string') {
-    finalUserText = '[Mensagem recebida sem conteudo legivel]';
-    userMessageContentForOpenAi = finalUserText;
-    console.log('[Webhook] Empty text after media processing, applying generic fallback');
+    console.log('[Webhook] Empty text after media processing');
+    return new Response('Empty text', { headers: corsHeaders });
   }
 
-  console.log(`[Webhook] Salvando historico e chamando OpenAI para: ${finalUserText}`);
+  console.log(`[Webhook] Salvando histórico e chamando OpenAI para: ${finalUserText}`);
 
-  // Salvar historico
+  // Salvar histórico
   await supabase.from('wa_chat_history').insert({
     user_id: agent.user_id,
     agent_id: agent.id,
     instance_id: instanceName,
     remote_jid: remoteJid,
     role: 'user',
-    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[Midia/Imagem]',
+    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[Mídia/Imagem]',
     lead_name: pushName
   })
 
-  // Buscar historico
+  // Buscar histórico
   const { data: history } = await supabase.from('wa_chat_history')
     .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(10)
 
@@ -1346,27 +332,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   } catch (err: any) {}
 
-  let systemPrompt = agent.system_prompt || 'Voce e um assistente prestativo.'
+  let systemPrompt = agent.system_prompt || 'Você é um assistente prestativo.'
   if (agent.company_name) systemPrompt += `\n\nEmpresa: ${agent.company_name}`
   if (knowledgeContext) systemPrompt += `\n\n## BASE DE CONHECIMENTO:\n${knowledgeContext}`
-  
-  // Regra anti-alucinacao para arquivos/midia
-  systemPrompt += `\n\n[REGRAS DE CONDUTA ANTE MIDIAS E ARQUIVOS]
-- Se o usuario enviar uma imagem (sera indicado com "[Imagem recebida]"), analise com precisao fotografica se conseguir visualizar o anexo no seu array.
-- Se o usuario enviar audio, a transcricao e entregue como texto direto para voce interpretar, lide naturalmente como se tivesse ouvido.
-- Se o usuario anexar documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCE NAO PODE ABRIR ARQUIVOS e NAO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visao ou que nao consegue abrir documentos, sugerindo que o cliente resuma o que ha no arquivo ou envie as duvidas em audio/texto. Nunca de respostas genericas e nunca ofereca "mais informacoes" se nao sabe o conteudo.`
-  systemPrompt += `\n\n[CONSULTA DE ESTOQUE BNDV]
-- Quando o cliente pedir preco, disponibilidade, ano, versao, cambio, combustivel, quilometragem ou quiser saber se existe algum veiculo no estoque, use a ferramenta "consultar_estoque_bndv".
-- Nunca invente veiculos, precos ou disponibilidade sem consultar a ferramenta.
-- Depois de consultar, responda como vendedor consultivo: direto, claro e comercial.
-- Se a ferramenta nao retornar resultados, diga isso de forma transparente e ofereca alternativas proximas.`
-  systemPrompt += `\n\n[REGRA DE QUALIFICACAO E TRANSFERENCIA]
-- Se o cliente quiser falar com vendedor, humano, consultor, fechar compra, ver proposta, financiamento, visita, teste drive, negociar ou demonstrar clara intencao de compra, use imediatamente a ferramenta "atualizar_etapa_crm" com status "qualificado".
-- Quando o lead estiver qualificado, o sistema encaminha o contato para o vendedor salvo na lista e na fila. Nao deixe de acionar a ferramenta nesses casos.`
-
-  systemPrompt += `\n- Se o cliente pedir fotos, imagens ou quiser ver o carro, use a ferramenta "enviar_fotos_bndv".`
-  systemPrompt += `\n- Nunca use frases roboticas como "enviadas com sucesso", "fotos enviadas com sucesso para o WhatsApp" ou semelhantes.`
-  systemPrompt += `\n- Se a ferramenta de fotos ja entregar links ou imagens direto ao cliente, nao repita uma confirmacao tecnica; no maximo continue de forma humana e comercial.`
 
   let aiModel = agent.model || 'gpt-4o';
   // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
@@ -1377,196 +345,150 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     aiModel = 'gpt-4o-mini';
   }
 
-  const mediaFallbackReply = getUazapiMediaFallbackReply(finalUserText);
-  let aiMessage: any = null;
-  let aiResponse = mediaFallbackReply || '';
-
-  if (!mediaFallbackReply) {
-    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
-      body: JSON.stringify({
-        model: aiModel,
-        messages: [{ role: 'system', content: systemPrompt }, ...chatHistory, { role: 'user', content: userMessageContentForOpenAi }],
-        temperature: agent.temperature || 0.7,
-        tools: tools,
-        tool_choice: "auto"
-      })
+  const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+    body: JSON.stringify({
+      model: aiModel,
+      messages: [{ role: 'system', content: systemPrompt }, ...chatHistory, { role: 'user', content: userMessageContentForOpenAi }],
+      temperature: agent.temperature || 0.7,
+      tools: tools,
+      tool_choice: "auto"
     })
+  })
 
-    if (!openaiRes.ok) {
-      const errText = await openaiRes.text();
-      console.error(`[Webhook] OpenAI Erro: ${openaiRes.status} - ${errText}`);
-      return new Response('OpenAI erro', { status: 500 });
-    }
-    const openaiData = await openaiRes.json()
-    aiMessage = openaiData.choices?.[0]?.message
-    aiResponse = aiMessage?.content || ''
+  if (!openaiRes.ok) {
+    const errText = await openaiRes.text();
+    console.error(`[Webhook] OpenAI Erro: ${openaiRes.status} - ${errText}`);
+    return new Response('OpenAI erro', { status: 500 });
   }
+  const openaiData = await openaiRes.json()
+  const aiMessage = openaiData.choices?.[0]?.message
   
   console.log(`[Webhook] Resposta da IA recebida. ToolCalls: ${aiMessage?.tool_calls?.length || 0}`);
-  if (!mediaFallbackReply && aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
-    const toolMessages: any[] = [];
-    let suppressAssistantReply = false;
 
-    for (const toolCall of aiMessage.tool_calls) {
+  let aiResponse = aiMessage?.content || ''
+
+  // Verificar se o modelo decidiu chamar a função de CRM (atualizar_etapa_crm)
+  if (aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
+    const toolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'atualizar_etapa_crm');
+    if (toolCall) {
       try {
-        if (toolCall.function.name === 'atualizar_etapa_crm') {
-          const args = JSON.parse(toolCall.function.arguments);
+        const args = JSON.parse(toolCall.function.arguments);
+        
+        // 1. Atualizar banco de dados CRM (arrastar cartão para a coluna correta)
+        await supabase.from('ai_crm_leads').update({
+          status: args.status,
+          summary: args.resumo,
+          last_interaction_at: new Date().toISOString()
+        }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
-          const { data: existingLead } = await supabase.from('ai_crm_leads')
-            .select('status, assigned_to_member_id')
-            .eq('agent_id', agent.id)
-            .eq('remote_jid', remoteJid)
-            .maybeSingle();
+        console.log(`[CRM] Lead ${phoneNumber} movido para: ${args.status}`);
 
-          const alreadyTransferred = existingLead && (existingLead.status === 'transferido' || existingLead.status === 'qualificado' || existingLead.assigned_to_member_id);
+        // 2. Alertar vendedor (round-robin) APENAS SE status for 'qualificado'
+        if (args.status === 'qualificado') {
+          try {
+            // Busca vendedores ativos e histórico de transfers para o round-robin
+            const { data: sellers } = await supabase
+              .from('ai_team_members').select('*')
+              .eq('agent_id', agent.id).eq('is_active', true)
+              .order('last_lead_received_at', { ascending: true, nullsFirst: true });
 
-          await supabase.from('ai_crm_leads').upsert({
-            user_id: agent.user_id,
-            agent_id: agent.id,
-            remote_jid: remoteJid,
-            status: args.status,
-            summary: args.resumo,
-            last_interaction_at: new Date().toISOString(),
-            lead_name: pushName
-          }, { onConflict: 'agent_id, remote_jid' });
+            const { data: recentTransfers } = await supabase
+              .from('ai_lead_transfers').select('to_member_id, created_at')
+              .eq('user_id', agent.user_id)
+              .order('created_at', { ascending: false }).limit(100);
 
-          console.log(`[CRM] Lead ${phoneNumber} analisado. Status: ${args.status}`);
-
-          if (args.status === 'qualificado' && !alreadyTransferred) {
-            const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
-            if (sellers && sellers.length > 0) {
-              const selectedSeller = sellers[0];
-              let sellerNum = String(selectedSeller.whatsapp_number || '').replace(/\D/g, '');
-              if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
-              if (sellerNum) {
-                const sellerMsg = `LEAD QUALIFICADO - ATENDIMENTO IMEDIATO\n\nNome do Cliente: ${pushName}\nContato: ${phoneNumber}\nAgente IA: ${agent.name}\n\n--------------------\n\nResumo do Atendimento pela IA:\n${args.resumo}\n\n--------------------\n\nAtender agora: https://wa.me/${phoneNumber}\n\nO cliente esta esperando!`;
-                const sellerSendResult = await sendUazapiTextMessage(
-                  baseUrl,
-                  instKey,
-                  instanceName,
-                  sellerNum,
-                  `${sellerNum}@s.whatsapp.net`,
-                  sellerMsg
-                );
-
-                if (!sellerSendResult.ok) {
-                  console.error(`[CRM] Falha ao enviar lead para vendedor ${selectedSeller.name} (${sellerNum}).`);
-                } else {
-                  await supabase.from('ai_team_members').update({
-                    last_lead_received_at: new Date().toISOString(),
-                    total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
-                  }).eq('id', selectedSeller.id);
-
-                  const { data: leadData } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
-                  if (leadData) {
-                    await supabase.from('ai_lead_transfers').insert({
-                      user_id: agent.user_id, lead_id: leadData.id, from_agent_id: agent.id,
-                      to_member_id: selectedSeller.id, transfer_reason: args.resumo,
-                      notes: `Transferido para ${selectedSeller.name} via round-robin`,
-                    });
-                    await supabase.from('ai_crm_leads').update({
-                      status: 'transferido', assigned_to_member_id: selectedSeller.id,
-                      transferred_at: new Date().toISOString(), transfer_reason: `Encaminhado para ${selectedSeller.name}`,
-                    }).eq('id', leadData.id);
-                  }
-
-                  console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
-                }
-              } else {
-                console.error(`[CRM] Vendedor ${selectedSeller.name} sem numero de WhatsApp configurado.`);
-              }
+            // Round-robin: prefere quem nunca recebeu, depois quem recebeu há mais tempo
+            const lastMap = new Map<string, number>();
+            for (const t of (recentTransfers || [])) {
+              if (t.to_member_id && !lastMap.has(t.to_member_id))
+                lastMap.set(t.to_member_id, new Date(t.created_at).getTime());
             }
+            const activeSellers = sellers || [];
+            const neverReceived = activeSellers.filter(s => !lastMap.has(s.id));
+            const nextSeller = neverReceived.length > 0
+              ? neverReceived[0]
+              : [...activeSellers].sort((a, b) => (lastMap.get(a.id) || 0) - (lastMap.get(b.id) || 0))[0] || null;
+
+            if (nextSeller) {
+              // Busca o id do lead para registrar a transferência
+              const { data: leadRow } = await supabase
+                .from('ai_crm_leads').select('id')
+                .eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
+
+              const timeoutAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+              await supabase.from('ai_lead_transfers').insert({
+                user_id: agent.user_id,
+                lead_id: leadRow?.id || null,
+                to_member_id: nextSeller.id,
+                transfer_reason: 'round_robin',
+                notes: `Qualificado por ${agent.name}`,
+                transfer_status: 'pending',
+                is_confirmed: false,
+                confirmation_timeout_at: timeoutAt,
+              });
+
+              // Atualiza status do lead para 'transferido'
+              await supabase.from('ai_crm_leads').update({
+                status: 'transferido',
+                assigned_to_id: nextSeller.id,
+              }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
+
+              let sellerNum = nextSeller.whatsapp_number.replace(/\D/g, '');
+              if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
+
+              const sellerMsg = `🚨 *LEAD QUALIFICADO — VOCÊ É O PRÓXIMO DA FILA*\n\n*Agente IA:* ${agent.name}\n*Nome:* ${pushName}\n*Contato:* ${phoneNumber}\n\n📝 *Resumo:*\n${args.resumo}\n\n👉 *Atender:* https://wa.me/${phoneNumber}\n\n⏰ *Responda esta mensagem em até 15 minutos para confirmar o recebimento. Se não responder, o lead passa para o próximo da fila.*`;
+
+              await fetch(`${baseUrl}/send/text`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'token': instKey },
+                body: JSON.stringify({ number: sellerNum, text: sellerMsg }),
+              });
+
+              console.log(`[Transfer] Lead enviado para ${nextSeller.name} — timeout: ${timeoutAt}`);
+            } else {
+              console.warn('[Transfer] Nenhum vendedor ativo disponível para receber o lead');
+            }
+          } catch (transferErr) {
+            console.error('[Transfer] Erro no round-robin:', transferErr);
           }
-
-          toolMessages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            name: toolCall.function.name,
-            content: JSON.stringify({ success: true, status: args.status })
+          // Se qualificou, substituir a resposta para a de Handoff
+          aiResponse = handoffMsg;
+        } else if (!aiResponse) {
+          // Se não é qualificado, e o GPT não retornou texto (só o tool_call), devemos devolver o resultado da tool e pedir o texto!
+          console.log(`[Webhook] IA apenas executou a tool sem texto. Solicitando resposta final...`);
+          const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+            body: JSON.stringify({
+              model: aiModel,
+              messages: [
+                { role: 'system', content: systemPrompt }, 
+                ...chatHistory, 
+                { role: 'user', content: userMessageContentForOpenAi },
+                aiMessage,
+                { role: 'tool', tool_call_id: toolCall.id, name: toolCall.function.name, content: `{"success": true}` }
+              ],
+              temperature: agent.temperature || 0.7
+            })
           });
-        }
-
-        if (toolCall.function.name === 'consultar_estoque_bndv') {
-          const args = JSON.parse(toolCall.function.arguments || '{}');
-          const stockResult = await consultarEstoqueBndv(supabase, agent.user_id, args);
-          console.log(`[BNDV] Consulta executada | success: ${stockResult.success} | total: ${stockResult.total || 0}`);
-          toolMessages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            name: toolCall.function.name,
-            content: JSON.stringify(stockResult)
-          });
-        }
-
-        if (toolCall.function.name === 'enviar_fotos_bndv') {
-          const args = JSON.parse(toolCall.function.arguments || '{}');
-          const photoResult = await enviarFotosBndv(
-            supabase,
-            agent.user_id,
-            args,
-            { baseUrl, instKey, instanceName, phoneNumber, remoteJid }
-          );
-          console.log(`[BNDV] Envio de fotos executado | success: ${photoResult.success} | sent: ${photoResult.sent || 0}`);
-          if (photoResult?.suppress_follow_up) {
-            suppressAssistantReply = true;
+          if (secondRes.ok) {
+            const secondData = await secondRes.json();
+            aiResponse = secondData.choices?.[0]?.message?.content || '';
+            console.log(`[Webhook] Resposta final capturada: ${aiResponse}`);
           }
-          toolMessages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            name: toolCall.function.name,
-            content: JSON.stringify(photoResult)
-          });
         }
       } catch (err) {
-        console.error(`[Webhook] Erro ao processar tool ${toolCall.function?.name}:`, err);
-        toolMessages.push({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          name: toolCall.function?.name || 'tool_error',
-          content: JSON.stringify({ success: false, error: err instanceof Error ? err.message : 'Erro inesperado na ferramenta.' })
-        });
-      }
-    }
-
-    if (suppressAssistantReply) {
-      aiResponse = '';
-      console.log('[Webhook] Tool de fotos ja respondeu direto ao cliente. Pulando follow-up da IA.');
-    } else if (toolMessages.length > 0) {
-      console.log(`[Webhook] Tool(s) executadas (${toolMessages.length}). Solicitando resposta final...`);
-      const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
-        body: JSON.stringify({
-          model: aiModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            ...chatHistory,
-            { role: 'user', content: userMessageContentForOpenAi },
-            aiMessage,
-            ...toolMessages
-          ],
-          temperature: agent.temperature || 0.7
-        })
-      });
-      if (secondRes.ok) {
-        const secondData = await secondRes.json();
-        aiResponse = secondData.choices?.[0]?.message?.content || aiResponse || '';
-        console.log(`[Webhook] Resposta final capturada: ${aiResponse}`);
-      } else {
-        console.error(`[Webhook] Falha no follow-up das tools: ${secondRes.status} - ${await secondRes.text()}`);
+        console.error("[Webhook] Erro no Handoff/CRM", err)
       }
     }
   }
 
-  if (!aiResponse) {
-    return new Response(JSON.stringify({ success: true, delivered_via_tool: true }), { headers: corsHeaders, status: 200 });
-  }
+  if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders })
 
-  console.log(`[Webhook] Resposta final ao cliente: ${aiResponse.substring(0, 200)}`);
-
-  // Salvar no historico
+  // Salvar no histórico
   await supabase.from('wa_chat_history').insert({
     user_id: agent.user_id, agent_id: agent.id, instance_id: instanceName,
     remote_jid: remoteJid, role: 'assistant', content: aiResponse
@@ -1574,14 +496,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   // Enviar para o cliente final
   try {
-    const sendResult = await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, aiResponse)
-    if (!sendResult.ok) {
-      console.error('[Webhook] Nenhuma tentativa de envio UAZAPI funcionou');
-    }
+    await fetch(`${baseUrl}/send/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: JSON.stringify({ number: phoneNumber, text: aiResponse })
+    })
   } catch (e) {
     console.error('[Webhook] Erro ao enviar mensagem:', e)
   }
 
   return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
 }
-
