@@ -1,0 +1,130 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+
+  try {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const body = await req.json();
+    const { form_id, name, email, phone, custom_data, utm_source, utm_campaign } = body;
+
+    if (!form_id) throw new Error("form_id obrigatório");
+
+    // 1. Busca configuração do formulário
+    const { data: form, error: formErr } = await supabase
+      .from("capture_forms")
+      .select("*, sequence:followup_sequences(id, instance_id, is_active, steps:followup_sequence_steps(*))")
+      .eq("id", form_id)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (formErr || !form) throw new Error("Formulário não encontrado ou inativo");
+
+    const ip = req.headers.get("x-forwarded-for") || req.headers.get("cf-connecting-ip") || null;
+
+    // 2. Salva submissão
+    const { data: submission, error: subErr } = await supabase
+      .from("capture_form_submissions")
+      .insert({
+        form_id,
+        user_id: form.user_id,
+        name: name || null,
+        email: email || null,
+        phone: phone || null,
+        custom_data: custom_data || {},
+        utm_source: utm_source || null,
+        utm_campaign: utm_campaign || null,
+        ip_address: ip,
+      })
+      .select("id")
+      .single();
+
+    if (subErr) throw subErr;
+
+    // 3. Incrementa contador do formulário
+    await supabase.rpc("increment_form_submissions" as any, { form_id_param: form_id }).maybeSingle();
+
+    // 4. Joga lead no CRM (primeiro estágio do pipeline)
+    const { data: stage } = await supabase
+      .from("crm_pipeline_stages")
+      .select("id")
+      .eq("user_id", form.user_id)
+      .order("position", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (stage) {
+      const { data: lastLead } = await supabase
+        .from("crm_leads")
+        .select("position")
+        .eq("stage_id", stage.id)
+        .order("position", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      await supabase.from("crm_leads").insert({
+        user_id: form.user_id,
+        stage_id: stage.id,
+        name: name || "Lead sem nome",
+        email: email || null,
+        phone: phone || null,
+        source: `form:${form.name}`,
+        position: ((lastLead?.position ?? 0) + 1),
+        custom_fields: custom_data || {},
+      });
+    }
+
+    // 5. Enfileira mensagens de follow-up se houver sequência ativa
+    const sequence = Array.isArray(form.sequence) ? form.sequence[0] : form.sequence;
+    if (sequence?.is_active && phone && sequence.steps?.length > 0) {
+      const instanceId = sequence.instance_id || form.instance_id;
+      const cleanPhone = phone.replace(/\D/g, "");
+
+      const steps = [...sequence.steps].sort((a: any, b: any) => a.step_order - b.step_order);
+      let accumulatedHours = 0;
+
+      for (const step of steps) {
+        accumulatedHours += step.delay_hours;
+        const scheduledFor = new Date(Date.now() + accumulatedHours * 60 * 60 * 1000).toISOString();
+
+        await supabase.from("followup_queue").insert({
+          user_id: form.user_id,
+          step_id: step.id,
+          submission_id: submission.id,
+          phone: cleanPhone,
+          instance_id: instanceId,
+          message_content: step.message_text.replace(/\{nome\}/gi, name || "").replace(/\{email\}/gi, email || ""),
+          channel: "whatsapp",
+          status: "scheduled",
+          scheduled_for: scheduledFor,
+        });
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        submission_id: submission.id,
+        redirect_url: form.redirect_url || null,
+        success_message: form.success_message,
+      }),
+      { headers: { ...cors, "Content-Type": "application/json" } }
+    );
+  } catch (err: any) {
+    console.error("[form-submit]", err);
+    return new Response(
+      JSON.stringify({ error: err.message }),
+      { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+    );
+  }
+});

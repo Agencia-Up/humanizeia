@@ -10,12 +10,18 @@ import {
   Sun,
   X,
   LogOut,
-  
+  MessageCircle,
+  Send,
+  Inbox,
+  Zap,
+  Smartphone,
   Radar,
   Instagram,
   CreditCard,
+  Kanban,
   FileText,
   Bot,
+  ClipboardList,
   ChevronDown,
   Mail,
   Users,
@@ -52,10 +58,19 @@ const agentItems = [
   { title: 'Davi',    subtitle: 'Social Media',  url: '/davi',           icon: Instagram, emoji: '📱' },
   { title: 'João',    subtitle: 'E-mail',        url: '/joao',           icon: Mail,      emoji: '📧' },
   { title: 'Daniel',  subtitle: 'Estratégia',    url: '/daniel',            icon: Brain,  emoji: '🧠' },
-  { title: 'Marcos',  subtitle: 'CRM & WhatsApp', url: '/marcos',            icon: Users,  emoji: '🤝' },
-  { title: 'Pedro',   subtitle: 'Atendimento IA', url: '/whatsapp/ai-agent', icon: Bot,    emoji: '💬' },
+  { title: 'Marcos',  subtitle: 'CRM & Leads',   url: '/crm',               icon: Users,  emoji: '🤝' },
+  { title: 'Pedro',   subtitle: 'WhatsApp IA',   url: '/whatsapp/ai-agent', icon: Bot,    emoji: '💬' },
 ];
 
+// ── WhatsApp & CRM ────────────────────────────────────────────────────────────
+const whatsappItems = [
+  { title: 'CRM',             url: '/crm',                    icon: Kanban },
+  { title: 'Formulários',     url: '/crm/formularios',        icon: ClipboardList },
+  { title: 'Inbox',           url: '/whatsapp/inbox',         icon: Inbox },
+  { title: 'Disparo em Massa',url: '/whatsapp/broadcast',     icon: Send },
+  { title: 'Instâncias',      url: '/whatsapp/instances',     icon: Smartphone },
+  { title: 'Automações',      url: '/whatsapp/automations',   icon: Zap },
+];
 
 // ── Sistema ───────────────────────────────────────────────────────────────────
 const systemItems = [
@@ -218,6 +233,12 @@ export function AppSidebar() {
           ))}
         </NavGroup>
 
+        {/* ── WhatsApp & CRM ── */}
+        <NavGroup label="WhatsApp & CRM" defaultOpen={false} collapsed={collapsed}>
+          {whatsappItems.map(item => (
+            <NavItem key={item.url} item={item} collapsed={collapsed} />
+          ))}
+        </NavGroup>
 
         {/* ── Sistema ── */}
         <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
