@@ -167,3 +167,9 @@ verify_jwt = false
 
 [functions.crm-capture]
 verify_jwt = false
+
+[functions.knowledge-embed]
+verify_jwt = false
+
+[functions.knowledge-search]
+verify_jwt = false
