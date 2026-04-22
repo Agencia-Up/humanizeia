@@ -68,7 +68,6 @@ const MarcosLeads = lazy(() => import("./pages/MarcosLeads"));
 const MetaAdsConnect = lazy(() => import("./pages/MetaAdsConnect"));
 const InstagramConnect = lazy(() => import("./pages/InstagramConnect"));
 const ConfirmEmail = lazy(() => import("./pages/ConfirmEmail"));
-const CRMAoVivo = lazy(() => import("./pages/CrmAoVivo"));
 const CrmFormularios = lazy(() => import("./pages/CrmFormularios"));
 const FormPublico = lazy(() => import("./pages/FormPublico"));
 
@@ -131,7 +130,6 @@ const App = () => (
                 <Route path="/meta-pixels" element={<ProtectedRoute><MetaPixels /></ProtectedRoute>} />
                 <Route path="/meta-audiences" element={<ProtectedRoute><MetaAudiences /></ProtectedRoute>} />
                 <Route path="/whatsapp/capi" element={<ProtectedRoute><WhatsAppCAPI /></ProtectedRoute>} />
-                <Route path="/whatsapp/crm-ao-vivo" element={<ProtectedRoute><CRMAoVivo /></ProtectedRoute>} />
                 <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
                 <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
                 <Route path="/marcos" element={<ProtectedRoute><MarcosLeads /></ProtectedRoute>} />
