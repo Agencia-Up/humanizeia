@@ -65,6 +65,8 @@ const BriefingDetails = lazy(() => import("./pages/BriefingDetails"));
 const SupportDashboard = lazy(() => import("./pages/SupportDashboard"));
 const ConfirmEmail = lazy(() => import("./pages/ConfirmEmail"));
 const CRMAoVivo = lazy(() => import("./pages/CRMAoVivo"));
+const CrmFormularios = lazy(() => import("./pages/CrmFormularios"));
+const FormPublico = lazy(() => import("./pages/FormPublico"));
 
 
 const queryClient = new QueryClient();
@@ -126,6 +128,8 @@ const App = () => (
                 <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
                 <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
                 <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
+                <Route path="/crm/formularios" element={<ProtectedRoute><CrmFormularios /></ProtectedRoute>} />
+                <Route path="/f/:formId" element={<FormPublico />} />
                 <Route path="/creative-intelligence" element={<ProtectedRoute><CreativeIntelligence /></ProtectedRoute>} />
                 <Route path="/competitor-radar" element={<ProtectedRoute><CompetitorRadar /></ProtectedRoute>} />
                 <Route path="/leads" element={<ProtectedRoute><LeadManagement /></ProtectedRoute>} />

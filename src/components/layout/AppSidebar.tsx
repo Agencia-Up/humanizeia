@@ -21,6 +21,7 @@ import {
   Kanban,
   FileText,
   Bot,
+  ClipboardList,
   ChevronDown,
   Mail,
   Users,
@@ -64,6 +65,7 @@ const agentItems = [
 // ── WhatsApp & CRM ────────────────────────────────────────────────────────────
 const whatsappItems = [
   { title: 'CRM',             url: '/crm',                    icon: Kanban },
+  { title: 'Formulários',     url: '/crm/formularios',        icon: ClipboardList },
   { title: 'Inbox',           url: '/whatsapp/inbox',         icon: Inbox },
   { title: 'Disparo em Massa',url: '/whatsapp/broadcast',     icon: Send },
   { title: 'Instâncias',      url: '/whatsapp/instances',     icon: Smartphone },
