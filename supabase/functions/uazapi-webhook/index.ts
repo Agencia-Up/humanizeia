@@ -125,6 +125,50 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   
   console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
 
+  // ── DETECÇÃO DE RESPOSTA DE VENDEDOR ────────────────────────────────
+  // Se a mensagem vier do número de um vendedor, confirma o transfer pendente
+  // e retorna sem deixar o Pedro responder ao vendedor.
+  const senderDigits = phoneNumber.replace(/\D/g, '').slice(-10); // últimos 10 dígitos
+  const { data: senderSeller } = await supabase
+    .from('ai_team_members')
+    .select('id, name')
+    .eq('agent_id', agent.id)
+    .eq('is_active', true)
+    .ilike('whatsapp_number', `%${senderDigits}`)
+    .maybeSingle();
+
+  if (senderSeller) {
+    console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} — verificando transfer pendente`);
+    const now = new Date().toISOString();
+    const { data: pendingTransfer } = await supabase
+      .from('ai_lead_transfers')
+      .select('id')
+      .eq('to_member_id', senderSeller.id)
+      .eq('transfer_status', 'pending')
+      .eq('is_confirmed', false)
+      .gt('confirmation_timeout_at', now)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (pendingTransfer) {
+      await supabase.from('ai_lead_transfers').update({
+        transfer_status: 'confirmed',
+        is_confirmed: true,
+        confirmed_at: now,
+      }).eq('id', pendingTransfer.id);
+
+      await supabase.from('ai_team_members').update({
+        last_lead_received_at: now,
+      }).eq('id', senderSeller.id);
+
+      console.log(`[Transfer] ✅ Vendedor ${senderSeller.name} confirmou o lead`);
+    }
+    // Vendedor não recebe resposta do Pedro
+    return new Response(JSON.stringify({ ok: true, seller_ack: true }), { headers: corsHeaders });
+  }
+  // ────────────────────────────────────────────────────────────────────
+
   // Registrar Lead no CRM
   await supabase.from('ai_crm_leads').upsert({
     user_id: agent.user_id,
@@ -341,21 +385,74 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
         console.log(`[CRM] Lead ${phoneNumber} movido para: ${args.status}`);
 
-        // 2. Alertar vendedores APENAS SE status for 'qualificado' (Transbordo Humano)
+        // 2. Alertar vendedor (round-robin) APENAS SE status for 'qualificado'
         if (args.status === 'qualificado') {
-          const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true);
-          if (sellers && sellers.length > 0) {
-            for (const seller of sellers) {
-              let sellerNum = seller.whatsapp_number.replace(/\D/g, '');
+          try {
+            // Busca vendedores ativos e histórico de transfers para o round-robin
+            const { data: sellers } = await supabase
+              .from('ai_team_members').select('*')
+              .eq('agent_id', agent.id).eq('is_active', true)
+              .order('last_lead_received_at', { ascending: true, nullsFirst: true });
+
+            const { data: recentTransfers } = await supabase
+              .from('ai_lead_transfers').select('to_member_id, created_at')
+              .eq('user_id', agent.user_id)
+              .order('created_at', { ascending: false }).limit(100);
+
+            // Round-robin: prefere quem nunca recebeu, depois quem recebeu há mais tempo
+            const lastMap = new Map<string, number>();
+            for (const t of (recentTransfers || [])) {
+              if (t.to_member_id && !lastMap.has(t.to_member_id))
+                lastMap.set(t.to_member_id, new Date(t.created_at).getTime());
+            }
+            const activeSellers = sellers || [];
+            const neverReceived = activeSellers.filter(s => !lastMap.has(s.id));
+            const nextSeller = neverReceived.length > 0
+              ? neverReceived[0]
+              : [...activeSellers].sort((a, b) => (lastMap.get(a.id) || 0) - (lastMap.get(b.id) || 0))[0] || null;
+
+            if (nextSeller) {
+              // Busca o id do lead para registrar a transferência
+              const { data: leadRow } = await supabase
+                .from('ai_crm_leads').select('id')
+                .eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
+
+              const timeoutAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+              await supabase.from('ai_lead_transfers').insert({
+                user_id: agent.user_id,
+                lead_id: leadRow?.id || null,
+                to_member_id: nextSeller.id,
+                transfer_reason: 'round_robin',
+                notes: `Qualificado por ${agent.name}`,
+                transfer_status: 'pending',
+                is_confirmed: false,
+                confirmation_timeout_at: timeoutAt,
+              });
+
+              // Atualiza status do lead para 'transferido'
+              await supabase.from('ai_crm_leads').update({
+                status: 'transferido',
+                assigned_to_id: nextSeller.id,
+              }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
+
+              let sellerNum = nextSeller.whatsapp_number.replace(/\D/g, '');
               if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
-              
-              const sellerMsg = `🚨 *LEAD QUALIFICADO*\n\n*Agente IA:* ${agent.name}\n*Nome:* ${pushName}\n*Contato:* ${phoneNumber}\n\n📝 *Resumo do Atendimento:*\n${args.resumo}\n\n👉 *Atender Lead:* https://wa.me/${phoneNumber}`;
+
+              const sellerMsg = `🚨 *LEAD QUALIFICADO — VOCÊ É O PRÓXIMO DA FILA*\n\n*Agente IA:* ${agent.name}\n*Nome:* ${pushName}\n*Contato:* ${phoneNumber}\n\n📝 *Resumo:*\n${args.resumo}\n\n👉 *Atender:* https://wa.me/${phoneNumber}\n\n⏰ *Responda esta mensagem em até 15 minutos para confirmar o recebimento. Se não responder, o lead passa para o próximo da fila.*`;
+
               await fetch(`${baseUrl}/send/text`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'token': instKey },
-                body: JSON.stringify({ number: sellerNum, text: sellerMsg })
+                body: JSON.stringify({ number: sellerNum, text: sellerMsg }),
               });
+
+              console.log(`[Transfer] Lead enviado para ${nextSeller.name} — timeout: ${timeoutAt}`);
+            } else {
+              console.warn('[Transfer] Nenhum vendedor ativo disponível para receber o lead');
             }
+          } catch (transferErr) {
+            console.error('[Transfer] Erro no round-robin:', transferErr);
           }
           // Se qualificou, substituir a resposta para a de Handoff
           aiResponse = handoffMsg;
