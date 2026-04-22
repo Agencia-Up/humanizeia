@@ -64,7 +64,7 @@ const NicheQuiz = lazy(() => import("./pages/NicheQuiz"));
 const BriefingDetails = lazy(() => import("./pages/BriefingDetails"));
 const SupportDashboard = lazy(() => import("./pages/SupportDashboard"));
 const ConfirmEmail = lazy(() => import("./pages/ConfirmEmail"));
-const CRMAoVivo = lazy(() => import("./pages/CRMAoVivo"));
+const CRMAoVivo = lazy(() => import("./pages/CrmAoVivo"));
 const CrmFormularios = lazy(() => import("./pages/CrmFormularios"));
 const FormPublico = lazy(() => import("./pages/FormPublico"));
 
