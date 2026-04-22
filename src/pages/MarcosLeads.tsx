@@ -2,7 +2,7 @@ import { useState, lazy, Suspense } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Users, Inbox, Send, Smartphone, Zap, Bot, Kanban } from 'lucide-react';
+import { Loader2, Users, Inbox, Send, Smartphone, Zap, Bot, Kanban, ClipboardList, MonitorPlay } from 'lucide-react';
 
 // Lazy load each sub-page content to keep bundle lean
 const FluxCRM = lazy(() => import('./FluxCRM'));
@@ -11,6 +11,8 @@ const WhatsAppBroadcast = lazy(() => import('./WhatsAppBroadcast'));
 const WhatsAppInstances = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppAutomations = lazy(() => import('./WhatsAppAutomations'));
 const WhatsAppAIAgent = lazy(() => import('./WhatsAppAIAgent'));
+const CrmFormularios = lazy(() => import('./CrmFormularios'));
+const CrmAoVivo = lazy(() => import('./CrmAoVivo'));
 
 const TabLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -19,12 +21,14 @@ const TabLoader = () => (
 );
 
 const tabs = [
-  { id: 'crm',         label: 'CRM',              icon: Kanban,     emoji: '📊' },
-  { id: 'inbox',       label: 'Inbox',            icon: Inbox,      emoji: '💬' },
-  { id: 'broadcast',   label: 'Disparo em Massa', icon: Send,       emoji: '📤' },
-  { id: 'instances',   label: 'Instâncias',       icon: Smartphone, emoji: '📱' },
-  { id: 'automations', label: 'Automações',       icon: Zap,        emoji: '⚡' },
-  { id: 'ai-agent',    label: 'Agente IA',        icon: Bot,        emoji: '🤖' },
+  { id: 'crm',         label: 'CRM',              icon: Kanban,       emoji: '📊' },
+  { id: 'formularios', label: 'Formulários',      icon: ClipboardList,emoji: '📋' },
+  { id: 'ao-vivo',     label: 'CRM ao Vivo',      icon: MonitorPlay,  emoji: '📺' },
+  { id: 'inbox',       label: 'Inbox',            icon: Inbox,        emoji: '💬' },
+  { id: 'broadcast',   label: 'Disparo em Massa', icon: Send,         emoji: '📤' },
+  { id: 'instances',   label: 'Instâncias',       icon: Smartphone,   emoji: '📱' },
+  { id: 'automations', label: 'Automações',       icon: Zap,          emoji: '⚡' },
+  { id: 'ai-agent',    label: 'Agente IA',        icon: Bot,          emoji: '🤖' },
 ];
 
 export default function MarcosLeads() {
@@ -71,6 +75,12 @@ export default function MarcosLeads() {
             <Suspense fallback={<TabLoader />}>
               <TabsContent value="crm" className="mt-0 h-full">
                 <FluxCRM embedded />
+              </TabsContent>
+              <TabsContent value="formularios" className="mt-0 h-full">
+                <CrmFormularios />
+              </TabsContent>
+              <TabsContent value="ao-vivo" className="mt-0 h-full">
+                <CrmAoVivo />
               </TabsContent>
               <TabsContent value="inbox" className="mt-0 h-full">
                 <WhatsAppInbox embedded />
