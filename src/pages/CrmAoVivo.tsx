@@ -208,6 +208,40 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     else await document.exitFullscreen?.();
   };
 
+  const handleManualTransfer = async (leadId: string) => {
+    if (!nextSeller || !user) return;
+    const msg = transferMessages[leadId] || '';
+    setTransferringLeadId(leadId);
+    try {
+      const { error: updErr } = await (supabase as any).from('ai_crm_leads').update({
+        status: 'transferido',
+        member_id: nextSeller.id,
+        last_interaction_at: new Date().toISOString()
+      }).eq('id', leadId);
+      if (updErr) throw updErr;
+
+      await (supabase as any).from('ai_lead_transfers').insert({
+        user_id: user.id,
+        lead_id: leadId,
+        to_member_id: nextSeller.id,
+        transfer_reason: 'manual',
+        notes: msg
+      });
+
+      await (supabase as any).from('ai_team_members').update({
+        last_lead_received_at: new Date().toISOString()
+      }).eq('id', nextSeller.id);
+
+      setTransferMessages(prev => { const n = { ...prev }; delete n[leadId]; return n; });
+      fetchLiveData();
+    } catch (e) {
+      console.error('Transfer error:', e);
+    } finally {
+      setTransferringLeadId(null);
+    }
+  };
+
+
   /* ── estilos base ───────────────────────────────────── */
   const card: React.CSSProperties = {
     borderRadius: 14,
