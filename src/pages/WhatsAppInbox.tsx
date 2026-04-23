@@ -12,11 +12,19 @@ import {
   Search, Send, Loader2, CheckCheck, Check,
   Sparkles, ArrowLeft, MessageCircle, Bot, Phone,
   Wifi, WifiOff, ChevronDown, MoreVertical, Smile,
-  Paperclip, Tag,
+  Paperclip, Tag, UserCheck
 } from 'lucide-react';
 import { TagBadge } from '@/components/whatsapp/TagBadge';
 import { TagSelector } from '@/components/whatsapp/TagSelector';
 import { TagFilter } from '@/components/whatsapp/TagFilter';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -115,6 +123,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const [loadingMsgs, setLoadingMsgs]         = useState(false);
   const [filterTags, setFilterTags]           = useState<string[]>([]);
   const [contactTags, setContactTags]         = useState<Record<string, string[]>>({});
+  const [teamMembers, setTeamMembers]         = useState<any[]>([]);
   const [sendInstanceId, setSendInstanceId]   = useState<string>('');
   const [isMobileChat, setIsMobileChat]       = useState(false);
 
@@ -220,6 +229,18 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     }
   }, [user, conversations]);
 
+  /* ── Fetch vendedores (equipe) ────────────────────────────────── */
+  const fetchTeamMembers = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('ai_team_members')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .order('name');
+    setTeamMembers(data || []);
+  }, [user]);
+
   const updateContactTags = async (phone: string, tags: string[]) => {
     if (!user) return;
     await supabase.from('wa_contacts').update({ tags } as any).eq('user_id', user.id).eq('phone', phone);
@@ -230,6 +251,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   useEffect(() => { fetchInstances(); }, [fetchInstances]);
   useEffect(() => { fetchConversations(); }, [fetchConversations]);
   useEffect(() => { fetchContactTags(); }, [fetchContactTags]);
+  useEffect(() => { fetchTeamMembers(); }, [fetchTeamMembers]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -300,6 +322,65 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       setMessages(prev => prev.filter(m => m.id !== opt.id));
     }
     setSending(false);
+  };
+
+  const handleTransfer = async (memberId: string) => {
+    if (!selectedConvKey || !user) return;
+    const [phone] = selectedConvKey.split('::');
+    const jid = `${phone}@s.whatsapp.net`;
+    const member = teamMembers.find(m => m.id === memberId);
+
+    try {
+      // 1. Buscar ou criar o lead
+      const { data: lead } = await supabase
+        .from('ai_crm_leads')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('remote_jid', jid)
+        .maybeSingle();
+
+      let leadId = lead?.id;
+
+      if (!leadId) {
+        const { data: newLead, error: createError } = await (supabase as any)
+          .from('ai_crm_leads')
+          .insert({
+            user_id: user.id,
+            remote_jid: jid,
+            lead_name: selectedConv?.contact_name || phone,
+            status: 'transferido',
+            assigned_to_member_id: memberId,
+            transferred_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+        if (createError) throw createError;
+        leadId = newLead.id;
+      } else {
+        await supabase
+          .from('ai_crm_leads')
+          .update({
+            status: 'transferido',
+            assigned_to_member_id: memberId,
+            transferred_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          } as any)
+          .eq('id', leadId);
+      }
+
+      // 2. Registrar a transferência
+      await supabase.from('ai_lead_transfers').insert({
+        user_id: user.id,
+        lead_id: leadId,
+        to_member_id: memberId,
+        transfer_reason: 'manual',
+        notes: 'Transferência manual via Inbox',
+      } as any);
+
+      toast({ title: 'Lead transferido!', description: `Conversa atribuída a ${member?.name}.` });
+    } catch (err: any) {
+      toast({ title: 'Erro ao transferir', description: err.message, variant: 'destructive' });
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -574,6 +655,28 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                         {CATEGORY_LABELS[selectedConv.ai_category] || selectedConv.ai_category}
                       </Badge>
                     )}
+                    
+                    {teamMembers.length > 0 && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-8 text-[11px] gap-1.5 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/5 hover:text-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-500/10">
+                            <UserCheck className="h-3.5 w-3.5" />
+                            Transferir
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuLabel className="text-[10px]">Escolha o vendedor</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          {teamMembers.map(m => (
+                            <DropdownMenuItem key={m.id} onClick={() => handleTransfer(m.id)} className="text-xs gap-2 cursor-pointer">
+                              <UserCheck className="h-3 w-3 text-muted-foreground" />
+                              {m.name}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+
                     <TagSelector
                       selectedTags={contactTags[selectedConv?.phone || ''] || []}
                       onTagsChange={(tags) => updateContactTags(selectedConv!.phone, tags)}
