@@ -438,16 +438,19 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                         <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 12 }}>
                           <div style={{ display: 'flex', gap: 6 }}>
                             <input
-                              placeholder="Mensagem para o vendedor..."
+                              placeholder="Observação para o vendedor..."
                               value={transferMessages[lead.id] || ''}
-                              onChange={(e) => setTransferMessages(p => ({ ...p, [lead.id]: e.target.value }))}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setTransferMessages(p => ({ ...p, [lead.id]: val }));
+                              }}
                               style={{
                                 flex: 1,
-                                padding: '8px 10px',
+                                padding: '6px 8px',
                                 fontSize: 11,
-                                borderRadius: 8,
-                                background: 'rgba(0,0,0,0.25)',
-                                border: '1px solid rgba(255,255,255,0.1)',
+                                borderRadius: 6,
+                                background: 'rgba(0,0,0,0.4)',
+                                border: '1px solid rgba(255,255,255,0.08)',
                                 color: '#fff',
                                 outline: 'none'
                               }}
