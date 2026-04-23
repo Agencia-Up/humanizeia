@@ -444,17 +444,17 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                           </div>
                         </div>
 
-                        {/* Transferência Manual */}
-                        {lead.status !== 'transferido' && (
-                          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 12 }}>
+                        {/* Ações e Histórico */}
+                        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 12 }}>
+                          <div style={{ display: 'flex', gap: 6 }}>
                             <input
                               placeholder="Mensagem para o vendedor..."
                               value={transferMessages[lead.id] || ''}
                               onChange={(e) => setTransferMessages(p => ({ ...p, [lead.id]: e.target.value }))}
                               style={{
-                                width: '100%',
+                                flex: 1,
                                 padding: '8px 10px',
-                                fontSize: 12,
+                                fontSize: 11,
                                 borderRadius: 8,
                                 background: 'rgba(0,0,0,0.25)',
                                 border: '1px solid rgba(255,255,255,0.1)',
@@ -464,27 +464,65 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                             />
                             <Button
                               size="sm"
-                              disabled={transferringLeadId === lead.id || !nextSeller}
-                              style={{
-                                background: C.orange,
-                                color: '#fff',
-                                fontWeight: 800,
-                                fontSize: 11,
-                                height: 32,
-                                borderRadius: 8,
-                                boxShadow: '0 4px 12px rgba(230,81,0,0.2)'
+                              variant="outline"
+                              title="Ver histórico"
+                              onClick={() => setShowHistory(p => ({ ...p, [lead.id]: !p[lead.id] }))}
+                              style={{ 
+                                borderColor: 'rgba(255,255,255,0.1)', 
+                                background: showHistory[lead.id] ? C.blueBg : 'transparent',
+                                color: showHistory[lead.id] ? C.blueL : '#64748B',
+                                padding: '0 8px'
                               }}
-                              onClick={() => handleManualTransfer(lead.id)}
                             >
-                              {transferringLeadId === lead.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
-                              ) : (
-                                <RefreshCw className="h-3.5 w-3.5 mr-2" />
-                              )}
-                              Transferir para {nextSeller?.name || 'fila'}
+                              <History style={{ width: 14, height: 14 }} />
                             </Button>
                           </div>
-                        )}
+
+                          <Button
+                            size="sm"
+                            disabled={transferringLeadId === lead.id || !nextSeller}
+                            style={{
+                              background: lead.status === 'transferido' ? 'transparent' : C.orange,
+                              border: lead.status === 'transferido' ? `1px solid ${C.orange}` : 'none',
+                              color: lead.status === 'transferido' ? C.orangeL : '#fff',
+                              fontWeight: 800,
+                              fontSize: 11,
+                              height: 32,
+                              borderRadius: 8,
+                              boxShadow: lead.status === 'transferido' ? 'none' : '0 4px 12px rgba(230,81,0,0.2)'
+                            }}
+                            onClick={() => handleManualTransfer(lead.id)}
+                          >
+                            {transferringLeadId === lead.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                            )}
+                            {lead.status === 'transferido' ? 'Re-transferir lead' : `Transferir para ${nextSeller?.name || 'fila'}`}
+                          </Button>
+
+                          {/* Mini Histórico */}
+                          {showHistory[lead.id] && (
+                            <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#475569', fontWeight: 700, marginBottom: 4 }}>Histórico de transferências</p>
+                              {transfers.filter(t => t.lead_id === lead.id).length === 0 ? (
+                                <p style={{ fontSize: 10, color: '#475569', fontStyle: 'italic' }}>Nenhuma transferência registrada.</p>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {transfers.filter(t => t.lead_id === lead.id).map(t => (
+                                    <div key={t.id} style={{ fontSize: 10.5, color: '#94A3B8', borderLeft: `2px solid ${C.orange}`, paddingLeft: 8 }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <strong style={{ color: C.orangeL }}>{t.member?.name || 'Vendedor'}</strong>
+                                        <span style={{ fontSize: 9, opacity: 0.6 }}>{new Date(t.created_at).toLocaleDateString()}</span>
+                                      </div>
+                                      {t.notes && <p style={{ marginTop: 2, color: '#CBD5E1' }}>"{t.notes}"</p>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                     ))}
