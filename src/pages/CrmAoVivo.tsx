@@ -149,7 +149,7 @@ export default function CrmAoVivo() {
   const fetchLiveData = useCallback(async () => {
     if (!user) { setLoading(false); return; }
     try {
-      const [{ data: leadsData }, { data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
+      const [leadsRes, transfersRes, membersRes, agentsRes] = await Promise.all([
         (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
           .eq('user_id', user.id).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
@@ -158,9 +158,15 @@ export default function CrmAoVivo() {
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', user.id),
       ]);
-      setLeads(leadsData || []); setTransfers(transfersData || []);
-      setTeamMembers(membersData || []); setAgents(agentsData || []);
+      if (leadsRes.error) throw leadsRes.error;
+      if (transfersRes.error) throw transfersRes.error;
+      if (membersRes.error) throw membersRes.error;
+      if (agentsRes.error) throw agentsRes.error;
+      setLeads(leadsRes.data || []); setTransfers(transfersRes.data || []);
+      setTeamMembers(membersRes.data || []); setAgents(agentsRes.data || []);
       setLastUpdatedAt(new Date().toISOString());
+    } catch (err: any) {
+      console.error('CRM ao vivo — erro ao carregar:', err?.message);
     } finally { setLoading(false); }
   }, [user]);
 
@@ -193,6 +199,10 @@ export default function CrmAoVivo() {
   const activeMembers  = useMemo(() => teamMembers.filter(m => m.is_active), [teamMembers]);
   const memberStats    = useMemo(() => getMemberStats(activeMembers, transfers), [activeMembers, transfers]);
   const nextSeller     = useMemo(() => getNextInQueue(teamMembers, transfers), [teamMembers, transfers]);
+  const totalByColumn  = useMemo(() =>
+    Object.fromEntries(LIVE_COLUMNS.map(col => [col.id, leads.filter(l => (l.status || 'novo') === col.id).length])),
+  [leads]) as Record<string, number>;
+
   const leadsByColumn  = useMemo(() =>
     Object.fromEntries(LIVE_COLUMNS.map(col => [col.id, leads.filter(l => (l.status || 'novo') === col.id).slice(0, isPortrait ? 4 : 6)])),
   [isPortrait, leads]) as Record<string, any[]>;
@@ -338,8 +348,13 @@ export default function CrmAoVivo() {
                       <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.2em', color: col.light, fontWeight: 700, opacity: 0.7 }}>Status</p>
                       <h2 style={{ fontSize: 18, fontWeight: 800, color: col.light, marginTop: 1 }}>{col.title}</h2>
                     </div>
-                    <div style={{ width: 30, height: 30, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', background: col.main, color: '#fff', fontWeight: 900, fontSize: 15 }}>
-                      {colLeads.length}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {totalByColumn[col.id] > colLeads.length && (
+                        <span style={{ fontSize: 10, color: col.light, opacity: 0.7 }}>+{totalByColumn[col.id] - colLeads.length}</span>
+                      )}
+                      <div style={{ width: 30, height: 30, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', background: col.main, color: '#fff', fontWeight: 900, fontSize: 15 }}>
+                        {totalByColumn[col.id]}
+                      </div>
                     </div>
                   </div>
 
