@@ -129,7 +129,7 @@ function playBell(muted: boolean) {
 }
 
 /* ── component ────────────────────────────────────────── */
-export default function CrmAoVivo() {
+export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -212,6 +212,8 @@ export default function CrmAoVivo() {
     border: '1px solid rgba(255,255,255,0.10)',
   };
 
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : ({ children }: { children: React.ReactNode }) => <>{children}</>; // CrmAoVivo already doesn't use MainLayout in its return
+
   if (loading) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0B0F1A', color: C.cyanL }}>
       <Loader2 className="h-8 w-8 animate-spin" style={{ marginRight: 12 }} />
@@ -220,7 +222,7 @@ export default function CrmAoVivo() {
   );
 
   return (
-    <>
+    <Wrapper>
       <style>{`
         @keyframes blink { 0%,100%{opacity:1}50%{opacity:.3} }
         @keyframes slide-in { from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none} }
@@ -488,6 +490,6 @@ export default function CrmAoVivo() {
           </div>
         </div>
       </div>
-    </>
+    </Wrapper>
   );
 }

@@ -343,13 +343,15 @@ export default function WhatsAppAIAgent() {
     if (!error) fetchData();
   };
 
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+
   if (loading) {
     return (
-      <MainLayout>
+      <Wrapper>
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-      </MainLayout>
+      </Wrapper>
     );
   }
 
@@ -357,7 +359,7 @@ export default function WhatsAppAIAgent() {
   const totalReplies = agents.reduce((s, a) => s + (a.total_replies || 0), 0);
 
   return (
-    <MainLayout>
+    <Wrapper>
       <div className="space-y-4 max-w-6xl">
         <Tabs defaultValue="agentes" className="w-full">
           <div className="px-1 mb-4 flex justify-between items-center w-full">
@@ -513,6 +515,6 @@ export default function WhatsAppAIAgent() {
         agents={agents}
         onSaved={() => { setDialogOpen(false); fetchData(); }}
       />
-    </MainLayout>
+    </Wrapper>
   );
 }
