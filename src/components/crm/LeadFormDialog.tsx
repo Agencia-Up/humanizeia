@@ -25,26 +25,46 @@ export function LeadFormDialog({ open, onClose, onSave, onDelete, lead, stages, 
   });
 
   useEffect(() => {
+    // Only initialize/reset form when dialog opens OR when lead changes
+    // We use a JSON stringified version of lead ID to avoid unnecessary re-runs
     if (open) {
       if (lead) {
         setForm({
-          name: lead.name || '', email: lead.email || '', phone: lead.phone || '',
-          company: lead.company || '', value: lead.value || 0, source: lead.source || '',
-          notes: lead.notes || '', priority: lead.priority || 'medium',
-          stage_id: lead.stage_id || '', tags: (lead.tags || []).join(', '),
+          name: lead.name || '',
+          email: lead.email || '',
+          phone: lead.phone || '',
+          company: lead.company || '',
+          value: lead.value || 0,
+          source: lead.source || '',
+          notes: lead.notes || '',
+          priority: lead.priority || 'medium',
+          stage_id: lead.stage_id || '',
+          tags: (lead.tags || []).join(', '),
           follow_up_date: lead.follow_up_date ? lead.follow_up_date.split('T')[0] : '',
-          utm_source: lead.utm_source || '', utm_campaign: lead.utm_campaign || '',
+          utm_source: lead.utm_source || '',
+          utm_campaign: lead.utm_campaign || '',
           vendedor: (lead.custom_fields?.vendedor as string) || '',
         });
       } else {
         setForm({
-          name: '', email: '', phone: '', company: '', value: 0, source: '',
-          notes: '', priority: 'medium', stage_id: defaultStageId || '',
-          tags: '', follow_up_date: '', utm_source: '', utm_campaign: '', vendedor: ''
+          name: '',
+          email: '',
+          phone: '',
+          company: '',
+          value: 0,
+          source: '',
+          notes: '',
+          priority: 'medium',
+          stage_id: defaultStageId || '',
+          tags: '',
+          follow_up_date: '',
+          utm_source: '',
+          utm_campaign: '',
+          vendedor: ''
         });
       }
     }
-  }, [open, lead, defaultStageId]);
+  }, [open, lead?.id, defaultStageId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
