@@ -268,7 +268,7 @@ function AgentCard({
   );
 }
 
-export default function WhatsAppAIAgent() {
+export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
