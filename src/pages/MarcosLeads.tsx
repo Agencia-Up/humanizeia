@@ -80,7 +80,7 @@ export default function MarcosLeads() {
                 <CrmFormularios />
               </TabsContent>
               <TabsContent value="ao-vivo" className="mt-0 h-full">
-                <CrmAoVivo />
+                <CrmAoVivo embedded />
               </TabsContent>
               <TabsContent value="inbox" className="mt-0 h-full">
                 <WhatsAppInbox embedded />
