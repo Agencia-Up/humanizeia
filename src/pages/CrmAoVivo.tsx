@@ -11,6 +11,7 @@ import {
   Crown,
   Expand,
   Flame,
+  History as HistoryIcon,
   Loader2,
   MonitorPlay,
   RefreshCw,
@@ -145,6 +146,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const prevCount = useRef<number | null>(null);
   const [transferMessages, setTransferMessages] = useState<Record<string, string>>({});
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState<Record<string, boolean>>({});
 
 
   useEffect(() => { const i = setInterval(() => setTick(p => !p), 900); return () => clearInterval(i); }, []);
@@ -156,7 +158,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
           .eq('user_id', user.id).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
-          .eq('user_id', user.id).order('created_at', { ascending: false }).limit(12),
+          .eq('user_id', user.id).order('created_at', { ascending: false }).limit(50),
         (supabase as any).from('ai_team_members').select('*').eq('user_id', user.id)
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', user.id),
@@ -213,6 +215,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     const msg = transferMessages[leadId] || '';
     setTransferringLeadId(leadId);
     try {
+      // 1. Atualizar o lead
       const { error: updErr } = await (supabase as any).from('ai_crm_leads').update({
         status: 'transferido',
         member_id: nextSeller.id,
@@ -220,6 +223,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       }).eq('id', leadId);
       if (updErr) throw updErr;
 
+      // 2. Registrar no histórico de transferências
       await (supabase as any).from('ai_lead_transfers').insert({
         user_id: user.id,
         lead_id: leadId,
@@ -227,6 +231,21 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         transfer_reason: 'manual',
         notes: msg
       });
+
+      // 3. Registrar no histórico geral de tarefas do Salomão (opcional, mas solicitado pelo usuário)
+      // Tenta inserir se a tabela existir, caso contrário ignora silenciosamente
+      try {
+        await (supabase as any).from('orchestrator_tasks').insert({
+          user_id: user.id,
+          lead_id: leadId,
+          title: 'Transferência de Lead',
+          description: `Lead transferido para ${nextSeller.name}. ${msg ? `Mensagem: ${msg}` : ''}`,
+          status: 'completed',
+          created_at: new Date().toISOString()
+        });
+      } catch (e) {
+        console.warn('orchestrator_tasks not found or error:', e);
+      }
 
       await (supabase as any).from('ai_team_members').update({
         last_lead_received_at: new Date().toISOString()
@@ -426,17 +445,17 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                           </div>
                         </div>
 
-                        {/* Transferência Manual */}
-                        {lead.status !== 'transferido' && (
-                          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 12 }}>
+                        {/* Ações e Histórico */}
+                        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 12 }}>
+                          <div style={{ display: 'flex', gap: 6 }}>
                             <input
                               placeholder="Mensagem para o vendedor..."
                               value={transferMessages[lead.id] || ''}
                               onChange={(e) => setTransferMessages(p => ({ ...p, [lead.id]: e.target.value }))}
                               style={{
-                                width: '100%',
+                                flex: 1,
                                 padding: '8px 10px',
-                                fontSize: 12,
+                                fontSize: 11,
                                 borderRadius: 8,
                                 background: 'rgba(0,0,0,0.25)',
                                 border: '1px solid rgba(255,255,255,0.1)',
@@ -446,27 +465,65 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                             />
                             <Button
                               size="sm"
-                              disabled={transferringLeadId === lead.id || !nextSeller}
-                              style={{
-                                background: C.orange,
-                                color: '#fff',
-                                fontWeight: 800,
-                                fontSize: 11,
-                                height: 32,
-                                borderRadius: 8,
-                                boxShadow: '0 4px 12px rgba(230,81,0,0.2)'
+                              variant="outline"
+                              title="Ver histórico"
+                              onClick={() => setShowHistory(p => ({ ...p, [lead.id]: !p[lead.id] }))}
+                              style={{ 
+                                borderColor: 'rgba(255,255,255,0.1)', 
+                                background: showHistory[lead.id] ? C.blueBg : 'transparent',
+                                color: showHistory[lead.id] ? C.blueL : '#64748B',
+                                padding: '0 8px'
                               }}
-                              onClick={() => handleManualTransfer(lead.id)}
                             >
-                              {transferringLeadId === lead.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
-                              ) : (
-                                <RefreshCw className="h-3.5 w-3.5 mr-2" />
-                              )}
-                              Transferir para {nextSeller?.name || 'fila'}
+                              <HistoryIcon style={{ width: 14, height: 14 }} />
                             </Button>
                           </div>
-                        )}
+
+                          <Button
+                            size="sm"
+                            disabled={transferringLeadId === lead.id || !nextSeller}
+                            style={{
+                              background: lead.status === 'transferido' ? 'transparent' : C.orange,
+                              border: lead.status === 'transferido' ? `1px solid ${C.orange}` : 'none',
+                              color: lead.status === 'transferido' ? C.orangeL : '#fff',
+                              fontWeight: 800,
+                              fontSize: 11,
+                              height: 32,
+                              borderRadius: 8,
+                              boxShadow: lead.status === 'transferido' ? 'none' : '0 4px 12px rgba(230,81,0,0.2)'
+                            }}
+                            onClick={() => handleManualTransfer(lead.id)}
+                          >
+                            {transferringLeadId === lead.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                            )}
+                            {lead.status === 'transferido' ? 'Re-transferir lead' : `Transferir para ${nextSeller?.name || 'fila'}`}
+                          </Button>
+
+                          {/* Mini Histórico */}
+                          {showHistory[lead.id] && (
+                            <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#475569', fontWeight: 700, marginBottom: 4 }}>Histórico de transferências</p>
+                              {transfers.filter(t => t.lead_id === lead.id).length === 0 ? (
+                                <p style={{ fontSize: 10, color: '#475569', fontStyle: 'italic' }}>Nenhuma transferência registrada.</p>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {transfers.filter(t => t.lead_id === lead.id).map(t => (
+                                    <div key={t.id} style={{ fontSize: 10.5, color: '#94A3B8', borderLeft: `2px solid ${C.orange}`, paddingLeft: 8 }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <strong style={{ color: C.orangeL }}>{t.member?.name || 'Vendedor'}</strong>
+                                        <span style={{ fontSize: 9, opacity: 0.6 }}>{new Date(t.created_at).toLocaleDateString()}</span>
+                                      </div>
+                                      {t.notes && <p style={{ marginTop: 2, color: '#CBD5E1' }}>"{t.notes}"</p>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                     ))}
