@@ -539,23 +539,42 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onN
           )}
         </div>
         
-        {lead.member ? (
-          <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-blue-500/30 text-blue-400 bg-blue-500/5">
-            → {lead.member.name}
-          </Badge>
-        ) : (
-          activeMembers.length > 0 && (
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="h-6 text-[9px] gap-1 px-2 border-emerald-500/30 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 animate-pulse-subtle"
-              onClick={() => onNextInQueueTransfer(lead.id)}
-            >
-              <UserCheck className="h-3 w-3" />
-              Transferir
-            </Button>
-          )
-        )}
+        <div className="flex flex-col items-end gap-1.5">
+          {lead.member && (
+            <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-blue-500/30 text-blue-400 bg-blue-500/5">
+              → {lead.member.name}
+            </Badge>
+          )}
+          
+          {activeMembers.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className={`h-6 text-[9px] gap-1 px-2 border-emerald-500/30 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 ${!lead.member ? 'animate-pulse-subtle' : ''}`}
+                >
+                  <UserCheck className="h-3 w-3" />
+                  {lead.member ? 'Re-atribuir' : 'Transferir'}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuLabel className="text-[10px]">Transferir para vendedor</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => onNextInQueueTransfer(lead.id)} className="text-xs gap-2 cursor-pointer font-semibold text-emerald-600 dark:text-emerald-400">
+                  <UserCheck className="h-3 w-3" />
+                  Próximo da Fila
+                </DropdownMenuItem>
+                {activeMembers.map(m => (
+                  <DropdownMenuItem key={m.id} onClick={() => onTransfer(lead.id, m.id)} className="text-xs gap-2 cursor-pointer">
+                    <UserCheck className="h-3 w-3 text-muted-foreground" />
+                    {m.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
       </div>
     </div>
   );
