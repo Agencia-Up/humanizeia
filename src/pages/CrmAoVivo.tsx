@@ -379,50 +379,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                     </div>
                     <div style={{ width: 30, height: 30, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', background: col.main, color: '#fff', fontWeight: 900, fontSize: 15 }}>
                       {colLeads.length}
-                        </div>
+                    </div>
+                  </div>
 
-                        {/* Transferência Manual */}
-                        {lead.status !== 'transferido' && (
-                          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 12 }}>
-                            <input
-                              placeholder="Mensagem para o vendedor..."
-                              value={transferMessages[lead.id] || ''}
-                              onChange={(e) => setTransferMessages(p => ({ ...p, [lead.id]: e.target.value }))}
-                              style={{
-                                width: '100%',
-                                padding: '8px 10px',
-                                fontSize: 12,
-                                borderRadius: 8,
-                                background: 'rgba(0,0,0,0.25)',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                color: '#fff',
-                                outline: 'none'
-                              }}
-                            />
-                            <Button
-                              size="sm"
-                              disabled={transferringLeadId === lead.id || !nextSeller}
-                              style={{
-                                background: C.orange,
-                                color: '#fff',
-                                fontWeight: 800,
-                                fontSize: 11,
-                                height: 32,
-                                borderRadius: 8,
-                                boxShadow: '0 4px 12px rgba(230,81,0,0.2)'
-                              }}
-                              onClick={() => handleManualTransfer(lead.id)}
-                            >
-                              {transferringLeadId === lead.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
-                              ) : (
-                                <RefreshCw className="h-3.5 w-3.5 mr-2" />
-                              )}
-                              Transferir para {nextSeller?.name || 'fila'}
-                            </Button>
-                          </div>
-                        )}
-                      </div>
 
 
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
