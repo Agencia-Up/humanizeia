@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -64,9 +64,10 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   const [renamingListId, setRenamingListId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
+  const claudeConfig = useMemo(() => ({ creativity: 0.8, variations: 3 }), []);
   const { sendSingleMessage, isLoading: aiLoading } = useClaudeChat({
     context: 'copywriter',
-    config: { creativity: 0.8, variations: 3 },
+    config: claudeConfig,
   });
 
   const fetchData = useCallback(async () => {
@@ -92,6 +93,8 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       ]);
 
       if (campaignsRes.error) throw campaignsRes.error;
+      if (listsRes.error) throw listsRes.error;
+      if (instancesRes.error) throw instancesRes.error;
       setCampaigns((campaignsRes.data as unknown as WACampaign[]) || []);
       setLists((listsRes.data as ContactList[]) || []);
       setInstances((instancesRes.data as WAInstance[]) || []);
@@ -216,8 +219,10 @@ Não numere as variações. Não inclua explicações adicionais.`
     if (!deleteListId) return;
     setIsDeletingList(true);
     try {
-      await supabase.from('wa_contacts').delete().eq('list_id', deleteListId);
-      await supabase.from('wa_contact_lists').delete().eq('id', deleteListId);
+      const { error: e1 } = await supabase.from('wa_contacts').delete().eq('list_id', deleteListId);
+      if (e1) throw e1;
+      const { error: e2 } = await supabase.from('wa_contact_lists').delete().eq('id', deleteListId);
+      if (e2) throw e2;
       toast({ title: '🗑️ Lista excluída' });
       setDeleteListId(null);
       fetchData();
@@ -252,11 +257,8 @@ Não numere as variações. Não inclua explicações adicionais.`
     }
   };
 
-  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
-
-  return (
-    <Wrapper>
-      <div className="space-y-6">
+  const mainContent = (
+    <div className={embedded ? 'space-y-6 p-4 md:p-6' : 'space-y-6'}>
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
@@ -443,7 +445,10 @@ Não numere as variações. Não inclua explicações adicionais.`
           </TabsContent>
         </Tabs>
       </div>
+  );
 
+  const modals = (
+    <>
       {/* Campaign Form Dialog (create + edit) */}
       <CampaignFormDialog
         open={dialogOpen}
@@ -509,6 +514,16 @@ Não numere as variações. Não inclua explicações adicionais.`
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Wrapper>
+    </>
+  );
+
+  if (embedded) {
+    return <>{mainContent}{modals}</>;
+  }
+  return (
+    <MainLayout>
+      {mainContent}
+      {modals}
+    </MainLayout>
   );
 }
