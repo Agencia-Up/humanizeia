@@ -1,18 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Inbox, Search, Send, Loader2, Check, CheckCheck,
-  Sparkles, User, Archive, ArrowLeft, MessageCircle, Tag, Phone,
+  Search, Send, Loader2, CheckCheck, Check,
+  Sparkles, ArrowLeft, MessageCircle, Bot, Phone,
+  Wifi, WifiOff, ChevronDown, MoreVertical, Smile,
+  Paperclip, Tag,
 } from 'lucide-react';
 import { TagBadge } from '@/components/whatsapp/TagBadge';
 import { TagSelector } from '@/components/whatsapp/TagSelector';
@@ -20,6 +20,7 @@ import { TagFilter } from '@/components/whatsapp/TagFilter';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
+/* ── Tipos ──────────────────────────────────────────────────────────── */
 interface InboxMessage {
   id: string;
   user_id: string;
@@ -37,12 +38,15 @@ interface InboxMessage {
 }
 
 interface Conversation {
+  key: string;           // `${phone}::${instance_id}`
   phone: string;
+  instance_id: string | null;
   contact_name: string | null;
   last_message: string | null;
   last_message_at: string;
   unread_count: number;
   ai_category: string | null;
+  has_ai_message: boolean;
 }
 
 interface WaInstance {
@@ -54,96 +58,70 @@ interface WaInstance {
   is_active: boolean;
 }
 
-const categoryColors: Record<string, string> = {
-  interested: 'bg-green-500/10 text-green-700 border-green-200',
-  question: 'bg-blue-500/10 text-blue-700 border-blue-200',
-  'opt-out': 'bg-red-500/10 text-red-700 border-red-200',
-  positive: 'bg-emerald-500/10 text-emerald-700 border-emerald-200',
-  negative: 'bg-orange-500/10 text-orange-700 border-orange-200',
-  neutral: 'bg-muted text-muted-foreground border-border',
-  spam: 'bg-yellow-500/10 text-yellow-700 border-yellow-200',
+/* ── Helpers ──────────────────────────────────────────────────────── */
+const CATEGORY_COLORS: Record<string, string> = {
+  interested: 'bg-emerald-500/15 text-emerald-700 border-emerald-300',
+  question:   'bg-blue-500/15 text-blue-700 border-blue-300',
+  'opt-out':  'bg-red-500/15 text-red-700 border-red-300',
+  positive:   'bg-green-500/15 text-green-700 border-green-300',
+  negative:   'bg-orange-500/15 text-orange-700 border-orange-300',
+  neutral:    'bg-gray-100 text-gray-600 border-gray-300',
+  spam:       'bg-yellow-500/15 text-yellow-700 border-yellow-300',
 };
 
-const categoryLabels: Record<string, string> = {
-  interested: 'Interessado',
-  question: 'Pergunta',
-  'opt-out': 'Opt-out',
-  positive: 'Positivo',
-  negative: 'Negativo',
-  neutral: 'Neutro',
-  spam: 'Spam',
+const CATEGORY_LABELS: Record<string, string> = {
+  interested: 'Interessado', question: 'Pergunta', 'opt-out': 'Opt-out',
+  positive: 'Positivo', negative: 'Negativo', neutral: 'Neutro', spam: 'Spam',
 };
 
-function formatMessageTime(dateStr: string) {
-  const date = new Date(dateStr);
-  if (isToday(date)) return format(date, 'HH:mm');
-  if (isYesterday(date)) return 'Ontem';
-  return format(date, 'dd/MM', { locale: ptBR });
+const AVATAR_COLORS = [
+  'bg-violet-500', 'bg-blue-500', 'bg-emerald-500', 'bg-orange-500',
+  'bg-pink-500', 'bg-teal-500', 'bg-amber-500', 'bg-red-500',
+];
+
+function avatarColor(str: string) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
+function formatTime(dateStr: string) {
+  const d = new Date(dateStr);
+  if (isToday(d))     return format(d, 'HH:mm');
+  if (isYesterday(d)) return 'Ontem';
+  return format(d, 'dd/MM', { locale: ptBR });
+}
+
+function initials(name: string) {
+  const parts = name.trim().split(' ');
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+}
+
+/* ── Componente principal ────────────────────────────────────────── */
 export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [messages, setMessages] = useState<InboxMessage[]>([]);
-  const [instances, setInstances] = useState<WaInstance[]>([]);
-  const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [replyText, setReplyText] = useState('');
-  const [sending, setSending] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [loadingMessages, setLoadingMessages] = useState(false);
+
+  const [instances, setInstances]             = useState<WaInstance[]>([]);
+  const [allInstances, setAllInstances]       = useState<WaInstance[]>([]);
+  const [activeInstanceTab, setActiveInstanceTab] = useState<string>('all');
+  const [conversations, setConversations]     = useState<Conversation[]>([]);
+  const [messages, setMessages]               = useState<InboxMessage[]>([]);
+  const [selectedConvKey, setSelectedConvKey] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery]         = useState('');
+  const [replyText, setReplyText]             = useState('');
+  const [sending, setSending]                 = useState(false);
+  const [loading, setLoading]                 = useState(true);
+  const [loadingMsgs, setLoadingMsgs]         = useState(false);
+  const [filterTags, setFilterTags]           = useState<string[]>([]);
+  const [contactTags, setContactTags]         = useState<Record<string, string[]>>({});
+  const [sendInstanceId, setSendInstanceId]   = useState<string>('');
+  const [isMobileChat, setIsMobileChat]       = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [isMobileShowChat, setIsMobileShowChat] = useState(false);
-  const [filterTags, setFilterTags] = useState<string[]>([]);
-  const [contactTags, setContactTags] = useState<Record<string, string[]>>({});
-  const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
+  const textareaRef    = useRef<HTMLTextAreaElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  // Fetch conversations (grouped by phone)
-  const fetchConversations = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-
-    const { data, error } = await supabase
-      .from('wa_inbox')
-      .select('phone, contact_name, content, ai_category, is_read, created_at')
-      .eq('user_id', user.id)
-      .eq('is_archived', false)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Fetch conversations error:', error);
-      setLoading(false);
-      return;
-    }
-
-    // Group by phone
-    const convMap = new Map<string, Conversation>();
-    for (const msg of (data || [])) {
-      if (!convMap.has(msg.phone)) {
-        convMap.set(msg.phone, {
-          phone: msg.phone,
-          contact_name: msg.contact_name,
-          last_message: msg.content,
-          last_message_at: msg.created_at,
-          unread_count: 0,
-          ai_category: msg.ai_category,
-        });
-      }
-      const conv = convMap.get(msg.phone)!;
-      if (!msg.is_read) conv.unread_count++;
-      if (!conv.contact_name && msg.contact_name) conv.contact_name = msg.contact_name;
-    }
-
-    setConversations(Array.from(convMap.values()));
-    setLoading(false);
-  }, [user]);
-
-  // Fetch instances
+  /* ── Fetch instâncias (conectadas + não conectadas para exibir) ── */
   const fetchInstances = useCallback(async () => {
     if (!user) return;
     const { data } = await supabase
@@ -151,27 +129,71 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       .select('id, instance_name, friendly_name, phone_number, status, is_active')
       .eq('user_id', user.id)
       .eq('is_active', true)
-      .eq('status', 'connected');
-    if (data) setInstances(data as unknown as WaInstance[]);
+      .order('instance_name');
+    const all = (data || []) as unknown as WaInstance[];
+    setAllInstances(all);
+    setInstances(all.filter(i => i.status === 'connected'));
   }, [user]);
 
-  // Fetch messages for selected conversation
-  const fetchMessages = useCallback(async (phone: string) => {
+  /* ── Fetch conversas agrupadas ─────────────────────────────────── */
+  const fetchConversations = useCallback(async () => {
     if (!user) return;
-    setLoadingMessages(true);
+    setLoading(true);
 
-    const { data, error } = await supabase
+    let query = supabase
+      .from('wa_inbox')
+      .select('phone, contact_name, content, ai_category, is_read, created_at, instance_id, direction')
+      .eq('user_id', user.id)
+      .eq('is_archived', false)
+      .order('created_at', { ascending: false });
+
+    if (activeInstanceTab !== 'all') {
+      query = query.eq('instance_id', activeInstanceTab);
+    }
+
+    const { data } = await query;
+
+    // Agrupar por (phone, instance_id)
+    const convMap = new Map<string, Conversation>();
+    for (const msg of (data || [])) {
+      const key = `${msg.phone}::${msg.instance_id ?? 'null'}`;
+      if (!convMap.has(key)) {
+        convMap.set(key, {
+          key, phone: msg.phone, instance_id: msg.instance_id,
+          contact_name: msg.contact_name, last_message: msg.content,
+          last_message_at: msg.created_at, unread_count: 0,
+          ai_category: msg.ai_category, has_ai_message: false,
+        });
+      }
+      const c = convMap.get(key)!;
+      if (!msg.is_read && msg.direction === 'incoming') c.unread_count++;
+      if (!c.contact_name && msg.contact_name) c.contact_name = msg.contact_name;
+      if (msg.ai_category) c.ai_category = msg.ai_category;
+    }
+
+    setConversations(Array.from(convMap.values()));
+    setLoading(false);
+  }, [user, activeInstanceTab]);
+
+  /* ── Fetch mensagens da conversa selecionada ───────────────────── */
+  const fetchMessages = useCallback(async (phone: string, instanceId: string | null) => {
+    if (!user) return;
+    setLoadingMsgs(true);
+
+    let query = supabase
       .from('wa_inbox')
       .select('*')
       .eq('user_id', user.id)
       .eq('phone', phone)
       .order('created_at', { ascending: true })
-      .limit(200);
+      .limit(300);
 
-    if (!error && data) {
+    if (instanceId) query = query.eq('instance_id', instanceId);
+
+    const { data } = await query;
+    if (data) {
       setMessages(data as unknown as InboxMessage[]);
-
-      // Mark as read
+      // Marcar como lidas
       await supabase
         .from('wa_inbox')
         .update({ is_read: true } as any)
@@ -179,202 +201,216 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         .eq('phone', phone)
         .eq('is_read', false);
     }
-    setLoadingMessages(false);
+    setLoadingMsgs(false);
   }, [user]);
 
-  // Fetch contact tags for conversations
+  /* ── Fetch tags dos contatos ───────────────────────────────────── */
   const fetchContactTags = useCallback(async () => {
     if (!user || conversations.length === 0) return;
-    const phones = conversations.map(c => c.phone);
+    const phones = [...new Set(conversations.map(c => c.phone))];
     const { data } = await supabase
       .from('wa_contacts')
       .select('phone, tags')
       .eq('user_id', user.id)
       .in('phone', phones);
     if (data) {
-      const tagMap: Record<string, string[]> = {};
-      for (const c of data) {
-        if (c.tags && (c.tags as string[]).length > 0) {
-          tagMap[c.phone] = c.tags as string[];
-        }
-      }
-      setContactTags(tagMap);
+      const map: Record<string, string[]> = {};
+      for (const c of data) if (c.tags?.length) map[c.phone] = c.tags as string[];
+      setContactTags(map);
     }
   }, [user, conversations]);
 
-  const updateContactTags = async (phone: string, newTags: string[]) => {
+  const updateContactTags = async (phone: string, tags: string[]) => {
     if (!user) return;
-    await supabase
-      .from('wa_contacts')
-      .update({ tags: newTags } as any)
-      .eq('user_id', user.id)
-      .eq('phone', phone);
-    setContactTags(prev => ({ ...prev, [phone]: newTags }));
+    await supabase.from('wa_contacts').update({ tags } as any).eq('user_id', user.id).eq('phone', phone);
+    setContactTags(prev => ({ ...prev, [phone]: tags }));
   };
 
-  useEffect(() => {
-    fetchConversations();
-    fetchInstances();
-  }, [fetchConversations, fetchInstances]);
+  /* ── Effects ───────────────────────────────────────────────────── */
+  useEffect(() => { fetchInstances(); }, [fetchInstances]);
+  useEffect(() => { fetchConversations(); }, [fetchConversations]);
+  useEffect(() => { fetchContactTags(); }, [fetchContactTags]);
 
   useEffect(() => {
-    fetchContactTags();
-  }, [fetchContactTags]);
-
-  useEffect(() => {
-    if (selectedPhone) {
-      fetchMessages(selectedPhone);
-      // Auto-select instance that last messaged this contact
-      supabase
-        .from('wa_inbox')
-        .select('instance_id')
-        .eq('user_id', user?.id || '')
-        .eq('phone', selectedPhone)
-        .eq('direction', 'outgoing')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .then(({ data }) => {
-          if (data && data.length > 0 && data[0].instance_id) {
-            setSelectedInstanceId(data[0].instance_id);
-          } else if (instances.length > 0) {
-            setSelectedInstanceId(instances[0].id);
-          }
-        });
-    }
-  }, [selectedPhone, fetchMessages]);
-
-  useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Realtime subscription
+  /* ── Realtime ──────────────────────────────────────────────────── */
   useEffect(() => {
     if (!user) return;
-
-    const channel = supabase
-      .channel('wa-inbox-realtime')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'wa_inbox', filter: `user_id=eq.${user.id}` },
-        (payload) => {
-          const newMsg = payload.new as unknown as InboxMessage;
-
-          // Update conversation list
-          fetchConversations();
-
-          // If viewing this conversation, add message
-          if (selectedPhone && newMsg.phone === selectedPhone) {
-            setMessages(prev => [...prev, newMsg]);
-
-            // Auto-mark as read
-            supabase
-              .from('wa_inbox')
-              .update({ is_read: true } as any)
-              .eq('id', newMsg.id)
-              .then(() => {});
+    const ch = supabase
+      .channel('wa-inbox-rt')
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'wa_inbox',
+        filter: `user_id=eq.${user.id}`,
+      }, (payload) => {
+        const msg = payload.new as unknown as InboxMessage;
+        fetchConversations();
+        if (selectedConvKey) {
+          const [selPhone, selInst] = selectedConvKey.split('::');
+          if (msg.phone === selPhone && (selInst === 'null' || selInst === msg.instance_id)) {
+            setMessages(prev => [...prev, msg]);
+            supabase.from('wa_inbox').update({ is_read: true } as any).eq('id', msg.id).then(() => {});
           }
         }
-      )
+      })
       .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [user, selectedConvKey, fetchConversations]);
 
-    return () => { supabase.removeChannel(channel); };
-  }, [user, selectedPhone, fetchConversations]);
+  /* ── Selecionar conversa ───────────────────────────────────────── */
+  const selectConversation = (conv: Conversation) => {
+    setSelectedConvKey(conv.key);
+    setIsMobileChat(true);
+    fetchMessages(conv.phone, conv.instance_id);
 
-  const handleSelectConversation = (phone: string) => {
-    setSelectedPhone(phone);
-    setIsMobileShowChat(true);
+    // Pre-selecionar instância para envio
+    const inst = allInstances.find(i => i.id === conv.instance_id && i.status === 'connected');
+    if (inst) setSendInstanceId(inst.id);
+    else if (instances.length > 0) setSendInstanceId(instances[0].id);
   };
 
-  const handleSendReply = async () => {
-    if (!replyText.trim() || !selectedPhone || !user) return;
-    if (instances.length === 0) {
-      toast({ title: 'Nenhuma instância conectada', variant: 'destructive' });
-      return;
-    }
-
-    const instanceId = selectedInstanceId || instances[0].id;
+  /* ── Enviar mensagem ───────────────────────────────────────────── */
+  const handleSend = async () => {
+    if (!replyText.trim() || !selectedConvKey || !user) return;
+    const [phone] = selectedConvKey.split('::');
+    const instId = sendInstanceId || instances[0]?.id;
+    if (!instId) { toast({ title: 'Selecione uma instância conectada', variant: 'destructive' }); return; }
 
     setSending(true);
+    const text = replyText.trim();
+    setReplyText('');
+
+    // Optimistic
+    const opt: InboxMessage = {
+      id: crypto.randomUUID(), user_id: user.id, instance_id: instId, phone,
+      contact_name: null, direction: 'outgoing', message_type: 'text',
+      content: text, media_url: null, ai_category: null, ai_sentiment: null,
+      is_read: true, created_at: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, opt]);
+
     try {
-      const { data, error } = await supabase.functions.invoke('wa-send-reply', {
-        body: {
-          instance_id: instanceId,
-          phone: selectedPhone,
-          content: replyText.trim(),
-        },
+      const { error } = await supabase.functions.invoke('wa-send-reply', {
+        body: { instance_id: instId, phone, content: text },
       });
       if (error) throw error;
-      setReplyText('');
-      const optimisticMsg: InboxMessage = {
-        id: crypto.randomUUID(),
-        user_id: user.id,
-        instance_id: instanceId,
-        phone: selectedPhone,
-        contact_name: null,
-        direction: 'outgoing',
-        message_type: 'text',
-        content: replyText.trim(),
-        media_url: null,
-        ai_category: null,
-        ai_sentiment: null,
-        is_read: true,
-        created_at: new Date().toISOString(),
-      };
-      setMessages(prev => [...prev, optimisticMsg]);
     } catch (err: any) {
       toast({ title: 'Erro ao enviar', description: err.message, variant: 'destructive' });
+      setMessages(prev => prev.filter(m => m.id !== opt.id));
     }
     setSending(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendReply();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
+  /* ── Dados derivados ───────────────────────────────────────────── */
+  const selectedConv = conversations.find(c => c.key === selectedConvKey) ?? null;
+
   const filteredConversations = conversations.filter(c => {
-    // Tag filter
     if (filterTags.length > 0) {
       const cTags = contactTags[c.phone] || [];
       if (!filterTags.some(ft => cTags.includes(ft))) return false;
     }
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
-    return (
-      c.phone.includes(q) ||
-      c.contact_name?.toLowerCase().includes(q) ||
-      c.last_message?.toLowerCase().includes(q)
-    );
+    return c.phone.includes(q) || c.contact_name?.toLowerCase().includes(q) || c.last_message?.toLowerCase().includes(q);
   });
 
-  const selectedConv = conversations.find(c => c.phone === selectedPhone);
+  const totalUnread = conversations.reduce((s, c) => s + c.unread_count, 0);
 
-  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+  const instName = (id: string | null) => {
+    if (!id) return null;
+    const inst = allInstances.find(i => i.id === id);
+    return inst ? (inst.friendly_name || inst.instance_name) : null;
+  };
 
+  /* ── Wrapper ───────────────────────────────────────────────────── */
+  const Wrapper = embedded
+    ? ({ children }: { children: React.ReactNode }) => <>{children}</>
+    : MainLayout;
+
+  /* ── Render ─────────────────────────────────────────────────────── */
   return (
     <Wrapper>
-      <div className="h-[calc(100vh-4rem)] flex flex-col">
-        {/* Header */}
-        <div className="p-4 border-b flex items-center gap-3">
-          <Inbox className="h-5 w-5 text-primary" />
-          <h1 className="text-lg font-bold text-foreground">Inbox Unificado</h1>
-          <Badge variant="secondary" className="ml-auto">
-            {conversations.reduce((sum, c) => sum + c.unread_count, 0)} não lidas
-          </Badge>
+      <div className="flex flex-col h-full overflow-hidden">
+
+        {/* ══════════════════════════════════════════════════════════
+            TOPO: seletor de instância (tabs)
+        ══════════════════════════════════════════════════════════ */}
+        <div className="border-b border-border/40 bg-muted/20 px-4 pt-3 pb-0 shrink-0">
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
+
+            {/* Tab "Todas" */}
+            <button
+              onClick={() => { setActiveInstanceTab('all'); setSelectedConvKey(null); }}
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
+                activeInstanceTab === 'all'
+                  ? 'border-primary text-primary bg-background'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
+              }`}
+            >
+              <MessageCircle className="h-3.5 w-3.5" />
+              Todas
+              {totalUnread > 0 && (
+                <span className="bg-primary text-primary-foreground text-[9px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                  {totalUnread}
+                </span>
+              )}
+            </button>
+
+            {/* Tab por instância */}
+            {allInstances.map(inst => {
+              const unread = conversations.filter(c => c.instance_id === inst.id).reduce((s, c) => s + c.unread_count, 0);
+              const connected = inst.status === 'connected';
+              return (
+                <button
+                  key={inst.id}
+                  onClick={() => { setActiveInstanceTab(inst.id); setSelectedConvKey(null); }}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
+                    activeInstanceTab === inst.id
+                      ? 'border-primary text-primary bg-background'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                  }`}
+                >
+                  {connected
+                    ? <Wifi className="h-3 w-3 text-emerald-500" />
+                    : <WifiOff className="h-3 w-3 text-red-400" />
+                  }
+                  <span className="max-w-[120px] truncate">{inst.friendly_name || inst.instance_name}</span>
+                  {inst.phone_number && (
+                    <span className="text-[10px] text-muted-foreground/60">
+                      {inst.phone_number.replace(/\D/g, '').slice(-4)}
+                    </span>
+                  )}
+                  {unread > 0 && (
+                    <span className="bg-primary text-primary-foreground text-[9px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                      {unread}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="flex flex-1 overflow-hidden">
-          {/* Conversation List */}
-          <div className={`w-full md:w-[360px] border-r flex flex-col ${isMobileShowChat ? 'hidden md:flex' : 'flex'}`}>
-            {/* Search + Tag Filter */}
-            <div className="p-3 border-b space-y-2">
+        {/* ══════════════════════════════════════════════════════════
+            CORPO: lista de conversas + área de chat
+        ══════════════════════════════════════════════════════════ */}
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+
+          {/* ── Lista de conversas ─────────────────────────────────── */}
+          <div className={`w-full md:w-[320px] lg:w-[360px] border-r border-border/40 flex flex-col shrink-0 ${isMobileChat ? 'hidden md:flex' : 'flex'}`}>
+
+            {/* Busca + filtro de tags */}
+            <div className="p-3 border-b border-border/40 space-y-2 bg-background">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
                 <Input
-                  placeholder="Buscar conversas..."
-                  className="pl-9"
+                  placeholder="Buscar contatos ou mensagens..."
+                  className="pl-8 h-8 text-xs bg-muted/30 border-0 focus-visible:ring-1"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                 />
@@ -382,236 +418,321 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
               <TagFilter activeTags={filterTags} onFilterChange={setFilterTags} />
             </div>
 
+            {/* Lista */}
             <ScrollArea className="flex-1">
               {loading ? (
-                <div className="flex items-center justify-center py-12">
+                <div className="flex items-center justify-center py-16">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
               ) : filteredConversations.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                  <p className="text-sm">Nenhuma conversa encontrada</p>
+                <div className="text-center py-16 px-4 text-muted-foreground">
+                  <MessageCircle className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                  <p className="text-sm font-medium">Nenhuma conversa</p>
+                  <p className="text-xs mt-1 opacity-70">
+                    {activeInstanceTab === 'all' ? 'Mensagens aparecerão aqui.' : 'Nenhuma conversa nesta instância.'}
+                  </p>
                 </div>
               ) : (
-                filteredConversations.map(conv => (
-                  <button
-                    key={conv.phone}
-                    className={`w-full text-left p-3 border-b hover:bg-muted/50 transition-colors ${
-                      selectedPhone === conv.phone ? 'bg-muted' : ''
-                    }`}
-                    onClick={() => handleSelectConversation(conv.phone)}
-                  >
-                    <div className="flex items-start gap-3">
-                      <Avatar className="h-10 w-10 shrink-0">
-                        <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                          {(conv.contact_name || conv.phone).slice(0, 2).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-sm truncate">
-                            {conv.contact_name || conv.phone}
-                          </span>
-                          <span className="text-xs text-muted-foreground shrink-0 ml-2">
-                            {formatMessageTime(conv.last_message_at)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between mt-0.5">
-                          <p className="text-xs text-muted-foreground truncate max-w-[180px]">
-                            {conv.last_message || '📎 Mídia'}
-                          </p>
-                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                            {conv.ai_category && (
-                              <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${categoryColors[conv.ai_category] || ''}`}>
-                                {categoryLabels[conv.ai_category] || conv.ai_category}
-                              </Badge>
+                <div className="divide-y divide-border/30">
+                  {filteredConversations.map(conv => {
+                    const label = conv.contact_name || conv.phone;
+                    const tags  = contactTags[conv.phone] || [];
+                    const iName = instName(conv.instance_id);
+                    const isSelected = selectedConvKey === conv.key;
+
+                    return (
+                      <button
+                        key={conv.key}
+                        onClick={() => selectConversation(conv)}
+                        className={`w-full text-left px-4 py-3.5 transition-colors hover:bg-muted/50 ${
+                          isSelected ? 'bg-primary/5 border-l-2 border-l-primary' : 'border-l-2 border-l-transparent'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          {/* Avatar */}
+                          <div className="relative shrink-0">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-semibold ${avatarColor(label)}`}>
+                              {initials(label)}
+                            </div>
+                            {conv.has_ai_message && (
+                              <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-violet-500 border-2 border-background flex items-center justify-center">
+                                <Bot className="h-2 w-2 text-white" />
+                              </div>
                             )}
-                            {conv.unread_count > 0 && (
-                              <span className="bg-primary text-primary-foreground text-[10px] rounded-full h-5 w-5 flex items-center justify-center font-bold">
-                                {conv.unread_count}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            {/* Linha 1: nome + hora */}
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`text-sm truncate ${conv.unread_count > 0 ? 'font-semibold text-foreground' : 'font-medium text-foreground/80'}`}>
+                                {label}
                               </span>
-                            )}
+                              <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">
+                                {formatTime(conv.last_message_at)}
+                              </span>
+                            </div>
+
+                            {/* Linha 2: última msg + badge unread */}
+                            <div className="flex items-center justify-between gap-2 mt-0.5">
+                              <p className={`text-xs truncate ${conv.unread_count > 0 ? 'text-foreground/70' : 'text-muted-foreground'}`}>
+                                {conv.last_message || '📎 Mídia'}
+                              </p>
+                              {conv.unread_count > 0 && (
+                                <span className="bg-primary text-primary-foreground text-[10px] rounded-full h-5 min-w-5 px-1 flex items-center justify-center font-bold shrink-0">
+                                  {conv.unread_count}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Linha 3: instância + categoria + tags */}
+                            <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                              {iName && activeInstanceTab === 'all' && (
+                                <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded-full">
+                                  <Wifi className="h-2.5 w-2.5" />
+                                  {iName}
+                                </span>
+                              )}
+                              {conv.ai_category && (
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${CATEGORY_COLORS[conv.ai_category] || ''}`}>
+                                  {CATEGORY_LABELS[conv.ai_category] || conv.ai_category}
+                                </span>
+                              )}
+                              {tags.slice(0, 2).map(tag => (
+                                <TagBadge key={tag} name={tag} color="#7c3aed" size="sm" />
+                              ))}
+                              {tags.length > 2 && (
+                                <span className="text-[10px] text-muted-foreground">+{tags.length - 2}</span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                        {/* Contact Tags */}
-                        {contactTags[conv.phone] && contactTags[conv.phone].length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {contactTags[conv.phone].slice(0, 3).map(tag => (
-                              <TagBadge key={tag} name={tag} color="#3b82f6" size="sm" />
-                            ))}
-                            {contactTags[conv.phone].length > 3 && (
-                              <span className="text-[10px] text-muted-foreground">+{contactTags[conv.phone].length - 3}</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                ))
+                      </button>
+                    );
+                  })}
+                </div>
               )}
             </ScrollArea>
           </div>
 
-          {/* Chat Area */}
-          <div className={`flex-1 flex flex-col ${!isMobileShowChat && !selectedPhone ? 'hidden md:flex' : 'flex'} ${isMobileShowChat ? 'flex' : !selectedPhone ? '' : 'hidden md:flex'}`}>
-            {!selectedPhone ? (
-              <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                <div className="text-center">
-                  <Inbox className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                  <p>Selecione uma conversa para começar</p>
+          {/* ── Área de chat ────────────────────────────────────────── */}
+          <div className={`flex-1 flex flex-col min-w-0 ${!isMobileChat && !selectedConvKey ? 'hidden md:flex' : 'flex'}`}>
+
+            {!selectedConvKey ? (
+              /* Empty state */
+              <div className="flex-1 flex items-center justify-center bg-muted/10">
+                <div className="text-center max-w-sm px-6">
+                  <div className="w-16 h-16 rounded-2xl bg-muted/30 flex items-center justify-center mx-auto mb-4">
+                    <MessageCircle className="h-8 w-8 text-muted-foreground/40" />
+                  </div>
+                  <h3 className="font-semibold text-foreground/70 mb-1">Nenhuma conversa aberta</h3>
+                  <p className="text-sm text-muted-foreground">Selecione uma conversa na lista ao lado para começar.</p>
                 </div>
               </div>
             ) : (
               <>
-                {/* Chat Header */}
-                <div className="p-3 border-b flex items-center gap-3">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="md:hidden"
-                    onClick={() => { setIsMobileShowChat(false); setSelectedPhone(null); }}
+                {/* ── Header do chat ── */}
+                <div className="px-4 py-3 border-b border-border/40 bg-background flex items-center gap-3 shrink-0">
+                  {/* Voltar mobile */}
+                  <button
+                    className="md:hidden p-1.5 rounded-lg hover:bg-muted/50 text-muted-foreground"
+                    onClick={() => { setIsMobileChat(false); setSelectedConvKey(null); }}
                   >
                     <ArrowLeft className="h-4 w-4" />
-                  </Button>
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                      {(selectedConv?.contact_name || selectedPhone).slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate">
-                      {selectedConv?.contact_name || selectedPhone}
-                    </p>
-                    <p className="text-xs text-muted-foreground">{selectedPhone}</p>
+                  </button>
+
+                  {/* Avatar */}
+                  <div className="relative shrink-0">
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-semibold ${avatarColor(selectedConv?.contact_name || selectedConv?.phone || '')}`}>
+                      {initials(selectedConv?.contact_name || selectedConv?.phone || '?')}
+                    </div>
                   </div>
-                  {selectedConv?.ai_category && (
-                    <Badge variant="outline" className={`text-xs ${categoryColors[selectedConv.ai_category] || ''}`}>
-                      <Sparkles className="h-3 w-3 mr-1" />
-                      {categoryLabels[selectedConv.ai_category] || selectedConv.ai_category}
-                    </Badge>
-                  )}
-                  <TagSelector
-                    selectedTags={contactTags[selectedPhone] || []}
-                    onTagsChange={(tags) => updateContactTags(selectedPhone, tags)}
-                  />
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm leading-tight truncate">
+                      {selectedConv?.contact_name || selectedConv?.phone}
+                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs text-muted-foreground">{selectedConv?.phone}</span>
+                      {instName(selectedConv?.instance_id ?? null) && (
+                        <>
+                          <span className="text-muted-foreground/30 text-xs">·</span>
+                          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Wifi className="h-3 w-3 text-emerald-500" />
+                            {instName(selectedConv?.instance_id ?? null)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Ações direita */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {selectedConv?.ai_category && (
+                      <Badge variant="outline" className={`text-[10px] gap-1 ${CATEGORY_COLORS[selectedConv.ai_category] || ''}`}>
+                        <Sparkles className="h-2.5 w-2.5" />
+                        {CATEGORY_LABELS[selectedConv.ai_category] || selectedConv.ai_category}
+                      </Badge>
+                    )}
+                    <TagSelector
+                      selectedTags={contactTags[selectedConv?.phone || ''] || []}
+                      onTagsChange={(tags) => updateContactTags(selectedConv!.phone, tags)}
+                    />
+                  </div>
                 </div>
 
-                {/* Messages */}
-                <ScrollArea className="flex-1 p-4">
-                  {loadingMessages ? (
-                    <div className="flex items-center justify-center py-12">
+                {/* ── Mensagens ── */}
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-1 bg-muted/10" style={{ backgroundImage: 'radial-gradient(circle, hsl(var(--muted)) 1px, transparent 1px)', backgroundSize: '20px 20px', backgroundRepeat: 'repeat' }}>
+                  {loadingMsgs ? (
+                    <div className="flex items-center justify-center h-full">
                       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                     </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {messages.map(msg => (
-                        <div
-                          key={msg.id}
-                          className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
-                        >
-                          <div
-                            className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
-                              msg.direction === 'outgoing'
-                                ? 'bg-primary text-primary-foreground rounded-br-md'
-                                : 'bg-muted rounded-bl-md'
-                            }`}
-                          >
-                            {msg.content && (
-                              <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
-                            )}
-                            {msg.media_url && (
-                              <p className="text-xs opacity-70 mt-1">📎 {msg.message_type}</p>
-                            )}
-                            <div className={`flex items-center justify-end gap-1 mt-1 ${
-                              msg.direction === 'outgoing' ? 'text-primary-foreground/60' : 'text-muted-foreground'
-                            }`}>
-                              {/* Show which instance sent the message */}
-                              {msg.direction === 'outgoing' && msg.instance_id && instances.length > 1 && (() => {
-                                const inst = instances.find(i => i.id === msg.instance_id);
-                                return inst ? (
-                                  <span className="text-[9px] mr-1 opacity-60">
-                                    via {inst.friendly_name || inst.instance_name}
-                                  </span>
-                                ) : null;
-                              })()}
-                              <span className="text-[10px]">
-                                {format(new Date(msg.created_at), 'HH:mm')}
-                              </span>
-                              {msg.direction === 'outgoing' && (
-                                <CheckCheck className="h-3 w-3" />
-                              )}
-                            </div>
-                            {msg.ai_category && msg.direction === 'incoming' && (
-                              <Badge
-                                variant="outline"
-                                className={`text-[9px] mt-1 px-1.5 py-0 ${categoryColors[msg.ai_category] || ''}`}
-                              >
-                                <Sparkles className="h-2.5 w-2.5 mr-0.5" />
-                                {categoryLabels[msg.ai_category] || msg.ai_category}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                      <div ref={messagesEndRef} />
+                  ) : messages.length === 0 ? (
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-sm text-muted-foreground">Nenhuma mensagem ainda.</p>
                     </div>
-                  )}
-                </ScrollArea>
+                  ) : (
+                    <>
+                      {messages.map((msg, idx) => {
+                        const isOut = msg.direction === 'outgoing';
+                        const prevMsg = messages[idx - 1];
+                        const showDate = !prevMsg || format(new Date(msg.created_at), 'dd/MM/yyyy') !== format(new Date(prevMsg.created_at), 'dd/MM/yyyy');
+                        const sameDir = prevMsg && prevMsg.direction === msg.direction;
+                        const gap = sameDir ? 'mt-0.5' : 'mt-3';
 
-                {/* Reply Input with Instance Selector */}
-                <div className="p-3 border-t space-y-2">
-                  {/* Instance Selector */}
+                        return (
+                          <div key={msg.id}>
+                            {/* Divisor de data */}
+                            {showDate && (
+                              <div className="flex items-center justify-center my-4">
+                                <span className="bg-background/80 backdrop-blur text-xs text-muted-foreground px-3 py-1 rounded-full border border-border/40 shadow-sm">
+                                  {isToday(new Date(msg.created_at)) ? 'Hoje' : isYesterday(new Date(msg.created_at)) ? 'Ontem' : format(new Date(msg.created_at), "dd 'de' MMMM", { locale: ptBR })}
+                                </span>
+                              </div>
+                            )}
+
+                            <div className={`flex ${isOut ? 'justify-end' : 'justify-start'} ${gap}`}>
+                              <div className={`max-w-[72%] flex flex-col ${isOut ? 'items-end' : 'items-start'}`}>
+                                <div className={`px-3.5 py-2 rounded-2xl shadow-sm ${
+                                  isOut
+                                    ? 'bg-primary text-primary-foreground rounded-br-sm'
+                                    : 'bg-background text-foreground rounded-bl-sm border border-border/30'
+                                }`}>
+                                  {msg.content && (
+                                    <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                                  )}
+                                  {msg.media_url && !msg.content && (
+                                    <p className="text-sm opacity-70 flex items-center gap-1">
+                                      <Paperclip className="h-3.5 w-3.5" />
+                                      {msg.message_type}
+                                    </p>
+                                  )}
+
+                                  {/* Rodapé da mensagem: hora + status */}
+                                  <div className={`flex items-center gap-1 mt-0.5 ${isOut ? 'justify-end' : 'justify-start'}`}>
+                                    {isOut && msg.instance_id && allInstances.length > 1 && (
+                                      <span className="text-[9px] opacity-50">{instName(msg.instance_id)}</span>
+                                    )}
+                                    <span className={`text-[10px] ${isOut ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
+                                      {format(new Date(msg.created_at), 'HH:mm')}
+                                    </span>
+                                    {isOut && (
+                                      msg.is_read
+                                        ? <CheckCheck className="h-3 w-3 text-primary-foreground/60" />
+                                        : <Check className="h-3 w-3 text-primary-foreground/60" />
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Badge categoria IA */}
+                                {msg.ai_category && !isOut && (
+                                  <div className="mt-1">
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-full border flex items-center gap-1 w-fit ${CATEGORY_COLORS[msg.ai_category] || ''}`}>
+                                      <Sparkles className="h-2.5 w-2.5" />
+                                      {CATEGORY_LABELS[msg.ai_category] || msg.ai_category}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div ref={messagesEndRef} />
+                    </>
+                  )}
+                </div>
+
+                {/* ── Input de resposta ── */}
+                <div className="border-t border-border/40 bg-background shrink-0">
+                  {/* Seletor de instância (se há mais de uma) */}
                   {instances.length > 1 && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      <span className="text-xs text-muted-foreground shrink-0">Enviar de:</span>
-                      <Select
-                        value={selectedInstanceId || instances[0]?.id}
-                        onValueChange={setSelectedInstanceId}
-                      >
-                        <SelectTrigger className="h-7 text-xs flex-1">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
+                    <div className="px-4 pt-2.5 pb-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-muted-foreground font-medium whitespace-nowrap">Enviar via:</span>
+                        <div className="flex gap-1.5 overflow-x-auto scrollbar-none flex-1">
                           {instances.map(inst => (
-                            <SelectItem key={inst.id} value={inst.id} className="text-xs">
+                            <button
+                              key={inst.id}
+                              onClick={() => setSendInstanceId(inst.id)}
+                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-all border ${
+                                (sendInstanceId || instances[0]?.id) === inst.id
+                                  ? 'bg-primary text-primary-foreground border-primary'
+                                  : 'bg-muted/40 text-muted-foreground border-border/40 hover:border-primary/40 hover:text-foreground'
+                              }`}
+                            >
+                              <Wifi className="h-2.5 w-2.5" />
                               {inst.friendly_name || inst.instance_name}
-                              {inst.phone_number ? ` (${inst.phone_number})` : ''}
-                            </SelectItem>
+                              {inst.phone_number && (
+                                <span className="opacity-60">·{inst.phone_number.replace(/\D/g,'').slice(-4)}</span>
+                              )}
+                            </button>
                           ))}
-                        </SelectContent>
-                      </Select>
+                        </div>
+                      </div>
                     </div>
                   )}
                   {instances.length === 1 && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="h-3 w-3 text-muted-foreground" />
+                    <div className="px-4 pt-2 flex items-center gap-1.5">
+                      <Wifi className="h-3 w-3 text-emerald-500" />
                       <span className="text-[11px] text-muted-foreground">
-                        Enviando de: {instances[0].friendly_name || instances[0].instance_name}
-                        {instances[0].phone_number ? ` (${instances[0].phone_number})` : ''}
+                        {instances[0].friendly_name || instances[0].instance_name}
+                        {instances[0].phone_number ? ` · ${instances[0].phone_number}` : ''}
                       </span>
                     </div>
                   )}
-                  <div className="flex items-center gap-2">
-                    <Input
-                      placeholder="Digite sua mensagem..."
-                      value={replyText}
-                      onChange={e => setReplyText(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      disabled={sending || instances.length === 0}
-                      className="flex-1"
-                    />
-                    <Button
-                      size="icon"
-                      onClick={handleSendReply}
-                      disabled={sending || !replyText.trim() || instances.length === 0}
-                    >
-                      {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    </Button>
-                  </div>
                   {instances.length === 0 && (
-                    <p className="text-xs text-destructive">Nenhuma instância conectada para enviar mensagens.</p>
+                    <div className="px-4 pt-2 flex items-center gap-1.5 text-destructive">
+                      <WifiOff className="h-3 w-3" />
+                      <span className="text-[11px]">Nenhuma instância conectada</span>
+                    </div>
                   )}
+
+                  {/* Campo de texto */}
+                  <div className="flex items-end gap-2 p-3">
+                    <div className="flex-1 bg-muted/30 rounded-2xl border border-border/40 px-4 py-2.5 focus-within:border-primary/50 focus-within:bg-background transition-all">
+                      <Textarea
+                        ref={textareaRef}
+                        placeholder="Digite uma mensagem..."
+                        value={replyText}
+                        onChange={e => setReplyText(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        disabled={sending || instances.length === 0}
+                        rows={1}
+                        className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed"
+                      />
+                    </div>
+                    <button
+                      onClick={handleSend}
+                      disabled={sending || !replyText.trim() || instances.length === 0}
+                      className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                    >
+                      {sending
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Send className="h-4 w-4" />
+                      }
+                    </button>
+                  </div>
                 </div>
               </>
             )}
