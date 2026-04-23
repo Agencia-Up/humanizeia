@@ -146,16 +146,17 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   }, [user]);
 
   /* ── Fetch conversas agrupadas ─────────────────────────────────── */
-  const fetchConversations = useCallback(async () => {
+  const fetchConversations = useCallback(async (isInitial = false) => {
     if (!user) return;
-    setLoading(true);
+    if (isInitial) setLoading(true);
 
     let query = supabase
       .from('wa_inbox')
       .select('phone, contact_name, content, ai_category, is_read, created_at, instance_id, direction')
       .eq('user_id', user.id)
       .eq('is_archived', false)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(500);
 
     if (activeInstanceTab !== 'all') {
       query = query.eq('instance_id', activeInstanceTab);
@@ -182,7 +183,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     }
 
     setConversations(Array.from(convMap.values()));
-    setLoading(false);
+    if (isInitial) setLoading(false);
   }, [user, activeInstanceTab]);
 
   /* ── Fetch mensagens da conversa selecionada ───────────────────── */
@@ -250,7 +251,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
   /* ── Effects ───────────────────────────────────────────────────── */
   useEffect(() => { fetchInstances(); }, [fetchInstances]);
-  useEffect(() => { fetchConversations(); }, [fetchConversations]);
+  useEffect(() => { fetchConversations(true); }, [fetchConversations]);
   useEffect(() => { fetchContactTags(); }, [fetchContactTags]);
   useEffect(() => { fetchTeamMembers(); }, [fetchTeamMembers]);
 
@@ -268,7 +269,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         filter: `user_id=eq.${user.id}`,
       }, (payload) => {
         const msg = payload.new as unknown as InboxMessage;
-        fetchConversations();
+        fetchConversations(false);
         if (selectedConvKey) {
           const [selPhone, selInst] = selectedConvKey.split('::');
           if (msg.phone === selPhone && (selInst === 'null' || selInst === msg.instance_id)) {
@@ -295,21 +296,33 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
   /* ── Enviar mensagem ───────────────────────────────────────────── */
   const handleSend = async () => {
-    if (!replyText.trim() || !selectedConvKey || !user) return;
+    if (!replyText.trim() || !selectedConvKey || !user || sending) return;
     const [phone] = selectedConvKey.split('::');
     const instId = sendInstanceId || instances[0]?.id;
-    if (!instId) { toast({ title: 'Selecione uma instância conectada', variant: 'destructive' }); return; }
+    if (!instId) {
+      toast({ title: 'Selecione uma instância conectada', variant: 'destructive' });
+      return;
+    }
 
-    setSending(true);
     const text = replyText.trim();
     setReplyText('');
+    setSending(true);
 
     // Optimistic
     const opt: InboxMessage = {
-      id: crypto.randomUUID(), user_id: user.id, instance_id: instId, phone,
-      contact_name: null, direction: 'outgoing', message_type: 'text',
-      content: text, media_url: null, ai_category: null, ai_sentiment: null,
-      is_read: true, created_at: new Date().toISOString(),
+      id: crypto.randomUUID(),
+      user_id: user.id,
+      instance_id: instId,
+      phone,
+      contact_name: null,
+      direction: 'outgoing',
+      message_type: 'text',
+      content: text,
+      media_url: null,
+      ai_category: null,
+      ai_sentiment: null,
+      is_read: true,
+      created_at: new Date().toISOString(),
     };
     setMessages(prev => [...prev, opt]);
 
@@ -318,11 +331,18 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         body: { instance_id: instId, phone, content: text },
       });
       if (error) throw error;
+      
+      // Clear textarea height
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
     } catch (err: any) {
       toast({ title: 'Erro ao enviar', description: err.message, variant: 'destructive' });
       setMessages(prev => prev.filter(m => m.id !== opt.id));
+      setReplyText(text); // Restore text on error
+    } finally {
+      setSending(false);
     }
-    setSending(false);
   };
 
   const handleTransfer = async (memberId: string) => {
@@ -819,11 +839,17 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                         ref={textareaRef}
                         placeholder="Digite uma mensagem..."
                         value={replyText}
-                        onChange={e => setReplyText(e.target.value)}
+                        onChange={e => {
+                          setReplyText(e.target.value);
+                          if (textareaRef.current) {
+                            textareaRef.current.style.height = 'auto';
+                            textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 128)}px`;
+                          }
+                        }}
                         onKeyDown={handleKeyDown}
                         disabled={sending || instances.length === 0}
                         rows={1}
-                        className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed"
+                        className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
                       />
                     </div>
                     <button
