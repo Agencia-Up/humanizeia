@@ -475,7 +475,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                                 padding: '0 8px'
                               }}
                             >
-                              <History style={{ width: 14, height: 14 }} />
+                              <HistoryIcon style={{ width: 14, height: 14 }} />
                             </Button>
                           </div>
 
