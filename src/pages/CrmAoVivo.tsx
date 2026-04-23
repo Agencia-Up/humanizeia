@@ -224,7 +224,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const fetchLiveData = useCallback(async () => {
     if (!user) { setLoading(false); return; }
     try {
-      const [{ data: leadsData }, { data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
+      const [leadsRes, transfersRes, membersRes, agentsRes] = await Promise.all([
         (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
           .eq('user_id', user.id).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
@@ -233,9 +233,15 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', user.id),
       ]);
-      setLeads(leadsData || []); setTransfers(transfersData || []);
-      setTeamMembers(membersData || []); setAgents(agentsData || []);
+      if (leadsRes.error) throw leadsRes.error;
+      if (transfersRes.error) throw transfersRes.error;
+      if (membersRes.error) throw membersRes.error;
+      if (agentsRes.error) throw agentsRes.error;
+      setLeads(leadsRes.data || []); setTransfers(transfersRes.data || []);
+      setTeamMembers(membersRes.data || []); setAgents(agentsRes.data || []);
       setLastUpdatedAt(new Date().toISOString());
+    } catch (err: any) {
+      console.error('CRM ao vivo — erro ao carregar:', err?.message);
     } finally { setLoading(false); }
   }, [user]);
 
