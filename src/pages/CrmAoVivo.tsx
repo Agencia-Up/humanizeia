@@ -213,6 +213,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     const msg = transferMessages[leadId] || '';
     setTransferringLeadId(leadId);
     try {
+      // 1. Atualizar o lead
       const { error: updErr } = await (supabase as any).from('ai_crm_leads').update({
         status: 'transferido',
         member_id: nextSeller.id,
@@ -220,6 +221,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       }).eq('id', leadId);
       if (updErr) throw updErr;
 
+      // 2. Registrar no histórico de transferências
       await (supabase as any).from('ai_lead_transfers').insert({
         user_id: user.id,
         lead_id: leadId,
@@ -227,6 +229,21 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         transfer_reason: 'manual',
         notes: msg
       });
+
+      // 3. Registrar no histórico geral de tarefas do Salomão (opcional, mas solicitado pelo usuário)
+      // Tenta inserir se a tabela existir, caso contrário ignora silenciosamente
+      try {
+        await (supabase as any).from('orchestrator_tasks').insert({
+          user_id: user.id,
+          lead_id: leadId,
+          title: 'Transferência de Lead',
+          description: `Lead transferido para ${nextSeller.name}. ${msg ? `Mensagem: ${msg}` : ''}`,
+          status: 'completed',
+          created_at: new Date().toISOString()
+        });
+      } catch (e) {
+        console.warn('orchestrator_tasks not found or error:', e);
+      }
 
       await (supabase as any).from('ai_team_members').update({
         last_lead_received_at: new Date().toISOString()
