@@ -157,7 +157,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
           .eq('user_id', user.id).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
-          .eq('user_id', user.id).order('created_at', { ascending: false }).limit(12),
+          .eq('user_id', user.id).order('created_at', { ascending: false }).limit(50),
         (supabase as any).from('ai_team_members').select('*').eq('user_id', user.id)
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', user.id),
