@@ -214,31 +214,24 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     if (!nextSeller || !user) return;
     const msg = transferMessages[leadId] || '';
     setTransferringLeadId(leadId);
+    
     try {
-      // 1. Atualizar o lead
-      const { error: updErr } = await (supabase as any).from('ai_crm_leads').update({
-        status: 'transferido',
-        member_id: nextSeller.id,
-        last_interaction_at: new Date().toISOString()
-      }).eq('id', leadId);
-      if (updErr) throw updErr;
-
-      // 2. Registrar no histórico de transferências
-      await (supabase as any).from('ai_lead_transfers').insert({
-        user_id: user.id,
-        lead_id: leadId,
-        to_member_id: nextSeller.id,
-        transfer_reason: 'manual',
-        notes: msg
+      const { data, error } = await supabase.functions.invoke('manual-transfer', {
+        body: {
+          leadId,
+          memberId: nextSeller.id,
+          notes: msg
+        }
       });
 
-      // 3. Registrar no histórico geral de tarefas do Salomão (opcional, mas solicitado pelo usuário)
-      // Tenta inserir se a tabela existir, caso contrário ignora silenciosamente
+      if (error) throw error;
+
+      // 3. Registrar no histórico geral de tarefas do Salomão (opcional, mas solicitado pelo usuário anteriormente)
       try {
         await (supabase as any).from('orchestrator_tasks').insert({
           user_id: user.id,
           lead_id: leadId,
-          title: 'Transferência de Lead',
+          title: 'Transferência de Lead (Manual)',
           description: `Lead transferido para ${nextSeller.name}. ${msg ? `Mensagem: ${msg}` : ''}`,
           status: 'completed',
           created_at: new Date().toISOString()
@@ -246,10 +239,6 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       } catch (e) {
         console.warn('orchestrator_tasks not found or error:', e);
       }
-
-      await (supabase as any).from('ai_team_members').update({
-        last_lead_received_at: new Date().toISOString()
-      }).eq('id', nextSeller.id);
 
       setTransferMessages(prev => { const n = { ...prev }; delete n[leadId]; return n; });
       fetchLiveData();
