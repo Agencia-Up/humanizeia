@@ -271,71 +271,75 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       <div style={{ minHeight: '100vh', background: '#0B0F1A', color: '#E2E8F0', fontFamily: "'Inter','Segoe UI',sans-serif" }}>
 
         {/* ── TOP BAR ─────────────────────────────────── */}
-        <div style={{ background: '#0F1629', borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            {/* logo strip */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 16, borderRight: '1px solid rgba(255,255,255,0.12)' }}>
-              <div style={{ width: 32, height: 32, borderRadius: 8, background: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 16, color: '#fff' }}>L</div>
-              <span style={{ fontWeight: 800, fontSize: 15, color: '#fff', letterSpacing: '-0.3px' }}>LogosIA</span>
-            </div>
-
-            {/* badge CRM */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 6, background: C.cyanBg, border: `1px solid ${C.cyan}`, color: C.cyanL, fontSize: 12, fontWeight: 700 }}>
-              <MonitorPlay style={{ width: 13, height: 13 }} />
-              CRM Ao Vivo
-            </div>
-
-            {/* badge ao vivo */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 6, background: C.greenBg, border: `1px solid ${C.green}`, color: C.greenL, fontSize: 12, fontWeight: 700 }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, display: 'inline-block', animation: tick ? 'blink .9s step-end infinite' : 'none' }} />
-              <Activity style={{ width: 13, height: 13 }} />
-              Tempo real
-            </div>
-
-            {/* alerta novo lead */}
-            {newLeadFlash && (
-              <div className="alert-badge" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 14px', borderRadius: 6, background: C.redBg, border: `1.5px solid ${C.red}`, color: C.redL, fontSize: 13, fontWeight: 800 }}>
-                <Bell style={{ width: 14, height: 14 }} />
-                NOVO LEAD
+        {!embedded && (
+          <div style={{ background: '#0F1629', borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {/* logo strip */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 16, borderRight: '1px solid rgba(255,255,255,0.12)' }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 16, color: '#fff' }}>L</div>
+                <span style={{ fontWeight: 800, fontSize: 15, color: '#fff', letterSpacing: '-0.3px' }}>LogosIA</span>
               </div>
-            )}
-          </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={() => window.history.length > 1 ? navigate(-1) : navigate('/dashboard')}>
-              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Voltar
-            </Button>
-            <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={fetchLiveData}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Atualizar
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              title={muted ? 'Ativar campainha' : 'Silenciar campainha'}
-              style={{
-                borderColor: muted ? 'rgba(255,255,255,0.15)' : C.amber,
-                background: muted ? 'transparent' : C.amberBg,
-                color: muted ? '#64748B' : C.amberL,
-                fontSize: 13,
-              }}
-              onClick={() => setMuted(m => !m)}
-            >
-              {muted ? <VolumeX className="mr-1.5 h-3.5 w-3.5" /> : <Volume2 className="mr-1.5 h-3.5 w-3.5" />}
-              {muted ? 'Mudo' : 'Som ligado'}
-            </Button>
-            <Button size="sm" style={{ background: C.blue, color: '#fff', fontWeight: 700, fontSize: 13 }} onClick={handleFullscreen}>
-              <Expand className="mr-1.5 h-3.5 w-3.5" /> Tela cheia
-            </Button>
+              {/* badge CRM */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 6, background: C.cyanBg, border: `1px solid ${C.cyan}`, color: C.cyanL, fontSize: 12, fontWeight: 700 }}>
+                <MonitorPlay style={{ width: 13, height: 13 }} />
+                CRM Ao Vivo
+              </div>
+
+              {/* badge ao vivo */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 6, background: C.greenBg, border: `1px solid ${C.green}`, color: C.greenL, fontSize: 12, fontWeight: 700 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, display: 'inline-block', animation: tick ? 'blink .9s step-end infinite' : 'none' }} />
+                <Activity style={{ width: 13, height: 13 }} />
+                Tempo real
+              </div>
+
+              {/* alerta novo lead */}
+              {newLeadFlash && (
+                <div className="alert-badge" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 14px', borderRadius: 6, background: C.redBg, border: `1.5px solid ${C.red}`, color: C.redL, fontSize: 13, fontWeight: 800 }}>
+                  <Bell style={{ width: 14, height: 14 }} />
+                  NOVO LEAD
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={() => window.history.length > 1 ? navigate(-1) : navigate('/dashboard')}>
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Voltar
+              </Button>
+              <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={fetchLiveData}>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Atualizar
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                title={muted ? 'Ativar campainha' : 'Silenciar campainha'}
+                style={{
+                  borderColor: muted ? 'rgba(255,255,255,0.15)' : C.amber,
+                  background: muted ? 'transparent' : C.amberBg,
+                  color: muted ? '#64748B' : C.amberL,
+                  fontSize: 13,
+                }}
+                onClick={() => setMuted(m => !m)}
+              >
+                {muted ? <VolumeX className="mr-1.5 h-3.5 w-3.5" /> : <Volume2 className="mr-1.5 h-3.5 w-3.5" />}
+                {muted ? 'Mudo' : 'Som ligado'}
+              </Button>
+              <Button size="sm" style={{ background: C.blue, color: '#fff', fontWeight: 700, fontSize: 13 }} onClick={handleFullscreen}>
+                <Expand className="mr-1.5 h-3.5 w-3.5" /> Tela cheia
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* ── PAGE TITLE ─────────────────────────────── */}
-        <div style={{ padding: '22px 24px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <h1 style={{ fontSize: 36, fontWeight: 800, color: '#F8FAFC', letterSpacing: '-0.5px', margin: 0 }}>Central de Leads</h1>
-          <p style={{ margin: '4px 0 0', color: '#64748B', fontSize: 14 }}>
-            Painel para TV — leads em tempo real, vendedor responsável e próximo da fila.
-          </p>
-        </div>
+        {!embedded && (
+          <div style={{ padding: '22px 24px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <h1 style={{ fontSize: 36, fontWeight: 800, color: '#F8FAFC', letterSpacing: '-0.5px', margin: 0 }}>Central de Leads</h1>
+            <p style={{ margin: '4px 0 0', color: '#64748B', fontSize: 14 }}>
+              Painel para TV — leads em tempo real, vendedor responsável e próximo da fila.
+            </p>
+          </div>
+        )}
 
         {/* ── MÉTRICAS ──────────────────────────────── */}
         <div style={{ padding: '16px 24px', display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2,1fr)' : 'repeat(5,1fr)', gap: 12 }}>
