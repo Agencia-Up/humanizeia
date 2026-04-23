@@ -13,6 +13,15 @@ import { Card } from '@/components/ui/card';
 export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
   const { stages, leads, loading, addLead, updateLead, deleteLead, moveLead, getLeadsByStage, totalValue } = useFluxCRM();
   const [search, setSearch] = useState('');
+  const [deferredSearch, setDeferredSearch] = useState('');
+
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDeferredSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<CRMLead | null>(null);
@@ -76,8 +85,8 @@ export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
     const stageLeads = leads
       .filter((l) => l.stage_id && allIds.includes(l.stage_id))
       .sort((a, b) => a.position - b.position);
-    if (!search) return stageLeads;
-    const q = search.toLowerCase();
+    if (!deferredSearch) return stageLeads;
+    const q = deferredSearch.toLowerCase();
     return stageLeads.filter(
       (l) =>
         l.name.toLowerCase().includes(q) ||
