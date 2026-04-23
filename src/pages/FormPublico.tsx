@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState, memo, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
@@ -18,16 +18,33 @@ interface FormField {
 const inputBase = 'w-full h-11 border border-gray-200 rounded-lg px-3 text-sm text-gray-800 bg-white outline-none transition-colors focus:border-gray-400';
 
 /* ── Renderizador de cada campo ─────────────────────────────────────── */
-function FieldInput({
+const FieldInput = memo(({
   field, value, onChange, color,
 }: {
   field: FormField;
   value: string | string[];
   onChange: (val: string | string[]) => void;
   color: string;
-}) {
-  const str = Array.isArray(value) ? '' : (value as string);
-  const arr = Array.isArray(value) ? (value as string[]) : [];
+}) => {
+  const [localValue, setLocalValue] = useState(value);
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const str = Array.isArray(localValue) ? '' : (localValue as string);
+  const arr = Array.isArray(localValue) ? (localValue as string[]) : [];
+
+  const handleTextChange = (val: string) => {
+    setLocalValue(val);
+    onChange(val);
+  };
+
+  const handleCheckChange = (val: string[]) => {
+    setLocalValue(val);
+    onChange(val);
+  };
+
 
   /* Textarea */
   if (field.type === 'textarea') {
@@ -36,7 +53,7 @@ function FieldInput({
         required={field.required}
         placeholder={field.placeholder || 'Sua resposta...'}
         value={str}
-        onChange={e => onChange(e.target.value)}
+        onChange={e => handleTextChange(e.target.value)}
         rows={3}
         className="resize-none border-gray-200 rounded-lg text-sm focus:border-gray-400 focus:outline-none"
       />
@@ -50,7 +67,7 @@ function FieldInput({
         <select
           required={field.required}
           value={str}
-          onChange={e => onChange(e.target.value)}
+          onChange={e => handleTextChange(e.target.value)}
           className="appearance-none w-full h-11 border border-gray-200 rounded-lg pl-3 pr-9 text-sm bg-white text-gray-800 outline-none focus:border-gray-400 transition-colors cursor-pointer"
         >
           <option value="">Selecionar...</option>
@@ -75,7 +92,7 @@ function FieldInput({
               value={opt}
               required={field.required && i === 0}
               checked={str === opt}
-              onChange={() => onChange(opt)}
+              onChange={() => handleTextChange(opt)}
               className="sr-only"
             />
             {/* círculo visual */}
@@ -104,7 +121,7 @@ function FieldInput({
                 type="checkbox"
                 value={opt}
                 checked={checked}
-                onChange={() => onChange(checked ? arr.filter(v => v !== opt) : [...arr, opt])}
+                onChange={() => handleCheckChange(checked ? arr.filter(v => v !== opt) : [...arr, opt])}
                 className="sr-only"
               />
               {/* quadrado visual */}
@@ -146,7 +163,7 @@ function FieldInput({
           <button
             key={n}
             type="button"
-            onClick={() => onChange(String(n))}
+            onClick={() => handleTextChange(String(n))}
             className="transition-transform hover:scale-110 focus:outline-none active:scale-95"
           >
             <Star
@@ -170,11 +187,11 @@ function FieldInput({
       placeholder={field.placeholder || ''}
       required={field.required}
       value={str}
-      onChange={e => onChange(e.target.value)}
+      onChange={e => handleTextChange(e.target.value)}
       className={inputBase}
     />
   );
-}
+});
 
 /* ── Componente principal ────────────────────────────────────────────── */
 export default function FormPublico() {
@@ -241,8 +258,8 @@ export default function FormPublico() {
     }
   };
 
-  const setVal = (id: string, val: string | string[]) =>
-    setValues(prev => ({ ...prev, [id]: val }));
+  const setVal = useCallback((id: string, val: string | string[]) =>
+    setValues(prev => ({ ...prev, [id]: val })), []);
 
   /* ── Estados especiais ── */
   if (loading) return (
