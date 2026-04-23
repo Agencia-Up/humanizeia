@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
+import { MainLayout } from '@/components/layout/MainLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -108,7 +109,7 @@ function FieldPreview({ field, color }: { field: FormField; color: string }) {
 }
 
 /* ─── Componente principal ──────────────────────────────────────────────── */
-export default function CrmFormularios() {
+export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -289,10 +290,13 @@ export default function CrmFormularios() {
   const color = editingForm.primary_color || '#6366f1';
 
   /* ── render ── */
-  if (loading) return <div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+
+  if (loading) return <Wrapper><div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div></Wrapper>;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <Wrapper>
+      <div className="p-6 max-w-6xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -767,6 +771,7 @@ export default function CrmFormularios() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </Wrapper>
   );
 }

@@ -52,14 +52,12 @@ export function GlobalLeadsCrm() {
     if (!user) { setLoading(false); return; }
     setLoading(true);
     try {
-      // Fetch leads
       const { data: leadsData } = await (supabase as any)
         .from('ai_crm_leads')
         .select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
         .eq('user_id', user.id)
         .order('last_interaction_at', { ascending: false });
 
-      // Fetch transfers
       const { data: transfersData } = await (supabase as any)
         .from('ai_lead_transfers')
         .select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
@@ -67,14 +65,12 @@ export function GlobalLeadsCrm() {
         .order('created_at', { ascending: false })
         .limit(200);
 
-      // Fetch team members
       const { data: teamData } = await (supabase as any)
         .from('ai_team_members')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: true });
 
-      // Fetch agents
       const { data: agentsData } = await (supabase as any)
         .from('wa_ai_agents')
         .select('id, name')
@@ -113,7 +109,6 @@ export function GlobalLeadsCrm() {
     return () => { supabase.removeChannel(channel); };
   }, [fetchAll, user]);
 
-  // Transfer stats calculation
   const transferStats = useMemo((): TransferStats[] => {
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -160,7 +155,6 @@ export function GlobalLeadsCrm() {
     if (!user) return;
     try {
       const lead = leads.find(l => l.id === leadId);
-      // Update lead
       await (supabase as any).from('ai_crm_leads').update({
         status: 'transferido',
         assigned_to_member_id: memberId,
@@ -168,7 +162,6 @@ export function GlobalLeadsCrm() {
         updated_at: new Date().toISOString(),
       }).eq('id', leadId);
 
-      // Log transfer
       await (supabase as any).from('ai_lead_transfers').insert({
         user_id: user.id,
         lead_id: leadId,
@@ -178,7 +171,6 @@ export function GlobalLeadsCrm() {
         notes: 'Transferência manual pelo gerente',
       });
 
-      // Increment member counter
       const member = teamMembers.find(m => m.id === memberId);
       if (member) {
         await (supabase as any).from('ai_team_members').update({
@@ -192,6 +184,18 @@ export function GlobalLeadsCrm() {
     } catch {
       toast({ title: 'Erro ao transferir', variant: 'destructive' });
     }
+  };
+
+  const handleNextInQueueTransfer = async (leadId: string) => {
+    const nextMember = getNextMemberInQueue(teamMembers, transfers);
+    if (!nextMember) {
+      toast({ title: 'Nenhum vendedor ativo na fila', variant: 'destructive' });
+      return;
+    }
+    
+    if (!confirm(`Deseja transferir este lead para ${nextMember.name} (Próximo da fila)?`)) return;
+    
+    await handleManualTransfer(leadId, nextMember.id);
   };
 
   const handleDeleteLead = async (leadId: string) => {
@@ -269,7 +273,6 @@ export function GlobalLeadsCrm() {
           <TabsTrigger value="history" className="gap-1.5 text-xs"><PhoneForwarded className="h-3.5 w-3.5" /> Transferências</TabsTrigger>
         </TabsList>
 
-        {/* ── KPI Strip ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <KpiCard icon={<MessageSquare className="h-4 w-4" />} label="Total Leads" value={leads.length} color="text-primary" />
           <KpiCard icon={<Calendar className="h-4 w-4" />} label="Transferências Hoje" value={totalStats.today} color="text-emerald-400" />
@@ -277,7 +280,6 @@ export function GlobalLeadsCrm() {
           <KpiCard icon={<CalendarRange className="h-4 w-4" />} label="No Mês" value={totalStats.month} color="text-violet-400" />
         </div>
 
-        {/* ── Pipeline Tab ── */}
         <TabsContent value="pipeline" className="mt-0">
           <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between mb-4">
             <div className="relative w-full md:w-72">
@@ -326,6 +328,7 @@ export function GlobalLeadsCrm() {
                           activeMembers={activeMembers}
                           onUpdateStatus={handleUpdateStatus}
                           onTransfer={handleManualTransfer}
+                          onNextInQueueTransfer={handleNextInQueueTransfer}
                           onDelete={handleDeleteLead}
                         />
                       ))
@@ -337,7 +340,6 @@ export function GlobalLeadsCrm() {
           </div>
         </TabsContent>
 
-        {/* ── Manager View Tab ── */}
         <TabsContent value="manager" className="mt-0">
           <div className="space-y-4">
             <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs text-foreground/80">
@@ -353,7 +355,6 @@ export function GlobalLeadsCrm() {
                 </div>
               ) : (
                 <>
-                  {/* Header */}
                   <div className="hidden md:grid grid-cols-6 gap-2 px-4 text-[10px] uppercase tracking-wider text-muted-foreground font-bold">
                     <span className="col-span-2">Vendedor</span>
                     <span className="text-center">Hoje</span>
@@ -387,7 +388,6 @@ export function GlobalLeadsCrm() {
                     );
                   })}
 
-                  {/* Rodízio info */}
                   <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs text-muted-foreground mt-2">
                     <ArrowRightLeft className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
                     <div>
@@ -401,7 +401,6 @@ export function GlobalLeadsCrm() {
           </div>
         </TabsContent>
 
-        {/* ── Transfer History Tab ── */}
         <TabsContent value="history" className="mt-0">
           <div className="space-y-3">
             {transfers.length === 0 ? (
@@ -439,8 +438,6 @@ export function GlobalLeadsCrm() {
   );
 }
 
-// ── Sub-components ──
-
 function KpiCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color: string }) {
   return (
     <Card className="p-3 flex items-center gap-3">
@@ -462,12 +459,13 @@ function StatCell({ value, label, accent }: { value: number; label: string; acce
   );
 }
 
-function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onDelete }: {
+function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onNextInQueueTransfer, onDelete }: {
   lead: any;
   column: typeof KANBAN_COLUMNS[0];
   activeMembers: any[];
   onUpdateStatus: (id: string, status: string) => void;
   onTransfer: (leadId: string, memberId: string) => void;
+  onNextInQueueTransfer: (leadId: string) => void;
   onDelete: (id: string) => void;
 }) {
   return (
@@ -500,9 +498,13 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onD
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel className="text-[10px]">Transferir para vendedor</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => onNextInQueueTransfer(lead.id)} className="text-xs gap-2 cursor-pointer font-semibold text-emerald-600 dark:text-emerald-400">
+                  <UserCheck className="h-3 w-3" />
+                  Próximo da Fila
+                </DropdownMenuItem>
                 {activeMembers.map(m => (
                   <DropdownMenuItem key={m.id} onClick={() => onTransfer(lead.id, m.id)} className="text-xs gap-2 cursor-pointer">
-                    <UserCheck className="h-3 w-3 text-emerald-500" />
+                    <UserCheck className="h-3 w-3 text-muted-foreground" />
                     {m.name}
                   </DropdownMenuItem>
                 ))}
@@ -536,10 +538,23 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onD
             </span>
           )}
         </div>
-        {lead.member && (
+        
+        {lead.member ? (
           <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-blue-500/30 text-blue-400 bg-blue-500/5">
             → {lead.member.name}
           </Badge>
+        ) : (
+          activeMembers.length > 0 && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="h-6 text-[9px] gap-1 px-2 border-emerald-500/30 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 animate-pulse-subtle"
+              onClick={() => onNextInQueueTransfer(lead.id)}
+            >
+              <UserCheck className="h-3 w-3" />
+              Transferir
+            </Button>
+          )
         )}
       </div>
     </div>
@@ -547,36 +562,38 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onD
 }
 
 function getNextInQueue(members: any[], transfers: any[]): string {
-  const active = members.filter(m => m.is_active);
-  if (active.length === 0) return 'Nenhum vendedor ativo';
-  if (transfers.length === 0) return active[0]?.name || '—';
+  const member = getNextMemberInQueue(members, transfers);
+  return member ? member.name : 'Nenhum vendedor ativo';
+}
 
-  // Find who received least recently to determine next in round-robin
-  const lastTransferMap = new Map<string, Date>();
+function getNextMemberInQueue(members: any[], transfers: any[]): any | null {
+  const active = members.filter(m => m.is_active);
+  if (active.length === 0) return null;
+  if (transfers.length === 0) return active[0] || null;
+
+  const lastTransferMap = new Map<string, number>();
   for (const t of transfers) {
     if (!lastTransferMap.has(t.to_member_id)) {
-      lastTransferMap.set(t.to_member_id, new Date(t.created_at));
+      lastTransferMap.set(t.to_member_id, new Date(t.created_at).getTime());
     }
   }
 
-  // Members who never received get priority
   const neverReceived = active.filter(m => !lastTransferMap.has(m.id));
-  if (neverReceived.length > 0) return neverReceived[0].name;
+  if (neverReceived.length > 0) return neverReceived[0];
 
-  // Otherwise, the one who received longest ago
   const sorted = [...active].sort((a, b) => {
-    const aDate = lastTransferMap.get(a.id)?.getTime() || 0;
-    const bDate = lastTransferMap.get(b.id)?.getTime() || 0;
+    const aDate = lastTransferMap.get(a.id) || 0;
+    const bDate = lastTransferMap.get(b.id) || 0;
     return aDate - bDate;
   });
 
-  return sorted[0]?.name || '—';
+  return sorted[0] || null;
 }
 
 
 function getTransferReasonLabel(transfer: any) {
   if (transfer?.transfer_reason === 'manual') return 'Manual';
-  if (transfer?.transfer_reason === 'round_robin') return 'Rod�zio';
-  if (String(transfer?.notes || '').toLowerCase().includes('round-robin')) return 'Rod�zio';
+  if (transfer?.transfer_reason === 'round_robin') return 'Rodízio';
+  if (String(transfer?.notes || '').toLowerCase().includes('round-robin')) return 'Rodízio';
   return transfer?.transfer_reason || '—';
 }
