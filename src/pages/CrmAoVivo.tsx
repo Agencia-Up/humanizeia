@@ -143,6 +143,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const [tick, setTick] = useState(false);
   const [muted, setMuted] = useState(false);
   const prevCount = useRef<number | null>(null);
+  const [transferMessages, setTransferMessages] = useState<Record<string, string>>({});
+  const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
+
 
   useEffect(() => { const i = setInterval(() => setTick(p => !p), 900); return () => clearInterval(i); }, []);
 
