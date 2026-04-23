@@ -223,12 +223,17 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
               <span className="flex items-center gap-1">
                 <XCircle className="h-3 w-3 text-destructive" /> {campaign.failed_count} falhas
               </span>
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" /> {campaign.min_delay_seconds}-{campaign.max_delay_seconds}s delay
-              </span>
-              <span className="flex items-center gap-1">
-                <RotateCcw className="h-3 w-3" /> Rodízio a cada {campaign.rotation_messages_per_instance} msgs
-              </span>
+              {(campaign.min_delay_seconds != null || campaign.max_delay_seconds != null) && (
+                <span className="flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  {campaign.min_delay_seconds ?? '?'}-{campaign.max_delay_seconds ?? '?'}s delay
+                </span>
+              )}
+              {campaign.rotation_messages_per_instance != null && (
+                <span className="flex items-center gap-1">
+                  <RotateCcw className="h-3 w-3" /> Rodízio a cada {campaign.rotation_messages_per_instance} msgs
+                </span>
+              )}
               {campaign.prompt_base && (
                 <span className="flex items-center gap-1">
                   <Wand2 className="h-3 w-3 text-primary" /> IA {campaign.variation_level}
