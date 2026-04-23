@@ -11,7 +11,7 @@ import {
   Crown,
   Expand,
   Flame,
-  History,
+  History as HistoryIcon,
   Loader2,
   MonitorPlay,
   RefreshCw,
