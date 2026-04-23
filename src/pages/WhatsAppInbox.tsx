@@ -146,9 +146,9 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   }, [user]);
 
   /* ── Fetch conversas agrupadas ─────────────────────────────────── */
-  const fetchConversations = useCallback(async () => {
+  const fetchConversations = useCallback(async (isInitial = false) => {
     if (!user) return;
-    setLoading(true);
+    if (isInitial) setLoading(true);
 
     let query = supabase
       .from('wa_inbox')
@@ -183,7 +183,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     }
 
     setConversations(Array.from(convMap.values()));
-    setLoading(false);
+    if (isInitial) setLoading(false);
   }, [user, activeInstanceTab]);
 
   /* ── Fetch mensagens da conversa selecionada ───────────────────── */
@@ -251,7 +251,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
   /* ── Effects ───────────────────────────────────────────────────── */
   useEffect(() => { fetchInstances(); }, [fetchInstances]);
-  useEffect(() => { fetchConversations(); }, [fetchConversations]);
+  useEffect(() => { fetchConversations(true); }, [fetchConversations]);
   useEffect(() => { fetchContactTags(); }, [fetchContactTags]);
   useEffect(() => { fetchTeamMembers(); }, [fetchTeamMembers]);
 
@@ -269,7 +269,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         filter: `user_id=eq.${user.id}`,
       }, (payload) => {
         const msg = payload.new as unknown as InboxMessage;
-        fetchConversations();
+        fetchConversations(false);
         if (selectedConvKey) {
           const [selPhone, selInst] = selectedConvKey.split('::');
           if (msg.phone === selPhone && (selInst === 'null' || selInst === msg.instance_id)) {
