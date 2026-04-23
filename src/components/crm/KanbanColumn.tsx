@@ -60,4 +60,4 @@ export const KanbanColumn = memo(function KanbanColumn({ stage, leads, onAddLead
       </Droppable>
     </div>
   );
-}
+});

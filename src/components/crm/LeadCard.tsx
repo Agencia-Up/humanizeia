@@ -86,4 +86,4 @@ export const LeadCard = memo(function LeadCard({ lead, index, onClick }: LeadCar
       )}
     </Draggable>
   );
-}
+});
