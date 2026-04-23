@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Droppable } from '@hello-pangea/dnd';
 import { Button } from '@/components/ui/button';
 import { Plus } from 'lucide-react';
@@ -11,7 +12,7 @@ interface KanbanColumnProps {
   onClickLead: (lead: CRMLead) => void;
 }
 
-export function KanbanColumn({ stage, leads, onAddLead, onClickLead }: KanbanColumnProps) {
+export const KanbanColumn = memo(function KanbanColumn({ stage, leads, onAddLead, onClickLead }: KanbanColumnProps) {
   const totalValue = leads.reduce((s, l) => s + (l.value || 0), 0);
 
   return (
@@ -59,4 +60,4 @@ export function KanbanColumn({ stage, leads, onAddLead, onClickLead }: KanbanCol
       </Droppable>
     </div>
   );
-}
+});

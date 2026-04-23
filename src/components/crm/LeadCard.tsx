@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Draggable } from '@hello-pangea/dnd';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,7 +23,7 @@ const priorityLabels: Record<string, string> = {
   low: 'Baixa',
 };
 
-export function LeadCard({ lead, index, onClick }: LeadCardProps) {
+export const LeadCard = memo(function LeadCard({ lead, index, onClick }: LeadCardProps) {
   return (
     <Draggable draggableId={lead.id} index={index}>
       {(provided, snapshot) => (
@@ -85,4 +86,4 @@ export function LeadCard({ lead, index, onClick }: LeadCardProps) {
       )}
     </Draggable>
   );
-}
+});
