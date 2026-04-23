@@ -95,7 +95,7 @@ function buildBriefingText(sections: BriefingSection[], data: Record<string, str
 }
 
 /* ── Small helpers ───────────────────────────────────────────────────── */
-function SectionCard({ num, icon: Icon, title, children }: { num: number; icon: React.ComponentType<{className?: string}>; title: string; children: React.ReactNode }) {
+const SectionCard = React.memo(({ num, icon: Icon, title, children }: { num: number; icon: React.ComponentType<{className?: string}>; title: string; children: React.ReactNode }) => {
   return (
     <div className="rounded-xl border border-border/50 bg-card/40 overflow-hidden">
       <div className="flex items-center gap-3 px-5 py-3.5 border-b border-border/40 bg-card/60">
@@ -106,16 +106,71 @@ function SectionCard({ num, icon: Icon, title, children }: { num: number; icon: 
       <div className="p-5 grid grid-cols-1 gap-4">{children}</div>
     </div>
   );
-}
+});
 
-function F({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+const F = React.memo(({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => {
   return (
     <div className="space-y-1.5">
       <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{label}</Label>
       {children}
     </div>
   );
-}
+});
+
+const BriefingField = React.memo(({ 
+  field, 
+  value, 
+  onChange 
+}: { 
+  field: BriefingField; 
+  value: string; 
+  onChange: (val: string) => void 
+}) => {
+  const [localValue, setLocalValue] = useState(value);
+  
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const isTextArea = field.hint.length > 50 || 
+                    field.label.toLowerCase().includes('dor') || 
+                    field.label.toLowerCase().includes('desejo') || 
+                    field.label.toLowerCase().includes('objetivos');
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setLocalValue(e.target.value);
+    onChange(e.target.value);
+  };
+
+  return (
+    <F label={field.label} hint={field.hint}>
+      {isTextArea ? (
+        <Textarea 
+          value={localValue} 
+          onChange={handleChange} 
+          placeholder="Descreva detalhadamente..."
+          className="min-h-[80px]"
+        />
+      ) : (
+        <Input 
+          value={localValue} 
+          onChange={handleChange} 
+          placeholder="Especifique..."
+        />
+      )}
+    </F>
+  );
+});
+
+const GeneratedPromptDisplay = React.memo(({ prompt }: { prompt: string }) => {
+  return (
+    <div className="p-6">
+      <pre className="text-[13px] leading-relaxed whitespace-pre-wrap text-foreground/90 font-mono">
+        {prompt}
+      </pre>
+    </div>
+  );
+});
 
 /* ════════════════════════════════════════════════════════════════════ */
 export default function SalomaoOrchestrator() {
