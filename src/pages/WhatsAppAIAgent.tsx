@@ -117,7 +117,6 @@ function AgentCard({
   agent,
   instances,
   agents,
-  isDeleting,
   onEdit,
   onDuplicate,
   onDelete,
@@ -126,7 +125,6 @@ function AgentCard({
   agent: AIAgent;
   instances: Instance[];
   agents: AIAgent[];
-  isDeleting?: boolean;
   onEdit: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -149,7 +147,6 @@ function AgentCard({
   return (
     <div
       className={`group relative rounded-2xl border transition-all duration-200 overflow-hidden
-        ${isDeleting ? 'opacity-50 pointer-events-none' : ''}
         ${agent.is_active
           ? 'border-primary/25 bg-gradient-to-br from-primary/5 via-card to-card shadow-md shadow-primary/5'
           : 'border-border/50 bg-card hover:border-border'}`}
@@ -280,7 +277,6 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
   const [agents, setAgents] = useState<AIAgent[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AIAgent | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!user) {
@@ -318,7 +314,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
 
   const handleDelete = async (agent: AIAgent) => {
     if (!confirm(`Deseja realmente excluir o agente "${agent.name}"?`)) return;
-    setDeletingId(agent.id);
+    setLoading(true);
     try {
       const ids = agent.instance_ids?.length ? agent.instance_ids : (agent.instance_id ? [agent.instance_id] : []);
       if (ids.length > 0) {
@@ -331,22 +327,20 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
     } catch (err: any) {
       toast({ title: 'Erro ao excluir', description: err.message, variant: 'destructive' });
     } finally {
-      setDeletingId(null);
+      setLoading(false);
     }
   };
 
   const handleDuplicate = async (agent: AIAgent) => {
-    if (!user) return;
     const { id, created_at, total_replies, ...rest } = agent;
-    const { error } = await (supabase as any).from('wa_ai_agents').insert({ ...rest, name: `${agent.name} (cópia)`, user_id: user.id, total_replies: 0, is_active: false });
+    const { error } = await (supabase as any).from('wa_ai_agents').insert({ ...rest, name: `${agent.name} (cópia)`, user_id: user!.id, total_replies: 0, is_active: false });
     if (error) toast({ title: 'Erro ao duplicar', description: error.message, variant: 'destructive' });
     else { toast({ title: 'Agente duplicado!' }); fetchData(); }
   };
 
   const handleToggleActive = async (agent: AIAgent) => {
     const { error } = await (supabase as any).from('wa_ai_agents').update({ is_active: !agent.is_active, updated_at: new Date().toISOString() }).eq('id', agent.id);
-    if (error) toast({ title: 'Erro ao ativar/desativar agente', description: error.message, variant: 'destructive' });
-    else fetchData();
+    if (!error) fetchData();
   };
 
   const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
@@ -479,7 +473,6 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
                   agent={agent}
                   instances={instances}
                   agents={agents}
-                  isDeleting={deletingId === agent.id}
                   onEdit={() => { setEditingAgent(agent); setDialogOpen(true); }}
                   onDuplicate={() => handleDuplicate(agent)}
                   onDelete={() => handleDelete(agent)}
