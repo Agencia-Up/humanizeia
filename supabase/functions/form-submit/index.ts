@@ -84,7 +84,44 @@ serve(async (req) => {
       });
     }
 
-    // 5. Enfileira mensagens de follow-up se houver sequência ativa
+    // 5. Salva contato na lista configurada (se houver)
+    if (form.contact_list_id && phone) {
+      const cleanPhone = phone.replace(/\D/g, "");
+
+      // Verifica se o contato já existe na lista para evitar duplicatas
+      const { data: existing } = await supabase
+        .from("wa_contacts")
+        .select("id")
+        .eq("list_id", form.contact_list_id)
+        .eq("phone", cleanPhone)
+        .maybeSingle();
+
+      if (!existing) {
+        const { error: contactErr } = await supabase.from("wa_contacts").insert({
+          user_id: form.user_id,
+          list_id: form.contact_list_id,
+          phone: cleanPhone,
+          name: name || null,
+          source: "form",
+          metadata: {
+            email: email || null,
+            form_id,
+            form_name: form.name,
+            ...(custom_data || {}),
+          },
+        });
+
+        if (!contactErr) {
+          await supabase.rpc("increment_contact_list_count" as any, {
+            list_id_param: form.contact_list_id,
+          });
+        } else {
+          console.error("[form-submit] erro ao salvar contato na lista:", contactErr.message);
+        }
+      }
+    }
+
+    // 6. Enfileira mensagens de follow-up se houver sequência ativa
     const sequence = Array.isArray(form.sequence) ? form.sequence[0] : form.sequence;
     if (sequence?.is_active && phone && sequence.steps?.length > 0) {
       const instanceId = sequence.instance_id || form.instance_id;

@@ -32,6 +32,7 @@ interface CaptureForm {
   id: string; name: string; title: string; description: string;
   primary_color: string; logo_url: string; cover_url: string; fields: FormField[];
   success_message: string; redirect_url: string; instance_id: string | null;
+  contact_list_id: string | null;
   is_active: boolean; submission_count: number; created_at: string;
 }
 
@@ -59,7 +60,7 @@ const EMPTY_FORM = {
   name: '', title: '', description: '', primary_color: '#6366f1',
   logo_url: '', cover_url: '', fields: DEFAULT_FIELDS,
   success_message: 'Obrigado! Entraremos em contato em breve.',
-  redirect_url: '', instance_id: null, is_active: true,
+  redirect_url: '', instance_id: null, contact_list_id: null, is_active: true,
 };
 
 /* ─── Preview mini do campo ─────────────────────────────────────────────── */
@@ -137,6 +138,10 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
   const [uploadingCover, setUploadingCover] = useState(false);
   const [showTypeMenu, setShowTypeMenu]     = useState<string | null>(null);
 
+  const [contactLists, setContactLists]   = useState<any[]>([]);
+  const [newListName, setNewListName]     = useState('');
+  const [creatingList, setCreatingList]   = useState(false);
+
   const logoRef  = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
   const baseUrl  = `${window.location.origin}/f`;
@@ -146,14 +151,17 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     if (!user) return;
     setLoading(true);
     try {
-      const [{ data: f, error: fErr }, { data: i, error: iErr }] = await Promise.all([
+      const [{ data: f, error: fErr }, { data: i, error: iErr }, { data: cl, error: clErr }] = await Promise.all([
         (supabase as any).from('capture_forms').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
         (supabase as any).from('wa_instances').select('id, instance_name').eq('user_id', user.id).eq('is_active', true),
+        (supabase as any).from('wa_contact_lists').select('id, name, contact_count').eq('user_id', user.id).order('name'),
       ]);
       if (fErr) console.error('fetchAll forms error:', fErr.message);
       if (iErr) console.error('fetchAll instances error:', iErr.message);
+      if (clErr) console.error('fetchAll contact lists error:', clErr.message);
       setForms(f || []);
       setInstances(i || []);
+      setContactLists(cl || []);
     } catch (err: any) {
       console.error('fetchAll error:', err?.message || err);
     } finally {
@@ -227,6 +235,28 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
       return;
     }
     fetchAll();
+  };
+
+  /* ── criar lista de contatos inline ── */
+  const handleCreateList = async () => {
+    if (!user || !newListName.trim()) return;
+    setCreatingList(true);
+    try {
+      const { data, error } = await (supabase as any)
+        .from('wa_contact_lists')
+        .insert({ user_id: user.id, name: newListName.trim(), source: 'form' })
+        .select('id, name, contact_count')
+        .single();
+      if (error) throw error;
+      setContactLists(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+      setEditingForm((f: any) => ({ ...f, contact_list_id: data.id }));
+      setNewListName('');
+      toast({ title: `✅ Lista "${data.name}" criada e selecionada!` });
+    } catch (err: any) {
+      toast({ title: 'Erro ao criar lista', description: err.message, variant: 'destructive' });
+    } finally {
+      setCreatingList(false);
+    }
   };
 
   const openSubs = async (form: CaptureForm) => {
@@ -358,6 +388,15 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
                   <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" /><strong className="text-foreground">{form.submission_count}</strong> leads</span>
                   <span className="flex items-center gap-1"><Type className="h-3.5 w-3.5" />{(form.fields || []).filter((f: FormField) => f.enabled).length} campos</span>
                 </div>
+                {form.contact_list_id && (() => {
+                  const list = contactLists.find(l => l.id === form.contact_list_id);
+                  return list ? (
+                    <div className="flex items-center gap-1 text-[10px] text-purple-500 bg-purple-500/10 border border-purple-500/20 rounded-full px-2 py-0.5 w-fit">
+                      <Users className="h-2.5 w-2.5" />
+                      <span className="truncate max-w-[160px]">{list.name}</span>
+                    </div>
+                  ) : null;
+                })()}
                 <div className="flex flex-wrap gap-1.5">
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => copyLink(form.id)}><ClipboardCopy className="h-3 w-3" />Link</Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => window.open(`/f/${form.id}`, '_blank')}><ExternalLink className="h-3 w-3" />Ver</Button>
@@ -627,6 +666,55 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
                         <option value="">— Selecionar instância —</option>
                         {instances.map(i => <option key={i.id} value={i.id}>{i.instance_name}</option>)}
                       </select>
+                    </div>
+
+                    {/* ── Lista de contatos ── */}
+                    <div className="space-y-2 p-3 border rounded-xl bg-muted/10">
+                      <div className="flex items-center gap-1.5">
+                        <Users className="h-3.5 w-3.5 text-purple-500" />
+                        <Label className="text-xs font-semibold text-purple-600 dark:text-purple-400">Lista de contatos para salvar leads</Label>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        Cada lead que preencher o formulário será adicionado automaticamente à lista. Use essa lista depois nos disparos em massa ou no funil de follow-up.
+                      </p>
+                      <select
+                        className="w-full h-9 text-sm border rounded-md px-3 bg-background"
+                        value={editingForm.contact_list_id || ''}
+                        onChange={e => setEditingForm((f: any) => ({ ...f, contact_list_id: e.target.value || null }))}
+                      >
+                        <option value="">— Nenhuma lista —</option>
+                        {contactLists.map(l => (
+                          <option key={l.id} value={l.id}>
+                            {l.name} ({l.contact_count ?? 0} contatos)
+                          </option>
+                        ))}
+                      </select>
+                      {/* Criar nova lista inline */}
+                      <div className="flex items-center gap-2 pt-0.5">
+                        <Input
+                          placeholder="Criar nova lista..."
+                          value={newListName}
+                          onChange={e => setNewListName(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCreateList(); } }}
+                          className="h-8 text-xs flex-1"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs gap-1 shrink-0 border-purple-500/40 text-purple-600 hover:bg-purple-500/10"
+                          onClick={handleCreateList}
+                          disabled={!newListName.trim() || creatingList}
+                        >
+                          {creatingList ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                          Criar lista
+                        </Button>
+                      </div>
+                      {editingForm.contact_list_id && (
+                        <div className="flex items-center gap-1.5 text-[10px] text-green-600 dark:text-green-400">
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                          Leads serão salvos automaticamente na lista selecionada
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-3 p-3 border rounded-xl bg-muted/20">
