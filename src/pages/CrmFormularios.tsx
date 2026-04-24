@@ -145,13 +145,20 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
   const fetchAll = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const [{ data: f }, { data: i }] = await Promise.all([
-      (supabase as any).from('capture_forms').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
-      (supabase as any).from('wa_instances').select('id, instance_name').eq('user_id', user.id).eq('is_active', true),
-    ]);
-    setForms(f || []);
-    setInstances(i || []);
-    setLoading(false);
+    try {
+      const [{ data: f, error: fErr }, { data: i, error: iErr }] = await Promise.all([
+        (supabase as any).from('capture_forms').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+        (supabase as any).from('wa_instances').select('id, instance_name').eq('user_id', user.id).eq('is_active', true),
+      ]);
+      if (fErr) console.error('fetchAll forms error:', fErr.message);
+      if (iErr) console.error('fetchAll instances error:', iErr.message);
+      setForms(f || []);
+      setInstances(i || []);
+    } catch (err: any) {
+      console.error('fetchAll error:', err?.message || err);
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
@@ -161,10 +168,11 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     try {
       const ext = file.name.split('.').pop();
       const path = `forms/${user!.id}/${prefix}_${Date.now()}.${ext}`;
-      const { error } = await supabase.storage.from('public-assets').upload(path, file, { upsert: true });
+      const { error } = await supabase.storage.from('creatives').upload(path, file, { upsert: true });
       if (error) throw error;
-      return supabase.storage.from('public-assets').getPublicUrl(path).data.publicUrl;
-    } catch {
+      return supabase.storage.from('creatives').getPublicUrl(path).data.publicUrl;
+    } catch (err: any) {
+      console.error('Upload error:', err?.message || err);
       return null;
     }
   };
@@ -197,10 +205,12 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     try {
       const payload = { ...editingForm, user_id: user.id };
       if (editingId) {
-        await (supabase as any).from('capture_forms').update(payload).eq('id', editingId);
+        const { error } = await (supabase as any).from('capture_forms').update(payload).eq('id', editingId);
+        if (error) throw error;
         toast({ title: '✅ Formulário atualizado!' });
       } else {
-        await (supabase as any).from('capture_forms').insert(payload);
+        const { error } = await (supabase as any).from('capture_forms').insert(payload);
+        if (error) throw error;
         toast({ title: '✅ Formulário criado!' });
       }
       setOpenEditor(false); fetchAll();
@@ -211,7 +221,11 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
   const handleDelete = async (id: string) => {
     if (!confirm('Excluir este formulário?')) return;
-    await (supabase as any).from('capture_forms').delete().eq('id', id);
+    const { error } = await (supabase as any).from('capture_forms').delete().eq('id', id);
+    if (error) {
+      toast({ title: 'Erro ao excluir', description: error.message, variant: 'destructive' });
+      return;
+    }
     fetchAll();
   };
 
@@ -290,12 +304,12 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
   const color = editingForm.primary_color || '#6366f1';
 
   /* ── render ── */
-  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+  if (loading) {
+    const spinner = <div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return embedded ? spinner : <MainLayout>{spinner}</MainLayout>;
+  }
 
-  if (loading) return <Wrapper><div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div></Wrapper>;
-
-  return (
-    <Wrapper>
+  const mainContent = (
       <div className="p-6 max-w-6xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -772,6 +786,8 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
         </DialogContent>
       </Dialog>
       </div>
-    </Wrapper>
   );
+
+  if (embedded) return mainContent;
+  return <MainLayout>{mainContent}</MainLayout>;
 }
