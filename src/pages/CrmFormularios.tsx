@@ -414,17 +414,29 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
       {/* ══════════════════════════════════════════════════════════════
           EDITOR — Dialog fullscreen
       ══════════════════════════════════════════════════════════════ */}
-      <Dialog open={openEditor} onOpenChange={setOpenEditor}>
-        <DialogContent className="max-w-[95vw] w-[1100px] max-h-[95vh] p-0 overflow-hidden flex flex-col">
+      <Dialog open={openEditor} onOpenChange={() => {}}>
+        <DialogContent
+          className="max-w-[95vw] w-[1100px] max-h-[95vh] p-0 overflow-hidden flex flex-col"
+          onInteractOutside={e => e.preventDefault()}
+          onEscapeKeyDown={e => e.preventDefault()}
+        >
           <DialogHeader className="px-6 py-4 border-b border-border/40 flex-row items-center justify-between space-y-0 shrink-0">
             <DialogTitle className="text-base font-semibold">{editingId ? 'Editar Formulário' : 'Novo Formulário'}</DialogTitle>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={() => window.open(`/f/preview`, '_blank')} className="h-8 gap-1.5 text-xs">
                 <Eye className="h-3.5 w-3.5" /> Pré-visualizar
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { if (confirm('Fechar sem salvar? Alterações não salvas serão perdidas.')) setOpenEditor(false); }}
+                className="h-8 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5 mr-1" /> Fechar
+              </Button>
               <Button size="sm" onClick={handleSaveForm} disabled={saving} className="h-8 gap-1.5 text-xs">
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                {editingId ? 'Salvar' : 'Criar'}
+                {editingId ? 'Salvar alterações' : 'Criar formulário'}
               </Button>
             </div>
           </DialogHeader>
