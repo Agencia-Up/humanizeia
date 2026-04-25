@@ -68,6 +68,7 @@ const marcosSubItems = [
   { title: 'Formulários',     url: '/crm/formularios',      icon: ClipboardList },
   { title: 'CRM ao Vivo',     url: '/whatsapp/crm-ao-vivo', icon: MonitorPlay },
   { title: 'Inbox',           url: '/whatsapp/inbox',       icon: Inbox },
+  { title: 'Contatos',        url: '/whatsapp/contacts',    icon: Users },
   { title: 'Disparo em Massa',url: '/whatsapp/broadcast',   icon: Send },
   { title: 'Instâncias',      url: '/whatsapp/instances',   icon: Smartphone },
   { title: 'Automações',      url: '/whatsapp/automations', icon: Zap },
