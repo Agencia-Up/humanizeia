@@ -470,7 +470,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const needsInstance = mainTab === 'groups' || mainTab === 'external';
 
   const content = (
-    <div className="space-y-6 p-4 md:p-6">
+    <><div className="space-y-6 p-4 md:p-6">
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold lg:text-3xl flex items-center gap-2">
@@ -805,7 +805,6 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
           </TabsContent>
         </Tabs>
       </div>
-
       {/* ============ DIALOGS ============ */}
 
       {/* New List */}
@@ -919,7 +918,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         lists={lists.map(l => ({ id: l.id, name: l.name }))}
         onSuccess={fetchLists}
       />
-    </div>
+    </>
   );
 
   return embedded ? content : <MainLayout>{content}</MainLayout>;
