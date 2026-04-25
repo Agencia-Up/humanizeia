@@ -2,7 +2,7 @@ import { useState, lazy, Suspense } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Users, Inbox, Send, Smartphone, Zap, Bot, Kanban, ClipboardList, MonitorPlay } from 'lucide-react';
+import { Loader2, Users, Inbox, Send, Smartphone, Zap, Bot, Kanban, ClipboardList, MonitorPlay, Contact } from 'lucide-react';
 
 // Lazy load each sub-page content to keep bundle lean
 const FluxCRM = lazy(() => import('./FluxCRM'));
@@ -13,6 +13,7 @@ const WhatsAppAutomations = lazy(() => import('./WhatsAppAutomations'));
 const WhatsAppAIAgent = lazy(() => import('./WhatsAppAIAgent'));
 const CrmFormularios = lazy(() => import('./CrmFormularios'));
 const CrmAoVivo = lazy(() => import('./CrmAoVivo'));
+const WhatsAppContacts = lazy(() => import('./WhatsAppContacts'));
 
 const TabLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -25,6 +26,7 @@ const tabs = [
   { id: 'formularios', label: 'Formulários',      icon: ClipboardList,emoji: '📋' },
   { id: 'ao-vivo',     label: 'CRM ao Vivo',      icon: MonitorPlay,  emoji: '📺' },
   { id: 'inbox',       label: 'Inbox',            icon: Inbox,        emoji: '💬' },
+  { id: 'contacts',    label: 'Contatos',         icon: Contact,      emoji: '👥' },
   { id: 'broadcast',   label: 'Disparo em Massa', icon: Send,         emoji: '📤' },
   { id: 'instances',   label: 'Instâncias',       icon: Smartphone,   emoji: '📱' },
   { id: 'automations', label: 'Automações',       icon: Zap,          emoji: '⚡' },
@@ -84,6 +86,9 @@ export default function MarcosLeads() {
               </TabsContent>
               <TabsContent value="inbox" className="mt-0 h-full">
                 <WhatsAppInbox embedded />
+              </TabsContent>
+              <TabsContent value="contacts" className="mt-0 h-full">
+                <WhatsAppContacts embedded />
               </TabsContent>
               <TabsContent value="broadcast" className="mt-0 h-full">
                 <WhatsAppBroadcast embedded />

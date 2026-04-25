@@ -135,7 +135,7 @@ function GroupTable({
   );
 }
 
-export default function WhatsAppContacts() {
+export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [mainTab, setMainTab] = useState('lists');
@@ -469,9 +469,8 @@ export default function WhatsAppContacts() {
 
   const needsInstance = mainTab === 'groups' || mainTab === 'external';
 
-  return (
-    <MainLayout>
-      <div className="space-y-6 p-4 md:p-6">
+  const content = (
+    <div className="space-y-6 p-4 md:p-6">
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold lg:text-3xl flex items-center gap-2">
@@ -920,6 +919,8 @@ export default function WhatsAppContacts() {
         lists={lists.map(l => ({ id: l.id, name: l.name }))}
         onSuccess={fetchLists}
       />
-    </MainLayout>
+    </div>
   );
+
+  return embedded ? content : <MainLayout>{content}</MainLayout>;
 }
