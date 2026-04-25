@@ -53,6 +53,7 @@ interface WAContact {
   is_valid: boolean;
   list_id: string | null;
   created_at: string;
+  metadata?: Record<string, any>;
 }
 
 interface WhatsAppGroup {
@@ -613,56 +614,109 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                         <Plus className="h-4 w-4 mr-1" /> Adicionar Contatos
                       </Button>
                     </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="w-10">
-                              <Checkbox
-                                checked={selectedContacts.length === filteredContacts.length && filteredContacts.length > 0}
-                                onCheckedChange={() => setSelectedContacts(selectedContacts.length === filteredContacts.length ? [] : filteredContacts.map(c => c.id))}
-                              />
-                            </TableHead>
-                            <TableHead>Telefone</TableHead>
-                            <TableHead>Nome</TableHead>
-                            <TableHead>Grupo/Endereço</TableHead>
-                            <TableHead>Origem</TableHead>
-                            <TableHead>Status</TableHead>
-                            <TableHead>Adicionado</TableHead>
-                            <TableHead className="w-10"></TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {filteredContacts.map(contact => (
-                            <TableRow key={contact.id}>
-                              <TableCell>
-                                <Checkbox checked={selectedContacts.includes(contact.id)} onCheckedChange={() => setSelectedContacts(prev => prev.includes(contact.id) ? prev.filter(c => c !== contact.id) : [...prev, contact.id])} />
-                              </TableCell>
-                              <TableCell className="font-mono text-sm">{contact.phone}</TableCell>
-                              <TableCell>{contact.name || '—'}</TableCell>
-                              <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">{contact.group_name || '—'}</TableCell>
-                              <TableCell><Badge variant="outline" className="text-xs">{sourceLabels[contact.source]?.label || contact.source}</Badge></TableCell>
-                              <TableCell><Badge variant={contact.is_valid ? 'secondary' : 'destructive'} className="text-xs">{contact.is_valid ? 'Válido' : 'Inválido'}</Badge></TableCell>
-                              <TableCell className="text-xs text-muted-foreground">{format(new Date(contact.created_at), 'dd/MM/yy', { locale: ptBR })}</TableCell>
-                              <TableCell>
-                                <button
-                                  onClick={() => deleteContact(contact.id)}
-                                  className="p-1.5 rounded-md text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                                  title="Remover contato"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              </TableCell>
+                  ) : (() => {
+                    // Campos dinâmicos do formulário presentes no metadata dos contatos
+                    const SKIP_META = new Set(['form_id', 'form_name', 'email', 'submission_id']);
+                    const formKeys = Array.from(
+                      new Set(
+                        filteredContacts.flatMap(c =>
+                          Object.keys(c.metadata || {}).filter(k => !SKIP_META.has(k))
+                        )
+                      )
+                    );
+                    const hasFormFields = formKeys.length > 0;
+                    const totalCols = 8 + formKeys.length;
+
+                    return (
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="w-10">
+                                <Checkbox
+                                  checked={selectedContacts.length === filteredContacts.length && filteredContacts.length > 0}
+                                  onCheckedChange={() => setSelectedContacts(selectedContacts.length === filteredContacts.length ? [] : filteredContacts.map(c => c.id))}
+                                />
+                              </TableHead>
+                              <TableHead>Telefone</TableHead>
+                              <TableHead>Nome</TableHead>
+                              {/* Colunas dinâmicas do formulário */}
+                              {formKeys.map(k => (
+                                <TableHead key={k} className="min-w-[140px] max-w-[200px]">
+                                  <span className="truncate block text-xs leading-tight" title={k}>{k}</span>
+                                </TableHead>
+                              ))}
+                              <TableHead>Origem</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Adicionado</TableHead>
+                              <TableHead className="w-10"></TableHead>
                             </TableRow>
-                          ))}
-                          {filteredContacts.length === 0 && (
-                            <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Nenhum resultado para "{search}"</TableCell></TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
+                          </TableHeader>
+                          <TableBody>
+                            {filteredContacts.map(contact => (
+                              <TableRow key={contact.id}>
+                                <TableCell>
+                                  <Checkbox checked={selectedContacts.includes(contact.id)} onCheckedChange={() => setSelectedContacts(prev => prev.includes(contact.id) ? prev.filter(c => c !== contact.id) : [...prev, contact.id])} />
+                                </TableCell>
+                                <TableCell className="font-mono text-sm">{contact.phone}</TableCell>
+                                <TableCell>
+                                  <div>
+                                    <p className="font-medium text-sm">{contact.name || '—'}</p>
+                                    {contact.metadata?.email && (
+                                      <p className="text-[10px] text-muted-foreground">{contact.metadata.email}</p>
+                                    )}
+                                  </div>
+                                </TableCell>
+                                {/* Células dinâmicas */}
+                                {formKeys.map(k => (
+                                  <TableCell key={k} className="max-w-[200px]">
+                                    <span
+                                      className="text-sm block truncate"
+                                      title={String(contact.metadata?.[k] ?? '')}
+                                    >
+                                      {contact.metadata?.[k] != null && contact.metadata[k] !== ''
+                                        ? String(contact.metadata[k])
+                                        : <span className="text-muted-foreground/40">—</span>
+                                      }
+                                    </span>
+                                  </TableCell>
+                                ))}
+                                <TableCell>
+                                  <Badge variant="outline" className="text-xs">
+                                    {contact.source === 'form' ? 'form' : (sourceLabels[contact.source]?.label || contact.source)}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={contact.is_valid ? 'secondary' : 'destructive'} className="text-xs">
+                                    {contact.is_valid ? 'Válido' : 'Inválido'}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground">
+                                  {format(new Date(contact.created_at), 'dd/MM/yy', { locale: ptBR })}
+                                </TableCell>
+                                <TableCell>
+                                  <button
+                                    onClick={() => deleteContact(contact.id)}
+                                    className="p-1.5 rounded-md text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                                    title="Remover contato"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            {filteredContacts.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={totalCols} className="text-center py-8 text-muted-foreground">
+                                  Nenhum resultado para "{search}"
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             )}
