@@ -17,6 +17,7 @@ import {
   Users, Zap, Image, Type, AlignLeft, ChevronDown, CheckSquare,
   Circle, Star, Calendar, Hash, Mail, Phone, Upload, X, GripVertical,
   Eye, Settings, LayoutTemplate, MessageSquare, QrCode, Download, Printer,
+  FileDown, ChevronRight, ChevronUp,
 } from 'lucide-react';
 
 /* ─── Tipos ─────────────────────────────────────────────────────────────── */
@@ -129,6 +130,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
   const [submissions, setSubmissions]     = useState<any[]>([]);
   const [submForm, setSubmForm]           = useState<CaptureForm | null>(null);
+  const [submExpanded, setSubmExpanded]   = useState<string | null>(null);
 
   const [seqForm, setSeqForm]             = useState<CaptureForm | null>(null);
   const [sequence, setSequence]           = useState<any>(null);
@@ -935,30 +937,137 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
       {/* ── Submissões ── */}
       <Dialog open={openSubmissions} onOpenChange={setOpenSubmissions}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Leads — {submForm?.title}</DialogTitle></DialogHeader>
-          {submissions.length === 0 ? (
-            <div className="text-center py-10 text-muted-foreground text-sm">Nenhum lead capturado ainda.</div>
-          ) : (
-            <div className="space-y-2 mt-2">
-              {submissions.map(s => (
-                <div key={s.id} className="flex items-start justify-between p-3 border rounded-xl bg-muted/10 gap-4">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-sm">{s.name || '—'}</p>
-                    <p className="text-xs text-muted-foreground">{s.phone || ''} {s.email ? `· ${s.email}` : ''}</p>
-                    {s.custom_data && Object.keys(s.custom_data).length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {Object.entries(s.custom_data).map(([k, v]) => (
-                          <Badge key={k} variant="outline" className="text-[10px]">{k}: {String(v)}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">{new Date(s.created_at).toLocaleString('pt-BR')}</span>
-                </div>
-              ))}
+        <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] flex flex-col p-0 overflow-hidden">
+          {/* Header */}
+          <DialogHeader className="px-6 py-4 border-b border-border/40 shrink-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-purple-500" />
+                  Leads capturados — {submForm?.title}
+                </DialogTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {submissions.length} {submissions.length === 1 ? 'resposta' : 'respostas'} recebidas
+                </p>
+              </div>
+              {submissions.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-xs h-8"
+                  onClick={() => {
+                    if (!submForm || submissions.length === 0) return;
+                    // Coleta todas as chaves de custom_data
+                    const customKeys = Array.from(new Set(submissions.flatMap(s => Object.keys(s.custom_data || {}))));
+                    const headers = ['Nome', 'WhatsApp', 'E-mail', ...customKeys, 'Data'];
+                    const rows = submissions.map(s => [
+                      s.name || '',
+                      s.phone || '',
+                      s.email || '',
+                      ...customKeys.map(k => String(s.custom_data?.[k] ?? '')),
+                      new Date(s.created_at).toLocaleString('pt-BR'),
+                    ]);
+                    const csv = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+                    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = `leads-${submForm.name.replace(/\s+/g,'-').toLowerCase()}.csv`;
+                    link.click();
+                  }}
+                >
+                  <FileDown className="h-3.5 w-3.5" /> Exportar CSV
+                </Button>
+              )}
             </div>
-          )}
+          </DialogHeader>
+
+          {/* Conteúdo */}
+          <div className="flex-1 overflow-auto p-4 space-y-2">
+            {submissions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <Users className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                <p className="text-sm font-medium text-muted-foreground">Nenhum lead capturado ainda</p>
+                <p className="text-xs text-muted-foreground mt-1">Compartilhe o formulário para começar a receber respostas</p>
+              </div>
+            ) : (() => {
+              // Monta colunas dinâmicas com base em custom_data de todas as submissões
+              const customKeys = Array.from(new Set(submissions.flatMap(s => Object.keys(s.custom_data || {}))));
+              return (
+                <div className="space-y-2">
+                  {submissions.map((s, idx) => {
+                    const isExpanded = submExpanded === s.id;
+                    const hasCustom = customKeys.length > 0;
+                    return (
+                      <div key={s.id} className="border rounded-xl overflow-hidden bg-card hover:border-primary/30 transition-colors">
+                        {/* Linha principal */}
+                        <div
+                          className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
+                          onClick={() => setSubmExpanded(isExpanded ? null : s.id)}
+                        >
+                          {/* Número */}
+                          <span className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground shrink-0">
+                            {idx + 1}
+                          </span>
+
+                          {/* Info principal */}
+                          <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-4">
+                            <div className="min-w-0">
+                              <p className="font-semibold text-sm truncate">{s.name || '—'}</p>
+                              <p className="text-[10px] text-muted-foreground">Nome</p>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm truncate">{s.phone || '—'}</p>
+                              <p className="text-[10px] text-muted-foreground">WhatsApp</p>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm truncate">{s.email || '—'}</p>
+                              <p className="text-[10px] text-muted-foreground">E-mail</p>
+                            </div>
+                          </div>
+
+                          {/* Data + expand */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[10px] text-muted-foreground hidden sm:block">
+                              {new Date(s.created_at).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' })}
+                            </span>
+                            {hasCustom && (
+                              <span className="text-muted-foreground">
+                                {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Respostas expandidas */}
+                        {isExpanded && hasCustom && (
+                          <div className="border-t border-border/40 bg-muted/5 px-4 py-3">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-2">Respostas do formulário</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {customKeys.map(k => (
+                                <div key={k} className="space-y-0.5">
+                                  <p className="text-[10px] text-muted-foreground leading-tight">{k}</p>
+                                  <p className="text-sm font-medium bg-muted/40 rounded-lg px-3 py-1.5 min-h-[32px] flex items-center">
+                                    {String(s.custom_data?.[k] ?? '—')}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                            {/* UTM se houver */}
+                            {(s.utm_source || s.utm_campaign) && (
+                              <div className="flex gap-2 mt-3 flex-wrap">
+                                {s.utm_source && <Badge variant="outline" className="text-[10px] gap-1">📡 {s.utm_source}</Badge>}
+                                {s.utm_campaign && <Badge variant="outline" className="text-[10px] gap-1">🎯 {s.utm_campaign}</Badge>}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
         </DialogContent>
       </Dialog>
 
