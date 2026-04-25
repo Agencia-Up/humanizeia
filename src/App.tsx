@@ -65,6 +65,7 @@ const NicheQuiz = lazy(() => import("./pages/NicheQuiz"));
 const BriefingDetails = lazy(() => import("./pages/BriefingDetails"));
 const SupportDashboard = lazy(() => import("./pages/SupportDashboard"));
 const MarcosLeads = lazy(() => import("./pages/MarcosLeads"));
+const PedroSDR    = lazy(() => import("./pages/PedroSDR"));
 const MetaAdsConnect = lazy(() => import("./pages/MetaAdsConnect"));
 const InstagramConnect = lazy(() => import("./pages/InstagramConnect"));
 const ConfirmEmail = lazy(() => import("./pages/ConfirmEmail"));
@@ -133,6 +134,7 @@ const App = () => (
                 <Route path="/salomao" element={<ProtectedRoute><SalomaoOrchestrator /></ProtectedRoute>} />
                 <Route path="/crm" element={<ProtectedRoute><FluxCRM /></ProtectedRoute>} />
                 <Route path="/marcos" element={<ProtectedRoute><MarcosLeads /></ProtectedRoute>} />
+                <Route path="/pedro"  element={<ProtectedRoute><PedroSDR /></ProtectedRoute>} />
                 <Route path="/crm/contacts" element={<ProtectedRoute><CRMContacts /></ProtectedRoute>} />
                 <Route path="/crm/formularios" element={<ProtectedRoute><CrmFormularios /></ProtectedRoute>} />
                 <Route path="/f/:formId" element={<FormPublico />} />

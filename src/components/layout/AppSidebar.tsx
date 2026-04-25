@@ -50,7 +50,7 @@ import {
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { useState } from 'react';
 
-// ── Agentes ───────────────────────────────────────────────────────────────────
+// ── Agentes (sem Pedro e Marcos — têm navegação própria expandível) ───────────
 const agentItems = [
   { title: 'Salomão', subtitle: 'Orquestrador', url: '/salomao',         icon: Sparkles,  emoji: '👑' },
   { title: 'José',    subtitle: 'Tráfego Pago',  url: '/jose',           icon: Radar,     emoji: '🎯' },
@@ -59,19 +59,23 @@ const agentItems = [
   { title: 'Davi',    subtitle: 'Social Media',  url: '/davi',           icon: Instagram, emoji: '📱' },
   { title: 'João',    subtitle: 'E-mail',        url: '/joao',           icon: Mail,      emoji: '📧' },
   { title: 'Daniel',  subtitle: 'Estratégia',    url: '/daniel',         icon: Brain,     emoji: '🧠' },
-  { title: 'Pedro',   subtitle: 'WhatsApp IA',   url: '/whatsapp/ai-agent', icon: Bot,   emoji: '💬' },
 ];
 
-// ── Marcos — sub-itens de CRM & WhatsApp ──────────────────────────────────────
+// ── Pedro — sub-itens SDR ─────────────────────────────────────────────────────
+const pedroSubItems = [
+  { title: 'Agente IA',    url: '/pedro',                icon: Bot },
+  { title: 'CRM ao Vivo',  url: '/whatsapp/crm-ao-vivo', icon: MonitorPlay },
+];
+
+// ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
 const marcosSubItems = [
-  { title: 'CRM',             url: '/crm',                  icon: Kanban },
-  { title: 'Formulários',     url: '/crm/formularios',      icon: ClipboardList },
-  { title: 'CRM ao Vivo',     url: '/whatsapp/crm-ao-vivo', icon: MonitorPlay },
-  { title: 'Inbox',           url: '/whatsapp/inbox',       icon: Inbox },
-  { title: 'Contatos',        url: '/whatsapp/contacts',    icon: Users },
-  { title: 'Disparo em Massa',url: '/whatsapp/broadcast',   icon: Send },
-  { title: 'Instâncias',      url: '/whatsapp/instances',   icon: Smartphone },
-  { title: 'Automações',      url: '/whatsapp/automations', icon: Zap },
+  { title: 'CRM',             url: '/crm',               icon: Kanban },
+  { title: 'Formulários',     url: '/crm/formularios',   icon: ClipboardList },
+  { title: 'Contatos',        url: '/whatsapp/contacts', icon: Users },
+  { title: 'Disparo em Massa',url: '/whatsapp/broadcast',icon: Send },
+  { title: 'Inbox',           url: '/whatsapp/inbox',    icon: Inbox },
+  { title: 'Instâncias',      url: '/whatsapp/instances',icon: Smartphone },
+  { title: 'Automações',      url: '/whatsapp/automations',icon: Zap },
 ];
 
 // ── Sistema ───────────────────────────────────────────────────────────────────
@@ -143,7 +147,61 @@ function NavAgent({
   );
 }
 
-// ── NavMarcosExpandable — Marcos com sub-itens CRM & WhatsApp ────────────────
+// ── NavPedroExpandable — Pedro SDR ───────────────────────────────────────────
+function NavPedroExpandable({ collapsed }: { collapsed?: boolean }) {
+  const { openSidebarGroups, toggleSidebarGroup } = useAppStore();
+  const key = 'pedro-sub';
+  const isOpen = openSidebarGroups.includes(key);
+
+  if (collapsed) {
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton asChild tooltip="Pedro — SDR & IA">
+          <NavLink
+            to="/pedro"
+            className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/60 hover:text-foreground"
+            activeClassName="bg-primary/10 text-primary font-medium border-l-2 border-primary pl-[9px]"
+          >
+            <span className="text-base leading-none">💬</span>
+          </NavLink>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
+
+  return (
+    <SidebarMenuItem>
+      <div
+        className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground cursor-pointer hover:bg-accent/60 hover:text-foreground transition-all select-none"
+        onClick={() => toggleSidebarGroup(key)}
+      >
+        <span className="text-sm leading-none w-5 text-center">💬</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium leading-tight">Pedro</p>
+          <p className="text-[10px] text-muted-foreground/70 leading-tight">SDR & Agente IA</p>
+        </div>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`} />
+      </div>
+      {isOpen && (
+        <div className="ml-4 mt-0.5 border-l border-border/40 pl-2 space-y-0.5">
+          {pedroSubItems.map(sub => (
+            <NavLink
+              key={sub.url}
+              to={sub.url}
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-all"
+              activeClassName="text-primary font-medium bg-primary/10"
+            >
+              <sub.icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{sub.title}</span>
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </SidebarMenuItem>
+  );
+}
+
+// ── NavMarcosExpandable — Marcos com sub-itens Leads & WhatsApp ──────────────
 function NavMarcosExpandable({ collapsed }: { collapsed?: boolean }) {
   const { openSidebarGroups, toggleSidebarGroup } = useAppStore();
   const key = 'marcos-sub';
@@ -290,7 +348,9 @@ export function AppSidebar() {
           {agentItems.map(item => (
             <NavAgent key={item.url} item={item} collapsed={collapsed} />
           ))}
-          {/* Marcos com sub-itens de CRM & WhatsApp */}
+          {/* Pedro — SDR & Agente IA */}
+          <NavPedroExpandable collapsed={collapsed} />
+          {/* Marcos — Captação de Leads & WhatsApp */}
           <NavMarcosExpandable collapsed={collapsed} />
         </NavGroup>
 

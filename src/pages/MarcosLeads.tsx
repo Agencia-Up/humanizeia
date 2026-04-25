@@ -2,18 +2,16 @@ import { useState, lazy, Suspense } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Users, Inbox, Send, Smartphone, Zap, Bot, Kanban, ClipboardList, MonitorPlay, Contact } from 'lucide-react';
+import { Loader2, Users, Inbox, Send, Smartphone, Zap, Kanban, ClipboardList, Contact } from 'lucide-react';
 
-// Lazy load each sub-page content to keep bundle lean
-const FluxCRM = lazy(() => import('./FluxCRM'));
-const WhatsAppInbox = lazy(() => import('./WhatsAppInbox'));
+// Lazy load cada sub-página
+const FluxCRM           = lazy(() => import('./FluxCRM'));
+const WhatsAppInbox     = lazy(() => import('./WhatsAppInbox'));
 const WhatsAppBroadcast = lazy(() => import('./WhatsAppBroadcast'));
 const WhatsAppInstances = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppAutomations = lazy(() => import('./WhatsAppAutomations'));
-const WhatsAppAIAgent = lazy(() => import('./WhatsAppAIAgent'));
-const CrmFormularios = lazy(() => import('./CrmFormularios'));
-const CrmAoVivo = lazy(() => import('./CrmAoVivo'));
-const WhatsAppContacts = lazy(() => import('./WhatsAppContacts'));
+const CrmFormularios    = lazy(() => import('./CrmFormularios'));
+const WhatsAppContacts  = lazy(() => import('./WhatsAppContacts'));
 
 const TabLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -24,13 +22,11 @@ const TabLoader = () => (
 const tabs = [
   { id: 'crm',         label: 'CRM',              icon: Kanban,       emoji: '📊' },
   { id: 'formularios', label: 'Formulários',      icon: ClipboardList,emoji: '📋' },
-  { id: 'ao-vivo',     label: 'CRM ao Vivo',      icon: MonitorPlay,  emoji: '📺' },
-  { id: 'inbox',       label: 'Inbox',            icon: Inbox,        emoji: '💬' },
   { id: 'contacts',    label: 'Contatos',         icon: Contact,      emoji: '👥' },
   { id: 'broadcast',   label: 'Disparo em Massa', icon: Send,         emoji: '📤' },
+  { id: 'inbox',       label: 'Inbox',            icon: Inbox,        emoji: '💬' },
   { id: 'instances',   label: 'Instâncias',       icon: Smartphone,   emoji: '📱' },
   { id: 'automations', label: 'Automações',       icon: Zap,          emoji: '⚡' },
-  { id: 'ai-agent',    label: 'Agente IA',        icon: Bot,          emoji: '🤖' },
 ];
 
 export default function MarcosLeads() {
@@ -52,7 +48,7 @@ export default function MarcosLeads() {
                 Agente Online
               </Badge>
             </div>
-            <p className="text-xs text-muted-foreground">CRM, Leads & WhatsApp</p>
+            <p className="text-xs text-muted-foreground">Captação de Leads, Formulários & Disparo em Massa</p>
           </div>
         </div>
 
@@ -81,26 +77,20 @@ export default function MarcosLeads() {
               <TabsContent value="formularios" className="mt-0 h-full">
                 <CrmFormularios />
               </TabsContent>
-              <TabsContent value="ao-vivo" className="mt-0 h-full">
-                <CrmAoVivo embedded />
-              </TabsContent>
-              <TabsContent value="inbox" className="mt-0 h-full">
-                <WhatsAppInbox embedded />
-              </TabsContent>
               <TabsContent value="contacts" className="mt-0 h-full">
                 <WhatsAppContacts embedded />
               </TabsContent>
               <TabsContent value="broadcast" className="mt-0 h-full">
                 <WhatsAppBroadcast embedded />
               </TabsContent>
+              <TabsContent value="inbox" className="mt-0 h-full">
+                <WhatsAppInbox embedded />
+              </TabsContent>
               <TabsContent value="instances" className="mt-0 h-full">
                 <WhatsAppInstances embedded />
               </TabsContent>
               <TabsContent value="automations" className="mt-0 h-full">
                 <WhatsAppAutomations embedded />
-              </TabsContent>
-              <TabsContent value="ai-agent" className="mt-0 h-full">
-                <WhatsAppAIAgent embedded />
               </TabsContent>
             </Suspense>
           </div>
