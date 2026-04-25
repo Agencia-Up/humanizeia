@@ -336,6 +336,23 @@ export default function WhatsAppContacts() {
     }
   };
 
+  const deleteContact = async (contactId: string) => {
+    if (!confirm('Remover este contato da lista?')) return;
+    try {
+      const { error } = await supabase.from('wa_contacts').delete().eq('id', contactId);
+      if (error) throw error;
+      toast({ title: 'Contato removido.' });
+      if (selectedList) {
+        fetchContacts(selectedList.id);
+        const { count } = await supabase.from('wa_contacts').select('id', { count: 'exact', head: true }).eq('list_id', selectedList.id);
+        await supabase.from('wa_contact_lists').update({ contact_count: count || 0 } as any).eq('id', selectedList.id);
+        fetchLists();
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao remover', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const extractGoogleMaps = async () => {
     if (!user || !mapsQuery.trim()) return;
     setIsExtractingMaps(true);
@@ -614,6 +631,7 @@ export default function WhatsAppContacts() {
                             <TableHead>Origem</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Adicionado</TableHead>
+                            <TableHead className="w-10"></TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -628,10 +646,19 @@ export default function WhatsAppContacts() {
                               <TableCell><Badge variant="outline" className="text-xs">{sourceLabels[contact.source]?.label || contact.source}</Badge></TableCell>
                               <TableCell><Badge variant={contact.is_valid ? 'secondary' : 'destructive'} className="text-xs">{contact.is_valid ? 'Válido' : 'Inválido'}</Badge></TableCell>
                               <TableCell className="text-xs text-muted-foreground">{format(new Date(contact.created_at), 'dd/MM/yy', { locale: ptBR })}</TableCell>
+                              <TableCell>
+                                <button
+                                  onClick={() => deleteContact(contact.id)}
+                                  className="p-1.5 rounded-md text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                                  title="Remover contato"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </TableCell>
                             </TableRow>
                           ))}
                           {filteredContacts.length === 0 && (
-                            <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Nenhum resultado para "{search}"</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Nenhum resultado para "{search}"</TableCell></TableRow>
                           )}
                         </TableBody>
                       </Table>
