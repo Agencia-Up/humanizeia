@@ -130,9 +130,13 @@ serve(async (req) => {
       const steps = [...sequence.steps].sort((a: any, b: any) => a.step_order - b.step_order);
       let accumulatedHours = 0;
 
+      let hasImmediate = false;
+
       for (const step of steps) {
         accumulatedHours += step.delay_hours;
         const scheduledFor = new Date(Date.now() + accumulatedHours * 60 * 60 * 1000).toISOString();
+        const isImmediate = accumulatedHours === 0;
+        if (isImmediate) hasImmediate = true;
 
         await supabase.from("followup_queue").insert({
           user_id: form.user_id,
@@ -145,6 +149,20 @@ serve(async (req) => {
           status: "scheduled",
           scheduled_for: scheduledFor,
         });
+      }
+
+      // Dispara o processador imediatamente se houver mensagem com delay 0
+      // (não espera o cron de 5 min — enviada segundos após o cadastro)
+      if (hasImmediate) {
+        const processorUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/process-followup-queue`;
+        fetch(processorUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: "{}",
+        }).catch((err: Error) => console.error("[form-submit] trigger followup processor:", err.message));
       }
     }
 
