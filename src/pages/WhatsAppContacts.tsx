@@ -13,6 +13,7 @@ import {
   Contact, Search, Trash2, Loader2, Plus, FolderOpen, Users, Phone, Tag,
   Edit, Eye, ArrowLeft, MoreHorizontal, MapPin, MessageCircle, Globe,
   Download, RefreshCw, UserPlus, CheckCircle, WifiOff, Upload,
+  CheckCheck, Clock, AlertCircle, MessageSquare,
 } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -148,6 +149,8 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
+  // followup status por telefone: { [phone]: { status, sent_at } }
+  const [followupStatus, setFollowupStatus] = useState<Record<string, { status: string; sent_at: string | null }>>({});
 
   // Dialogs
   const [showNewList, setShowNewList] = useState(false);
@@ -237,7 +240,27 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         .eq('list_id', listId)
         .order('created_at', { ascending: false });
       if (error) throw error;
-      setContacts((data as WAContact[]) || []);
+      const contacts = (data as WAContact[]) || [];
+      setContacts(contacts);
+
+      // Busca status de followup para os telefones da lista
+      if (contacts.length > 0) {
+        const phones = contacts.map(c => c.phone);
+        const { data: fq } = await (supabase as any)
+          .from('followup_queue')
+          .select('phone, status, sent_at')
+          .in('phone', phones)
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+        // Pega o status mais recente por telefone
+        const map: Record<string, { status: string; sent_at: string | null }> = {};
+        for (const row of (fq || [])) {
+          if (!map[row.phone]) map[row.phone] = { status: row.status, sent_at: row.sent_at };
+        }
+        setFollowupStatus(map);
+      } else {
+        setFollowupStatus({});
+      }
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     }
@@ -594,132 +617,216 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                   })}
                 </div>
               )
-            ) : (
-              <Card>
-                <CardHeader>
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                    <CardTitle className="text-lg">{selectedList.name}</CardTitle>
-                    <div className="relative w-full sm:w-64">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input placeholder="Buscar por telefone, nome..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+            ) : (() => {
+              const SKIP_META = new Set(['form_id', 'form_name', 'email', 'submission_id']);
+              const formKeys = Array.from(new Set(
+                filteredContacts.flatMap(c => Object.keys(c.metadata || {}).filter(k => !SKIP_META.has(k)))
+              ));
+              const hasForm = formKeys.length > 0;
+
+              // Contadores de status WA
+              const waSent = contacts.filter(c => followupStatus[c.phone]?.status === 'sent').length;
+              const waPending = contacts.filter(c => followupStatus[c.phone]?.status === 'scheduled').length;
+              const waFailed = contacts.filter(c => followupStatus[c.phone]?.status === 'failed').length;
+              const waNoInfo = contacts.length - waSent - waPending - waFailed;
+
+              return (
+              <div className="space-y-3">
+                {/* Header da lista */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold">{selectedList.name}</h2>
+                    <p className="text-xs text-muted-foreground">{contacts.length} contatos</p>
+                  </div>
+                  <div className="relative w-full sm:w-72">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input placeholder="Buscar por telefone, nome..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-9" />
+                  </div>
+                </div>
+
+                {/* Painel de status WhatsApp */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
+                    <CheckCheck className="h-4 w-4 text-emerald-500 shrink-0" />
+                    <div>
+                      <p className="text-xs text-muted-foreground leading-none mb-0.5">Confirmação enviada</p>
+                      <p className="text-lg font-bold text-emerald-500 leading-none">{waSent}</p>
                     </div>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  {contacts.length === 0 ? (
-                    <div className="text-center py-12 text-muted-foreground">
-                      <Users className="h-10 w-10 mx-auto mb-3 opacity-40" />
-                      <p>Nenhum contato nesta lista</p>
-                      <Button size="sm" className="mt-3" onClick={() => { setTargetListId(selectedList.id); setShowAddContacts(true); }}>
-                        <Plus className="h-4 w-4 mr-1" /> Adicionar Contatos
-                      </Button>
+                  <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                    <Clock className="h-4 w-4 text-amber-500 shrink-0" />
+                    <div>
+                      <p className="text-xs text-muted-foreground leading-none mb-0.5">Aguardando envio</p>
+                      <p className="text-lg font-bold text-amber-500 leading-none">{waPending}</p>
                     </div>
-                  ) : (() => {
-                    // Campos dinâmicos do formulário presentes no metadata dos contatos
-                    const SKIP_META = new Set(['form_id', 'form_name', 'email', 'submission_id']);
-                    const formKeys = Array.from(
-                      new Set(
-                        filteredContacts.flatMap(c =>
-                          Object.keys(c.metadata || {}).filter(k => !SKIP_META.has(k))
-                        )
-                      )
-                    );
-                    const hasFormFields = formKeys.length > 0;
-                    const totalCols = 8 + formKeys.length;
+                  </div>
+                  <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">
+                    <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
+                    <div>
+                      <p className="text-xs text-muted-foreground leading-none mb-0.5">Falha no envio</p>
+                      <p className="text-lg font-bold text-red-500 leading-none">{waFailed}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 bg-muted/40 border border-border/40 rounded-xl px-3 py-2">
+                    <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-xs text-muted-foreground leading-none mb-0.5">Sem informação</p>
+                      <p className="text-lg font-bold text-muted-foreground leading-none">{waNoInfo}</p>
+                    </div>
+                  </div>
+                </div>
 
-                    return (
-                      <div className="overflow-x-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="w-10">
-                                <Checkbox
-                                  checked={selectedContacts.length === filteredContacts.length && filteredContacts.length > 0}
-                                  onCheckedChange={() => setSelectedContacts(selectedContacts.length === filteredContacts.length ? [] : filteredContacts.map(c => c.id))}
-                                />
+                {/* Tabela */}
+                {contacts.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground border rounded-2xl">
+                    <Users className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                    <p>Nenhum contato nesta lista</p>
+                    <Button size="sm" className="mt-3" onClick={() => { setTargetListId(selectedList.id); setShowAddContacts(true); }}>
+                      <Plus className="h-4 w-4 mr-1" /> Adicionar Contatos
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="border rounded-2xl overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/30 hover:bg-muted/30">
+                            <TableHead className="w-10 pl-4">
+                              <Checkbox
+                                checked={selectedContacts.length === filteredContacts.length && filteredContacts.length > 0}
+                                onCheckedChange={() => setSelectedContacts(selectedContacts.length === filteredContacts.length ? [] : filteredContacts.map(c => c.id))}
+                              />
+                            </TableHead>
+                            <TableHead className="font-semibold text-xs uppercase tracking-wide">Contato</TableHead>
+                            <TableHead className="font-semibold text-xs uppercase tracking-wide w-28 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <MessageSquare className="h-3 w-3 text-green-500" />
+                                Confirm. WA
+                              </div>
+                            </TableHead>
+                            {formKeys.map(k => (
+                              <TableHead key={k} className="font-semibold text-xs uppercase tracking-wide min-w-[130px]">
+                                <span className="truncate block max-w-[160px]" title={k}>{k}</span>
                               </TableHead>
-                              <TableHead>Telefone</TableHead>
-                              <TableHead>Nome</TableHead>
-                              {/* Colunas dinâmicas do formulário */}
-                              {formKeys.map(k => (
-                                <TableHead key={k} className="min-w-[140px] max-w-[200px]">
-                                  <span className="truncate block text-xs leading-tight" title={k}>{k}</span>
-                                </TableHead>
-                              ))}
-                              <TableHead>Origem</TableHead>
-                              <TableHead>Status</TableHead>
-                              <TableHead>Adicionado</TableHead>
-                              <TableHead className="w-10"></TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {filteredContacts.map(contact => (
-                              <TableRow key={contact.id}>
-                                <TableCell>
-                                  <Checkbox checked={selectedContacts.includes(contact.id)} onCheckedChange={() => setSelectedContacts(prev => prev.includes(contact.id) ? prev.filter(c => c !== contact.id) : [...prev, contact.id])} />
-                                </TableCell>
-                                <TableCell className="font-mono text-sm">{contact.phone}</TableCell>
-                                <TableCell>
-                                  <div>
-                                    <p className="font-medium text-sm">{contact.name || '—'}</p>
-                                    {contact.metadata?.email && (
-                                      <p className="text-[10px] text-muted-foreground">{contact.metadata.email}</p>
+                            ))}
+                            <TableHead className="font-semibold text-xs uppercase tracking-wide">Cadastro</TableHead>
+                            <TableHead className="w-10 pr-4"></TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredContacts.map(contact => {
+                            const wa = followupStatus[contact.phone];
+                            return (
+                              <TableRow key={contact.id} className="hover:bg-muted/10 group">
+                                <TableCell className="pl-4">
+                                  <Checkbox
+                                    checked={selectedContacts.includes(contact.id)}
+                                    onCheckedChange={() => setSelectedContacts(prev =>
+                                      prev.includes(contact.id) ? prev.filter(c => c !== contact.id) : [...prev, contact.id]
                                     )}
+                                  />
+                                </TableCell>
+
+                                {/* Contato */}
+                                <TableCell>
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                                      <span className="text-xs font-bold text-primary">
+                                        {(contact.name || contact.phone)[0].toUpperCase()}
+                                      </span>
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="font-semibold text-sm leading-tight truncate">{contact.name || '—'}</p>
+                                      <p className="text-xs text-muted-foreground font-mono leading-tight">{contact.phone}</p>
+                                      {contact.metadata?.email && (
+                                        <p className="text-[10px] text-muted-foreground/70 leading-tight truncate">{contact.metadata.email}</p>
+                                      )}
+                                    </div>
                                   </div>
                                 </TableCell>
-                                {/* Células dinâmicas */}
-                                {formKeys.map(k => (
-                                  <TableCell key={k} className="max-w-[200px]">
-                                    <span
-                                      className="text-sm block truncate"
-                                      title={String(contact.metadata?.[k] ?? '')}
-                                    >
-                                      {contact.metadata?.[k] != null && contact.metadata[k] !== ''
-                                        ? String(contact.metadata[k])
-                                        : <span className="text-muted-foreground/40">—</span>
-                                      }
+
+                                {/* Status WA */}
+                                <TableCell className="text-center">
+                                  {!wa ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50 bg-muted/30 rounded-full px-2 py-0.5">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
+                                      Sem info
                                     </span>
-                                  </TableCell>
-                                ))}
-                                <TableCell>
-                                  <Badge variant="outline" className="text-xs">
-                                    {contact.source === 'form' ? 'form' : (sourceLabels[contact.source]?.label || contact.source)}
-                                  </Badge>
+                                  ) : wa.status === 'sent' ? (
+                                    <div className="inline-flex flex-col items-center gap-0.5">
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-0.5">
+                                        <CheckCheck className="h-3 w-3" /> Enviada
+                                      </span>
+                                      {wa.sent_at && (
+                                        <span className="text-[9px] text-muted-foreground">
+                                          {format(new Date(wa.sent_at), 'dd/MM HH:mm', { locale: ptBR })}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : wa.status === 'scheduled' ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded-full px-2 py-0.5">
+                                      <Clock className="h-3 w-3" /> Pendente
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-500 bg-red-500/10 border border-red-500/20 rounded-full px-2 py-0.5">
+                                      <AlertCircle className="h-3 w-3" /> Falha
+                                    </span>
+                                  )}
                                 </TableCell>
-                                <TableCell>
-                                  <Badge variant={contact.is_valid ? 'secondary' : 'destructive'} className="text-xs">
-                                    {contact.is_valid ? 'Válido' : 'Inválido'}
-                                  </Badge>
+
+                                {/* Respostas do formulário */}
+                                {formKeys.map(k => {
+                                  const val = contact.metadata?.[k];
+                                  const isEmpty = val == null || val === '';
+                                  return (
+                                    <TableCell key={k}>
+                                      {isEmpty ? (
+                                        <span className="text-muted-foreground/30 text-sm">—</span>
+                                      ) : (
+                                        <span
+                                          className="inline-block max-w-[160px] truncate text-sm bg-muted/30 rounded-lg px-2 py-0.5"
+                                          title={String(val)}
+                                        >
+                                          {String(val)}
+                                        </span>
+                                      )}
+                                    </TableCell>
+                                  );
+                                })}
+
+                                {/* Data */}
+                                <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                                  {format(new Date(contact.created_at), "dd/MM/yy", { locale: ptBR })}
                                 </TableCell>
-                                <TableCell className="text-xs text-muted-foreground">
-                                  {format(new Date(contact.created_at), 'dd/MM/yy', { locale: ptBR })}
-                                </TableCell>
-                                <TableCell>
+
+                                {/* Ações */}
+                                <TableCell className="pr-4">
                                   <button
                                     onClick={() => deleteContact(contact.id)}
-                                    className="p-1.5 rounded-md text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                                    className="p-1.5 rounded-md text-muted-foreground/40 hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
                                     title="Remover contato"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
                                 </TableCell>
                               </TableRow>
-                            ))}
-                            {filteredContacts.length === 0 && (
-                              <TableRow>
-                                <TableCell colSpan={totalCols} className="text-center py-8 text-muted-foreground">
-                                  Nenhum resultado para "{search}"
-                                </TableCell>
-                              </TableRow>
-                            )}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    );
-                  })()}
-                </CardContent>
-              </Card>
-            )}
+                            );
+                          })}
+                          {filteredContacts.length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={5 + formKeys.length} className="text-center py-8 text-muted-foreground">
+                                Nenhum resultado para "{search}"
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
+              </div>
+              );
+            })()}
           </TabsContent>
 
           {/* ============ TAB: Meus Grupos ============ */}
