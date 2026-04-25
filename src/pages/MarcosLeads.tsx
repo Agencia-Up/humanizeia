@@ -69,13 +69,13 @@ export default function MarcosLeads() {
             </TabsList>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div className="flex-1 min-h-0 overflow-hidden">
             <Suspense fallback={<TabLoader />}>
               <TabsContent value="crm" className="mt-0 h-full">
                 <FluxCRM embedded />
               </TabsContent>
               <TabsContent value="formularios" className="mt-0 h-full">
-                <CrmFormularios />
+                <CrmFormularios embedded />
               </TabsContent>
               <TabsContent value="contacts" className="mt-0 h-full">
                 <WhatsAppContacts embedded />

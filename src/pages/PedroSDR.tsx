@@ -58,7 +58,7 @@ export default function PedroSDR() {
             </TabsList>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div className="flex-1 min-h-0 overflow-hidden">
             <Suspense fallback={<TabLoader />}>
               <TabsContent value="agente"  className="mt-0 h-full">
                 <WhatsAppAIAgent embedded />
