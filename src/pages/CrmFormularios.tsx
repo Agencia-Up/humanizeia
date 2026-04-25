@@ -11,11 +11,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import {
   ClipboardCopy, ExternalLink, FilePlus2, Loader2, Pencil, Plus, Trash2,
   Users, Zap, Image, Type, AlignLeft, ChevronDown, CheckSquare,
   Circle, Star, Calendar, Hash, Mail, Phone, Upload, X, GripVertical,
-  Eye, Settings, LayoutTemplate, MessageSquare,
+  Eye, Settings, LayoutTemplate, MessageSquare, QrCode, Download, Printer,
 } from 'lucide-react';
 
 /* ─── Tipos ─────────────────────────────────────────────────────────────── */
@@ -140,6 +141,9 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
   const [contactLists, setContactLists]   = useState<any[]>([]);
   const [newListName, setNewListName]     = useState('');
+
+  const [qrForm, setQrForm]     = useState<CaptureForm | null>(null);
+  const [openQr, setOpenQr]     = useState(false);
   const [creatingList, setCreatingList]   = useState(false);
 
   const logoRef  = useRef<HTMLInputElement>(null);
@@ -331,6 +335,55 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
   const copyLink = (id: string) => { navigator.clipboard.writeText(`${baseUrl}/${id}`); toast({ title: '🔗 Link copiado!' }); };
 
+  const downloadQrPng = (form: CaptureForm) => {
+    const canvas = document.getElementById(`qr-canvas-${form.id}`) as HTMLCanvasElement;
+    if (!canvas) return;
+    const link = document.createElement('a');
+    link.download = `qrcode-${form.name.replace(/\s+/g, '-').toLowerCase()}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
+  const printQr = (form: CaptureForm) => {
+    const url = `${baseUrl}/${form.id}`;
+    const color = form.primary_color || '#6366f1';
+    const win = window.open('', '_blank', 'width=600,height=700');
+    if (!win) return;
+    const canvas = document.getElementById(`qr-canvas-${form.id}`) as HTMLCanvasElement;
+    const dataUrl = canvas?.toDataURL('image/png') || '';
+    win.document.write(`
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8" />
+        <title>QR Code — ${form.title}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 32px; }
+          .card { text-align: center; max-width: 360px; width: 100%; }
+          .badge { display: inline-block; background: ${color}22; color: ${color}; border: 1.5px solid ${color}55; border-radius: 99px; padding: 4px 14px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 20px; }
+          .qr { display: block; margin: 0 auto 20px; border: 3px solid #f1f1f1; border-radius: 16px; padding: 12px; }
+          h1 { font-size: 22px; font-weight: 800; color: #111; margin-bottom: 6px; }
+          p  { font-size: 13px; color: #666; margin-bottom: 20px; }
+          .url { font-size: 11px; color: #aaa; word-break: break-all; border-top: 1px dashed #e5e5e5; padding-top: 16px; margin-top: 8px; }
+          @media print { body { min-height: unset; } }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="badge">Formulário</div>
+          <img class="qr" src="${dataUrl}" width="220" height="220" alt="QR Code" />
+          <h1>${form.title}</h1>
+          ${form.description ? `<p>${form.description}</p>` : ''}
+          <div class="url">${url}</div>
+        </div>
+        <script>window.onload = () => { window.print(); }<\/script>
+      </body>
+      </html>
+    `);
+    win.document.close();
+  };
+
   const color = editingForm.primary_color || '#6366f1';
 
   /* ── render ── */
@@ -400,6 +453,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
                 <div className="flex flex-wrap gap-1.5">
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => copyLink(form.id)}><ClipboardCopy className="h-3 w-3" />Link</Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => window.open(`/f/${form.id}`, '_blank')}><ExternalLink className="h-3 w-3" />Ver</Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-indigo-500 border-indigo-500/30 hover:bg-indigo-500/10" onClick={() => { setQrForm(form); setOpenQr(true); }}><QrCode className="h-3 w-3" />QR Code</Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => openSubs(form)}><Users className="h-3 w-3" />Leads</Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-purple-500 border-purple-500/30 hover:bg-purple-500/10" onClick={() => openSeq(form)}><Zap className="h-3 w-3" />Follow-up</Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { setEditingId(form.id); setEditingForm({ ...EMPTY_FORM, ...form }); setEditorTab('design'); setOpenEditor(true); }}><Pencil className="h-3 w-3" />Editar</Button>
@@ -885,6 +939,77 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── QR Code ── */}
+      <Dialog open={openQr} onOpenChange={setOpenQr}>
+        <DialogContent className="max-w-sm w-full">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="h-5 w-5 text-indigo-500" />
+              QR Code — {qrForm?.title}
+            </DialogTitle>
+          </DialogHeader>
+
+          {qrForm && (() => {
+            const url = `${baseUrl}/${qrForm.id}`;
+            const qrColor = qrForm.primary_color || '#6366f1';
+            return (
+              <div className="flex flex-col items-center gap-5 pt-2">
+                {/* QR visível (SVG) */}
+                <div className="p-4 rounded-2xl border-2 border-border/50 bg-white shadow-inner">
+                  <QRCodeSVG
+                    value={url}
+                    size={220}
+                    fgColor={qrColor}
+                    bgColor="#ffffff"
+                    level="H"
+                    includeMargin={false}
+                  />
+                </div>
+
+                {/* Canvas oculto para download/impressão */}
+                <QRCodeCanvas
+                  id={`qr-canvas-${qrForm.id}`}
+                  value={url}
+                  size={600}
+                  fgColor={qrColor}
+                  bgColor="#ffffff"
+                  level="H"
+                  includeMargin={true}
+                  style={{ display: 'none' }}
+                />
+
+                <div className="text-center space-y-1 w-full">
+                  <p className="font-semibold text-sm text-foreground">{qrForm.title}</p>
+                  <p className="text-[11px] text-muted-foreground break-all">{url}</p>
+                </div>
+
+                <div className="flex gap-2 w-full">
+                  <Button
+                    variant="outline"
+                    className="flex-1 gap-2 h-10"
+                    onClick={() => downloadQrPng(qrForm)}
+                  >
+                    <Download className="h-4 w-4" /> Baixar PNG
+                  </Button>
+                  <Button
+                    className="flex-1 gap-2 h-10"
+                    style={{ background: qrColor }}
+                    onClick={() => printQr(qrForm)}
+                  >
+                    <Printer className="h-4 w-4" /> Imprimir
+                  </Button>
+                </div>
+
+                <p className="text-[10px] text-muted-foreground text-center">
+                  Aponte a câmera do celular para o QR Code para abrir o formulário
+                </p>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       </div>
   );
 
