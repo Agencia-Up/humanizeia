@@ -207,7 +207,36 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     setUploadingCover(false);
   };
 
-  /* ── salvar formulário ── */
+  /* ── abrir editor (carrega sequência se existir) ── */
+  const handleOpenEditor = async (form?: CaptureForm) => {
+    if (form) {
+      setEditingId(form.id);
+      setEditingForm({ ...EMPTY_FORM, ...form });
+      // Carrega sequência de follow-up do banco
+      const { data: seq } = await (supabase as any)
+        .from('followup_sequences')
+        .select('*, steps:followup_sequence_steps(*)')
+        .eq('form_id', form.id)
+        .eq('user_id', user!.id)
+        .maybeSingle();
+      if (seq) {
+        setSequence(seq);
+        setSteps([...seq.steps].sort((a: any, b: any) => a.step_order - b.step_order));
+      } else {
+        setSequence(null);
+        setSteps([{ step_order: 1, delay_hours: 0, message_text: '' }]);
+      }
+    } else {
+      setEditingId(null);
+      setEditingForm(EMPTY_FORM);
+      setSequence(null);
+      setSteps([{ step_order: 1, delay_hours: 0, message_text: '' }]);
+    }
+    setEditorTab('design');
+    setOpenEditor(true);
+  };
+
+  /* ── salvar formulário (inclui sequência de follow-up) ── */
   const handleSaveForm = async () => {
     if (!user) return;
     if (!editingForm.name.trim() || !editingForm.title.trim()) {
@@ -216,15 +245,44 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     setSaving(true);
     try {
       const payload = { ...editingForm, user_id: user.id };
+      let formId = editingId;
       if (editingId) {
         const { error } = await (supabase as any).from('capture_forms').update(payload).eq('id', editingId);
         if (error) throw error;
-        toast({ title: '✅ Formulário atualizado!' });
       } else {
-        const { error } = await (supabase as any).from('capture_forms').insert(payload);
+        const { data: newForm, error } = await (supabase as any).from('capture_forms').insert(payload).select('id').single();
         if (error) throw error;
-        toast({ title: '✅ Formulário criado!' });
+        formId = newForm.id;
       }
+
+      // Salva sequência de follow-up se houver mensagens preenchidas
+      const filledSteps = steps.filter(s => s.message_text.trim());
+      if (filledSteps.length > 0 && formId) {
+        let seqId = sequence?.id;
+        if (!seqId) {
+          const { data: newSeq, error: seqErr } = await (supabase as any)
+            .from('followup_sequences')
+            .insert({ user_id: user.id, form_id: formId, name: `Sequência — ${editingForm.name}`, instance_id: editingForm.instance_id || null, is_active: true })
+            .select('id').single();
+          if (seqErr) console.error('Erro ao criar sequência:', seqErr.message);
+          else seqId = newSeq?.id;
+        } else {
+          await (supabase as any).from('followup_sequences')
+            .update({ instance_id: editingForm.instance_id || null, is_active: true })
+            .eq('id', seqId);
+        }
+        if (seqId) {
+          await (supabase as any).from('followup_sequence_steps').delete().eq('sequence_id', seqId);
+          for (let i = 0; i < filledSteps.length; i++) {
+            await (supabase as any).from('followup_sequence_steps').insert({
+              sequence_id: seqId, user_id: user.id, step_order: i + 1,
+              delay_hours: filledSteps[i].delay_hours, message_text: filledSteps[i].message_text,
+            });
+          }
+        }
+      }
+
+      toast({ title: editingId ? '✅ Formulário atualizado!' : '✅ Formulário criado!' });
       setOpenEditor(false); fetchAll();
     } catch (e: any) {
       toast({ title: 'Erro', description: e.message, variant: 'destructive' });
@@ -400,7 +458,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
           <h1 className="text-2xl font-bold">Formulários de Captura</h1>
           <p className="text-sm text-muted-foreground mt-1">Crie formulários personalizados e capture leads direto no CRM.</p>
         </div>
-        <Button onClick={() => { setEditingId(null); setEditingForm(EMPTY_FORM); setEditorTab('design'); setOpenEditor(true); }} className="gap-2">
+        <Button onClick={() => handleOpenEditor()} className="gap-2">
           <FilePlus2 className="h-4 w-4" /> Novo Formulário
         </Button>
       </div>
@@ -456,7 +514,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-indigo-500 border-indigo-500/30 hover:bg-indigo-500/10" onClick={() => { setQrForm(form); setOpenQr(true); }}><QrCode className="h-3 w-3" />QR Code</Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => openSubs(form)}><Users className="h-3 w-3" />Leads</Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-purple-500 border-purple-500/30 hover:bg-purple-500/10" onClick={() => openSeq(form)}><Zap className="h-3 w-3" />Follow-up</Button>
-                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { setEditingId(form.id); setEditingForm({ ...EMPTY_FORM, ...form }); setEditorTab('design'); setOpenEditor(true); }}><Pencil className="h-3 w-3" />Editar</Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleOpenEditor(form)}><Pencil className="h-3 w-3" />Editar</Button>
                   <Button size="sm" variant="ghost" className="h-7 text-xs text-red-400 hover:text-red-500 px-2" onClick={() => handleDelete(form.id)}><Trash2 className="h-3 w-3" /></Button>
                 </div>
               </div>
