@@ -10,13 +10,6 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const authHeader = req.headers.get("authorization") ?? "";
-  if (authHeader.replace("Bearer ", "") !== serviceKey) {
-    return new Response(JSON.stringify({ error: "Não autorizado" }), {
-      status: 401, headers: { ...cors, "Content-Type": "application/json" },
-    });
-  }
-
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
 
   try {
