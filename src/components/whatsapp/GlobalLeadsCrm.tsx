@@ -20,11 +20,11 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 const KANBAN_COLUMNS = [
-  { id: 'novo', title: '­ƒö░ Novo', borderColor: 'border-slate-500/30', headerBg: 'bg-slate-500/10', dotColor: 'bg-slate-400' },
-  { id: 'interessado', title: '­ƒæÇ Interessado', borderColor: 'border-yellow-500/30', headerBg: 'bg-yellow-500/10', dotColor: 'bg-yellow-400' },
-  { id: 'qualificado', title: '­ƒÄ» Qualificado', borderColor: 'border-green-500/30', headerBg: 'bg-green-500/10', dotColor: 'bg-green-400' },
-  { id: 'transferido', title: '­ƒñØ Transferido', borderColor: 'border-blue-500/30', headerBg: 'bg-blue-500/10', dotColor: 'bg-blue-400' },
-  { id: 'encerrado', title: '­ƒÜ½ Encerrado', borderColor: 'border-red-500/30', headerBg: 'bg-red-500/10', dotColor: 'bg-red-400' },
+  { id: 'novo', title: '✨ Novo', borderColor: 'border-slate-500/30', headerBg: 'bg-slate-500/10', dotColor: 'bg-slate-400' },
+  { id: 'interessado', title: '👀 Interessado', borderColor: 'border-yellow-500/30', headerBg: 'bg-yellow-500/10', dotColor: 'bg-yellow-400' },
+  { id: 'qualificado', title: '🎯 Qualificado', borderColor: 'border-green-500/30', headerBg: 'bg-green-500/10', dotColor: 'bg-green-400' },
+  { id: 'transferido', title: '🤝 Transferido', borderColor: 'border-blue-500/30', headerBg: 'bg-blue-500/10', dotColor: 'bg-blue-400' },
+  { id: 'encerrado', title: '🚫 Encerrado', borderColor: 'border-red-500/30', headerBg: 'bg-red-500/10', dotColor: 'bg-red-400' },
 ];
 
 interface TransferStats {
@@ -98,7 +98,7 @@ export function GlobalLeadsCrm() {
         if (payload.eventType === 'INSERT') {
           const newLead = payload.new as any;
           toast({
-            title: '­ƒåò Novo lead recebido!',
+            title: '📥 Novo lead recebido!',
             description: `${newLead.lead_name || newLead.remote_jid} entrou no CRM.`,
           });
         }
@@ -168,7 +168,7 @@ export function GlobalLeadsCrm() {
         from_agent_id: lead?.agent_id || null,
         to_member_id: memberId,
         transfer_reason: 'manual',
-        notes: 'Transfer├¬ncia manual pelo gerente',
+        notes: 'Transferência manual pelo gerente',
       });
 
       const member = teamMembers.find(m => m.id === memberId);
@@ -193,13 +193,13 @@ export function GlobalLeadsCrm() {
       return;
     }
     
-    if (!confirm(`Deseja transferir este lead para ${nextMember.name} (Pr├│ximo da fila)?`)) return;
+    if (!confirm(`Deseja transferir este lead para ${nextMember.name} (Próximo da fila)?`)) return;
     
     await handleManualTransfer(leadId, nextMember.id);
   };
 
   const handleDeleteLead = async (leadId: string) => {
-    if (!confirm('Deseja realmente remover este lead do CRM? Isso n├úo apagar├í o hist├│rico de conversas.')) return;
+    if (!confirm('Deseja realmente remover este lead do CRM? Isso não apagará o histórico de conversas.')) return;
     try {
       const { error } = await (supabase as any)
         .from('ai_crm_leads')
@@ -242,10 +242,10 @@ export function GlobalLeadsCrm() {
       <Tabs defaultValue="pipeline" className="w-full">
         <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-primary/15 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-1">
-            <p className="text-[11px] uppercase tracking-[0.25em] text-primary/80">Novo modo de exibi├º├úo</p>
+            <p className="text-[11px] uppercase tracking-[0.25em] text-primary/80">Novo modo de exibição</p>
             <h2 className="text-lg font-semibold">CRM Ao Vivo para TV</h2>
             <p className="text-sm text-muted-foreground">
-              Abra uma visualiza├º├úo em tela cheia com atualiza├º├úo autom├ítica, rod├¡zio do Pedro e vendedor respons├ível em destaque.
+              Abra uma visualização em tela cheia com atualização automática, rodízio do Pedro e vendedor responsável em destaque.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -269,15 +269,15 @@ export function GlobalLeadsCrm() {
 
         <TabsList className="bg-card border mb-4">
           <TabsTrigger value="pipeline" className="gap-1.5 text-xs"><Users className="h-3.5 w-3.5" /> Pipeline</TabsTrigger>
-          <TabsTrigger value="manager" className="gap-1.5 text-xs"><BarChart3 className="h-3.5 w-3.5" /> Vis├úo Gerente</TabsTrigger>
-          <TabsTrigger value="history" className="gap-1.5 text-xs"><PhoneForwarded className="h-3.5 w-3.5" /> Transfer├¬ncias</TabsTrigger>
+          <TabsTrigger value="manager" className="gap-1.5 text-xs"><BarChart3 className="h-3.5 w-3.5" /> Visão Gerente</TabsTrigger>
+          <TabsTrigger value="history" className="gap-1.5 text-xs"><PhoneForwarded className="h-3.5 w-3.5" /> Transferências</TabsTrigger>
         </TabsList>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <KpiCard icon={<MessageSquare className="h-4 w-4" />} label="Total Leads" value={leads.length} color="text-primary" />
-          <KpiCard icon={<Calendar className="h-4 w-4" />} label="Transfer├¬ncias Hoje" value={totalStats.today} color="text-emerald-400" />
+          <KpiCard icon={<Calendar className="h-4 w-4" />} label="Transferências Hoje" value={totalStats.today} color="text-emerald-400" />
           <KpiCard icon={<CalendarDays className="h-4 w-4" />} label="Na Semana" value={totalStats.week} color="text-blue-400" />
-          <KpiCard icon={<CalendarRange className="h-4 w-4" />} label="No M├¬s" value={totalStats.month} color="text-violet-400" />
+          <KpiCard icon={<CalendarRange className="h-4 w-4" />} label="No Mês" value={totalStats.month} color="text-violet-400" />
         </div>
 
         <TabsContent value="pipeline" className="mt-0">
@@ -344,7 +344,7 @@ export function GlobalLeadsCrm() {
           <div className="space-y-4">
             <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs text-foreground/80">
               <TrendingUp className="h-4 w-4 text-primary shrink-0" />
-              <span><strong>Vis├úo do Gerente:</strong> Acompanhe a distribui├º├úo de leads por vendedor e o rod├¡zio autom├ítico.</span>
+              <span><strong>Visão do Gerente:</strong> Acompanhe a distribuição de leads por vendedor e o rodízio automático.</span>
             </div>
 
             <div className="grid gap-3">
@@ -359,7 +359,7 @@ export function GlobalLeadsCrm() {
                     <span className="col-span-2">Vendedor</span>
                     <span className="text-center">Hoje</span>
                     <span className="text-center">Semana</span>
-                    <span className="text-center">M├¬s</span>
+                    <span className="text-center">Mês</span>
                     <span className="text-center">Total</span>
                   </div>
 
@@ -382,7 +382,7 @@ export function GlobalLeadsCrm() {
                         </div>
                         <StatCell value={stat.today} label="Hoje" />
                         <StatCell value={stat.week} label="Semana" />
-                        <StatCell value={stat.month} label="M├¬s" />
+                        <StatCell value={stat.month} label="Mês" />
                         <StatCell value={stat.total} label="Total" accent />
                       </Card>
                     );
@@ -391,8 +391,8 @@ export function GlobalLeadsCrm() {
                   <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs text-muted-foreground mt-2">
                     <ArrowRightLeft className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
                     <div>
-                      <strong className="text-foreground">Rod├¡zio Autom├ítico:</strong> Os leads qualificados s├úo distribu├¡dos em sequ├¬ncia entre os vendedores ativos. 
-                      Quando todos recebem, a fila reinicia. Pr├│ximo na fila: <strong className="text-foreground">{getNextInQueue(teamMembers, transfers)}</strong>
+                      <strong className="text-foreground">Rodízio Automático:</strong> Os leads qualificados são distribuídos em sequência entre os vendedores ativos. 
+                      Quando todos recebem, a fila reinicia. Próximo na fila: <strong className="text-foreground">{getNextInQueue(teamMembers, transfers)}</strong>
                     </div>
                   </div>
                 </>
@@ -406,7 +406,7 @@ export function GlobalLeadsCrm() {
             {transfers.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground text-sm">
                 <PhoneForwarded className="h-8 w-8 mx-auto mb-3 opacity-40" />
-                Nenhuma transfer├¬ncia registrada ainda.
+                Nenhuma transferência registrada ainda.
               </div>
             ) : (
               transfers.slice(0, 50).map(t => (
@@ -417,11 +417,11 @@ export function GlobalLeadsCrm() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 text-sm">
                       <span className="font-semibold truncate">{t.lead?.lead_name || t.lead?.remote_jid || 'Lead'}</span>
-                      <span className="text-muted-foreground">ÔåÆ</span>
+                      <span className="text-muted-foreground">→</span>
                       <span className="text-primary font-medium">{t.member?.name || '?'}</span>
                     </div>
                     <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-0.5">
-                      <span>Agente: {t.agent?.name || 'ÔÇö'}</span>
+                      <span>Agente: {t.agent?.name || '—'}</span>
                       <span>Motivo: {getTransferReasonLabel(t)}</span>
                     </div>
                   </div>
@@ -473,7 +473,7 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onN
       <div className="flex items-start justify-between mb-1.5">
         <div className="max-w-[80%]">
           <h4 className="font-semibold text-xs truncate" title={lead.lead_name || 'Lead'}>
-            {lead.lead_name || '­ƒæñ Lead An├┤nimo'}
+            {lead.lead_name || '👤 Lead Anônimo'}
           </h4>
           <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
             {(lead.remote_jid || '').replace('@s.whatsapp.net', '')}
@@ -500,7 +500,7 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onN
                 <DropdownMenuLabel className="text-[10px]">Transferir para vendedor</DropdownMenuLabel>
                 <DropdownMenuItem onClick={() => onNextInQueueTransfer(lead.id)} className="text-xs gap-2 cursor-pointer font-semibold text-emerald-600 dark:text-emerald-400">
                   <UserCheck className="h-3 w-3" />
-                  Pr├│ximo da Fila
+                  Próximo da Fila
                 </DropdownMenuItem>
                 {activeMembers.map(m => (
                   <DropdownMenuItem key={m.id} onClick={() => onTransfer(lead.id, m.id)} className="text-xs gap-2 cursor-pointer">
@@ -542,7 +542,7 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onN
         <div className="flex flex-col items-end gap-1.5">
           {lead.member && (
             <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-blue-500/30 text-blue-400 bg-blue-500/5">
-              ÔåÆ {lead.member.name}
+              → {lead.member.name}
             </Badge>
           )}
           
@@ -563,7 +563,7 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onN
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => onNextInQueueTransfer(lead.id)} className="text-xs gap-2 cursor-pointer font-semibold text-emerald-600 dark:text-emerald-400">
                   <UserCheck className="h-3 w-3" />
-                  Pr├│ximo da Fila
+                  Próximo da Fila
                 </DropdownMenuItem>
                 {activeMembers.map(m => (
                   <DropdownMenuItem key={m.id} onClick={() => onTransfer(lead.id, m.id)} className="text-xs gap-2 cursor-pointer">
@@ -612,7 +612,7 @@ function getNextMemberInQueue(members: any[], transfers: any[]): any | null {
 
 function getTransferReasonLabel(transfer: any) {
   if (transfer?.transfer_reason === 'manual') return 'Manual';
-  if (transfer?.transfer_reason === 'round_robin') return 'Rod├¡zio';
-  if (String(transfer?.notes || '').toLowerCase().includes('round-robin')) return 'Rod├¡zio';
-  return transfer?.transfer_reason || 'ÔÇö';
+  if (transfer?.transfer_reason === 'round_robin') return 'Rodízio';
+  if (String(transfer?.notes || '').toLowerCase().includes('round-robin')) return 'Rodízio';
+  return transfer?.transfer_reason || '—';
 }
