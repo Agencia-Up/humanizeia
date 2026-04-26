@@ -1277,7 +1277,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                       notes: `Transferido para ${selectedSeller.name} via round-robin`,
                     });
                     await supabase.from('ai_crm_leads').update({
-                      status: 'transferido', assigned_to_id: selectedSeller.id
+                      assigned_to_id: selectedSeller.id
                     }).eq('id', leadData.id);
                   }
 
