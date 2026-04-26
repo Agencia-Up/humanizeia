@@ -1082,5 +1082,9 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     </>
   );
 
-  return embedded ? content : <MainLayout>{content}</MainLayout>;
+  return embedded ? (
+    <div className="h-full overflow-y-auto">{content}</div>
+  ) : (
+    <MainLayout>{content}</MainLayout>
+  );
 }

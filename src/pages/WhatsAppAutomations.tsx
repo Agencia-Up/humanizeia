@@ -131,7 +131,7 @@ export default function WhatsAppAutomations({ embedded }: { embedded?: boolean }
   const getTriggerLabel = (val: string) => TRIGGER_OPTIONS.find(t => t.value === val)?.label || val;
   const getActionLabel = (val: string) => ACTION_OPTIONS.find(a => a.value === val)?.label || val;
 
-  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <div className="h-full overflow-y-auto">{children}</div> : MainLayout;
 
   return (
     <Wrapper>

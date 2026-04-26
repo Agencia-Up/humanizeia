@@ -518,7 +518,7 @@ Não numere as variações. Não inclua explicações adicionais.`
   );
 
   if (embedded) {
-    return <>{mainContent}{modals}</>;
+    return <div className="h-full overflow-y-auto">{mainContent}{modals}</div>;
   }
   return (
     <MainLayout>

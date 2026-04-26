@@ -111,6 +111,9 @@ function FieldPreview({ field, color }: { field: FormField; color: string }) {
   );
 }
 
+/* ─── Rascunho localStorage ─────────────────────────────────────────────── */
+const DRAFT_KEY = 'crm_formularios_editor_draft';
+
 /* ─── Componente principal ──────────────────────────────────────────────── */
 export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
@@ -151,6 +154,31 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
   const logoRef  = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
+
+  // Restaura rascunho do localStorage ao abrir o componente
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      if (draft && draft.editingForm) {
+        setEditingForm(draft.editingForm);
+        setEditingId(draft.editingId || null);
+        setEditorTab(draft.editorTab || 'design');
+        setSteps(draft.steps || [{ step_order: 1, delay_hours: 0, message_text: '' }]);
+        setOpenEditor(true);
+      }
+    } catch (_) { /* ignora erros de parse */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Salva rascunho no localStorage sempre que o editor tiver dados
+  useEffect(() => {
+    if (!openEditor) return;
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ editingForm, editingId, editorTab, steps }));
+    } catch (_) { /* ignora */ }
+  }, [openEditor, editingForm, editingId, editorTab, steps]);
   const baseUrl  = `${window.location.origin}/f`;
 
   /* ── fetch ── */
@@ -286,6 +314,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
       }
 
       toast({ title: editingId ? '✅ Formulário atualizado!' : '✅ Formulário criado!' });
+      localStorage.removeItem(DRAFT_KEY);
       setOpenEditor(false); fetchAll();
     } catch (e: any) {
       toast({ title: 'Erro', description: e.message, variant: 'destructive' });
@@ -619,7 +648,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => { if (confirm('Fechar sem salvar? Alterações não salvas serão perdidas.')) setOpenEditor(false); }}
+                onClick={() => { if (confirm('Fechar sem salvar? Alterações não salvas serão perdidas.')) { localStorage.removeItem(DRAFT_KEY); setOpenEditor(false); } }}
                 className="h-8 text-xs text-muted-foreground hover:text-foreground"
               >
                 <X className="h-3.5 w-3.5 mr-1" /> Fechar
@@ -1267,6 +1296,6 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
       </div>
   );
 
-  if (embedded) return mainContent;
+  if (embedded) return <div className="h-full overflow-y-auto">{mainContent}</div>;
   return <MainLayout>{mainContent}</MainLayout>;
 }
