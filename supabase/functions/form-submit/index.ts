@@ -55,13 +55,34 @@ serve(async (req) => {
     await supabase.rpc("increment_form_submissions" as any, { form_id_param: form_id }).maybeSingle();
 
     // 4. Joga lead no CRM (primeiro estágio do pipeline)
-    const { data: stage } = await supabase
+    // Busca primeiro estágio — cria etapas padrão se o usuário nunca abriu o CRM
+    let { data: stage } = await supabase
       .from("crm_pipeline_stages")
       .select("id")
       .eq("user_id", form.user_id)
       .order("position", { ascending: true })
       .limit(1)
       .maybeSingle();
+
+    if (!stage) {
+      // Usuário ainda não tem etapas — cria o pipeline padrão
+      const defaultStages = [
+        { user_id: form.user_id, name: "Novo Lead",    color: "#6366f1", position: 0, is_default: true },
+        { user_id: form.user_id, name: "Qualificado",  color: "#f59e0b", position: 1, is_default: false },
+        { user_id: form.user_id, name: "Proposta",     color: "#3b82f6", position: 2, is_default: false },
+        { user_id: form.user_id, name: "Negociação",   color: "#8b5cf6", position: 3, is_default: false },
+        { user_id: form.user_id, name: "Fechado",      color: "#10b981", position: 4, is_default: false },
+      ];
+      await supabase.from("crm_pipeline_stages").insert(defaultStages);
+      const { data: newStage } = await supabase
+        .from("crm_pipeline_stages")
+        .select("id")
+        .eq("user_id", form.user_id)
+        .order("position", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      stage = newStage;
+    }
 
     if (stage) {
       const { data: lastLead } = await supabase
@@ -72,7 +93,7 @@ serve(async (req) => {
         .limit(1)
         .maybeSingle();
 
-      await supabase.from("crm_leads").insert({
+      const { error: leadErr } = await supabase.from("crm_leads").insert({
         user_id: form.user_id,
         stage_id: stage.id,
         name: name || "Lead sem nome",
@@ -82,6 +103,7 @@ serve(async (req) => {
         position: ((lastLead?.position ?? 0) + 1),
         custom_fields: custom_data || {},
       });
+      if (leadErr) console.error("[form-submit] erro ao criar lead no CRM:", leadErr.message);
     }
 
     // 5. Salva contato na lista configurada (se houver)

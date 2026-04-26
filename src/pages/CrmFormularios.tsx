@@ -17,7 +17,7 @@ import {
   Users, Zap, Image, Type, AlignLeft, ChevronDown, CheckSquare,
   Circle, Star, Calendar, Hash, Mail, Phone, Upload, X, GripVertical,
   Eye, Settings, LayoutTemplate, MessageSquare, QrCode, Download, Printer,
-  FileDown, ChevronRight, ChevronUp,
+  FileDown, ChevronRight, ChevronUp, Kanban,
 } from 'lucide-react';
 
 /* ─── Tipos ─────────────────────────────────────────────────────────────── */
@@ -131,6 +131,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
   const [submissions, setSubmissions]     = useState<any[]>([]);
   const [submForm, setSubmForm]           = useState<CaptureForm | null>(null);
   const [submExpanded, setSubmExpanded]   = useState<string | null>(null);
+  const [syncingCrm, setSyncingCrm]       = useState(false);
 
   const [seqForm, setSeqForm]             = useState<CaptureForm | null>(null);
   const [sequence, setSequence]           = useState<any>(null);
@@ -327,6 +328,81 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     setSubmForm(form);
     const { data } = await (supabase as any).from('capture_form_submissions').select('*').eq('form_id', form.id).order('created_at', { ascending: false });
     setSubmissions(data || []); setOpenSubmissions(true);
+  };
+
+  const syncSubmissionsToCRM = async () => {
+    if (!user || !submForm || submissions.length === 0) return;
+    setSyncingCrm(true);
+    try {
+      // 1. Garante que o pipeline existe
+      let { data: stage } = await (supabase as any)
+        .from('crm_pipeline_stages')
+        .select('id')
+        .eq('user_id', user.id)
+        .order('position', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (!stage) {
+        const defaults = [
+          { user_id: user.id, name: 'Novo Lead',   color: '#6366f1', position: 0, is_default: true },
+          { user_id: user.id, name: 'Qualificado', color: '#f59e0b', position: 1, is_default: false },
+          { user_id: user.id, name: 'Proposta',    color: '#3b82f6', position: 2, is_default: false },
+          { user_id: user.id, name: 'Negociação',  color: '#8b5cf6', position: 3, is_default: false },
+          { user_id: user.id, name: 'Fechado',     color: '#10b981', position: 4, is_default: false },
+        ];
+        await supabase.from('crm_pipeline_stages' as any).insert(defaults);
+        const { data: newStage } = await (supabase as any)
+          .from('crm_pipeline_stages')
+          .select('id')
+          .eq('user_id', user.id)
+          .order('position', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        stage = newStage;
+      }
+
+      if (!stage) throw new Error('Não foi possível criar o pipeline');
+
+      // 2. Busca leads já existentes de formulários (para evitar duplicatas)
+      const { data: existingLeads } = await (supabase as any)
+        .from('crm_leads')
+        .select('custom_fields')
+        .eq('user_id', user.id)
+        .like('source', 'form:%');
+
+      const existingSubmissionIds = new Set(
+        (existingLeads || []).map((l: any) => l.custom_fields?.submission_id).filter(Boolean)
+      );
+
+      // 3. Insere leads que ainda não estão no CRM
+      const toInsert = submissions
+        .filter(s => !existingSubmissionIds.has(s.id))
+        .map((s, i) => ({
+          user_id: user!.id,
+          stage_id: stage.id,
+          name: s.name || 'Lead sem nome',
+          email: s.email || null,
+          phone: s.phone || null,
+          source: `form:${submForm!.name}`,
+          position: i,
+          custom_fields: { ...(s.custom_data || {}), submission_id: s.id },
+        }));
+
+      if (toInsert.length === 0) {
+        toast({ title: '✅ Todos os leads já estão no CRM!' });
+        return;
+      }
+
+      const { error } = await supabase.from('crm_leads' as any).insert(toInsert);
+      if (error) throw error;
+
+      toast({ title: `✅ ${toInsert.length} lead${toInsert.length > 1 ? 's' : ''} enviado${toInsert.length > 1 ? 's' : ''} para o CRM!` });
+    } catch (e: any) {
+      toast({ title: 'Erro ao sincronizar', description: e.message, variant: 'destructive' });
+    } finally {
+      setSyncingCrm(false);
+    }
   };
 
   const openSeq = async (form: CaptureForm) => {
@@ -951,32 +1027,43 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
                 </p>
               </div>
               {submissions.length > 0 && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5 text-xs h-8"
-                  onClick={() => {
-                    if (!submForm || submissions.length === 0) return;
-                    // Coleta todas as chaves de custom_data
-                    const customKeys = Array.from(new Set(submissions.flatMap(s => Object.keys(s.custom_data || {}))));
-                    const headers = ['Nome', 'WhatsApp', 'E-mail', ...customKeys, 'Data'];
-                    const rows = submissions.map(s => [
-                      s.name || '',
-                      s.phone || '',
-                      s.email || '',
-                      ...customKeys.map(k => String(s.custom_data?.[k] ?? '')),
-                      new Date(s.created_at).toLocaleString('pt-BR'),
-                    ]);
-                    const csv = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-                    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    link.download = `leads-${submForm.name.replace(/\s+/g,'-').toLowerCase()}.csv`;
-                    link.click();
-                  }}
-                >
-                  <FileDown className="h-3.5 w-3.5" /> Exportar CSV
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 text-xs h-8 text-purple-500 border-purple-500/30 hover:bg-purple-500/10"
+                    onClick={syncSubmissionsToCRM}
+                    disabled={syncingCrm}
+                  >
+                    {syncingCrm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Kanban className="h-3.5 w-3.5" />}
+                    Enviar para CRM
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 text-xs h-8"
+                    onClick={() => {
+                      if (!submForm || submissions.length === 0) return;
+                      const customKeys = Array.from(new Set(submissions.flatMap(s => Object.keys(s.custom_data || {}))));
+                      const headers = ['Nome', 'WhatsApp', 'E-mail', ...customKeys, 'Data'];
+                      const rows = submissions.map(s => [
+                        s.name || '',
+                        s.phone || '',
+                        s.email || '',
+                        ...customKeys.map(k => String(s.custom_data?.[k] ?? '')),
+                        new Date(s.created_at).toLocaleString('pt-BR'),
+                      ]);
+                      const csv = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+                      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+                      const link = document.createElement('a');
+                      link.href = URL.createObjectURL(blob);
+                      link.download = `leads-${submForm.name.replace(/\s+/g,'-').toLowerCase()}.csv`;
+                      link.click();
+                    }}
+                  >
+                    <FileDown className="h-3.5 w-3.5" /> Exportar CSV
+                  </Button>
+                </div>
               )}
             </div>
           </DialogHeader>

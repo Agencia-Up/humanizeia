@@ -154,7 +154,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       .from('wa_inbox')
       .select('phone, contact_name, content, ai_category, is_read, created_at, instance_id, direction')
       .eq('user_id', user.id)
-      .eq('is_archived', false)
+      .neq('is_archived', true)
       .order('created_at', { ascending: false })
       .limit(500);
 

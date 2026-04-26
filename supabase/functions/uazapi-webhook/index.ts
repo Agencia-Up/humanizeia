@@ -301,6 +301,21 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     lead_name: pushName
   })
 
+  // Salvar mensagem RECEBIDA no wa_inbox (para aparecer no Inbox do Marcos)
+  await supabase.from('wa_inbox').insert({
+    user_id: waInstance.user_id,
+    instance_id: waInstance.id,
+    phone: phoneNumber,
+    contact_name: pushName || null,
+    direction: 'incoming',
+    message_type: (msgType.includes('audio') || msgType === 'ptt') ? 'audio' : (msgType.includes('image') ? 'image' : 'text'),
+    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[Mídia recebida]',
+    is_read: false,
+    remote_message_id: messageId || null,
+  }).then(({ error }: any) => {
+    if (error) console.error('[uazapi-webhook] wa_inbox incoming insert error:', error.message);
+  });
+
   // Buscar histórico
   const { data: history } = await supabase.from('wa_chat_history')
     .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(10)
@@ -493,6 +508,21 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     user_id: agent.user_id, agent_id: agent.id, instance_id: instanceName,
     remote_jid: remoteJid, role: 'assistant', content: aiResponse
   })
+
+  // Salvar resposta do AGENTE IA no wa_inbox (para aparecer no Inbox do Marcos)
+  await supabase.from('wa_inbox').insert({
+    user_id: waInstance.user_id,
+    instance_id: waInstance.id,
+    phone: phoneNumber,
+    contact_name: pushName || null,
+    direction: 'outgoing',
+    message_type: 'text',
+    content: aiResponse,
+    is_read: true,
+    ai_category: 'agent',
+  }).then(({ error }: any) => {
+    if (error) console.error('[uazapi-webhook] wa_inbox outgoing insert error:', error.message);
+  });
 
   // Enviar para o cliente final
   try {
