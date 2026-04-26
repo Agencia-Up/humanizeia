@@ -343,7 +343,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
     if (!error) fetchData();
   };
 
-  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <div className="h-full overflow-y-auto p-4 md:p-6">{children}</div> : MainLayout;
 
   if (loading) {
     return (

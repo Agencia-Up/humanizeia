@@ -16,7 +16,7 @@ export const KanbanColumn = memo(function KanbanColumn({ stage, leads, onAddLead
   const totalValue = leads.reduce((s, l) => s + (l.value || 0), 0);
 
   return (
-    <div className="flex flex-col min-w-[280px] max-w-[320px] w-full shrink-0">
+    <div className="flex flex-col min-w-[280px] max-w-[320px] w-full shrink-0 h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 rounded-t-lg" style={{ backgroundColor: stage.color + '18' }}>
         <div className="flex items-center gap-2">
@@ -42,7 +42,7 @@ export const KanbanColumn = memo(function KanbanColumn({ stage, leads, onAddLead
           <div
             ref={provided.innerRef}
             {...provided.droppableProps}
-            className={`flex-1 p-2 space-y-0 min-h-[120px] rounded-b-lg border border-border/40 transition-colors ${
+            className={`flex-1 p-2 space-y-0 min-h-[120px] overflow-y-auto rounded-b-lg border border-border/40 transition-colors ${
               snapshot.isDraggingOver ? 'bg-primary/5 border-primary/20' : 'bg-card/50'
             }`}
           >

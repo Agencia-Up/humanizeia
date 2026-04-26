@@ -336,7 +336,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   );
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0B0F1A', color: '#E2E8F0', fontFamily: "'Inter','Segoe UI',sans-serif" }}>
+    <div style={{ minHeight: embedded ? '100%' : '100vh', height: embedded ? '100%' : undefined, overflowY: embedded ? 'auto' : undefined, background: '#0B0F1A', color: '#E2E8F0', fontFamily: "'Inter','Segoe UI',sans-serif" }}>
       <style>{`
         @keyframes blink { 0%,100%{opacity:1}50%{opacity:.3} }
         @keyframes slide-in { from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none} }

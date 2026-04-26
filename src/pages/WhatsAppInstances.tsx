@@ -210,7 +210,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     ? Math.round(instances.reduce((s, i) => s + (i.health_score ?? 0), 0) / instances.length)
     : 0;
 
-  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <div className="h-full overflow-y-auto">{children}</div> : MainLayout;
 
   return (
     <Wrapper>
