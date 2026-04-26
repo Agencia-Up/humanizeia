@@ -870,6 +870,13 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   console.log(`[Webhook] Remetente nao e vendedor. Processando como lead...`);
 
 
+  // Verificar se o lead existe no CRM. Se nao existe (ou foi apagado), limpar o historico para comecar do zero
+  const { data: leadExists } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
+  if (!leadExists) {
+    console.log(`[Webhook] Lead apagado manualmente ou novo. Limpando historico de chat de ${remoteJid}...`);
+    await supabase.from('wa_chat_history').delete().eq('agent_id', agent.id).eq('remote_jid', remoteJid);
+  }
+
   // Registrar Lead no CRM (legado + novo)
   const nowStr = new Date().toISOString();
   const crmPayload = {
