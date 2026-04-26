@@ -859,10 +859,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     const isConfirmation = CONFIRMATION_KEYWORDS.some(kw => normalizedText.includes(normalizeBndvText(kw)));
     if (isConfirmation) {
       console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou atendimento. Atualizando CRM...`);
-      const { data: assignedLead } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('assigned_to_id', matchedSeller.id).in('status', ['qualificado', 'transferido']).order('last_interaction_at', { ascending: false }).limit(1).maybeSingle();
-      if (assignedLead) {
-        await supabase.from('ai_crm_leads').update({ status: 'em_atendimento', last_interaction_at: new Date().toISOString() }).eq('id', assignedLead.id);
-        console.log(`[Webhook] Lead ${assignedLead.id} atualizado para 'em_atendimento' pelo vendedor ${matchedSeller.name}.`);
+      const { data: assignedLead } = await supabase.from('ai_crm_leads').select('id, assigned_to_id').eq('agent_id', agent.id).eq('status', 'qualificado').order('last_interaction_at', { ascending: false }).limit(1).maybeSingle();
+      if (assignedLead && assignedLead.assigned_to_id === matchedSeller.id) {
+        await supabase.from('ai_crm_leads').update({ status: 'transferido', last_interaction_at: new Date().toISOString() }).eq('id', assignedLead.id);
+        console.log(`[Webhook] Lead ${assignedLead.id} atualizado para 'transferido' (Em Atendimento) pelo vendedor ${matchedSeller.name}.`);
+      } else {
+        console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou, mas o lead nao esta mais designado para ele (ja foi repassado ou assumido).`);
+        const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
+        const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || '';
+        await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, "⚠️ *Tempo esgotado!* \n\nEste lead já foi repassado para o próximo especialista da fila pois passaram-se 5 minutos. Fique atento aos próximos!");
       }
     }
     return new Response(JSON.stringify({ ok: true, seller_message: true }), { headers: corsHeaders });

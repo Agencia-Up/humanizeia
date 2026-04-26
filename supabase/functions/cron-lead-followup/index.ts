@@ -119,7 +119,7 @@ serve(async (req) => {
     const { data: leads, error } = await supabase
       .from('ai_crm_leads')
       .select('*, wa_ai_agents(id, name, instance_id, instance_ids)')
-      .in('status', ['em_atendimento', 'novo'])
+      .in('status', ['novo', 'interessado'])
       .not('last_agent_reply_at', 'is', null)
       .not('last_user_reply_at', 'is', null)
       .lte('last_agent_reply_at', fiveMinsAgo);
@@ -164,7 +164,7 @@ serve(async (req) => {
         const { data: updatedRows, error: updateError } = await supabase
           .from('ai_crm_leads')
           .update({ status: 'transferido' })
-          .in('status', ['novo', 'em_atendimento', 'interessado', 'qualificado'])
+          .in('status', ['novo', 'interessado'])
           .eq('id', lead.id)
           .select('id');
 
