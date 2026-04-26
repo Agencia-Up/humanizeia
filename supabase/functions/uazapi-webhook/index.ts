@@ -143,7 +143,7 @@ serve(async (req) => {
     
     if (!adTextContext && contextInfo) {
       const matchedText = contextInfo.matchedText || contextInfo.description || contextInfo.title || '';
-      const sourceUrl = contextInfo.sourceUrl || '';
+      const sourceUrl = (contextInfo.sourceUrl || '').toLowerCase();
       if (matchedText || sourceUrl.includes('fb.me') || sourceUrl.includes('facebook') || sourceUrl.includes('instagram')) {
          adTextContext = `[O lead clicou em um Anúncio do Facebook/Instagram. Texto do anúncio: "${matchedText}". Link: ${sourceUrl}]`;
       }
@@ -156,7 +156,7 @@ serve(async (req) => {
     }
 
     if (adTextContext) {
-      userText = `${adTextContext}\n(NOTA PARA IA: Analise a IMAGEM e o TEXTO do anúncio acima para saber qual carro o lead tem interesse e continue o atendimento focado nisso. O cliente já escolheu este carro.)\n\nMensagem digitada pelo lead: ${userText}`;
+      userText = `${adTextContext}\n(NOTA PARA IA: Analise a IMAGEM (se houver) e o TEXTO do anúncio acima para descobrir qual carro o lead se interessou. COMO ELE VEIO DE UM ANÚNCIO DE CARRO ESPECÍFICO, VOCÊ DEVE OBRIGATORIAMENTE ACIONAR A FERRAMENTA 'consultar_estoque_bndv' IMEDIATAMENTE PARA BUSCAR ESTE CARRO ANTES DE QUALQUER RESPOSTA DE TEXTO!)\n\nMensagem digitada pelo lead: ${userText}`;
     }
     
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
@@ -1193,6 +1193,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 - Se o usuario anexar documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCE NAO PODE ABRIR ARQUIVOS e NAO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visao ou que nao consegue abrir documentos, sugerindo que o cliente resuma o que ha no arquivo ou envie as duvidas em audio/texto. Nunca de respostas genericas e nunca ofereca "mais informacoes" se nao sabe o conteudo.`
   systemPrompt += `\n\n[CONSULTA DE ESTOQUE BNDV]
 - Quando o cliente perguntar sobre veiculos (ex: "Tem Renegade?", "Qual o preco do Onix?"), voce DEVE usar a ferramenta "consultar_estoque_bndv" ANTES de responder.
+- REGRA CRITICA: NUNCA diga que vai "verificar", "consultar o estoque" ou peca "um segundo" sem efetivamente acionar a ferramenta. Se voce precisa buscar algo, APENAS CHAME A FERRAMENTA na mesma iteracao. Nao envie mensagens de "espera" vazias.
 - NUNCA invente veiculos, precos ou disponibilidade. Baseie-se APENAS no retorno da ferramenta. Se a ferramenta voltar vazio, diga que nao tem no momento.
 - Ao apresentar os resultados, liste as opcoes encontradas de forma comercial (versao, ano, km, preco) e pergunte se ele quer ver as fotos.
 
