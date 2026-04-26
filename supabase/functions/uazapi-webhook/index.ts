@@ -876,7 +876,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
 
   // Verificar se o lead existe no CRM. Se nao existe (ou foi apagado), limpar o historico para comecar do zero
-  const { data: leadExists } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
+  const { data: leadExists } = await supabase.from('ai_crm_leads').select('id, status, assigned_to_id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
   if (!leadExists) {
     console.log(`[Webhook] Lead apagado manualmente ou novo. Limpando historico de chat de ${remoteJid}...`);
     await supabase.from('wa_chat_history').delete().eq('agent_id', agent.id).eq('remote_jid', remoteJid);
@@ -1046,6 +1046,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           const formData = new FormData();
           formData.append('file', blob, `audio.${(mediaMimeType || 'audio/ogg').split('/')[1] || 'ogg'}`);
           formData.append('model', 'whisper-1');
+          formData.append('prompt', 'Jeep, Compass, Renegade, Commander, Fiat, Toro, Argo, Pulse, Fastback, Volkswagen, Nivus, T-Cross, Chevrolet, Onix, Tracker, automotivo, carro, seminovo, automático, financiamento, concessionária, valor, repasse, tabela fipe');
           
           console.log('[Webhook] Enviando para Whisper...');
           const wRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -1142,6 +1143,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   systemPrompt += `\n\n[REGRAS DE CONDUTA ANTE MIDIAS E ARQUIVOS]
 - Se o usuario enviar uma imagem (sera indicado com "[Imagem recebida]"), analise com precisao fotografica se conseguir visualizar o anexo no seu array.
 - Se o usuario enviar audio, a transcricao e entregue como texto direto para voce interpretar, lide naturalmente como se tivesse ouvido.
+- Se a transcricao do audio parecer muito confusa, com palavras aleatorias sem sentido ou totalmente fora do contexto automotivo, VOCE DEVE dizer muito educadamente que o audio falhou ou cortou, e pedir para ele repetir ou digitar. Tente ao MAXIMO extrair o sentido antes de pedir para repetir, use isso apenas em ultimo caso.
 - Se o usuario anexar documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCE NAO PODE ABRIR ARQUIVOS e NAO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visao ou que nao consegue abrir documentos, sugerindo que o cliente resuma o que ha no arquivo ou envie as duvidas em audio/texto. Nunca de respostas genericas e nunca ofereca "mais informacoes" se nao sabe o conteudo.`
   systemPrompt += `\n\n[CONSULTA DE ESTOQUE BNDV]
 - Quando o cliente perguntar sobre veiculos (ex: "Tem Renegade?", "Qual o preco do Onix?"), voce DEVE usar a ferramenta "consultar_estoque_bndv" ANTES de responder.
@@ -1158,6 +1160,16 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   systemPrompt += `\n- O WhatsApp NAO suporta Markdown para imagens. NUNCA escreva links ou URLs de fotos no chat. SEMPRE use a ferramenta "enviar_fotos_bndv" para envio de midia.`
   systemPrompt += `\n- REGRA ABSOLUTA AO ENVIAR FOTOS: PROIBIDO dizer "foram enviadas", "aqui estao as fotos" ou confirmar o envio tecnicamente. O cliente JA ESTA VENDO AS FOTOS. Faca apenas um comentario comercial natural sobre o veiculo.`
+
+  if (leadExists && (leadExists.status === 'qualificado' || leadExists.status === 'transferido') && leadExists.assigned_to_id) {
+    const { data: sellerData } = await supabase.from('ai_team_members').select('name').eq('id', leadExists.assigned_to_id).maybeSingle();
+    if (sellerData) {
+      systemPrompt += `\n\n[ATENÇÃO MÁXIMA - ATENDIMENTO JÁ TRANSFERIDO]
+O atendimento deste cliente já foi transferido para o vendedor humano chamado ${sellerData.name}. 
+Sua ÚNICA função agora é responder de forma curta, prestativa e humana, avisando que o vendedor ${sellerData.name} irá prosseguir com o atendimento em breve ou já está ciente e a caminho. 
+Você NÃO DEVE tentar vender, não deve fazer novas perguntas e não deve consultar ferramentas de estoque ou fotos. Apenas avise que ${sellerData.name} assumirá daqui em diante. Varie a mensagem para soar natural.`;
+    }
+  }
 
   let aiModel = agent.model || 'gpt-4o';
   // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
