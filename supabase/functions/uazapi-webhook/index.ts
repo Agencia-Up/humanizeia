@@ -287,8 +287,17 @@ function bndvMatchesQuery(vehicle: any, query?: string | null) {
   const normalizedQuery = normalizeBndvText(query).replace(/-/g, ' ');
   
   const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 0);
+  const matchCount = queryWords.filter(word => indexed.includes(word)).length;
+
+  if (queryWords.length <= 2) {
+    // Para buscas curtas ("Honda Civic", "Renegade"), todas as palavras devem bater
+    return matchCount === queryWords.length;
+  }
   
-  return queryWords.every(word => indexed.includes(word));
+  // Para buscas longas ("Renegade Longitude 1.3 T270 2025 Automatico"),
+  // permitimos que algumas palavras especificas faltem (ex: 1.3 ou T270)
+  const minRequired = Math.ceil(queryWords.length * 0.6);
+  return matchCount >= minRequired;
 }
 
 function parseBndvPictures(rawPictureJs: any) {
@@ -1278,6 +1287,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 - Ao apresentar os resultados, liste as opcoes encontradas de forma comercial (versao, ano, km, preco) e pergunte se ele quer ver as fotos.
 - REGRA PARA ANUNCIOS: Se o lead veio de um anuncio de carro e voce identificou o modelo (ex: "Renegade"), busque PRIMEIRO esse modelo especifico. Se a busca especifica nao retornar nada, busque pela MARCA (ex: "Jeep") sem filtrar o modelo. Se ainda assim nao achar, busque sem filtros para ver todos os veiculos disponiveis. NUNCA peca para o cliente "me dar mais detalhes" quando ele claramente veio de um anuncio — ele ja mostrou o carro, e voce deve buscar no estoque.
 - REGRA PARA IMAGENS DO ANUNCIO: Se receber uma imagem (thumbnail do anuncio), leia CUIDADOSAMENTE qualquer texto visivel na imagem — como "Renegade Longitude", "Strada CS", "Compass 2025" — e use esses termos como parametros da busca no estoque.
+- REGRA DE BUSCA (query): O campo 'query' da ferramenta deve ser SIMPLES (apenas MARCA e MODELO, ex: "Jeep Renegade"). NAO coloque detalhes muito especificos (como "1.3", "T270", "Automatico", "Branco") na 'query', senao a busca no banco de dados ira falhar e retornar vazio. Faca a busca simples e analise os resultados voce mesmo.
 
 [ENVIO DE FOTOS BNDV]
 - Se o cliente pedir fotos (ex: "Me manda fotos", "Quero ver esse", "Quero fotos do 2"), use a ferramenta "enviar_fotos_bndv".
