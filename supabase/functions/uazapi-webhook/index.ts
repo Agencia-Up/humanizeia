@@ -854,9 +854,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   if (matchedSeller) {
     console.log(`[Webhook] Mensagem de VENDEDOR identificado: ${matchedSeller.name}. Verificando confirmacao de atendimento...`);
-    const CONFIRMATION_KEYWORDS = ['ok', 'ta certo', 'tá certo', 'vou chamar', 'vou contatar', 'vou atender', 'certo', 'entendido', 'recebi', 'vou ligar', 'beleza', 'combinado', 'pode deixar', 'sim', 'perfeito', 'ok!', 'já ligo', 'ja ligo', 'vou ver', 'vou verificar'];
+    const CONFIRMATION_KEYWORDS = ['ok', 'ta certo', 'tá certo', 'vou chamar', 'vou contatar', 'vou atender', 'certo', 'entendido', 'recebi', 'vou ligar', 'beleza', 'combinado', 'pode deixar', 'sim', 'perfeito', 'ok!', 'já ligo', 'ja ligo', 'vou ver', 'vou verificar', 'blz', 'joia', 'pronto', 'peguei', 'chamei', 'chamando', 'okay', 'atendendo', 'to indo', 'tô indo', 'estou indo', 'já peguei', 'ja peguei', 'pode mandar', 'manda', 'opa'];
     const normalizedText = normalizeBndvText(userText);
-    const isConfirmation = CONFIRMATION_KEYWORDS.some(kw => normalizedText.includes(normalizeBndvText(kw)));
+    const isConfirmation = CONFIRMATION_KEYWORDS.some(kw => normalizedText.includes(normalizeBndvText(kw))) || userText.length <= 15;
     if (isConfirmation) {
       console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou atendimento. Atualizando CRM...`);
       const { data: assignedLead } = await supabase.from('ai_crm_leads').select('id, assigned_to_id').eq('agent_id', agent.id).eq('status', 'qualificado').order('last_interaction_at', { ascending: false }).limit(1).maybeSingle();
