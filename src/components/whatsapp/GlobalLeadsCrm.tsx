@@ -20,10 +20,10 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 const KANBAN_COLUMNS = [
-  { id: 'novo', title: '🔰 Novo', borderColor: 'border-slate-500/30', headerBg: 'bg-slate-500/10', dotColor: 'bg-slate-400' },
+  { id: 'novo', title: '✨ Novo', borderColor: 'border-slate-500/30', headerBg: 'bg-slate-500/10', dotColor: 'bg-slate-400' },
   { id: 'interessado', title: '👀 Interessado', borderColor: 'border-yellow-500/30', headerBg: 'bg-yellow-500/10', dotColor: 'bg-yellow-400' },
   { id: 'qualificado', title: '🎯 Qualificado', borderColor: 'border-green-500/30', headerBg: 'bg-green-500/10', dotColor: 'bg-green-400' },
-  { id: 'transferido', title: '🤝 Transferido', borderColor: 'border-blue-500/30', headerBg: 'bg-blue-500/10', dotColor: 'bg-blue-400' },
+  { id: 'transferido', title: '🤝 Em Atendimento', borderColor: 'border-blue-500/30', headerBg: 'bg-blue-500/10', dotColor: 'bg-blue-400' },
   { id: 'encerrado', title: '🚫 Encerrado', borderColor: 'border-red-500/30', headerBg: 'bg-red-500/10', dotColor: 'bg-red-400' },
 ];
 
@@ -93,17 +93,17 @@ export function GlobalLeadsCrm() {
     fetchAll();
 
     const channel = supabase.channel('crm-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads' }, (payload) => {
         fetchAll();
         if (payload.eventType === 'INSERT') {
           const newLead = payload.new as any;
           toast({
-            title: '🆕 Novo lead recebido!',
+            title: '📥 Novo lead recebido!',
             description: `${newLead.lead_name || newLead.remote_jid} entrou no CRM.`,
           });
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${user.id}` }, () => fetchAll())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers' }, () => fetchAll())
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
