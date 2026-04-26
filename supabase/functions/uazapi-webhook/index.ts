@@ -89,10 +89,72 @@ serve(async (req) => {
          return new Response('Ignored group/broadcast', { headers: corsHeaders });
       }
 
-      const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim();
+      let userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim();
       const pushName = msgObj.senderName || chat.name || msgObj.notifyName || msgObj.pushName || 'Lead';
-      
-      console.log(`[Webhook] Mensagem final a repassar -> Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
+
+      // ─── Extração de contexto de Anúncio (Facebook / Instagram) ───────────
+      // Em mensagens Uazapi, os metadados do anúncio chegam dentro do msgObj
+      // em diferentes campos dependendo da versão do WhatsApp / uazapi.
+      const msgMeta = msgObj?.message || msgObj;
+      const ctxInfo = msgMeta?.extendedTextMessage?.contextInfo
+        || msgMeta?.imageMessage?.contextInfo
+        || msgMeta?.videoMessage?.contextInfo
+        || msgObj?.contextInfo
+        || msgObj?.quoted?.contextInfo
+        || {};
+
+      const extAdReply = ctxInfo?.externalAdReply
+        || ctxInfo?.quotedMessage?.extendedTextMessage?.contextInfo?.externalAdReply
+        || {};
+
+      let adTextContext = '';
+
+      // 1) Click-to-WhatsApp (externalAdReply populado)
+      if (extAdReply?.title || extAdReply?.body || extAdReply?.sourceUrl) {
+        const t = extAdReply.title || '';
+        const b = extAdReply.body || '';
+        const u = extAdReply.sourceUrl || '';
+        adTextContext = `[Lead veio de Anúncio Facebook/Instagram: "${t} ${b}" | URL: ${u}]`;
+        console.log('[Webhook] externalAdReply detectado:', adTextContext);
+      }
+
+      // 2) Link compartilhado com preview (contextInfo com matchedText ou sourceUrl do Meta)
+      if (!adTextContext && ctxInfo) {
+        const matched = ctxInfo.matchedText || ctxInfo.description || ctxInfo.title || '';
+        const srcUrl = (ctxInfo.sourceUrl || '').toLowerCase();
+        if (matched || srcUrl.includes('fb.me') || srcUrl.includes('facebook') || srcUrl.includes('instagram')) {
+          adTextContext = `[Lead enviou link de anúncio Facebook/Instagram: "${matched}" | URL: ${srcUrl}]`;
+          console.log('[Webhook] contextInfo ad-link detectado:', adTextContext);
+        }
+      }
+
+      // 3) Link preview pelo extendedTextMessage direto no msgObj
+      if (!adTextContext) {
+        const ext = msgMeta?.extendedTextMessage || {};
+        const matchedUrl = (ext.matchedText || ext.canonicalUrl || '').toLowerCase();
+        const linkTitle = ext.title || '';
+        const linkDesc = ext.description || '';
+        if (matchedUrl.includes('fb.me') || matchedUrl.includes('facebook') || matchedUrl.includes('instagram') || linkTitle) {
+          adTextContext = `[Lead enviou link/anúncio: "${linkTitle} - ${linkDesc}" | URL: ${matchedUrl}]`;
+          console.log('[Webhook] extendedTextMessage link detectado:', adTextContext);
+        }
+      }
+
+      // 4) Fallback: se o próprio body é um link do Facebook
+      if (!adTextContext) {
+        const bodyLower = userText.toLowerCase();
+        if (bodyLower.includes('fb.me') || bodyLower.includes('facebook.com/story') || bodyLower.includes('instagram.com')) {
+          adTextContext = `[Lead enviou um link de anúncio do Facebook/Instagram: ${userText}]`;
+          console.log('[Webhook] URL no body detectada como anuncio:', adTextContext);
+        }
+      }
+
+      if (adTextContext) {
+        userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA PARA IA: O lead veio de um anúncio de carro específico. Você DEVE identificar qual carro aparece no anúncio (pelo título, imagem ou texto) e IMEDIATAMENTE acionar a ferramenta 'consultar_estoque_bndv' para buscar esse carro ANTES de enviar qualquer mensagem de texto. PROIBIDO dizer 'vou verificar' sem acionar a ferramenta na mesma iteração.)\n\nMensagem do lead: ${userText}`;
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
+      console.log(`[Webhook] Mensagem final a repassar -> Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText.substring(0, 200)}`);
       return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
     }
     // --- FORMATO EVOLUTION API ---
