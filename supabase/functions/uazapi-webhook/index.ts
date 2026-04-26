@@ -672,9 +672,15 @@ function getUazapiMediaFallbackReply(content: string) {
 }
 
 function inferUazapiMessageType(rawMsgObj: any) {
+  // Check thumbnail from externalAdReply (Click-to-WhatsApp ads)
   const contextInfo = rawMsgObj?.message?.extendedTextMessage?.contextInfo || rawMsgObj?.message?.imageMessage?.contextInfo || rawMsgObj?.contextInfo;
   const adReply = contextInfo?.externalAdReply || contextInfo?.quotedMessage?.extendedTextMessage?.contextInfo?.externalAdReply;
   if (adReply?.thumbnail || adReply?.jpegThumbnail || contextInfo?.jpegThumbnail || adReply?.thumbnailUrl || adReply?.mediaUrl) {
+    return 'image';
+  }
+
+  // Check thumbnail from link preview (extendedTextMessage.jpegThumbnail) - THIS is what Facebook story links send
+  if (rawMsgObj?.message?.extendedTextMessage?.jpegThumbnail || rawMsgObj?.extendedTextMessage?.jpegThumbnail) {
     return 'image';
   }
 
@@ -760,7 +766,11 @@ function extractUazapiMessageId(rawMsgObj: any) {
 function extractUazapiBase64(rawMsgObj: any) {
   const contextInfo = rawMsgObj?.message?.extendedTextMessage?.contextInfo || rawMsgObj?.message?.imageMessage?.contextInfo || rawMsgObj?.contextInfo;
   const adReply = contextInfo?.externalAdReply || contextInfo?.quotedMessage?.extendedTextMessage?.contextInfo?.externalAdReply;
-  const thumbBase64 = adReply?.thumbnail || adReply?.jpegThumbnail || contextInfo?.jpegThumbnail || '';
+  const thumbBase64 = adReply?.thumbnail || adReply?.jpegThumbnail || contextInfo?.jpegThumbnail
+    // Link preview thumbnail (Facebook story links, Instagram, etc.)
+    || rawMsgObj?.message?.extendedTextMessage?.jpegThumbnail
+    || rawMsgObj?.extendedTextMessage?.jpegThumbnail
+    || '';
 
   const value = thumbBase64 || rawMsgObj?.base64 ||
     rawMsgObj?.base64Data ||
@@ -809,6 +819,14 @@ function extractUazapiMediaUrl(rawMsgObj: any) {
 }
 
 function extractUazapiMimeType(rawMsgObj: any) {
+  // If this message has a JPEG thumbnail (link preview or ad), declare it as image/jpeg
+  const contextInfo = rawMsgObj?.message?.extendedTextMessage?.contextInfo || rawMsgObj?.contextInfo;
+  const adReply = contextInfo?.externalAdReply || {};
+  const hasJpegThumb = !!(adReply?.jpegThumbnail || adReply?.thumbnail || contextInfo?.jpegThumbnail
+    || rawMsgObj?.message?.extendedTextMessage?.jpegThumbnail
+    || rawMsgObj?.extendedTextMessage?.jpegThumbnail);
+  if (hasJpegThumb) return 'image/jpeg';
+
   return rawMsgObj?.mimetype ||
     rawMsgObj?.mimeType ||
     rawMsgObj?.media?.mimetype ||
@@ -1256,8 +1274,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   systemPrompt += `\n\n[CONSULTA DE ESTOQUE BNDV]
 - Quando o cliente perguntar sobre veiculos (ex: "Tem Renegade?", "Qual o preco do Onix?"), voce DEVE usar a ferramenta "consultar_estoque_bndv" ANTES de responder.
 - REGRA CRITICA: NUNCA diga que vai "verificar", "consultar o estoque" ou peca "um segundo" sem efetivamente acionar a ferramenta. Se voce precisa buscar algo, APENAS CHAME A FERRAMENTA na mesma iteracao. Nao envie mensagens de "espera" vazias.
-- NUNCA invente veiculos, precos ou disponibilidade. Baseie-se APENAS no retorno da ferramenta. Se a ferramenta voltar vazio, diga que nao tem no momento.
+- NUNCA invente veiculos, precos ou disponibilidade. Baseie-se APENAS no retorno da ferramenta.
 - Ao apresentar os resultados, liste as opcoes encontradas de forma comercial (versao, ano, km, preco) e pergunte se ele quer ver as fotos.
+- REGRA PARA ANUNCIOS: Se o lead veio de um anuncio de carro e voce identificou o modelo (ex: "Renegade"), busque PRIMEIRO esse modelo especifico. Se a busca especifica nao retornar nada, busque pela MARCA (ex: "Jeep") sem filtrar o modelo. Se ainda assim nao achar, busque sem filtros para ver todos os veiculos disponiveis. NUNCA peca para o cliente "me dar mais detalhes" quando ele claramente veio de um anuncio — ele ja mostrou o carro, e voce deve buscar no estoque.
+- REGRA PARA IMAGENS DO ANUNCIO: Se receber uma imagem (thumbnail do anuncio), leia CUIDADOSAMENTE qualquer texto visivel na imagem — como "Renegade Longitude", "Strada CS", "Compass 2025" — e use esses termos como parametros da busca no estoque.
 
 [ENVIO DE FOTOS BNDV]
 - Se o cliente pedir fotos (ex: "Me manda fotos", "Quero ver esse", "Quero fotos do 2"), use a ferramenta "enviar_fotos_bndv".
