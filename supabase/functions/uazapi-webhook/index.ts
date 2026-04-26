@@ -130,16 +130,33 @@ serve(async (req) => {
     const contextInfo = message?.extendedTextMessage?.contextInfo || message?.imageMessage?.contextInfo || message?.videoMessage?.contextInfo || data?.contextInfo;
     const adReply = contextInfo?.externalAdReply || contextInfo?.quotedMessage?.extendedTextMessage?.contextInfo?.externalAdReply;
     
+    let adTextContext = '';
+
     if (adReply) {
       const adTitle = adReply.title || '';
       const adBody = adReply.body || '';
-      if (adTitle || adBody) {
-        userText = `[O lead veio de um Anúncio do Facebook/Instagram sobre: "${adTitle} ${adBody}"]\n\n${userText}`;
+      const sourceUrl = adReply.sourceUrl || '';
+      if (adTitle || adBody || sourceUrl) {
+        adTextContext = `[O lead veio de um Anúncio do Facebook/Instagram sobre: "${adTitle} ${adBody}" | Link: ${sourceUrl}]`;
       }
-    } else if (message?.extendedTextMessage?.title || message?.extendedTextMessage?.description) {
+    } 
+    
+    if (!adTextContext && contextInfo) {
+      const matchedText = contextInfo.matchedText || contextInfo.description || contextInfo.title || '';
+      const sourceUrl = contextInfo.sourceUrl || '';
+      if (matchedText || sourceUrl.includes('fb.me') || sourceUrl.includes('facebook') || sourceUrl.includes('instagram')) {
+         adTextContext = `[O lead clicou em um Anúncio do Facebook/Instagram. Texto do anúncio: "${matchedText}". Link: ${sourceUrl}]`;
+      }
+    }
+
+    if (!adTextContext && (message?.extendedTextMessage?.title || message?.extendedTextMessage?.description || message?.extendedTextMessage?.matchedText)) {
       const linkTitle = message.extendedTextMessage.title || '';
-      const linkDesc = message.extendedTextMessage.description || '';
-      userText = `[O lead enviou um link sobre: "${linkTitle} - ${linkDesc}"] (NOTA PARA IA: As informacoes do link ja foram extraidas, atenda o cliente com base nisso e nao diga que nao consegue abrir o link)\n\n${userText}`;
+      const linkDesc = message.extendedTextMessage.description || message?.extendedTextMessage?.matchedText || '';
+      adTextContext = `[O lead clicou ou enviou um anúncio/link sobre: "${linkTitle} - ${linkDesc}"]`;
+    }
+
+    if (adTextContext) {
+      userText = `${adTextContext}\n(NOTA PARA IA: Analise a IMAGEM e o TEXTO do anúncio acima para saber qual carro o lead tem interesse e continue o atendimento focado nisso. O cliente já escolheu este carro.)\n\nMensagem digitada pelo lead: ${userText}`;
     }
     
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
@@ -593,6 +610,12 @@ function getUazapiMediaFallbackReply(content: string) {
 }
 
 function inferUazapiMessageType(rawMsgObj: any) {
+  const contextInfo = rawMsgObj?.message?.extendedTextMessage?.contextInfo || rawMsgObj?.message?.imageMessage?.contextInfo || rawMsgObj?.contextInfo;
+  const adReply = contextInfo?.externalAdReply || contextInfo?.quotedMessage?.extendedTextMessage?.contextInfo?.externalAdReply;
+  if (adReply?.thumbnail || adReply?.jpegThumbnail || contextInfo?.jpegThumbnail || adReply?.thumbnailUrl || adReply?.mediaUrl) {
+    return 'image';
+  }
+
   const explicitType = String(
     rawMsgObj?.messageType ||
     rawMsgObj?.type ||
@@ -673,7 +696,11 @@ function extractUazapiMessageId(rawMsgObj: any) {
 }
 
 function extractUazapiBase64(rawMsgObj: any) {
-  const value = rawMsgObj?.base64 ||
+  const contextInfo = rawMsgObj?.message?.extendedTextMessage?.contextInfo || rawMsgObj?.message?.imageMessage?.contextInfo || rawMsgObj?.contextInfo;
+  const adReply = contextInfo?.externalAdReply || contextInfo?.quotedMessage?.extendedTextMessage?.contextInfo?.externalAdReply;
+  const thumbBase64 = adReply?.thumbnail || adReply?.jpegThumbnail || contextInfo?.jpegThumbnail || '';
+
+  const value = thumbBase64 || rawMsgObj?.base64 ||
     rawMsgObj?.base64Data ||
     rawMsgObj?.message?.base64 ||
     rawMsgObj?.message?.base64Data ||
@@ -694,7 +721,11 @@ function extractUazapiBase64(rawMsgObj: any) {
 }
 
 function extractUazapiMediaUrl(rawMsgObj: any) {
-  return rawMsgObj?.url ||
+  const contextInfo = rawMsgObj?.message?.extendedTextMessage?.contextInfo || rawMsgObj?.message?.imageMessage?.contextInfo || rawMsgObj?.contextInfo;
+  const adReply = contextInfo?.externalAdReply || contextInfo?.quotedMessage?.extendedTextMessage?.contextInfo?.externalAdReply;
+  const thumbUrl = adReply?.thumbnailUrl || adReply?.mediaUrl || (adReply?.sourceUrl?.match(/\.(jpeg|jpg|png|gif)/i) ? adReply.sourceUrl : '');
+
+  return thumbUrl || rawMsgObj?.url ||
     rawMsgObj?.mediaUrl ||
     rawMsgObj?.mediaURL ||
     rawMsgObj?.downloadUrl ||
