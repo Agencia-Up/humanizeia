@@ -1,13 +1,72 @@
-import { lazy, Suspense } from "react";
+import React, { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Loader2 } from "lucide-react";
 import { AgentTasksProvider } from "@/contexts/AgentTasksContext";
 import { AgentChatProvider } from "@/contexts/AgentChatContext";
+
+// ── Error Boundary ────────────────────────────────────────────────────────────
+// Catches render errors so a broken page never crashes the entire app.
+// Resets automatically when the user navigates to a different route.
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode; resetKey?: string },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode; resetKey?: string }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(err: Error) {
+    console.error('[ErrorBoundary] Page render error:', err);
+  }
+
+  componentDidUpdate(prevProps: { children: React.ReactNode; resetKey?: string }) {
+    // Auto-reset when the route changes so the next page gets a clean slate
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background">
+          <p className="text-sm text-muted-foreground">
+            Algo deu errado ao carregar esta página.
+          </p>
+          <button
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            onClick={() => this.setState({ hasError: false })}
+          >
+            Tentar novamente
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Wraps routes with an ErrorBoundary that resets on navigation
+function RouteWrapper({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  return (
+    <ErrorBoundary resetKey={location.pathname}>
+      <Suspense fallback={<PageLoader />}>
+        {children}
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
 
 // Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
@@ -87,7 +146,7 @@ const App = () => (
       <BrowserRouter>
         <AgentTasksProvider>
           <AgentChatProvider>
-            <Suspense fallback={<PageLoader />}>
+            <RouteWrapper>
               <Routes>
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/auth/confirm" element={<ConfirmEmail />} />
@@ -152,7 +211,7 @@ const App = () => (
                 <Route path="/performance" element={<ProtectedRoute><SupportDashboard /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
-            </Suspense>
+            </RouteWrapper>
             <Toaster />
             <Sonner />
           </AgentChatProvider>
