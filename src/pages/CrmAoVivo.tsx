@@ -238,6 +238,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isPortrait, setIsPortrait] = useState(() => window.innerHeight >= window.innerWidth);
   const [leads, setLeads] = useState<any[]>([]);
   const [transfers, setTransfers] = useState<any[]>([]);
@@ -441,6 +442,22 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     }
   }, [nextSeller, user, fetchLiveData]);
 
+  // Atualizar manualmente com feedback visual
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await fetchLiveData();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchLiveData]);
+
+  // Mute toggle — também faz warm-up do AudioContext para garantir que o som funcione
+  const handleMuteToggle = useCallback(async () => {
+    await warmUpAudio();   // resume o contexto singleton na interação do usuário
+    setMuted(m => !m);
+  }, []);
+
   const handleFullscreen = async () => {
     if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
     else await document.exitFullscreen?.();
@@ -498,8 +515,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={() => navigate('/dashboard')}>
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Painel
             </Button>
-            <Button size="sm" variant="outline" style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={fetchLiveData}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Atualizar
+            <Button size="sm" variant="outline" disabled={refreshing} style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', fontSize: 13 }} onClick={handleRefresh}>
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5${refreshing ? ' animate-spin' : ''}`} /> {refreshing ? 'Atualizando…' : 'Atualizar'}
             </Button>
             <Button
               size="sm"
@@ -511,7 +528,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                 color: muted ? '#64748B' : C.amberL,
                 fontSize: 13,
               }}
-              onClick={() => setMuted(m => !m)}
+              onClick={handleMuteToggle}
             >
               {muted ? <VolumeX className="mr-1.5 h-3.5 w-3.5" /> : <Volume2 className="mr-1.5 h-3.5 w-3.5" />}
               {muted ? 'Mudo' : 'Campainha'}
@@ -749,10 +766,35 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   );
 }
 
-function playBell(muted: boolean) {
+// ── AudioContext singleton ──────────────────────────────────────────────────
+// Browsers block audio until the user interacts with the page (autoplay policy).
+// We keep a single AudioContext alive and call resume() before playing so that
+// sounds triggered by Realtime subscriptions (no user gesture) still work after
+// the user has already interacted at least once (e.g. clicked the mute toggle).
+let _sharedAudioCtx: AudioContext | null = null;
+
+function getAudioCtx(): AudioContext {
+  if (!_sharedAudioCtx || _sharedAudioCtx.state === 'closed') {
+    _sharedAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  }
+  return _sharedAudioCtx;
+}
+
+// Call this inside any user-gesture handler to unlock audio for the session.
+async function warmUpAudio(): Promise<void> {
+  try {
+    const ctx = getAudioCtx();
+    if (ctx.state === 'suspended') await ctx.resume();
+  } catch (_) {}
+}
+
+async function playBell(muted: boolean) {
   if (muted) return;
   try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const ctx = getAudioCtx();
+    // Resume in case context was suspended (autoplay policy)
+    if (ctx.state === 'suspended') await ctx.resume();
+
     const bellNote = (freq: number, startTime: number, vol = 0.45) => {
       ([
         [1.0, vol],
