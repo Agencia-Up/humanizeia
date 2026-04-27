@@ -59,10 +59,10 @@ serve(async (req) => {
       .select('*, wa_ai_agents(id, name, instance_id, instance_ids)')
       .eq('status', 'qualificado')
       .not('assigned_to_id', 'is', null)
-      .lte('last_interaction_at', fiveMinsAgo);
+      .lte('last_interaction_at', tenMinsAgo);
 
     if (timeoutLeads && timeoutLeads.length > 0) {
-      console.log(`[Cron] Encontrados ${timeoutLeads.length} leads qualificados aguardando vendedor ha mais de 5 min.`);
+      console.log(`[Cron] Encontrados ${timeoutLeads.length} leads qualificados aguardando vendedor ha mais de 10 min.`);
       const { data: instances } = await supabase.from('wa_instances').select('*');
 
       for (const lead of timeoutLeads) {
@@ -89,7 +89,6 @@ serve(async (req) => {
 
           await supabase.from('ai_team_members').update({ 
             last_lead_received_at: now.toISOString(), 
-            total_leads_received: (nextSeller.total_leads_received || 0) + 1 
           }).eq('id', nextSeller.id);
 
           const agentData = lead.wa_ai_agents;
@@ -102,9 +101,36 @@ serve(async (req) => {
             const instKey = instance.api_key_encrypted || instance.api_key;
             const cleanSellerNum = nextSeller.whatsapp_number.replace(/\D/g, '');
             const phoneNumber = lead.remote_jid.split('@')[0];
+
+            // Buscar contexto para o novo vendedor
+            const { data: recentChat } = await supabase
+              .from('wa_chat_history')
+              .select('role, content, created_at')
+              .eq('agent_id', agentId)
+              .eq('instance_id', instance.instance_name)
+              .eq('user_id', lead.user_id)
+              .order('created_at', { ascending: false })
+              .limit(8);
+
+            let chatSnippet = '';
+            if (recentChat && recentChat.length > 0) {
+              chatSnippet = '\n\n--------------------\n\nUltimas mensagens da conversa:\n' + recentChat.reverse().map((m: any) => `${m.role === 'user' ? `👤 ${lead.lead_name || 'Cliente'}` : '🤖 Agente'}: ${String(m.content || '').substring(0, 300)}`).join('\n');
+            }
             
-            const notificationMsg = `🚨 *LEAD REPASSADO (Vendedor Anterior Não Respondeu)*\n\n*Nome:* ${lead.lead_name || 'Desconhecido'}\n*Numero:* +${phoneNumber}\n*Resumo:* ${lead.summary || 'Sem resumo'}\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\nResponda "Ok" para assumir este atendimento!`;
+            const notificationMsg = `🚨 *LEAD REPASSADO (Vendedor Anterior Não Respondeu)*\n\n*Nome:* ${lead.lead_name || 'Desconhecido'}\n*Numero:* +${phoneNumber}\n*Resumo:* ${lead.summary || 'Sem resumo'}${chatSnippet}\n\n--------------------\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\nResponda "Ok" para assumir este atendimento!`;
+            
             await sendUazapiTextMessage(baseUrl, instKey, instance.instance_name, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
+            
+            // Registrar a transferencia no log para o dashboard atualizar o 'Proximo Vendedor'
+            await supabase.from('ai_lead_transfers').insert({
+              user_id: lead.user_id,
+              lead_id: lead.id,
+              from_member_id: lead.assigned_to_id,
+              to_member_id: nextSeller.id,
+              transfer_reason: 'Rodízio por Inatividade do Vendedor',
+              notes: `Repassado de ${lead.assigned_to_id} para ${nextSeller.id} por falta de resposta`
+            });
+
             console.log(`[Cron] Lead ${lead.id} repassado para ${nextSeller.name}`);
           }
         }
@@ -163,7 +189,10 @@ serve(async (req) => {
         // PASSO 1: Atualizar o status atomicamente para 'transferido' ANTES de qualquer mensagem.
         const { data: updatedRows, error: updateError } = await supabase
           .from('ai_crm_leads')
-          .update({ status: 'transferido' })
+          .update({ 
+            status: 'qualificado',
+            last_interaction_at: now.toISOString() // Inicia o timer de 10 min para o vendedor
+          })
           .in('status', ['novo', 'interessado'])
           .eq('id', lead.id)
           .select('id');
@@ -195,13 +224,29 @@ serve(async (req) => {
           
           await supabase.from('ai_team_members').update({ 
             last_lead_received_at: new Date().toISOString(), 
-            total_leads_received: (seller.total_leads_received || 0) + 1 
           }).eq('id', seller.id);
 
           // Avisar vendedor apenas se tiver numero de WhatsApp
           if (seller.whatsapp_number) {
             const cleanSellerNum = seller.whatsapp_number.replace(/\D/g, '');
-            const notificationMsg = `ÔÜá´©Å *Novo Lead Transferido (Inatividade)*\n\nNome: ${lead.lead_name || 'Desconhecido'}\nNumero: ${phoneNumber}\nO bot transferiu automaticamente apos 10 minutos de inatividade do cliente.`;
+            
+            // Buscar ultimas mensagens para contexto (igual no uazapi-webhook)
+            const { data: recentChat } = await supabase
+              .from('wa_chat_history')
+              .select('role, content, created_at')
+              .eq('agent_id', agentId)
+              .eq('instance_id', instanceName)
+              .eq('user_id', lead.user_id)
+              .order('created_at', { ascending: false })
+              .limit(8);
+
+            let chatSnippet = '';
+            if (recentChat && recentChat.length > 0) {
+              chatSnippet = '\n\n--------------------\n\nUltimas mensagens da conversa:\n' + recentChat.reverse().map((m: any) => `${m.role === 'user' ? `👤 ${lead.lead_name || 'Cliente'}` : '🤖 Agente'}: ${String(m.content || '').substring(0, 300)}`).join('\n');
+            }
+
+            const notificationMsg = `🚨 *LEAD QUALIFICADO (Inatividade 10min)*\n\n*Nome do Cliente:* ${lead.lead_name || 'Desconhecido'}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n\n*📋 Resumo do Atendimento pela IA:*\n${lead.summary || 'Cliente parou de responder durante a conversa.'}${chatSnippet}\n\n--------------------\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\nResponda "Ok" para assumir este atendimento! ⏳`;
+            
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }
         }
@@ -215,7 +260,6 @@ serve(async (req) => {
           await supabase.from('ai_lead_transfers').insert({
             user_id: lead.user_id,
             lead_id: lead.id,
-            from_agent_id: agentId,
             to_member_id: selectedSellerId,
             transfer_reason: 'Inatividade (10 minutos)',
             notes: `Transferido automaticamente para o analista via cron`
@@ -236,14 +280,12 @@ serve(async (req) => {
         const sent = await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, randomMsg);
         
         if (sent) {
-          // Atualiza para nao enviar de novo e atualiza a last_agent_reply_at para reiniciar o cronometro dos proximos 5 minutos para dar os 10 totais
-          // Porem se eu atualizar last_agent_reply_at, ele vai esperar mais 10 min a partir de AGORA para transferir.
-          // O cliente quer 10 min no total. Entao nao mudo last_agent_reply_at. Apenas marco a flag.
+          // Marca que ja enviou o ping de 5 min
           await supabase.from('ai_crm_leads').update({
             followup_5min_sent: true
           }).eq('id', lead.id);
           
-          // Registrar no chat history
+          // Registrar no chat history para o bot saber que ja falou
           await supabase.from('wa_chat_history').insert({
             user_id: lead.user_id, agent_id: agentId, instance_id: instanceName,
             remote_jid: remoteJid, role: 'assistant', content: randomMsg
