@@ -328,23 +328,40 @@ serve(async (req) => {
 })
 
 // ─── Busca de metadados reais do anúncio (Open Graph) ───────────────────────
-// Faz uma requisição HTTP ao link do anúncio e extrai og:title / og:description.
-// Isso garante que a IA receba informações REAIS do carro, não adivinhe.
-async function fetchAdMetadata(rawUrl: string): Promise<{ title: string; description: string; imageUrl: string }> {
+async function fetchAdMetadata(rawUrl: string, maxRedirects = 5): Promise<{ title: string; description: string; imageUrl: string }> {
   try {
+    let currentUrl = rawUrl;
+    let res: Response | null = null;
+    let redirects = 0;
+
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-    const res = await fetch(rawUrl, {
-      headers: {
-        'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'pt-BR,pt;q=0.9',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    while (redirects <= maxRedirects) {
+      res = await fetch(currentUrl, {
+        headers: {
+          'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'pt-BR,pt;q=0.9',
+        },
+        redirect: 'manual', // IMPEDE que Deno remova os headers no redirect
+        signal: controller.signal,
+      });
+
+      if ([301, 302, 303, 307, 308].includes(res.status)) {
+        const loc = res.headers.get('location');
+        if (loc) {
+          currentUrl = loc.startsWith('http') ? loc : new URL(loc, currentUrl).href;
+          redirects++;
+          continue;
+        }
+      }
+      break;
+    }
+    
     clearTimeout(timeout);
-    if (!res.ok) return { title: '', description: '', imageUrl: '' };
+    if (!res || !res.ok) return { title: '', description: '', imageUrl: '' };
+    
     const html = await res.text();
 
     const extract = (prop: string) => {
@@ -363,7 +380,7 @@ async function fetchAdMetadata(rawUrl: string): Promise<{ title: string; descrip
     const title = extract('og:title');
     const description = extract('og:description');
     const imageUrl = extract('og:image');
-    console.log(`[AdFetch] URL: ${rawUrl} | og:title: ${title} | og:image: ${imageUrl.substring(0, 80)}`);
+    console.log(`[AdFetch] URL: ${rawUrl} | Final: ${currentUrl} | og:title: ${title} | og:image: ${imageUrl.substring(0, 80)}`);
     return { title, description, imageUrl };
   } catch (e) {
     console.warn('[AdFetch] Falha ao buscar metadados do anuncio:', e);
