@@ -736,13 +736,38 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
   const result = await fetchBndvVehicles(supabase, userId, filters);
   if (!result.success) return result;
 
-  const vehicleWithPhotos = (result.items || []).find((item: any) => parseBndvPictures(item?.pictureJs).length > 0);
-  const vehicleExists = (result.items || []).length > 0;
+  const allVehicles = result.items || [];
+  const vehiclesWithPhotos = allVehicles.filter((item: any) => parseBndvPictures(item?.pictureJs).length > 0);
+  
+  // Selecionar o MELHOR veiculo que bate com os filtros passados, nao apenas o primeiro
+  // Pontua por: versao bate (+3), ano bate (+2), preco bate (+1), marca+modelo bate (+2)
+  const scoreVehicle = (v: any) => {
+    let score = 0;
+    const normV = normalizeBndvText;
+    if (filters.versao && normV(v.versionName).includes(normV(filters.versao))) score += 3;
+    if (filters.ano_min && filters.ano_max && v.year >= filters.ano_min && v.year <= filters.ano_max) score += 2;
+    else if (filters.ano_min && v.year >= filters.ano_min) score += 1;
+    else if (filters.ano_max && v.year <= filters.ano_max) score += 1;
+    if (filters.preco_max && v.saleValue <= filters.preco_max) score += 1;
+    if (filters.marca && normV(v.markName).includes(normV(filters.marca))) score += 2;
+    if (filters.modelo && normV(v.modelName).includes(normV(filters.modelo))) score += 2;
+    if (filters.query) {
+      const q = normV(filters.query);
+      const label = normV([v.markName, v.modelName, v.versionName, String(v.year || '')].join(' '));
+      const wordMatches = q.split(/\s+/).filter((w: string) => w.length > 2 && label.includes(w)).length;
+      score += wordMatches;
+    }
+    return score;
+  };
+
+  const vehicleWithPhotos = vehiclesWithPhotos.sort((a: any, b: any) => scoreVehicle(b) - scoreVehicle(a))[0]
+    || vehiclesWithPhotos[0];
+
+  const vehicleExists = allVehicles.length > 0;
   
   if (!vehicleWithPhotos) {
     if (vehicleExists) {
-      // Carro existe no estoque mas nao tem fotos cadastradas no portal BNDV
-      const existingVehicle = result.items[0];
+      const existingVehicle = allVehicles[0];
       const label = buildBndvVehicleLabel(existingVehicle);
       return {
         success: false,
@@ -762,7 +787,8 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
   const vehicle = vehicleWithPhotos;
 
   const pictures = parseBndvPictures(vehicle.pictureJs);
-  const requestedCount = Math.max(1, Math.min(Number(filters?.quantidade_fotos || 3), 5));
+  // Enviar mais fotos por padrao (5) para aumentar chance de ter interior
+  const requestedCount = Math.max(1, Math.min(Number(filters?.quantidade_fotos || 5), 5));
   const selectedPictures = pictures.slice(0, requestedCount);
 
   if (selectedPictures.length === 0) {
@@ -1223,14 +1249,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "consultar_estoque_bndv",
-        description: "Consulta o estoque real de veiculos do cliente integrado ao BNDV. Use quando o cliente perguntar por carro disponivel, preco, ano, versao, cambio, combustivel, cor ou faixa de valor. Nunca invente estoque sem usar esta ferramenta.",
+        description: "Consulta o estoque real de veiculos integrado ao BNDV. Use quando o cliente perguntar por carro disponivel, preco, ano, versao, cambio, combustivel, cor ou faixa de valor. Nunca invente estoque sem usar esta ferramenta. IMPORTANTE: Quando apresentar um veiculo ao cliente, guarde mentalmente o nome EXATO, ano, versao e preco para usar em chamadas futuras de 'enviar_fotos_bndv'.",
         parameters: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Busca livre do cliente, como 'nivus automatico ate 110 mil'." },
+            query: { type: "string", description: "Busca simples: apenas MARCA e MODELO (ex: 'Chevrolet Onix'). Nao inclua ano, cor ou versao aqui." },
             marca: { type: "string", description: "Marca do veiculo, ex: Chevrolet, Jeep, Hyundai." },
             modelo: { type: "string", description: "Modelo do veiculo, ex: Onix, Renegade, Creta." },
-            versao: { type: "string", description: "Versao ou detalhe do veiculo, ex: LTZ, EX, Touring." },
+            versao: { type: "string", description: "Versao ou detalhe do veiculo, ex: LTZ, EX, Touring, ACTIV." },
             combustivel: { type: "string", description: "Combustivel desejado, ex: Flex, Diesel." },
             cambio: { type: "string", description: "Tipo de cambio, ex: Automatico, Manual." },
             cor: { type: "string", description: "Cor desejada, se o cliente pedir." },
@@ -1248,18 +1274,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "enviar_fotos_bndv",
-        description: "Envia fotos reais de um veiculo do estoque BNDV pelo WhatsApp. Use quando o cliente pedir fotos, imagens, quiser ver o carro ou disser para mandar fotos.",
+        description: "Envia fotos reais de um veiculo do estoque BNDV pelo WhatsApp. Use quando o cliente pedir fotos, imagens, quiser ver o carro ou disser para mandar fotos. CRITICO: Para garantir que as fotos do veiculo CORRETO sejam enviadas, voce DEVE passar o maximo de detalhes possiveis do veiculo que esta sendo discutido: marca, modelo, versao, ano_min e ano_max. Se souber o ano exato, passe como ano_min E ano_max (ex: ano_min: 2019, ano_max: 2019). Sempre use quantidade_fotos: 5 para o cliente ver bem o veiculo.",
         parameters: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Busca livre do cliente, como 'onix activ 2019'." },
+            query: { type: "string", description: "Nome completo do veiculo em discussao, como 'Chevrolet Onix Activ 1.4 2019'." },
             marca: { type: "string", description: "Marca do veiculo." },
             modelo: { type: "string", description: "Modelo do veiculo." },
-            versao: { type: "string", description: "Versao do veiculo." },
-            ano_min: { type: "number", description: "Ano minimo desejado." },
-            ano_max: { type: "number", description: "Ano maximo desejado." },
+            versao: { type: "string", description: "Versao exata do veiculo, ex: ACTIV, LTZ, LONGITUDE." },
+            ano_min: { type: "number", description: "Ano minimo - se souber o ano exato, repita o mesmo valor em ano_min e ano_max." },
+            ano_max: { type: "number", description: "Ano maximo - se souber o ano exato, repita o mesmo valor em ano_min e ano_max." },
             preco_max: { type: "number", description: "Preco maximo desejado." },
-            quantidade_fotos: { type: "number", description: "Quantidade maxima de fotos para enviar, entre 1 e 5." }
+            quantidade_fotos: { type: "number", description: "Quantidade de fotos para enviar. Sempre use 5." }
           },
           additionalProperties: false
         }
