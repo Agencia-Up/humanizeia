@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Bell,
   CalendarClock,
+  CalendarDays,
   Crown,
   Expand,
   Flame,
@@ -22,6 +23,23 @@ import {
   VolumeX,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+
+/* ── Filtro de período ──────────────────────────────────── */
+type DateFilter = 'today' | '7d' | '30d' | '90d' | 'all';
+const DATE_FILTERS: { value: DateFilter; label: string }[] = [
+  { value: 'today', label: 'Hoje'   },
+  { value: '7d',    label: '7 dias' },
+  { value: '30d',   label: '30 dias'},
+  { value: '90d',   label: '90 dias'},
+  { value: 'all',   label: 'Tudo'   },
+];
+function getThreshold(f: DateFilter): Date | null {
+  if (f === 'all') return null;
+  const now = new Date();
+  if (f === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const days = f === '7d' ? 7 : f === '30d' ? 30 : 90;
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
 
 /* ── Paleta corporativa — cores fortes ─────── */
 const C = {
@@ -218,6 +236,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const [muted, setMuted] = useState(false);
   const prevCount = useRef<number | null>(null);
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
+  const [dateFilter, setDateFilter] = useState<DateFilter>('today');
 
   useEffect(() => { const i = setInterval(() => setTick(p => !p), 900); return () => clearInterval(i); }, []);
 
@@ -266,7 +285,26 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   }, []);
 
   const activeMembers  = useMemo(() => teamMembers.filter(m => m.is_active), [teamMembers]);
-  
+
+  // Leads filtrados pelo período selecionado
+  const filteredLeads = useMemo(() => {
+    const threshold = getThreshold(dateFilter);
+    if (!threshold) return leads;
+    return leads.filter(l => {
+      const d = new Date(l.created_at || l.last_interaction_at);
+      return d >= threshold;
+    });
+  }, [leads, dateFilter]);
+
+  // Contagem de hoje (sempre fixa no KPI, independente do filtro)
+  const todayStart = useMemo(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+  }, []);
+  const todayLeadsCount = useMemo(
+    () => leads.filter(l => new Date(l.created_at || l.last_interaction_at) >= todayStart).length,
+    [leads, todayStart]
+  );
+
   const nextSeller = useMemo(() => {
     if (!activeMembers.length) return null;
     const last = new Map<string, number>();
@@ -292,13 +330,13 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
     LIVE_COLUMNS.forEach(col => {
-      res[col.id] = leads.filter(l => (l.status || 'novo') === col.id).slice(0, isPortrait ? 6 : 10);
+      res[col.id] = filteredLeads.filter(l => (l.status || 'novo') === col.id).slice(0, isPortrait ? 6 : 10);
     });
     return res;
-  }, [leads, isPortrait]);
+  }, [filteredLeads, isPortrait]);
 
-  const totalQualified = leads.filter(l => l.status === 'qualificado' || l.status === 'transferido').length;
-  const attendedNow    = leads.filter(l => l.status === 'transferido').length;
+  const totalQualified = filteredLeads.filter(l => l.status === 'qualificado' || l.status === 'transferido').length;
+  const attendedNow    = filteredLeads.filter(l => l.status === 'transferido').length;
 
   const handleManualTransfer = useCallback(async (leadId: string, notes: string) => {
     if (!nextSeller || !user) return;
@@ -409,10 +447,44 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         </div>
       )}
 
+      {/* ── FILTRO DE PERÍODO ─────────────────────── */}
+      <div style={{ padding: '0 24px 8px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <CalendarDays style={{ width: 14, height: 14, color: '#64748B' }} />
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#64748B' }}>Período</span>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {DATE_FILTERS.map(f => (
+            <button
+              key={f.value}
+              onClick={() => setDateFilter(f.value)}
+              style={{
+                padding: '5px 14px',
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 700,
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+                background: dateFilter === f.value ? C.cyan : 'rgba(255,255,255,0.06)',
+                color: dateFilter === f.value ? '#fff' : '#94A3B8',
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {dateFilter !== 'all' && (
+          <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, background: C.cyanBg, border: `1px solid ${C.cyan}`, color: C.cyanL }}>
+            {filteredLeads.length} de {leads.length} leads
+          </span>
+        )}
+      </div>
+
       {/* ── MÉTRICAS ──────────────────────────────── */}
-      <div style={{ padding: '20px 24px', display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2,1fr)' : 'repeat(5,1fr)', gap: 14 }}>
+      <div style={{ padding: '8px 24px 20px', display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2,1fr)' : 'repeat(5,1fr)', gap: 14 }}>
         {[
-          { icon: <Users className="h-5 w-5" />, label: 'Leads no pipeline', value: leads.length, main: C.blue, light: C.blueL, bg: C.blueBg },
+          { icon: <Users className="h-5 w-5" />, label: dateFilter === 'all' ? 'Leads no pipeline' : `Leads — ${DATE_FILTERS.find(f=>f.value===dateFilter)?.label}`, value: filteredLeads.length, main: C.blue, light: C.blueL, bg: C.blueBg },
           { icon: <Flame className="h-5 w-5" />, label: 'Qualificados', value: totalQualified, main: C.green, light: C.greenL, bg: C.greenBg },
           { icon: <UserCheck className="h-5 w-5" />, label: 'Em atendimento', value: attendedNow, main: C.orange, light: C.orangeL, bg: C.orangeBg },
           { icon: <Crown className="h-5 w-5" />, label: 'Vendedores online', value: activeMembers.length, main: C.purple, light: C.purpleL, bg: C.purpleBg },
