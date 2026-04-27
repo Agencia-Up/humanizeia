@@ -1620,13 +1620,58 @@ Este cliente já foi encaminhado para o vendedor ${sellerData.name}. Sua única 
               let sellerNum = String(selectedSeller.whatsapp_number || '').replace(/\D/g, '');
               if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
               if (sellerNum) {
-                // Buscar ultimas mensagens do chat para contexto
-                const { data: recentChat } = await supabase.from('wa_chat_history').select('role, content, created_at').eq('agent_id', agent.id).eq('instance_id', instanceName).eq('user_id', agent.user_id).order('created_at', { ascending: false }).limit(8);
-                let chatSnippet = '';
-                if (recentChat && recentChat.length > 0) {
-                  chatSnippet = '\n\n--------------------\n\nUltimas mensagens da conversa:\n' + recentChat.reverse().map((m: any) => `${m.role === 'user' ? `👤 ${pushName}` : '🤖 Agente'}: ${String(m.content || '').substring(0, 300)}`).join('\n');
+                // Buscar TODAS as mensagens desta conversa específica para o resumo da IA
+                const { data: fullChat } = await supabase.from('wa_chat_history')
+                  .select('role, content, created_at')
+                  .eq('agent_id', agent.id)
+                  .eq('remote_jid', remoteJid)
+                  .order('created_at', { ascending: true })
+                  .limit(30);
+
+                // Gerar resumo inteligente via IA (call dedicado)
+                let aiGeneratedSummary = args.resumo || 'Lead qualificado pela IA.';
+                try {
+                  const chatTranscript = (fullChat || []).map((m: any) =>
+                    `${m.role === 'user' ? `Cliente (${pushName})` : 'Agente IA'}: ${String(m.content || '').substring(0, 500)}`
+                  ).join('\n');
+
+                  const summaryRes = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+                    body: JSON.stringify({
+                      model: 'gpt-4o-mini',
+                      temperature: 0.3,
+                      messages: [
+                        {
+                          role: 'system',
+                          content: `Você é um analista de vendas especialista em mercado automotivo. Sua função é ler a conversa entre um cliente e um agente de IA de uma concessionária e gerar um briefing COMPLETO e OBJETIVO para o vendedor humano que vai assumir o atendimento agora.
+
+O briefing deve ser em português, direto ao ponto, e conter EXATAMENTE estas seções:
+
+🚗 *VEÍCULO DE INTERESSE:* (qual carro específico o cliente demonstrou interesse - marca, modelo, versão, ano se mencionado)
+📢 *ORIGEM DO LEAD:* (se veio de anúncio do Meta/Facebook/Instagram, mencionar o produto anunciado. Se foi busca orgânica, dizer isso.)
+👤 *PERFIL DO CLIENTE:* (nível de interesse: alto/médio/baixo, urgência percebida, se tem carro para troca, situação financeira mencionada, etc.)
+💡 *DICA PARA O VENDEDOR:* (1-2 frases objetivas de como abordar este cliente para fechar a venda com base no que foi conversado)
+
+Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conversa, escreva "Não mencionado".`
+                        },
+                        {
+                          role: 'user',
+                          content: `Conversa completa:\n\n${chatTranscript}\n\nGere o briefing para o vendedor.`
+                        }
+                      ]
+                    })
+                  });
+                  if (summaryRes.ok) {
+                    const summaryData = await summaryRes.json();
+                    const generatedText = summaryData.choices?.[0]?.message?.content;
+                    if (generatedText) aiGeneratedSummary = generatedText;
+                  }
+                } catch(summaryErr) {
+                  console.error('[CRM] Falha ao gerar resumo inteligente da IA:', summaryErr);
                 }
-                const sellerMsg = `🚨 *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*\n\n*Nome do Cliente:* ${pushName}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agent.name}\n\n--------------------\n\n*📋 Resumo do Atendimento pela IA:*\n${args.resumo}${chatSnippet}\n\n--------------------\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\nO cliente está esperando! ⏳`;
+
+                const sellerMsg = `🔥 *LEAD QUALIFICADO — ATENDIMENTO IMEDIATO*\n\n👤 *Cliente:* ${pushName}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agent.name}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
                 const sellerSendResult = await sendUazapiTextMessage(
                   baseUrl,
                   instKey,
