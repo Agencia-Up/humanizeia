@@ -149,8 +149,37 @@ serve(async (req) => {
         }
       }
 
+      // ─── Enriquecimento: busca metadados reais do anúncio no servidor ──────
+      // Extrai a URL do Facebook/Instagram da mensagem ou dos metadados
+      let adRawUrl = '';
+      if (extAdReply?.sourceUrl) adRawUrl = extAdReply.sourceUrl;
+      else if (ctxInfo?.sourceUrl) adRawUrl = ctxInfo.sourceUrl;
+      else {
+        const ext2 = msgMeta?.extendedTextMessage || {};
+        adRawUrl = ext2.matchedText || ext2.canonicalUrl || '';
+      }
+      // Fallback: a URL está no próprio corpo da mensagem
+      if (!adRawUrl) {
+        const urlMatch = userText.match(/https?:\/\/(fb\.me|www\.facebook\.com|m\.facebook\.com|instagram\.com)\S+/i);
+        if (urlMatch) adRawUrl = urlMatch[0];
+      }
+
+      // Se temos uma URL real do Meta, buscamos os OG tags para ter o nome EXATO do carro
+      if (adRawUrl) {
+        const ogMeta = await fetchAdMetadata(adRawUrl);
+        if (ogMeta.title || ogMeta.description) {
+          // Temos dados reais — substituímos o adTextContext com informações confirmadas
+          adTextContext = `[ANÚNCIO CONFIRMADO pelo servidor — Título real: "${ogMeta.title}" | Descrição: "${ogMeta.description}" | URL: ${adRawUrl}]`;
+          console.log('[Webhook] adTextContext enriquecido com OG real:', adTextContext.substring(0, 200));
+        } else if (!adTextContext) {
+          // Não conseguimos os OG tags mas sabemos que é um anúncio Meta
+          adTextContext = `[Lead enviou um link de anúncio do Facebook/Instagram: ${adRawUrl}]`;
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
       if (adTextContext) {
-        userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA PARA IA: O lead veio de um anúncio de carro específico. Você DEVE identificar qual carro aparece no anúncio (pelo título, imagem ou texto) e IMEDIATAMENTE acionar a ferramenta 'consultar_estoque_bndv' para buscar esse carro ANTES de enviar qualquer mensagem de texto. PROIBIDO dizer 'vou verificar' sem acionar a ferramenta na mesma iteração.)\n\nMensagem do lead: ${userText}`;
+        userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA: O lead veio de um anúncio de carro. O TITULO E DESCRIÇÃO ACIMA SÃO REAIS, lidos diretamente do link do anúncio — NÃO adivinhe, use exatamente o que está escrito. 1) Acione a ferramenta 'consultar_estoque_bndv' com uma query simples baseada na marca e modelo do anúncio. 2) Responda como um vendedor premium: dê boas-vindas, mencione o carro EXATO do anúncio pelo nome, e pergunte se o lead quer ver as fotos. NÃO liste outros carros se o carro do anúncio estiver no estoque.)\n\nMensagem do lead: ${userText}`;
       }
       // ────────────────────────────────────────────────────────────────────────
 
@@ -228,6 +257,51 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: error.message }), { headers: corsHeaders, status: 500 })
   }
 })
+
+// ─── Busca de metadados reais do anúncio (Open Graph) ───────────────────────
+// Faz uma requisição HTTP ao link do anúncio e extrai og:title / og:description.
+// Isso garante que a IA receba informações REAIS do carro, não adivinhe.
+async function fetchAdMetadata(rawUrl: string): Promise<{ title: string; description: string }> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(rawUrl, {
+      headers: {
+        'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+      },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return { title: '', description: '' };
+    const html = await res.text();
+
+    const extract = (prop: string) => {
+      // Formato: <meta property="og:title" content="..."> ou invertido
+      const patterns = [
+        new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']+)["']`, 'i'),
+        new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${prop}["']`, 'i'),
+        new RegExp(`<meta[^>]+name=["']${prop.replace('og:','')}["'][^>]+content=["']([^"']+)["']`, 'i'),
+      ];
+      for (const p of patterns) {
+        const m = html.match(p);
+        if (m?.[1]) return m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#039;/g, "'").trim();
+      }
+      return '';
+    };
+
+    const title = extract('og:title') || extract('og:description');
+    const description = extract('og:description');
+    console.log(`[AdFetch] URL: ${rawUrl} | og:title: ${title} | og:description: ${description.substring(0, 100)}`);
+    return { title, description };
+  } catch (e) {
+    console.warn('[AdFetch] Falha ao buscar metadados do anuncio:', e);
+    return { title: '', description: '' };
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function buildUazapiMediaFallbackContent(msgType: string, currentText: string) {
   const text = (currentText || '').trim();
@@ -1284,9 +1358,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 - Quando o cliente perguntar sobre veiculos (ex: "Tem Renegade?", "Qual o preco do Onix?"), voce DEVE usar a ferramenta "consultar_estoque_bndv" ANTES de responder.
 - REGRA CRITICA: NUNCA diga que vai "verificar", "consultar o estoque" ou peca "um segundo" sem efetivamente acionar a ferramenta. Se voce precisa buscar algo, APENAS CHAME A FERRAMENTA na mesma iteracao. Nao envie mensagens de "espera" vazias.
 - NUNCA invente veiculos, precos ou disponibilidade. Baseie-se APENAS no retorno da ferramenta.
-- Ao apresentar os resultados, liste as opcoes encontradas de forma comercial (versao, ano, km, preco) e pergunte se ele quer ver as fotos.
-- REGRA PARA ANUNCIOS: Se o lead veio de um anuncio de carro e voce identificou o modelo (ex: "Renegade"), busque PRIMEIRO esse modelo especifico. Se a busca especifica nao retornar nada, busque pela MARCA (ex: "Jeep") sem filtrar o modelo. Se ainda assim nao achar, busque sem filtros para ver todos os veiculos disponiveis. NUNCA peca para o cliente "me dar mais detalhes" quando ele claramente veio de um anuncio — ele ja mostrou o carro, e voce deve buscar no estoque.
-- REGRA PARA IMAGENS DO ANUNCIO: Se receber uma imagem (thumbnail do anuncio), leia CUIDADOSAMENTE qualquer texto visivel na imagem — como "Renegade Longitude", "Strada CS", "Compass 2025" — e use esses termos como parametros da busca no estoque.
+- APRESENTACAO DE RESULTADOS: Jamais jogue uma lista fria de carros na cara do cliente. Aja como um consultor de vendas premium.
+- REGRA PARA ANUNCIOS: Se o lead veio de um anuncio, analise os resultados da ferramenta de estoque e filtre mentalmente para encontrar o carro EXATO do anuncio. IMPORTANTE: Use inteligencia comercial. Os nomes das versoes frequentemente aparecem abreviados no estoque (ex: "LONG." para "LONGITUDE", "AUT." para "AUTOMATICO", "TB" para "TURBO"). Se o PRECO e o ANO baterem perfeitamente com um carro do estoque, assuma com 100% de certeza que E O MESMO CARRO do anuncio, mesmo que a nomenclatura da versao esteja abreviada ou ligeiramente diferente. Se encontrar o carro do anuncio, cite-o de forma atraente e NAO mencione os demais. So ofereca as outras alternativas se o carro exato realmente nao estiver na lista.
 - REGRA DE BUSCA (query): O campo 'query' da ferramenta deve ser SIMPLES (apenas MARCA e MODELO, ex: "Jeep Renegade"). NAO coloque detalhes muito especificos (como "1.3", "T270", "Automatico", "Branco") na 'query', senao a busca no banco de dados ira falhar e retornar vazio. Faca a busca simples e analise os resultados voce mesmo.
 
 [ENVIO DE FOTOS BNDV]
