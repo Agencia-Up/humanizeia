@@ -442,6 +442,14 @@ Deno.serve(async (req) => {
       });
     }
 
+    const userId = claimsData.user.id;
+
+    // Admin client para desconto de tokens (service_role ignora RLS)
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
+
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
     const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
@@ -458,6 +466,25 @@ Deno.serve(async (req) => {
     const { messages, context, config, stream = true } = body;
 
     console.log('AI chat request:', { context, messagesCount: messages.length, config, provider: ANTHROPIC_API_KEY ? 'anthropic' : 'lovable' });
+
+    // Fire-and-forget: desconta tokens sem bloquear a resposta
+    const consumeTokens = (amount: number) => {
+      const rounded = Math.round(amount);
+      if (rounded <= 0) return;
+      const desc = `${context} — ${messages.length} mensagem${messages.length !== 1 ? 's' : ''}`;
+      supabaseAdmin
+        .rpc('consume_user_tokens', {
+          p_user_id: userId,
+          p_amount: rounded,
+          p_agent: context,
+          p_description: desc,
+        })
+        .then(({ error }: { error: unknown }) => {
+          if (error) console.error('consume_user_tokens error:', error);
+          else console.log(`Tokens consumed: ${rounded} (${context})`);
+        })
+        .catch((e: unknown) => console.error('consume_user_tokens exception:', e));
+    };
 
     // Build system prompt
     let systemPrompt = systemPrompts[context] || systemPrompts.assistant;
@@ -510,12 +537,52 @@ Deno.serve(async (req) => {
             messages: openaiMessages,
             stream: !!stream,
             temperature: parseFloat(temperature.toFixed(2)),
+            // Solicita usage no último chunk do stream
+            ...(stream ? { stream_options: { include_usage: true } } : {}),
           }),
         });
 
         if (openaiResponse.ok) {
           if (stream) {
-            return new Response(openaiResponse.body, {
+            // Intercepta o stream para capturar usage (stream_options.include_usage)
+            const reader = openaiResponse.body!.getReader();
+            const decoder = new TextDecoder();
+            let sseBuffer = '';
+            let totalTokens = 0;
+
+            const passthroughStream = new ReadableStream({
+              async start(controller) {
+                try {
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                      consumeTokens(totalTokens);
+                      controller.close();
+                      break;
+                    }
+                    // Parse SSE para capturar usage sem re-encodar
+                    sseBuffer += decoder.decode(value, { stream: true });
+                    let idx: number;
+                    while ((idx = sseBuffer.indexOf('\n')) !== -1) {
+                      const line = sseBuffer.slice(0, idx).trim();
+                      sseBuffer = sseBuffer.slice(idx + 1);
+                      if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                        try {
+                          const parsed = JSON.parse(line.slice(6));
+                          if (parsed.usage?.total_tokens) totalTokens = parsed.usage.total_tokens;
+                        } catch { /* ignore parse errors */ }
+                      }
+                    }
+                    controller.enqueue(value); // passa bytes inalterados
+                  }
+                } catch (err) {
+                  console.error('OpenAI stream passthrough error:', err);
+                  controller.close();
+                }
+              },
+            });
+
+            return new Response(passthroughStream, {
               headers: {
                 ...corsHeaders,
                 'Content-Type': 'text/event-stream',
@@ -525,6 +592,7 @@ Deno.serve(async (req) => {
             });
           } else {
             const data = await openaiResponse.json();
+            consumeTokens(data.usage?.total_tokens || 0);
             const compatResponse = {
               choices: [{ message: { role: 'assistant', content: data.choices?.[0]?.message?.content || '' } }],
               _provider: 'openai',
@@ -578,6 +646,10 @@ Deno.serve(async (req) => {
             const encoder = new TextEncoder();
             const decoder = new TextDecoder();
 
+            // Captura tokens dos eventos SSE do Anthropic
+            let inputTokens = 0;
+            let outputTokens = 0;
+
             const transformedStream = new ReadableStream({
               async start(controller) {
                 let buffer = '';
@@ -585,6 +657,7 @@ Deno.serve(async (req) => {
                   while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
+                      consumeTokens(inputTokens + outputTokens);
                       controller.enqueue(encoder.encode('data: [DONE]\n\n'));
                       controller.close();
                       break;
@@ -604,12 +677,22 @@ Deno.serve(async (req) => {
                       try {
                         const event = JSON.parse(jsonStr);
 
+                        // Captura input tokens do evento message_start
+                        if (event.type === 'message_start' && event.message?.usage?.input_tokens) {
+                          inputTokens = event.message.usage.input_tokens;
+                        }
+                        // Captura output tokens do evento message_delta
+                        if (event.type === 'message_delta' && event.usage?.output_tokens) {
+                          outputTokens = event.usage.output_tokens;
+                        }
+
                         if (event.type === 'content_block_delta' && event.delta?.text) {
                           const openaiChunk = {
                             choices: [{ delta: { content: event.delta.text } }],
                           };
                           controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
                         } else if (event.type === 'message_stop') {
+                          consumeTokens(inputTokens + outputTokens);
                           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
                           controller.close();
                           return;
@@ -641,6 +724,8 @@ Deno.serve(async (req) => {
             });
           } else {
             const data = await anthropicResponse.json();
+            const tokensUsed = (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0);
+            consumeTokens(tokensUsed);
             const text = data.content
               ?.filter((block: any) => block.type === 'text')
               ?.map((block: any) => block.text)
