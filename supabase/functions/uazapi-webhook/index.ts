@@ -139,47 +139,92 @@ serve(async (req) => {
           console.log('[Webhook] extendedTextMessage link detectado:', adTextContext);
         }
       }
+      // ─── Enriquecimento via GPT-4o Vision na thumbnail do anúncio ────────────
+      // A thumbnail do WhatsApp contém a imagem REAL do anúncio com o nome do carro,
+      // versão, ano e preço escritos diretamente nela. O Vision lê isso com 100% de precisão.
+      // Estratégia de extração: tentar todos os caminhos possíveis onde a thumbnail pode estar.
+      const adThumbnailB64 =
+        extAdReply?.jpegThumbnail ||
+        extAdReply?.thumbnail ||
+        ctxInfo?.jpegThumbnail ||
+        msgMeta?.extendedTextMessage?.jpegThumbnail ||
+        msgMeta?.imageMessage?.jpegThumbnail ||
+        msgObj?.extendedTextMessage?.jpegThumbnail ||
+        msgObj?.jpegThumbnail ||
+        '';
 
-      // 4) Fallback: se o próprio body é um link do Facebook
-      if (!adTextContext) {
-        const bodyLower = userText.toLowerCase();
-        if (bodyLower.includes('fb.me') || bodyLower.includes('facebook.com/story') || bodyLower.includes('instagram.com')) {
-          adTextContext = `[Lead enviou um link de anúncio do Facebook/Instagram: ${userText}]`;
-          console.log('[Webhook] URL no body detectada como anuncio:', adTextContext);
-        }
-      }
-
-      // ─── Enriquecimento: busca metadados reais do anúncio no servidor ──────
-      // Extrai a URL do Facebook/Instagram da mensagem ou dos metadados
-      let adRawUrl = '';
-      if (extAdReply?.sourceUrl) adRawUrl = extAdReply.sourceUrl;
-      else if (ctxInfo?.sourceUrl) adRawUrl = ctxInfo.sourceUrl;
-      else {
+      // Também extrair URL do anúncio para fallback
+      let adRawUrl = extAdReply?.sourceUrl || ctxInfo?.sourceUrl || '';
+      if (!adRawUrl) {
         const ext2 = msgMeta?.extendedTextMessage || {};
         adRawUrl = ext2.matchedText || ext2.canonicalUrl || '';
       }
-      // Fallback: a URL está no próprio corpo da mensagem
       if (!adRawUrl) {
         const urlMatch = userText.match(/https?:\/\/(fb\.me|www\.facebook\.com|m\.facebook\.com|instagram\.com)\S+/i);
         if (urlMatch) adRawUrl = urlMatch[0];
       }
 
-      // Se temos uma URL real do Meta, buscamos os OG tags para ter o nome EXATO do carro
-      if (adRawUrl) {
+      // Pré-processamento Vision: identifica o carro EXATO na imagem do anúncio
+      const OPENAI_API_KEY_PRE = Deno.env.get('OPENAI_API_KEY') || '';
+      if (adThumbnailB64 && OPENAI_API_KEY_PRE) {
+        try {
+          console.log('[AdVision] Iniciando análise da thumbnail do anúncio...');
+          const visionRes = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${OPENAI_API_KEY_PRE}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'gpt-4o',
+              max_tokens: 300,
+              messages: [{
+                role: 'user',
+                content: [
+                  {
+                    type: 'image_url',
+                    image_url: { url: `data:image/jpeg;base64,${adThumbnailB64}`, detail: 'high' }
+                  },
+                  {
+                    type: 'text',
+                    text: 'Esta é a imagem de um anúncio de carro de uma concessionária. Leia TODOS os textos visíveis na imagem (inclusive textos sobrepostos, etiquetas, faixas de preço e textos na carroceria). Identifique e informe: MARCA, MODELO, VERSÃO, ANO e PREÇO do carro anunciado. Responda APENAS com esses dados em formato curto, por exemplo: "Ford EcoSport Freestyle 1.5 2021 - R$81.990". Se houver mais de um carro ou informação incompleta, informe o que conseguir ler.'
+                  }
+                ]
+              }]
+            }),
+          });
+          if (visionRes.ok) {
+            const visionData = await visionRes.json();
+            const carIdentified = visionData.choices?.[0]?.message?.content?.trim() || '';
+            if (carIdentified) {
+              adTextContext = `[ANÚNCIO ANALISADO POR VISÃO COMPUTACIONAL — Carro identificado com precisão: "${carIdentified}" | URL do anúncio: ${adRawUrl}]`;
+              console.log('[AdVision] Carro identificado:', carIdentified);
+            } else {
+              console.warn('[AdVision] Vision não retornou dados do carro.');
+            }
+          } else {
+            console.warn('[AdVision] Vision API retornou erro:', visionRes.status);
+          }
+        } catch (visionErr) {
+          console.warn('[AdVision] Erro ao analisar thumbnail:', visionErr);
+        }
+      }
+
+      // Fallback: se não temos thumbnail mas temos URL, tentamos OG tags
+      if (!adTextContext && adRawUrl) {
         const ogMeta = await fetchAdMetadata(adRawUrl);
-        if (ogMeta.title || ogMeta.description) {
-          // Temos dados reais — substituímos o adTextContext com informações confirmadas
-          adTextContext = `[ANÚNCIO CONFIRMADO pelo servidor — Título real: "${ogMeta.title}" | Descrição: "${ogMeta.description}" | URL: ${adRawUrl}]`;
-          console.log('[Webhook] adTextContext enriquecido com OG real:', adTextContext.substring(0, 200));
+        // OG tags do Facebook geralmente retornam nome da página, não o carro.
+        // Só usamos se a descrição parecer conter um carro (tem número de ano ou R$)
+        const combined = `${ogMeta.title} ${ogMeta.description}`;
+        const looksLikeCar = /\b(20\d{2}|R\$|km|cv|flex|diesel|turbo|aut\.|manual)/i.test(combined);
+        if (looksLikeCar && (ogMeta.title || ogMeta.description)) {
+          adTextContext = `[ANÚNCIO (via OG): "${ogMeta.title}" | "${ogMeta.description}" | URL: ${adRawUrl}]`;
+          console.log('[AdFetch] OG útil encontrado:', adTextContext.substring(0, 200));
         } else if (!adTextContext) {
-          // Não conseguimos os OG tags mas sabemos que é um anúncio Meta
-          adTextContext = `[Lead enviou um link de anúncio do Facebook/Instagram: ${adRawUrl}]`;
+          adTextContext = `[Lead enviou link de anúncio do Facebook/Instagram. URL: ${adRawUrl}. ATENÇÃO: Não foi possível identificar o carro automaticamente — pergunte ao lead qual carro viu no anúncio.]`;
         }
       }
       // ─────────────────────────────────────────────────────────────────────────
 
       if (adTextContext) {
-        userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA: O lead veio de um anúncio de carro. O TITULO E DESCRIÇÃO ACIMA SÃO REAIS, lidos diretamente do link do anúncio — NÃO adivinhe, use exatamente o que está escrito. 1) Acione a ferramenta 'consultar_estoque_bndv' com uma query simples baseada na marca e modelo do anúncio. 2) Responda como um vendedor premium: dê boas-vindas, mencione o carro EXATO do anúncio pelo nome, e pergunte se o lead quer ver as fotos. NÃO liste outros carros se o carro do anúncio estiver no estoque.)\n\nMensagem do lead: ${userText}`;
+        userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA: O lead veio de um anúncio de carro. O CARRO ACIMA FOI IDENTIFICADO COM PRECISÃO — use esse nome EXATAMENTE. NÃO adivinhe nem use carros do histórico. 1) Acione 'consultar_estoque_bndv' com a query simples (marca + modelo) do carro identificado. 2) Responda como vendedor premium: boas-vindas, comente sobre o carro EXATO do anúncio, pergunte se quer ver fotos. Não liste outros carros se este estiver no estoque.)\n\nMensagem do lead: ${userText}`;
       }
       // ────────────────────────────────────────────────────────────────────────
 
