@@ -305,7 +305,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   // UPDATE / DELETE → só atualiza dados (drag-and-drop não gera alertas)
   useEffect(() => {
     if (!user) return;
-    const iv = window.setInterval(() => fetchLiveDataRef.current(), 120000);
+    const iv = window.setInterval(() => fetchLiveDataRef.current(), 30000); // 30s fallback poll
 
     const triggerNewLeadAlert = () => {
       playBell(mutedRef.current);
