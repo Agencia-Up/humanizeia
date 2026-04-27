@@ -150,7 +150,7 @@ serve(async (req) => {
       }
 
       if (adTextContext) {
-        userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA PARA IA: O lead veio de um anúncio de carro específico. Você DEVE identificar qual carro aparece no anúncio (pelo título, imagem ou texto) e IMEDIATAMENTE acionar a ferramenta 'consultar_estoque_bndv' para buscar esse carro ANTES de enviar qualquer mensagem de texto. PROIBIDO dizer 'vou verificar' sem acionar a ferramenta na mesma iteração.)\n\nMensagem do lead: ${userText}`;
+        userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA: O lead veio de um anúncio de carro. 1) Acione a ferramenta 'consultar_estoque_bndv' imediatamente para buscar o modelo do carro na mesma iteração. 2) Na sua resposta de texto ao cliente, AJA COMO UM VENDEDOR PREMIUM. Dê boas-vindas naturais, comente sobre o carro do anúncio e, com base na lista que a ferramenta retornar, IDENTIFIQUE o carro exato (bata ano, versão e preço). NÃO liste todas as opções como um robô. Fale apenas do carro do anúncio e pergunte se ele quer ver as fotos. Caso não tenha o carro exato, aí sim ofereça com muita educação as outras alternativas similares da lista.)\n\nMensagem do lead: ${userText}`;
       }
       // ────────────────────────────────────────────────────────────────────────
 
@@ -1284,9 +1284,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 - Quando o cliente perguntar sobre veiculos (ex: "Tem Renegade?", "Qual o preco do Onix?"), voce DEVE usar a ferramenta "consultar_estoque_bndv" ANTES de responder.
 - REGRA CRITICA: NUNCA diga que vai "verificar", "consultar o estoque" ou peca "um segundo" sem efetivamente acionar a ferramenta. Se voce precisa buscar algo, APENAS CHAME A FERRAMENTA na mesma iteracao. Nao envie mensagens de "espera" vazias.
 - NUNCA invente veiculos, precos ou disponibilidade. Baseie-se APENAS no retorno da ferramenta.
-- Ao apresentar os resultados, liste as opcoes encontradas de forma comercial (versao, ano, km, preco) e pergunte se ele quer ver as fotos.
-- REGRA PARA ANUNCIOS: Se o lead veio de um anuncio de carro e voce identificou o modelo (ex: "Renegade"), busque PRIMEIRO esse modelo especifico. Se a busca especifica nao retornar nada, busque pela MARCA (ex: "Jeep") sem filtrar o modelo. Se ainda assim nao achar, busque sem filtros para ver todos os veiculos disponiveis. NUNCA peca para o cliente "me dar mais detalhes" quando ele claramente veio de um anuncio — ele ja mostrou o carro, e voce deve buscar no estoque.
-- REGRA PARA IMAGENS DO ANUNCIO: Se receber uma imagem (thumbnail do anuncio), leia CUIDADOSAMENTE qualquer texto visivel na imagem — como "Renegade Longitude", "Strada CS", "Compass 2025" — e use esses termos como parametros da busca no estoque.
+- APRESENTACAO DE RESULTADOS: Jamais jogue uma lista fria de carros na cara do cliente. Aja como um consultor de vendas premium.
+- REGRA PARA ANUNCIOS: Se o lead veio de um anuncio, analise os resultados da ferramenta de estoque e filtre mentalmente para encontrar o carro EXATO do anuncio (comparando ano, versao, preco da imagem/texto). Se encontrar, cite-o de forma atraente e NAO mencione os demais. So ofereca os outros da lista caso o carro exato do anuncio nao esteja no resultado.
 - REGRA DE BUSCA (query): O campo 'query' da ferramenta deve ser SIMPLES (apenas MARCA e MODELO, ex: "Jeep Renegade"). NAO coloque detalhes muito especificos (como "1.3", "T270", "Automatico", "Branco") na 'query', senao a busca no banco de dados ira falhar e retornar vazio. Faca a busca simples e analise os resultados voce mesmo.
 
 [ENVIO DE FOTOS BNDV]
