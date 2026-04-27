@@ -199,6 +199,16 @@ Retorne APENAS um objeto JSON puro (sem markdown ou blocos de código) no format
         tokens_used: tokensUsed,
       });
 
+      // Desconta tokens da assinatura do usuário
+      if (tokensUsed > 0) {
+        await supabase.rpc('consume_user_tokens', {
+          p_user_id: user.id,
+          p_amount: tokensUsed,
+          p_agent: 'salomao',
+          p_description: 'Geração de prompt IA (Salomão)',
+        }).catch((e: unknown) => console.error('consume_user_tokens error:', e));
+      }
+
       return new Response(JSON.stringify({
         prompt: promptText,
         tokens_used: tokensUsed,
