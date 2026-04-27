@@ -109,15 +109,16 @@ serve(async (req) => {
               .eq('agent_id', agentId)
               .eq('instance_id', instance.instance_name)
               .eq('user_id', lead.user_id)
+              .eq('remote_jid', lead.remote_jid) // FILTRO ESSENCIAL ADICIONADO
               .order('created_at', { ascending: false })
               .limit(8);
 
             let chatSnippet = '';
             if (recentChat && recentChat.length > 0) {
-              chatSnippet = '\n\n--------------------\n\nUltimas mensagens da conversa:\n' + recentChat.reverse().map((m: any) => `${m.role === 'user' ? `👤 ${lead.lead_name || 'Cliente'}` : '🤖 Agente'}: ${String(m.content || '').substring(0, 300)}`).join('\n');
+              chatSnippet = '\n\n━━━━━━━━━━━━━━━━━━━━\n💬 *ÚLTIMAS MENSAGENS:*\n' + recentChat.reverse().map((m: any) => `${m.role === 'user' ? `👤 *${lead.lead_name || 'Cliente'}*` : '🤖 *Agente*'}: ${String(m.content || '').substring(0, 300)}`).join('\n');
             }
             
-            const notificationMsg = `🚨 *LEAD REPASSADO (Vendedor Anterior Não Respondeu)*\n\n*Nome:* ${lead.lead_name || 'Desconhecido'}\n*Numero:* +${phoneNumber}\n*Resumo:* ${lead.summary || 'Sem resumo'}${chatSnippet}\n\n--------------------\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\nResponda "Ok" para assumir este atendimento!`;
+            const notificationMsg = `🚨 *LEAD REPASSADO (Vendedor não respondeu)*\n\n👤 *Nome:* ${lead.lead_name || 'Desconhecido'}\n📱 *Número:* +${phoneNumber}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *RESUMO DO LEAD:*\n${lead.summary || 'Lead interessado aguardando resposta.'}${chatSnippet}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
             
             await sendUazapiTextMessage(baseUrl, instKey, instance.instance_name, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
             
@@ -237,15 +238,16 @@ serve(async (req) => {
               .eq('agent_id', agentId)
               .eq('instance_id', instanceName)
               .eq('user_id', lead.user_id)
+              .eq('remote_jid', remoteJid) // FILTRO ESSENCIAL ADICIONADO
               .order('created_at', { ascending: false })
               .limit(8);
 
             let chatSnippet = '';
             if (recentChat && recentChat.length > 0) {
-              chatSnippet = '\n\n--------------------\n\nUltimas mensagens da conversa:\n' + recentChat.reverse().map((m: any) => `${m.role === 'user' ? `👤 ${lead.lead_name || 'Cliente'}` : '🤖 Agente'}: ${String(m.content || '').substring(0, 300)}`).join('\n');
+              chatSnippet = '\n\n━━━━━━━━━━━━━━━━━━━━\n💬 *ÚLTIMAS MENSAGENS:*\n' + recentChat.reverse().map((m: any) => `${m.role === 'user' ? `👤 *${lead.lead_name || 'Cliente'}*` : '🤖 *Agente*'}: ${String(m.content || '').substring(0, 300)}`).join('\n');
             }
 
-            const notificationMsg = `🚨 *LEAD QUALIFICADO (Inatividade 10min)*\n\n*Nome do Cliente:* ${lead.lead_name || 'Desconhecido'}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n\n*📋 Resumo do Atendimento pela IA:*\n${lead.summary || 'Cliente parou de responder durante a conversa.'}${chatSnippet}\n\n--------------------\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\nResponda "Ok" para assumir este atendimento! ⏳`;
+            const notificationMsg = `🔥 *NOVO LEAD QUALIFICADO (Inatividade)*\n\n👤 *Cliente:* ${lead.lead_name || 'Desconhecido'}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agentData?.name || 'Agente'}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *RESUMO DO ATENDIMENTO:*\n${lead.summary || 'O cliente demonstrou interesse e parou de responder durante a conversa.'}${chatSnippet}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
             
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }
