@@ -1418,13 +1418,22 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     if (error) console.error('[uazapi-webhook] wa_inbox incoming insert error:', error.message);
   });
 
-  // Buscar histórico
+  // Buscar histórico - CRÍTICO: filtrar por agent_id + remote_jid para não misturar conversas
   const { data: history } = await supabase.from('wa_chat_history')
-    .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(10)
+    .select('role, content').eq('agent_id', agent.id).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(12)
 
   const chatHistory = (history || []).reverse().map((m: any) => ({ role: m.role, content: m.content }))
 
   // RAG - Busca Base de Conhecimento
+  // Usa apenas o texto limpo do usuário (sem contexto de anúncio injetado) para embedding preciso
+  const cleanUserTextForEmbedding = userText
+    .replace(/\[ANÚNCI0[^\]]*\]/g, '')
+    .replace(/\[Lead enviou link[^\]]*\]/g, '')
+    .replace(/\(INSTRUÇÃO OBRIGATÓRIA:[^)]*\)/g, '')
+    .replace(/\(NOTA PARA IA:[^)]*\)/g, '')
+    .trim()
+    .slice(0, 2000) || userText.slice(0, 2000);
+
   let knowledgeContext = ''
   try {
     const { data: agentKbs } = await supabase.from('agent_knowledge_bases').select('kb_id').eq('agent_id', agent.id)
@@ -1436,7 +1445,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         const embedRes = await fetch('https://api.openai.com/v1/embeddings', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: 'text-embedding-3-small', input: userText.slice(0, 8000) })
+          body: JSON.stringify({ model: 'text-embedding-3-small', input: cleanUserTextForEmbedding })
         })
         if (embedRes.ok) {
           const embedData = await embedRes.json()
@@ -1450,58 +1459,33 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   } catch (err: any) {}
 
   // ─── PROMPT DO SISTEMA ────────────────────────────────────────────────────
-  // PRIORIDADE 1: O prompt configurado pelo usuário no cadastro do agente.
-  // Toda a personalidade, tom, nome, restrições de produto e estilo de venda
-  // vêm daqui. Este é o documento mais importante. Siga-o à risca.
+  // O prompt do agente é a AUTORIDADE MÁXIMA — personalidade, tom, nome e estilo de venda.
+  // As ferramentas são complementos que o agente usa quando JULGAR necessário, como um MCP.
   let systemPrompt = agent.system_prompt || 'Você é um consultor de vendas prestativo e atencioso.'
   if (agent.company_name) systemPrompt += `\n\nEmpresa/Loja: ${agent.company_name}`
-  if (knowledgeContext) systemPrompt += `\n\n## BASE DE CONHECIMENTO ADICIONAL:\n${knowledgeContext}`
 
-  // PRIORIDADE 2: Regras de naturalidade. Você é um humano, não um robô.
-  systemPrompt += `\n\n## REGRAS DE COMPORTAMENTO NATURAL (SIGA SEMPRE):
-- Você é um consultor humano real. NUNCA responda de forma robótica, com frases prontas ou engessadas.
-- Leia a mensagem do cliente com ATENÇÃO TOTAL antes de responder. Entenda o que ele realmente quer.
-- Se ele pediu "fotos de dentro do carro", mande fotos de dentro. Se pediu o preço, dê o preço. Não mande informação genérica.
-- Varie suas respostas. Nunca repita a mesma frase de abertura (como "Claro!") em sequência.
-- Mantenha respostas curtas e diretas. WhatsApp não é e-mail. Uma ou duas frases por vez são suficientes.
-- Não use emojis em excesso. Use apenas quando for natural e não forçado.
-- Nunca use linguagem excessivamente formal. Seja próximo, como um amigo que entende de carros.
-- Nunca antecipe perguntas que o cliente não fez. Responda o que foi perguntado e espere a próxima interação.
-- Se não souber algo, diga que vai verificar. Não invente.`
+  // Base de conhecimento integrada como contexto natural, não como regra
+  if (knowledgeContext) {
+    systemPrompt += `\n\n---\nINFORMAÇÕES ÚTEIS PARA O ATENDIMENTO:\n${knowledgeContext}\n---`
+  }
 
-  // PRIORIDADE 3: Regras operacionais do sistema (mídias, estoque, fotos, transferência).
-  systemPrompt += `\n\n## REGRAS OPERACIONAIS:
+  // Guia de uso das ferramentas — descritivo, não imperativo
+  systemPrompt += `\n\nFERRAMENTAS DISPONÍVEIS (use quando julgar necessário):
 
-### MÍDIAS E ARQUIVOS
-- Imagem recebida: analise o que o cliente enviou. Se for um anúncio, identifique o carro do anúncio.
-- Áudio: a transcrição chega como texto. Interprete normalmente. Se for incompreensível, peça para repetir (último recurso).
-- Documento/PDF: informe que não consegue abrir arquivos e peça que resuma em texto.
+• consultar_estoque_bndv — Consulta os veículos disponíveis no estoque real. Use quando o cliente perguntar sobre um modelo, preço, disponibilidade ou estiver interessado em um carro específico. Nunca invente informações de estoque — sempre consulte. Para busca, use apenas marca e modelo simples (ex: "Fiat Strada").
 
-### CONSULTA DE ESTOQUE (ferramenta: consultar_estoque_bndv)
-- Quando o cliente perguntar sobre um veículo, use a ferramenta ANTES de responder. Nunca diga que vai verificar sem chamar a ferramenta.
-- NUNCA invente carros, preços ou disponibilidade. Use apenas o que a ferramenta retornar.
-- Apresente os resultados como um consultor premium: destaque o carro certo, não jogue listas frias.
-- Se o lead veio de um anúncio, encontre o carro EXATO do anúncio na lista do estoque. Versões podem aparecer abreviadas (LONG. = LONGITUDE, AUT. = AUTOMÁTICO). Se preço e ano batem, é o mesmo carro.
-- Campo 'query' da ferramenta: use apenas MARCA e MODELO simples (ex: "Fiat Strada"). Não coloque detalhes como ano, cor ou câmbio na query.
+• enviar_fotos_bndv — Envia fotos do veículo diretamente no WhatsApp. Use quando o cliente pedir para ver o carro, quiser fotos ou imagens. No campo 'query', use o nome exato do carro que está sendo discutido na conversa (ex: "Chevrolet Onix Activ 2019"). Após enviar, faça um comentário natural sobre o veículo — o cliente já está vendo as fotos, não precisa confirmar o envio.
 
-### ENVIO DE FOTOS (ferramenta: enviar_fotos_bndv)
-- Quando o cliente pedir fotos, use a ferramenta "enviar_fotos_bndv" com o nome EXATO do carro.
-- ATENÇÃO: Se o cliente pediu fotos de uma parte específica (interior, painel, banco, etc.), use a ferramenta normalmente. As fotos disponíveis serão enviadas.
-- REGRA CRÍTICA: Depois que as fotos são enviadas, JAMAIS diga "aqui estão as fotos", "enviei as fotos" ou descreva as fotos. O cliente já está vendo. Faça APENAS um comentário comercial curto e natural sobre o veículo (ex: "Acabamento bem cuidado, né? 😊 Esse carro tem revisões em dia também."). Mude o foco para o próximo passo da venda.
+• atualizar_etapa_crm — Registra a evolução do lead. Use 'interessado' quando o cliente demonstrar interesse claro, 'qualificado' quando quiser comprar, falar com um vendedor, ver proposta, financiamento ou agendar visita, e 'encerrado' quando desistir. Para 'qualificado', o sistema notifica um vendedor humano automaticamente.`
 
-### TRANSFERÊNCIA PARA VENDEDOR (ferramenta: atualizar_etapa_crm)
-- Use com status "qualificado" quando o cliente quiser: falar com vendedor, ver proposta, financiamento, visita, test drive, negociar ou demonstrar intenção clara de compra.
-- Não questione, apenas acione. O sistema faz o resto.`
-
-  // PRIORIDADE 4: Restrição especial se o lead já foi transferido recentemente
+  // Situação especial: lead já transferido recentemente
   const lastTransferAt = leadExists?.last_interaction_at ? new Date(leadExists.last_interaction_at).getTime() : 0;
   const hoursSinceTransfer = (Date.now() - lastTransferAt) / (1000 * 60 * 60);
 
   if (leadExists && (leadExists.status === 'qualificado' || leadExists.status === 'transferido') && leadExists.assigned_to_id && hoursSinceTransfer < 24) {
     const { data: sellerData } = await supabase.from('ai_team_members').select('name').eq('id', leadExists.assigned_to_id).maybeSingle();
     if (sellerData) {
-      systemPrompt += `\n\n## SITUAÇÃO ESPECIAL: LEAD JÁ TRANSFERIDO
-Este cliente já foi encaminhado para o vendedor ${sellerData.name}. Sua única função agora é tranquilizá-lo de forma natural e humana, dizendo que ${sellerData.name} já está ciente e entrará em contato em breve. NÃO consulte estoque, NÃO envie fotos, NÃO faça perguntas. Apenas mantenha o cliente tranquilo até o vendedor assumir. Varie a mensagem para não soar repetitivo.`;
+      systemPrompt += `\n\nSITUAÇÃO ATUAL: Este cliente já foi encaminhado para o vendedor ${sellerData.name}. Avise-o de forma natural que ${sellerData.name} já está ciente e entrará em contato em breve. Não consulte estoque nem envie fotos agora.`;
     }
   }
 
@@ -1521,11 +1505,26 @@ Este cliente já foi encaminhado para o vendedor ${sellerData.name}. Sua única 
   if (!mediaFallbackReply) {
     let iterations = 0;
     const maxIterations = 3;
-    let currentMessages: any[] = [
-      { role: 'system', content: systemPrompt },
-      ...chatHistory,
-      { role: 'user', content: userMessageContentForOpenAi }
-    ];
+
+    // Separar o contexto de anúncio do texto real do usuário
+    // Isso evita que instruções internas poluam o raciocínio da IA e o histórico
+    const buildMessages = () => {
+      const msgs: any[] = [{ role: 'system', content: systemPrompt }];
+
+      // Se há contexto de anúncio, injetar como mensagem de sistema separada (não polui o histórico)
+      const adContextMatch = userText.match(/^(\[ANÚNCI0[^\n]*\]|\[Lead enviou link[^\n]*\])/m);
+      const hasAdContext = adContextMatch && userText !== finalUserText;
+      if (hasAdContext) {
+        const adCtx = userText.split(/\(INSTRUÇÃO OBRIGATÓRIA|\(NOTA PARA IA/)[0].trim();
+        msgs.push({ role: 'system', content: `CONTEXTO DE ORIGEM DO LEAD: ${adCtx}\n\nO cliente veio por este anúncio. Use 'consultar_estoque_bndv' para verificar o veículo de interesse antes de responder.` });
+      }
+
+      msgs.push(...chatHistory);
+      msgs.push({ role: 'user', content: userMessageContentForOpenAi });
+      return msgs;
+    };
+
+    let currentMessages: any[] = buildMessages();
 
     while (iterations < maxIterations) {
       iterations++;
