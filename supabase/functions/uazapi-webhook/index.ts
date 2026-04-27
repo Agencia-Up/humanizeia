@@ -150,6 +150,8 @@ serve(async (req) => {
         msgMeta?.extendedTextMessage?.jpegThumbnail ||
         msgMeta?.imageMessage?.jpegThumbnail ||
         msgObj?.extendedTextMessage?.jpegThumbnail ||
+        msgObj?.content?.JPEGThumbnail ||
+        msgObj?.content?.jpegThumbnail ||
         msgObj?.jpegThumbnail ||
         '';
 
@@ -244,11 +246,20 @@ serve(async (req) => {
       // Fallback final: ao menos sinaliza que é um anúncio e pede o carro ao lead
       if (!adTextContext && (adRawUrl || adThumbnailB64)) {
         adTextContext = `[Lead enviou link de anúncio. URL: ${adRawUrl}. Não foi possível identificar o carro automaticamente.]`;
+        try {
+          await supabase.storage.from('creatives').upload(`payload_diag_${Date.now()}.json`, JSON.stringify(msgObj));
+        } catch (err) {
+          console.error("Erro diag dump storage", err);
+        }
       }
       // ─────────────────────────────────────────────────────────────────────────
 
       if (adTextContext) {
-        userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA: O lead veio de um anúncio de carro. O CARRO ACIMA FOI IDENTIFICADO COM PRECISÃO — use esse nome EXATAMENTE. NÃO adivinhe nem use carros do histórico. 1) Acione 'consultar_estoque_bndv' com a query simples (marca + modelo) do carro identificado. 2) Responda como vendedor premium: boas-vindas, comente sobre o carro EXATO do anúncio, pergunte se quer ver fotos. Não liste outros carros se este estiver no estoque.)\n\nMensagem do lead: ${userText}`;
+        if (adTextContext.includes('Não foi possível identificar')) {
+          userText = `${adTextContext}\n\nMensagem do lead: ${userText}`;
+        } else {
+          userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA: O lead veio de um anúncio de carro. O CARRO ACIMA FOI IDENTIFICADO COM PRECISÃO — use esse nome EXATAMENTE. NÃO adivinhe nem use carros do histórico. 1) Acione 'consultar_estoque_bndv' com a query simples (marca + modelo) do carro identificado. 2) Responda como vendedor premium: boas-vindas, comente sobre o carro EXATO do anúncio, pergunte se quer ver fotos. Não liste outros carros se este estiver no estoque.)\n\nMensagem do lead: ${userText}`;
+        }
       }
       // ────────────────────────────────────────────────────────────────────────
 
@@ -1142,6 +1153,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       const { data: assignedLead } = await supabase.from('ai_crm_leads').select('id, assigned_to_id').eq('agent_id', agent.id).eq('status', 'qualificado').order('last_interaction_at', { ascending: false }).limit(1).maybeSingle();
       if (assignedLead && assignedLead.assigned_to_id === matchedSeller.id) {
         await supabase.from('ai_crm_leads').update({ status: 'transferido', last_interaction_at: new Date().toISOString() }).eq('id', assignedLead.id);
+        
+        // Confirmar tambem na tabela de transferencias para o dashboard
+        await supabase.from('ai_lead_transfers').update({ 
+          is_confirmed: true, 
+          confirmed_at: new Date().toISOString(),
+          transfer_status: 'confirmed'
+        }).eq('lead_id', assignedLead.id).eq('to_member_id', matchedSeller.id);
+
         console.log(`[Webhook] Lead ${assignedLead.id} atualizado para 'transferido' (Em Atendimento) pelo vendedor ${matchedSeller.name}.`);
       } else {
         console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou, mas o lead nao esta mais designado para ele (ja foi repassado ou assumido).`);
@@ -1459,11 +1478,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   systemPrompt += `\n- O WhatsApp NAO suporta Markdown para imagens. NUNCA escreva links ou URLs de fotos no chat. SEMPRE use a ferramenta "enviar_fotos_bndv" para envio de midia.`
   systemPrompt += `\n- REGRA ABSOLUTA AO ENVIAR FOTOS: PROIBIDO dizer "foram enviadas", "aqui estao as fotos" ou confirmar o envio tecnicamente. O cliente JA ESTA VENDO AS FOTOS. Faca apenas um comentario comercial natural sobre o veiculo.`
 
-  if (leadExists && (leadExists.status === 'qualificado' || leadExists.status === 'transferido') && leadExists.assigned_to_id) {
+  // Se o lead já foi transferido RECENTEMENTE (últimas 24h), restringir o papel da IA para apenas suporte básico
+  const lastTransferAt = leadExists?.last_interaction_at ? new Date(leadExists.last_interaction_at).getTime() : 0;
+  const hoursSinceTransfer = (Date.now() - lastTransferAt) / (1000 * 60 * 60);
+
+  if (leadExists && (leadExists.status === 'qualificado' || leadExists.status === 'transferido') && leadExists.assigned_to_id && hoursSinceTransfer < 24) {
     const { data: sellerData } = await supabase.from('ai_team_members').select('name').eq('id', leadExists.assigned_to_id).maybeSingle();
     if (sellerData) {
-      systemPrompt += `\n\n[ATENÇÃO MÁXIMA - ATENDIMENTO JÁ TRANSFERIDO]
-O atendimento deste cliente já foi transferido para o vendedor humano chamado ${sellerData.name}. 
+      systemPrompt += `\n\n[ATENÇÃO MÁXIMA - ATENDIMENTO JÁ TRANSFERIDO RECENTEMENTE]
+O atendimento deste cliente já foi transferido para o vendedor humano chamado ${sellerData.name} recentemente. 
 Sua ÚNICA função agora é responder de forma curta, prestativa e humana, avisando que o vendedor ${sellerData.name} irá prosseguir com o atendimento em breve ou já está ciente e a caminho. 
 Você NÃO DEVE tentar vender, não deve fazer novas perguntas e não deve consultar ferramentas de estoque ou fotos. Apenas avise que ${sellerData.name} assumirá daqui em diante. Varie a mensagem para soar natural.`;
     }
@@ -1561,9 +1584,26 @@ Você NÃO DEVE tentar vender, não deve fazer novas perguntas e não deve consu
           console.log(`[CRM] Lead ${phoneNumber} analisado. Status: ${args.status}`);
 
           if (args.status === 'qualificado') {
-            const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
-            if (sellers && sellers.length > 0) {
-              const selectedSeller = sellers[0];
+            let selectedSeller = null;
+
+            // Tentar manter o mesmo vendedor se o lead ja estiver designado e o vendedor estiver ativo
+            if (existingLead && existingLead.assigned_to_id) {
+              const { data: currentSeller } = await supabase.from('ai_team_members').select('*').eq('id', existingLead.assigned_to_id).eq('is_active', true).maybeSingle();
+              if (currentSeller) {
+                selectedSeller = currentSeller;
+                console.log(`[CRM] Lead recorrente. Re-notificando vendedor designado: ${selectedSeller.name}`);
+              }
+            }
+
+            // Se nao tiver vendedor ou o anterior estiver inativo, fazer round-robin
+            if (!selectedSeller) {
+              const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
+              if (sellers && sellers.length > 0) {
+                selectedSeller = sellers[0];
+              }
+            }
+
+            if (selectedSeller) {
               let sellerNum = String(selectedSeller.whatsapp_number || '').replace(/\D/g, '');
               if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
               if (sellerNum) {
@@ -1588,13 +1628,12 @@ Você NÃO DEVE tentar vender, não deve fazer novas perguntas e não deve consu
                 } else {
                   await supabase.from('ai_team_members').update({
                     last_lead_received_at: new Date().toISOString(),
-                    total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
                   }).eq('id', selectedSeller.id);
 
                   const { data: leadData } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
                   if (leadData) {
                     await supabase.from('ai_lead_transfers').insert({
-                      user_id: agent.user_id, lead_id: leadData.id, from_agent_id: agent.id,
+                      user_id: agent.user_id, lead_id: leadData.id,
                       to_member_id: selectedSeller.id, transfer_reason: args.resumo,
                       notes: `Transferido para ${selectedSeller.name} via round-robin`,
                     });

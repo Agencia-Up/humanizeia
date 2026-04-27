@@ -131,9 +131,7 @@ ${notes || "Sem observações adicionais."}
     // 5. Update Lead
     await supabase.from("ai_crm_leads").update({
       status: "transferido",
-      assigned_to_member_id: member.id,
-      transferred_at: new Date().toISOString(),
-      transfer_reason: `Transferência manual para ${member.name}`,
+      assigned_to_id: member.id, // Changed from assigned_to_member_id to match actual schema
       last_interaction_at: new Date().toISOString(),
     }).eq("id", lead.id);
 
@@ -141,16 +139,18 @@ ${notes || "Sem observações adicionais."}
     await supabase.from("ai_lead_transfers").insert({
       user_id: userId,
       lead_id: lead.id,
-      from_agent_id: lead.agent_id,
+      from_member_id: lead.assigned_to_member_id,
       to_member_id: member.id,
       transfer_reason: "manual",
       notes: notes,
+      is_confirmed: true,
+      transfer_status: 'confirmed',
+      confirmed_at: new Date().toISOString()
     });
 
     // 7. Update member stats
     await supabase.from("ai_team_members").update({
       last_lead_received_at: new Date().toISOString(),
-      total_leads_received: (member.total_leads_received || 0) + 1,
     }).eq("id", member.id);
 
     return new Response(JSON.stringify({ success: true }), {
