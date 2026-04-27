@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,7 @@ import {
   Crown,
   Expand,
   Flame,
+  GripVertical,
   History as HistoryIcon,
   Loader2,
   MonitorPlay,
@@ -22,6 +24,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
 /* ── Filtro de período ──────────────────────────────────── */
@@ -98,19 +101,29 @@ function getTransferLabel(t: any) {
 }
 
 /* ── COMPONENTE CARD (Memoizado para performance) ─────────── */
-const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransfer, transfers }: any) => {
+const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransfer, transfers, dragHandleProps }: any) => {
   const [msg, setMsg] = useState('');
   const [showHist, setShowHist] = useState(false);
   const isTransferring = transferringLeadId === lead.id;
 
-  const leadTransfers = useMemo(() => 
+  const leadTransfers = useMemo(() =>
     transfers.filter((t: any) => t.lead_id === lead.id),
   [transfers, lead.id]);
 
   return (
     <div style={{ borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', background: '#16213E', padding: 14 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-        <div style={{ minWidth: 0 }}>
+        {/* Drag handle */}
+        {dragHandleProps && (
+          <div
+            {...dragHandleProps}
+            style={{ cursor: 'grab', padding: '3px 4px 0 0', color: 'rgba(255,255,255,0.18)', flexShrink: 0, marginTop: 1 }}
+            title="Arrastar para outra coluna"
+          >
+            <GripVertical style={{ width: 13, height: 13 }} />
+          </div>
+        )}
+        <div style={{ minWidth: 0, flex: 1 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: '#F1F5F9', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
             {lead.lead_name || 'Lead sem nome'}
           </h3>
@@ -336,10 +349,34 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
     LIVE_COLUMNS.forEach(col => {
-      res[col.id] = filteredLeads.filter(l => (l.status || 'novo') === col.id).slice(0, isPortrait ? 6 : 10);
+      res[col.id] = filteredLeads.filter(l => (l.status || 'novo') === col.id);
     });
     return res;
-  }, [filteredLeads, isPortrait]);
+  }, [filteredLeads]);
+
+  // ── Drag-and-drop: muda status do lead entre colunas ─────────────────────
+  const handleDragEnd = useCallback(async (result: DropResult) => {
+    const { draggableId, destination, source } = result;
+    if (!destination || destination.droppableId === source.droppableId) return;
+
+    const newStatus = destination.droppableId;
+    const leadId = draggableId;
+
+    // Optimistic update — move card imediatamente na UI
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
+
+    // Persistir no banco
+    const { error } = await (supabase as any)
+      .from('ai_crm_leads')
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', leadId);
+
+    if (error) {
+      console.error('Erro ao atualizar status do lead:', error);
+      toast.error('Erro ao mover lead — revertendo');
+      fetchLiveDataRef.current(); // rollback via refetch
+    }
+  }, []);
 
   const totalQualified = filteredLeads.filter(l => l.status === 'qualificado' || l.status === 'transferido').length;
   const attendedNow    = filteredLeads.filter(l => l.status === 'transferido').length;
@@ -511,39 +548,81 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       {/* ── KANBAN + SIDEBAR ──────────────────────── */}
       <div style={{ padding: '0 24px 40px', display: 'flex', flexDirection: isPortrait ? 'column' : 'row', gap: 24 }}>
         
-        {/* COLUNAS KANBAN */}
-        <div style={{ flex: isPortrait ? 'none' : 3, display: 'flex', flexDirection: isPortrait ? 'column' : 'row', gap: 16 }}>
-          {LIVE_COLUMNS.map(col => {
-            const colLeads = leadsByColumn[col.id] || [];
-            return (
-              <section key={col.id} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: isPortrait ? '100%' : 260 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: col.main }} />
-                  <h2 style={{ fontSize: 13, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: col.light }}>{col.title}</h2>
-                  <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.5, marginLeft: 'auto' }}>{leads.filter(l => (l.status || 'novo') === col.id).length}</span>
-                </div>
+        {/* COLUNAS KANBAN — com Drag & Drop */}
+        <DragDropContext onDragEnd={handleDragEnd}>
+          <div style={{ flex: isPortrait ? 'none' : 3, display: 'flex', flexDirection: isPortrait ? 'column' : 'row', gap: 16 }}>
+            {LIVE_COLUMNS.map(col => {
+              const colLeads = leadsByColumn[col.id] || [];
+              return (
+                <section key={col.id} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: isPortrait ? '100%' : 260 }}>
+                  {/* Cabeçalho da coluna */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: col.main }} />
+                    <h2 style={{ fontSize: 13, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: col.light }}>{col.title}</h2>
+                    <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.5, marginLeft: 'auto' }}>{colLeads.length}</span>
+                  </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {colLeads.length === 0 ? (
-                    <div style={{ borderRadius: 10, border: '1.5px dashed rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)', minHeight: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 12 }}>
-                      Vazio
-                    </div>
-                  ) : colLeads.map(lead => (
-                    <LiveLeadCard
-                      key={lead.id}
-                      lead={lead}
-                      col={col}
-                      nextSeller={nextSeller}
-                      transferringLeadId={transferringLeadId}
-                      onTransfer={handleManualTransfer}
-                      transfers={transfers}
-                    />
-                  ))}
-                </div>
-              </section>
-            );
-          })}
-        </div>
+                  {/* Droppable — área de drop */}
+                  <Droppable droppableId={col.id}>
+                    {(provided, snapshot) => (
+                      <div
+                        ref={provided.innerRef}
+                        {...provided.droppableProps}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 10,
+                          minHeight: 90,
+                          maxHeight: isPortrait ? 'none' : 'calc(100vh - 340px)',
+                          overflowY: 'auto',
+                          borderRadius: 12,
+                          padding: snapshot.isDraggingOver ? '8px 8px' : '0',
+                          background: snapshot.isDraggingOver ? col.bg : 'transparent',
+                          border: snapshot.isDraggingOver ? `1.5px dashed ${col.main}` : '1.5px solid transparent',
+                          transition: 'background 0.15s, border 0.15s, padding 0.15s',
+                        }}
+                      >
+                        {colLeads.length === 0 && !snapshot.isDraggingOver && (
+                          <div style={{ borderRadius: 10, border: '1.5px dashed rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)', minHeight: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 12 }}>
+                            Arraste um lead aqui
+                          </div>
+                        )}
+
+                        {colLeads.map((lead, index) => (
+                          <Draggable key={lead.id} draggableId={lead.id} index={index}>
+                            {(prov, snap) => (
+                              <div
+                                ref={prov.innerRef}
+                                {...prov.draggableProps}
+                                style={{
+                                  ...prov.draggableProps.style,
+                                  opacity: snap.isDragging ? 0.92 : 1,
+                                  boxShadow: snap.isDragging ? '0 12px 32px rgba(0,0,0,0.5)' : 'none',
+                                  borderRadius: 10,
+                                }}
+                              >
+                                <LiveLeadCard
+                                  lead={lead}
+                                  col={col}
+                                  nextSeller={nextSeller}
+                                  transferringLeadId={transferringLeadId}
+                                  onTransfer={handleManualTransfer}
+                                  transfers={transfers}
+                                  dragHandleProps={prov.dragHandleProps}
+                                />
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </section>
+              );
+            })}
+          </div>
+        </DragDropContext>
 
         {/* SIDEBAR */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>

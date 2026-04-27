@@ -132,13 +132,25 @@ export function useFluxCRM() {
         .eq('id', leadId);
       if (error) throw error;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+    // ── Optimistic update: move card instantly, rollback on failure ──────────
+    onMutate: async ({ leadId, stageId, position }) => {
+      await queryClient.cancelQueries({ queryKey: ['crm-leads', user?.id] });
+      const previousLeads = queryClient.getQueryData<CRMLead[]>(['crm-leads', user?.id]);
+      queryClient.setQueryData<CRMLead[]>(['crm-leads', user?.id], (old = []) =>
+        old.map((l) => l.id === leadId ? { ...l, stage_id: stageId, position } : l)
+      );
+      return { previousLeads };
     },
-    onError: (err) => {
+    onError: (err, _, context) => {
+      if (context?.previousLeads) {
+        queryClient.setQueryData(['crm-leads', user?.id], context.previousLeads);
+      }
       console.error(err);
       toast.error('Erro ao mover lead');
-    }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+    },
   });
 
   const updateLeadMutation = useMutation({
