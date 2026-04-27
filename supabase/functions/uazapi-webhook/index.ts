@@ -164,62 +164,86 @@ serve(async (req) => {
         if (urlMatch) adRawUrl = urlMatch[0];
       }
 
-      // Pré-processamento Vision: identifica o carro EXATO na imagem do anúncio
+      // ─── Identificação do carro por Vision: og:image do link ou thumbnail do WhatsApp ──
       const OPENAI_API_KEY_PRE = Deno.env.get('OPENAI_API_KEY') || '';
-      if (adThumbnailB64 && OPENAI_API_KEY_PRE) {
+
+      // Função auxiliar: analisa uma imagem (base64 JPEG) com GPT-4o Vision e retorna o carro
+      const analyzeImageWithVision = async (b64: string, mimeType = 'image/jpeg'): Promise<string> => {
         try {
-          console.log('[AdVision] Iniciando análise da thumbnail do anúncio...');
-          const visionRes = await fetch('https://api.openai.com/v1/chat/completions', {
+          const vRes = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${OPENAI_API_KEY_PRE}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
               model: 'gpt-4o',
               max_tokens: 300,
-              messages: [{
-                role: 'user',
-                content: [
-                  {
-                    type: 'image_url',
-                    image_url: { url: `data:image/jpeg;base64,${adThumbnailB64}`, detail: 'high' }
-                  },
-                  {
-                    type: 'text',
-                    text: 'Esta é a imagem de um anúncio de carro de uma concessionária. Leia TODOS os textos visíveis na imagem (inclusive textos sobrepostos, etiquetas, faixas de preço e textos na carroceria). Identifique e informe: MARCA, MODELO, VERSÃO, ANO e PREÇO do carro anunciado. Responda APENAS com esses dados em formato curto, por exemplo: "Ford EcoSport Freestyle 1.5 2021 - R$81.990". Se houver mais de um carro ou informação incompleta, informe o que conseguir ler.'
-                  }
-                ]
-              }]
+              messages: [{ role: 'user', content: [
+                { type: 'image_url', image_url: { url: `data:${mimeType};base64,${b64}`, detail: 'high' } },
+                { type: 'text', text: 'Esta é a imagem de um anúncio de carro de uma concessionária. Leia TODOS os textos visíveis na imagem (etiquetas, sobreposições, faixas de preço). Identifique MARCA, MODELO, VERSÃO, ANO e PREÇO. Responda APENAS com esses dados em formato curto. Exemplo: "Fiat Strada CS Endurence 1.3 2024 - R$81.990"' }
+              ]}]
             }),
           });
-          if (visionRes.ok) {
-            const visionData = await visionRes.json();
-            const carIdentified = visionData.choices?.[0]?.message?.content?.trim() || '';
-            if (carIdentified) {
-              adTextContext = `[ANÚNCIO ANALISADO POR VISÃO COMPUTACIONAL — Carro identificado com precisão: "${carIdentified}" | URL do anúncio: ${adRawUrl}]`;
-              console.log('[AdVision] Carro identificado:', carIdentified);
-            } else {
-              console.warn('[AdVision] Vision não retornou dados do carro.');
+          if (!vRes.ok) return '';
+          const vData = await vRes.json();
+          return vData.choices?.[0]?.message?.content?.trim() || '';
+        } catch { return ''; }
+      };
+
+      if (OPENAI_API_KEY_PRE) {
+        // PRIORIDADE 1: Baixar a og:image do link do anúncio (mais confiável)
+        // Esta é exatamente a imagem que aparece quando você abre o link no celular.
+        if (adRawUrl) {
+          const ogMeta = await fetchAdMetadata(adRawUrl);
+          if (ogMeta.imageUrl) {
+            console.log('[AdVision] Baixando og:image:', ogMeta.imageUrl.substring(0, 80));
+            try {
+              const imgCtrl = new AbortController();
+              const imgTimeout = setTimeout(() => imgCtrl.abort(), 8000);
+              const imgRes = await fetch(ogMeta.imageUrl, { signal: imgCtrl.signal });
+              clearTimeout(imgTimeout);
+              if (imgRes.ok) {
+                const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
+                const imgBuffer = await imgRes.arrayBuffer();
+                // Converter para base64 de forma compatível com Deno
+                const uint8 = new Uint8Array(imgBuffer);
+                let binary = '';
+                for (let i = 0; i < uint8.length; i++) binary += String.fromCharCode(uint8[i]);
+                const imgBase64 = btoa(binary);
+                const carInfo = await analyzeImageWithVision(imgBase64, mimeType);
+                if (carInfo) {
+                  adTextContext = `[ANÚNCI0 IDENTIFICADO (imagem do link): "${carInfo}" | URL: ${adRawUrl}]`;
+                  console.log('[AdVision] Carro identificado via og:image:', carInfo);
+                }
+              }
+            } catch (imgErr) {
+              console.warn('[AdVision] Erro ao baixar og:image:', imgErr);
             }
-          } else {
-            console.warn('[AdVision] Vision API retornou erro:', visionRes.status);
           }
-        } catch (visionErr) {
-          console.warn('[AdVision] Erro ao analisar thumbnail:', visionErr);
+
+          // Se Vision falhou mas OG text tem dados úteis, usa como fallback
+          if (!adTextContext) {
+            const combined = `${ogMeta.title} ${ogMeta.description}`;
+            const looksLikeCar = /\b(20\d{2}|R\$|km|flex|diesel|turbo|aut\.)/i.test(combined);
+            if (looksLikeCar) {
+              adTextContext = `[ANÚNCI0 (OG text): "${ogMeta.title}" | "${ogMeta.description}" | URL: ${adRawUrl}]`;
+              console.log('[AdFetch] OG text útil como fallback:', adTextContext.substring(0, 150));
+            }
+          }
+        }
+
+        // PRIORIDADE 2: Thumbnail embutida no próprio payload WhatsApp
+        if (!adTextContext && adThumbnailB64) {
+          console.log('[AdVision] Tentando thumbnail do payload WhatsApp...');
+          const carInfo = await analyzeImageWithVision(adThumbnailB64);
+          if (carInfo) {
+            adTextContext = `[ANÚNCI0 IDENTIFICADO (thumbnail WhatsApp): "${carInfo}" | URL: ${adRawUrl}]`;
+            console.log('[AdVision] Carro identificado via thumbnail:', carInfo);
+          }
         }
       }
 
-      // Fallback: se não temos thumbnail mas temos URL, tentamos OG tags
-      if (!adTextContext && adRawUrl) {
-        const ogMeta = await fetchAdMetadata(adRawUrl);
-        // OG tags do Facebook geralmente retornam nome da página, não o carro.
-        // Só usamos se a descrição parecer conter um carro (tem número de ano ou R$)
-        const combined = `${ogMeta.title} ${ogMeta.description}`;
-        const looksLikeCar = /\b(20\d{2}|R\$|km|cv|flex|diesel|turbo|aut\.|manual)/i.test(combined);
-        if (looksLikeCar && (ogMeta.title || ogMeta.description)) {
-          adTextContext = `[ANÚNCIO (via OG): "${ogMeta.title}" | "${ogMeta.description}" | URL: ${adRawUrl}]`;
-          console.log('[AdFetch] OG útil encontrado:', adTextContext.substring(0, 200));
-        } else if (!adTextContext) {
-          adTextContext = `[Lead enviou link de anúncio do Facebook/Instagram. URL: ${adRawUrl}. ATENÇÃO: Não foi possível identificar o carro automaticamente — pergunte ao lead qual carro viu no anúncio.]`;
-        }
+      // Fallback final: ao menos sinaliza que é um anúncio e pede o carro ao lead
+      if (!adTextContext && (adRawUrl || adThumbnailB64)) {
+        adTextContext = `[Lead enviou link de anúncio. URL: ${adRawUrl}. Não foi possível identificar o carro automaticamente.]`;
       }
       // ─────────────────────────────────────────────────────────────────────────
 
@@ -306,10 +330,10 @@ serve(async (req) => {
 // ─── Busca de metadados reais do anúncio (Open Graph) ───────────────────────
 // Faz uma requisição HTTP ao link do anúncio e extrai og:title / og:description.
 // Isso garante que a IA receba informações REAIS do carro, não adivinhe.
-async function fetchAdMetadata(rawUrl: string): Promise<{ title: string; description: string }> {
+async function fetchAdMetadata(rawUrl: string): Promise<{ title: string; description: string; imageUrl: string }> {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 6000);
     const res = await fetch(rawUrl, {
       headers: {
         'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
@@ -320,11 +344,10 @@ async function fetchAdMetadata(rawUrl: string): Promise<{ title: string; descrip
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    if (!res.ok) return { title: '', description: '' };
+    if (!res.ok) return { title: '', description: '', imageUrl: '' };
     const html = await res.text();
 
     const extract = (prop: string) => {
-      // Formato: <meta property="og:title" content="..."> ou invertido
       const patterns = [
         new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']+)["']`, 'i'),
         new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${prop}["']`, 'i'),
@@ -337,13 +360,14 @@ async function fetchAdMetadata(rawUrl: string): Promise<{ title: string; descrip
       return '';
     };
 
-    const title = extract('og:title') || extract('og:description');
+    const title = extract('og:title');
     const description = extract('og:description');
-    console.log(`[AdFetch] URL: ${rawUrl} | og:title: ${title} | og:description: ${description.substring(0, 100)}`);
-    return { title, description };
+    const imageUrl = extract('og:image');
+    console.log(`[AdFetch] URL: ${rawUrl} | og:title: ${title} | og:image: ${imageUrl.substring(0, 80)}`);
+    return { title, description, imageUrl };
   } catch (e) {
     console.warn('[AdFetch] Falha ao buscar metadados do anuncio:', e);
-    return { title: '', description: '' };
+    return { title: '', description: '', imageUrl: '' };
   }
 }
 // ─────────────────────────────────────────────────────────────────────────────
