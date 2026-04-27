@@ -743,7 +743,7 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
   // Pontua por: versao bate (+3), ano bate (+2), preco bate (+1), marca+modelo bate (+2)
   const scoreVehicle = (v: any) => {
     let score = 0;
-    const normV = normalizeBndvText;
+    const normV = (text: any) => String(text || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     if (filters.versao && normV(v.versionName).includes(normV(filters.versao))) score += 3;
     if (filters.ano_min && filters.ano_max && v.year >= filters.ano_min && v.year <= filters.ano_max) score += 2;
     else if (filters.ano_min && v.year >= filters.ano_min) score += 1;
