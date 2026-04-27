@@ -3,17 +3,39 @@ import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Search, DollarSign, Users, TrendingUp, Filter, Sparkles, RefreshCw } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Plus, Search, DollarSign, Users, TrendingUp, Filter, RefreshCw, CalendarDays } from 'lucide-react';
 import { KanbanColumn } from '@/components/crm/KanbanColumn';
 import { LeadFormDialog } from '@/components/crm/LeadFormDialog';
 import LeadDetailModal from '@/features/orchestrator/components/LeadDetailModal';
 import { useFluxCRM, type CRMLead } from '@/hooks/useFluxCRM';
 import { Card } from '@/components/ui/card';
 
+/* ─── Períodos de filtro ─────────────────────────────────────────────────── */
+type DateFilter = 'today' | '7d' | '30d' | '90d' | 'all';
+const DATE_FILTERS: { value: DateFilter; label: string; short: string }[] = [
+  { value: 'today', label: 'Hoje',          short: 'Hoje'   },
+  { value: '7d',    label: 'Últimos 7 dias', short: '7d'    },
+  { value: '30d',   label: 'Últimos 30 dias', short: '30d'  },
+  { value: '90d',   label: 'Últimos 90 dias', short: '90d'  },
+  { value: 'all',   label: 'Todos os leads',  short: 'Tudo' },
+];
+
+function getDateThreshold(filter: DateFilter): Date | null {
+  if (filter === 'all') return null;
+  const now = new Date();
+  if (filter === 'today') {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  }
+  const days = filter === '7d' ? 7 : filter === '30d' ? 30 : 90;
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
 export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
   const { stages, leads, loading, addLead, updateLead, deleteLead, moveLead, getLeadsByStage, totalValue } = useFluxCRM();
   const [search, setSearch] = useState('');
   const [deferredSearch, setDeferredSearch] = useState('');
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
 
   // Debounce search
   useEffect(() => {
@@ -80,23 +102,49 @@ export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
     }
   };
 
+  // Aplica filtro de período + texto em todos os leads
+  const dateThreshold = useMemo(() => getDateThreshold(dateFilter), [dateFilter]);
+
+  const filteredLeads = useMemo(() => {
+    return leads.filter((l) => {
+      // Filtro de data
+      if (dateThreshold) {
+        const createdAt = new Date(l.created_at);
+        if (createdAt < dateThreshold) return false;
+      }
+      // Filtro de texto
+      if (deferredSearch) {
+        const q = deferredSearch.toLowerCase();
+        return (
+          l.name.toLowerCase().includes(q) ||
+          l.company?.toLowerCase().includes(q) ||
+          l.email?.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [leads, dateThreshold, deferredSearch]);
+
   const filteredLeadsByStage = (stageId: string) => {
     const allIds = allIdsForStage.get(stageId) || [stageId];
-    const stageLeads = leads
+    return filteredLeads
       .filter((l) => l.stage_id && allIds.includes(l.stage_id))
       .sort((a, b) => a.position - b.position);
-    if (!deferredSearch) return stageLeads;
-    const q = deferredSearch.toLowerCase();
-    return stageLeads.filter(
-      (l) =>
-        l.name.toLowerCase().includes(q) ||
-        l.company?.toLowerCase().includes(q) ||
-        l.email?.toLowerCase().includes(q)
-    );
   };
 
-  const wonLeads = leads.filter((l) => l.won_at);
+  const wonLeads = filteredLeads.filter((l) => l.won_at);
   const wonValue = wonLeads.reduce((s, l) => s + (l.value || 0), 0);
+
+  // Contagem de leads de hoje (para o KPI fixo)
+  const todayThreshold = useMemo(() => new Date(
+    new Date().getFullYear(), new Date().getMonth(), new Date().getDate(), 0, 0, 0, 0
+  ), []);
+  const todayCount = useMemo(
+    () => leads.filter((l) => new Date(l.created_at) >= todayThreshold).length,
+    [leads, todayThreshold]
+  );
+
+  const currentFilterLabel = DATE_FILTERS.find(f => f.value === dateFilter)?.label || 'Tudo';
 
   const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : MainLayout;
 
@@ -132,8 +180,15 @@ export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
               <Users className="h-4 w-4 text-primary" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Total Leads</p>
-              <p className="text-lg font-bold text-white">{leads.length}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-semibold">
+                {dateFilter === 'all' ? 'Total Leads' : currentFilterLabel}
+              </p>
+              <p className="text-lg font-bold text-white">
+                {filteredLeads.length}
+                {dateFilter !== 'all' && (
+                  <span className="text-xs text-muted-foreground font-normal ml-1">/ {leads.length}</span>
+                )}
+              </p>
             </div>
           </Card>
           <Card className="p-3 bg-black/40 border-white/5 flex items-center gap-3">
@@ -141,8 +196,8 @@ export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
               <DollarSign className="h-4 w-4 text-purple-500" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Fluxo de Etapas</p>
-              <p className="text-lg font-bold text-white">{totalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Valor no Período</p>
+              <p className="text-lg font-bold text-white">{wonValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
             </div>
           </Card>
           <Card className="p-3 bg-black/40 border-white/5 flex items-center gap-3">
@@ -150,8 +205,11 @@ export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
               <TrendingUp className="h-4 w-4 text-green-500" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Ganhos</p>
-              <p className="text-lg font-bold text-white">{wonValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Hoje</p>
+              <p className="text-lg font-bold text-white">
+                {todayCount}
+                <span className="text-xs text-green-500 font-normal ml-1">lead{todayCount !== 1 ? 's' : ''}</span>
+              </p>
             </div>
           </Card>
           <Card className="p-3 bg-black/40 border-white/5 flex items-center gap-3">
@@ -165,9 +223,10 @@ export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
           </Card>
         </div>
 
-        {/* Search */}
-        <div className="px-6 pb-6">
-          <div className="relative max-w-sm">
+        {/* Search + Date Filter */}
+        <div className="px-6 pb-4 flex flex-wrap items-center gap-3">
+          {/* Busca */}
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Buscar leads por nome ou empresa..."
@@ -176,6 +235,31 @@ export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
               className="pl-9 bg-black/40 border-white/10 text-white focus:border-purple-500/50"
             />
           </div>
+
+          {/* Filtros rápidos de período */}
+          <div className="flex items-center gap-1.5">
+            <CalendarDays className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            {DATE_FILTERS.map((f) => (
+              <button
+                key={f.value}
+                onClick={() => setDateFilter(f.value)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  dateFilter === f.value
+                    ? 'bg-purple-600 text-white shadow'
+                    : 'text-muted-foreground hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                {f.short}
+              </button>
+            ))}
+          </div>
+
+          {/* Badge de resumo quando filtrado */}
+          {dateFilter !== 'all' && (
+            <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/30 text-xs gap-1 shrink-0">
+              {filteredLeads.length} de {leads.length} leads
+            </Badge>
+          )}
         </div>
 
         {/* Kanban Board */}
