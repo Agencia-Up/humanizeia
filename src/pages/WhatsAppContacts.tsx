@@ -377,6 +377,83 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     }
   };
 
+  // ─── Exportar contatos como CSV ──────────────────────────────────────────
+  const buildAndDownloadCSV = (rows: WAContact[], listName: string, statusMap: Record<string, { status: string; sent_at: string | null }>) => {
+    const SKIP_META = new Set(['form_id', 'form_name', 'submission_id']);
+    const formKeys = Array.from(new Set(
+      rows.flatMap(c => Object.keys(c.metadata || {}).filter(k => !SKIP_META.has(k)))
+    ));
+
+    const headers = ['Nome', 'Telefone', 'Email', ...formKeys, 'Status WA', 'Data Cadastro', 'Origem'];
+
+    const escape = (val: string) =>
+      val.includes(',') || val.includes('"') || val.includes('\n')
+        ? `"${val.replace(/"/g, '""')}"`
+        : val;
+
+    const csvRows = rows.map(c => {
+      const wa = statusMap[c.phone];
+      const waLabel = !wa ? '' : wa.status === 'sent' ? 'Enviada' : wa.status === 'scheduled' ? 'Pendente' : 'Falha';
+      return [
+        c.name || '',
+        c.phone,
+        c.metadata?.email || '',
+        ...formKeys.map(k => (c.metadata?.[k] == null ? '' : String(c.metadata[k]))),
+        waLabel,
+        format(new Date(c.created_at), 'dd/MM/yyyy HH:mm', { locale: ptBR }),
+        sourceLabels[c.source]?.label || c.source || '',
+      ].map(v => escape(String(v))).join(',');
+    });
+
+    const csv = '﻿' + [headers.map(escape).join(','), ...csvRows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${listName.replace(/[^a-zA-Z0-9_\- ]/g, '')}_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  /** Exporta os contatos atualmente visíveis (ou apenas os selecionados) */
+  const exportContacts = () => {
+    const toExport = selectedContacts.length > 0
+      ? filteredContacts.filter(c => selectedContacts.includes(c.id))
+      : filteredContacts;
+
+    if (toExport.length === 0) {
+      toast({ title: 'Nenhum contato para exportar', variant: 'destructive' });
+      return;
+    }
+    buildAndDownloadCSV(toExport, selectedList?.name || 'contatos', followupStatus);
+    toast({ title: `✅ ${toExport.length} contato(s) exportado(s) com sucesso!` });
+  };
+
+  /** Exporta uma lista diretamente do card (sem precisar entrar nela) */
+  const exportListDirect = async (list: ContactList) => {
+    if (!user) return;
+    try {
+      const { data } = await supabase.from('wa_contacts').select('*').eq('user_id', user.id).eq('list_id', list.id).order('created_at', { ascending: false });
+      const rows = (data as WAContact[]) || [];
+      if (rows.length === 0) { toast({ title: 'Lista sem contatos para exportar', variant: 'destructive' }); return; }
+
+      // Busca followup status para esses contatos
+      const phones = rows.map(c => c.phone);
+      const { data: fq } = await (supabase as any).from('followup_queue').select('phone, status, sent_at').in('phone', phones).eq('user_id', user.id).order('created_at', { ascending: false });
+      const statusMap: Record<string, { status: string; sent_at: string | null }> = {};
+      for (const row of (fq || [])) {
+        if (!statusMap[row.phone]) statusMap[row.phone] = { status: row.status, sent_at: row.sent_at };
+      }
+
+      buildAndDownloadCSV(rows, list.name, statusMap);
+      toast({ title: `✅ ${rows.length} contato(s) exportado(s) com sucesso!` });
+    } catch (err: any) {
+      toast({ title: 'Erro ao exportar', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const extractGoogleMaps = async () => {
     if (!user || !mapsQuery.trim()) return;
     setIsExtractingMaps(true);
@@ -540,6 +617,16 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                     <Button variant="outline" size="sm" onClick={() => { setTargetListId(selectedList.id); setShowAddContacts(true); }}>
                       <Plus className="h-4 w-4 mr-1" /> Adicionar
                     </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={exportContacts}
+                      className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+                      title={selectedContacts.length > 0 ? `Exportar ${selectedContacts.length} selecionados` : 'Exportar toda a lista como CSV'}
+                    >
+                      <Download className="h-4 w-4 mr-1" />
+                      {selectedContacts.length > 0 ? `Exportar (${selectedContacts.length})` : 'Exportar CSV'}
+                    </Button>
                     {selectedContacts.length > 0 && (
                       <Button variant="destructive" size="sm" onClick={deleteSelectedContacts}>
                         <Trash2 className="h-4 w-4 mr-1" /> Remover ({selectedContacts.length})
@@ -599,6 +686,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 <DropdownMenuItem onClick={() => setSelectedList(list)}><Eye className="h-4 w-4 mr-2" /> Ver Contatos</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => exportListDirect(list)} className="text-emerald-400 focus:text-emerald-300"><Download className="h-4 w-4 mr-2" /> Exportar CSV</DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openEditDialog(list)}><Edit className="h-4 w-4 mr-2" /> Editar</DropdownMenuItem>
                                 <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(list)}><Trash2 className="h-4 w-4 mr-2" /> Excluir</DropdownMenuItem>
                               </DropdownMenuContent>
