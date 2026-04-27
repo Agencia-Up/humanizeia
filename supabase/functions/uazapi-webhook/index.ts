@@ -789,9 +789,16 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
   const pictures = parseBndvPictures(vehicle.pictureJs);
   // Enviar mais fotos por padrao (5) para aumentar chance de ter interior
   const requestedCount = Math.max(1, Math.min(Number(filters?.quantidade_fotos || 5), 5));
-  const selectedPictures = pictures.slice(0, requestedCount);
+  const offset = Math.max(0, Number(filters?.offset_fotos || 0));
+  const selectedPictures = pictures.slice(offset, offset + requestedCount);
 
   if (selectedPictures.length === 0) {
+    if (offset > 0) {
+      return {
+        success: false,
+        error: `O veiculo possui apenas ${pictures.length} fotos cadastradas e voce tentou pular ${offset} fotos. Avise o cliente que nao ha mais fotos cadastradas no sistema.`,
+      };
+    }
     return {
       success: false,
       error: 'Esse veiculo nao possui fotos disponiveis para envio agora.',
@@ -1260,7 +1267,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "enviar_fotos_bndv",
-        description: "Envia fotos de um veículo específico do estoque diretamente no WhatsApp do cliente. Use quando o cliente pedir para ver o carro. Para garantir as fotos do veículo correto, passe todos os detalhes que você já sabe sobre ele: marca, modelo, versão, e o ano exato tanto em ano_min quanto em ano_max.",
+        description: "Envia fotos de um veículo específico do estoque diretamente no WhatsApp do cliente. Use quando o cliente pedir para ver o carro. IMPORTANTE SOBRE FOTOS DE INTERIOR: O sistema cadastra fotos externas primeiro. Se o cliente pedir 'fotos de dentro', use offset_fotos=6 para pular as externas e enviar as fotos internas. Se pedir 'mais fotos', use offset_fotos=5. Sempre passe os detalhes do veículo para garantir que enviará as fotos do carro certo.",
         parameters: {
           type: "object",
           properties: {
@@ -1268,10 +1275,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             marca: { type: "string", description: "Marca do veículo." },
             modelo: { type: "string", description: "Modelo do veículo." },
             versao: { type: "string", description: "Versão exata, ex: ACTIV, LTZ, LONGITUDE." },
-            ano_min: { type: "number", description: "Ano mínimo (se souber o ano exato, use o mesmo valor em ano_min e ano_max)." },
-            ano_max: { type: "number", description: "Ano máximo (se souber o ano exato, use o mesmo valor em ano_min e ano_max)." },
+            ano_min: { type: "number", description: "Ano mínimo." },
+            ano_max: { type: "number", description: "Ano máximo." },
             preco_max: { type: "number", description: "Preço máximo." },
-            quantidade_fotos: { type: "number", description: "Quantidade de fotos. Use 5 para o cliente ver bem." }
+            quantidade_fotos: { type: "number", description: "Quantidade de fotos. Use 5 para o cliente ver bem." },
+            offset_fotos: { type: "number", description: "Quantas fotos pular do início. Use 6 para acessar fotos de interior, 0 para fotos externas." }
           },
           additionalProperties: false
         }
