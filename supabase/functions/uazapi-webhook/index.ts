@@ -1228,43 +1228,29 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     try { await supabaseNew.from('ai_crm_leads').update(updatePayload).eq('agent_id', agent.id).eq('remote_jid', remoteJid); } catch(e) { console.warn('[CRM Mirror] update followup falhou:', e); }
   }
 
-  // Tools
+  // Tools — descrições naturais, sem comandos imperativos
+  // A IA decide quando usar cada ferramenta baseada na personalidade e no contexto da conversa
   const tools = [
     {
       type: "function",
       function: {
-        name: "atualizar_etapa_crm",
-        description: "Atualiza o Kanban/CRM conforme a evolucao da conversa. Chame esta funcao secretamente para categorizar o lead. Valores validos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando nao quer comprar). OBS IMPORTANTE: Ao chamar esta funcao para status 'interessado' ou 'encerrado', VOCE DEVE TAMBEM gerar uma mensagem normal para o cliente. So encerre a conversa se for status 'qualificado'.",
-        parameters: {
-          type: "object",
-          properties: {
-            status: { type: "string", enum: ["interessado", "qualificado", "encerrado"], description: "A etapa atual do cliente." },
-            resumo: { type: "string", description: "Resumo DETALHADO e COMPLETO do atendimento para o vendedor humano que vai continuar. Inclua OBRIGATORIAMENTE: (1) o que o cliente quer comprar (modelo, versao, ano, cor, km, preco maximo se mencionado), (2) quais veiculos ja foram apresentados pela IA, (3) o motivo pelo qual o cliente quer falar com um humano ou fechar negocio, e (4) o tom e urgencia demonstrados pelo cliente. NUNCA seja vago ou generico." }
-          },
-          required: ["status", "resumo"]
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
         name: "consultar_estoque_bndv",
-        description: "Consulta o estoque real de veiculos integrado ao BNDV. Use quando o cliente perguntar por carro disponivel, preco, ano, versao, cambio, combustivel, cor ou faixa de valor. Nunca invente estoque sem usar esta ferramenta. IMPORTANTE: Quando apresentar um veiculo ao cliente, guarde mentalmente o nome EXATO, ano, versao e preco para usar em chamadas futuras de 'enviar_fotos_bndv'.",
+        description: "Acessa o sistema interno de estoque de veículos em tempo real. Retorna os carros disponíveis com modelo, versão, ano, km, preço e combustível. Use quando precisar verificar disponibilidade ou encontrar opções para o cliente. Nunca invente ou suponha informações de estoque sem consultar.",
         parameters: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Busca simples: apenas MARCA e MODELO (ex: 'Chevrolet Onix'). Nao inclua ano, cor ou versao aqui." },
-            marca: { type: "string", description: "Marca do veiculo, ex: Chevrolet, Jeep, Hyundai." },
-            modelo: { type: "string", description: "Modelo do veiculo, ex: Onix, Renegade, Creta." },
-            versao: { type: "string", description: "Versao ou detalhe do veiculo, ex: LTZ, EX, Touring, ACTIV." },
-            combustivel: { type: "string", description: "Combustivel desejado, ex: Flex, Diesel." },
-            cambio: { type: "string", description: "Tipo de cambio, ex: Automatico, Manual." },
-            cor: { type: "string", description: "Cor desejada, se o cliente pedir." },
-            ano_min: { type: "number", description: "Ano minimo desejado." },
-            ano_max: { type: "number", description: "Ano maximo desejado." },
-            preco_max: { type: "number", description: "Preco maximo desejado pelo cliente." },
-            km_max: { type: "number", description: "Quilometragem maxima desejada pelo cliente." },
-            limite: { type: "number", description: "Quantidade maxima de veiculos para retornar." }
+            query: { type: "string", description: "Nome do modelo a buscar, ex: 'Chevrolet Onix' ou 'Jeep Renegade'. Use apenas marca e modelo." },
+            marca: { type: "string", description: "Marca, ex: Chevrolet, Jeep, Fiat." },
+            modelo: { type: "string", description: "Modelo, ex: Onix, Renegade, Strada." },
+            versao: { type: "string", description: "Versão específica, ex: ACTIV, LTZ, LONGITUDE." },
+            combustivel: { type: "string", description: "Combustível preferido, ex: Flex, Diesel." },
+            cambio: { type: "string", description: "Câmbio preferido, ex: Automatico, Manual." },
+            cor: { type: "string", description: "Cor preferida." },
+            ano_min: { type: "number", description: "Ano mínimo." },
+            ano_max: { type: "number", description: "Ano máximo." },
+            preco_max: { type: "number", description: "Preço máximo em reais." },
+            km_max: { type: "number", description: "Quilometragem máxima." },
+            limite: { type: "number", description: "Número máximo de resultados." }
           },
           additionalProperties: false
         }
@@ -1274,20 +1260,35 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "enviar_fotos_bndv",
-        description: "Envia fotos reais de um veiculo do estoque BNDV pelo WhatsApp. Use quando o cliente pedir fotos, imagens, quiser ver o carro ou disser para mandar fotos. CRITICO: Para garantir que as fotos do veiculo CORRETO sejam enviadas, voce DEVE passar o maximo de detalhes possiveis do veiculo que esta sendo discutido: marca, modelo, versao, ano_min e ano_max. Se souber o ano exato, passe como ano_min E ano_max (ex: ano_min: 2019, ano_max: 2019). Sempre use quantidade_fotos: 5 para o cliente ver bem o veiculo.",
+        description: "Envia fotos de um veículo específico do estoque diretamente no WhatsApp do cliente. Use quando o cliente pedir para ver o carro. Para garantir as fotos do veículo correto, passe todos os detalhes que você já sabe sobre ele: marca, modelo, versão, e o ano exato tanto em ano_min quanto em ano_max.",
         parameters: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Nome completo do veiculo em discussao, como 'Chevrolet Onix Activ 1.4 2019'." },
-            marca: { type: "string", description: "Marca do veiculo." },
-            modelo: { type: "string", description: "Modelo do veiculo." },
-            versao: { type: "string", description: "Versao exata do veiculo, ex: ACTIV, LTZ, LONGITUDE." },
-            ano_min: { type: "number", description: "Ano minimo - se souber o ano exato, repita o mesmo valor em ano_min e ano_max." },
-            ano_max: { type: "number", description: "Ano maximo - se souber o ano exato, repita o mesmo valor em ano_min e ano_max." },
-            preco_max: { type: "number", description: "Preco maximo desejado." },
-            quantidade_fotos: { type: "number", description: "Quantidade de fotos para enviar. Sempre use 5." }
+            query: { type: "string", description: "Nome completo do veículo, ex: 'Chevrolet Onix ACTIV 1.4 2019'." },
+            marca: { type: "string", description: "Marca do veículo." },
+            modelo: { type: "string", description: "Modelo do veículo." },
+            versao: { type: "string", description: "Versão exata, ex: ACTIV, LTZ, LONGITUDE." },
+            ano_min: { type: "number", description: "Ano mínimo (se souber o ano exato, use o mesmo valor em ano_min e ano_max)." },
+            ano_max: { type: "number", description: "Ano máximo (se souber o ano exato, use o mesmo valor em ano_min e ano_max)." },
+            preco_max: { type: "number", description: "Preço máximo." },
+            quantidade_fotos: { type: "number", description: "Quantidade de fotos. Use 5 para o cliente ver bem." }
           },
           additionalProperties: false
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "atualizar_etapa_crm",
+        description: "Registra a evolução do lead no CRM interno. Não é visível para o cliente. Use 'interessado' quando o cliente demonstrar interesse claro em algum carro, 'qualificado' quando demonstrar intenção de compra ou pedir para falar com um vendedor humano (o sistema notifica o vendedor automaticamente), e 'encerrado' quando o cliente desistir ou não tiver mais interesse.",
+        parameters: {
+          type: "object",
+          properties: {
+            status: { type: "string", enum: ["interessado", "qualificado", "encerrado"], description: "Etapa atual do lead." },
+            resumo: { type: "string", description: "Breve resumo da situação atual do lead para registro interno." }
+          },
+          required: ["status", "resumo"]
         }
       }
     }
@@ -1484,44 +1485,33 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   } catch (err: any) {}
 
-  // ─── PROMPT DO SISTEMA ────────────────────────────────────────────────────
-  // O prompt do agente é a AUTORIDADE MÁXIMA — personalidade, tom, nome e estilo de venda.
-  // As ferramentas são complementos que o agente usa quando JULGAR necessário, como um MCP.
-  let systemPrompt = agent.system_prompt || 'Você é um consultor de vendas prestativo e atencioso.'
-  if (agent.company_name) systemPrompt += `\n\nEmpresa/Loja: ${agent.company_name}`
+  // ─── SYSTEM PROMPT: apenas o prompt do agente + base de conhecimento ────────────────
+  // O prompt configurado pelo usuário no cadastro do agente é a ÚNICA fonte de personalidade.
+  // Não há regras internas, não há instruções de comportamento impostas pelo sistema.
+  // As ferramentas são acessíveis e a IA decide quando e como usá-las, igual a um consultor humano.
+  let systemPrompt = agent.system_prompt || 'Você é um consultor de vendas prestativo e atencioso.';
+  if (agent.company_name) systemPrompt += `\n\nEmpresa/Loja: ${agent.company_name}`;
 
-  // Base de conhecimento integrada como contexto natural, não como regra
+  // Base de conhecimento: contexto de apoio, não como regra
   if (knowledgeContext) {
-    systemPrompt += `\n\n---\nINFORMAÇÕES ÚTEIS PARA O ATENDIMENTO:\n${knowledgeContext}\n---`
+    systemPrompt += `\n\n${knowledgeContext}`;
   }
 
-  // Guia de uso das ferramentas — descritivo, não imperativo
-  systemPrompt += `\n\nFERRAMENTAS DISPONÍVEIS (use quando julgar necessário):
-
-• consultar_estoque_bndv — Consulta os veículos disponíveis no estoque real. Use quando o cliente perguntar sobre um modelo, preço, disponibilidade ou estiver interessado em um carro específico. Nunca invente informações de estoque — sempre consulte. Para busca, use apenas marca e modelo simples (ex: "Fiat Strada").
-
-• enviar_fotos_bndv — Envia fotos do veículo diretamente no WhatsApp. Use quando o cliente pedir para ver o carro, quiser fotos ou imagens. No campo 'query', use o nome exato do carro que está sendo discutido na conversa (ex: "Chevrolet Onix Activ 2019"). Após enviar, faça um comentário natural sobre o veículo — o cliente já está vendo as fotos, não precisa confirmar o envio.
-
-• atualizar_etapa_crm — Registra a evolução do lead. Use 'interessado' quando o cliente demonstrar interesse claro, 'qualificado' quando quiser comprar, falar com um vendedor, ver proposta, financiamento ou agendar visita, e 'encerrado' quando desistir. Para 'qualificado', o sistema notifica um vendedor humano automaticamente.`
-
-  // Situação especial: lead já transferido recentemente
+  // Contexto situacional: apenas quando o lead já foi transferido
   const lastTransferAt = leadExists?.last_interaction_at ? new Date(leadExists.last_interaction_at).getTime() : 0;
   const hoursSinceTransfer = (Date.now() - lastTransferAt) / (1000 * 60 * 60);
-
   if (leadExists && (leadExists.status === 'qualificado' || leadExists.status === 'transferido') && leadExists.assigned_to_id && hoursSinceTransfer < 24) {
     const { data: sellerData } = await supabase.from('ai_team_members').select('name').eq('id', leadExists.assigned_to_id).maybeSingle();
     if (sellerData) {
-      systemPrompt += `\n\nSITUAÇÃO ATUAL: Este cliente já foi encaminhado para o vendedor ${sellerData.name}. Avise-o de forma natural que ${sellerData.name} já está ciente e entrará em contato em breve. Não consulte estoque nem envie fotos agora.`;
+      systemPrompt += `\n\n(Contexto: ${sellerData.name} já foi notificado e assumirá este atendimento em breve.)`;
     }
   }
 
-  let aiModel = agent.model || 'gpt-4o';
-  // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
-  if (aiModel.startsWith('openai/')) {
-    aiModel = aiModel.replace('openai/', '');
-  } else if (aiModel.includes('google/') || aiModel.includes('anthropic/')) {
-    console.log(`[Webhook] Aviso: Modelo externo (${aiModel}) detectado no endpoint OpenAI nativo. Fazendo fallback para gpt-4o-mini para evitar falha.`);
-    aiModel = 'gpt-4o-mini';
+  let aiModel = agent.model || 'gpt-4o'; // gpt-4o para raciocínio completo e conversa natural
+  if (aiModel.startsWith('openai/')) aiModel = aiModel.replace('openai/', '');
+  else if (aiModel.includes('google/') || aiModel.includes('anthropic/')) {
+    console.log(`[Webhook] Modelo externo detectado (${aiModel}), usando gpt-4o.`);
+    aiModel = 'gpt-4o';
   }
 
   const mediaFallbackReply = getUazapiMediaFallbackReply(finalUserText);
@@ -1530,19 +1520,17 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   if (!mediaFallbackReply) {
     let iterations = 0;
-    const maxIterations = 3;
+    const maxIterations = 4; // aumentado para permitir mais tool calls em sequencia
 
-    // Separar o contexto de anúncio do texto real do usuário
-    // Isso evita que instruções internas poluam o raciocínio da IA e o histórico
+    // Montar as mensagens de forma limpa
     const buildMessages = () => {
       const msgs: any[] = [{ role: 'system', content: systemPrompt }];
 
-      // Se há contexto de anúncio, injetar como mensagem de sistema separada (não polui o histórico)
-      const adContextMatch = userText.match(/^(\[ANÚNCI0[^\n]*\]|\[Lead enviou link[^\n]*\])/m);
-      const hasAdContext = adContextMatch && userText !== finalUserText;
-      if (hasAdContext) {
-        const adCtx = userText.split(/\(INSTRUÇÃO OBRIGATÓRIA|\(NOTA PARA IA/)[0].trim();
-        msgs.push({ role: 'system', content: `CONTEXTO DE ORIGEM DO LEAD: ${adCtx}\n\nO cliente veio por este anúncio. Use 'consultar_estoque_bndv' para verificar o veículo de interesse antes de responder.` });
+      // Contexto de anúncio: apenas como prefixo informativo, não como instrução imperativa
+      const hasAdCtx = userText.includes('[ANÚNCI0') || userText.includes('[Lead enviou link');
+      if (hasAdCtx) {
+        const adLine = userText.split('\n').find((l: string) => l.startsWith('[ANÚNCI0') || l.startsWith('[Lead enviou link')) || '';
+        if (adLine) msgs.push({ role: 'system', content: `Origem do lead: ${adLine}` });
       }
 
       msgs.push(...chatHistory);
