@@ -248,10 +248,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const [tick, setTick] = useState(false);
   const [muted, setMuted] = useState(false);
   const prevCount = useRef<number | null>(null);
+  const mutedRef = useRef(muted); // sempre atual para callbacks de subscription
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState<DateFilter>('today');
 
   useEffect(() => { const i = setInterval(() => setTick(p => !p), 900); return () => clearInterval(i); }, []);
+  useEffect(() => { mutedRef.current = muted; }, [muted]); // mantém ref sempre sincronizada
 
   const fetchLiveData = useCallback(async () => {
     if (!user) { setLoading(false); return; }
@@ -277,26 +279,67 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   useEffect(() => { fetchLiveData(); }, [fetchLiveData]);
 
+  // ── Alerta de novo lead ───────────────────────────────────────────────────
+  // Dispara alerta visual + campainha quando leads.length aumenta após o
+  // carregamento inicial. Não depende de muted (usa mutedRef para evitar
+  // stale closure e re-execuções desnecessárias quando muted muda).
   useEffect(() => {
     if (loading) return;
-    if (prevCount.current === null) { prevCount.current = leads.length; return; }
+    if (prevCount.current === null) {
+      prevCount.current = leads.length; // inicializa silenciosamente na 1ª carga
+      return;
+    }
     if (leads.length > prevCount.current) {
-      playBell(muted); setNewLeadFlash(true); setTimeout(() => setNewLeadFlash(false), 3000);
+      playBell(mutedRef.current);
+      setNewLeadFlash(true);
+      setTimeout(() => setNewLeadFlash(false), 4000);
     }
     prevCount.current = leads.length;
-  }, [leads.length, loading, muted]);
+  }, [leads.length, loading]); // ← muted FORA das deps — usa ref para evitar re-runs
 
-  // Subscription e polling criados UMA ÚNICA VEZ por sessão de user.
-  // O ref garante que sempre chamamos a versão mais recente de fetchLiveData.
+  // ── Realtime + polling ────────────────────────────────────────────────────
+  // Subscription criada UMA ÚNICA VEZ por sessão de user.
+  // INSERT → dispara alerta diretamente (mais confiável que detecção por contagem)
+  //          + atualiza dados
+  // UPDATE / DELETE → só atualiza dados (drag-and-drop não gera alertas)
   useEffect(() => {
     if (!user) return;
     const iv = window.setInterval(() => fetchLiveDataRef.current(), 120000);
-    const ch = supabase.channel('crm-ao-vivo')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads',    filter: `user_id=eq.${user.id}` }, () => fetchLiveDataRef.current())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers',filter: `user_id=eq.${user.id}` }, () => fetchLiveDataRef.current())
+
+    const triggerNewLeadAlert = () => {
+      playBell(mutedRef.current);
+      setNewLeadFlash(true);
+      setTimeout(() => setNewLeadFlash(false), 4000);
+    };
+
+    const ch = supabase
+      .channel(`crm-ao-vivo-${user.id}`)   // nome único por usuário evita conflito de canais
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          // Alerta apenas para leads não-encerrados
+          if ((payload.new as any)?.status !== 'encerrado') {
+            triggerNewLeadAlert();
+          }
+          fetchLiveDataRef.current();
+        }
+      )
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` },
+        () => fetchLiveDataRef.current()
+      )
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` },
+        () => fetchLiveDataRef.current()
+      )
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${user.id}` },
+        () => fetchLiveDataRef.current()
+      )
       .subscribe();
+
     return () => { window.clearInterval(iv); supabase.removeChannel(ch); };
-  }, [user]); // apenas user — não fetchLiveData
+  }, [user]); // apenas user
 
   useEffect(() => {
     const h = () => setIsPortrait(window.innerHeight >= window.innerWidth);
