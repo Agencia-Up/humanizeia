@@ -345,7 +345,8 @@ Deno.serve(async (req) => {
         }
 
         // ===== ANTI-BAN: Validate number exists on WhatsApp before sending =====
-        if (instance.provider === "evolution") {
+        // Skip for UazAPI — endpoint not available; Evolution API only.
+        if (instance.provider === "evolution" && !isUazAPIInstance(instance)) {
           const numberValid = await validateWhatsAppNumber(instance, item.phone);
           if (!numberValid) {
             console.log(`Number ${item.phone} not on WhatsApp, skipping`);
@@ -391,8 +392,10 @@ Deno.serve(async (req) => {
         }
 
         // Decide if opt-in/opt-out buttons should be sent
+        // Buttons only work on standard Evolution API — UazAPI uses plain text.
         const shouldSendOptoutButtons = campaign?.include_optout_buttons &&
-          !item.contact_metadata?.last_message_at; // only for first-time contacts
+          !item.contact_metadata?.last_message_at && // only for first-time contacts
+          !isUazAPIInstance(instance);
 
         let sendResult: SendResult;
         if (shouldSendOptoutButtons && instance.provider === "evolution") {
@@ -636,26 +639,28 @@ async function selectSmartInstance(
   const rodizio = campaign?.regras_rodizio || {};
   const rotationLimit = Math.max(1, rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10);
 
-  // Use ALL active instances for rotation
-  const scopedInstances = userInstances.length > 1
-    ? userInstances
-    : campaign?.instance_id
-      ? userInstances.filter((inst) => inst.id === campaign.instance_id)
-      : userInstances;
+  // Se a campanha tem instância específica, usar APENAS ela.
+  // Só usa rodízio geral quando a campanha não especifica instância.
+  const scopedInstances = campaign?.instance_id
+    ? userInstances.filter((inst) => inst.id === campaign.instance_id)
+    : userInstances;
 
-  if (scopedInstances.length === 0) {
+  // Fallback: se a instância específica não estiver ativa, usa todas
+  const finalInstances = scopedInstances.length > 0 ? scopedInstances : userInstances;
+
+  if (finalInstances.length === 0) {
     return null;
   }
 
   // ===== ROTATION FIX: Query REAL per-instance sent counts for THIS campaign =====
   // This is the source of truth — no race conditions with campaign.sent_count
   const campaignInstanceCounts = new Map<string, number>();
-  for (const inst of scopedInstances) {
+  for (const inst of finalInstances) {
     campaignInstanceCounts.set(inst.id, 0);
   }
 
-  if (item.campaign_id && scopedInstances.length > 1) {
-    const instanceIds = scopedInstances.map(i => i.id);
+  if (item.campaign_id && finalInstances.length > 1) {
+    const instanceIds = finalInstances.map(i => i.id);
     const { data: perInstCounts } = await supabase
       .from("wa_queue")
       .select("instance_id")
@@ -674,7 +679,7 @@ async function selectSmartInstance(
   // Determine which instance should be active based on real counts
   // Strategy: Fill each instance up to rotationLimit before moving to next
   // Order instances deterministically (by id to be stable across invocations)
-  const orderedInstances = [...scopedInstances].sort((a, b) => a.id.localeCompare(b.id));
+  const orderedInstances = [...finalInstances].sort((a, b) => a.id.localeCompare(b.id));
 
   // Find the "current" instance: the first one that hasn't reached rotationLimit yet in its current slot
   // Total sent across all instances for this campaign
@@ -745,6 +750,12 @@ async function selectSmartInstance(
 
 // ====================== PROVIDER ABSTRACTION ======================
 
+/** UazAPI (logos-ia.uazapi.com) uses a completely different endpoint format than Evolution API v2.
+ *  Detect it by the api_url so we can route accordingly. */
+function isUazAPIInstance(instance: Instance): boolean {
+  return instance.api_url.includes("uazapi");
+}
+
 async function sendMessageByProvider(
   instance: Instance,
   phone: string,
@@ -755,7 +766,88 @@ async function sendMessageByProvider(
   if (instance.provider === "meta") {
     return await sendToMetaAPI(instance, phone, text, mediaUrl, mediaType);
   }
+  if (isUazAPIInstance(instance)) {
+    return await sendToUazAPI(instance, phone, text, mediaUrl, mediaType);
+  }
   return await sendToEvolutionAPI(instance, phone, text, mediaUrl, mediaType);
+}
+
+// ====================== UAZAPI (logos-ia.uazapi.com) ======================
+// UazAPI uses token-based auth (header "token"), no instance name in path.
+// Endpoint: POST /send/text  Body: { number, text }
+
+async function sendToUazAPI(
+  instance: Instance,
+  phone: string,
+  text: string,
+  mediaUrl: string | null,
+  mediaType: string | null
+): Promise<SendResult> {
+  const apiUrl = instance.api_url.replace(/\/+$/, "");
+  const number = phone.replace(/\D/g, "");
+  const token = instance.api_key_encrypted;
+
+  if (mediaUrl && mediaType) {
+    // Try UazAPI media endpoint first
+    const mediaEndpoint = mediaType === "image" ? "image" :
+                          mediaType === "video" ? "video"  :
+                          mediaType === "audio" ? "audio"  : "document";
+    const mediaResponse = await fetchWithTimeout(
+      `${apiUrl}/send/${mediaEndpoint}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", token },
+        body: JSON.stringify({ number, url: mediaUrl, caption: text || "" }),
+      },
+      OUTBOUND_FETCH_TIMEOUT_MS
+    ).catch(() => null);
+
+    if (mediaResponse && mediaResponse.ok) {
+      const data = await mediaResponse.json().catch(() => ({}));
+      return { remoteMessageId: data?.messageId || data?.id || null };
+    }
+
+    // Fallback: send text with media URL appended
+    const fallbackText = text ? `${text}\n\n${mediaUrl}` : mediaUrl!;
+    const fallbackResp = await fetchWithTimeout(
+      `${apiUrl}/send/text`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", token },
+        body: JSON.stringify({ number, text: fallbackText }),
+      },
+      OUTBOUND_FETCH_TIMEOUT_MS
+    );
+    if (!fallbackResp.ok) {
+      const errText = await fallbackResp.text();
+      throw new Error(`UazAPI error (media fallback): ${fallbackResp.status} - ${errText}`);
+    }
+    const data = await fallbackResp.json().catch(() => ({}));
+    return { remoteMessageId: data?.messageId || data?.id || null };
+  }
+
+  // Plain text
+  const response = await fetchWithTimeout(
+    `${apiUrl}/send/text`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", token },
+      body: JSON.stringify({ number, text }),
+    },
+    OUTBOUND_FETCH_TIMEOUT_MS
+  );
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`UazAPI error (sendText): ${response.status} - ${errText}`);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  const remoteMessageId = data?.messageId || data?.id || null;
+  if (remoteMessageId) {
+    console.log(`[UazAPI] Message sent successfully: ${remoteMessageId}`);
+  }
+  return { remoteMessageId };
 }
 
 async function sendToMetaAPI(
@@ -901,6 +993,9 @@ async function sendToEvolutionAPI(
 
 // ===== Verify instance connection status before sending =====
 async function verifyEvolutionConnection(instance: Instance) {
+  // UazAPI does not expose a connection-state endpoint in the same format — skip.
+  if (isUazAPIInstance(instance)) return;
+
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   try {
     const response = await fetchWithTimeout(
@@ -914,21 +1009,26 @@ async function verifyEvolutionConnection(instance: Instance) {
 
     if (!response.ok) {
       const errText = await response.text();
+      // 404 = instância não existe no servidor (deletada/removida) — tratar como aviso, não erro fatal
+      if (response.status === 404) {
+        console.warn(`Instance ${instance.instance_name} not found on server (404) — skipping connection check`);
+        return;
+      }
       throw new Error(`Instance ${instance.instance_name} connection check failed: ${response.status} - ${errText}`);
     }
 
     const data = await response.json();
     // Evolution API returns { instance: { state: "open" } } when connected
     const state = data?.instance?.state || data?.state || data?.connectionState;
-    
+
     if (state && state !== "open" && state !== "connected") {
       throw new Error(`Instance ${instance.instance_name} is not connected (state: ${state}). Reconnect the WhatsApp number.`);
     }
   } catch (err) {
-    if (err instanceof Error && (err.message.includes("not connected") || err.message.includes("connection check failed"))) {
-      throw err; // Re-throw connection errors
+    if (err instanceof Error && err.message.includes("not connected")) {
+      throw err; // Re-throw apenas erros reais de desconexão
     }
-    // If the connection check endpoint itself fails (404, timeout), log warning but proceed
+    // Timeout, rede ou endpoint não disponível — log aviso e prossegue
     console.warn(`Connection check for ${instance.instance_name} failed (non-critical):`, err);
   }
 }
@@ -1271,7 +1371,7 @@ async function generateHash(text: string): Promise<string> {
 // ====================== ANTI-BAN: HUMAN BEHAVIOR SIMULATION ======================
 
 async function simulateTyping(instance: Instance, phone: string, durationMs: number) {
-  if (instance.provider === "meta") return;
+  if (instance.provider === "meta" || isUazAPIInstance(instance)) return;
 
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
@@ -1296,7 +1396,7 @@ async function simulateTyping(instance: Instance, phone: string, durationMs: num
 }
 
 async function simulateOnlinePresence(instance: Instance, _phone: string) {
-  if (instance.provider === "meta") return;
+  if (instance.provider === "meta" || isUazAPIInstance(instance)) return;
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
@@ -1308,7 +1408,7 @@ async function simulateOnlinePresence(instance: Instance, _phone: string) {
 }
 
 async function simulateOfflinePresence(instance: Instance) {
-  if (instance.provider === "meta") return;
+  if (instance.provider === "meta" || isUazAPIInstance(instance)) return;
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     await fetchWithTimeout(`${apiUrl}/chat/presence/${instance.instance_name}`, {
@@ -1320,7 +1420,7 @@ async function simulateOfflinePresence(instance: Instance) {
 }
 
 async function simulateReadReceipt(instance: Instance, phone: string) {
-  if (instance.provider === "meta") return;
+  if (instance.provider === "meta" || isUazAPIInstance(instance)) return;
   try {
     const apiUrl = instance.api_url.replace(/\/+$/, "");
     const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
