@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
@@ -87,14 +87,18 @@ export function GlobalLeadsCrm() {
     }
   }, [user]);
 
+  // Ref estável — subscription criada uma única vez por user, sempre chama versão atual do fetchAll
+  const fetchAllRef = useRef(fetchAll);
+  useEffect(() => { fetchAllRef.current = fetchAll; }, [fetchAll]);
+
   useEffect(() => {
     if (!user) return;
 
-    fetchAll();
+    fetchAllRef.current();
 
     const channel = supabase.channel('crm-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` }, (payload) => {
-        fetchAll();
+        fetchAllRef.current();
         if (payload.eventType === 'INSERT') {
           const newLead = payload.new as any;
           toast({
@@ -103,11 +107,11 @@ export function GlobalLeadsCrm() {
           });
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${user.id}` }, () => fetchAll())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${user.id}` }, () => fetchAllRef.current())
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [fetchAll, user]);
+  }, [user]); // apenas user — não fetchAll
 
   const transferStats = useMemo((): TransferStats[] => {
     const now = new Date();

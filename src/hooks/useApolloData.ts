@@ -88,15 +88,16 @@ export function useApolloAlerts() {
     enabled: !!user,
   });
 
-  // Realtime subscription for new alerts
+  // Realtime subscription for new alerts — filtrado pelo user para não receber eventos de outros usuários
   useEffect(() => {
     if (!user) return;
     const channel = supabase
-      .channel('apollo-alerts-realtime')
+      .channel(`apollo-alerts-realtime-${user.id}`)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'apollo_alerts',
+        filter: `user_id=eq.${user.id}`,
       }, () => {
         queryClient.invalidateQueries({ queryKey: ['apollo-alerts'] });
       })

@@ -260,6 +260,12 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   }, [messages]);
 
   /* ── Realtime ──────────────────────────────────────────────────── */
+  // Refs estáveis — subscription recriada apenas quando user muda, não a cada render
+  const fetchConversationsRef = useRef(fetchConversations);
+  useEffect(() => { fetchConversationsRef.current = fetchConversations; }, [fetchConversations]);
+  const selectedConvKeyRef = useRef(selectedConvKey);
+  useEffect(() => { selectedConvKeyRef.current = selectedConvKey; }, [selectedConvKey]);
+
   useEffect(() => {
     if (!user) return;
     const ch = supabase
@@ -269,9 +275,10 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         filter: `user_id=eq.${user.id}`,
       }, (payload) => {
         const msg = payload.new as unknown as InboxMessage;
-        fetchConversations(false);
-        if (selectedConvKey) {
-          const [selPhone, selInst] = selectedConvKey.split('::');
+        fetchConversationsRef.current(false);
+        const convKey = selectedConvKeyRef.current;
+        if (convKey) {
+          const [selPhone, selInst] = convKey.split('::');
           if (msg.phone === selPhone && (selInst === 'null' || selInst === msg.instance_id)) {
             setMessages(prev => [...prev, msg]);
             supabase.from('wa_inbox').update({ is_read: true } as any).eq('id', msg.id).then(() => {});
@@ -280,7 +287,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [user, selectedConvKey, fetchConversations]);
+  }, [user]); // apenas user — refs garantem acesso à versão atual
 
   /* ── Selecionar conversa ───────────────────────────────────────── */
   const selectConversation = (conv: Conversation) => {

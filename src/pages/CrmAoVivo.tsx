@@ -258,6 +258,10 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     } finally { setLoading(false); }
   }, [user]);
 
+  // Ref estável para o callback — evita recriar subscriptions a cada render
+  const fetchLiveDataRef = useRef(fetchLiveData);
+  useEffect(() => { fetchLiveDataRef.current = fetchLiveData; }, [fetchLiveData]);
+
   useEffect(() => { fetchLiveData(); }, [fetchLiveData]);
 
   useEffect(() => {
@@ -269,15 +273,17 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     prevCount.current = leads.length;
   }, [leads.length, loading, muted]);
 
+  // Subscription e polling criados UMA ÚNICA VEZ por sessão de user.
+  // O ref garante que sempre chamamos a versão mais recente de fetchLiveData.
   useEffect(() => {
     if (!user) return;
-    const iv = window.setInterval(fetchLiveData, 120000);
+    const iv = window.setInterval(() => fetchLiveDataRef.current(), 120000);
     const ch = supabase.channel('crm-ao-vivo')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads',    filter: `user_id=eq.${user.id}` }, fetchLiveData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers',filter: `user_id=eq.${user.id}` }, fetchLiveData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads',    filter: `user_id=eq.${user.id}` }, () => fetchLiveDataRef.current())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers',filter: `user_id=eq.${user.id}` }, () => fetchLiveDataRef.current())
       .subscribe();
     return () => { window.clearInterval(iv); supabase.removeChannel(ch); };
-  }, [fetchLiveData, user]);
+  }, [user]); // apenas user — não fetchLiveData
 
   useEffect(() => {
     const h = () => setIsPortrait(window.innerHeight >= window.innerWidth);
