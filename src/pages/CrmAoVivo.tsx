@@ -260,9 +260,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     if (!user) { setLoading(false); return; }
     try {
       const [{ data: leadsData }, { data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
-        (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
+        (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents!ai_crm_leads_agent_id_fkey(name), member:ai_team_members!ai_crm_leads_assigned_to_member_id_fkey(name, whatsapp_number)')
           .eq('user_id', user.id).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
-        (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
+        (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), agent:wa_ai_agents!ai_lead_transfers_from_agent_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
           .eq('user_id', user.id).order('created_at', { ascending: false }).limit(500),
         (supabase as any).from('ai_team_members').select('*').eq('user_id', user.id)
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),

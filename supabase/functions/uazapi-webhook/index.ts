@@ -1192,7 +1192,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           .maybeSingle();
 
         if (assignedLead) {
-          await supabase.from('ai_crm_leads').update({ status: 'transferido', last_interaction_at: new Date().toISOString() }).eq('id', assignedLead.id);
+          await supabase.from('ai_crm_leads').update({ 
+            status: 'transferido', 
+            assigned_to_id: matchedSeller.id,
+            assigned_to_member_id: matchedSeller.id, // Sincronizar com a UI
+            last_interaction_at: new Date().toISOString() 
+          }).eq('id', assignedLead.id);
           
           // Confirmar tambem na tabela de transferencias para o dashboard
           await supabase.from('ai_lead_transfers').update({ 

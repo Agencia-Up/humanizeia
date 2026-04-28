@@ -322,7 +322,8 @@ serve(async (req) => {
 
         // PASSO 3: Salvar o vendedor escolhido no CRM e historico
         await supabase.from('ai_crm_leads').update({
-          assigned_to_id: selectedSellerId
+          assigned_to_id: selectedSellerId,
+          assigned_to_member_id: selectedSellerId // Coluna que a UI usa para o JOIN
         }).eq('id', lead.id);
 
         if (selectedSellerId) {
@@ -330,6 +331,7 @@ serve(async (req) => {
             user_id: lead.user_id,
             lead_id: lead.id,
             to_member_id: selectedSellerId,
+            from_agent_id: agentId, // Adicionado para estatisticas por agente
             transfer_reason: 'Inatividade (10 minutos)',
             notes: `Transferido automaticamente para o analista via cron`
           });
