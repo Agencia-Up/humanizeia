@@ -1178,39 +1178,37 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     const CONFIRMATION_KEYWORDS = ['ok', 'ta certo', 'tá certo', 'vou chamar', 'vou contatar', 'vou atender', 'certo', 'entendido', 'recebi', 'vou ligar', 'beleza', 'combinado', 'pode deixar', 'sim', 'perfeito', 'ok!', 'já ligo', 'ja ligo', 'vou ver', 'vou verificar', 'blz', 'joia', 'pronto', 'peguei', 'chamei', 'chamando', 'okay', 'atendendo', 'to indo', 'tô indo', 'estou indo', 'já peguei', 'ja peguei', 'pode mandar', 'manda', 'opa'];
     const normalizedText = normalizeBndvText(userText);
     const isConfirmation = CONFIRMATION_KEYWORDS.some(kw => normalizedText.includes(normalizeBndvText(kw))) || userText.length <= 15;
-    if (isConfirmation) {
-      console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou atendimento. Atualizando CRM...`);
-      const { data: assignedLead } = await supabase.from('ai_crm_leads').select('id, assigned_to_id').eq('agent_id', agent.id).eq('status', 'qualificado').order('last_interaction_at', { ascending: false }).limit(1).maybeSingle();
-      if (assignedLead && assignedLead.assigned_to_id === matchedSeller.id) {
-        await supabase.from('ai_crm_leads').update({ status: 'transferido', last_interaction_at: new Date().toISOString() }).eq('id', assignedLead.id);
+      if (isConfirmation) {
+        console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou atendimento. Atualizando CRM...`);
         
-        // Confirmar tambem na tabela de transferencias para o dashboard
-        await supabase.from('ai_lead_transfers').update({ 
-          is_confirmed: true, 
-          confirmed_at: new Date().toISOString(),
-          transfer_status: 'confirmed'
-        }).eq('lead_id', assignedLead.id).eq('to_member_id', matchedSeller.id);
+        // Buscar o lead MAIS RECENTE que foi designado para ESTE vendedor específico e ainda está 'qualificado'
+        const { data: assignedLead } = await supabase.from('ai_crm_leads')
+          .select('id')
+          .eq('agent_id', agent.id)
+          .eq('assigned_to_id', matchedSeller.id)
+          .eq('status', 'qualificado')
+          .order('last_interaction_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-        console.log(`[Webhook] Lead ${assignedLead.id} atualizado para 'transferido' (Em Atendimento) pelo vendedor ${matchedSeller.name}.`);
-      } else {
-        console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou, mas o lead nao esta mais designado para ele (ja foi repassado ou assumido).`);
-        // --- DEDUPLICACAO DE MENSAGENS ---
-  if (messageId) {
-    const { data: existingMsg } = await supabase.from('wa_inbox')
-      .select('id')
-      .eq('remote_message_id', messageId)
-      .maybeSingle();
-    
-    if (existingMsg) {
-      console.log(`[Webhook] MENSAGEM DUPLICADA DETECTADA (ID: ${messageId}). Ignorando.`);
-      const corsH = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
-      return new Response('Duplicate message ignored', { headers: corsH, status: 200 });
-    }
-  }
+        if (assignedLead) {
+          await supabase.from('ai_crm_leads').update({ status: 'transferido', last_interaction_at: new Date().toISOString() }).eq('id', assignedLead.id);
+          
+          // Confirmar tambem na tabela de transferencias para o dashboard
+          await supabase.from('ai_lead_transfers').update({ 
+            is_confirmed: true, 
+            confirmed_at: new Date().toISOString(),
+            transfer_status: 'confirmed'
+          }).eq('lead_id', assignedLead.id).eq('to_member_id', matchedSeller.id);
 
-  const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
-        const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || '';
-        await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, "⚠️ *Tempo esgotado!* \n\nEste lead já foi repassado para o próximo especialista da fila pois passaram-se 5 minutos. Fique atento aos próximos!");
+          console.log(`[Webhook] Lead ${assignedLead.id} atualizado para 'transferido' (Em Atendimento) pelo vendedor ${matchedSeller.name}.`);
+        } else {
+          console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou, mas nao encontrei lead qualificado pendente para ele.`);
+          // Opcional: Avisar que o tempo acabou se houver algum lead recente dele que mudou de status
+          const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
+          const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || '';
+          await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, "⚠️ *Tempo esgotado!* \n\nEste lead já foi repassado para o próximo especialista da fila pois passaram-se 10 minutos. Fique atento aos próximos!");
+        }
       }
     }
     return new Response(JSON.stringify({ ok: true, seller_message: true }), { headers: corsHeaders });
