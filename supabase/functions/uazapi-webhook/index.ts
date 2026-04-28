@@ -451,7 +451,21 @@ function bndvMatchesQuery(vehicle: any, query?: string | null) {
     vehicle?.year?.toString?.(),
   ].filter(Boolean).join(' ');
 
-  const indexed = normalizeBndvText(rawIndexed).replace(/-/g, ' ');
+  let indexed = normalizeBndvText(rawIndexed).replace(/-/g, ' ');
+  
+  // Injeção de categorias automotivas para permitir busca por "picape", "caminhonete", "suv"
+  const isPicape = /\b(hilux|s10|ranger|amarok|toro|frontier|triton|strada|saveiro|montana|oroch|maverick|ram|f150|f-150)\b/i.test(indexed);
+  if (isPicape) indexed += ' picape caminhonete camionete pickup';
+
+  const isSUV = /\b(compass|renegade|creta|kicks|hrv|corolla cross|tracker|t cross|nivus|fastback|pulse|tiggo|sw4|equinox|commander|taos|ecosport|duster|kardian|outlander|pajero|xc60|xc40)\b/i.test(indexed);
+  if (isSUV) indexed += ' suv utilitario utilitário';
+
+  const isSedan = /\b(corolla|civic|cruze|jetta|virtus|cronos|versa|hb20s|yaris sedan|logan|city|sentra|cerato|fusion)\b/i.test(indexed);
+  if (isSedan) indexed += ' sedan sedã';
+
+  const isHatch = /\b(onix|hb20|polo|argo|208|yaris|mobi|kwid|c3|gol|fox|sandero|up|fiesta|march)\b/i.test(indexed);
+  if (isHatch) indexed += ' hatch popular';
+
   const normalizedQuery = normalizeBndvText(query).replace(/-/g, ' ');
   
   const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 0);
