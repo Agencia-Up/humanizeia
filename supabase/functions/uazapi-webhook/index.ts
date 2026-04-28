@@ -1,4 +1,4 @@
-﻿import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
@@ -1453,7 +1453,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   console.log(`[Webhook] Salvando historico e chamando OpenAI para: ${finalUserText}`);
 
   // Salvar historico
-  await supabase.from('wa_chat_history').insert({
+  const { data: insertedChat, error: chatError } = await supabase.from('wa_chat_history').insert({
     user_id: agent.user_id,
     agent_id: agent.id,
     instance_id: instanceName,
@@ -1461,7 +1461,59 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     role: 'user',
     content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[Midia/Imagem]',
     lead_name: pushName
-  })
+  }).select('id, created_at').single();
+
+  if (chatError) {
+    console.error('[Webhook] Erro ao salvar historico:', chatError.message);
+  }
+
+  const insertedId = insertedChat?.id;
+
+  // --- BUFFER DE MENSAGENS (Human-like behavior) ---
+  // Aguarda 4 segundos para ver se o lead manda mais mensagens em sequencia.
+  // Apenas a ULTIMA mensagem da sequencia prosseguira para gerar a resposta da IA.
+  console.log(`[Webhook] Aguardando buffer de 4s para ${remoteJid}...`);
+  await new Promise(r => setTimeout(r, 4000));
+
+  // Verifica se esta ainda e a ultima mensagem enviada pelo usuario
+  const { data: lastUserMsg } = await supabase.from('wa_chat_history')
+    .select('id')
+    .eq('agent_id', agent.id)
+    .eq('remote_jid', remoteJid)
+    .eq('role', 'user')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (lastUserMsg && insertedId && lastUserMsg.id !== insertedId) {
+    console.log(`[Webhook] Outra mensagem chegou depois. Esta instancia (${insertedId}) sera encerrada para evitar respostas duplas.`);
+    return new Response('Buffered', { headers: corsHeaders });
+  }
+
+  // Se chegou aqui, somos a instancia encarregada de responder.
+  // Vamos buscar todas as mensagens do usuario que chegaram desde a ultima resposta da IA.
+  const { data: leadData } = await supabase.from('ai_crm_leads')
+    .select('last_agent_reply_at')
+    .eq('agent_id', agent.id)
+    .eq('remote_jid', remoteJid)
+    .maybeSingle();
+
+  const lastReplyAt = leadData?.last_agent_reply_at || new Date(0).toISOString();
+
+  const { data: recentUserMsgs } = await supabase.from('wa_chat_history')
+    .select('content')
+    .eq('agent_id', agent.id)
+    .eq('remote_jid', remoteJid)
+    .eq('role', 'user')
+    .gt('created_at', lastReplyAt)
+    .order('created_at', { ascending: true });
+
+  let combinedUserText = finalUserText;
+  if (recentUserMsgs && recentUserMsgs.length > 1) {
+    combinedUserText = recentUserMsgs.map((m: any, idx: number) => `${idx + 1}. ${m.content}`).join('\n');
+    userMessageContentForOpenAi = `[O lead enviou ${recentUserMsgs.length} mensagens em sequência]:\n${combinedUserText}`;
+    console.log(`[Webhook] Mensagens combinadas para processamento: ${recentUserMsgs.length}`);
+  }
 
   // Salvar mensagem RECEBIDA no wa_inbox (para aparecer no Inbox do Marcos)
   await supabase.from('wa_inbox').insert({
