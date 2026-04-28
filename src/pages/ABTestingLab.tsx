@@ -468,7 +468,7 @@ Formate em Markdown com headers e emojis.`;
   const winRate = totalTests > 0 ? Math.round((winnerTests / totalTests) * 100) : 0;
 
   const filteredAds = metaAds.filter(ad =>
-    ad.name.toLowerCase().includes(adSearch.toLowerCase())
+    (ad.name ?? '').toLowerCase().includes(adSearch.toLowerCase())
   );
 
   // Determine winner per metric for highlighting

@@ -216,9 +216,16 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   }, [user]);
 
   /* ── Fetch tags dos contatos ───────────────────────────────────── */
+  // Usa ref para conversations para evitar recriar o callback (e re-executar o
+  // useEffect) a cada mensagem nova recebida via Realtime — o que gerava
+  // dezenas de queries desnecessárias por sessão.
+  const conversationsRef = useRef(conversations);
+  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
+
   const fetchContactTags = useCallback(async () => {
-    if (!user || conversations.length === 0) return;
-    const phones = [...new Set(conversations.map(c => c.phone))];
+    const convs = conversationsRef.current;
+    if (!user || convs.length === 0) return;
+    const phones = [...new Set(convs.map(c => c.phone))];
     const { data } = await supabase
       .from('wa_contacts')
       .select('phone, tags')
@@ -229,7 +236,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       for (const c of data) if (c.tags?.length) map[c.phone] = c.tags as string[];
       setContactTags(map);
     }
-  }, [user, conversations]);
+  }, [user]); // conversations removido das deps — usa ref acima
 
   /* ── Fetch vendedores (equipe) ────────────────────────────────── */
   const fetchTeamMembers = useCallback(async () => {
@@ -252,7 +259,9 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   /* ── Effects ───────────────────────────────────────────────────── */
   useEffect(() => { fetchInstances(); }, [fetchInstances]);
   useEffect(() => { fetchConversations(true); }, [fetchConversations]);
-  useEffect(() => { fetchContactTags(); }, [fetchContactTags]);
+  // Busca tags só quando a quantidade de conversas muda, não a cada referência nova
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchContactTags(); }, [fetchContactTags, conversations.length]);
   useEffect(() => { fetchTeamMembers(); }, [fetchTeamMembers]);
 
   useEffect(() => {
