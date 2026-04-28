@@ -9,7 +9,8 @@ const corsHeaders = {
 const sendOkResponse = (payload: any) =>
   new Response(JSON.stringify(payload), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-async function callAI(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
+// Returns text + token count consumed
+async function callAI(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<{ text: string; tokens: number }> {
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
   const openaiKey = Deno.env.get('OPENAI_API_KEY');
 
@@ -33,7 +34,8 @@ async function callAI(systemPrompt: string, userPrompt: string, maxTokens: numbe
       });
       if (res.ok) {
         const data = await res.json();
-        return data?.content?.[0]?.text ?? '';
+        const tokens = (data?.usage?.input_tokens ?? 0) + (data?.usage?.output_tokens ?? 0);
+        return { text: data?.content?.[0]?.text ?? '', tokens };
       }
       anthropicError = await res.text();
       console.error('Falha Anthropic:', anthropicError);
@@ -62,13 +64,28 @@ async function callAI(systemPrompt: string, userPrompt: string, maxTokens: numbe
     });
     if (res.ok) {
       const data = await res.json();
-      return data?.choices?.[0]?.message?.content ?? '';
+      const tokens = data?.usage?.total_tokens ?? 0;
+      return { text: data?.choices?.[0]?.message?.content ?? '', tokens };
     }
     const err = await res.text();
     throw new Error(`Ambas as APIs falharam. Anthropic: ${anthropicError}. OpenAI: ${err}`);
   }
 
   throw new Error(`Falha na IA. Anthropic Error: ${anthropicError}. OpenAI não configurada.`);
+}
+
+// Fire-and-forget token consumption
+function consumeTokens(supabase: any, userId: string, tokens: number, agent: string, description: string) {
+  if (tokens <= 0) return;
+  supabase.rpc('consume_user_tokens', {
+    p_user_id: userId,
+    p_amount: Math.round(tokens),
+    p_agent: agent,
+    p_description: description,
+  }).then(({ error }: any) => {
+    if (error) console.error('consume_user_tokens error:', error);
+    else console.log(`Tokens consumed: ${tokens} (daniel/${agent})`);
+  }).catch((e: any) => console.error('consume_user_tokens exception:', e));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,10 +135,10 @@ serve(async (req) => {
       // silently ignore — briefing is optional context
     }
 
-    if (action === 'generate_strategy') return await generateStrategy(body);
-    if (action === 'research_trends') return await researchTrends(body, clientContext);
-    if (action === 'generate_swot') return await generateSwot(body);
-    if (action === 'analyze_reference') return await analyzeReference(body);
+    if (action === 'generate_strategy') return await generateStrategy(body, supabase, user.id);
+    if (action === 'research_trends') return await researchTrends(body, clientContext, supabase, user.id);
+    if (action === 'generate_swot') return await generateSwot(body, supabase, user.id);
+    if (action === 'analyze_reference') return await analyzeReference(body, supabase, user.id);
 
     return sendOkResponse({ error: `Ação desconhecida: ${action}` });
   } catch (err: any) {
@@ -132,7 +149,7 @@ serve(async (req) => {
 
 // ─── generate_strategy ────────────────────────────────────────────────────────
 
-async function generateStrategy(body: any) {
+async function generateStrategy(body: any, supabase: any, userId: string) {
   const { business_name, business_type, strategy_type, current_situation, main_challenge, budget, timeframe_months = 6 } = body;
 
   const systemPrompt = `Você é DANIEL, um consultor estratégico de negócios de elite (Nível CEO/Board-Level), com especialização avançada em neuromarketing, engenharia de crescimento e tração escalável em mercados hiper-competitivos.
@@ -161,7 +178,8 @@ Formato JSON esperado:
 }`;
 
   try {
-    const rawText = await callAI(systemPrompt, userPrompt, 4000);
+    const { text: rawText, tokens } = await callAI(systemPrompt, userPrompt, 4000);
+    consumeTokens(supabase, userId, tokens, 'daniel', 'Plano estratégico — Daniel');
     const match = rawText.match(/\{[\s\S]*\}/);
     return sendOkResponse({ strategy: JSON.parse(match ? match[0] : rawText) });
   } catch (err: any) {
@@ -171,7 +189,7 @@ Formato JSON esperado:
 
 // ─── research_trends (MOTOR 2.0) ─────────────────────────────────────────────
 
-async function researchTrends(body: any, clientContext: string) {
+async function researchTrends(body: any, clientContext: string, supabase: any, userId: string) {
   const { niche, links, platforms = ['instagram', 'tiktok', 'google'] } = body;
   if (!niche?.trim()) return sendOkResponse({ error: 'O Nicho do cliente é obrigatório.' });
 
@@ -238,11 +256,13 @@ FORMATO JSON EXATO:
 
   try {
     // PASS 1: Generate Deep Markdown Manifesto
-    const manifesto = await callAI(systemPrompt, userPrompt, 8000);
+    const { text: manifesto, tokens: t1 } = await callAI(systemPrompt, userPrompt, 8000);
+    consumeTokens(supabase, userId, t1, 'daniel', 'Pesquisa de tendências — Daniel (pass 1)');
 
     // PASS 2: Extract JSON from Manifesto
-    const rawJson = await callAI("Você é um arquiteto de dados. Extraia todo o JSON sem encurtar arrays ou resumir os textos.",
+    const { text: rawJson, tokens: t2 } = await callAI("Você é um arquiteto de dados. Extraia todo o JSON sem encurtar arrays ou resumir os textos.",
       `${extractionPrompt}\n\nMANIFESTO:\n${manifesto}`, 8000);
+    consumeTokens(supabase, userId, t2, 'daniel', 'Pesquisa de tendências — Daniel (pass 2)');
 
     // Try to extract JSON from the response
     const match = rawJson.match(/\{[\s\S]*\}/);
@@ -268,7 +288,7 @@ FORMATO JSON EXATO:
 
 // ─── analyze_reference (chamado pelo Davi) ────────────────────────────────────
 
-async function analyzeReference(body: any) {
+async function analyzeReference(body: any, supabase: any, userId: string) {
   const { reference_url, context } = body;
 
   const systemPrompt = `Você é DANIEL, especialista em análise de conteúdo e estratégia de marketing digital. Analise referências de conteúdo e extraia insights estratégicos profundos.`;
@@ -279,7 +299,8 @@ Extraia: formato, tom de voz, tamanho do texto, uso de emojis, tipo de hook, est
 Retorne como texto descritivo e acionável.`;
 
   try {
-    const analysis = await callAI(systemPrompt, userPrompt, 1500);
+    const { text: analysis, tokens } = await callAI(systemPrompt, userPrompt, 1500);
+    consumeTokens(supabase, userId, tokens, 'daniel', 'Análise de referência — Daniel');
     return sendOkResponse({ analysis });
   } catch (err: any) {
     return sendOkResponse({ error: `Falha na análise: ${err.message}` });
@@ -288,7 +309,7 @@ Retorne como texto descritivo e acionável.`;
 
 // ─── generate_swot ────────────────────────────────────────────────────────────
 
-async function generateSwot(body: any) {
+async function generateSwot(body: any, supabase: any, userId: string) {
   const { business_name, business_type, context } = body;
 
   const systemPrompt = `Você é um Analista Estratégico Sênior focado em Board Executivo. Retorne APENAS um objeto JSON válido.`;
@@ -299,7 +320,8 @@ Retorne APENAS o JSON:
 {"forcas":["f1 técnico pesado","f2","f3","f4","f5"], "fraquezas":["..."], "oportunidades":["..."], "ameacas":["..."]}`;
 
   try {
-    const rawText = await callAI(systemPrompt, userPrompt, 2500);
+    const { text: rawText, tokens } = await callAI(systemPrompt, userPrompt, 2500);
+    consumeTokens(supabase, userId, tokens, 'daniel', 'Análise SWOT — Daniel');
     const match = rawText.match(/\{[\s\S]*\}/);
     return sendOkResponse({ swot: JSON.parse(match ? match[0] : rawText) });
   } catch (err: any) {
