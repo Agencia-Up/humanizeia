@@ -25,7 +25,7 @@ serve(async (req) => {
     const { action } = body;
 
     if (action === 'generate_email') {
-      return await generateEmail(body, corsHeaders);
+      return await generateEmail(body, user, supabase, corsHeaders);
     }
 
     if (action === 'send_campaign') {
@@ -42,7 +42,19 @@ serve(async (req) => {
   }
 });
 
-async function generateEmail(body: any, cors: Record<string, string>) {
+async function consumeTokens(supabase: any, userId: string, amount: number, description: string) {
+  if (amount <= 0) return;
+  supabase.rpc('consume_user_tokens', {
+    p_user_id: userId,
+    p_amount: amount,
+    p_agent: 'joao',
+    p_description: description,
+  }).then(({ error: e }: any) => {
+    if (e) console.error('consume_user_tokens error:', e);
+  }).catch((e: any) => console.error('consume_user_tokens exception:', e));
+}
+
+async function generateEmail(body: any, user: any, supabase: any, cors: Record<string, string>) {
   const {
     topic, audience, goal, tone, sender_name = 'Nossa Equipe',
     include_ps = true, include_emoji = true,
@@ -109,6 +121,10 @@ ${include_ps ? '- Adicione um P.S. poderoso no final' : ''}`;
   if (!res.ok) throw new Error(`OpenAI: ${res.status}`);
   const data = await res.json();
   const email = JSON.parse(data.choices?.[0]?.message?.content || '{}');
+
+  // Track token consumption (fire-and-forget)
+  const tokensUsed = (data.usage?.prompt_tokens ?? 0) + (data.usage?.completion_tokens ?? 0);
+  consumeTokens(supabase, user.id, tokensUsed, 'Email marketing — João');
 
   return new Response(JSON.stringify({ email }), {
     headers: { ...cors, 'Content-Type': 'application/json' },

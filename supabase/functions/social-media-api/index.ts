@@ -30,17 +30,17 @@ serve(async (req) => {
 
     // ── GENERATE CAROUSEL V2 (RICH PAGE-BASED SLIDES) ──────────────────────
     if (action === 'generate_carousel_v2') {
-      return await generateCarouselV2(body, corsHeaders);
+      return await generateCarouselV2(body, user, supabase, corsHeaders);
     }
 
     // ── GENERATE CAROUSEL (legacy) ──────────────────────────────────────────
     if (action === 'generate_carousel') {
-      return await generateCarousel(body, corsHeaders);
+      return await generateCarousel(body, user, supabase, corsHeaders);
     }
 
     // ── FETCH TRENDS BRIEF ──────────────────────────────────────────────────
     if (action === 'fetch_trends_brief') {
-      return await fetchTrendsBrief(body, corsHeaders);
+      return await fetchTrendsBrief(body, user, supabase, corsHeaders);
     }
 
     // ── GENERATE SLIDE IMAGE (fal.ai Flux.1) ───────────────────────────────
@@ -74,8 +74,21 @@ serve(async (req) => {
   }
 });
 
+// ─── Token consumption helper ────────────────────────────────────────────────
+function consumeTokens(supabase: any, userId: string, amount: number, description: string) {
+  if (amount <= 0) return;
+  supabase.rpc('consume_user_tokens', {
+    p_user_id: userId,
+    p_amount: amount,
+    p_agent: 'davi',
+    p_description: description,
+  }).then(({ error: e }: any) => {
+    if (e) console.error('consume_user_tokens error:', e);
+  }).catch((e: any) => console.error('consume_user_tokens exception:', e));
+}
+
 // ─── V2 Carousel Generator (Rich Page-Based Slides) ─────────────────────────
-async function generateCarouselV2(body: any, cors: Record<string, string>) {
+async function generateCarouselV2(body: any, user: any, supabase: any, cors: Record<string, string>) {
   const {
     topic,
     audience,
@@ -197,6 +210,10 @@ Seja IMENSAMENTE detalhado. Cada slide deve ter conteúdo suficiente para transf
   }
   const data1 = await res1.json();
   const bible = data1.choices?.[0]?.message?.content || '';
+  // Track tokens for bible step
+  consumeTokens(supabase, user.id,
+    (data1.usage?.prompt_tokens ?? 0) + (data1.usage?.completion_tokens ?? 0),
+    'Carrossel social media (bíblia) — Davi');
 
   // ── STEP 2: Data Architect (Extração JSON determinística) ────────────────────
   const extractionSystemPrompt = `Você é o Arquiteto de Estruturas da HumanizeIA.
@@ -251,6 +268,10 @@ Tipos de slide: "cover", "content", "list", "quote", "cta"`;
 
   const aiData = await res2.json();
   const rawContent = aiData.choices?.[0]?.message?.content || '{}';
+  // Track tokens for extraction step
+  consumeTokens(supabase, user.id,
+    (aiData.usage?.prompt_tokens ?? 0) + (aiData.usage?.completion_tokens ?? 0),
+    'Carrossel social media (JSON) — Davi');
 
   let carousel;
   try {
@@ -265,7 +286,7 @@ Tipos de slide: "cover", "content", "list", "quote", "cta"`;
 }
 
 // ─── Fetch Trends Brief ──────────────────────────────────────────────────────
-async function fetchTrendsBrief(body: any, cors: Record<string, string>) {
+async function fetchTrendsBrief(body: any, user: any, supabase: any, cors: Record<string, string>) {
   const { niche = 'marketing digital', limit = 8 } = body;
   const newsdataKey = Deno.env.get('NEWSDATA_API_KEY');
 
@@ -377,6 +398,10 @@ Retorne apenas JSON.`,
         const data = await res.json();
         const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}');
         carouselIdeas = parsed.ideas || [];
+        // Track tokens
+        consumeTokens(supabase, user.id,
+          (data.usage?.prompt_tokens ?? 0) + (data.usage?.completion_tokens ?? 0),
+          'Tendências social media — Davi');
       }
     } catch { /* use raw topics as fallback */ }
   }
@@ -496,7 +521,7 @@ function buildMockCarouselV2(
 }
 
 // ─── AI Carousel Generator (Legacy) ─────────────────────────────────────────
-async function generateCarousel(body: any, cors: Record<string, string>) {
+async function generateCarousel(body: any, user: any, supabase: any, cors: Record<string, string>) {
   const openaiKey = Deno.env.get('OPENAI_API_KEY');
   const { topic, audience, tone = 'profissional', slide_count = 7, include_cta = true, brand_name = 'Minha Empresa' } = body;
 
@@ -528,6 +553,11 @@ Retorne: {"cover_headline":"...","topic":"...","audience":"...","caption":"...",
   if (!res.ok) throw new Error(`OpenAI API: ${res.status}`);
   const aiData = await res.json();
   const carousel = JSON.parse(aiData.choices?.[0]?.message?.content || '{}');
+
+  // Track tokens
+  consumeTokens(supabase, user.id,
+    (aiData.usage?.prompt_tokens ?? 0) + (aiData.usage?.completion_tokens ?? 0),
+    'Carrossel social media — Davi');
 
   return new Response(JSON.stringify({ carousel }), { headers: { ...cors, 'Content-Type': 'application/json' } });
 }
