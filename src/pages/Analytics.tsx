@@ -147,7 +147,10 @@ export default function Analytics() {
   ];
 
   // ── chart data ─────────────────────────────────────────
-  const chartData = (dailyData?.data || dailyData || []).map((d: any) => ({
+  const dailyArr: any[] = Array.isArray(dailyData) ? dailyData
+    : Array.isArray((dailyData as any)?.data) ? (dailyData as any).data
+    : [];
+  const chartData = dailyArr.map((d: any) => ({
     date: d.date_start || d.date_stop,
     gasto: Number(d.spend || 0),
     cliques: Number(d.clicks || 0),
@@ -157,7 +160,10 @@ export default function Analytics() {
   }));
 
   // ── campaign rows ──────────────────────────────────────
-  const campaignRows = (campaignInsights?.data || campaignInsights || []).map((c: any) => ({
+  const campaignArr: any[] = Array.isArray(campaignInsights) ? campaignInsights
+    : Array.isArray((campaignInsights as any)?.data) ? (campaignInsights as any).data
+    : [];
+  const campaignRows = campaignArr.map((c: any) => ({
     name: c.campaign_name || c.campaign_id,
     spend: Number(c.spend || 0),
     impressions: Number(c.impressions || 0),
