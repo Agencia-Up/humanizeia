@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+﻿import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
@@ -249,19 +249,16 @@ serve(async (req) => {
         try {
           await supabase.storage.from('creatives').upload(`payload_diag_${Date.now()}.json`, JSON.stringify(msgObj));
         } catch (err) {
-          console.error("Erro diag dump storage", err);
-        }
+          console.error("Erro diag dump stora      if (adTextContext) {
+        // Enviar o adTextContext como um metadado separado para o processMessage
+        // para não poluir o userText (que vai para o histórico e o Inbox)
+        console.log(`[Webhook] Mensagem com contexto de anuncio -> Instance: ${instanceName}, From: ${remoteJid}`);
+        return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj, adTextContext);
       }
-      // ─────────────────────────────────────────────────────────────────────────
-
-      if (adTextContext) {
-        if (adTextContext.includes('Não foi possível identificar')) {
-          userText = `${adTextContext}\n\nMensagem do lead: ${userText}`;
-        } else {
-          userText = `${adTextContext}\n(INSTRUÇÃO OBRIGATÓRIA: O lead veio de um anúncio de carro. O CARRO ACIMA FOI IDENTIFICADO COM PRECISÃO — use esse nome EXATAMENTE. NÃO adivinhe nem use carros do histórico. 1) Acione 'consultar_estoque_bndv' com a query simples (marca + modelo) do carro identificado. 2) Responda como vendedor premium: boas-vindas, comente sobre o carro EXATO do anúncio, pergunte se quer ver fotos. Não liste outros carros se este estiver no estoque.)\n\nMensagem do lead: ${userText}`;
-        }
-      }
-      // ────────────────────────────────────────────────────────────────────────
+      
+      console.log(`[Webhook] Mensagem final a repassar -> Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText.substring(0, 200)}`);
+      return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
+    }�──────────────────────────────────────────────────────────
 
       console.log(`[Webhook] Mensagem final a repassar -> Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText.substring(0, 200)}`);
       return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
@@ -1122,7 +1119,7 @@ async function sendUazapiTextMessage(baseUrl: string, instKey: string, instanceN
   return { ok: false };
 }
 
-async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any) {
+async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any, adTextContext?: string) {
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 
   const { data: waInstance } = await supabase.from('wa_instances').select('*').eq('instance_name', instanceName).maybeSingle()
@@ -1197,7 +1194,21 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         console.log(`[Webhook] Lead ${assignedLead.id} atualizado para 'transferido' (Em Atendimento) pelo vendedor ${matchedSeller.name}.`);
       } else {
         console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou, mas o lead nao esta mais designado para ele (ja foi repassado ou assumido).`);
-        const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
+        // --- DEDUPLICACAO DE MENSAGENS ---
+  if (messageId) {
+    const { data: existingMsg } = await supabase.from('wa_inbox')
+      .select('id')
+      .eq('remote_message_id', messageId)
+      .maybeSingle();
+    
+    if (existingMsg) {
+      console.log(`[Webhook] MENSAGEM DUPLICADA DETECTADA (ID: ${messageId}). Ignorando.`);
+      const corsH = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
+      return new Response('Duplicate message ignored', { headers: corsH, status: 200 });
+    }
+  }
+
+  const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
         const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || '';
         await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, "⚠️ *Tempo esgotado!* \n\nEste lead já foi repassado para o próximo especialista da fila pois passaram-se 5 minutos. Fique atento aos próximos!");
       }
@@ -1320,6 +1331,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   const msgType = inferUazapiMessageType(rawMsgObj);
   const messageId = extractUazapiMessageId(rawMsgObj);
+
+  // --- DEDUPLICACAO DE MENSAGENS ---
+  if (messageId) {
+    const { data: existingMsg } = await supabase.from('wa_inbox')
+      .select('id')
+      .eq('remote_message_id', messageId)
+      .maybeSingle();
+    
+    if (existingMsg) {
+      console.log(`[Webhook] MENSAGEM DUPLICADA DETECTADA (ID: ${messageId}). Ignorando.`);
+      const corsH = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
+      return new Response('Duplicate message ignored', { headers: corsH, status: 200 });
+    }
+  }
 
   const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '')
   const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || ''
