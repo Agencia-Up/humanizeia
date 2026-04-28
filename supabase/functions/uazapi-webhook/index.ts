@@ -1618,6 +1618,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   let systemPrompt = agent.system_prompt || 'Você é um consultor de vendas prestativo e atencioso.';
   if (agent.company_name) systemPrompt += `\n\nEmpresa/Loja: ${agent.company_name}`;
 
+  // Terminologia e Gírias Automotivas (Global)
+  systemPrompt += `\n\n(TERMINOLOGIA AUTOMOTIVA: Entenda "Caminhonete" ou "Camionete" como "Picape" / "Picapes" (ex: Hilux, S10, Ranger, Amarok, Toro, Frontier, Triton, etc.). Se o cliente pedir caminhonete, busque e ofereça as picapes disponíveis no estoque e JAMAIS diga que não tem caminhonetes se tiver picapes.)`;
+
   // Base de conhecimento: contexto de apoio, não como regra
   if (knowledgeContext) {
     systemPrompt += `\n\n${knowledgeContext}`;
