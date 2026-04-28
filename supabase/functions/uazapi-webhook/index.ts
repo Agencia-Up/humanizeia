@@ -1470,10 +1470,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   const insertedId = insertedChat?.id;
 
   // --- BUFFER DE MENSAGENS (Human-like behavior) ---
-  // Aguarda 4 segundos para ver se o lead manda mais mensagens em sequencia.
+  // Aguarda 15 segundos para ver se o lead manda mais mensagens em sequencia.
   // Apenas a ULTIMA mensagem da sequencia prosseguira para gerar a resposta da IA.
-  console.log(`[Webhook] Aguardando buffer de 4s para ${remoteJid}...`);
-  await new Promise(r => setTimeout(r, 4000));
+  console.log(`[Webhook] Aguardando buffer de 15s para ${remoteJid}...`);
+  await new Promise(r => setTimeout(r, 15000));
 
   // Verifica se esta ainda e a ultima mensagem enviada pelo usuario
   const { data: lastUserMsg } = await supabase.from('wa_chat_history')
