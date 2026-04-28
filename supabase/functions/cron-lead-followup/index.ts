@@ -265,7 +265,8 @@ serve(async (req) => {
             const cleanSellerNum = seller.whatsapp_number.replace(/\D/g, '');
             
             // Buscar ultimas mensagens para contexto (igual no uazapi-webhook)
-            const { data: recentChat } = await supabase
+            // Buscar ultimas mensagens para contexto (igual no uazapi-webhook)
+            const { data: fullChat } = await supabase
               .from('wa_chat_history')
               .select('role, content, created_at')
               .eq('agent_id', agentId)
@@ -273,14 +274,47 @@ serve(async (req) => {
               .eq('user_id', lead.user_id)
               .eq('remote_jid', remoteJid) // FILTRO ESSENCIAL ADICIONADO
               .order('created_at', { ascending: false })
-              .limit(8);
+              .limit(30);
 
-            let chatSnippet = '';
-            if (recentChat && recentChat.length > 0) {
-              chatSnippet = '\n\n━━━━━━━━━━━━━━━━━━━━\n💬 *ÚLTIMAS MENSAGENS:*\n' + recentChat.reverse().map((m: any) => `${m.role === 'user' ? `👤 *${lead.lead_name || 'Cliente'}*` : '🤖 *Agente*'}: ${String(m.content || '').substring(0, 300)}`).join('\n');
+            let aiGeneratedSummary = lead.summary || 'O cliente demonstrou interesse e parou de responder durante a conversa.';
+            try {
+              if (fullChat && fullChat.length > 0) {
+                const chatTranscript = fullChat.reverse().map((m: any) =>
+                  `${m.role === 'user' ? `Cliente (${lead.lead_name || 'Desconhecido'})` : 'Agente IA'}: ${String(m.content || '').substring(0, 500)}`
+                ).join('\n');
+
+                const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+                if (openaiApiKey) {
+                  const summaryRes = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+                    body: JSON.stringify({
+                      model: 'gpt-4o-mini',
+                      temperature: 0.3,
+                      messages: [
+                        {
+                          role: 'system',
+                          content: `Você é um analista de vendas especialista em mercado automotivo. Sua função é ler a conversa entre um cliente e um agente de IA de uma concessionária e gerar um briefing COMPLETO e OBJETIVO para o vendedor humano que vai assumir o atendimento agora.\n\nO cliente parou de responder no meio da conversa. O vendedor vai assumir para tentar reativar o lead.\n\nO briefing deve ser em português, direto ao ponto, e conter EXATAMENTE estas seções:\n\n🚗 *VEÍCULO DE INTERESSE:* (qual carro específico o cliente demonstrou interesse)\n📢 *ORIGEM DO LEAD:* (se mencionado)\n👤 *PERFIL DO CLIENTE:* (nível de interesse, urgência, etc)\n💡 *DICA PARA RETOMADA:* (como o vendedor deve abordar este cliente que parou de responder. Qual gatilho mental usar baseado na conversa?)`
+                        },
+                        {
+                          role: 'user',
+                          content: `Conversa completa:\n\n${chatTranscript}\n\nGere o briefing para o vendedor.`
+                        }
+                      ]
+                    })
+                  });
+                  if (summaryRes.ok) {
+                    const summaryData = await summaryRes.json();
+                    const generatedText = summaryData.choices?.[0]?.message?.content;
+                    if (generatedText) aiGeneratedSummary = generatedText;
+                  }
+                }
+              }
+            } catch(summaryErr) {
+              console.error('[Cron] Falha ao gerar resumo inteligente:', summaryErr);
             }
 
-            const notificationMsg = `🔥 *NOVO LEAD QUALIFICADO (Inatividade)*\n\n👤 *Cliente:* ${lead.lead_name || 'Desconhecido'}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agentData?.name || 'Agente'}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *RESUMO DO ATENDIMENTO:*\n${lead.summary || 'O cliente demonstrou interesse e parou de responder durante a conversa.'}${chatSnippet}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
+            const notificationMsg = `🔥 *NOVO LEAD QUALIFICADO (Inatividade)*\n\n👤 *Cliente:* ${lead.lead_name || 'Desconhecido'}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agentData?.name || 'Agente'}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
             
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }
