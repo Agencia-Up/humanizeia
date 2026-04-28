@@ -131,7 +131,8 @@ ${notes || "Sem observações adicionais."}
     // 5. Update Lead
     await supabase.from("ai_crm_leads").update({
       status: "transferido",
-      assigned_to_id: member.id, // Changed from assigned_to_member_id to match actual schema
+      assigned_to_id: member.id,
+      assigned_to_member_id: member.id,
       last_interaction_at: new Date().toISOString(),
     }).eq("id", lead.id);
 

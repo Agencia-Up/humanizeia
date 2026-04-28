@@ -51,9 +51,13 @@ serve(async (req) => {
     const fiveMinsAgo = new Date(now.getTime() - 5 * 60000).toISOString();
     const tenMinsAgo = new Date(now.getTime() - 10 * 60000).toISOString();
 
-    console.log(`[Cron] Iniciando varredura. 5 mins ago: ${fiveMinsAgo} | 10 mins ago: ${tenMinsAgo}`);
+    console.log(`[Cron] Iniciando varredura. Agora: ${now.toISOString()} | 5m ago: ${fiveMinsAgo} | 10m ago: ${tenMinsAgo}`);
 
-    // --- ROTATIVIDADE DE VENDEDORES (5 MIN) ---
+    // ════════════════════════════════════════════════════════════════
+    // SEÇÃO 1: ROTATIVIDADE DE VENDEDORES (lead já qualificado > 10 min)
+    // Se um vendedor recebeu um lead (status=qualificado) e não respondeu "Ok"
+    // em 10 minutos, repassa para o próximo vendedor da fila.
+    // ════════════════════════════════════════════════════════════════
     const { data: timeoutLeads } = await supabase
       .from('ai_crm_leads')
       .select('*, wa_ai_agents(id, name, instance_id, instance_ids)')
@@ -69,6 +73,24 @@ serve(async (req) => {
         const agentId = lead.agent_id;
         const currentSellerId = lead.assigned_to_id;
         
+        // ── UPDATE ATÔMICO: só repassa se o status AINDA for 'qualificado' ──
+        // Isso previne race condition: se o vendedor confirmou "Ok" durante
+        // o processamento do cron, o status já será 'transferido' e este
+        // update não afetará nenhuma linha.
+        const { data: atomicResult, error: atomicErr } = await supabase
+          .from('ai_crm_leads')
+          .update({
+            last_interaction_at: now.toISOString() // Reseta timer temporariamente
+          })
+          .eq('id', lead.id)
+          .eq('status', 'qualificado') // SÓ atualiza se ainda for qualificado!
+          .select('id');
+
+        if (atomicErr || !atomicResult || atomicResult.length === 0) {
+          console.log(`[Cron] Lead ${lead.id} já foi confirmado pelo vendedor (status mudou). Pulando.`);
+          continue;
+        }
+
         // Buscar proximo vendedor (excluindo o atual)
         const { data: teamMembers } = await supabase
           .from('ai_team_members')
@@ -81,12 +103,24 @@ serve(async (req) => {
 
         if (teamMembers && teamMembers.length > 0) {
           const nextSeller = teamMembers[0];
-          
-          await supabase.from('ai_crm_leads').update({
-            assigned_to_id: nextSeller.id,
-            last_interaction_at: now.toISOString() // Reseta o timer para o novo vendedor
-          }).eq('id', lead.id);
 
+          // ── SEGUNDO UPDATE ATÔMICO: verifica status de novo antes de reatribuir ──
+          const { data: reassignResult } = await supabase
+            .from('ai_crm_leads')
+            .update({
+              assigned_to_id: nextSeller.id,
+              assigned_to_member_id: nextSeller.id,
+              last_interaction_at: now.toISOString()
+            })
+            .eq('id', lead.id)
+            .eq('status', 'qualificado') // SÓ reatribui se AINDA for qualificado!
+            .select('id');
+
+          if (!reassignResult || reassignResult.length === 0) {
+            console.log(`[Cron] Lead ${lead.id} mudou de status durante processamento. Vendedor provavelmente confirmou. Pulando.`);
+            continue;
+          }
+          
           await supabase.from('ai_team_members').update({ 
             last_lead_received_at: now.toISOString(), 
           }).eq('id', nextSeller.id);
@@ -109,7 +143,7 @@ serve(async (req) => {
               .eq('agent_id', agentId)
               .eq('instance_id', instance.instance_name)
               .eq('user_id', lead.user_id)
-              .eq('remote_jid', lead.remote_jid) // FILTRO ESSENCIAL ADICIONADO
+              .eq('remote_jid', lead.remote_jid)
               .order('created_at', { ascending: false })
               .limit(30);
 
@@ -159,23 +193,25 @@ serve(async (req) => {
             await supabase.from('ai_lead_transfers').insert({
               user_id: lead.user_id,
               lead_id: lead.id,
-              from_member_id: lead.assigned_to_id,
+              from_member_id: currentSellerId,
               to_member_id: nextSeller.id,
+              from_agent_id: agentId,
               transfer_reason: 'Rodízio por Inatividade do Vendedor',
-              notes: `Repassado de ${lead.assigned_to_id} para ${nextSeller.id} por falta de resposta`
+              notes: `Repassado de ${currentSellerId} para ${nextSeller.id} por falta de resposta`
             });
 
-            console.log(`[Cron] Lead ${lead.id} repassado para ${nextSeller.name}`);
+            console.log(`[Cron] Lead ${lead.id} repassado de vendedor para ${nextSeller.name}`);
           }
         }
       }
     }
 
-    // Buscar leads que precisam de follow-up (5 mins) ou transferencia (10 mins)
-    // Regras: 
-    // - status: em_atendimento ou novo
-    // - last_agent_reply_at > last_user_reply_at (o bot foi o ultimo a falar)
-    // - last_agent_reply_at <= fiveMinsAgo (passou 5 min desde a ultima msg do bot)
+    // ════════════════════════════════════════════════════════════════
+    // SEÇÃO 2: FOLLOW-UP + TRANSFERÊNCIA INICIAL
+    // Leads novo/interessado onde o bot foi o último a falar.
+    // 5 min → ping de follow-up
+    // 10 min → qualifica e transfere para primeiro vendedor
+    // ════════════════════════════════════════════════════════════════
     const { data: leads, error } = await supabase
       .from('ai_crm_leads')
       .select('*, wa_ai_agents(id, name, instance_id, instance_ids)')
@@ -220,7 +256,7 @@ serve(async (req) => {
 
       if (is10MinPassed) {
         // --- REGRA DE 10 MINUTOS (TRANSFERENCIA) ---
-        // PASSO 1: Atualizar o status atomicamente para 'transferido' ANTES de qualquer mensagem.
+        // PASSO 1: Atualizar o status atomicamente para 'qualificado' ANTES de qualquer mensagem.
         const { data: updatedRows, error: updateError } = await supabase
           .from('ai_crm_leads')
           .update({ 
@@ -237,7 +273,7 @@ serve(async (req) => {
           continue;
         }
 
-        console.log(`[Cron] Lead ${phoneNumber} inativo ha 10 min. Status atualizado. Iniciando transferencia...`);
+        console.log(`[Cron] Lead ${phoneNumber} inativo ha 10 min. Status atualizado para qualificado. Iniciando transferencia...`);
 
         // PASSO 2: Achar vendedor pelo rodizio (menos leads recebidos)
         let selectedSellerId = null;
@@ -264,15 +300,14 @@ serve(async (req) => {
           if (seller.whatsapp_number) {
             const cleanSellerNum = seller.whatsapp_number.replace(/\D/g, '');
             
-            // Buscar ultimas mensagens para contexto (igual no uazapi-webhook)
-            // Buscar ultimas mensagens para contexto (igual no uazapi-webhook)
+            // Buscar ultimas mensagens para contexto
             const { data: fullChat } = await supabase
               .from('wa_chat_history')
               .select('role, content, created_at')
               .eq('agent_id', agentId)
               .eq('instance_id', instanceName)
               .eq('user_id', lead.user_id)
-              .eq('remote_jid', remoteJid) // FILTRO ESSENCIAL ADICIONADO
+              .eq('remote_jid', remoteJid)
               .order('created_at', { ascending: false })
               .limit(30);
 
@@ -331,7 +366,7 @@ serve(async (req) => {
             user_id: lead.user_id,
             lead_id: lead.id,
             to_member_id: selectedSellerId,
-            from_agent_id: agentId, // Adicionado para estatisticas por agente
+            from_agent_id: agentId,
             transfer_reason: 'Inatividade (10 minutos)',
             notes: `Transferido automaticamente para o analista via cron`
           });

@@ -249,17 +249,17 @@ serve(async (req) => {
         try {
           await supabase.storage.from('creatives').upload(`payload_diag_${Date.now()}.json`, JSON.stringify(msgObj));
         } catch (err) {
-          console.error("Erro diag dump stora      if (adTextContext) {
+          console.error("Erro diag dump storage:", err);
+        }
+      }
+
+      if (adTextContext) {
         // Enviar o adTextContext como um metadado separado para o processMessage
         // para não poluir o userText (que vai para o histórico e o Inbox)
         console.log(`[Webhook] Mensagem com contexto de anuncio -> Instance: ${instanceName}, From: ${remoteJid}`);
         return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj, adTextContext);
       }
       
-      console.log(`[Webhook] Mensagem final a repassar -> Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText.substring(0, 200)}`);
-      return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
-    }�──────────────────────────────────────────────────────────
-
       console.log(`[Webhook] Mensagem final a repassar -> Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText.substring(0, 200)}`);
       return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
     }
@@ -1178,42 +1178,44 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     const CONFIRMATION_KEYWORDS = ['ok', 'ta certo', 'tá certo', 'vou chamar', 'vou contatar', 'vou atender', 'certo', 'entendido', 'recebi', 'vou ligar', 'beleza', 'combinado', 'pode deixar', 'sim', 'perfeito', 'ok!', 'já ligo', 'ja ligo', 'vou ver', 'vou verificar', 'blz', 'joia', 'pronto', 'peguei', 'chamei', 'chamando', 'okay', 'atendendo', 'to indo', 'tô indo', 'estou indo', 'já peguei', 'ja peguei', 'pode mandar', 'manda', 'opa'];
     const normalizedText = normalizeBndvText(userText);
     const isConfirmation = CONFIRMATION_KEYWORDS.some(kw => normalizedText.includes(normalizeBndvText(kw))) || userText.length <= 15;
-      if (isConfirmation) {
-        console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou atendimento. Atualizando CRM...`);
-        
-        // Buscar o lead MAIS RECENTE que foi designado para ESTE vendedor específico e ainda está 'qualificado'
-        const { data: assignedLead } = await supabase.from('ai_crm_leads')
-          .select('id')
-          .eq('agent_id', agent.id)
-          .eq('assigned_to_id', matchedSeller.id)
-          .eq('status', 'qualificado')
-          .order('last_interaction_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+    
+    if (isConfirmation) {
+      console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou atendimento. Atualizando CRM...`);
+      // Buscar o lead MAIS RECENTE que foi designado para ESTE vendedor específico e ainda está 'qualificado'
+      const { data: assignedLead } = await supabase.from('ai_crm_leads')
+        .select('id')
+        .eq('agent_id', agent.id)
+        .eq('assigned_to_id', matchedSeller.id)
+        .eq('status', 'qualificado')
+        .order('last_interaction_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-        if (assignedLead) {
-          await supabase.from('ai_crm_leads').update({ 
-            status: 'transferido', 
-            assigned_to_id: matchedSeller.id,
-            assigned_to_member_id: matchedSeller.id, // Sincronizar com a UI
-            last_interaction_at: new Date().toISOString() 
-          }).eq('id', assignedLead.id);
-          
-          // Confirmar tambem na tabela de transferencias para o dashboard
-          await supabase.from('ai_lead_transfers').update({ 
-            is_confirmed: true, 
-            confirmed_at: new Date().toISOString(),
-            transfer_status: 'confirmed'
-          }).eq('lead_id', assignedLead.id).eq('to_member_id', matchedSeller.id);
-
-          console.log(`[Webhook] Lead ${assignedLead.id} atualizado para 'transferido' (Em Atendimento) pelo vendedor ${matchedSeller.name}.`);
-        } else {
-          console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou, mas nao encontrei lead qualificado pendente para ele.`);
-          // Opcional: Avisar que o tempo acabou se houver algum lead recente dele que mudou de status
-          const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
-          const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || '';
-          await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, "⚠️ *Tempo esgotado!* \n\nEste lead já foi repassado para o próximo especialista da fila pois passaram-se 10 minutos. Fique atento aos próximos!");
+      if (assignedLead) {
+        const updateData = { 
+          status: 'transferido', 
+          assigned_to_id: matchedSeller.id,
+          assigned_to_member_id: matchedSeller.id,
+          last_interaction_at: new Date().toISOString() 
+        };
+        await supabase.from('ai_crm_leads').update(updateData).eq('id', assignedLead.id);
+        if (supabaseNew) {
+          try { await supabaseNew.from('ai_crm_leads').update(updateData).eq('id', assignedLead.id); } catch(e) { console.warn('[CRM Mirror] update transfer confirm falhou:', e); }
         }
+        
+        // Confirmar tambem na tabela de transferencias para o dashboard
+        await supabase.from('ai_lead_transfers').update({ 
+          is_confirmed: true, 
+          confirmed_at: new Date().toISOString(),
+          transfer_status: 'confirmed'
+        }).eq('lead_id', assignedLead.id).eq('to_member_id', matchedSeller.id);
+
+        console.log(`[Webhook] Lead ${assignedLead.id} atualizado para 'transferido' (Em Atendimento) pelo vendedor ${matchedSeller.name}.`);
+      } else {
+        console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou, mas nao encontrei lead qualificado pendente para ele.`);
+        const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
+        const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || '';
+        await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, "⚠️ *Atenção!* \n\nNão encontrei nenhum lead aguardando sua confirmação neste momento. Se ele foi repassado por tempo (10 min), você não consegue mais assumir.");
       }
     }
     return new Response(JSON.stringify({ ok: true, seller_message: true }), { headers: corsHeaders });
@@ -1243,7 +1245,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     try { await supabaseNew.from('ai_crm_leads').upsert(crmPayload, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true }); } catch(e) { console.warn('[CRM Mirror] upsert falhou:', e); }
   }
 
-  const updatePayload: any = { last_user_reply_at: nowStr, followup_5min_sent: false };
+  const updatePayload: any = { 
+    last_interaction_at: nowStr,
+    last_user_reply_at: nowStr, 
+    followup_5min_sent: false 
+  };
   await supabase.from('ai_crm_leads').update(updatePayload).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
   if (supabaseNew) {
     try { await supabaseNew.from('ai_crm_leads').update(updatePayload).eq('agent_id', agent.id).eq('remote_jid', remoteJid); } catch(e) { console.warn('[CRM Mirror] update followup falhou:', e); }
@@ -1473,10 +1479,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   const insertedId = insertedChat?.id;
 
   // --- BUFFER DE MENSAGENS (Human-like behavior) ---
-  // Aguarda 15 segundos para ver se o lead manda mais mensagens em sequencia.
+  // Aguarda 4 segundos para ver se o lead manda mais mensagens em sequencia.
   // Apenas a ULTIMA mensagem da sequencia prosseguira para gerar a resposta da IA.
-  console.log(`[Webhook] Aguardando buffer de 15s para ${remoteJid}...`);
-  await new Promise(r => setTimeout(r, 15000));
+  console.log(`[Webhook] Aguardando buffer de 4s para ${remoteJid}...`);
+  await new Promise(r => setTimeout(r, 4000));
 
   // Verifica se esta ainda e a ultima mensagem enviada pelo usuario
   const { data: lastUserMsg } = await supabase.from('wa_chat_history')
@@ -1612,21 +1618,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
     // Montar as mensagens de forma limpa
     const buildMessages = () => {
-      let currentSystemPrompt = systemPrompt;
+      const msgs: any[] = [{ role: 'system', content: systemPrompt }];
 
-      // Injetar contexto de anúncio diretamente no system prompt — não no histórico
-      if (adTextContext) {
-        if (adTextContext.includes('Não foi possível identificar')) {
-          currentSystemPrompt += `\n\n[CONTEXTO: O lead enviou um link de anúncio, mas não foi possível identificar o carro automaticamente. Pergunte educadamente qual veículo ele viu no anúncio.]`;
-        } else {
-          currentSystemPrompt += `\n\n[CONTEXTO DE ANÚNCIO — USE APENAS NESTA RESPOSTA: ${adTextContext}]\n[INSTRUÇÃO: 1) Cumprimente o lead de forma calorosa e natural. 2) Mencione o carro EXATO identificado no contexto acima — não invente outro. 3) Acione 'consultar_estoque_bndv' para verificar se temos esse modelo. 4) Se houver, ofereça fotos ou uma visita. Se não, mencione que saiu do estoque mas você tem opções similares.]`;
-        }
+      // Contexto de anúncio: apenas como prefixo informativo, não como instrução imperativa
+      const hasAdCtx = userText.includes('[ANÚNCI0') || userText.includes('[Lead enviou link');
+      if (hasAdCtx) {
+        const adLine = userText.split('\n').find((l: string) => l.startsWith('[ANÚNCI0') || l.startsWith('[Lead enviou link')) || '';
+        if (adLine) msgs.push({ role: 'system', content: `Origem do lead: ${adLine}` });
       }
 
-      // Instrução para encerramento de conversas
-      currentSystemPrompt += `\n\n[REGRA DE CRM: Se a conversa chegar ao fim de forma polida (despedida) ou o cliente demonstrar que não tem interesse/está muito longe, acione OBRIGATORIAMENTE a ferramenta 'atualizar_etapa_crm' com o status 'encerrado' e um breve resumo. Isso mantém nosso CRM organizado.]`;
-
-      const msgs: any[] = [{ role: 'system', content: currentSystemPrompt }];
       msgs.push(...chatHistory);
       msgs.push({ role: 'user', content: userMessageContentForOpenAi });
       return msgs;
@@ -1694,7 +1694,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             status: args.status,
             summary: args.resumo,
             last_interaction_at: new Date().toISOString(),
-            lead_name: pushName
+            lead_name: pushName,
+            assigned_to_id: existingLead?.assigned_to_id || null,
+            assigned_to_member_id: existingLead?.assigned_to_id || null
           };
           await supabase.from('ai_crm_leads').upsert(crmStatusPayload, { onConflict: 'agent_id, remote_jid' });
           if (supabaseNew) {
@@ -1802,9 +1804,14 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
                       to_member_id: selectedSeller.id, transfer_reason: args.resumo,
                       notes: `Transferido para ${selectedSeller.name} via round-robin`,
                     });
-                    await supabase.from('ai_crm_leads').update({
-                      assigned_to_id: selectedSeller.id
-                    }).eq('id', leadData.id);
+                    const assignData = {
+                      assigned_to_id: selectedSeller.id,
+                      assigned_to_member_id: selectedSeller.id
+                    };
+                    await supabase.from('ai_crm_leads').update(assignData).eq('id', leadData.id);
+                    if (supabaseNew) {
+                      try { await supabaseNew.from('ai_crm_leads').update(assignData).eq('id', leadData.id); } catch(e) { console.warn('[CRM Mirror] tool update assign falhou:', e); }
+                    }
                   }
 
                   console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
@@ -1910,22 +1917,6 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
 
   // Enviar para o cliente final
   try {
-    // --- AUTO-ENCERRAMENTO DE LEAD ---
-    // Se a IA mandou uma despedida clara mas não chamou a ferramenta de encerrar, 
-    // fazemos o update automático para manter o CRM limpo.
-    const despedidas = ['até mais', 'ate mais', 'tenha um ótimo dia', 'tenha um otimo dia', 'tenha uma excelente semana', 'qualquer coisa é só chamar', 'estou por aqui', 'sucesso na sua busca'];
-    const respLower = aiResponse.toLowerCase();
-    const isGoodbye = despedidas.some(d => respLower.includes(d)) && respLower.length < 200;
-    
-    if (isGoodbye) {
-      console.log(`[Webhook] Despedida detectada na resposta. Movendo lead ${remoteJid} para 'encerrado' automaticamente.`);
-      await supabase.from('ai_crm_leads')
-        .update({ status: 'encerrado', last_interaction_at: new Date().toISOString() })
-        .eq('agent_id', agent.id)
-        .eq('remote_jid', remoteJid)
-        .neq('status', 'transferido'); // Nao encerra se ja estiver com humano
-    }
-
     const sendResult = await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, aiResponse)
     if (!sendResult.ok) {
       console.error('[Webhook] Nenhuma tentativa de envio UAZAPI funcionou');
