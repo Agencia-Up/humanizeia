@@ -60,7 +60,7 @@ export function GlobalLeadsCrm() {
 
       const { data: transfersData } = await (supabase as any)
         .from('ai_lead_transfers')
-        .select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
+        .select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(200);
