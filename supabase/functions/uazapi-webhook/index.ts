@@ -180,7 +180,7 @@ serve(async (req) => {
               max_tokens: 300,
               messages: [{ role: 'user', content: [
                 { type: 'image_url', image_url: { url: `data:${mimeType};base64,${b64}`, detail: 'high' } },
-                { type: 'text', text: 'Esta é a imagem de um anúncio de carro de uma concessionária. Leia TODOS os textos visíveis na imagem (etiquetas, sobreposições, faixas de preço). Identifique MARCA, MODELO, VERSÃO, ANO e PREÇO. Responda APENAS com esses dados em formato curto. Exemplo: "Fiat Strada CS Endurence 1.3 2024 - R$81.990"' }
+                { type: 'text', text: 'Esta e a imagem de um anuncio de carro de uma concessionaria. Leia TODOS os textos visiveis na imagem (etiquetas, sobreposicoes, faixas de preco). Identifique MARCA, MODELO, VERSAO, ANO e PRECO. IMPORTANTE: NUNCA adivinhe o modelo do carro apenas pelo design visual. Extraia APENAS o que esta escrito no texto da imagem ou anuncio. Se o modelo exato nao estiver escrito, diga apenas o que conseguiu ler. Responda APENAS com os dados encontrados em formato curto. Exemplo: "Fiat Strada CS Endurence 1.3 2024 - R$81.990"' }
               ]}]
             }),
           });
@@ -1499,6 +1499,34 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Response('Buffered', { headers: corsHeaders });
   }
 
+  // --- AI LOCK MECHANISM ---
+  // Prevent double processing if a message arrives right after the buffer finishes
+  const { data: lockMsg } = await supabase.from('wa_chat_history')
+    .select('created_at')
+    .eq('agent_id', agent.id)
+    .eq('remote_jid', remoteJid)
+    .eq('role', 'system')
+    .eq('content', '[AI_LOCK]')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (lockMsg) {
+    const lockAgeMs = Date.now() - new Date(lockMsg.created_at).getTime();
+    if (lockAgeMs < 15000) { // Lock is less than 15 seconds old
+      console.log(`[Webhook] IA ja esta gerando resposta (Lock ativo: ${lockAgeMs}ms). Abortando instancia ${insertedId}.`);
+      return new Response('Locked', { headers: corsHeaders });
+    }
+  }
+
+  // Set the lock
+  await supabase.from('wa_chat_history').insert({
+    agent_id: agent.id,
+    remote_jid: remoteJid,
+    role: 'system',
+    content: '[AI_LOCK]'
+  });
+
   // Se chegou aqui, somos a instancia encarregada de responder.
   // Vamos buscar todas as mensagens do usuario que chegaram desde a ultima resposta da IA.
   const { data: leadData } = await supabase.from('ai_crm_leads')
@@ -1508,6 +1536,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     .maybeSingle();
 
   const lastReplyAt = leadData?.last_agent_reply_at || new Date(0).toISOString();
+  
+  // Atualiza last_agent_reply_at AGORA para evitar que outros webhooks peguem as mesmas mensagens
+  await supabase.from('ai_crm_leads').update({ last_agent_reply_at: new Date().toISOString() })
+    .eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
   const { data: recentUserMsgs } = await supabase.from('wa_chat_history')
     .select('content')
