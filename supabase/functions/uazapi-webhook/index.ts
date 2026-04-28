@@ -1607,15 +1607,21 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
     // Montar as mensagens de forma limpa
     const buildMessages = () => {
-      const msgs: any[] = [{ role: 'system', content: systemPrompt }];
+      let currentSystemPrompt = systemPrompt;
 
-      // Contexto de anúncio: apenas como prefixo informativo, não como instrução imperativa
-      const hasAdCtx = userText.includes('[ANÚNCI0') || userText.includes('[Lead enviou link');
-      if (hasAdCtx) {
-        const adLine = userText.split('\n').find((l: string) => l.startsWith('[ANÚNCI0') || l.startsWith('[Lead enviou link')) || '';
-        if (adLine) msgs.push({ role: 'system', content: `Origem do lead: ${adLine}` });
+      // Injetar contexto de anúncio diretamente no system prompt — não no histórico
+      if (adTextContext) {
+        if (adTextContext.includes('Não foi possível identificar')) {
+          currentSystemPrompt += `\n\n[CONTEXTO: O lead enviou um link de anúncio, mas não foi possível identificar o carro automaticamente. Pergunte educadamente qual veículo ele viu no anúncio.]`;
+        } else {
+          currentSystemPrompt += `\n\n[CONTEXTO DE ANÚNCIO — USE APENAS NESTA RESPOSTA: ${adTextContext}]\n[INSTRUÇÃO: 1) Cumprimente o lead de forma calorosa e natural. 2) Mencione o carro EXATO identificado no contexto acima — não invente outro. 3) Acione 'consultar_estoque_bndv' para verificar se temos esse modelo. 4) Se houver, ofereça fotos ou uma visita. Se não, mencione que saiu do estoque mas você tem opções similares.]`;
+        }
       }
 
+      // Instrução para encerramento de conversas
+      currentSystemPrompt += `\n\n[REGRA DE CRM: Se a conversa chegar ao fim de forma polida (despedida) ou o cliente demonstrar que não tem interesse/está muito longe, acione OBRIGATORIAMENTE a ferramenta 'atualizar_etapa_crm' com o status 'encerrado' e um breve resumo. Isso mantém nosso CRM organizado.]`;
+
+      const msgs: any[] = [{ role: 'system', content: currentSystemPrompt }];
       msgs.push(...chatHistory);
       msgs.push({ role: 'user', content: userMessageContentForOpenAi });
       return msgs;
@@ -1899,6 +1905,22 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
 
   // Enviar para o cliente final
   try {
+    // --- AUTO-ENCERRAMENTO DE LEAD ---
+    // Se a IA mandou uma despedida clara mas não chamou a ferramenta de encerrar, 
+    // fazemos o update automático para manter o CRM limpo.
+    const despedidas = ['até mais', 'ate mais', 'tenha um ótimo dia', 'tenha um otimo dia', 'tenha uma excelente semana', 'qualquer coisa é só chamar', 'estou por aqui', 'sucesso na sua busca'];
+    const respLower = aiResponse.toLowerCase();
+    const isGoodbye = despedidas.some(d => respLower.includes(d)) && respLower.length < 200;
+    
+    if (isGoodbye) {
+      console.log(`[Webhook] Despedida detectada na resposta. Movendo lead ${remoteJid} para 'encerrado' automaticamente.`);
+      await supabase.from('ai_crm_leads')
+        .update({ status: 'encerrado', last_interaction_at: new Date().toISOString() })
+        .eq('agent_id', agent.id)
+        .eq('remote_jid', remoteJid)
+        .neq('status', 'transferido'); // Nao encerra se ja estiver com humano
+    }
+
     const sendResult = await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, aiResponse)
     if (!sendResult.ok) {
       console.error('[Webhook] Nenhuma tentativa de envio UAZAPI funcionou');
