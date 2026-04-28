@@ -259,18 +259,44 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const fetchLiveData = useCallback(async () => {
     if (!user) { setLoading(false); return; }
     try {
-      const [{ data: leadsData }, { data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
-        (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents!ai_crm_leads_agent_id_fkey(name), member:ai_team_members!ai_crm_leads_assigned_to_member_id_fkey(name, whatsapp_number)')
-          .eq('user_id', user.id).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
-        (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), agent:wa_ai_agents!ai_lead_transfers_from_agent_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
+      // Fetch leads - uses simple join without FK-name to avoid silent failures
+      const leadsRes = await (supabase as any)
+        .from('ai_crm_leads')
+        .select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
+        .eq('user_id', user.id)
+        .neq('status', 'encerrado')
+        .order('last_interaction_at', { ascending: false });
+
+      let leadsData = leadsRes.data;
+
+      // Fallback: if join failed (FK doesn't exist), fetch without join
+      if (leadsRes.error || !leadsData) {
+        console.warn('[CrmAoVivo] Join com FK falhou, usando fallback simples:', leadsRes.error?.message);
+        const fallbackRes = await (supabase as any)
+          .from('ai_crm_leads')
+          .select('*')
+          .eq('user_id', user.id)
+          .neq('status', 'encerrado')
+          .order('last_interaction_at', { ascending: false });
+        leadsData = fallbackRes.data;
+        if (fallbackRes.error) console.error('[CrmAoVivo] Fallback também falhou:', fallbackRes.error?.message);
+      }
+
+      const [{ data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
+        (supabase as any).from('ai_lead_transfers')
+          .select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
           .eq('user_id', user.id).order('created_at', { ascending: false }).limit(500),
         (supabase as any).from('ai_team_members').select('*').eq('user_id', user.id)
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', user.id),
       ]);
+
+      console.log(`[CrmAoVivo] Leads carregados: ${leadsData?.length ?? 0} | Membros: ${membersData?.length ?? 0}`);
       setLeads(leadsData || []); setTransfers(transfersData || []);
       setTeamMembers(membersData || []); setAgents(agentsData || []);
       setLastUpdatedAt(new Date().toISOString());
+    } catch (err) {
+      console.error('[CrmAoVivo] Erro inesperado no fetchLiveData:', err);
     } finally { setLoading(false); }
   }, [user]);
 
