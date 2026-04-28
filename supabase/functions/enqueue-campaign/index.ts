@@ -66,18 +66,89 @@ Deno.serve(async (req) => {
       );
     }
 
-    const listIds: string[] = campaign.listas_alvo || campaign.list_ids || [];
-    if (listIds.length === 0) {
-      return new Response(JSON.stringify({ error: "No contact lists selected" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const listIds: string[] = (
+      Array.isArray(campaign.listas_alvo) && campaign.listas_alvo.length > 0
+        ? campaign.listas_alvo
+        : Array.isArray(campaign.list_ids) && campaign.list_ids.length > 0
+          ? campaign.list_ids
+          : []
+    );
 
     // Use regras_delay if available, fallback to legacy columns
     const delayRules = campaign.regras_delay || {};
     const minDelay = delayRules.min || campaign.min_delay_seconds || 5;
     const maxDelay = delayRules.max || campaign.max_delay_seconds || 15;
+
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    // ── PAUSED RESUME WITHOUT LISTS: reactivate existing queue entries ──────────
+    // When a paused campaign has no list IDs saved (older campaigns or direct imports),
+    // skip contact fetch and just reactivate what's already in the queue.
+    if (listIds.length === 0 && campaign.status === "paused") {
+      const { data: existingPending, error: queueReadErr } = await serviceClient
+        .from("wa_queue")
+        .select("id")
+        .eq("campaign_id", campaign_id)
+        .in("status", ["pending", "failed", "processing"]);
+
+      if (queueReadErr) {
+        return new Response(JSON.stringify({ error: "Erro ao ler fila da campanha." }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      if (!existingPending || existingPending.length === 0) {
+        return new Response(JSON.stringify({ error: "Nenhum contato pendente na fila. Edite a campanha e selecione uma lista de contatos." }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const ids = existingPending.map((r: any) => r.id);
+      const baseTime = Date.now();
+      let cursor = baseTime;
+      const updates = ids.map((id: string) => {
+        const scheduledFor = new Date(cursor).toISOString();
+        const randomDelay = minDelay + Math.random() * (maxDelay - minDelay);
+        cursor += randomDelay * 1000;
+        return { id, status: "pending", scheduled_for: scheduledFor, retry_count: 0, error_message: null };
+      });
+
+      for (let i = 0; i < updates.length; i += 500) {
+        const { error: updErr } = await serviceClient
+          .from("wa_queue")
+          .upsert(updates.slice(i, i + 500), { onConflict: "id" });
+        if (updErr) {
+          console.error("Queue reactivate error:", updErr);
+          return new Response(JSON.stringify({ error: "Erro ao reativar fila." }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      await serviceClient
+        .from("wa_campaigns")
+        .update({ status: "running" })
+        .eq("id", campaign_id);
+
+      return new Response(
+        JSON.stringify({ success: true, enqueued: updates.length, total_contacts: updates.length }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── NO LISTS FOR DRAFT: clear error message ──────────────────────────────
+    if (listIds.length === 0) {
+      return new Response(JSON.stringify({ error: "Nenhuma lista de contatos selecionada. Edite a campanha e adicione uma lista antes de iniciar." }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Fetch all contacts from selected lists WITH metadata for AI personalization
     const { data: contacts, error: contactsErr } = await supabase
@@ -88,14 +159,14 @@ Deno.serve(async (req) => {
       .eq("user_id", userId);
 
     if (contactsErr) {
-      return new Response(JSON.stringify({ error: "Failed to fetch contacts" }), {
+      return new Response(JSON.stringify({ error: "Erro ao buscar contatos das listas." }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     if (!contacts || contacts.length === 0) {
-      return new Response(JSON.stringify({ error: "No valid contacts found in selected lists" }), {
+      return new Response(JSON.stringify({ error: "Nenhum contato válido nas listas selecionadas." }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -120,11 +191,6 @@ Deno.serve(async (req) => {
     // Ensure base time is in the future
     const now = Date.now();
     const effectiveBaseTime = Math.max(baseTime, now);
-
-    const serviceClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     // Read current queue rows so resume/edit works from where it stopped
     const { data: existingQueue, error: existingQueueErr } = await serviceClient
