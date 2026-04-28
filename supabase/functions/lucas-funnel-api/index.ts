@@ -97,6 +97,19 @@ Responda APENAS com o JSON válido conforme o formato especificado.`;
       const data = await response.json();
       const rawText = data.content?.[0]?.text ?? '{}';
 
+      // Track token consumption (fire-and-forget)
+      const tokensUsed = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
+      if (tokensUsed > 0) {
+        supabase.rpc('consume_user_tokens', {
+          p_user_id: user.id,
+          p_amount: tokensUsed,
+          p_agent: 'lucas',
+          p_description: 'Copy de landing page — Lucas',
+        }).then(({ error: e }: any) => {
+          if (e) console.error('consume_user_tokens error:', e);
+        }).catch((e: any) => console.error('consume_user_tokens exception:', e));
+      }
+
       // Extract JSON from response
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       const copy = jsonMatch ? JSON.parse(jsonMatch[0]) : buildDemoCopy(briefing);
