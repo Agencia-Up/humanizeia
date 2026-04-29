@@ -1783,6 +1783,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           console.log(`[CRM] Lead ${phoneNumber} analisado. Status: ${args.status}`);
 
           if (args.status === 'qualificado') {
+            // Verificar se já existe uma transferência PENDENTE para esse lead.
+            // Isso previne dupla-notificação quando a IA chama a ferramenta duas vezes.
+            const { data: existingTransfer } = await supabase.from('ai_lead_transfers')
+              .select('id, to_member_id')
+              .eq('lead_id', (await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle()).data?.id || '')
+              .eq('is_confirmed', false)
+              .eq('transfer_status', 'pending')
+              .maybeSingle();
+
+            if (existingTransfer) {
+              console.log(`[CRM] Lead já tem transferência pendente (id: ${existingTransfer.id}). Pulando round-robin duplicado.`);
+            } else {
             let selectedSeller = null;
 
             // Tentar manter o mesmo vendedor se o lead ja estiver designado e o vendedor estiver ativo
@@ -1897,7 +1909,9 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
                 console.error(`[CRM] Vendedor ${selectedSeller.name} sem numero de WhatsApp configurado.`);
               }
             }
+            } // fim do else (sem transferência pendente duplicada)
           }
+
 
           toolMessages.push({
             role: 'tool',
