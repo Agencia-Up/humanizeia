@@ -454,7 +454,7 @@ function bndvMatchesQuery(vehicle: any, query?: string | null) {
   let indexed = normalizeBndvText(rawIndexed).replace(/-/g, ' ');
   
   // Injeção de categorias automotivas para permitir busca por "picape", "caminhonete", "suv"
-  const isPicape = /\b(hilux|s10|ranger|amarok|toro|frontier|triton|strada|saveiro|montana|oroch|maverick|ram|f150|f-150)\b/i.test(indexed);
+  const isPicape = /\b(hilux|s10|ranger|amarok|toro|frontier|triton|l200|strada|saveiro|montana|oroch|maverick|ram|1500|2500|3500|f150|f-150|silverado|titano|poer|gladiator|d20|f1000)\b/i.test(indexed);
   if (isPicape) indexed += ' picape caminhonete camionete pickup';
 
   const isSUV = /\b(compass|renegade|creta|kicks|hrv|corolla cross|tracker|t cross|nivus|fastback|pulse|tiggo|sw4|equinox|commander|taos|ecosport|duster|kardian|outlander|pajero|xc60|xc40)\b/i.test(indexed);
@@ -1661,7 +1661,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   if (agent.company_name) systemPrompt += `\n\nEmpresa/Loja: ${agent.company_name}`;
 
   // Terminologia e Gírias Automotivas (Global)
-  systemPrompt += `\n\n(TERMINOLOGIA AUTOMOTIVA: Entenda "Caminhonete" ou "Camionete" como "Picape" / "Picapes" (ex: Hilux, S10, Ranger, Amarok, Toro, Frontier, Triton, etc.). Se o cliente pedir caminhonete, busque e ofereça as picapes disponíveis no estoque e JAMAIS diga que não tem caminhonetes se tiver picapes.)`;
+  systemPrompt += `\n\n(TERMINOLOGIA AUTOMOTIVA: Entenda "Caminhonete", "Camionete" ou "Picape" como a mesma categoria. Isso inclui picapes pequenas como Fiat Strada e VW Saveiro, médias como Toyota Hilux e Chevrolet S10, e grandes como a linha RAM. Se o cliente pedir caminhonete, busque e ofereça TODAS as picapes disponíveis no estoque, incluindo Strada e Toro, e JAMAIS diga que não tem se houver qualquer uma dessas disponíveis.)`;
 
   // Base de conhecimento: contexto de apoio, não como regra
   if (knowledgeContext) {
