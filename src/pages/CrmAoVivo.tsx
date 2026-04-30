@@ -246,14 +246,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const [agents, setAgents] = useState<any[]>([]);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const [newLeadFlash, setNewLeadFlash] = useState(false);
-  const [tick, setTick] = useState(false);
   const [muted, setMuted] = useState(false);
   const prevCount = useRef<number | null>(null);
   const mutedRef = useRef(muted); // sempre atual para callbacks de subscription
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState<DateFilter>('today');
 
-  useEffect(() => { const i = setInterval(() => setTick(p => !p), 900); return () => clearInterval(i); }, []);
   useEffect(() => { mutedRef.current = muted; }, [muted]); // mantém ref sempre sincronizada
 
   const fetchLiveData = useCallback(async () => {
@@ -510,7 +508,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
               CRM Ao Vivo
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 6, background: C.greenBg, border: `1px solid ${C.green}`, color: C.greenL, fontSize: 12, fontWeight: 700 }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, display: 'inline-block', animation: tick ? 'blink .9s step-end infinite' : 'none' }} />
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, display: 'inline-block', animation: 'blink .9s step-end infinite' }} />
               <Activity style={{ width: 13, height: 13 }} />
               Tempo real
             </div>
@@ -762,7 +760,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                 <div style={{ borderRadius: 10, border: '1.5px dashed rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)', padding: '24px 16px', textAlign: 'center', color: '#475569' }}>
                   Aguardando movimentações...
                 </div>
-              ) : transfers.map(t => (
+              ) : transfers.slice(0, 30).map(t => (
                 <div key={t.id} style={{ borderRadius: 10, background: C.amberBg, border: `1px solid ${C.amber}`, padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: 14, fontWeight: 700, color: '#F1F5F9', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
