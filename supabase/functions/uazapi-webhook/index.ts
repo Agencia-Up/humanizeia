@@ -1425,6 +1425,41 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
   if (!openaiApiKey) return new Response('Missing AI Key', { status: 500 })
 
+  const normalizedAdTextContext = String(adTextContext || '').trim();
+  const hasAdTextContext = normalizedAdTextContext.length > 0;
+
+  const injectAdContextIntoUserContent = (content: any) => {
+    if (!hasAdTextContext) return content;
+
+    const adInstruction = `CONTEXTO PRIORITÁRIO DO ANÚNCIO: ${normalizedAdTextContext}
+
+O lead veio diretamente desse anúncio e o veículo anunciado deve ser tratado como o ponto de partida da conversa.
+Antes de responder de forma substantiva, identifique o carro do anúncio e consulte o estoque BNDV para esse veículo ou para a opção mais próxima disponível.
+Se o cliente pedir fotos, trabalhe em cima desse mesmo veículo identificado no anúncio.
+Responda de forma humana, comercial e natural, sem mencionar que você "não abre links" se já houver contexto suficiente do anúncio.
+`;
+
+    if (Array.isArray(content)) {
+      const alreadyHasInstruction = content.some((part: any) =>
+        part?.type === 'text' &&
+        typeof part?.text === 'string' &&
+        part.text.includes('CONTEXTO PRIORITÁRIO DO ANÚNCIO:')
+      );
+      if (alreadyHasInstruction) return content;
+      return [
+        { type: 'text', text: adInstruction },
+        ...content,
+      ];
+    }
+
+    if (typeof content === 'string') {
+      if (content.includes('CONTEXTO PRIORITÁRIO DO ANÚNCIO:')) return content;
+      return `${adInstruction}\nMensagem do lead: ${content}`;
+    }
+
+    return content;
+  };
+
   let finalUserText = userText;
   let userMessageContentForOpenAi: any = finalUserText;
   let mediaMimeType = extractUazapiMimeType(rawMsgObj);
@@ -1521,6 +1556,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     finalUserText = '[Mensagem recebida sem conteudo legivel]';
     userMessageContentForOpenAi = finalUserText;
     console.log('[Webhook] Empty text after media processing, applying generic fallback');
+  }
+
+  userMessageContentForOpenAi = injectAdContextIntoUserContent(userMessageContentForOpenAi);
+
+  if (hasAdTextContext) {
+    console.log('[Webhook] Contexto de anúncio injetado no prompt da IA:', normalizedAdTextContext);
   }
 
   console.log(`[Webhook] Salvando historico e chamando OpenAI para: ${finalUserText}`);
@@ -1620,6 +1661,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.log(`[Webhook] Mensagens combinadas para processamento: ${recentUserMsgs.length}`);
   }
 
+  userMessageContentForOpenAi = injectAdContextIntoUserContent(userMessageContentForOpenAi);
+
   // Salvar mensagem RECEBIDA no wa_inbox (para aparecer no Inbox do Marcos)
   await supabase.from('wa_inbox').insert({
     user_id: waInstance.user_id,
@@ -1690,6 +1733,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     systemPrompt += `\n\n${knowledgeContext}`;
   }
 
+  if (hasAdTextContext) {
+    systemPrompt += `\n\n(CONTEXTO DO ANÚNCIO META/FACEBOOK/INSTAGRAM: ${normalizedAdTextContext}. Considere este anúncio como o veículo de interesse principal do lead. Se ainda faltar confirmação objetiva, use o contexto do anúncio para conduzir a conversa e consulte o estoque BNDV antes de sugerir outros carros.)`;
+  }
+
   // Contexto situacional: apenas quando o lead já foi transferido
   const lastTransferAt = leadExists?.last_interaction_at ? new Date(leadExists.last_interaction_at).getTime() : 0;
   const hoursSinceTransfer = (Date.now() - lastTransferAt) / (1000 * 60 * 60);
@@ -1719,11 +1766,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     const buildMessages = () => {
       const msgs: any[] = [{ role: 'system', content: systemPrompt }];
 
-      // Contexto de anúncio: apenas como prefixo informativo, não como instrução imperativa
-      const hasAdCtx = userText.includes('[ANÚNCI0') || userText.includes('[Lead enviou link');
-      if (hasAdCtx) {
-        const adLine = userText.split('\n').find((l: string) => l.startsWith('[ANÚNCI0') || l.startsWith('[Lead enviou link')) || '';
-        if (adLine) msgs.push({ role: 'system', content: `Origem do lead: ${adLine}` });
+      if (hasAdTextContext) {
+        msgs.push({
+          role: 'system',
+          content: `Origem do lead: ${normalizedAdTextContext}. Priorize o carro do anúncio e consulte o estoque antes de responder.`,
+        });
       }
 
       msgs.push(...chatHistory);
