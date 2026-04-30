@@ -432,14 +432,14 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       const leadsAssignedToday = todayCount === 0
         ? leads.filter(l =>
             l.status === 'transferido' &&
-            (l.assigned_to_id === m.id || l.assigned_to_member_id === m.id) &&
+            l.assigned_to_id === m.id &&
             new Date(l.last_interaction_at || l.created_at) >= today
           ).length
         : 0;
       const leadsAssignedPeriod = periodCount === 0
         ? leads.filter(l =>
             l.status === 'transferido' &&
-            (l.assigned_to_id === m.id || l.assigned_to_member_id === m.id) &&
+            l.assigned_to_id === m.id &&
             (!threshold || new Date(l.last_interaction_at || l.created_at) >= threshold)
           ).length
         : 0;
@@ -450,7 +450,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         todayCount: todayCount || leadsAssignedToday,
         totalCount: totalCount || leads.filter(l =>
           l.status === 'transferido' &&
-          (l.assigned_to_id === m.id || l.assigned_to_member_id === m.id)
+          l.assigned_to_id === m.id
         ).length,
       };
     }).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
@@ -478,7 +478,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     // Persistir no banco
     const { error } = await (supabase as any)
       .from('ai_crm_leads')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .update({ status: newStatus })
       .eq('id', leadId);
 
     if (error) {

@@ -154,7 +154,6 @@ serve(async (req) => {
           // Atualizar lead com novo vendedor
           await supabase.from('ai_crm_leads').update({
             assigned_to_id: nextSeller.id,
-            assigned_to_member_id: nextSeller.id,
           }).eq('id', lead.id).eq('status', 'qualificado');
 
           // Atualizar timestamp do novo vendedor
@@ -322,7 +321,6 @@ serve(async (req) => {
           await supabase.from('ai_crm_leads').update({
             status: 'qualificado',
             assigned_to_id: seller.id,
-            assigned_to_member_id: seller.id,
             followup_5min_sent: true,
             last_interaction_at: now.toISOString()
           }).eq('id', lead.id);

@@ -1246,7 +1246,6 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         const updateData = {
           status: 'transferido',
           assigned_to_id: matchedSeller.id,
-          assigned_to_member_id: matchedSeller.id,
           last_interaction_at: confirmationTime
         };
         const { error: updateErr } = await supabase.from('ai_crm_leads').update(updateData).eq('id', assignedLeadId);
@@ -1794,9 +1793,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             status: args.status,
             summary: args.resumo,
             last_interaction_at: new Date().toISOString(),
-            lead_name: pushName,
-            assigned_to_id: existingLead?.assigned_to_id || null,
-            assigned_to_member_id: existingLead?.assigned_to_id || null
+          lead_name: pushName,
+            assigned_to_id: existingLead?.assigned_to_id || null
           };
           await supabase.from('ai_crm_leads').upsert(crmStatusPayload, { onConflict: 'agent_id, remote_jid' });
           if (supabaseNew) {
@@ -1906,7 +1904,6 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
                   const assignData = {
                     status: 'qualificado',
                     assigned_to_id: selectedSeller.id,
-                    assigned_to_member_id: selectedSeller.id,
                     followup_5min_sent: true,
                     last_interaction_at: assignmentTime
                   };
