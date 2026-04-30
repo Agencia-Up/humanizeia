@@ -518,111 +518,9 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function selectBndvPicturesWithVision(
-  pictures: Array<{ url: string; principal?: boolean }>,
-  vehicleLabel: string,
-  openaiApiKey?: string | null
-) {
-  if (!openaiApiKey || pictures.length === 0) return null;
-
-  const sample = pictures.slice(0, Math.min(pictures.length, 12));
-  try {
-    const content: any[] = [
-      {
-        type: 'text',
-        text:
-          `Você está escolhendo as melhores fotos de um veículo para enviar no WhatsApp de vendas.\n` +
-          `Veículo: ${vehicleLabel}.\n` +
-          `Objetivo: escolher 5 fotos diferentes e úteis para o cliente entender o estado do carro.\n` +
-          `Quero priorizar, nesta ordem:\n` +
-          `1. uma foto de frente\n` +
-          `2. uma foto de traseira\n` +
-          `3. uma foto de lateral\n` +
-          `4. duas fotos do interior\n` +
-          `Se alguma categoria não existir, substitua por outra foto diferente e útil.\n` +
-          `Evite escolher duas imagens quase iguais do mesmo ângulo.\n` +
-          `Responda SOMENTE um JSON neste formato:\n` +
-          `{"front":0,"rear":4,"side":2,"interior":[6,7],"fallback":[1,3,5]}\n` +
-          `Todos os índices devem apontar para fotos distintas. Não escreva explicações.`
-      }
-    ];
-
-    sample.forEach((picture, index) => {
-      content.push({
-        type: 'image_url',
-        image_url: { url: picture.url }
-      });
-      content.push({
-        type: 'text',
-        text: `Foto índice ${index}`
-      });
-    });
-
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${openaiApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0,
-        response_format: { type: 'json_object' },
-        messages: [{ role: 'user', content }],
-      }),
-    });
-
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      console.warn('[BNDV] Falha ao classificar fotos com visão:', res.status, txt.substring(0, 200));
-      return null;
-    }
-
-    const data = await res.json();
-    const raw = data?.choices?.[0]?.message?.content;
-    const parsed = raw ? JSON.parse(raw) : null;
-    const normalizeIndex = (value: any) => {
-      const index = Number(value);
-      return Number.isInteger(index) && index >= 0 && index < sample.length ? index : undefined;
-    };
-    const normalizeList = (values: any) =>
-      Array.isArray(values)
-        ? values
-            .map((value) => normalizeIndex(value))
-            .filter((value): value is number => typeof value === 'number')
-        : [];
-
-    const normalized = {
-      front: normalizeIndex(parsed?.front),
-      rear: normalizeIndex(parsed?.rear),
-      side: normalizeIndex(parsed?.side),
-      interior: normalizeList(parsed?.interior),
-      fallback: normalizeList(parsed?.fallback),
-    };
-
-    console.log('[BNDV] Seleção visual das fotos:', JSON.stringify(normalized));
-    return normalized;
-  } catch (err) {
-    console.warn('[BNDV] Erro ao selecionar fotos com visão:', err);
-    return null;
-  }
-}
-
-function selectBalancedBndvPictures(
-  pictures: Array<{ url: string; principal?: boolean }>,
-  selectedViews:
-    | {
-        front?: number;
-        rear?: number;
-        side?: number;
-        interior?: number[];
-        fallback?: number[];
-      }
-    | null,
-  requestedCount: number
-) {
+function selectBalancedBndvPictures(pictures: Array<{ url: string; principal?: boolean }>, requestedCount: number) {
   const uniqueIndexes: number[] = [];
-  const shouldSkipDefaultWheelShot = (idx: number) => idx === 5 && pictures.length >= 8;
+  const shouldSkipDefaultWheelShot = (idx: number) => idx === 6 && pictures.length >= 9;
   const pushIndex = (idx?: number) => {
     if (typeof idx !== 'number') return;
     if (idx < 0 || idx >= pictures.length) return;
@@ -630,19 +528,12 @@ function selectBalancedBndvPictures(
     if (!uniqueIndexes.includes(idx)) uniqueIndexes.push(idx);
   };
 
-  if (selectedViews) {
-    pushIndex(selectedViews.front);
-    pushIndex(selectedViews.rear);
-    pushIndex(selectedViews.side);
-    (selectedViews.interior || []).forEach(pushIndex);
-    (selectedViews.fallback || []).forEach(pushIndex);
-  }
-
-  if (uniqueIndexes.length === 0) {
-    // Fallback heurístico: BNDV costuma cadastrar externas primeiro, a 6ª foto tende a ser roda,
-    // e as fotos de interior costumam aparecer logo depois.
-    [0, 4, 2, 6, 7, 1, 3, 8, 9, 5].forEach(pushIndex);
-  }
+  // Mapeamento baseado no padrão real da API BNDV observado no estoque:
+  // 0-2: frente / frente-lateral
+  // 3-5: traseira / traseira-lateral
+  // 6: roda/detalhe externo
+  // 7+: interior
+  [1, 4, 2, 7, 8, 9, 0, 3, 5].forEach(pushIndex);
 
   if (uniqueIndexes.length < requestedCount) {
     pictures.forEach((_, index) => {
@@ -955,16 +846,15 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
   const pictures = parseBndvPictures(vehicle.pictureJs);
   const requestedCount = Math.max(1, Math.min(Number(filters?.quantidade_fotos || 5), 5));
   const offset = Math.max(0, Number(filters?.offset_fotos || 0));
-  const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
 
   let selectedPictures: Array<{ url: string; principal?: boolean }> = [];
   if (offset > 0) {
     selectedPictures = pictures.slice(offset, offset + requestedCount);
     console.log(`[BNDV] Envio com offset manual ${offset}. Mantendo ordem sequencial das fotos.`);
   } else {
-    const selectedViews = await selectBndvPicturesWithVision(pictures, buildBndvVehicleLabel(vehicle), openaiApiKey);
-    selectedPictures = selectBalancedBndvPictures(pictures, selectedViews, requestedCount);
-    console.log(`[BNDV] Seleção inteligente de fotos | total disponíveis: ${pictures.length} | selecionadas: ${selectedPictures.length}`);
+    selectedPictures = selectBalancedBndvPictures(pictures, requestedCount);
+    console.log(`[BNDV] Seleção mapeada de fotos | total disponíveis: ${pictures.length} | selecionadas: ${selectedPictures.length}`);
+    console.log(`[BNDV] Índices escolhidos no padrão BNDV: ${selectedPictures.map((picture) => pictures.findIndex((candidate) => candidate.url === picture.url)).join(', ')}`);
   }
 
   if (selectedPictures.length === 0) {
@@ -1515,11 +1405,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       }
     },
     {
-      type: "function",
-      function: {
-        name: "enviar_fotos_bndv",
-        description: "Envia fotos de um veículo específico do estoque diretamente no WhatsApp do cliente. Use quando o cliente pedir para ver o carro. IMPORTANTE SOBRE FOTOS DE INTERIOR: O sistema cadastra fotos externas primeiro. Se o cliente pedir 'fotos de dentro', use offset_fotos=6 para pular as externas e enviar as fotos internas. Se pedir 'mais fotos', use offset_fotos=5. Sempre passe os detalhes do veículo para garantir que enviará as fotos do carro certo.",
-        parameters: {
+        type: "function",
+        function: {
+          name: "enviar_fotos_bndv",
+          description: "Envia fotos de um veículo específico do estoque diretamente no WhatsApp do cliente. Use quando o cliente pedir para ver o carro. No envio padrão, o sistema já manda uma combinação equilibrada com frente, traseira, lateral e interior. IMPORTANTE SOBRE FOTOS DE INTERIOR: no padrão atual do BNDV, a foto da roda costuma aparecer antes do interior. Se o cliente pedir 'fotos de dentro' ou 'interior', use offset_fotos=7 para priorizar as fotos internas. Se pedir 'mais fotos', use offset_fotos=7. Sempre passe os detalhes do veículo para garantir que enviará as fotos do carro certo.",
+          parameters: {
           type: "object",
           properties: {
             query: { type: "string", description: "Nome completo do veículo, ex: 'Chevrolet Onix ACTIV 1.4 2019'." },
