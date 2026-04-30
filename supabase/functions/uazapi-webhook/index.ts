@@ -505,6 +505,133 @@ function parseBndvPictures(rawPictureJs: any) {
     .sort((left: any, right: any) => Number(right.principal) - Number(left.principal));
 }
 
+function normalizeBndvPhotoView(view: string) {
+  const normalized = String(view || '').toLowerCase().trim();
+  if (['frente', 'front', 'dianteira'].includes(normalized)) return 'front';
+  if (['traseira', 'rear', 'tras', 'trás'].includes(normalized)) return 'rear';
+  if (['lateral', 'side', 'lado'].includes(normalized)) return 'side';
+  if (['interior', 'inside', 'interna', 'interno', 'cabine', 'painel'].includes(normalized)) return 'interior';
+  return 'other';
+}
+
+async function classifyBndvPicturesWithVision(
+  pictures: Array<{ url: string; principal?: boolean }>,
+  vehicleLabel: string,
+  openaiApiKey?: string | null
+) {
+  if (!openaiApiKey || pictures.length === 0) return null;
+
+  const sample = pictures.slice(0, Math.min(pictures.length, 12));
+  try {
+    const content: any[] = [
+      {
+        type: 'text',
+        text:
+          `Você está classificando fotos de um veículo para WhatsApp de vendas.\n` +
+          `Veículo: ${vehicleLabel}.\n` +
+          `Analise as imagens e responda SOMENTE um JSON no formato:\n` +
+          `{"items":[{"index":0,"view":"front"},{"index":1,"view":"rear"}]}\n` +
+          `Valores permitidos para "view": front, rear, side, interior, other.\n` +
+          `Use "interior" para painel, volante, bancos, central multimídia, porta-malas interno e cabine.\n` +
+          `Não escreva explicações.`
+      }
+    ];
+
+    sample.forEach((picture, index) => {
+      content.push({
+        type: 'image_url',
+        image_url: { url: picture.url }
+      });
+      content.push({
+        type: 'text',
+        text: `Foto índice ${index}`
+      });
+    });
+
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content }],
+      }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.warn('[BNDV] Falha ao classificar fotos com visão:', res.status, txt.substring(0, 200));
+      return null;
+    }
+
+    const data = await res.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    const parsed = raw ? JSON.parse(raw) : null;
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+
+    const normalized = items
+      .map((item: any) => ({
+        index: Number(item?.index),
+        view: normalizeBndvPhotoView(item?.view),
+      }))
+      .filter((item: any) => Number.isInteger(item.index) && item.index >= 0 && item.index < sample.length);
+
+    console.log('[BNDV] Classificação visual das fotos:', JSON.stringify(normalized));
+    return normalized;
+  } catch (err) {
+    console.warn('[BNDV] Erro ao classificar fotos com visão:', err);
+    return null;
+  }
+}
+
+function selectBalancedBndvPictures(
+  pictures: Array<{ url: string; principal?: boolean }>,
+  classifiedViews: Array<{ index: number; view: string }> | null,
+  requestedCount: number
+) {
+  const uniqueIndexes: number[] = [];
+  const pushIndex = (idx?: number) => {
+    if (typeof idx !== 'number') return;
+    if (idx < 0 || idx >= pictures.length) return;
+    if (!uniqueIndexes.includes(idx)) uniqueIndexes.push(idx);
+  };
+
+  if (classifiedViews && classifiedViews.length > 0) {
+    const grouped = {
+      front: classifiedViews.filter((item) => item.view === 'front').map((item) => item.index),
+      rear: classifiedViews.filter((item) => item.view === 'rear').map((item) => item.index),
+      side: classifiedViews.filter((item) => item.view === 'side').map((item) => item.index),
+      interior: classifiedViews.filter((item) => item.view === 'interior').map((item) => item.index),
+      other: classifiedViews.filter((item) => item.view === 'other').map((item) => item.index),
+    };
+
+    pushIndex(grouped.front[0]);
+    pushIndex(grouped.rear[0]);
+    pushIndex(grouped.side[0]);
+    pushIndex(grouped.interior[0]);
+    pushIndex(grouped.interior[1]);
+
+    [
+      ...grouped.front,
+      ...grouped.rear,
+      ...grouped.side,
+      ...grouped.interior,
+      ...grouped.other,
+    ].forEach(pushIndex);
+  }
+
+  if (uniqueIndexes.length === 0) {
+    // Fallback heurístico: BNDV costuma cadastrar externas primeiro e interiores após ~6 fotos.
+    [0, 2, 4, 6, 7, 1, 3, 5, 8, 9].forEach(pushIndex);
+  }
+
+  return uniqueIndexes.slice(0, requestedCount).map((idx) => pictures[idx]);
+}
+
 function buildBndvVehicleLabel(vehicle: any) {
   return [vehicle?.markName, vehicle?.modelName, vehicle?.versionName].filter(Boolean).join(' ');
 }
@@ -798,10 +925,19 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
   const vehicle = vehicleWithPhotos;
 
   const pictures = parseBndvPictures(vehicle.pictureJs);
-  // Enviar mais fotos por padrao (5) para aumentar chance de ter interior
   const requestedCount = Math.max(1, Math.min(Number(filters?.quantidade_fotos || 5), 5));
   const offset = Math.max(0, Number(filters?.offset_fotos || 0));
-  const selectedPictures = pictures.slice(offset, offset + requestedCount);
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+
+  let selectedPictures: Array<{ url: string; principal?: boolean }> = [];
+  if (offset > 0) {
+    selectedPictures = pictures.slice(offset, offset + requestedCount);
+    console.log(`[BNDV] Envio com offset manual ${offset}. Mantendo ordem sequencial das fotos.`);
+  } else {
+    const classifiedViews = await classifyBndvPicturesWithVision(pictures, buildBndvVehicleLabel(vehicle), openaiApiKey);
+    selectedPictures = selectBalancedBndvPictures(pictures, classifiedViews, requestedCount);
+    console.log(`[BNDV] Seleção inteligente de fotos | total disponíveis: ${pictures.length} | selecionadas: ${selectedPictures.length}`);
+  }
 
   if (selectedPictures.length === 0) {
     if (offset > 0) {
