@@ -280,9 +280,9 @@ serve(async (req) => {
 
       const is10MinPassed = new Date(lead.last_agent_reply_at) <= new Date(tenMinsAgo);
 
-      if (is10MinPassed && operacional) {
-        // --- REGRA DE 10 MINUTOS: TRANSFERÊNCIA PARA VENDEDOR ---
-        // Só executa dentro do horário operacional
+      if (is10MinPassed) {
+        // --- REGRA DE 10 MINUTOS: TRANSFERÊNCIA PARA VENDEDOR (Funciona 24/7) ---
+        // Sempre envia o lead inicial para o funil do vendedor, independente do horário.
         const { data: updatedRows, error: updateError } = await supabase
           .from('ai_crm_leads')
           .update({
@@ -388,10 +388,6 @@ serve(async (req) => {
         const byeMsg = "Estarei te transferindo para um dos nossos especialistas em vendas!";
         await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, byeMsg);
         processed10Min++;
-
-      } else if (is10MinPassed && !operacional) {
-        // Fora do horário: não transfere, só registra no log
-        console.log(`[Cron] Lead ${phoneNumber} inativo há 10min, mas fora do horário operacional. Não será transferido agora.`);
 
       } else if (!lead.followup_5min_sent) {
         // --- REGRA DE 5 MINUTOS (FOLLOW-UP) — Funciona 24h ---
