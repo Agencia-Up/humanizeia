@@ -622,9 +622,11 @@ function selectBalancedBndvPictures(
   requestedCount: number
 ) {
   const uniqueIndexes: number[] = [];
+  const shouldSkipDefaultWheelShot = (idx: number) => idx === 5 && pictures.length >= 8;
   const pushIndex = (idx?: number) => {
     if (typeof idx !== 'number') return;
     if (idx < 0 || idx >= pictures.length) return;
+    if (shouldSkipDefaultWheelShot(idx)) return;
     if (!uniqueIndexes.includes(idx)) uniqueIndexes.push(idx);
   };
 
@@ -637,12 +639,22 @@ function selectBalancedBndvPictures(
   }
 
   if (uniqueIndexes.length === 0) {
-    // Fallback heurístico: BNDV costuma cadastrar externas primeiro e interiores depois.
-    [0, 4, 2, 6, 7, 1, 3, 5, 8, 9].forEach(pushIndex);
+    // Fallback heurístico: BNDV costuma cadastrar externas primeiro, a 6ª foto tende a ser roda,
+    // e as fotos de interior costumam aparecer logo depois.
+    [0, 4, 2, 6, 7, 1, 3, 8, 9, 5].forEach(pushIndex);
   }
 
   if (uniqueIndexes.length < requestedCount) {
-    pictures.forEach((_, index) => pushIndex(index));
+    pictures.forEach((_, index) => {
+      if (!shouldSkipDefaultWheelShot(index)) pushIndex(index);
+    });
+  }
+
+  if (uniqueIndexes.length < requestedCount && pictures.length > 0) {
+    // Se realmente faltar imagem, libera até a foto da roda como último recurso.
+    pictures.forEach((_, index) => {
+      if (!uniqueIndexes.includes(index)) uniqueIndexes.push(index);
+    });
   }
 
   return uniqueIndexes.slice(0, requestedCount).map((idx) => pictures[idx]);
