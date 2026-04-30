@@ -454,7 +454,7 @@ function bndvMatchesQuery(vehicle: any, query?: string | null) {
   let indexed = normalizeBndvText(rawIndexed).replace(/-/g, ' ');
   
   // Injeção de categorias automotivas para permitir busca por "picape", "caminhonete", "suv"
-  const isPicape = /\b(hilux|s10|ranger|amarok|toro|frontier|triton|strada|saveiro|montana|oroch|maverick|ram|f150|f-150)\b/i.test(indexed);
+  const isPicape = /\b(hilux|s10|ranger|amarok|toro|frontier|triton|l200|strada|saveiro|montana|oroch|maverick|ram|1500|2500|3500|f150|f-150|silverado|titano|poer|gladiator|d20|f1000)\b/i.test(indexed);
   if (isPicape) indexed += ' picape caminhonete camionete pickup';
 
   const isSUV = /\b(compass|renegade|creta|kicks|hrv|corolla cross|tracker|t cross|nivus|fastback|pulse|tiggo|sw4|equinox|commander|taos|ecosport|duster|kardian|outlander|pajero|xc60|xc40)\b/i.test(indexed);
@@ -1191,45 +1191,95 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.log(`[Webhook] Mensagem de VENDEDOR identificado: ${matchedSeller.name}. Verificando confirmacao de atendimento...`);
     const CONFIRMATION_KEYWORDS = ['ok', 'ta certo', 'tá certo', 'vou chamar', 'vou contatar', 'vou atender', 'certo', 'entendido', 'recebi', 'vou ligar', 'beleza', 'combinado', 'pode deixar', 'sim', 'perfeito', 'ok!', 'já ligo', 'ja ligo', 'vou ver', 'vou verificar', 'blz', 'joia', 'pronto', 'peguei', 'chamei', 'chamando', 'okay', 'atendendo', 'to indo', 'tô indo', 'estou indo', 'já peguei', 'ja peguei', 'pode mandar', 'manda', 'opa'];
     const normalizedText = normalizeBndvText(userText);
-    const isConfirmation = CONFIRMATION_KEYWORDS.some(kw => normalizedText.includes(normalizeBndvText(kw))) || userText.length <= 15;
+    const compactText = normalizedText.replace(/\s+/g, ' ').trim();
+    const isShortAcknowledgement = compactText.length > 0 && compactText.length <= 12 && compactText.split(' ').length <= 3;
+    const isConfirmation = CONFIRMATION_KEYWORDS.some(kw => normalizedText.includes(normalizeBndvText(kw))) || isShortAcknowledgement;
     
     if (isConfirmation) {
-      console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou atendimento. Atualizando CRM...`);
-      // Buscar o lead MAIS RECENTE que foi designado para ESTE vendedor específico e ainda está 'qualificado'
-      const { data: assignedLead } = await supabase.from('ai_crm_leads')
-        .select('id')
-        .eq('agent_id', agent.id)
-        .eq('assigned_to_id', matchedSeller.id)
-        .eq('status', 'qualificado')
-        .order('last_interaction_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou atendimento. Buscando lead para associar...`);
+      
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      let assignedLeadId: string | null = null;
+      let confirmedTransferId: string | null = null;
 
-      if (assignedLead) {
-        const updateData = { 
-          status: 'transferido', 
-          assigned_to_id: matchedSeller.id,
-          assigned_to_member_id: matchedSeller.id,
-          last_interaction_at: new Date().toISOString() 
-        };
-        await supabase.from('ai_crm_leads').update(updateData).eq('id', assignedLead.id);
-        if (supabaseNew) {
-          try { await supabaseNew.from('ai_crm_leads').update(updateData).eq('id', assignedLead.id); } catch(e) { console.warn('[CRM Mirror] update transfer confirm falhou:', e); }
+      // PASSO 1: Busca qualquer transferência NÃO confirmada das últimas 2h para este vendedor
+      // Não filtra transfer_status porque registros antigos têm NULL neste campo
+      const { data: recentTransfers } = await supabase
+        .from('ai_lead_transfers')
+        .select('id, lead_id, is_confirmed, transfer_status, created_at')
+        .eq('to_member_id', matchedSeller.id)
+        .neq('is_confirmed', true) // não confirmada = pendente para aceite
+        .gte('created_at', twoHoursAgo)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      console.log(`[Webhook] Transferências recentes para ${matchedSeller.name}: ${JSON.stringify(recentTransfers?.map(t => ({id: t.id, lead_id: t.lead_id, confirmed: t.is_confirmed, status: t.transfer_status})))}`);
+
+      if (recentTransfers && recentTransfers.length > 0) {
+        const transfer = recentTransfers.find((t: any) => !t.transfer_status || t.transfer_status === 'pending') || recentTransfers[0];
+        assignedLeadId = transfer.lead_id;
+        confirmedTransferId = transfer.id;
+      }
+
+      // PASSO 2 (FALLBACK): Se não achar pela tabela de transferências, busca direto no CRM
+      // Procura qualquer lead atribuído a este vendedor que ainda não foi para 'transferido' ou 'encerrado'
+      if (!assignedLeadId) {
+        console.log(`[Webhook] Sem transferência recente. Buscando lead no CRM atribuído a ${matchedSeller.name}...`);
+        const { data: crmLead } = await supabase
+          .from('ai_crm_leads')
+          .select('id, status')
+          .eq('assigned_to_id', matchedSeller.id)
+          .in('status', ['qualificado', 'interessado', 'novo'])
+          .order('last_interaction_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (crmLead) {
+          assignedLeadId = crmLead.id;
+          console.log(`[Webhook] Lead encontrado via CRM fallback: ${crmLead.id} (status: ${crmLead.status})`);
         }
-        
-        // Confirmar tambem na tabela de transferencias para o dashboard
-        await supabase.from('ai_lead_transfers').update({ 
-          is_confirmed: true, 
-          confirmed_at: new Date().toISOString(),
-          transfer_status: 'confirmed'
-        }).eq('lead_id', assignedLead.id).eq('to_member_id', matchedSeller.id);
+      }
 
-        console.log(`[Webhook] Lead ${assignedLead.id} atualizado para 'transferido' (Em Atendimento) pelo vendedor ${matchedSeller.name}.`);
-      } else {
-        console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou, mas nao encontrei lead qualificado pendente para ele.`);
+      if (assignedLeadId) {
+        // Atualizar o CRM com o vendedor como responsável e status = transferido
+        const confirmationTime = new Date().toISOString();
+        const updateData = {
+          status: 'transferido',
+          assigned_to_id: matchedSeller.id,
+          last_interaction_at: confirmationTime
+        };
+        const { error: updateErr } = await supabase.from('ai_crm_leads').update(updateData).eq('id', assignedLeadId);
+        if (updateErr) console.error(`[Webhook] Erro ao atualizar CRM:`, updateErr);
+
+        if (supabaseNew) {
+          try { await supabaseNew.from('ai_crm_leads').update(updateData).eq('id', assignedLeadId); } catch(e) { console.warn('[CRM Mirror] confirm falhou:', e); }
+        }
+
+        // Marcar a transferência como confirmada
+        if (confirmedTransferId) {
+          await supabase.from('ai_lead_transfers').update({
+            is_confirmed: true,
+            confirmed_at: confirmationTime,
+            transfer_status: 'confirmed'
+          }).eq('id', confirmedTransferId);
+        } else {
+          // Marcar todas as transferências pendentes deste lead para este vendedor como confirmadas
+          await supabase.from('ai_lead_transfers').update({
+            is_confirmed: true,
+            confirmed_at: confirmationTime,
+            transfer_status: 'confirmed'
+          }).eq('lead_id', assignedLeadId).eq('to_member_id', matchedSeller.id).neq('is_confirmed', true);
+        }
+
+        console.log(`[Webhook] ✅ Lead ${assignedLeadId} → TRANSFERIDO para ${matchedSeller.name}`);
         const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
         const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || '';
-        await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, "⚠️ *Atenção!* \n\nNão encontrei nenhum lead aguardando sua confirmação neste momento. Se ele foi repassado por tempo (10 min), você não consegue mais assumir.");
+        await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, `✅ *Atendimento Confirmado!*\n\nO lead foi atribuído a você no CRM. Pode seguir com a venda! 🚀`);
+      } else {
+        console.log(`[Webhook] ⚠️ Vendedor ${matchedSeller.name} confirmou, mas não encontrei nenhum lead para associar.`);
+        const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
+        const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || '';
+        await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, `⚠️ *Atenção!*\n\nNão encontrei um lead pendente para confirmar agora. Se ele já foi repassado, o atendimento segue com outro vendedor. Se quiser, eu posso conferir novamente.`);
       }
     }
     return new Response(JSON.stringify({ ok: true, seller_message: true }), { headers: corsHeaders });
@@ -1633,7 +1683,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   if (agent.company_name) systemPrompt += `\n\nEmpresa/Loja: ${agent.company_name}`;
 
   // Terminologia e Gírias Automotivas (Global)
-  systemPrompt += `\n\n(TERMINOLOGIA AUTOMOTIVA: Entenda "Caminhonete" ou "Camionete" como "Picape" / "Picapes" (ex: Hilux, S10, Ranger, Amarok, Toro, Frontier, Triton, etc.). Se o cliente pedir caminhonete, busque e ofereça as picapes disponíveis no estoque e JAMAIS diga que não tem caminhonetes se tiver picapes.)`;
+  systemPrompt += `\n\n(TERMINOLOGIA AUTOMOTIVA: Entenda "Caminhonete", "Camionete" ou "Picape" como a mesma categoria. Isso inclui picapes pequenas como Fiat Strada e VW Saveiro, médias como Toyota Hilux e Chevrolet S10, e grandes como a linha RAM. Se o cliente pedir caminhonete, busque e ofereça TODAS as picapes disponíveis no estoque, incluindo Strada e Toro, e JAMAIS diga que não tem se houver qualquer uma dessas disponíveis.)`;
 
   // Base de conhecimento: contexto de apoio, não como regra
   if (knowledgeContext) {
@@ -1743,9 +1793,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             status: args.status,
             summary: args.resumo,
             last_interaction_at: new Date().toISOString(),
-            lead_name: pushName,
-            assigned_to_id: existingLead?.assigned_to_id || null,
-            assigned_to_member_id: existingLead?.assigned_to_id || null
+          lead_name: pushName,
+            assigned_to_id: existingLead?.assigned_to_id || null
           };
           await supabase.from('ai_crm_leads').upsert(crmStatusPayload, { onConflict: 'agent_id, remote_jid' });
           if (supabaseNew) {
@@ -1755,6 +1804,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           console.log(`[CRM] Lead ${phoneNumber} analisado. Status: ${args.status}`);
 
           if (args.status === 'qualificado') {
+            // Verificar se já existe uma transferência PENDENTE para esse lead.
+            // Isso previne dupla-notificação quando a IA chama a ferramenta duas vezes.
+            const { data: existingTransfer } = await supabase.from('ai_lead_transfers')
+              .select('id, to_member_id')
+              .eq('lead_id', (await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle()).data?.id || '')
+              .eq('is_confirmed', false)
+              .eq('transfer_status', 'pending')
+              .maybeSingle();
+
+            if (existingTransfer) {
+              console.log(`[CRM] Lead já tem transferência pendente (id: ${existingTransfer.id}). Pulando round-robin duplicado.`);
+            } else {
             let selectedSeller = null;
 
             // Tentar manter o mesmo vendedor se o lead ja estiver designado e o vendedor estiver ativo
@@ -1829,47 +1890,71 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
                   console.error('[CRM] Falha ao gerar resumo inteligente da IA:', summaryErr);
                 }
 
-                const sellerMsg = `🔥 *LEAD QUALIFICADO — ATENDIMENTO IMEDIATO*\n\n👤 *Cliente:* ${pushName}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agent.name}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
-                const sellerSendResult = await sendUazapiTextMessage(
-                  baseUrl,
-                  instKey,
-                  instanceName,
-                  sellerNum,
-                  `${sellerNum}@s.whatsapp.net`,
-                  sellerMsg
-                );
+                const { data: leadData } = await supabase
+                  .from('ai_crm_leads')
+                  .select('id')
+                  .eq('agent_id', agent.id)
+                  .eq('remote_jid', remoteJid)
+                  .maybeSingle();
 
-                if (!sellerSendResult.ok) {
-                  console.error(`[CRM] Falha ao enviar lead para vendedor ${selectedSeller.name} (${sellerNum}).`);
+                if (!leadData?.id) {
+                  console.error(`[CRM] Lead ${phoneNumber} não encontrado para atribuição antes do envio ao vendedor.`);
                 } else {
-                  await supabase.from('ai_team_members').update({
-                    last_lead_received_at: new Date().toISOString(),
-                  }).eq('id', selectedSeller.id);
+                  const assignmentTime = new Date().toISOString();
+                  const assignData = {
+                    status: 'qualificado',
+                    assigned_to_id: selectedSeller.id,
+                    followup_5min_sent: true,
+                    last_interaction_at: assignmentTime
+                  };
 
-                  const { data: leadData } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
-                  if (leadData) {
-                    await supabase.from('ai_lead_transfers').insert({
-                      user_id: agent.user_id, lead_id: leadData.id,
-                      to_member_id: selectedSeller.id, transfer_reason: args.resumo,
-                      notes: `Transferido para ${selectedSeller.name} via round-robin`,
-                    });
-                    const assignData = {
-                      assigned_to_id: selectedSeller.id,
-                      assigned_to_member_id: selectedSeller.id
-                    };
-                    await supabase.from('ai_crm_leads').update(assignData).eq('id', leadData.id);
-                    if (supabaseNew) {
-                      try { await supabaseNew.from('ai_crm_leads').update(assignData).eq('id', leadData.id); } catch(e) { console.warn('[CRM Mirror] tool update assign falhou:', e); }
+                  await supabase.from('ai_crm_leads').update(assignData).eq('id', leadData.id);
+                  if (supabaseNew) {
+                    try {
+                      await supabaseNew.from('ai_crm_leads').update(assignData).eq('id', leadData.id);
+                    } catch(e) {
+                      console.warn('[CRM Mirror] tool update assign falhou:', e);
                     }
                   }
 
-                  console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
+                  await supabase.from('ai_lead_transfers').insert({
+                    user_id: agent.user_id,
+                    lead_id: leadData.id,
+                    to_member_id: selectedSeller.id,
+                    from_agent_id: agent.id,
+                    transfer_reason: args.resumo,
+                    notes: `Transferido para ${selectedSeller.name} via round-robin`,
+                    transfer_status: 'pending',
+                    is_confirmed: false,
+                  });
+
+                  const sellerMsg = `🔥 *LEAD QUALIFICADO — ATENDIMENTO IMEDIATO*\n\n👤 *Cliente:* ${pushName}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agent.name}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
+                  const sellerSendResult = await sendUazapiTextMessage(
+                    baseUrl,
+                    instKey,
+                    instanceName,
+                    sellerNum,
+                    `${sellerNum}@s.whatsapp.net`,
+                    sellerMsg
+                  );
+
+                  if (!sellerSendResult.ok) {
+                    console.error(`[CRM] Falha ao enviar lead para vendedor ${selectedSeller.name} (${sellerNum}).`);
+                  } else {
+                    await supabase.from('ai_team_members').update({
+                      last_lead_received_at: assignmentTime,
+                    }).eq('id', selectedSeller.id);
+
+                    console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
+                  }
                 }
               } else {
                 console.error(`[CRM] Vendedor ${selectedSeller.name} sem numero de WhatsApp configurado.`);
               }
             }
+            } // fim do else (sem transferência pendente duplicada)
           }
+
 
           toolMessages.push({
             role: 'tool',
@@ -1982,4 +2067,5 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
 
   return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
 }
+
 

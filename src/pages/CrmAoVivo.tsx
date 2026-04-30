@@ -283,7 +283,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       const [{ data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
         (supabase as any).from('ai_lead_transfers')
           .select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
-          .eq('user_id', user.id).order('created_at', { ascending: false }).limit(500),
+          .eq('user_id', user.id).order('created_at', { ascending: false }).limit(2000),
         (supabase as any).from('ai_team_members').select('*').eq('user_id', user.id)
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', user.id),
@@ -406,24 +406,53 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   }, [activeMembers, transfers]);
 
   const memberStats = useMemo(() => {
-    // Usa o mesmo threshold do filtro de período para mostrar os atendimentos do período selecionado
     const threshold = getThreshold(dateFilter);
+    // Recalculate today dynamically inside the memo (avoids stale midnight bug)
     const today = new Date(); today.setHours(0, 0, 0, 0);
 
-    return activeMembers.map(m => ({
-      ...m,
-      // Atendimentos no período selecionado (respeita o filtro do gerente)
-      periodCount: transfers.filter(t =>
+    console.log(`[CrmAoVivo] memberStats | transfers: ${transfers.length} | leads: ${leads.length} | members: ${activeMembers.length}`);
+
+    return activeMembers.map(m => {
+      // PRIMARY: contar atendimentos realmente assumidos pelo vendedor.
+      const transfersForMember = transfers.filter(t =>
         t.to_member_id === m.id &&
-        (!threshold || new Date(t.created_at) >= threshold)
-      ).length,
-      // Atendimentos só hoje (sempre visível como sub-dado)
-      todayCount: transfers.filter(t =>
-        t.to_member_id === m.id && new Date(t.created_at) >= today
-      ).length,
-      totalCount: transfers.filter(t => t.to_member_id === m.id).length,
-    })).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
-  }, [activeMembers, transfers, dateFilter]);
+        (t.is_confirmed === true || t.transfer_status === 'confirmed')
+      );
+      const periodCount = transfersForMember.filter(t =>
+        !threshold || new Date(t.created_at) >= threshold
+      ).length;
+      const todayCount = transfersForMember.filter(t =>
+        new Date(t.created_at) >= today
+      ).length;
+      const totalCount = transfersForMember.length;
+
+      // FALLBACK: se nao houver historico confirmado suficiente, usa leads efetivamente em atendimento.
+      const leadsAssignedToday = todayCount === 0
+        ? leads.filter(l =>
+            l.status === 'transferido' &&
+            l.assigned_to_id === m.id &&
+            new Date(l.last_interaction_at || l.created_at) >= today
+          ).length
+        : 0;
+      const leadsAssignedPeriod = periodCount === 0
+        ? leads.filter(l =>
+            l.status === 'transferido' &&
+            l.assigned_to_id === m.id &&
+            (!threshold || new Date(l.last_interaction_at || l.created_at) >= threshold)
+          ).length
+        : 0;
+
+      return {
+        ...m,
+        periodCount: periodCount || leadsAssignedPeriod,
+        todayCount: todayCount || leadsAssignedToday,
+        totalCount: totalCount || leads.filter(l =>
+          l.status === 'transferido' &&
+          l.assigned_to_id === m.id
+        ).length,
+      };
+    }).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
+  }, [activeMembers, transfers, leads, dateFilter]);
 
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
@@ -447,7 +476,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     // Persistir no banco
     const { error } = await (supabase as any)
       .from('ai_crm_leads')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .update({ status: newStatus })
       .eq('id', leadId);
 
     if (error) {

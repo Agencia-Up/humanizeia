@@ -34,6 +34,25 @@ async function sendUazapiTextMessage(baseUrl: string, instKey: string, instanceN
   return false;
 }
 
+/**
+ * Verifica se o horário atual está dentro da janela de rodízio vendedor -> vendedor.
+ * Regra de negócio: 10:11 até 20:59 (horário de Brasília).
+ * A transferência inicial do lead para o primeiro vendedor segue ativa 24h.
+ */
+function isDentroDoHorarioOperacional(now: Date): boolean {
+  // Converte para horário de Brasília (UTC-3)
+  const nowBrasilia = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+  const hora = nowBrasilia.getUTCHours();
+  const minuto = nowBrasilia.getUTCMinutes();
+  const minutosDoDia = hora * 60 + minuto;
+
+  const inicioRodizio = 10 * 60 + 11;
+  const fimRodizio = 20 * 60 + 59;
+  const ativo = minutosDoDia >= inicioRodizio && minutosDoDia <= fimRodizio;
+  console.log(`[Cron] Hora Brasília: ${hora}:${String(minuto).padStart(2, '0')} | Horário operacional: ${ativo ? 'SIM ✅' : 'NÃO ⛔'}`);
+  return ativo;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -44,91 +63,122 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseKey)
 
-    // Pegar a hora atual
     const now = new Date();
-    
-    // Calcular thresholds
     const fiveMinsAgo = new Date(now.getTime() - 5 * 60000).toISOString();
     const tenMinsAgo = new Date(now.getTime() - 10 * 60000).toISOString();
 
     console.log(`[Cron] Iniciando varredura. Agora: ${now.toISOString()} | 5m ago: ${fiveMinsAgo} | 10m ago: ${tenMinsAgo}`);
 
+    const operacional = isDentroDoHorarioOperacional(now);
+
     // ════════════════════════════════════════════════════════════════
-    // SEÇÃO 1: ROTATIVIDADE DE VENDEDORES (lead já qualificado > 10 min)
-    // Se um vendedor recebeu um lead (status=qualificado) e não respondeu "Ok"
-    // em 10 minutos, repassa para o próximo vendedor da fila.
+    // SEÇÃO 1: ROTATIVIDADE DE VENDEDORES (transferência pendente > 10 min)
+    // REGRA: O vendedor tem 10 minutos para responder "Ok" a partir do momento
+    //        em que RECEBEU a notificação (ai_lead_transfers.created_at).
+    //        Usa ai_lead_transfers como fonte de verdade, NÃO last_interaction_at.
+    //        Só executa dentro do horário operacional (10:10 - 21:30 Brasília).
     // ════════════════════════════════════════════════════════════════
-    const { data: timeoutLeads } = await supabase
-      .from('ai_crm_leads')
-      .select('*, wa_ai_agents(id, name, instance_id, instance_ids)')
-      .eq('status', 'qualificado')
-      .not('assigned_to_id', 'is', null)
-      .lte('last_interaction_at', tenMinsAgo);
+    if (operacional) {
+      // Buscar transferências pendentes onde o vendedor NÃO confirmou em 10 minutos
+      const { data: pendingTransfers } = await supabase
+        .from('ai_lead_transfers')
+        .select('*, lead:ai_crm_leads(*, wa_ai_agents(id, name, instance_id, instance_ids))')
+        .eq('is_confirmed', false)
+        .eq('transfer_status', 'pending')
+        .lte('created_at', tenMinsAgo); // A notificação foi criada há mais de 10 minutos
 
-    if (timeoutLeads && timeoutLeads.length > 0) {
-      console.log(`[Cron] Encontrados ${timeoutLeads.length} leads qualificados aguardando vendedor ha mais de 10 min.`);
-      const { data: instances } = await supabase.from('wa_instances').select('*');
+      if (pendingTransfers && pendingTransfers.length > 0) {
+        console.log(`[Cron] Encontradas ${pendingTransfers.length} transferências pendentes há mais de 10 min.`);
+        const { data: allInstances } = await supabase.from('wa_instances').select('*');
 
-      for (const lead of timeoutLeads) {
-        const agentId = lead.agent_id;
-        const currentSellerId = lead.assigned_to_id;
-        
-        // ── UPDATE ATÔMICO: só repassa se o status AINDA for 'qualificado' ──
-        // Isso previne race condition: se o vendedor confirmou "Ok" durante
-        // o processamento do cron, o status já será 'transferido' e este
-        // update não afetará nenhuma linha.
-        const { data: atomicResult, error: atomicErr } = await supabase
-          .from('ai_crm_leads')
-          .update({
-            last_interaction_at: now.toISOString() // Reseta timer temporariamente
-          })
-          .eq('id', lead.id)
-          .eq('status', 'qualificado') // SÓ atualiza se ainda for qualificado!
-          .select('id');
-
-        if (atomicErr || !atomicResult || atomicResult.length === 0) {
-          console.log(`[Cron] Lead ${lead.id} já foi confirmado pelo vendedor (status mudou). Pulando.`);
-          continue;
-        }
-
-        // Buscar proximo vendedor (excluindo o atual)
-        const { data: teamMembers } = await supabase
-          .from('ai_team_members')
-          .select('*')
-          .eq('agent_id', agentId)
-          .eq('is_active', true)
-          .neq('id', currentSellerId)
-          .order('last_lead_received_at', { ascending: true, nullsFirst: true })
-          .limit(1);
-
-        if (teamMembers && teamMembers.length > 0) {
-          const nextSeller = teamMembers[0];
-
-          // ── SEGUNDO UPDATE ATÔMICO: verifica status de novo antes de reatribuir ──
-          const { data: reassignResult } = await supabase
-            .from('ai_crm_leads')
-            .update({
-              assigned_to_id: nextSeller.id,
-              assigned_to_member_id: nextSeller.id,
-              last_interaction_at: now.toISOString()
-            })
-            .eq('id', lead.id)
-            .eq('status', 'qualificado') // SÓ reatribui se AINDA for qualificado!
-            .select('id');
-
-          if (!reassignResult || reassignResult.length === 0) {
-            console.log(`[Cron] Lead ${lead.id} mudou de status durante processamento. Vendedor provavelmente confirmou. Pulando.`);
+        for (const transfer of pendingTransfers) {
+          const lead = transfer.lead;
+          if (!lead) {
+            console.warn(`[Cron] Transferência ${transfer.id} sem lead associado. Pulando.`);
             continue;
           }
-          
-          await supabase.from('ai_team_members').update({ 
-            last_lead_received_at: now.toISOString(), 
+
+          // Verificar se o lead ainda está 'qualificado' (vendedor pode ter confirmado manualmente)
+          const { data: freshLead } = await supabase
+            .from('ai_crm_leads')
+            .select('id, status, assigned_to_id')
+            .eq('id', lead.id)
+            .maybeSingle();
+
+          if (!freshLead || freshLead.status !== 'qualificado') {
+            console.log(`[Cron] Lead ${lead.id} não está mais qualificado (status: ${freshLead?.status}). Marcando transferência como expirada e pulando.`);
+            await supabase.from('ai_lead_transfers')
+              .update({ transfer_status: 'expired' })
+              .eq('id', transfer.id);
+            continue;
+          }
+
+          const agentId = lead.agent_id;
+          const currentSellerId = transfer.to_member_id;
+
+          // Marcar a transferência atual como expirada ATOMICAMENTE antes de repassar
+          const { data: expireResult } = await supabase
+            .from('ai_lead_transfers')
+            .update({ transfer_status: 'expired' })
+            .eq('id', transfer.id)
+            .eq('transfer_status', 'pending') // SÓ expira se ainda for pending
+            .select('id');
+
+          if (!expireResult || expireResult.length === 0) {
+            console.log(`[Cron] Transferência ${transfer.id} já foi processada por outro worker. Pulando.`);
+            continue;
+          }
+
+          // Buscar próximo vendedor na fila (excluindo o atual que não respondeu)
+          const { data: teamMembers } = await supabase
+            .from('ai_team_members')
+            .select('*')
+            .eq('agent_id', agentId)
+            .eq('is_active', true)
+            .neq('id', currentSellerId)
+            .order('last_lead_received_at', { ascending: true, nullsFirst: true })
+            .limit(1);
+
+          if (!teamMembers || teamMembers.length === 0) {
+            console.log(`[Cron] Nenhum outro vendedor disponível para o agente ${agentId}. Lead ${lead.id} permanece com vendedor atual.`);
+            // Repassar de volta para o mesmo (sem outros disponíveis)
+            await supabase.from('ai_lead_transfers')
+              .update({ transfer_status: 'pending' })
+              .eq('id', transfer.id);
+            continue;
+          }
+
+          const nextSeller = teamMembers[0];
+          console.log(`[Cron] Repassando lead ${lead.id} de ${currentSellerId} para ${nextSeller.name} (não respondeu em 10min).`);
+
+          // Atualizar lead com novo vendedor
+          await supabase.from('ai_crm_leads').update({
+            assigned_to_id: nextSeller.id,
+          }).eq('id', lead.id).eq('status', 'qualificado');
+
+          // Atualizar timestamp do novo vendedor
+          await supabase.from('ai_team_members').update({
+            last_lead_received_at: now.toISOString(),
           }).eq('id', nextSeller.id);
 
+          // Criar nova transferência para o próximo vendedor
+          await supabase.from('ai_lead_transfers').insert({
+            user_id: lead.user_id,
+            lead_id: lead.id,
+            from_member_id: currentSellerId,
+            to_member_id: nextSeller.id,
+            from_agent_id: agentId,
+            transfer_reason: 'Rodízio por Inatividade do Vendedor (10min)',
+            notes: `Repassado de ${currentSellerId} para ${nextSeller.name} por falta de resposta em 10 minutos`,
+            transfer_status: 'pending',
+            is_confirmed: false,
+          });
+
+          // Notificar próximo vendedor
           const agentData = lead.wa_ai_agents;
           let targetInstanceId = agentData?.instance_id;
           if (!targetInstanceId && agentData?.instance_ids?.length > 0) targetInstanceId = agentData.instance_ids[0];
-          const instance = instances?.find((i: any) => i.id === targetInstanceId);
+          const instance = allInstances?.find((i: any) => i.id === targetInstanceId);
 
           if (instance && nextSeller.whatsapp_number) {
             const baseUrl = instance.api_url?.replace(/\/$/, '');
@@ -136,86 +186,66 @@ serve(async (req) => {
             const cleanSellerNum = nextSeller.whatsapp_number.replace(/\D/g, '');
             const phoneNumber = lead.remote_jid.split('@')[0];
 
-            // Buscar contexto para o novo vendedor
-            const { data: fullChat } = await supabase
-              .from('wa_chat_history')
-              .select('role, content, created_at')
-              .eq('agent_id', agentId)
-              .eq('instance_id', instance.instance_name)
-              .eq('user_id', lead.user_id)
-              .eq('remote_jid', lead.remote_jid)
-              .order('created_at', { ascending: false })
-              .limit(30);
-
-            let aiGeneratedSummary = lead.summary || 'Lead qualificado pela IA aguardando resposta.';
+            // Gerar resumo para o próximo vendedor
+            let aiGeneratedSummary = lead.summary || 'Lead qualificado aguardando atendimento.';
             try {
-              if (fullChat && fullChat.length > 0) {
+              const { data: fullChat } = await supabase
+                .from('wa_chat_history')
+                .select('role, content, created_at')
+                .eq('agent_id', agentId)
+                .eq('remote_jid', lead.remote_jid)
+                .order('created_at', { ascending: false })
+                .limit(20);
+
+              const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+              if (openaiApiKey && fullChat && fullChat.length > 0) {
                 const chatTranscript = fullChat.reverse().map((m: any) =>
-                  `${m.role === 'user' ? `Cliente (${lead.lead_name || 'Desconhecido'})` : 'Agente IA'}: ${String(m.content || '').substring(0, 500)}`
+                  `${m.role === 'user' ? `Cliente (${lead.lead_name || 'Desconhecido'})` : 'Agente IA'}: ${String(m.content || '').substring(0, 400)}`
                 ).join('\n');
 
-                const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
-                if (openaiApiKey) {
-                  const summaryRes = await fetch('https://api.openai.com/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
-                    body: JSON.stringify({
-                      model: 'gpt-4o-mini',
-                      temperature: 0.3,
-                      messages: [
-                        {
-                          role: 'system',
-                          content: `Você é um analista de vendas especialista em mercado automotivo. Sua função é ler a conversa entre um cliente e um agente de IA de uma concessionária e gerar um briefing COMPLETO e OBJETIVO para o vendedor humano que vai assumir o atendimento agora.\n\nO briefing deve ser em português, direto ao ponto, e conter EXATAMENTE estas seções:\n\n🚗 *VEÍCULO DE INTERESSE:* (qual carro específico o cliente demonstrou interesse)\n📢 *ORIGEM DO LEAD:* (se mencionado)\n👤 *PERFIL DO CLIENTE:* (nível de interesse, urgência, troca, etc)\n💡 *DICA PARA O VENDEDOR:* (como abordar este cliente para fechar a venda)\n\nSeja cirúrgico. Não invente informações. Se algo não foi mencionado, escreva "Não mencionado".`
-                        },
-                        {
-                          role: 'user',
-                          content: `Conversa completa:\n\n${chatTranscript}\n\nGere o briefing para o vendedor.`
-                        }
-                      ]
-                    })
-                  });
-                  if (summaryRes.ok) {
-                    const summaryData = await summaryRes.json();
-                    const generatedText = summaryData.choices?.[0]?.message?.content;
-                    if (generatedText) aiGeneratedSummary = generatedText;
-                  }
+                const summaryRes = await fetch('https://api.openai.com/v1/chat/completions', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+                  body: JSON.stringify({
+                    model: 'gpt-4o-mini',
+                    temperature: 0.3,
+                    messages: [
+                      { role: 'system', content: `Gere um briefing curto e objetivo para um vendedor de carros que está recebendo um lead repassado. Inclua: veículo de interesse, perfil do cliente e dica de abordagem. Máximo 5 linhas.` },
+                      { role: 'user', content: `Conversa:\n${chatTranscript}\n\nGere o briefing.` }
+                    ]
+                  })
+                });
+                if (summaryRes.ok) {
+                  const sd = await summaryRes.json();
+                  const gt = sd.choices?.[0]?.message?.content;
+                  if (gt) aiGeneratedSummary = gt;
                 }
               }
-            } catch(summaryErr) {
-              console.error('[Cron] Falha ao gerar resumo inteligente:', summaryErr);
-            }
-            
-            const notificationMsg = `🚨 *LEAD REPASSADO (Vendedor não respondeu em 10m)*\n\n👤 *Nome:* ${lead.lead_name || 'Desconhecido'}\n📱 *Número:* +${phoneNumber}\n🤖 *Agente IA:* ${lead.wa_ai_agents?.name || 'Assistente'}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
-            
-            await sendUazapiTextMessage(baseUrl, instKey, instance.instance_name, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
-            
-            // Registrar a transferencia no log para o dashboard atualizar o 'Proximo Vendedor'
-            await supabase.from('ai_lead_transfers').insert({
-              user_id: lead.user_id,
-              lead_id: lead.id,
-              from_member_id: currentSellerId,
-              to_member_id: nextSeller.id,
-              from_agent_id: agentId,
-              transfer_reason: 'Rodízio por Inatividade do Vendedor',
-              notes: `Repassado de ${currentSellerId} para ${nextSeller.id} por falta de resposta`
-            });
+            } catch (e) { /* silencioso */ }
 
-            console.log(`[Cron] Lead ${lead.id} repassado de vendedor para ${nextSeller.name}`);
+            const notificationMsg = `🚨 *LEAD REPASSADO (Vendedor anterior não respondeu em 10min)*\n\n👤 *Nome:* ${lead.lead_name || 'Desconhecido'}\n📱 *Número:* +${phoneNumber}\n🤖 *Agente IA:* ${agentData?.name || 'Assistente'}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
+
+            await sendUazapiTextMessage(baseUrl, instKey, instance.instance_name, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
+            console.log(`[Cron] Notificação enviada para ${nextSeller.name}.`);
           }
         }
+      } else {
+        console.log('[Cron] Nenhuma transferência pendente com timeout.');
       }
+    } else {
+      console.log('[Cron] Fora do horário operacional. Seção 1 (rodízio) ignorada.');
     }
 
     // ════════════════════════════════════════════════════════════════
-    // SEÇÃO 2: FOLLOW-UP + TRANSFERÊNCIA INICIAL
-    // Leads novo/interessado onde o bot foi o último a falar.
-    // 5 min → ping de follow-up
-    // 10 min → qualifica e transfere para primeiro vendedor
+    // SEÇÃO 2: FOLLOW-UP + TRANSFERÊNCIA POR INATIVIDADE DO CLIENTE
+    // 5 min → ping de follow-up (funciona 24h)
+    // 10 min → transferência para vendedor (só dentro do horário operacional)
     // ════════════════════════════════════════════════════════════════
     const { data: leads, error } = await supabase
       .from('ai_crm_leads')
       .select('*, wa_ai_agents(id, name, instance_id, instance_ids)')
       .in('status', ['novo', 'interessado'])
+      .is('assigned_to_id', null)
       .not('last_agent_reply_at', 'is', null)
       .not('last_user_reply_at', 'is', null)
       .lte('last_agent_reply_at', fiveMinsAgo);
@@ -227,22 +257,20 @@ serve(async (req) => {
     }
 
     console.log(`[Cron] Encontrados ${leads.length} leads inativos. Processando...`);
-
-    // Fetch instances
     const { data: instances } = await supabase.from('wa_instances').select('*');
 
     let processed5Min = 0;
     let processed10Min = 0;
 
     for (const lead of leads) {
-      // Ignorar se o usuario falou DEPOIS do agente (o agente esta processando ou bugou, mas a inatividade e do agente, nao do usuario)
+      // Ignorar se o usuario falou depois do agente
       if (new Date(lead.last_user_reply_at) >= new Date(lead.last_agent_reply_at)) continue;
 
       const agentData = lead.wa_ai_agents;
       let targetInstanceId = agentData?.instance_id;
       if (!targetInstanceId && agentData?.instance_ids?.length > 0) targetInstanceId = agentData.instance_ids[0];
-      
-      const instance = instances?.find(i => i.id === targetInstanceId);
+
+      const instance = instances?.find((i: any) => i.id === targetInstanceId);
       if (!instance) continue;
 
       const baseUrl = instance.api_url?.replace(/\/$/, '');
@@ -255,28 +283,25 @@ serve(async (req) => {
       const is10MinPassed = new Date(lead.last_agent_reply_at) <= new Date(tenMinsAgo);
 
       if (is10MinPassed) {
-        // --- REGRA DE 10 MINUTOS (TRANSFERENCIA) ---
-        // PASSO 1: Atualizar o status atomicamente para 'qualificado' ANTES de qualquer mensagem.
+        // --- REGRA DE 10 MINUTOS: TRANSFERÊNCIA PARA VENDEDOR (Funciona 24/7) ---
+        // Sempre envia o lead inicial para o funil do vendedor, independente do horário.
         const { data: updatedRows, error: updateError } = await supabase
           .from('ai_crm_leads')
-          .update({ 
+          .update({
             status: 'qualificado',
-            last_interaction_at: now.toISOString() // Inicia o timer de 10 min para o vendedor
+            last_interaction_at: now.toISOString()
           })
           .in('status', ['novo', 'interessado'])
           .eq('id', lead.id)
           .select('id');
 
-        // Se nenhuma linha foi atualizada, outro cron ja processou esse lead. Pular.
         if (updateError || !updatedRows || updatedRows.length === 0) {
-          console.log(`[Cron] Lead ${phoneNumber} ja foi processado ou falhou no update. Pulando.`);
+          console.log(`[Cron] Lead ${phoneNumber} já foi processado. Pulando.`);
           continue;
         }
 
-        console.log(`[Cron] Lead ${phoneNumber} inativo ha 10 min. Status atualizado para qualificado. Iniciando transferencia...`);
+        console.log(`[Cron] Lead ${phoneNumber} inativo há 10 min. Status → qualificado. Buscando vendedor...`);
 
-        // PASSO 2: Achar vendedor pelo rodizio (menos leads recebidos)
-        let selectedSellerId = null;
         const { data: teamMembers } = await supabase
           .from('ai_team_members')
           .select('*')
@@ -285,113 +310,97 @@ serve(async (req) => {
           .order('last_lead_received_at', { ascending: true, nullsFirst: true })
           .limit(1);
 
+        let selectedSellerId = null;
         let sellerName = 'Especialista';
-        
+
         if (teamMembers && teamMembers.length > 0) {
           const seller = teamMembers[0];
           selectedSellerId = seller.id;
           sellerName = seller.name;
-          
-          await supabase.from('ai_team_members').update({ 
-            last_lead_received_at: new Date().toISOString(), 
+
+          await supabase.from('ai_crm_leads').update({
+            status: 'qualificado',
+            assigned_to_id: seller.id,
+            followup_5min_sent: true,
+            last_interaction_at: now.toISOString()
+          }).eq('id', lead.id);
+
+          await supabase.from('ai_lead_transfers').insert({
+            user_id: lead.user_id,
+            lead_id: lead.id,
+            to_member_id: seller.id,
+            from_agent_id: agentId,
+            transfer_reason: 'Inatividade do cliente (10 minutos)',
+            notes: `Transferido automaticamente para ${seller.name} via cron`,
+            transfer_status: 'pending',
+            is_confirmed: false,
+          });
+
+          await supabase.from('ai_team_members').update({
+            last_lead_received_at: now.toISOString(),
           }).eq('id', seller.id);
 
-          // Avisar vendedor apenas se tiver numero de WhatsApp
           if (seller.whatsapp_number) {
             const cleanSellerNum = seller.whatsapp_number.replace(/\D/g, '');
-            
-            // Buscar ultimas mensagens para contexto
+
             const { data: fullChat } = await supabase
               .from('wa_chat_history')
               .select('role, content, created_at')
               .eq('agent_id', agentId)
-              .eq('instance_id', instanceName)
-              .eq('user_id', lead.user_id)
               .eq('remote_jid', remoteJid)
               .order('created_at', { ascending: false })
-              .limit(30);
+              .limit(20);
 
             let aiGeneratedSummary = lead.summary || 'O cliente demonstrou interesse e parou de responder durante a conversa.';
             try {
-              if (fullChat && fullChat.length > 0) {
+              const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+              if (openaiApiKey && fullChat && fullChat.length > 0) {
                 const chatTranscript = fullChat.reverse().map((m: any) =>
-                  `${m.role === 'user' ? `Cliente (${lead.lead_name || 'Desconhecido'})` : 'Agente IA'}: ${String(m.content || '').substring(0, 500)}`
+                  `${m.role === 'user' ? `Cliente (${lead.lead_name || 'Desconhecido'})` : 'Agente IA'}: ${String(m.content || '').substring(0, 400)}`
                 ).join('\n');
 
-                const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
-                if (openaiApiKey) {
-                  const summaryRes = await fetch('https://api.openai.com/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
-                    body: JSON.stringify({
-                      model: 'gpt-4o-mini',
-                      temperature: 0.3,
-                      messages: [
-                        {
-                          role: 'system',
-                          content: `Você é um analista de vendas especialista em mercado automotivo. Sua função é ler a conversa entre um cliente e um agente de IA de uma concessionária e gerar um briefing COMPLETO e OBJETIVO para o vendedor humano que vai assumir o atendimento agora.\n\nO cliente parou de responder no meio da conversa. O vendedor vai assumir para tentar reativar o lead.\n\nO briefing deve ser em português, direto ao ponto, e conter EXATAMENTE estas seções:\n\n🚗 *VEÍCULO DE INTERESSE:* (qual carro específico o cliente demonstrou interesse)\n📢 *ORIGEM DO LEAD:* (se mencionado)\n👤 *PERFIL DO CLIENTE:* (nível de interesse, urgência, etc)\n💡 *DICA PARA RETOMADA:* (como o vendedor deve abordar este cliente que parou de responder. Qual gatilho mental usar baseado na conversa?)`
-                        },
-                        {
-                          role: 'user',
-                          content: `Conversa completa:\n\n${chatTranscript}\n\nGere o briefing para o vendedor.`
-                        }
-                      ]
-                    })
-                  });
-                  if (summaryRes.ok) {
-                    const summaryData = await summaryRes.json();
-                    const generatedText = summaryData.choices?.[0]?.message?.content;
-                    if (generatedText) aiGeneratedSummary = generatedText;
-                  }
+                const summaryRes = await fetch('https://api.openai.com/v1/chat/completions', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+                  body: JSON.stringify({
+                    model: 'gpt-4o-mini',
+                    temperature: 0.3,
+                    messages: [
+                      { role: 'system', content: `Você é um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSeções obrigatórias:\n🚗 *VEÍCULO DE INTERESSE:*\n📢 *ORIGEM DO LEAD:*\n👤 *PERFIL DO CLIENTE:*\n💡 *DICA PARA RETOMADA:*\n\nSeja direto. Não invente informações.` },
+                      { role: 'user', content: `Conversa:\n${chatTranscript}\n\nGere o briefing.` }
+                    ]
+                  })
+                });
+                if (summaryRes.ok) {
+                  const sd = await summaryRes.json();
+                  const gt = sd.choices?.[0]?.message?.content;
+                  if (gt) aiGeneratedSummary = gt;
                 }
               }
-            } catch(summaryErr) {
-              console.error('[Cron] Falha ao gerar resumo inteligente:', summaryErr);
-            }
+            } catch (e) { /* silencioso */ }
 
             const notificationMsg = `🔥 *NOVO LEAD QUALIFICADO (Inatividade)*\n\n👤 *Cliente:* ${lead.lead_name || 'Desconhecido'}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agentData?.name || 'Agente'}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
-            
+
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }
         }
-
-        // PASSO 3: Salvar o vendedor escolhido no CRM e historico
-        await supabase.from('ai_crm_leads').update({
-          assigned_to_id: selectedSellerId,
-          assigned_to_member_id: selectedSellerId // Coluna que a UI usa para o JOIN
-        }).eq('id', lead.id);
-
-        if (selectedSellerId) {
-          await supabase.from('ai_lead_transfers').insert({
-            user_id: lead.user_id,
-            lead_id: lead.id,
-            to_member_id: selectedSellerId,
-            from_agent_id: agentId,
-            transfer_reason: 'Inatividade (10 minutos)',
-            notes: `Transferido automaticamente para o analista via cron`
-          });
-        }
-
-        // PASSO 4: Mensagem de despedida para o cliente (depois de tudo garantido)
+        // Mensagem de despedida para o cliente
         const byeMsg = "Estarei te transferindo para um dos nossos especialistas em vendas!";
         await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, byeMsg);
-
         processed10Min++;
 
       } else if (!lead.followup_5min_sent) {
-        // --- REGRA DE 5 MINUTOS (FOLLOW-UP) ---
-        console.log(`[Cron] Lead ${phoneNumber} inativo ha 5 min. Enviando ping...`);
+        // --- REGRA DE 5 MINUTOS (FOLLOW-UP) — Funciona 24h ---
+        console.log(`[Cron] Lead ${phoneNumber} inativo há 5 min. Enviando ping...`);
         const randomMsg = FIVE_MIN_MESSAGES[Math.floor(Math.random() * FIVE_MIN_MESSAGES.length)];
-        
+
         const sent = await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, randomMsg);
-        
+
         if (sent) {
-          // Marca que ja enviou o ping de 5 min
           await supabase.from('ai_crm_leads').update({
             followup_5min_sent: true
           }).eq('id', lead.id);
-          
-          // Registrar no chat history para o bot saber que ja falou
+
           await supabase.from('wa_chat_history').insert({
             user_id: lead.user_id, agent_id: agentId, instance_id: instanceName,
             remote_jid: remoteJid, role: 'assistant', content: randomMsg
@@ -402,10 +411,11 @@ serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ 
-      success: true, 
-      processed_5_min: processed5Min, 
-      processed_10_min: processed10Min 
+    return new Response(JSON.stringify({
+      success: true,
+      horario_operacional: operacional,
+      processed_5_min: processed5Min,
+      processed_10_min: processed10Min
     }), { headers: corsHeaders, status: 200 })
 
   } catch (err: any) {
@@ -413,3 +423,5 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: err.message }), { headers: corsHeaders, status: 500 })
   }
 })
+
+

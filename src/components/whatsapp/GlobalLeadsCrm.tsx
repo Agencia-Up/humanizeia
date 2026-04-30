@@ -145,7 +145,7 @@ export function GlobalLeadsCrm() {
       setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
       const { error } = await (supabase as any)
         .from('ai_crm_leads')
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .update({ status: newStatus })
         .eq('id', leadId);
       if (error) throw error;
       toast({ title: 'Status atualizado!' });
@@ -161,9 +161,8 @@ export function GlobalLeadsCrm() {
       const lead = leads.find(l => l.id === leadId);
       await (supabase as any).from('ai_crm_leads').update({
         status: 'transferido',
-        assigned_to_member_id: memberId,
         transferred_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        assigned_to_id: memberId,
       }).eq('id', leadId);
 
       await (supabase as any).from('ai_lead_transfers').insert({
