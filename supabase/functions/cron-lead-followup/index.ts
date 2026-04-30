@@ -35,18 +35,20 @@ async function sendUazapiTextMessage(baseUrl: string, instKey: string, instanceN
 }
 
 /**
- * Verifica se o horário atual está dentro do horário de funcionamento do rodízio.
- * Horário de Brasília (UTC-3): 10:10 até 21:30
+ * Verifica se o horário atual está dentro da janela de rodízio vendedor -> vendedor.
+ * Regra de negócio: 10:11 até 20:59 (horário de Brasília).
+ * A transferência inicial do lead para o primeiro vendedor segue ativa 24h.
  */
 function isDentroDoHorarioOperacional(now: Date): boolean {
   // Converte para horário de Brasília (UTC-3)
   const nowBrasilia = new Date(now.getTime() - 3 * 60 * 60 * 1000);
   const hora = nowBrasilia.getUTCHours();
   const minuto = nowBrasilia.getUTCMinutes();
-  const horaDecimal = hora + minuto / 60;
+  const minutosDoDia = hora * 60 + minuto;
 
-  // Ativo das 10:10 (10.1667) até às 21:30 (21.5)
-  const ativo = horaDecimal >= 10.1667 && horaDecimal < 21.5;
+  const inicioRodizio = 10 * 60 + 11;
+  const fimRodizio = 20 * 60 + 59;
+  const ativo = minutosDoDia >= inicioRodizio && minutosDoDia <= fimRodizio;
   console.log(`[Cron] Hora Brasília: ${hora}:${String(minuto).padStart(2, '0')} | Horário operacional: ${ativo ? 'SIM ✅' : 'NÃO ⛔'}`);
   return ativo;
 }
@@ -423,3 +425,4 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: err.message }), { headers: corsHeaders, status: 500 })
   }
 })
+

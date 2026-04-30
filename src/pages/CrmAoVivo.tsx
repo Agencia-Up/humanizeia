@@ -415,8 +415,11 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     console.log(`[CrmAoVivo] memberStats | transfers: ${transfers.length} | leads: ${leads.length} | members: ${activeMembers.length}`);
 
     return activeMembers.map(m => {
-      // PRIMARY: count from ai_lead_transfers (most accurate - includes round-robin repasses)
-      const transfersForMember = transfers.filter(t => t.to_member_id === m.id);
+      // PRIMARY: contar atendimentos realmente assumidos pelo vendedor.
+      const transfersForMember = transfers.filter(t =>
+        t.to_member_id === m.id &&
+        (t.is_confirmed === true || t.transfer_status === 'confirmed')
+      );
       const periodCount = transfersForMember.filter(t =>
         !threshold || new Date(t.created_at) >= threshold
       ).length;
@@ -425,16 +428,17 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       ).length;
       const totalCount = transfersForMember.length;
 
-      // FALLBACK: if transfers is empty for this member, count directly from leads assigned to them
-      // This handles cases where ai_lead_transfers may be missing entries
+      // FALLBACK: se nao houver historico confirmado suficiente, usa leads efetivamente em atendimento.
       const leadsAssignedToday = todayCount === 0
         ? leads.filter(l =>
+            l.status === 'transferido' &&
             (l.assigned_to_id === m.id || l.assigned_to_member_id === m.id) &&
             new Date(l.last_interaction_at || l.created_at) >= today
           ).length
         : 0;
       const leadsAssignedPeriod = periodCount === 0
         ? leads.filter(l =>
+            l.status === 'transferido' &&
             (l.assigned_to_id === m.id || l.assigned_to_member_id === m.id) &&
             (!threshold || new Date(l.last_interaction_at || l.created_at) >= threshold)
           ).length
@@ -444,7 +448,10 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         ...m,
         periodCount: periodCount || leadsAssignedPeriod,
         todayCount: todayCount || leadsAssignedToday,
-        totalCount: totalCount || leads.filter(l => l.assigned_to_id === m.id || l.assigned_to_member_id === m.id).length,
+        totalCount: totalCount || leads.filter(l =>
+          l.status === 'transferido' &&
+          (l.assigned_to_id === m.id || l.assigned_to_member_id === m.id)
+        ).length,
       };
     }).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
   }, [activeMembers, transfers, leads, dateFilter]);

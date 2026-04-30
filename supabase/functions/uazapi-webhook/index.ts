@@ -1191,7 +1191,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.log(`[Webhook] Mensagem de VENDEDOR identificado: ${matchedSeller.name}. Verificando confirmacao de atendimento...`);
     const CONFIRMATION_KEYWORDS = ['ok', 'ta certo', 'tá certo', 'vou chamar', 'vou contatar', 'vou atender', 'certo', 'entendido', 'recebi', 'vou ligar', 'beleza', 'combinado', 'pode deixar', 'sim', 'perfeito', 'ok!', 'já ligo', 'ja ligo', 'vou ver', 'vou verificar', 'blz', 'joia', 'pronto', 'peguei', 'chamei', 'chamando', 'okay', 'atendendo', 'to indo', 'tô indo', 'estou indo', 'já peguei', 'ja peguei', 'pode mandar', 'manda', 'opa'];
     const normalizedText = normalizeBndvText(userText);
-    const isConfirmation = CONFIRMATION_KEYWORDS.some(kw => normalizedText.includes(normalizeBndvText(kw))) || userText.length <= 15;
+    const compactText = normalizedText.replace(/\s+/g, ' ').trim();
+    const isShortAcknowledgement = compactText.length > 0 && compactText.length <= 12 && compactText.split(' ').length <= 3;
+    const isConfirmation = CONFIRMATION_KEYWORDS.some(kw => normalizedText.includes(normalizeBndvText(kw))) || isShortAcknowledgement;
     
     if (isConfirmation) {
       console.log(`[Webhook] Vendedor ${matchedSeller.name} confirmou atendimento. Buscando lead para associar...`);
@@ -1204,17 +1206,17 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       // Não filtra transfer_status porque registros antigos têm NULL neste campo
       const { data: recentTransfers } = await supabase
         .from('ai_lead_transfers')
-        .select('id, lead_id, is_confirmed, transfer_status')
+        .select('id, lead_id, is_confirmed, transfer_status, created_at')
         .eq('to_member_id', matchedSeller.id)
         .neq('is_confirmed', true) // não confirmada = pendente para aceite
         .gte('created_at', twoHoursAgo)
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(10);
 
       console.log(`[Webhook] Transferências recentes para ${matchedSeller.name}: ${JSON.stringify(recentTransfers?.map(t => ({id: t.id, lead_id: t.lead_id, confirmed: t.is_confirmed, status: t.transfer_status})))}`);
 
       if (recentTransfers && recentTransfers.length > 0) {
-        const transfer = recentTransfers[0];
+        const transfer = recentTransfers.find((t: any) => !t.transfer_status || t.transfer_status === 'pending') || recentTransfers[0];
         assignedLeadId = transfer.lead_id;
         confirmedTransferId = transfer.id;
       }
@@ -1227,7 +1229,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           .from('ai_crm_leads')
           .select('id, status')
           .eq('assigned_to_id', matchedSeller.id)
-          .not('status', 'in', '("transferido","encerrado")')
+          .in('status', ['qualificado', 'interessado', 'novo'])
           .order('last_interaction_at', { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -1240,11 +1242,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
       if (assignedLeadId) {
         // Atualizar o CRM com o vendedor como responsável e status = transferido
+        const confirmationTime = new Date().toISOString();
         const updateData = {
           status: 'transferido',
           assigned_to_id: matchedSeller.id,
           assigned_to_member_id: matchedSeller.id,
-          last_interaction_at: new Date().toISOString()
+          last_interaction_at: confirmationTime
         };
         const { error: updateErr } = await supabase.from('ai_crm_leads').update(updateData).eq('id', assignedLeadId);
         if (updateErr) console.error(`[Webhook] Erro ao atualizar CRM:`, updateErr);
@@ -1257,14 +1260,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         if (confirmedTransferId) {
           await supabase.from('ai_lead_transfers').update({
             is_confirmed: true,
-            confirmed_at: new Date().toISOString(),
+            confirmed_at: confirmationTime,
             transfer_status: 'confirmed'
           }).eq('id', confirmedTransferId);
         } else {
           // Marcar todas as transferências pendentes deste lead para este vendedor como confirmadas
           await supabase.from('ai_lead_transfers').update({
             is_confirmed: true,
-            confirmed_at: new Date().toISOString(),
+            confirmed_at: confirmationTime,
             transfer_status: 'confirmed'
           }).eq('lead_id', assignedLeadId).eq('to_member_id', matchedSeller.id).neq('is_confirmed', true);
         }
@@ -1277,7 +1280,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         console.log(`[Webhook] ⚠️ Vendedor ${matchedSeller.name} confirmou, mas não encontrei nenhum lead para associar.`);
         const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '');
         const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || '';
-        await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, `⚠️ *Atenção!*\n\nNão encontrei nenhum lead recente aguardando sua confirmação. Pode ser que o lead já tenha sido repassado para outro vendedor.`);
+        await sendUazapiTextMessage(baseUrl, instKey, instanceName, remoteJid.split('@')[0], remoteJid, `⚠️ *Atenção!*\n\nNão encontrei um lead pendente para confirmar agora. Se ele já foi repassado, o atendimento segue com outro vendedor. Se quiser, eu posso conferir novamente.`);
       }
     }
     return new Response(JSON.stringify({ ok: true, seller_message: true }), { headers: corsHeaders });
@@ -1910,8 +1913,12 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
                   if (leadData) {
                     await supabase.from('ai_lead_transfers').insert({
                       user_id: agent.user_id, lead_id: leadData.id,
-                      to_member_id: selectedSeller.id, transfer_reason: args.resumo,
+                      to_member_id: selectedSeller.id,
+                      from_agent_id: agent.id,
+                      transfer_reason: args.resumo,
                       notes: `Transferido para ${selectedSeller.name} via round-robin`,
+                      transfer_status: 'pending',
+                      is_confirmed: false,
                     });
                     const assignData = {
                       assigned_to_id: selectedSeller.id,
@@ -2044,4 +2051,5 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
 
   return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
 }
+
 
