@@ -514,7 +514,11 @@ function normalizeBndvPhotoView(view: string) {
   return 'other';
 }
 
-async function classifyBndvPicturesWithVision(
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function selectBndvPicturesWithVision(
   pictures: Array<{ url: string; principal?: boolean }>,
   vehicleLabel: string,
   openaiApiKey?: string | null
@@ -527,13 +531,19 @@ async function classifyBndvPicturesWithVision(
       {
         type: 'text',
         text:
-          `Você está classificando fotos de um veículo para WhatsApp de vendas.\n` +
+          `Você está escolhendo as melhores fotos de um veículo para enviar no WhatsApp de vendas.\n` +
           `Veículo: ${vehicleLabel}.\n` +
-          `Analise as imagens e responda SOMENTE um JSON no formato:\n` +
-          `{"items":[{"index":0,"view":"front"},{"index":1,"view":"rear"}]}\n` +
-          `Valores permitidos para "view": front, rear, side, interior, other.\n` +
-          `Use "interior" para painel, volante, bancos, central multimídia, porta-malas interno e cabine.\n` +
-          `Não escreva explicações.`
+          `Objetivo: escolher 5 fotos diferentes e úteis para o cliente entender o estado do carro.\n` +
+          `Quero priorizar, nesta ordem:\n` +
+          `1. uma foto de frente\n` +
+          `2. uma foto de traseira\n` +
+          `3. uma foto de lateral\n` +
+          `4. duas fotos do interior\n` +
+          `Se alguma categoria não existir, substitua por outra foto diferente e útil.\n` +
+          `Evite escolher duas imagens quase iguais do mesmo ângulo.\n` +
+          `Responda SOMENTE um JSON neste formato:\n` +
+          `{"front":0,"rear":4,"side":2,"interior":[6,7],"fallback":[1,3,5]}\n` +
+          `Todos os índices devem apontar para fotos distintas. Não escreva explicações.`
       }
     ];
 
@@ -571,26 +581,44 @@ async function classifyBndvPicturesWithVision(
     const data = await res.json();
     const raw = data?.choices?.[0]?.message?.content;
     const parsed = raw ? JSON.parse(raw) : null;
-    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    const normalizeIndex = (value: any) => {
+      const index = Number(value);
+      return Number.isInteger(index) && index >= 0 && index < sample.length ? index : undefined;
+    };
+    const normalizeList = (values: any) =>
+      Array.isArray(values)
+        ? values
+            .map((value) => normalizeIndex(value))
+            .filter((value): value is number => typeof value === 'number')
+        : [];
 
-    const normalized = items
-      .map((item: any) => ({
-        index: Number(item?.index),
-        view: normalizeBndvPhotoView(item?.view),
-      }))
-      .filter((item: any) => Number.isInteger(item.index) && item.index >= 0 && item.index < sample.length);
+    const normalized = {
+      front: normalizeIndex(parsed?.front),
+      rear: normalizeIndex(parsed?.rear),
+      side: normalizeIndex(parsed?.side),
+      interior: normalizeList(parsed?.interior),
+      fallback: normalizeList(parsed?.fallback),
+    };
 
-    console.log('[BNDV] Classificação visual das fotos:', JSON.stringify(normalized));
+    console.log('[BNDV] Seleção visual das fotos:', JSON.stringify(normalized));
     return normalized;
   } catch (err) {
-    console.warn('[BNDV] Erro ao classificar fotos com visão:', err);
+    console.warn('[BNDV] Erro ao selecionar fotos com visão:', err);
     return null;
   }
 }
 
 function selectBalancedBndvPictures(
   pictures: Array<{ url: string; principal?: boolean }>,
-  classifiedViews: Array<{ index: number; view: string }> | null,
+  selectedViews:
+    | {
+        front?: number;
+        rear?: number;
+        side?: number;
+        interior?: number[];
+        fallback?: number[];
+      }
+    | null,
   requestedCount: number
 ) {
   const uniqueIndexes: number[] = [];
@@ -600,33 +628,21 @@ function selectBalancedBndvPictures(
     if (!uniqueIndexes.includes(idx)) uniqueIndexes.push(idx);
   };
 
-  if (classifiedViews && classifiedViews.length > 0) {
-    const grouped = {
-      front: classifiedViews.filter((item) => item.view === 'front').map((item) => item.index),
-      rear: classifiedViews.filter((item) => item.view === 'rear').map((item) => item.index),
-      side: classifiedViews.filter((item) => item.view === 'side').map((item) => item.index),
-      interior: classifiedViews.filter((item) => item.view === 'interior').map((item) => item.index),
-      other: classifiedViews.filter((item) => item.view === 'other').map((item) => item.index),
-    };
-
-    pushIndex(grouped.front[0]);
-    pushIndex(grouped.rear[0]);
-    pushIndex(grouped.side[0]);
-    pushIndex(grouped.interior[0]);
-    pushIndex(grouped.interior[1]);
-
-    [
-      ...grouped.front,
-      ...grouped.rear,
-      ...grouped.side,
-      ...grouped.interior,
-      ...grouped.other,
-    ].forEach(pushIndex);
+  if (selectedViews) {
+    pushIndex(selectedViews.front);
+    pushIndex(selectedViews.rear);
+    pushIndex(selectedViews.side);
+    (selectedViews.interior || []).forEach(pushIndex);
+    (selectedViews.fallback || []).forEach(pushIndex);
   }
 
   if (uniqueIndexes.length === 0) {
-    // Fallback heurístico: BNDV costuma cadastrar externas primeiro e interiores após ~6 fotos.
-    [0, 2, 4, 6, 7, 1, 3, 5, 8, 9].forEach(pushIndex);
+    // Fallback heurístico: BNDV costuma cadastrar externas primeiro e interiores depois.
+    [0, 4, 2, 6, 7, 1, 3, 5, 8, 9].forEach(pushIndex);
+  }
+
+  if (uniqueIndexes.length < requestedCount) {
+    pictures.forEach((_, index) => pushIndex(index));
   }
 
   return uniqueIndexes.slice(0, requestedCount).map((idx) => pictures[idx]);
@@ -934,8 +950,8 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
     selectedPictures = pictures.slice(offset, offset + requestedCount);
     console.log(`[BNDV] Envio com offset manual ${offset}. Mantendo ordem sequencial das fotos.`);
   } else {
-    const classifiedViews = await classifyBndvPicturesWithVision(pictures, buildBndvVehicleLabel(vehicle), openaiApiKey);
-    selectedPictures = selectBalancedBndvPictures(pictures, classifiedViews, requestedCount);
+    const selectedViews = await selectBndvPicturesWithVision(pictures, buildBndvVehicleLabel(vehicle), openaiApiKey);
+    selectedPictures = selectBalancedBndvPictures(pictures, selectedViews, requestedCount);
     console.log(`[BNDV] Seleção inteligente de fotos | total disponíveis: ${pictures.length} | selecionadas: ${selectedPictures.length}`);
   }
 
@@ -1002,6 +1018,9 @@ async function enviarFotosBndv(supabase: any, userId: string, filters: any, deli
     }
 
     sentCount += 1;
+    if (index < selectedPictures.length - 1) {
+      await sleep(600);
+    }
   }
 
   return {
