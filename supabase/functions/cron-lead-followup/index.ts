@@ -246,6 +246,7 @@ serve(async (req) => {
       .from('ai_crm_leads')
       .select('*, wa_ai_agents(id, name, instance_id, instance_ids)')
       .in('status', ['novo', 'interessado'])
+      .is('assigned_to_id', null)
       .not('last_agent_reply_at', 'is', null)
       .not('last_user_reply_at', 'is', null)
       .lte('last_agent_reply_at', fiveMinsAgo);
@@ -318,6 +319,25 @@ serve(async (req) => {
           selectedSellerId = seller.id;
           sellerName = seller.name;
 
+          await supabase.from('ai_crm_leads').update({
+            status: 'qualificado',
+            assigned_to_id: seller.id,
+            assigned_to_member_id: seller.id,
+            followup_5min_sent: true,
+            last_interaction_at: now.toISOString()
+          }).eq('id', lead.id);
+
+          await supabase.from('ai_lead_transfers').insert({
+            user_id: lead.user_id,
+            lead_id: lead.id,
+            to_member_id: seller.id,
+            from_agent_id: agentId,
+            transfer_reason: 'Inatividade do cliente (10 minutos)',
+            notes: `Transferido automaticamente para ${seller.name} via cron`,
+            transfer_status: 'pending',
+            is_confirmed: false,
+          });
+
           await supabase.from('ai_team_members').update({
             last_lead_received_at: now.toISOString(),
           }).eq('id', seller.id);
@@ -366,26 +386,6 @@ serve(async (req) => {
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }
         }
-
-        // Salvar vendedor e criar registro de transferência
-        await supabase.from('ai_crm_leads').update({
-          assigned_to_id: selectedSellerId,
-          assigned_to_member_id: selectedSellerId
-        }).eq('id', lead.id);
-
-        if (selectedSellerId) {
-          await supabase.from('ai_lead_transfers').insert({
-            user_id: lead.user_id,
-            lead_id: lead.id,
-            to_member_id: selectedSellerId,
-            from_agent_id: agentId,
-            transfer_reason: 'Inatividade do cliente (10 minutos)',
-            notes: `Transferido automaticamente para ${sellerName} via cron`,
-            transfer_status: 'pending',
-            is_confirmed: false,
-          });
-        }
-
         // Mensagem de despedida para o cliente
         const byeMsg = "Estarei te transferindo para um dos nossos especialistas em vendas!";
         await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, byeMsg);
@@ -425,4 +425,5 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: err.message }), { headers: corsHeaders, status: 500 })
   }
 })
+
 

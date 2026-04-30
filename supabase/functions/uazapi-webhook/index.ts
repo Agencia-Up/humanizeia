@@ -1892,45 +1892,64 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
                   console.error('[CRM] Falha ao gerar resumo inteligente da IA:', summaryErr);
                 }
 
-                const sellerMsg = `🔥 *LEAD QUALIFICADO — ATENDIMENTO IMEDIATO*\n\n👤 *Cliente:* ${pushName}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agent.name}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
-                const sellerSendResult = await sendUazapiTextMessage(
-                  baseUrl,
-                  instKey,
-                  instanceName,
-                  sellerNum,
-                  `${sellerNum}@s.whatsapp.net`,
-                  sellerMsg
-                );
+                const { data: leadData } = await supabase
+                  .from('ai_crm_leads')
+                  .select('id')
+                  .eq('agent_id', agent.id)
+                  .eq('remote_jid', remoteJid)
+                  .maybeSingle();
 
-                if (!sellerSendResult.ok) {
-                  console.error(`[CRM] Falha ao enviar lead para vendedor ${selectedSeller.name} (${sellerNum}).`);
+                if (!leadData?.id) {
+                  console.error(`[CRM] Lead ${phoneNumber} não encontrado para atribuição antes do envio ao vendedor.`);
                 } else {
-                  await supabase.from('ai_team_members').update({
-                    last_lead_received_at: new Date().toISOString(),
-                  }).eq('id', selectedSeller.id);
+                  const assignmentTime = new Date().toISOString();
+                  const assignData = {
+                    status: 'qualificado',
+                    assigned_to_id: selectedSeller.id,
+                    assigned_to_member_id: selectedSeller.id,
+                    followup_5min_sent: true,
+                    last_interaction_at: assignmentTime
+                  };
 
-                  const { data: leadData } = await supabase.from('ai_crm_leads').select('id').eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
-                  if (leadData) {
-                    await supabase.from('ai_lead_transfers').insert({
-                      user_id: agent.user_id, lead_id: leadData.id,
-                      to_member_id: selectedSeller.id,
-                      from_agent_id: agent.id,
-                      transfer_reason: args.resumo,
-                      notes: `Transferido para ${selectedSeller.name} via round-robin`,
-                      transfer_status: 'pending',
-                      is_confirmed: false,
-                    });
-                    const assignData = {
-                      assigned_to_id: selectedSeller.id,
-                      assigned_to_member_id: selectedSeller.id
-                    };
-                    await supabase.from('ai_crm_leads').update(assignData).eq('id', leadData.id);
-                    if (supabaseNew) {
-                      try { await supabaseNew.from('ai_crm_leads').update(assignData).eq('id', leadData.id); } catch(e) { console.warn('[CRM Mirror] tool update assign falhou:', e); }
+                  await supabase.from('ai_crm_leads').update(assignData).eq('id', leadData.id);
+                  if (supabaseNew) {
+                    try {
+                      await supabaseNew.from('ai_crm_leads').update(assignData).eq('id', leadData.id);
+                    } catch(e) {
+                      console.warn('[CRM Mirror] tool update assign falhou:', e);
                     }
                   }
 
-                  console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
+                  await supabase.from('ai_lead_transfers').insert({
+                    user_id: agent.user_id,
+                    lead_id: leadData.id,
+                    to_member_id: selectedSeller.id,
+                    from_agent_id: agent.id,
+                    transfer_reason: args.resumo,
+                    notes: `Transferido para ${selectedSeller.name} via round-robin`,
+                    transfer_status: 'pending',
+                    is_confirmed: false,
+                  });
+
+                  const sellerMsg = `🔥 *LEAD QUALIFICADO — ATENDIMENTO IMEDIATO*\n\n👤 *Cliente:* ${pushName}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agent.name}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
+                  const sellerSendResult = await sendUazapiTextMessage(
+                    baseUrl,
+                    instKey,
+                    instanceName,
+                    sellerNum,
+                    `${sellerNum}@s.whatsapp.net`,
+                    sellerMsg
+                  );
+
+                  if (!sellerSendResult.ok) {
+                    console.error(`[CRM] Falha ao enviar lead para vendedor ${selectedSeller.name} (${sellerNum}).`);
+                  } else {
+                    await supabase.from('ai_team_members').update({
+                      last_lead_received_at: assignmentTime,
+                    }).eq('id', selectedSeller.id);
+
+                    console.log(`[CRM] Lead ${phoneNumber} transferred to seller: ${selectedSeller.name}`);
+                  }
                 }
               } else {
                 console.error(`[CRM] Vendedor ${selectedSeller.name} sem numero de WhatsApp configurado.`);
