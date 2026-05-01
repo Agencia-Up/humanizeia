@@ -425,12 +425,24 @@ function parseStoredIntegrationCredentials(raw: string | null) {
 }
 
 function normalizeBndvText(value?: string | null) {
-  // Remove acentos para que "automatico" == "Automático", "manual" == "Manual", etc.
-  return String(value || '')
+  let normalized = String(value || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/-/g, ' ')
+    .replace(/[^\w\s.]/g, ' ')
     .trim();
+
+  normalized = normalized
+    .replace(/\beco\s*sport\b/g, 'ecosport')
+    .replace(/\bfree\s*style\b/g, 'freestyle')
+    .replace(/\bcresta\b/g, 'creta')
+    .replace(/\bh rv\b/g, 'hrv')
+    .replace(/\bt-cross\b/g, 'tcross')
+    .replace(/\bt\s+cross\b/g, 'tcross')
+    .replace(/\s+/g, ' ');
+
+  return normalized;
 }
 
 function bndvIncludes(haystack?: string | null, needle?: string | null) {
@@ -440,8 +452,61 @@ function bndvIncludes(haystack?: string | null, needle?: string | null) {
 
 function bndvMatchesQuery(vehicle: any, query?: string | null) {
   if (!query || !String(query).trim()) return true;
-  
-  const rawIndexed = [
+  const scored = scoreBndvVehicle(vehicle, { query });
+  return scored.score > 0;
+}
+
+const BNDV_WEAK_WORDS = new Set([
+  'carro', 'veiculo', 'veiculos', 'revisado', 'revisados', 'pronto', 'prontos',
+  'para', 'por', 'apenas', 'oferta', 'anuncio', 'facebook', 'instagram', 'fale',
+  'agora', 'consultor', 'consultores', 'opcoes', 'disponiveis', 'disponivel',
+  'informacoes', 'interesse', 'queria', 'mais', 'favor', 'preco', 'valor',
+  'automatico', 'manual', 'flex', 'gasolina', 'diesel', 'alcool', 'aut',
+  'mec', 'mecanico', 'motors', 'icom', 'loja', 'estoque', 'ltda', 'porfavor',
+]);
+
+function bndvTokens(value?: string | null) {
+  return normalizeBndvText(value)
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2)
+    .filter((token) => !BNDV_WEAK_WORDS.has(token));
+}
+
+function levenshteinDistance(left: string, right: string) {
+  if (left === right) return 0;
+  if (!left) return right.length;
+  if (!right) return left.length;
+
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array(right.length + 1).fill(0);
+
+  for (let i = 1; i <= left.length; i++) {
+    current[0] = i;
+    for (let j = 1; j <= right.length; j++) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + cost,
+      );
+    }
+    for (let j = 0; j <= right.length; j++) previous[j] = current[j];
+  }
+
+  return previous[right.length];
+}
+
+function tokenSimilarity(left: string, right: string) {
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.length <= 3 || right.length <= 3) return 0;
+  const longest = Math.max(left.length, right.length);
+  return 1 - (levenshteinDistance(left, right) / longest);
+}
+
+function buildBndvIndexedText(vehicle: any) {
+  let indexed = normalizeBndvText([
     vehicle?.markName,
     vehicle?.modelName,
     vehicle?.versionName,
@@ -449,37 +514,115 @@ function bndvMatchesQuery(vehicle: any, query?: string | null) {
     vehicle?.fuelName,
     vehicle?.transmissionName,
     vehicle?.year?.toString?.(),
-  ].filter(Boolean).join(' ');
+  ].filter(Boolean).join(' '));
 
-  let indexed = normalizeBndvText(rawIndexed).replace(/-/g, ' ');
-  
-  // Injeção de categorias automotivas para permitir busca por "picape", "caminhonete", "suv"
-  const isPicape = /\b(hilux|s10|ranger|amarok|toro|frontier|triton|l200|strada|saveiro|montana|oroch|maverick|ram|1500|2500|3500|f150|f-150|silverado|titano|poer|gladiator|d20|f1000)\b/i.test(indexed);
+  const isPicape = /\b(hilux|s10|ranger|amarok|toro|frontier|triton|l200|strada|saveiro|montana|oroch|maverick|ram|1500|2500|3500|f150|silverado|titano|poer|gladiator|d20|f1000)\b/i.test(indexed);
   if (isPicape) indexed += ' picape caminhonete camionete pickup';
 
-  const isSUV = /\b(compass|renegade|creta|kicks|hrv|corolla cross|tracker|t cross|nivus|fastback|pulse|tiggo|sw4|equinox|commander|taos|ecosport|duster|kardian|outlander|pajero|xc60|xc40)\b/i.test(indexed);
-  if (isSUV) indexed += ' suv utilitario utilitário';
+  const isSUV = /\b(compass|renegade|creta|kicks|hrv|corolla cross|tracker|tcross|nivus|fastback|pulse|tiggo|sw4|equinox|commander|taos|ecosport|duster|kardian|outlander|pajero|xc60|xc40)\b/i.test(indexed);
+  if (isSUV) indexed += ' suv utilitario utilitario';
 
   const isSedan = /\b(corolla|civic|cruze|jetta|virtus|cronos|versa|hb20s|yaris sedan|logan|city|sentra|cerato|fusion)\b/i.test(indexed);
-  if (isSedan) indexed += ' sedan sedã';
+  if (isSedan) indexed += ' sedan';
 
   const isHatch = /\b(onix|hb20|polo|argo|208|yaris|mobi|kwid|c3|gol|fox|sandero|up|fiesta|march)\b/i.test(indexed);
   if (isHatch) indexed += ' hatch popular';
 
-  const normalizedQuery = normalizeBndvText(query).replace(/-/g, ' ');
-  
-  const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 0);
-  const matchCount = queryWords.filter(word => indexed.includes(word)).length;
+  return indexed;
+}
 
-  if (queryWords.length <= 2) {
-    // Para buscas curtas ("Honda Civic", "Renegade"), todas as palavras devem bater
-    return matchCount === queryWords.length;
+function buildBndvSearchText(filters: any) {
+  return normalizeBndvText([
+    filters?.query,
+    filters?.marca,
+    filters?.modelo,
+    filters?.versao,
+    filters?.cor,
+    filters?.combustivel,
+    filters?.cambio,
+    filters?.ano_min && filters?.ano_min === filters?.ano_max ? String(filters.ano_min) : '',
+  ].filter(Boolean).join(' '));
+}
+
+function scoreBndvVehicle(vehicle: any, filters: any) {
+  const searchText = buildBndvSearchText(filters);
+  if (!searchText) return { score: 1, matchedTokens: [] as string[] };
+
+  const indexed = buildBndvIndexedText(vehicle);
+  const indexedTokens = bndvTokens(indexed);
+  const queryTokens = [...new Set(bndvTokens(searchText))];
+  const matchedTokens: string[] = [];
+  let score = 0;
+
+  for (const token of queryTokens) {
+    if (indexed.includes(token)) {
+      matchedTokens.push(token);
+      score += token.length <= 3 ? 1 : 2;
+      continue;
+    }
+
+    const similar = indexedTokens.some((candidate) => tokenSimilarity(candidate, token) >= 0.84);
+    if (similar) {
+      matchedTokens.push(token);
+      score += 1.25;
+    }
   }
-  
-  // Para buscas longas ("Renegade Longitude 1.3 T270 2025 Automatico"),
-  // permitimos que algumas palavras especificas faltem (ex: 1.3 ou T270)
-  const minRequired = Math.ceil(queryWords.length * 0.6);
-  return matchCount >= minRequired;
+
+  const exactModel = normalizeBndvText(vehicle?.modelName);
+  const exactVersion = normalizeBndvText(vehicle?.versionName);
+  const exactMark = normalizeBndvText(vehicle?.markName);
+  const year = String(vehicle?.year || '');
+
+  if (filters?.marca && exactMark.includes(normalizeBndvText(filters.marca))) score += 4;
+  if (filters?.modelo && (exactModel.includes(normalizeBndvText(filters.modelo)) || indexed.includes(normalizeBndvText(filters.modelo)))) score += 7;
+  if (filters?.versao && exactVersion.includes(normalizeBndvText(filters.versao))) score += 4;
+  if (year && searchText.includes(year)) score += 3;
+
+  for (const modelToken of bndvTokens(exactModel)) {
+    if (queryTokens.includes(modelToken)) score += 5;
+  }
+
+  if (searchText.includes('creta') && exactModel.includes('tiggo')) score -= 5;
+
+  const requiredTokens = Math.min(2, queryTokens.length);
+  if (queryTokens.length > 0 && matchedTokens.length < requiredTokens && score < 5) score = 0;
+
+  return { score, matchedTokens };
+}
+
+function bndvPassesNumericFilters(vehicle: any, filters: any, relaxed = false) {
+  if (relaxed) return true;
+  const year = Number(vehicle?.year || 0);
+  const price = Number(vehicle?.saleValue || 0);
+  const mileage = Number(vehicle?.km || 0);
+
+  return (
+    (!filters?.ano_min || year >= Number(filters.ano_min)) &&
+    (!filters?.ano_max || year <= Number(filters.ano_max)) &&
+    (!filters?.preco_max || price <= Number(filters.preco_max)) &&
+    (!filters?.km_max || mileage <= Number(filters.km_max))
+  );
+}
+
+function rankBndvVehicles(items: any[], filters: any) {
+  const hasSearch = !!buildBndvSearchText(filters);
+  if (!hasSearch) {
+    return [...items]
+      .filter((vehicle) => bndvPassesNumericFilters(vehicle, filters))
+      .map((vehicle) => ({ vehicle, score: 1, matchedTokens: [] as string[], relaxed: false }));
+  }
+
+  const ranked = items
+    .map((vehicle) => ({ vehicle, ...scoreBndvVehicle(vehicle, filters), relaxed: false }))
+    .filter((item) => item.score > 0 && bndvPassesNumericFilters(item.vehicle, filters))
+    .sort((left, right) => right.score - left.score);
+
+  if (ranked.length > 0) return ranked;
+
+  return items
+    .map((vehicle) => ({ vehicle, ...scoreBndvVehicle(vehicle, filters), relaxed: true }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score);
 }
 
 function parseBndvPictures(rawPictureJs: any) {
@@ -633,48 +776,24 @@ async function fetchBndvVehicles(supabase: any, userId: string, filters: any) {
     return { success: false, error: payload.errors[0]?.message || 'A API do BNDV retornou um erro.' };
   }
 
-  const {
-    query,
-    marca,
-    modelo,
-    versao,
-    combustivel,
-    cambio,
-    cor,
-    ano_min,
-    ano_max,
-    preco_max,
-    km_max,
-    limite,
-  } = filters || {};
-
   const items = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
-  const filtered = items
-    .filter((vehicle: any) => {
-      const year = Number(vehicle?.year || 0);
-      const price = Number(vehicle?.saleValue || 0);
-      const mileage = Number(vehicle?.km || 0);
-
-      return (
-        bndvMatchesQuery(vehicle, query) &&
-        bndvIncludes(vehicle?.markName, marca) &&
-        bndvIncludes(vehicle?.modelName, modelo) &&
-        bndvIncludes(vehicle?.versionName, versao) &&
-        bndvIncludes(vehicle?.fuelName, combustivel) &&
-        bndvIncludes(vehicle?.transmissionName, cambio) &&
-        bndvIncludes(vehicle?.color, cor) &&
-        (!ano_min || year >= Number(ano_min)) &&
-        (!ano_max || year <= Number(ano_max)) &&
-        (!preco_max || price <= Number(preco_max)) &&
-        (!km_max || mileage <= Number(km_max))
-      );
-    })
+  const rankedVehicles = rankBndvVehicles(items, filters || {});
+  const filtered = rankedVehicles
     .sort((left: any, right: any) => {
-      const leftPrice = Number(left?.saleValue || 0);
-      const rightPrice = Number(right?.saleValue || 0);
+      if (right.score !== left.score) return right.score - left.score;
+      const leftPrice = Number(left.vehicle?.saleValue || 0);
+      const rightPrice = Number(right.vehicle?.saleValue || 0);
       if (leftPrice !== rightPrice) return leftPrice - rightPrice;
-      return Number(right?.year || 0) - Number(left?.year || 0);
-    });
+      return Number(right.vehicle?.year || 0) - Number(left.vehicle?.year || 0);
+    })
+    .map((item: any) => ({
+      ...item.vehicle,
+      __bndv_score: item.score,
+      __bndv_matched_tokens: item.matchedTokens,
+      __bndv_relaxed_match: item.relaxed,
+    }));
+
+  console.log(`[BNDV] Busca ranqueada | filtros: ${JSON.stringify(filters || {})} | total estoque: ${items.length} | encontrados: ${filtered.length} | relaxada: ${filtered.some((item: any) => item.__bndv_relaxed_match) ? 'sim' : 'nao'}`);
 
   return {
     success: true,
@@ -1383,7 +1502,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "consultar_estoque_bndv",
-        description: "Acessa o sistema interno de estoque de veículos em tempo real. Retorna os carros disponíveis com modelo, versão, ano, km, preço e combustível. Use quando precisar verificar disponibilidade ou encontrar opções para o cliente. Nunca invente ou suponha informações de estoque sem consultar.",
+        description: "Acessa o estoque BNDV em tempo real com busca tolerante a erro de leitura, variação de versão e OCR de anúncio. Retorna veículos disponíveis com modelo, versão, ano, km, preço e combustível. Use sempre que o lead vier de anúncio ou perguntar disponibilidade. Nunca declare que não há estoque sem consultar; se a busca retornar candidatos aproximados, trate o melhor candidato como opção provável e confirme de forma humana.",
         parameters: {
           type: "object",
           properties: {
@@ -1491,8 +1610,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     const adInstruction = `CONTEXTO PRIORITÁRIO DO ANÚNCIO: ${normalizedAdTextContext}
 
 O lead veio diretamente desse anúncio e o veículo anunciado deve ser tratado como o ponto de partida da conversa.
-Antes de responder de forma substantiva, identifique o carro do anúncio e consulte o estoque BNDV para esse veículo ou para a opção mais próxima disponível.
-Se o cliente pedir fotos, trabalhe em cima desse mesmo veículo identificado no anúncio.
+Antes de responder de forma substantiva, identifique o carro do anúncio e consulte o estoque BNDV para esse veículo. A leitura da imagem pode errar letras ou versão; por isso, use uma busca ampla com marca/modelo/ano quando possível e considere a opção mais próxima retornada pela ferramenta antes de dizer que não há estoque.
+Se o cliente pedir fotos, trabalhe em cima desse mesmo veículo identificado no anúncio ou no melhor candidato aproximado retornado pelo BNDV.
 Responda de forma humana, comercial e natural, sem mencionar que você "não abre links" se já houver contexto suficiente do anúncio.
 `;
 
@@ -1791,7 +1910,7 @@ Responda de forma humana, comercial e natural, sem mencionar que você "não abr
   }
 
   if (hasAdTextContext) {
-    systemPrompt += `\n\n(CONTEXTO DO ANÚNCIO META/FACEBOOK/INSTAGRAM: ${normalizedAdTextContext}. Considere este anúncio como o veículo de interesse principal do lead. Se ainda faltar confirmação objetiva, use o contexto do anúncio para conduzir a conversa e consulte o estoque BNDV antes de sugerir outros carros.)`;
+    systemPrompt += `\n\n(CONTEXTO DO ANÚNCIO META/FACEBOOK/INSTAGRAM: ${normalizedAdTextContext}. Considere este anúncio como o veículo de interesse principal do lead. A leitura visual pode trocar letras, como Cresta/Creta, ou misturar versão com modelo. Consulte o estoque BNDV com busca ampla antes de sugerir outros carros e nunca diga que o veículo saiu de estoque sem a ferramenta retornar zero candidatos.)`;
   }
 
   // Contexto situacional: apenas quando o lead já foi transferido
@@ -2171,5 +2290,4 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
 
   return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
 }
-
 
