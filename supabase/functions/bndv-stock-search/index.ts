@@ -68,11 +68,24 @@ function normalizeText(value?: string | null) {
   normalized = normalized
     .replace(/\beco\s*sport\b/g, 'ecosport')
     .replace(/\bfree\s*style\b/g, 'freestyle')
+    .replace(/\bprem\.\b/g, 'premier')
+    .replace(/\bpremi\b/g, 'premier')
     .replace(/\bcresta\b/g, 'creta')
     .replace(/\bh rv\b/g, 'hrv')
     .replace(/\bt-cross\b/g, 'tcross')
     .replace(/\bt\s+cross\b/g, 'tcross')
+    .replace(/\bonix\s+plus\s+sedan\b/g, 'onix sedan plus')
+    .replace(/\bonix\s+plus\b/g, 'onix sedan plus')
     .replace(/\s+/g, ' ');
+
+  const expansions: string[] = [];
+  if (/\bonix\b/.test(normalized)) expansions.push('chevrolet onix hatch sedan plus joy premier lt ltz activ');
+  if (/\bonix\b/.test(normalized) && /\bsedan\b/.test(normalized)) expansions.push('onix plus');
+  if (/\bcreta\b/.test(normalized)) expansions.push('hyundai creta action comfort limited platinum ultimate');
+  if (/\becosport\b/.test(normalized)) expansions.push('ford ecosport freestyle titanium se');
+  if (/\bargo\b/.test(normalized)) expansions.push('fiat argo drive trekking');
+  if (/\btracker\b/.test(normalized)) expansions.push('chevrolet tracker premier ltz lt');
+  if (expansions.length > 0) normalized = `${normalized} ${expansions.join(' ')}`;
 
   return normalized;
 }
@@ -84,6 +97,8 @@ const WEAK_WORDS = new Set([
   'informacoes', 'interesse', 'queria', 'mais', 'favor', 'preco', 'valor',
   'automatico', 'manual', 'flex', 'gasolina', 'diesel', 'alcool', 'aut',
   'mec', 'mecanico', 'motors', 'icom', 'loja', 'estoque', 'ltda', 'porfavor',
+  'lead', 'clicou', 'link', 'meta', 'whatsapp', 'identificado', 'imagem', 'thumbnail',
+  'url', 'texto', 'de', 'da', 'do', 'dos', 'das', 'um', 'uma', 'com', 'sem',
 ]);
 
 function searchTokens(value?: string | null) {
@@ -143,6 +158,8 @@ function buildIndexedText(vehicle: BndvVehicle) {
 function buildSearchText(filters: any) {
   return normalizeText([
     filters?.query,
+    filters?.ad_context,
+    filters?.contexto_anuncio,
     filters?.marca,
     filters?.modelo,
     filters?.versao,
@@ -185,11 +202,21 @@ function scoreVehicle(vehicle: BndvVehicle, filters: any) {
   if (filters?.versao && version.includes(normalizeText(filters.versao))) score += 4;
   if (year && searchText.includes(year)) score += 3;
 
+  if (searchText.includes('onix') && model.includes('onix')) score += 10;
+  if (searchText.includes('onix') && searchText.includes('sedan') && (model.includes('sed') || version.includes('sed') || model.includes('plus') || version.includes('plus'))) score += 8;
+  if (searchText.includes('onix') && searchText.includes('plus') && (model.includes('plus') || version.includes('plus') || model.includes('sed'))) score += 6;
+  if (searchText.includes('premier') && (version.includes('premier') || version.includes('prem'))) score += 4;
+  if (searchText.includes('ecosport') && model.includes('ecosport')) score += 10;
+  if (searchText.includes('creta') && model.includes('creta')) score += 10;
+
   for (const modelToken of searchTokens(model)) {
     if (queryTokens.includes(modelToken)) score += 5;
   }
 
   if (searchText.includes('creta') && model.includes('tiggo')) score -= 5;
+  if (searchText.includes('onix') && !model.includes('onix')) score -= 8;
+  if (searchText.includes('ecosport') && !model.includes('ecosport')) score -= 8;
+  if (searchText.includes('creta') && !model.includes('creta')) score -= 8;
 
   const requiredTokens = Math.min(2, queryTokens.length);
   if (queryTokens.length > 0 && matchedTokens.length < requiredTokens && score < 5) score = 0;
@@ -426,8 +453,13 @@ Deno.serve(async (req) => {
             label: [vehicle.markName, vehicle.modelName, vehicle.versionName].filter(Boolean).join(" "),
             principal_image: principalImage,
             images_count: pictures.length,
+            match_score: (vehicle as any).__bndv_score || null,
+            relaxed_match: !!(vehicle as any).__bndv_relaxed_match,
           };
         }),
+        response_guidance: filtered.length > 0
+          ? "Ha candidatos compativeis no estoque. Nao trate como indisponivel; se nao for 100% exato, apresente como opcao provavel/proxima e confirme os detalhes."
+          : "Nenhum candidato compativel encontrado mesmo com busca ampla.",
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

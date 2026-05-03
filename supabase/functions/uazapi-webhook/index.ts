@@ -436,11 +436,24 @@ function normalizeBndvText(value?: string | null) {
   normalized = normalized
     .replace(/\beco\s*sport\b/g, 'ecosport')
     .replace(/\bfree\s*style\b/g, 'freestyle')
+    .replace(/\bprem\.\b/g, 'premier')
+    .replace(/\bpremi\b/g, 'premier')
     .replace(/\bcresta\b/g, 'creta')
     .replace(/\bh rv\b/g, 'hrv')
     .replace(/\bt-cross\b/g, 'tcross')
     .replace(/\bt\s+cross\b/g, 'tcross')
+    .replace(/\bonix\s+plus\s+sedan\b/g, 'onix sedan plus')
+    .replace(/\bonix\s+plus\b/g, 'onix sedan plus')
     .replace(/\s+/g, ' ');
+
+  const expansions: string[] = [];
+  if (/\bonix\b/.test(normalized)) expansions.push('chevrolet onix hatch sedan plus joy premier lt ltz activ');
+  if (/\bonix\b/.test(normalized) && /\bsedan\b/.test(normalized)) expansions.push('onix plus');
+  if (/\bcreta\b/.test(normalized)) expansions.push('hyundai creta action comfort limited platinum ultimate');
+  if (/\becosport\b/.test(normalized)) expansions.push('ford ecosport freestyle titanium se');
+  if (/\bargo\b/.test(normalized)) expansions.push('fiat argo drive trekking');
+  if (/\btracker\b/.test(normalized)) expansions.push('chevrolet tracker premier ltz lt');
+  if (expansions.length > 0) normalized = `${normalized} ${expansions.join(' ')}`;
 
   return normalized;
 }
@@ -463,6 +476,8 @@ const BNDV_WEAK_WORDS = new Set([
   'informacoes', 'interesse', 'queria', 'mais', 'favor', 'preco', 'valor',
   'automatico', 'manual', 'flex', 'gasolina', 'diesel', 'alcool', 'aut',
   'mec', 'mecanico', 'motors', 'icom', 'loja', 'estoque', 'ltda', 'porfavor',
+  'lead', 'clicou', 'link', 'meta', 'whatsapp', 'identificado', 'imagem', 'thumbnail',
+  'url', 'texto', 'de', 'da', 'do', 'dos', 'das', 'um', 'uma', 'com', 'sem',
 ]);
 
 function bndvTokens(value?: string | null) {
@@ -534,6 +549,8 @@ function buildBndvIndexedText(vehicle: any) {
 function buildBndvSearchText(filters: any) {
   return normalizeBndvText([
     filters?.query,
+    filters?.ad_context,
+    filters?.contexto_anuncio,
     filters?.marca,
     filters?.modelo,
     filters?.versao,
@@ -578,11 +595,21 @@ function scoreBndvVehicle(vehicle: any, filters: any) {
   if (filters?.versao && exactVersion.includes(normalizeBndvText(filters.versao))) score += 4;
   if (year && searchText.includes(year)) score += 3;
 
+  if (searchText.includes('onix') && exactModel.includes('onix')) score += 10;
+  if (searchText.includes('onix') && searchText.includes('sedan') && (exactModel.includes('sed') || exactVersion.includes('sed') || exactModel.includes('plus') || exactVersion.includes('plus'))) score += 8;
+  if (searchText.includes('onix') && searchText.includes('plus') && (exactModel.includes('plus') || exactVersion.includes('plus') || exactModel.includes('sed'))) score += 6;
+  if (searchText.includes('premier') && (exactVersion.includes('premier') || exactVersion.includes('prem'))) score += 4;
+  if (searchText.includes('ecosport') && exactModel.includes('ecosport')) score += 10;
+  if (searchText.includes('creta') && exactModel.includes('creta')) score += 10;
+
   for (const modelToken of bndvTokens(exactModel)) {
     if (queryTokens.includes(modelToken)) score += 5;
   }
 
   if (searchText.includes('creta') && exactModel.includes('tiggo')) score -= 5;
+  if (searchText.includes('onix') && !exactModel.includes('onix')) score -= 8;
+  if (searchText.includes('ecosport') && !exactModel.includes('ecosport')) score -= 8;
+  if (searchText.includes('creta') && !exactModel.includes('creta')) score -= 8;
 
   const requiredTokens = Math.min(2, queryTokens.length);
   if (queryTokens.length > 0 && matchedTokens.length < requiredTokens && score < 5) score = 0;
@@ -623,6 +650,90 @@ function rankBndvVehicles(items: any[], filters: any) {
     .map((vehicle) => ({ vehicle, ...scoreBndvVehicle(vehicle, filters), relaxed: true }))
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score);
+}
+
+async function rerankBndvVehiclesWithAi(openaiApiKey: string, filters: any, rankedItems: any[]) {
+  const searchText = buildBndvSearchText(filters);
+  if (!openaiApiKey || !searchText || rankedItems.length < 2) {
+    return { ranked: rankedItems, strategy: 'fuzzy_rank', confidence: 'medium', note: '' };
+  }
+
+  const candidates = rankedItems.slice(0, 20).map((item: any, index: number) => ({
+    index,
+    score: item.score,
+    matched_tokens: item.matchedTokens,
+    relaxed: item.relaxed,
+    marca: item.vehicle?.markName,
+    modelo: item.vehicle?.modelName,
+    versao: item.vehicle?.versionName,
+    ano: item.vehicle?.year,
+    preco: item.vehicle?.saleValue,
+    cor: item.vehicle?.color,
+  }));
+
+  try {
+    const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'Voce e um classificador de estoque automotivo.',
+              'Escolha quais candidatos do estoque correspondem ao veiculo procurado em um anuncio ou conversa.',
+              'Leitura de anuncio pode errar ano, letras e versao. Modelo/familia visual tem prioridade sobre ano/versao exatos.',
+              'Se houver mesmo modelo/familia e versao proxima, trate como disponivel/provavel, nao como ausente.',
+              'Responda apenas JSON: {"best_indexes":[0,1],"confidence":"high|medium|low","reason":"curto"}.',
+            ].join(' '),
+          },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              busca_do_lead: searchText,
+              filtros_recebidos: filters || {},
+              candidatos: candidates,
+            }),
+          },
+        ],
+      }),
+    });
+
+    if (!aiRes.ok) {
+      console.warn(`[BNDV] AI rerank indisponivel: ${aiRes.status}`);
+      return { ranked: rankedItems, strategy: 'fuzzy_rank', confidence: 'medium', note: '' };
+    }
+
+    const aiPayload = await aiRes.json().catch(() => null);
+    const content = aiPayload?.choices?.[0]?.message?.content || '{}';
+    const parsed = JSON.parse(content);
+    const indexes = Array.isArray(parsed?.best_indexes)
+      ? parsed.best_indexes.map((value: any) => Number(value)).filter((value: number) => Number.isInteger(value) && value >= 0 && value < candidates.length)
+      : [];
+
+    if (indexes.length === 0) {
+      return { ranked: rankedItems, strategy: 'fuzzy_rank', confidence: 'medium', note: String(parsed?.reason || '') };
+    }
+
+    const selected = indexes.map((index: number) => rankedItems[index]).filter(Boolean);
+    const selectedSet = new Set(indexes);
+    const rest = rankedItems.filter((_: any, index: number) => !selectedSet.has(index));
+    return {
+      ranked: [...selected, ...rest],
+      strategy: 'ai_rerank',
+      confidence: parsed?.confidence || 'medium',
+      note: String(parsed?.reason || ''),
+    };
+  } catch (err) {
+    console.warn('[BNDV] Falha no AI rerank:', err);
+    return { ranked: rankedItems, strategy: 'fuzzy_rank', confidence: 'medium', note: '' };
+  }
 }
 
 function parseBndvPictures(rawPictureJs: any) {
@@ -715,7 +826,7 @@ function buildImageFileName(imageUrl: string, vehicleLabel?: string) {
   return `${baseName}.${extension}`;
 }
 
-async function fetchBndvVehicles(supabase: any, userId: string, filters: any) {
+async function fetchBndvVehicles(supabase: any, userId: string, filters: any, options: any = {}) {
   const BNDV_API_URL = 'https://api-estoque.azurewebsites.net/graphql';
 
   const { data: integration, error: integrationError } = await supabase
@@ -776,34 +887,50 @@ async function fetchBndvVehicles(supabase: any, userId: string, filters: any) {
     return { success: false, error: payload.errors[0]?.message || 'A API do BNDV retornou um erro.' };
   }
 
+  const rankingFilters = {
+    ...(filters || {}),
+    ad_context: String(options?.adTextContext || filters?.ad_context || '').trim(),
+  };
   const items = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
-  const rankedVehicles = rankBndvVehicles(items, filters || {});
-  const filtered = rankedVehicles
-    .sort((left: any, right: any) => {
+  const rankedVehicles = rankBndvVehicles(items, rankingFilters);
+  const reranked = await rerankBndvVehiclesWithAi(String(options?.openaiApiKey || ''), rankingFilters, rankedVehicles);
+  const orderedVehicles = reranked.strategy === 'ai_rerank'
+    ? reranked.ranked
+    : reranked.ranked.sort((left: any, right: any) => {
       if (right.score !== left.score) return right.score - left.score;
       const leftPrice = Number(left.vehicle?.saleValue || 0);
       const rightPrice = Number(right.vehicle?.saleValue || 0);
       if (leftPrice !== rightPrice) return leftPrice - rightPrice;
       return Number(right.vehicle?.year || 0) - Number(left.vehicle?.year || 0);
-    })
+    });
+
+  const filtered = orderedVehicles
     .map((item: any) => ({
       ...item.vehicle,
       __bndv_score: item.score,
       __bndv_matched_tokens: item.matchedTokens,
       __bndv_relaxed_match: item.relaxed,
+      __bndv_match_strategy: reranked.strategy,
+      __bndv_match_confidence: reranked.confidence,
     }));
 
-  console.log(`[BNDV] Busca ranqueada | filtros: ${JSON.stringify(filters || {})} | total estoque: ${items.length} | encontrados: ${filtered.length} | relaxada: ${filtered.some((item: any) => item.__bndv_relaxed_match) ? 'sim' : 'nao'}`);
+  console.log(`[BNDV] Busca inteligente | filtros: ${JSON.stringify(filters || {})} | ad: ${rankingFilters.ad_context ? 'sim' : 'nao'} | total estoque: ${items.length} | encontrados: ${filtered.length} | estrategia: ${reranked.strategy} | relaxada: ${filtered.some((item: any) => item.__bndv_relaxed_match) ? 'sim' : 'nao'}`);
 
   return {
     success: true,
     total: filtered.length,
     items: filtered,
+    match_strategy: reranked.strategy,
+    match_confidence: reranked.confidence,
+    match_note: reranked.note,
+    response_guidance: filtered.length > 0
+      ? 'Ha candidatos compativeis no estoque. Nao diga que nao temos o veiculo. Se nao for uma correspondencia 100% exata, diga de forma humana que encontrou uma opcao muito proxima/correspondente e confirme detalhes como ano, versao e preco.'
+      : 'Nenhum candidato compativel foi encontrado mesmo com busca ampla.',
   };
 }
 
-async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
-  const result = await fetchBndvVehicles(supabase, userId, filters);
+async function consultarEstoqueBndv(supabase: any, userId: string, filters: any, options: any = {}) {
+  const result = await fetchBndvVehicles(supabase, userId, filters, options);
   if (!result.success) return result;
 
   const limite = filters?.limite;
@@ -823,6 +950,10 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     cambio: vehicle?.transmissionName || null,
       label: buildBndvVehicleLabel(vehicle),
       images_count: pictures.length,
+      match_score: vehicle?.__bndv_score || null,
+      match_strategy: vehicle?.__bndv_match_strategy || result.match_strategy || null,
+      match_confidence: vehicle?.__bndv_match_confidence || result.match_confidence || null,
+      relaxed_match: !!vehicle?.__bndv_relaxed_match,
     };
   });
 
@@ -830,6 +961,10 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     success: true,
     total: result.total,
     items: capped,
+    match_strategy: result.match_strategy,
+    match_confidence: result.match_confidence,
+    match_note: result.match_note,
+    response_guidance: result.response_guidance,
   };
 }
 
@@ -908,8 +1043,8 @@ function buildBndvPhotoLinksMessage(vehicleLabel: string, vehicle: any, pictures
   return [intro, details, urls].filter(Boolean).join('\n\n');
 }
 
-async function enviarFotosBndv(supabase: any, userId: string, filters: any, delivery: any) {
-  const result = await fetchBndvVehicles(supabase, userId, filters);
+async function enviarFotosBndv(supabase: any, userId: string, filters: any, delivery: any, options: any = {}) {
+  const result = await fetchBndvVehicles(supabase, userId, filters, options);
   if (!result.success) return result;
 
   const allVehicles = result.items || [];
@@ -1502,7 +1637,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "consultar_estoque_bndv",
-        description: "Acessa o estoque BNDV em tempo real com busca tolerante a erro de leitura, variação de versão e OCR de anúncio. Retorna veículos disponíveis com modelo, versão, ano, km, preço e combustível. Use sempre que o lead vier de anúncio ou perguntar disponibilidade. Nunca declare que não há estoque sem consultar; se a busca retornar candidatos aproximados, trate o melhor candidato como opção provável e confirme de forma humana.",
+        description: "Acessa o estoque BNDV em tempo real com busca inteligente/tolerante a erro de leitura, variacao de versao, ano incorreto e OCR de anuncio. Retorna veiculos disponiveis com modelo, versao, ano, km, preco e combustivel. Use sempre que o lead vier de anuncio ou perguntar disponibilidade. Nunca declare que nao ha estoque se a ferramenta retornar candidatos: candidatos aproximados devem ser tratados como opcoes provaveis/compativeis e confirmados de forma humana.",
         parameters: {
           type: "object",
           properties: {
@@ -1910,7 +2045,7 @@ Responda de forma humana, comercial e natural, sem mencionar que você "não abr
   }
 
   if (hasAdTextContext) {
-    systemPrompt += `\n\n(CONTEXTO DO ANÚNCIO META/FACEBOOK/INSTAGRAM: ${normalizedAdTextContext}. Considere este anúncio como o veículo de interesse principal do lead. A leitura visual pode trocar letras, como Cresta/Creta, ou misturar versão com modelo. Consulte o estoque BNDV com busca ampla antes de sugerir outros carros e nunca diga que o veículo saiu de estoque sem a ferramenta retornar zero candidatos.)`;
+    systemPrompt += `\n\n(CONTEXTO DO ANUNCIO META/FACEBOOK/INSTAGRAM: ${normalizedAdTextContext}. Considere este anuncio como o veiculo de interesse principal do lead. A leitura visual pode trocar letras, como Cresta/Creta, ou misturar versao/modelo/ano. Consulte o estoque BNDV com busca ampla antes de sugerir outros carros. Se a ferramenta retornar QUALQUER candidato compativel ou provavel, nunca diga que nao temos ou que saiu de estoque; responda como consultor humano: "encontrei esse aqui no estoque" ou "achei uma opcao muito proxima", confirmando ano/versao/preco com naturalidade.)`;
   }
 
   // Contexto situacional: apenas quando o lead já foi transferido
@@ -2189,7 +2324,10 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
 
         if (toolCall.function.name === 'consultar_estoque_bndv') {
           const args = JSON.parse(toolCall.function.arguments || '{}');
-          const stockResult = await consultarEstoqueBndv(supabase, agent.user_id, args);
+          const stockResult = await consultarEstoqueBndv(supabase, agent.user_id, args, {
+            openaiApiKey,
+            adTextContext: normalizedAdTextContext,
+          });
           console.log(`[BNDV] Consulta executada | success: ${stockResult.success} | total: ${stockResult.total || 0}`);
           toolMessages.push({
             role: 'tool',
@@ -2205,7 +2343,8 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
             supabase,
             agent.user_id,
             args,
-            { baseUrl, instKey, instanceName, phoneNumber, remoteJid }
+            { baseUrl, instKey, instanceName, phoneNumber, remoteJid },
+            { openaiApiKey, adTextContext: normalizedAdTextContext }
           );
           console.log(`[BNDV] Envio de fotos executado | success: ${photoResult.success} | sent: ${photoResult.sent || 0}`);
           if (photoResult?.suppress_follow_up) {
@@ -2290,4 +2429,3 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
 
   return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
 }
-
