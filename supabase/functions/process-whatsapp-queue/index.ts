@@ -158,12 +158,17 @@ Deno.serve(async (req) => {
           .eq("id", cid)
           .single();
         if (freshStatus && (freshStatus.status === "paused" || freshStatus.status === "cancelled")) {
-          console.log(`Campaign ${cid} is ${freshStatus.status}, returning all its items to pending`);
+          console.log(`Campaign ${cid} is ${freshStatus.status}, deferring its pending queue items to unblock queue`);
+          // Push ALL pending items of this paused/cancelled campaign 24h into the future
+          // so they don't block pending items of active campaigns in the queue
           await supabase
             .from("wa_queue")
-            .update({ status: "pending" })
+            .update({
+              status: "pending",
+              scheduled_for: new Date(Date.now() + 24 * 3600_000).toISOString(),
+            })
             .eq("campaign_id", cid)
-            .eq("status", "processing");
+            .in("status", ["processing", "pending"]);
         } else {
           activeCampaignIds.add(cid);
         }
@@ -445,9 +450,12 @@ Deno.serve(async (req) => {
         // ===== SHADOW BAN DETECTION: Increment consecutive_undelivered =====
         // When a delivery receipt arrives, it will reset this counter.
         // If it reaches 10+, the instance is flagged as shadow-banned.
-        await supabase.rpc("increment_consecutive_undelivered", { iid: instance.id }).catch((err: any) => {
-          console.warn("increment_consecutive_undelivered failed:", err);
-        });
+        try {
+          const { error: undeliveredErr } = await supabase.rpc("increment_consecutive_undelivered", { iid: instance.id });
+          if (undeliveredErr) console.warn("increment_consecutive_undelivered failed:", undeliveredErr);
+        } catch (rpcEx: any) {
+          console.warn("increment_consecutive_undelivered exception:", rpcEx);
+        }
 
         // ===== SAVE TO CRM INBOX =====
         // Store every outgoing message so conversations appear in the unified inbox
