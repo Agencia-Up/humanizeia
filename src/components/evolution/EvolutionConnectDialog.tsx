@@ -51,7 +51,8 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
         setFriendlyName(initialFriendlyName || initialInstanceName);
         setActiveSlug(initialInstanceName);
         setProvider('evolution');
-        handleCreateUazapiInstance(initialInstanceName);
+        // Reconectar instância existente: buscar QR diretamente sem criar nova
+        handleReconnectExisting(initialInstanceName);
       }
     } else {
       stopPolling();
@@ -101,6 +102,29 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
       startPolling(slug);
     } catch (err: any) {
       toast.error(err.message || 'Erro ao criar instância');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  // ========== RECONNECT EXISTING INSTANCE (busca QR sem criar novo registro) ==========
+  const handleReconnectExisting = async (slug: string) => {
+    setIsCreating(true);
+    setStep('qrcode');
+    try {
+      const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
+        body: { user_id: user!.id, instance_name: slug },
+      });
+      if (error) throw error;
+      if (data?.connected) {
+        handleSuccess();
+        return;
+      }
+      setQrCode(data?.qr_code || null);
+      startPolling(slug);
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao buscar QR Code da instância');
+      setStep('instance');
     } finally {
       setIsCreating(false);
     }
