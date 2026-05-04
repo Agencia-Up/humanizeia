@@ -271,8 +271,16 @@ Deno.serve(async (req) => {
         const userInstances = instanceMap.get(item.user_id);
 
         if (!userInstances || userInstances.length === 0) {
-          await markFailed(supabase, item.id, "No active WhatsApp instances available");
-          failed++; processed++; continue;
+          // No instance connected yet — defer retry instead of permanently failing
+          await supabase
+            .from("wa_queue")
+            .update({
+              status: "pending",
+              scheduled_for: new Date(Date.now() + 60_000).toISOString(),
+              error_message: "Aguardando instância WhatsApp conectada — tentando novamente em 1 min",
+            })
+            .eq("id", item.id);
+          processed++; continue;
         }
 
         // --- Smart Switcher: Instance Selection ---
@@ -286,8 +294,16 @@ Deno.serve(async (req) => {
         );
 
         if (!instance) {
-          await markFailed(supabase, item.id, "All instances circuit-broken or at warmup limit");
-          failed++; processed++; continue;
+          // Circuit broken or at daily limit — defer retry instead of permanently failing
+          await supabase
+            .from("wa_queue")
+            .update({
+              status: "pending",
+              scheduled_for: new Date(Date.now() + 300_000).toISOString(),
+              error_message: "Instâncias no limite ou circuit-breaker ativo — tentando novamente em 5 min",
+            })
+            .eq("id", item.id);
+          processed++; continue;
         }
 
         selectedInstance = instance;
