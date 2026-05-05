@@ -389,28 +389,18 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   }, [activeMembers, transfers]);
 
   const memberStats = useMemo(() => {
-    // Usa o mesmo threshold do filtro de período para mostrar os atendimentos do período selecionado
-    const threshold = getThreshold(dateFilter, customStart);
-    const endDate = dateFilter === 'custom' && customEnd ? new Date(customEnd + 'T23:59:59') : null;
     const today = new Date(); today.setHours(0, 0, 0, 0);
 
     return activeMembers.map(m => ({
       ...m,
-      // Atendimentos no período selecionado (respeita o filtro do gerente)
-      periodCount: transfers.filter(t => {
-        if (t.to_member_id !== m.id) return false;
-        const d = new Date(t.created_at);
-        if (threshold && d < threshold) return false;
-        if (endDate && d > endDate) return false;
-        return true;
-      }).length,
-      // Atendimentos só hoje (sempre visível como sub-dado)
+      // Atendimentos só hoje — número principal do painel de rodízio
       todayCount: transfers.filter(t =>
         t.to_member_id === m.id && new Date(t.created_at) >= today
       ).length,
+      // Total histórico de atendimentos — mostrado como sub-dado
       totalCount: transfers.filter(t => t.to_member_id === m.id).length,
-    })).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
-  }, [activeMembers, transfers, dateFilter, customStart, customEnd]);
+    })).sort((a, b) => b.todayCount - a.todayCount || b.totalCount - a.totalCount);
+  }, [activeMembers, transfers]);
 
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
@@ -864,24 +854,18 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {memberStats.slice(0, 5).map((m, i) => {
                   const pal = SELLER_PALETTE[i % SELLER_PALETTE.length];
-                  const periodLabel = dateFilter === 'today' ? 'Hoje'
-                    : dateFilter === '7d' ? '7 dias'
-                    : dateFilter === '30d' ? '30 dias'
-                    : dateFilter === '90d' ? '90 dias'
-                    : dateFilter === 'custom' ? `${customStart || '?'}→${customEnd || '?'}`
-                    : 'Total';
                   return (
                     <div key={m.id} className={m.is_active ? 'seller-active' : ''} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: 10, background: pal.bg, border: `1.5px solid ${pal.main}`, padding: '12px' }}>
                       <div style={{ minWidth: 0 }}>
                         <p style={{ fontSize: 10, color: '#475569', fontWeight: 700, marginBottom: 2 }}>#{i + 1} {m.is_active ? '● Ativo' : '○ Off'}</p>
                         <p style={{ fontSize: 16, fontWeight: 800, color: pal.light, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{m.name}</p>
-                        {dateFilter !== 'today' && (
-                          <p style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>Hoje: {m.todayCount}</p>
+                        {m.totalCount > 0 && (
+                          <p style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>Total: {m.totalCount}</p>
                         )}
                       </div>
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        <p style={{ fontSize: 24, fontWeight: 900, color: pal.light, lineHeight: 1 }}>{m.periodCount}</p>
-                        <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.15em', color: '#475569', fontWeight: 700 }}>{periodLabel}</p>
+                        <p style={{ fontSize: 24, fontWeight: 900, color: pal.light, lineHeight: 1 }}>{m.todayCount}</p>
+                        <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.15em', color: '#475569', fontWeight: 700 }}>Hoje</p>
                       </div>
                     </div>
                   );
