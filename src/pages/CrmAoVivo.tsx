@@ -459,6 +459,10 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           lead_summary: l.summary,
           qualified_by: 'Pedro SDR',
           assigned_to: l.member?.name || null,
+          assigned_to_phone: l.member?.whatsapp_number || null,
+          transferred_at: l.transferred_at || null,
+          transfer_reason: l.transfer_reason || null,
+          agent_name: l.agent?.name || 'Pedro',
           synced_at: new Date().toISOString(),
         },
       }));
