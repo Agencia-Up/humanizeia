@@ -25,7 +25,7 @@ async function sendWAMessage(instance: any, phone: string, text: string) {
 }
 
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
-async function syncLeadToMarcos(supabase: any, userId: string, lead: any, memberName: string) {
+async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member: any) {
   try {
     const phone = lead.remote_jid.replace(/\D/g, "");
     const name = lead.lead_name || phone;
@@ -66,7 +66,11 @@ async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member
             lead_status: lead.status,
             lead_summary: lead.summary,
             qualified_by: "Pedro SDR",
-            assigned_to: memberName,
+            assigned_to: member.name,
+            assigned_to_phone: member.whatsapp_number || null,
+            transferred_at: new Date().toISOString(),
+            transfer_reason: "manual",
+            agent_name: lead.agent?.name || "Pedro",
             synced_at: new Date().toISOString(),
           },
         },
@@ -76,7 +80,7 @@ async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member
       .single();
 
     if (contactErr) console.warn("wa_contacts upsert warning:", contactErr);
-    console.log(`Lead ${phone} synced to Marcos list '${listName}' (contact: ${contact?.id})`);
+    console.log(`Lead ${phone} synced to Marcos list '${listName}' — vendedor: ${member.name} (${member.whatsapp_number}) — contact: ${contact?.id}`);
   } catch (err) {
     console.warn("syncLeadToMarcos failed (non-critical):", err);
   }
@@ -245,7 +249,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
     }).eq("id", member.id);
 
     // 10. Sync lead to Marcos contact list (non-blocking)
-    syncLeadToMarcos(supabase, userId, lead, member.name);
+    syncLeadToMarcos(supabase, userId, lead, member);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
