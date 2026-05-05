@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Users, UserPlus, Phone, Loader2, Trash2, PhoneForwarded, Pencil, Check, X } from 'lucide-react';
+import { Users, UserPlus, Phone, Loader2, Trash2, PhoneForwarded, Pencil, Check, X, Crown, Save } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 
 interface AgentCrmEquipeTabProps {
@@ -22,6 +22,10 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
   const [newSellerPhone, setNewSellerPhone] = useState('');
   const [savingSeller, setSavingSeller] = useState(false);
 
+  // Gerente (manager) phone state
+  const [gerentePhone, setGerentePhone] = useState('');
+  const [savingGerente, setSavingGerente] = useState(false);
+
   // Estado de edição inline
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -36,14 +40,14 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
     
     setLoading(true);
     try {
-      const { data: teamData, error: teamErr } = await (supabase as any)
-        .from('ai_team_members')
-        .select('*')
-        .eq('agent_id', agentId)
-        .order('created_at', { ascending: true });
-        
+      const [{ data: teamData, error: teamErr }, { data: agentData }] = await Promise.all([
+        (supabase as any).from('ai_team_members').select('*').eq('agent_id', agentId).order('created_at', { ascending: true }),
+        (supabase as any).from('wa_ai_agents').select('gerente_phone').eq('id', agentId).single(),
+      ]);
+
       if (teamErr) throw teamErr;
       setTeamMembers(teamData || []);
+      setGerentePhone(agentData?.gerente_phone || '');
 
     } catch (err: any) {
       console.error('Erro ao carregar Equipe:', err);
@@ -92,6 +96,25 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
       setTeamMembers(prev => prev.map(m => m.id === id ? { ...m, is_active: !currentStatus } : m));
     } catch (err: any) {
       toast({ title: 'Erro', variant: 'destructive' });
+    }
+  };
+
+  const handleSaveGerente = async () => {
+    if (!agentId) return;
+    setSavingGerente(true);
+    try {
+      const cleanPhone = gerentePhone.replace(/\D/g, '');
+      const { error } = await (supabase as any)
+        .from('wa_ai_agents')
+        .update({ gerente_phone: cleanPhone || null })
+        .eq('id', agentId);
+      if (error) throw error;
+      setGerentePhone(cleanPhone);
+      toast({ title: '✅ Número do Gerente salvo!', description: 'Ele receberá relatório a cada transferência de lead.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao salvar gerente', description: err.message, variant: 'destructive' });
+    } finally {
+      setSavingGerente(false);
     }
   };
 
@@ -166,6 +189,37 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
         <div className="leading-relaxed">
           <strong>Inteligência Comercial:</strong> Quando o Pedro identificar clientes quentes e qualificá-los no CRM, ele automaticamente encaminhará o resumo da conversa via WhatsApp para os seus vendedores configurados nesta lista.
         </div>
+      </div>
+
+      {/* ── GERENTE — Relatório automático ──────────────── */}
+      <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3">
+        <div className="flex items-center gap-2">
+          <Crown className="h-4 w-4 text-amber-400" />
+          <h4 className="text-sm font-semibold text-amber-300">WhatsApp do Gerente</h4>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          A cada lead transferido para um vendedor, o gerente receberá um relatório automático via WhatsApp com nome do lead, vendedor designado e hora da transferência.
+        </p>
+        <div className="flex gap-2">
+          <Input
+            placeholder="Ex: 5511999990000 (com DDI)"
+            value={gerentePhone}
+            onChange={e => setGerentePhone(e.target.value)}
+            className="h-8 text-xs font-mono flex-1"
+          />
+          <Button
+            size="sm"
+            className="h-8 px-4 shrink-0 bg-amber-600 hover:bg-amber-700 text-white"
+            onClick={handleSaveGerente}
+            disabled={savingGerente}
+          >
+            {savingGerente ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+            Salvar
+          </Button>
+        </div>
+        {gerentePhone && (
+          <p className="text-[10px] text-amber-400/70">✅ Gerente configurado: {gerentePhone}</p>
+        )}
       </div>
 
       <div className="space-y-4">
