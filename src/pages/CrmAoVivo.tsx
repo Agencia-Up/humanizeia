@@ -28,16 +28,17 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
 /* ── Filtro de período ──────────────────────────────────── */
-type DateFilter = 'today' | '7d' | '30d' | '90d' | 'all';
+type DateFilter = 'today' | '7d' | '30d' | '90d' | 'all' | 'custom';
 const DATE_FILTERS: { value: DateFilter; label: string }[] = [
-  { value: 'today', label: 'Hoje'   },
-  { value: '7d',    label: '7 dias' },
-  { value: '30d',   label: '30 dias'},
-  { value: '90d',   label: '90 dias'},
-  { value: 'all',   label: 'Tudo'   },
+  { value: 'today',  label: 'Hoje'          },
+  { value: '7d',     label: '7 dias'        },
+  { value: '30d',    label: '30 dias'       },
+  { value: '90d',    label: '90 dias'       },
+  { value: 'all',    label: 'Tudo'          },
+  { value: 'custom', label: 'Personalizado' },
 ];
-function getThreshold(f: DateFilter): Date | null {
-  if (f === 'all') return null;
+function getThreshold(f: DateFilter, customStart?: string): Date | null {
+  if (f === 'all' || f === 'custom') return customStart ? new Date(customStart + 'T00:00:00') : null;
   const now = new Date();
   if (f === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
   const days = f === '7d' ? 7 : f === '30d' ? 30 : 90;
@@ -251,6 +252,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const mutedRef = useRef(muted); // sempre atual para callbacks de subscription
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState<DateFilter>('today');
+  const [customStart, setCustomStart] = useState<string>('');
+  const [customEnd, setCustomEnd] = useState<string>('');
+  const [exportingMarcos, setExportingMarcos] = useState(false);
 
   useEffect(() => { mutedRef.current = muted; }, [muted]); // mantém ref sempre sincronizada
 
@@ -349,13 +353,18 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   // Leads filtrados pelo período selecionado
   const filteredLeads = useMemo(() => {
-    const threshold = getThreshold(dateFilter);
-    if (!threshold) return leads;
+    const threshold = getThreshold(dateFilter, customStart);
+    const endDate = dateFilter === 'custom' && customEnd
+      ? new Date(customEnd + 'T23:59:59')
+      : null;
+    if (!threshold && !endDate) return leads;
     return leads.filter(l => {
       const d = new Date(l.created_at || l.last_interaction_at);
-      return d >= threshold;
+      if (threshold && d < threshold) return false;
+      if (endDate && d > endDate) return false;
+      return true;
     });
-  }, [leads, dateFilter]);
+  }, [leads, dateFilter, customStart, customEnd]);
 
   // Contagem de hoje (sempre fixa no KPI, independente do filtro)
   const todayStart = useMemo(() => {
@@ -381,23 +390,27 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   const memberStats = useMemo(() => {
     // Usa o mesmo threshold do filtro de período para mostrar os atendimentos do período selecionado
-    const threshold = getThreshold(dateFilter);
+    const threshold = getThreshold(dateFilter, customStart);
+    const endDate = dateFilter === 'custom' && customEnd ? new Date(customEnd + 'T23:59:59') : null;
     const today = new Date(); today.setHours(0, 0, 0, 0);
 
     return activeMembers.map(m => ({
       ...m,
       // Atendimentos no período selecionado (respeita o filtro do gerente)
-      periodCount: transfers.filter(t =>
-        t.to_member_id === m.id &&
-        (!threshold || new Date(t.created_at) >= threshold)
-      ).length,
+      periodCount: transfers.filter(t => {
+        if (t.to_member_id !== m.id) return false;
+        const d = new Date(t.created_at);
+        if (threshold && d < threshold) return false;
+        if (endDate && d > endDate) return false;
+        return true;
+      }).length,
       // Atendimentos só hoje (sempre visível como sub-dado)
       todayCount: transfers.filter(t =>
         t.to_member_id === m.id && new Date(t.created_at) >= today
       ).length,
       totalCount: transfers.filter(t => t.to_member_id === m.id).length,
     })).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
-  }, [activeMembers, transfers, dateFilter]);
+  }, [activeMembers, transfers, dateFilter, customStart, customEnd]);
 
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
@@ -406,6 +419,68 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     });
     return res;
   }, [filteredLeads]);
+
+  // ── Exportar leads filtrados para lista do Marcos ─────────────────────────
+  const handleExportToMarcos = useCallback(async () => {
+    if (!user || filteredLeads.length === 0) return;
+    setExportingMarcos(true);
+    try {
+      const listName = 'Leads Pedro CRM';
+      // Ensure list exists
+      let listId: string;
+      const { data: existingList } = await (supabase as any)
+        .from('wa_contact_lists')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('name', listName)
+        .maybeSingle();
+
+      if (existingList?.id) {
+        listId = existingList.id;
+      } else {
+        const { data: newList, error: listErr } = await (supabase as any)
+          .from('wa_contact_lists')
+          .insert({ user_id: user.id, name: listName, description: 'Leads qualificados pelo Pedro SDR' })
+          .select('id')
+          .single();
+        if (listErr) throw listErr;
+        listId = newList.id;
+      }
+
+      // Upsert each lead as a contact
+      const contacts = filteredLeads.map(l => ({
+        user_id: user.id,
+        list_id: listId,
+        phone: l.remote_jid.replace(/\D/g, ''),
+        name: l.lead_name || l.remote_jid.replace(/\D/g, ''),
+        is_valid: true,
+        metadata: {
+          lead_status: l.status,
+          lead_summary: l.summary,
+          qualified_by: 'Pedro SDR',
+          assigned_to: l.member?.name || null,
+          synced_at: new Date().toISOString(),
+        },
+      }));
+
+      // Insert in batches of 50
+      let exported = 0;
+      for (let i = 0; i < contacts.length; i += 50) {
+        const batch = contacts.slice(i, i + 50);
+        const { error } = await (supabase as any)
+          .from('wa_contacts')
+          .upsert(batch, { onConflict: 'user_id,list_id,phone', ignoreDuplicates: false });
+        if (error) console.warn('Batch upsert warning:', error);
+        else exported += batch.length;
+      }
+
+      toast.success(`✅ ${exported} leads exportados para a lista "${listName}" do Marcos`);
+    } catch (err: any) {
+      toast.error(`Erro ao exportar: ${err.message}`);
+    } finally {
+      setExportingMarcos(false);
+    }
+  }, [user, filteredLeads]);
 
   // ── Drag-and-drop: muda status do lead entre colunas ─────────────────────
   const handleDragEnd = useCallback(async (result: DropResult) => {
@@ -565,7 +640,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           <CalendarDays style={{ width: 14, height: 14, color: '#64748B' }} />
           <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#64748B' }}>Período</span>
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {DATE_FILTERS.map(f => (
             <button
               key={f.value}
@@ -578,7 +653,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                 border: 'none',
                 cursor: 'pointer',
                 transition: 'all 0.15s',
-                background: dateFilter === f.value ? C.cyan : 'rgba(255,255,255,0.06)',
+                background: dateFilter === f.value
+                  ? f.value === 'custom' ? C.purple : C.cyan
+                  : 'rgba(255,255,255,0.06)',
                 color: dateFilter === f.value ? '#fff' : '#94A3B8',
               }}
             >
@@ -586,17 +663,80 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             </button>
           ))}
         </div>
+
+        {/* Date range inputs — visible only when 'custom' is selected */}
+        {dateFilter === 'custom' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: '#94A3B8' }}>De</span>
+            <input
+              type="date"
+              value={customStart}
+              onChange={e => setCustomStart(e.target.value)}
+              style={{
+                background: 'rgba(106,27,154,0.2)',
+                border: `1px solid ${C.purple}`,
+                borderRadius: 8,
+                color: '#E9D5FF',
+                fontSize: 12,
+                padding: '4px 10px',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            />
+            <span style={{ fontSize: 11, color: '#94A3B8' }}>até</span>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={e => setCustomEnd(e.target.value)}
+              style={{
+                background: 'rgba(106,27,154,0.2)',
+                border: `1px solid ${C.purple}`,
+                borderRadius: 8,
+                color: '#E9D5FF',
+                fontSize: 12,
+                padding: '4px 10px',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            />
+          </div>
+        )}
+
         {dateFilter !== 'all' && (
           <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, background: C.cyanBg, border: `1px solid ${C.cyan}`, color: C.cyanL }}>
             {filteredLeads.length} de {leads.length} leads
           </span>
         )}
+
+        {/* Export to Marcos button */}
+        <button
+          onClick={handleExportToMarcos}
+          disabled={exportingMarcos || filteredLeads.length === 0}
+          style={{
+            marginLeft: 'auto',
+            padding: '5px 14px',
+            borderRadius: 8,
+            fontSize: 12,
+            fontWeight: 700,
+            border: `1px solid ${C.green}`,
+            cursor: exportingMarcos || filteredLeads.length === 0 ? 'not-allowed' : 'pointer',
+            background: 'rgba(46,125,50,0.15)',
+            color: exportingMarcos || filteredLeads.length === 0 ? '#64748B' : C.greenL,
+            transition: 'all 0.15s',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+          title="Exportar leads do período para lista de contatos do Marcos (disparo em massa / follow-up)"
+        >
+          {exportingMarcos ? '⏳' : '📤'} Exportar para Marcos ({filteredLeads.length})
+        </button>
       </div>
 
       {/* ── MÉTRICAS ──────────────────────────────── */}
       <div style={{ padding: '8px 24px 20px', display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2,1fr)' : 'repeat(5,1fr)', gap: 14 }}>
         {[
-          { icon: <Users className="h-5 w-5" />, label: dateFilter === 'all' ? 'Leads no pipeline' : `Leads — ${DATE_FILTERS.find(f=>f.value===dateFilter)?.label}`, value: filteredLeads.length, main: C.blue, light: C.blueL, bg: C.blueBg },
+          { icon: <Users className="h-5 w-5" />, label: dateFilter === 'all' ? 'Leads no pipeline' : dateFilter === 'custom' ? `Leads — ${customStart || '?'} a ${customEnd || '?'}` : `Leads — ${DATE_FILTERS.find(f=>f.value===dateFilter)?.label}`, value: filteredLeads.length, main: C.blue, light: C.blueL, bg: C.blueBg },
           { icon: <Flame className="h-5 w-5" />, label: 'Qualificados', value: totalQualified, main: C.green, light: C.greenL, bg: C.greenBg },
           { icon: <UserCheck className="h-5 w-5" />, label: 'Em atendimento', value: attendedNow, main: C.orange, light: C.orangeL, bg: C.orangeBg },
           { icon: <Crown className="h-5 w-5" />, label: 'Vendedores online', value: activeMembers.length, main: C.purple, light: C.purpleL, bg: C.purpleBg },
@@ -724,6 +864,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                     : dateFilter === '7d' ? '7 dias'
                     : dateFilter === '30d' ? '30 dias'
                     : dateFilter === '90d' ? '90 dias'
+                    : dateFilter === 'custom' ? `${customStart || '?'}→${customEnd || '?'}`
                     : 'Total';
                   return (
                     <div key={m.id} className={m.is_active ? 'seller-active' : ''} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: 10, background: pal.bg, border: `1.5px solid ${pal.main}`, padding: '12px' }}>
