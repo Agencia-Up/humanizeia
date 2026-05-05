@@ -439,6 +439,9 @@ function normalizeBndvText(value?: string | null) {
     .replace(/\bprem\.\b/g, 'premier')
     .replace(/\bpremi\b/g, 'premier')
     .replace(/\bcresta\b/g, 'creta')
+    .replace(/\bauthen\.?\b/g, 'authentique')
+    .replace(/\bauthent\.?\b/g, 'authentique')
+    .replace(/\bauth\b/g, 'authentique')
     .replace(/\bh rv\b/g, 'hrv')
     .replace(/\bt-cross\b/g, 'tcross')
     .replace(/\bt\s+cross\b/g, 'tcross')
@@ -451,6 +454,7 @@ function normalizeBndvText(value?: string | null) {
   if (/\bonix\b/.test(normalized) && /\bsedan\b/.test(normalized)) expansions.push('onix plus');
   if (/\bcreta\b/.test(normalized)) expansions.push('hyundai creta action comfort limited platinum ultimate');
   if (/\becosport\b/.test(normalized)) expansions.push('ford ecosport freestyle titanium se');
+  if (/\bduster\b/.test(normalized)) expansions.push('renault duster authentique dynamique expression intense iconic suv automatico manual');
   if (/\bargo\b/.test(normalized)) expansions.push('fiat argo drive trekking');
   if (/\btracker\b/.test(normalized)) expansions.push('chevrolet tracker premier ltz lt');
   if (expansions.length > 0) normalized = `${normalized} ${expansions.join(' ')}`;
@@ -601,6 +605,9 @@ function scoreBndvVehicle(vehicle: any, filters: any) {
   if (searchText.includes('premier') && (exactVersion.includes('premier') || exactVersion.includes('prem'))) score += 4;
   if (searchText.includes('ecosport') && exactModel.includes('ecosport')) score += 10;
   if (searchText.includes('creta') && exactModel.includes('creta')) score += 10;
+  if (searchText.includes('duster') && exactModel.includes('duster')) score += 10;
+  if (searchText.includes('duster') && searchText.includes('renault') && exactMark.includes('renault')) score += 4;
+  if (searchText.includes('authentique') && (exactVersion.includes('authentique') || exactVersion.includes('auth'))) score += 4;
 
   for (const modelToken of bndvTokens(exactModel)) {
     if (queryTokens.includes(modelToken)) score += 5;
@@ -610,6 +617,7 @@ function scoreBndvVehicle(vehicle: any, filters: any) {
   if (searchText.includes('onix') && !exactModel.includes('onix')) score -= 8;
   if (searchText.includes('ecosport') && !exactModel.includes('ecosport')) score -= 8;
   if (searchText.includes('creta') && !exactModel.includes('creta')) score -= 8;
+  if (searchText.includes('duster') && !exactModel.includes('duster')) score -= 8;
 
   const requiredTokens = Math.min(2, queryTokens.length);
   if (queryTokens.length > 0 && matchedTokens.length < requiredTokens && score < 5) score = 0;
@@ -637,6 +645,23 @@ function rankBndvVehicles(items: any[], filters: any) {
     return [...items]
       .filter((vehicle) => bndvPassesNumericFilters(vehicle, filters))
       .map((vehicle) => ({ vehicle, score: 1, matchedTokens: [] as string[], relaxed: false }));
+  }
+
+  const hasAdSearch = !!String(filters?.ad_context || filters?.contexto_anuncio || '').trim();
+  if (hasAdSearch) {
+    return items
+      .map((vehicle) => {
+        const scored = scoreBndvVehicle(vehicle, filters);
+        const relaxed = !bndvPassesNumericFilters(vehicle, filters);
+        return {
+          vehicle,
+          ...scored,
+          score: relaxed ? Math.max(0.1, scored.score - 1) : scored.score,
+          relaxed,
+        };
+      })
+      .filter((item) => item.score > 0)
+      .sort((left, right) => right.score - left.score);
   }
 
   const ranked = items
@@ -2102,7 +2127,9 @@ Responda de forma humana, comercial e natural, sem mencionar que você "não abr
           messages: currentMessages,
           temperature: agent.temperature || 0.7,
           tools: tools,
-          tool_choice: "auto"
+          tool_choice: hasAdTextContext && iterations === 1
+            ? { type: "function", function: { name: "consultar_estoque_bndv" } }
+            : "auto"
         })
       });
 
@@ -2324,6 +2351,10 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
 
         if (toolCall.function.name === 'consultar_estoque_bndv') {
           const args = JSON.parse(toolCall.function.arguments || '{}');
+          if (hasAdTextContext) {
+            args.query = args.query || normalizedAdTextContext;
+            args.limite = args.limite || 8;
+          }
           const stockResult = await consultarEstoqueBndv(supabase, agent.user_id, args, {
             openaiApiKey,
             adTextContext: normalizedAdTextContext,
