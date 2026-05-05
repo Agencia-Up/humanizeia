@@ -71,6 +71,9 @@ function normalizeText(value?: string | null) {
     .replace(/\bprem\.\b/g, 'premier')
     .replace(/\bpremi\b/g, 'premier')
     .replace(/\bcresta\b/g, 'creta')
+    .replace(/\bauthen\.?\b/g, 'authentique')
+    .replace(/\bauthent\.?\b/g, 'authentique')
+    .replace(/\bauth\b/g, 'authentique')
     .replace(/\bh rv\b/g, 'hrv')
     .replace(/\bt-cross\b/g, 'tcross')
     .replace(/\bt\s+cross\b/g, 'tcross')
@@ -83,6 +86,7 @@ function normalizeText(value?: string | null) {
   if (/\bonix\b/.test(normalized) && /\bsedan\b/.test(normalized)) expansions.push('onix plus');
   if (/\bcreta\b/.test(normalized)) expansions.push('hyundai creta action comfort limited platinum ultimate');
   if (/\becosport\b/.test(normalized)) expansions.push('ford ecosport freestyle titanium se');
+  if (/\bduster\b/.test(normalized)) expansions.push('renault duster authentique dynamique expression intense iconic suv automatico manual');
   if (/\bargo\b/.test(normalized)) expansions.push('fiat argo drive trekking');
   if (/\btracker\b/.test(normalized)) expansions.push('chevrolet tracker premier ltz lt');
   if (expansions.length > 0) normalized = `${normalized} ${expansions.join(' ')}`;
@@ -208,6 +212,9 @@ function scoreVehicle(vehicle: BndvVehicle, filters: any) {
   if (searchText.includes('premier') && (version.includes('premier') || version.includes('prem'))) score += 4;
   if (searchText.includes('ecosport') && model.includes('ecosport')) score += 10;
   if (searchText.includes('creta') && model.includes('creta')) score += 10;
+  if (searchText.includes('duster') && model.includes('duster')) score += 10;
+  if (searchText.includes('duster') && searchText.includes('renault') && mark.includes('renault')) score += 4;
+  if (searchText.includes('authentique') && (version.includes('authentique') || version.includes('auth'))) score += 4;
 
   for (const modelToken of searchTokens(model)) {
     if (queryTokens.includes(modelToken)) score += 5;
@@ -217,6 +224,7 @@ function scoreVehicle(vehicle: BndvVehicle, filters: any) {
   if (searchText.includes('onix') && !model.includes('onix')) score -= 8;
   if (searchText.includes('ecosport') && !model.includes('ecosport')) score -= 8;
   if (searchText.includes('creta') && !model.includes('creta')) score -= 8;
+  if (searchText.includes('duster') && !model.includes('duster')) score -= 8;
 
   const requiredTokens = Math.min(2, queryTokens.length);
   if (queryTokens.length > 0 && matchedTokens.length < requiredTokens && score < 5) score = 0;
@@ -244,6 +252,23 @@ function rankVehicles(vehicles: BndvVehicle[], filters: any) {
     return [...vehicles]
       .filter((vehicle) => passesNumericFilters(vehicle, filters))
       .map((vehicle) => ({ vehicle, score: 1, matchedTokens: [] as string[], relaxed: false }));
+  }
+
+  const hasAdSearch = !!String(filters?.ad_context || filters?.contexto_anuncio || '').trim();
+  if (hasAdSearch) {
+    return vehicles
+      .map((vehicle) => {
+        const scored = scoreVehicle(vehicle, filters);
+        const relaxed = !passesNumericFilters(vehicle, filters);
+        return {
+          vehicle,
+          ...scored,
+          score: relaxed ? Math.max(0.1, scored.score - 1) : scored.score,
+          relaxed,
+        };
+      })
+      .filter((item) => item.score > 0)
+      .sort((left, right) => right.score - left.score);
   }
 
   const ranked = vehicles
