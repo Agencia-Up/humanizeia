@@ -262,7 +262,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     if (!user) { setLoading(false); return; }
     try {
       const [{ data: leadsData }, { data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
-        (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
+        (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents(name), member:ai_team_members(id, name, whatsapp_number)')
           .eq('user_id', user.id).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
           .eq('user_id', user.id).order('created_at', { ascending: false }).limit(500),
@@ -377,31 +377,28 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   const nextSeller = useMemo(() => {
     if (!activeMembers.length) return null;
-    const last = new Map<string, number>();
-    for (const t of transfers) {
-      if (t?.to_member_id && !last.has(t.to_member_id)) {
-        last.set(t.to_member_id, new Date(t.created_at).getTime());
-      }
-    }
-    const never = activeMembers.filter(m => !last.has(m.id));
+    // Usa last_lead_received_at do próprio membro — atualizado tanto por transferência
+    // manual quanto automática do Pedro SDR, nunca fica desatualizado
+    const never = activeMembers.filter(m => !m.last_lead_received_at);
     if (never.length) return never[0];
-    return [...activeMembers].sort((a, b) => (last.get(a.id) || 0) - (last.get(b.id) || 0))[0] || null;
-  }, [activeMembers, transfers]);
+    return [...activeMembers].sort((a, b) =>
+      new Date(a.last_lead_received_at).getTime() - new Date(b.last_lead_received_at).getTime()
+    )[0] || null;
+  }, [activeMembers]);
 
   const memberStats = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
 
     return activeMembers.map(m => ({
       ...m,
-      // Conta leads atribuídos ao membro hoje (usa assigned_to_member_id do lead — captura
-      // tanto transferências manuais quanto automáticas pelo Pedro SDR)
+      // Usa l.member?.id (retornado pelo join FK) — funciona independente do nome
+      // da coluna FK (assigned_to_member_id, assigned_to_id, etc.)
       todayCount: leads.filter(l => {
-        if (l.assigned_to_member_id !== m.id) return false;
+        if (l.member?.id !== m.id) return false;
         const d = new Date(l.transferred_at || l.last_interaction_at || l.created_at);
         return d >= today;
       }).length,
-      // Total de leads já atribuídos ao membro (pipeline completo)
-      totalCount: leads.filter(l => l.assigned_to_member_id === m.id).length,
+      totalCount: leads.filter(l => l.member?.id === m.id).length,
     })).sort((a, b) => b.todayCount - a.todayCount || b.totalCount - a.totalCount);
   }, [activeMembers, leads]);
 
