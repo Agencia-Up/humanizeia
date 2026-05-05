@@ -393,14 +393,17 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
     return activeMembers.map(m => ({
       ...m,
-      // Atendimentos só hoje — número principal do painel de rodízio
-      todayCount: transfers.filter(t =>
-        t.to_member_id === m.id && new Date(t.created_at) >= today
-      ).length,
-      // Total histórico de atendimentos — mostrado como sub-dado
-      totalCount: transfers.filter(t => t.to_member_id === m.id).length,
+      // Conta leads atribuídos ao membro hoje (usa assigned_to_member_id do lead — captura
+      // tanto transferências manuais quanto automáticas pelo Pedro SDR)
+      todayCount: leads.filter(l => {
+        if (l.assigned_to_member_id !== m.id) return false;
+        const d = new Date(l.transferred_at || l.last_interaction_at || l.created_at);
+        return d >= today;
+      }).length,
+      // Total de leads já atribuídos ao membro (pipeline completo)
+      totalCount: leads.filter(l => l.assigned_to_member_id === m.id).length,
     })).sort((a, b) => b.todayCount - a.todayCount || b.totalCount - a.totalCount);
-  }, [activeMembers, transfers]);
+  }, [activeMembers, leads]);
 
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
