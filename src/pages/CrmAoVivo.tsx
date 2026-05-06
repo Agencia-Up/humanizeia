@@ -388,19 +388,29 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   const memberStats = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
+    // Respeita o mesmo período que o kanban está exibindo
+    const threshold = getThreshold(dateFilter, customStart);
+    const endDate = dateFilter === 'custom' && customEnd ? new Date(customEnd + 'T23:59:59') : null;
 
     return activeMembers.map(m => ({
       ...m,
-      // Usa l.member?.id (retornado pelo join FK) — funciona independente do nome
-      // da coluna FK (assigned_to_member_id, assigned_to_id, etc.)
+      // Atendimentos no período selecionado (usa l.member?.id do join FK — robusto)
+      periodCount: leads.filter(l => {
+        if (l.member?.id !== m.id) return false;
+        const d = new Date(l.transferred_at || l.last_interaction_at || l.created_at);
+        if (threshold && d < threshold) return false;
+        if (endDate && d > endDate) return false;
+        return true;
+      }).length,
+      // Atendimentos só hoje — sempre visível como sub-dado
       todayCount: leads.filter(l => {
         if (l.member?.id !== m.id) return false;
         const d = new Date(l.transferred_at || l.last_interaction_at || l.created_at);
         return d >= today;
       }).length,
       totalCount: leads.filter(l => l.member?.id === m.id).length,
-    })).sort((a, b) => b.todayCount - a.todayCount || b.totalCount - a.totalCount);
-  }, [activeMembers, leads]);
+    })).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
+  }, [activeMembers, leads, dateFilter, customStart, customEnd]);
 
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
@@ -854,18 +864,24 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {memberStats.slice(0, 5).map((m, i) => {
                   const pal = SELLER_PALETTE[i % SELLER_PALETTE.length];
+                  const periodLabel = dateFilter === 'today' ? 'Hoje'
+                    : dateFilter === '7d' ? '7 dias'
+                    : dateFilter === '30d' ? '30 dias'
+                    : dateFilter === '90d' ? '90 dias'
+                    : dateFilter === 'custom' ? `${customStart || '?'} → ${customEnd || '?'}`
+                    : 'Total';
                   return (
                     <div key={m.id} className={m.is_active ? 'seller-active' : ''} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: 10, background: pal.bg, border: `1.5px solid ${pal.main}`, padding: '12px' }}>
                       <div style={{ minWidth: 0 }}>
                         <p style={{ fontSize: 10, color: '#475569', fontWeight: 700, marginBottom: 2 }}>#{i + 1} {m.is_active ? '● Ativo' : '○ Off'}</p>
                         <p style={{ fontSize: 16, fontWeight: 800, color: pal.light, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{m.name}</p>
-                        {m.totalCount > 0 && (
-                          <p style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>Total: {m.totalCount}</p>
+                        {dateFilter !== 'today' && (
+                          <p style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>Hoje: {m.todayCount}</p>
                         )}
                       </div>
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        <p style={{ fontSize: 24, fontWeight: 900, color: pal.light, lineHeight: 1 }}>{m.todayCount}</p>
-                        <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.15em', color: '#475569', fontWeight: 700 }}>Hoje</p>
+                        <p style={{ fontSize: 24, fontWeight: 900, color: pal.light, lineHeight: 1 }}>{m.periodCount}</p>
+                        <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.15em', color: '#475569', fontWeight: 700 }}>{periodLabel}</p>
                       </div>
                     </div>
                   );
