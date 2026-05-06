@@ -49,6 +49,7 @@ import {
 } from '@/components/ui/sidebar';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { useState } from 'react';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 
 // ── Agentes (sem Pedro e Marcos — têm navegação própria expandível) ───────────
 const agentItems = [
@@ -299,10 +300,11 @@ function NavGroup({
 // ── Main Sidebar ───────────────────────────────────────────────────────────────
 export function AppSidebar() {
   const { isDarkMode, toggleDarkMode } = useAppStore();
-  const { signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === 'collapsed';
+  const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
 
   const handleLogout = async () => {
     await signOut();
@@ -338,28 +340,38 @@ export function AppSidebar() {
 
       <SidebarContent className={`py-2 ${collapsed ? 'px-1' : 'px-2'}`}>
 
-        {/* ── Dashboard ── */}
-        <NavGroup label="Painel" collapsed={collapsed}>
-          <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
-        </NavGroup>
+        {sellerLoading ? null : isSeller ? (
+          /* ── SELLER: apenas Marcos ── */
+          <NavGroup label="Marcos" collapsed={collapsed}>
+            <NavMarcosExpandable collapsed={collapsed} />
+          </NavGroup>
+        ) : (
+          /* ── MASTER: visão completa ── */
+          <>
+            {/* ── Dashboard ── */}
+            <NavGroup label="Painel" collapsed={collapsed}>
+              <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+            </NavGroup>
 
-        {/* ── Agentes ── */}
-        <NavGroup label="Agentes IA" collapsed={collapsed}>
-          {agentItems.map(item => (
-            <NavAgent key={item.url} item={item} collapsed={collapsed} />
-          ))}
-          {/* Pedro — SDR & Agente IA */}
-          <NavPedroExpandable collapsed={collapsed} />
-          {/* Marcos — Captação de Leads & WhatsApp */}
-          <NavMarcosExpandable collapsed={collapsed} />
-        </NavGroup>
+            {/* ── Agentes ── */}
+            <NavGroup label="Agentes IA" collapsed={collapsed}>
+              {agentItems.map(item => (
+                <NavAgent key={item.url} item={item} collapsed={collapsed} />
+              ))}
+              {/* Pedro — SDR & Agente IA */}
+              <NavPedroExpandable collapsed={collapsed} />
+              {/* Marcos — Captação de Leads & WhatsApp */}
+              <NavMarcosExpandable collapsed={collapsed} />
+            </NavGroup>
 
-        {/* ── Sistema ── */}
-        <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
-          {systemItems.map(item => (
-            <NavItem key={item.url} item={item} collapsed={collapsed} />
-          ))}
-        </NavGroup>
+            {/* ── Sistema ── */}
+            <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
+              {systemItems.map(item => (
+                <NavItem key={item.url} item={item} collapsed={collapsed} />
+              ))}
+            </NavGroup>
+          </>
+        )}
 
       </SidebarContent>
 

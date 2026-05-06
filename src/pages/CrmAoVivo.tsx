@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { Button } from '@/components/ui/button';
 import {
   Activity,
@@ -102,7 +103,7 @@ function getTransferLabel(t: any) {
 }
 
 /* ── COMPONENTE CARD (Memoizado para performance) ─────────── */
-const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransfer, transfers, dragHandleProps }: any) => {
+const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransfer, transfers, dragHandleProps, hideTransfer }: any) => {
   const [msg, setMsg] = useState('');
   const [showHist, setShowHist] = useState(false);
   const isTransferring = transferringLeadId === lead.id;
@@ -183,31 +184,33 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransf
           </Button>
         </div>
 
-        <Button
-          size="sm"
-          disabled={isTransferring || !nextSeller}
-          style={{
-            background: lead.status === 'transferido' ? 'transparent' : C.orange,
-            border: lead.status === 'transferido' ? `1px solid ${C.orange}` : 'none',
-            color: lead.status === 'transferido' ? C.orangeL : '#fff',
-            fontWeight: 800,
-            fontSize: 11,
-            height: 32,
-            borderRadius: 8,
-            boxShadow: lead.status === 'transferido' ? 'none' : '0 4px 12px rgba(230,81,0,0.2)'
-          }}
-          onClick={() => {
-            onTransfer(lead.id, msg);
-            setMsg('');
-          }}
-        >
-          {isTransferring ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5 mr-2" />
-          )}
-          {lead.status === 'transferido' ? 'Re-transferir lead' : `Transferir para ${nextSeller?.name || 'vendedor'}`}
-        </Button>
+        {!hideTransfer && (
+          <Button
+            size="sm"
+            disabled={isTransferring || !nextSeller}
+            style={{
+              background: lead.status === 'transferido' ? 'transparent' : C.orange,
+              border: lead.status === 'transferido' ? `1px solid ${C.orange}` : 'none',
+              color: lead.status === 'transferido' ? C.orangeL : '#fff',
+              fontWeight: 800,
+              fontSize: 11,
+              height: 32,
+              borderRadius: 8,
+              boxShadow: lead.status === 'transferido' ? 'none' : '0 4px 12px rgba(230,81,0,0.2)'
+            }}
+            onClick={() => {
+              onTransfer(lead.id, msg);
+              setMsg('');
+            }}
+          >
+            {isTransferring ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5 mr-2" />
+            )}
+            {lead.status === 'transferido' ? 'Re-transferir lead' : `Transferir para ${nextSeller?.name || 'vendedor'}`}
+          </Button>
+        )}
 
         {showHist && (
           <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)' }}>
@@ -237,6 +240,7 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransf
 /* ── COMPONENTE PRINCIPAL ──────────────────────────────── */
 export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
+  const { isSeller, seller } = useSellerProfile(user?.id);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -260,21 +264,27 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   const fetchLiveData = useCallback(async () => {
     if (!user) { setLoading(false); return; }
+    // Sellers use the master's user_id for filtering; RLS further restricts rows to only their leads
+    const effectiveUserId = (isSeller && seller?.user_id) ? seller.user_id : user.id;
     try {
       const [{ data: leadsData }, { data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
         (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents(name), member:ai_team_members(id, name, whatsapp_number)')
-          .eq('user_id', user.id).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
+          .eq('user_id', effectiveUserId).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members(name), agent:wa_ai_agents(name), lead:ai_crm_leads(lead_name, remote_jid)')
-          .eq('user_id', user.id).order('created_at', { ascending: false }).limit(500),
-        (supabase as any).from('ai_team_members').select('*').eq('user_id', user.id)
-          .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
-        (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', user.id),
+          .eq('user_id', effectiveUserId).order('created_at', { ascending: false }).limit(500),
+        isSeller
+          // Sellers see all team members of their master (for display), RLS allows this
+          ? (supabase as any).from('ai_team_members').select('*').eq('user_id', effectiveUserId)
+              .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true })
+          : (supabase as any).from('ai_team_members').select('*').eq('user_id', user.id)
+              .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
+        (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', effectiveUserId),
       ]);
       setLeads(leadsData || []); setTransfers(transfersData || []);
       setTeamMembers(membersData || []); setAgents(agentsData || []);
       setLastUpdatedAt(new Date().toISOString());
     } finally { setLoading(false); }
-  }, [user]);
+  }, [user, isSeller, seller]);
 
   // Ref estável para o callback — evita recriar subscriptions a cada render
   const fetchLiveDataRef = useRef(fetchLiveData);
@@ -822,6 +832,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                                   onTransfer={handleManualTransfer}
                                   transfers={transfers}
                                   dragHandleProps={prov.dragHandleProps}
+                                  hideTransfer={isSeller}
                                 />
                               </div>
                             )}
@@ -837,8 +848,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           </div>
         </DragDropContext>
 
-        {/* SIDEBAR */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>
+        {/* SIDEBAR — hidden for sellers */}
+        {!isSeller && <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>
           
           {/* PRÓXIMO DA FILA */}
           <section style={{ ...cardStyle, overflow: 'hidden' }}>
@@ -922,7 +933,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
               ))}
             </div>
           </section>
-        </div>
+        </div>}
       </div>
     </div>
   );
