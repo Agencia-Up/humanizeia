@@ -22,6 +22,7 @@ import {
   Wifi,
   WifiOff,
   Signal,
+  Link2,
 } from 'lucide-react';
 import {
   AlertDialog,
@@ -89,6 +90,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   const [isDeleting, setIsDeleting] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [isVerifyingAll, setIsVerifyingAll] = useState(false);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [selectedInstance, setSelectedInstance] = useState<{ name: string; friendlyName: string } | null>(null);
 
   const verifyInstanceStatus = async (instanceId: string, silent = false) => {
@@ -189,6 +191,25 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
       friendlyName: instance.friendly_name || instance.instance_name 
     });
     setConnectOpen(true);
+  };
+
+  const handleSyncWebhook = async (instance: WaInstance) => {
+    setSyncingId(instance.id);
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
+        body: { instance_id: instance.id, user_id: user?.id },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Erro ao sincronizar webhook');
+      toast({
+        title: '✅ Webhook sincronizado!',
+        description: `Webhook registrado: ${data.webhookUrl}`,
+      });
+    } catch (err: any) {
+      toast({ title: 'Erro ao sincronizar webhook', description: err.message, variant: 'destructive' });
+    } finally {
+      setSyncingId(null);
+    }
   };
 
   const handleToggleActive = async (instance: WaInstance) => {
@@ -402,6 +423,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
                         size="sm"
                         onClick={() => verifyInstanceStatus(instance.id)}
                         disabled={verifyingId === instance.id}
+                        title="Verificar status"
                       >
                         {verifyingId === instance.id ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -409,6 +431,22 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
                           <RefreshCw className="h-3.5 w-3.5" />
                         )}
                       </Button>
+                      {instance.provider !== 'meta' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSyncWebhook(instance)}
+                          disabled={syncingId === instance.id}
+                          title="Sincronizar Webhook (corrige Pedro sem transferir)"
+                          className="text-amber-500 border-amber-500/30 hover:bg-amber-500/10"
+                        >
+                          {syncingId === instance.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Link2 className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      )}
                       {instance.status === 'connected' ? (
                         <Button
                           variant="outline"
