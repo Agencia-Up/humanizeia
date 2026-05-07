@@ -114,10 +114,11 @@ serve(async (req) => {
 
         // 2. Busca instância da API para poder enviar WhatsApp
         const agentId = lead.agent_id || expiredSeller.agent_id;
+        const instanceIds: string[] = lead.agent?.instance_ids || [];
         const { data: waInstance } = await supabase
           .from("wa_instances")
           .select("api_url, api_key_encrypted, instance_name")
-          .contains("id", lead.agent?.instance_ids || [])
+          .in("id", instanceIds.length > 0 ? instanceIds : ["00000000-0000-0000-0000-000000000000"])
           .limit(1)
           .maybeSingle();
 
