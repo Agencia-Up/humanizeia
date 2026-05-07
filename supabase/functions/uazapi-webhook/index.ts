@@ -403,11 +403,26 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         // 2. Alertar vendedor (round-robin) APENAS SE status for 'qualificado'
         if (args.status === 'qualificado') {
           try {
-            // Busca vendedores ativos e histórico de transfers para o round-robin
-            const { data: sellers } = await supabase
+            console.log(`[Transfer] Iniciando round-robin. agent.id=${agent.id} agent.user_id=${agent.user_id}`);
+
+            // Busca vendedores ativos pelo agent_id (vinculo direto ao Pedro)
+            let { data: sellers, error: sellersErr } = await supabase
               .from('ai_team_members').select('*')
               .eq('agent_id', agent.id).eq('is_active', true)
               .order('last_lead_received_at', { ascending: true, nullsFirst: true });
+
+            console.log(`[Transfer] Vendedores encontrados por agent_id: ${sellers?.length ?? 0}${sellersErr ? ' | erro: ' + sellersErr.message : ''}`);
+
+            // Fallback: se nenhum vendedor vinculado ao agent_id, busca pelo user_id
+            if (!sellers || sellers.length === 0) {
+              console.warn(`[Transfer] Nenhum vendedor com agent_id=${agent.id}. Tentando fallback por user_id=${agent.user_id}...`);
+              const { data: fallbackSellers, error: fallbackErr } = await supabase
+                .from('ai_team_members').select('*')
+                .eq('user_id', agent.user_id).eq('is_active', true)
+                .order('last_lead_received_at', { ascending: true, nullsFirst: true });
+              sellers = fallbackSellers;
+              console.log(`[Transfer] Vendedores encontrados por user_id (fallback): ${sellers?.length ?? 0}${fallbackErr ? ' | erro: ' + fallbackErr.message : ''}`);
+            }
 
             const { data: recentTransfers } = await supabase
               .from('ai_lead_transfers').select('to_member_id, created_at')
@@ -425,6 +440,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             const nextSeller = neverReceived.length > 0
               ? neverReceived[0]
               : [...activeSellers].sort((a, b) => (lastMap.get(a.id) || 0) - (lastMap.get(b.id) || 0))[0] || null;
+
+            console.log(`[Transfer] nextSeller=${nextSeller ? nextSeller.name : 'NULO'} | total ativos=${activeSellers.length}`);
 
             if (nextSeller) {
               // Busca o id do lead para registrar a transferência
@@ -456,43 +473,47 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
               const sellerMsg = `🚨 *LEAD QUALIFICADO — VOCÊ É O PRÓXIMO DA FILA*\n\n*Agente IA:* ${agent.name}\n*Nome:* ${pushName}\n*Contato:* ${phoneNumber}\n\n📝 *Resumo:*\n${args.resumo}\n\n👉 *Atender:* https://wa.me/${phoneNumber}\n\n⏰ *Responda esta mensagem em até 15 minutos para confirmar o recebimento. Se não responder, o lead passa para o próximo da fila.*`;
 
-              await fetch(`${baseUrl}/send/text`, {
+              const sendRes = await fetch(`${baseUrl}/send/text`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'token': instKey },
                 body: JSON.stringify({ number: sellerNum, text: sellerMsg }),
               });
+              console.log(`[Transfer] WA para vendedor ${nextSeller.name} → HTTP ${sendRes.status}`);
 
-              console.log(`[Transfer] Lead enviado para ${nextSeller.name} — timeout: ${timeoutAt}`);
+              console.log(`[Transfer] ✅ Lead transferido para ${nextSeller.name} — timeout: ${timeoutAt}`);
 
-              // Notificar Gerente se configurado
+              // Notificar Gerente — isolado para não bloquear o fluxo principal
               if (agent.gerente_phone) {
-                const transferredAt = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-                let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
-                if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
+                try {
+                  const transferredAt = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+                  let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
+                  if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
 
-                const gerenteMsg =
-                  `📊 *RELATÓRIO DE LEAD — ${agent.name}*\n\n` +
-                  `🕐 *Horário:* ${transferredAt}\n\n` +
-                  `👤 *Lead:* ${pushName}\n` +
-                  `📱 *Telefone:* wa.me/${phoneNumber}\n` +
-                  `📊 *Status:* qualificado\n` +
-                  `${args.resumo ? `\n📝 *Resumo:* ${args.resumo.substring(0, 300)}\n` : ''}` +
-                  `\n━━━━━━━━━━━━━━━━━━━━\n\n` +
-                  `🎯 *Enviado para:* ${nextSeller.name}\n` +
-                  `📲 *WhatsApp vendedor:* ${nextSeller.whatsapp_number}\n` +
-                  `\n━━━━━━━━━━━━━━━━━━━━\n` +
-                  `_Gerado automaticamente pelo Pedro SDR_`;
+                  const gerenteMsg =
+                    `📊 *RELATÓRIO DE LEAD — ${agent.name}*\n\n` +
+                    `🕐 *Horário:* ${transferredAt}\n\n` +
+                    `👤 *Lead:* ${pushName}\n` +
+                    `📱 *Telefone:* wa.me/${phoneNumber}\n` +
+                    `📊 *Status:* qualificado\n` +
+                    `${args.resumo ? `\n📝 *Resumo:* ${args.resumo.substring(0, 300)}\n` : ''}` +
+                    `\n━━━━━━━━━━━━━━━━━━━━\n\n` +
+                    `🎯 *Enviado para:* ${nextSeller.name}\n` +
+                    `📲 *WhatsApp vendedor:* ${nextSeller.whatsapp_number}\n` +
+                    `\n━━━━━━━━━━━━━━━━━━━━\n` +
+                    `_Gerado automaticamente pelo Pedro SDR_`;
 
-                await fetch(`${baseUrl}/send/text`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'token': instKey },
-                  body: JSON.stringify({ number: gerenteNum, text: gerenteMsg }),
-                });
-
-                console.log(`[Transfer] Gerente notificado: ${agent.gerente_phone}`);
+                  const gerenteRes = await fetch(`${baseUrl}/send/text`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'token': instKey },
+                    body: JSON.stringify({ number: gerenteNum, text: gerenteMsg }),
+                  });
+                  console.log(`[Transfer] WA gerente → HTTP ${gerenteRes.status}`);
+                } catch (gerenteErr) {
+                  console.error('[Transfer] Falha ao notificar gerente (não bloqueia fluxo):', gerenteErr);
+                }
               }
             } else {
-              console.warn('[Transfer] Nenhum vendedor ativo disponível para receber o lead');
+              console.warn(`[Transfer] ⚠️ Nenhum vendedor ativo disponível. Verifique se os vendedores têm agent_id=${agent.id} ou user_id=${agent.user_id} e is_active=true`);
             }
           } catch (transferErr) {
             console.error('[Transfer] Erro no round-robin:', transferErr);
