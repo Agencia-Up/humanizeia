@@ -260,6 +260,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const [customEnd, setCustomEnd] = useState<string>('');
   const [exportingMarcos, setExportingMarcos] = useState(false);
 
+  // Controla quais leads já foram enviados ao Marcos CRM nesta sessão (evita duplicatas)
+  const syncedToMarcosRef = useRef<Set<string>>(new Set());
+
   useEffect(() => { mutedRef.current = muted; }, [muted]); // mantém ref sempre sincronizada
 
   const fetchLiveData = useCallback(async () => {
@@ -291,6 +294,101 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   useEffect(() => { fetchLiveDataRef.current = fetchLiveData; }, [fetchLiveData]);
 
   useEffect(() => { fetchLiveData(); }, [fetchLiveData]);
+
+  // ── Auto-sync: envia leads transferidos para o CRM do Marcos ──────────────
+  // Roda toda vez que leads muda; o Set evita re-enviar o mesmo lead.
+  // Envia também para wa_contacts (lista de disparo) com nome do vendedor.
+  const syncTransferredToMarcos = useCallback(async (transferredLeads: any[]) => {
+    if (!user) return;
+    const unsync = transferredLeads.filter(l => !syncedToMarcosRef.current.has(l.id));
+    if (unsync.length === 0) return;
+
+    // Busca o primeiro estágio do pipeline do Marcos (para posicionar no CRM)
+    const { data: firstStage } = await (supabase as any)
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('user_id', user.id)
+      .order('position', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    for (const lead of unsync) {
+      try {
+        const phone = (lead.remote_jid || '').replace(/\D/g, '');
+        if (!phone) { syncedToMarcosRef.current.add(lead.id); continue; }
+
+        const sellerName  = lead.member?.name  || 'Aguardando';
+        const agentName   = lead.agent?.name   || 'Pedro SDR';
+        const notes = `Vendedor: ${sellerName}\nAgente IA: ${agentName}${lead.summary ? `\n\nResumo: ${lead.summary}` : ''}`;
+        const tags  = ['Pedro SDR', sellerName].filter(Boolean);
+
+        // ── 1. crm_leads (FluxCRM / Kanban do Marcos) ───────────────────────
+        const { data: existing } = await (supabase as any)
+          .from('crm_leads')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('phone', phone)
+          .maybeSingle();
+
+        if (existing?.id) {
+          await (supabase as any).from('crm_leads').update({ notes, tags }).eq('id', existing.id);
+        } else {
+          await (supabase as any).from('crm_leads').insert({
+            user_id:  user.id,
+            stage_id: firstStage?.id || null,
+            name:     lead.lead_name || phone,
+            phone,
+            source:   `Pedro SDR — ${agentName}`,
+            notes,
+            tags,
+            value:    0,
+            currency: 'BRL',
+            priority: 'medium',
+            position: 0,
+          });
+        }
+
+        // ── 2. wa_contacts (lista "Leads Pedro CRM" para disparo) ───────────
+        const { data: list } = await (supabase as any)
+          .from('wa_contact_lists').select('id')
+          .eq('user_id', user.id).eq('name', 'Leads Pedro CRM').maybeSingle();
+
+        let listId = list?.id;
+        if (!listId) {
+          const { data: newList } = await (supabase as any)
+            .from('wa_contact_lists')
+            .insert({ user_id: user.id, name: 'Leads Pedro CRM', description: 'Leads qualificados pelo Pedro SDR' })
+            .select('id').single();
+          listId = newList?.id;
+        }
+
+        if (listId) {
+          await (supabase as any).from('wa_contacts').upsert({
+            user_id: user.id, list_id: listId, phone,
+            name: lead.lead_name || phone,
+            is_valid: true,
+            metadata: {
+              lead_status: lead.status, lead_summary: lead.summary,
+              qualified_by: agentName, assigned_to: sellerName,
+              assigned_to_phone: lead.member?.whatsapp_number || null,
+              synced_at: new Date().toISOString(),
+            },
+          }, { onConflict: 'user_id,list_id,phone', ignoreDuplicates: false });
+        }
+
+        syncedToMarcosRef.current.add(lead.id);
+      } catch (err) {
+        console.error('[CrmAoVivo] Erro ao sincronizar lead com Marcos:', err);
+      }
+    }
+  }, [user]);
+
+  // Dispara o sync sempre que novos leads 'transferido' aparecem
+  useEffect(() => {
+    if (loading) return;
+    const transferred = leads.filter(l => l.status === 'transferido');
+    if (transferred.length > 0) syncTransferredToMarcos(transferred);
+  }, [leads, loading, syncTransferredToMarcos]);
 
   // ── Alerta de novo lead ───────────────────────────────────────────────────
   // Dispara alerta visual + campainha quando leads.length aumenta após o
@@ -397,30 +495,43 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   }, [activeMembers]);
 
   const memberStats = useMemo(() => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    // Respeita o mesmo período que o kanban está exibindo
+    // ── Usa ai_lead_transfers para contar atendimentos por vendedor ──────────
+    // Mais confiável do que o join FK de leads.member (que depende do assigned_to_id
+    // estar preenchido) e não usa transferred_at (campo que não existe na tabela).
     const threshold = getThreshold(dateFilter, customStart);
     const endDate = dateFilter === 'custom' && customEnd ? new Date(customEnd + 'T23:59:59') : null;
+    const todayDate = new Date(); todayDate.setHours(0, 0, 0, 0);
 
-    return activeMembers.map(m => ({
-      ...m,
-      // Atendimentos no período selecionado (usa l.member?.id do join FK — robusto)
-      periodCount: leads.filter(l => {
-        if (l.member?.id !== m.id) return false;
-        const d = new Date(l.transferred_at || l.last_interaction_at || l.created_at);
-        if (threshold && d < threshold) return false;
-        if (endDate && d > endDate) return false;
-        return true;
-      }).length,
-      // Atendimentos só hoje — sempre visível como sub-dado
-      todayCount: leads.filter(l => {
-        if (l.member?.id !== m.id) return false;
-        const d = new Date(l.transferred_at || l.last_interaction_at || l.created_at);
-        return d >= today;
-      }).length,
-      totalCount: leads.filter(l => l.member?.id === m.id).length,
-    })).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
-  }, [activeMembers, leads, dateFilter, customStart, customEnd]);
+    return activeMembers.map(m => {
+      // Transfers deste vendedor que não expiraram (pending ou confirmed)
+      const myTransfers = transfers.filter(t =>
+        t.to_member_id === m.id && t.transfer_status !== 'expired'
+      );
+
+      // Leads únicos no período — usa lead_id quando disponível, senão usa id do transfer
+      const periodSet = new Set(
+        myTransfers.filter(t => {
+          const d = new Date(t.created_at);
+          if (threshold && d < threshold) return false;
+          if (endDate && d > endDate) return false;
+          return true;
+        }).map(t => t.lead_id || t.id)
+      );
+
+      const todaySet = new Set(
+        myTransfers
+          .filter(t => new Date(t.created_at) >= todayDate)
+          .map(t => t.lead_id || t.id)
+      );
+
+      return {
+        ...m,
+        periodCount: periodSet.size,
+        todayCount:  todaySet.size,
+        totalCount:  new Set(myTransfers.map(t => t.lead_id || t.id)).size,
+      };
+    }).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
+  }, [activeMembers, transfers, dateFilter, customStart, customEnd]);
 
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
@@ -430,71 +541,54 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     return res;
   }, [filteredLeads]);
 
-  // ── Exportar leads filtrados para lista do Marcos ─────────────────────────
+  // ── Exportar/forçar sync de TODOS leads do filtro para Marcos ─────────────
   const handleExportToMarcos = useCallback(async () => {
     if (!user || filteredLeads.length === 0) return;
     setExportingMarcos(true);
     try {
-      const listName = 'Leads Pedro CRM';
-      // Ensure list exists
-      let listId: string;
-      const { data: existingList } = await (supabase as any)
-        .from('wa_contact_lists')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('name', listName)
-        .maybeSingle();
-
-      if (existingList?.id) {
-        listId = existingList.id;
-      } else {
-        const { data: newList, error: listErr } = await (supabase as any)
-          .from('wa_contact_lists')
-          .insert({ user_id: user.id, name: listName, description: 'Leads qualificados pelo Pedro SDR' })
-          .select('id')
-          .single();
-        if (listErr) throw listErr;
-        listId = newList.id;
+      // Limpa o cache de synced para forçar re-sync de todos do filtro
+      filteredLeads.forEach(l => syncedToMarcosRef.current.delete(l.id));
+      await syncTransferredToMarcos(filteredLeads.filter(l => l.status === 'transferido'));
+      // Para leads não-transferidos (interessado/qualificado), envia só para wa_contacts
+      const nonTransferred = filteredLeads.filter(l => l.status !== 'transferido');
+      if (nonTransferred.length > 0) {
+        const { data: list } = await (supabase as any)
+          .from('wa_contact_lists').select('id')
+          .eq('user_id', user.id).eq('name', 'Leads Pedro CRM').maybeSingle();
+        let listId = list?.id;
+        if (!listId) {
+          const { data: newList } = await (supabase as any)
+            .from('wa_contact_lists')
+            .insert({ user_id: user.id, name: 'Leads Pedro CRM', description: 'Leads qualificados pelo Pedro SDR' })
+            .select('id').single();
+          listId = newList?.id;
+        }
+        if (listId) {
+          const batch = nonTransferred.map(l => ({
+            user_id: user.id, list_id: listId,
+            phone: (l.remote_jid || '').replace(/\D/g, ''),
+            name: l.lead_name || (l.remote_jid || '').replace(/\D/g, ''),
+            is_valid: true,
+            metadata: {
+              lead_status: l.status, lead_summary: l.summary,
+              qualified_by: l.agent?.name || 'Pedro SDR',
+              assigned_to: l.member?.name || null,
+              synced_at: new Date().toISOString(),
+            },
+          })).filter(c => c.phone);
+          for (let i = 0; i < batch.length; i += 50) {
+            await (supabase as any).from('wa_contacts')
+              .upsert(batch.slice(i, i + 50), { onConflict: 'user_id,list_id,phone', ignoreDuplicates: false });
+          }
+        }
       }
-
-      // Upsert each lead as a contact
-      const contacts = filteredLeads.map(l => ({
-        user_id: user.id,
-        list_id: listId,
-        phone: l.remote_jid.replace(/\D/g, ''),
-        name: l.lead_name || l.remote_jid.replace(/\D/g, ''),
-        is_valid: true,
-        metadata: {
-          lead_status: l.status,
-          lead_summary: l.summary,
-          qualified_by: 'Pedro SDR',
-          assigned_to: l.member?.name || null,
-          assigned_to_phone: l.member?.whatsapp_number || null,
-          transferred_at: l.transferred_at || null,
-          transfer_reason: l.transfer_reason || null,
-          agent_name: l.agent?.name || 'Pedro',
-          synced_at: new Date().toISOString(),
-        },
-      }));
-
-      // Insert in batches of 50
-      let exported = 0;
-      for (let i = 0; i < contacts.length; i += 50) {
-        const batch = contacts.slice(i, i + 50);
-        const { error } = await (supabase as any)
-          .from('wa_contacts')
-          .upsert(batch, { onConflict: 'user_id,list_id,phone', ignoreDuplicates: false });
-        if (error) console.warn('Batch upsert warning:', error);
-        else exported += batch.length;
-      }
-
-      toast.success(`✅ ${exported} leads exportados para a lista "${listName}" do Marcos`);
+      toast.success(`✅ ${filteredLeads.length} leads sincronizados com o Marcos (CRM + lista de contatos)`);
     } catch (err: any) {
       toast.error(`Erro ao exportar: ${err.message}`);
     } finally {
       setExportingMarcos(false);
     }
-  }, [user, filteredLeads]);
+  }, [user, filteredLeads, syncTransferredToMarcos]);
 
   // ── Drag-and-drop: muda status do lead entre colunas ─────────────────────
   const handleDragEnd = useCallback(async (result: DropResult) => {
