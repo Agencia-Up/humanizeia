@@ -1505,22 +1505,52 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
 
   // --- VERIFICACAO SE REMETENTE E UM VENDEDOR CADASTRADO ---
+  // Importante: vendedor cadastrado nunca pode cair no fluxo de lead.
+  // A equipe pertence ao usuario/loja; filtrar so por agent_id deixa passar vendedor
+  // cadastrado em outro agente do mesmo usuario e cria lead indevido.
   const phoneNumber = remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
-  const { data: allTeamMembers } = await supabase.from('ai_team_members').select('id, name, whatsapp_number').eq('agent_id', agent.id).eq('is_active', true);
+  const { data: allTeamMembers } = await supabase.from('ai_team_members')
+    .select('id, name, whatsapp_number, agent_id')
+    .eq('user_id', agent.user_id)
+    .eq('is_active', true);
   
-  // Normaliza para os ultimos 11 digitos (DDD + numero 9 digitos) para comparacao robusta
-  const normalizePhone = (p: string) => {
+  const normalizePhoneDigits = (p: string) => {
     const digits = String(p || '').replace(/\D/g, '');
-    // Remove prefixo internacional 55 se tiver 13 digitos (5511999999999)
     if (digits.startsWith('55') && digits.length >= 12) return digits.slice(2);
-    return digits;
+    return digits.replace(/^0+/, '');
   };
-  const senderNormalized = normalizePhone(phoneNumber);
-  console.log(`[Webhook] Sender phone normalizado: "${senderNormalized}" | Vendedores cadastrados: ${allTeamMembers?.map((m: any) => `${m.name}="${normalizePhone(m.whatsapp_number)}"`).join(', ')}`);
+
+  const phoneVariants = (p: string) => {
+    const base = normalizePhoneDigits(p);
+    const variants = new Set<string>();
+    if (!base) return variants;
+
+    variants.add(base);
+    if (base.length > 11) variants.add(base.slice(-11));
+    if (base.length > 10) variants.add(base.slice(-10));
+    if (base.length > 9) variants.add(base.slice(-9));
+    // Brasil: alguns cadastros chegam com nono digito e outros sem.
+    // Ex: 85999998888 <-> 8588888888.
+    const local11 = base.slice(-11);
+    if (local11.length === 11 && local11[2] === '9') {
+      variants.add(`${local11.slice(0, 2)}${local11.slice(3)}`);
+    }
+    const local10 = base.slice(-10);
+    if (local10.length === 10) {
+      variants.add(`${local10.slice(0, 2)}9${local10.slice(2)}`);
+    }
+
+    return variants;
+  };
+
+  const senderVariants = phoneVariants(phoneNumber);
+  console.log(`[Webhook] Sender phone variantes: "${Array.from(senderVariants).join('|')}" | Vendedores cadastrados: ${allTeamMembers?.map((m: any) => `${m.name}="${Array.from(phoneVariants(m.whatsapp_number)).join('|')}"`).join(', ')}`);
   const matchedSeller = allTeamMembers?.find((m: any) => {
-    const sellerNorm = normalizePhone(m.whatsapp_number);
-    // Match se os ultimos digitos coincidirem (pelo menos 8 digitos finais para ignorar o 9 extra)
-    return sellerNorm && senderNormalized && (sellerNorm === senderNormalized || sellerNorm.endsWith(senderNormalized.slice(-8)) || senderNormalized.endsWith(sellerNorm.slice(-8)));
+    const sellerVariants = phoneVariants(m.whatsapp_number);
+    for (const variant of sellerVariants) {
+      if (variant && senderVariants.has(variant)) return true;
+    }
+    return false;
   });
 
   if (matchedSeller) {
@@ -2178,7 +2208,7 @@ Responda de forma humana, comercial e natural, sem mencionar que você "não abr
             status: args.status,
             summary: args.resumo,
             last_interaction_at: new Date().toISOString(),
-          lead_name: pushName,
+            lead_name: pushName,
             assigned_to_id: existingLead?.assigned_to_id || null
           };
           await supabase.from('ai_crm_leads').upsert(crmStatusPayload, { onConflict: 'agent_id, remote_jid' });
@@ -2214,7 +2244,7 @@ Responda de forma humana, comercial e natural, sem mencionar que você "não abr
 
             // Se nao tiver vendedor ou o anterior estiver inativo, fazer round-robin
             if (!selectedSeller) {
-              const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('agent_id', agent.id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
+              const { data: sellers } = await supabase.from('ai_team_members').select('*').eq('user_id', agent.user_id).eq('is_active', true).order('last_lead_received_at', { ascending: true, nullsFirst: true });
               if (sellers && sellers.length > 0) {
                 selectedSeller = sellers[0];
               }
@@ -2306,7 +2336,6 @@ Seja cirúrgico. Não invente informações. Se algo não foi mencionado na conv
                     user_id: agent.user_id,
                     lead_id: leadData.id,
                     to_member_id: selectedSeller.id,
-                    from_agent_id: agent.id,
                     transfer_reason: args.resumo,
                     notes: `Transferido para ${selectedSeller.name} via round-robin`,
                     transfer_status: 'pending',
