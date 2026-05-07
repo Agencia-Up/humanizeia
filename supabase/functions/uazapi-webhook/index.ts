@@ -221,6 +221,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '')
   const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || ''
   const phoneNumber = remoteJid.replace(/@.*$/, '').replace(/\D/g, '')
+  // Normaliza para o formato sem DDI "55" — crm_leads armazena sem prefixo (ex: "12996200820")
+  const crmPhone = (phoneNumber.startsWith('55') && (phoneNumber.length === 13 || phoneNumber.length === 12))
+    ? phoneNumber.slice(2)
+    : phoneNumber
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
   if (!openaiApiKey) return new Response('Missing AI Key', { status: 500 })
 
@@ -543,10 +547,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   .eq('user_id', agent.user_id)
                   .order('position', { ascending: true }).limit(1).maybeSingle();
 
+                // crmPhone = sem prefixo "55" para bater com o formato já salvo em crm_leads
                 const { data: crmExisting } = await supabase
                   .from('crm_leads').select('id')
                   .eq('user_id', agent.user_id)
-                  .eq('phone', phoneNumber)
+                  .eq('phone', crmPhone)
                   .maybeSingle();
 
                 const crmNotes = `Vendedor: ${nextSeller.name}\nAgente IA: ${agent.name}${args.resumo ? `\n\nResumo: ${args.resumo}` : ''}`;
@@ -557,21 +562,29 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     .update({ notes: crmNotes, tags: crmTags })
                     .eq('id', crmExisting.id);
                 } else {
+                  // Calcula a próxima posição para não colidir com leads existentes
+                  const { data: maxPosRow } = await supabase
+                    .from('crm_leads').select('position')
+                    .eq('user_id', agent.user_id)
+                    .eq('stage_id', firstStage?.id || null)
+                    .order('position', { ascending: false }).limit(1).maybeSingle();
+                  const nextPos = (maxPosRow?.position ?? -1) + 1;
+
                   await supabase.from('crm_leads').insert({
                     user_id:  agent.user_id,
                     stage_id: firstStage?.id || null,
                     name:     pushName,
-                    phone:    phoneNumber,
+                    phone:    crmPhone,
                     source:   `Pedro SDR — ${agent.name}`,
                     notes:    crmNotes,
                     tags:     crmTags,
                     value:    0,
                     currency: 'BRL',
                     priority: 'medium',
-                    position: 0,
+                    position: nextPos,
                   });
                 }
-                console.log(`[Transfer] Lead ${pushName} → CRM Marcos (vendedor: ${nextSeller.name})`);
+                console.log(`[Transfer] Lead ${pushName} (${crmPhone}) → CRM Marcos (vendedor: ${nextSeller.name})`);
               } catch (crmErr) {
                 console.error('[Transfer] Erro ao enviar lead ao CRM do Marcos:', crmErr);
               }
