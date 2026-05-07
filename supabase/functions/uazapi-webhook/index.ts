@@ -405,6 +405,29 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           try {
             console.log(`[Transfer] Iniciando round-robin. agent.id=${agent.id} agent.user_id=${agent.user_id}`);
 
+            // ── Proteção contra dupla transferência ────────────────────────
+            // Se já existe um transfer ativo (pending ou confirmed) para este lead,
+            // não cria outro — evita o lead ser repassado a dois vendedores ao mesmo tempo.
+            let skipTransfer = false;
+            const { data: existingLeadCheck } = await supabase
+              .from('ai_crm_leads').select('id')
+              .eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
+
+            if (existingLeadCheck?.id) {
+              const { data: activeTransfer } = await supabase
+                .from('ai_lead_transfers').select('id, transfer_status')
+                .eq('lead_id', existingLeadCheck.id)
+                .in('transfer_status', ['pending', 'confirmed'])
+                .maybeSingle();
+              if (activeTransfer) {
+                console.log(`[Transfer] Lead já tem transfer ativo (${activeTransfer.transfer_status}) — ignorando round-robin duplicado`);
+                skipTransfer = true;
+              }
+            }
+
+            if (!skipTransfer) {
+            // ────────────────────────────────────────────────────────────────
+
             // Busca vendedores ativos pelo agent_id (vinculo direto ao Pedro)
             let { data: sellers, error: sellersErr } = await supabase
               .from('ai_team_members').select('*')
@@ -512,9 +535,51 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   console.error('[Transfer] Falha ao notificar gerente (não bloqueia fluxo):', gerenteErr);
                 }
               }
+
+              // ── Push automático para o CRM do Marcos (crm_leads / FluxCRM) ───
+              try {
+                const { data: firstStage } = await supabase
+                  .from('crm_pipeline_stages').select('id')
+                  .eq('user_id', agent.user_id)
+                  .order('position', { ascending: true }).limit(1).maybeSingle();
+
+                const { data: crmExisting } = await supabase
+                  .from('crm_leads').select('id')
+                  .eq('user_id', agent.user_id)
+                  .eq('phone', phoneNumber)
+                  .maybeSingle();
+
+                const crmNotes = `Vendedor: ${nextSeller.name}\nAgente IA: ${agent.name}${args.resumo ? `\n\nResumo: ${args.resumo}` : ''}`;
+                const crmTags  = ['Pedro SDR', nextSeller.name];
+
+                if (crmExisting?.id) {
+                  await supabase.from('crm_leads')
+                    .update({ notes: crmNotes, tags: crmTags })
+                    .eq('id', crmExisting.id);
+                } else {
+                  await supabase.from('crm_leads').insert({
+                    user_id:  agent.user_id,
+                    stage_id: firstStage?.id || null,
+                    name:     pushName,
+                    phone:    phoneNumber,
+                    source:   `Pedro SDR — ${agent.name}`,
+                    notes:    crmNotes,
+                    tags:     crmTags,
+                    value:    0,
+                    currency: 'BRL',
+                    priority: 'medium',
+                    position: 0,
+                  });
+                }
+                console.log(`[Transfer] Lead ${pushName} → CRM Marcos (vendedor: ${nextSeller.name})`);
+              } catch (crmErr) {
+                console.error('[Transfer] Erro ao enviar lead ao CRM do Marcos:', crmErr);
+              }
+              // ────────────────────────────────────────────────────────────────
             } else {
               console.warn(`[Transfer] ⚠️ Nenhum vendedor ativo disponível. Verifique se os vendedores têm agent_id=${agent.id} ou user_id=${agent.user_id} e is_active=true`);
             }
+            } // ── fecha if (!skipTransfer) ──────────────────────────────────
           } catch (transferErr) {
             console.error('[Transfer] Erro no round-robin:', transferErr);
           }
