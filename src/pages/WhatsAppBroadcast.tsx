@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -108,12 +108,16 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // Auto-refresh running campaigns
+  // Ref para fetchData evita recriar o interval a cada ciclo de polling
+  const fetchDataRef = useRef(fetchData);
+  useEffect(() => { fetchDataRef.current = fetchData; }, [fetchData]);
+
+  const hasRunningCampaign = campaigns.some(c => c.status === 'running');
   useEffect(() => {
-    const hasRunning = campaigns.some(c => c.status === 'running');
-    if (!hasRunning) return;
-    const interval = setInterval(fetchData, 10000);
+    if (!hasRunningCampaign) return;
+    const interval = setInterval(() => fetchDataRef.current(), 10000);
     return () => clearInterval(interval);
-  }, [campaigns, fetchData]);
+  }, [hasRunningCampaign]);
 
   // Campaign form submit (create or edit)
   const handleFormSubmit = async (data: CampaignFormData) => {

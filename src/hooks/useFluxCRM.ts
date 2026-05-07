@@ -178,18 +178,27 @@ export function useFluxCRM() {
         .eq('is_active', true)
         .eq('trigger_event', 'new_lead')
         .eq('action_type', 'notify_webhook');
-        
+
       if (automations && automations.length > 0) {
-        automations.forEach(async (auto) => {
-          const config = auto.action_config as Record<string, any>;
-          if (config?.webhook_url) {
-            fetch(config.webhook_url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ lead, event: 'new_lead' })
-            }).catch(console.error);
-          }
-        });
+        // Usar Promise.all para aguardar todos os disparos (evita forEach+async com promises perdidas)
+        await Promise.all(
+          automations.map(async (auto) => {
+            const config = auto.action_config as Record<string, any>;
+            if (!config?.webhook_url) return;
+            try {
+              const res = await fetch(config.webhook_url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lead, event: 'new_lead' }),
+              });
+              if (!res.ok) {
+                console.warn(`Webhook retornou ${res.status} para ${config.webhook_url}`);
+              }
+            } catch (fetchErr) {
+              console.error(`Falha ao chamar webhook ${config.webhook_url}:`, fetchErr);
+            }
+          })
+        );
       }
     } catch (err) {
       console.warn('Erro ao disparar webhook:', err);

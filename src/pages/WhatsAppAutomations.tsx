@@ -118,12 +118,27 @@ export default function WhatsAppAutomations({ embedded }: { embedded?: boolean }
   };
 
   const toggleActive = async (id: string, isActive: boolean) => {
-    await (supabase as any).from('wa_automations').update({ is_active: !isActive }).eq('id', id);
-    fetchAutomations();
+    // Optimistic update: inverte o estado localmente de imediato
+    setAutomations(prev => prev.map(a => a.id === id ? { ...a, is_active: !isActive } : a));
+
+    const { error } = await (supabase as any)
+      .from('wa_automations')
+      .update({ is_active: !isActive })
+      .eq('id', id);
+
+    if (error) {
+      // Rollback se a API falhar
+      setAutomations(prev => prev.map(a => a.id === id ? { ...a, is_active: isActive } : a));
+      toast({ title: 'Erro ao atualizar automação', description: error.message, variant: 'destructive' });
+    }
   };
 
   const handleDelete = async (id: string) => {
-    await (supabase as any).from('wa_automations').delete().eq('id', id);
+    const { error } = await (supabase as any).from('wa_automations').delete().eq('id', id);
+    if (error) {
+      toast({ title: 'Erro ao excluir automação', description: error.message, variant: 'destructive' });
+      return;
+    }
     setAutomations(prev => prev.filter(a => a.id !== id));
     toast({ title: 'Automação excluída' });
   };
