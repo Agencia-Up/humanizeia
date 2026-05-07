@@ -463,6 +463,34 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
               });
 
               console.log(`[Transfer] Lead enviado para ${nextSeller.name} — timeout: ${timeoutAt}`);
+
+              // Notificar Gerente se configurado
+              if (agent.gerente_phone) {
+                const transferredAt = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+                let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
+                if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
+
+                const gerenteMsg =
+                  `📊 *RELATÓRIO DE LEAD — ${agent.name}*\n\n` +
+                  `🕐 *Horário:* ${transferredAt}\n\n` +
+                  `👤 *Lead:* ${pushName}\n` +
+                  `📱 *Telefone:* wa.me/${phoneNumber}\n` +
+                  `📊 *Status:* qualificado\n` +
+                  `${args.resumo ? `\n📝 *Resumo:* ${args.resumo.substring(0, 300)}\n` : ''}` +
+                  `\n━━━━━━━━━━━━━━━━━━━━\n\n` +
+                  `🎯 *Enviado para:* ${nextSeller.name}\n` +
+                  `📲 *WhatsApp vendedor:* ${nextSeller.whatsapp_number}\n` +
+                  `\n━━━━━━━━━━━━━━━━━━━━\n` +
+                  `_Gerado automaticamente pelo Pedro SDR_`;
+
+                await fetch(`${baseUrl}/send/text`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'token': instKey },
+                  body: JSON.stringify({ number: gerenteNum, text: gerenteMsg }),
+                });
+
+                console.log(`[Transfer] Gerente notificado: ${agent.gerente_phone}`);
+              }
             } else {
               console.warn('[Transfer] Nenhum vendedor ativo disponível para receber o lead');
             }
