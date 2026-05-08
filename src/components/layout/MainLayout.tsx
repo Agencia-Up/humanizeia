@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useLayoutEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { AppSidebar } from './AppSidebar';
@@ -23,13 +23,27 @@ export function MainLayout({ children }: MainLayoutProps) {
 
   const showBackButton = !NO_BACK_ROUTES.includes(location.pathname);
 
+  // ── HMR safety net ───────────────────────────────────────────────────────
+  // If a Radix UI modal was open when HMR fired, the `inert` / `aria-hidden`
+  // cleanup may not have completed. We re-check on every layout paint and
+  // remove any stuck markers so the layout is always interactive.
+  useLayoutEffect(() => {
+    const root = document.getElementById('root');
+    if (root?.hasAttribute('inert')) {
+      root.removeAttribute('inert');
+      root.removeAttribute('data-inert-ed');
+    }
+    if (root?.getAttribute('aria-hidden') === 'true') {
+      root.removeAttribute('aria-hidden');
+      root.removeAttribute('data-aria-hidden');
+    }
+  });
+
   return (
     <SidebarProvider defaultOpen={sidebarOpen} open={sidebarOpen} onOpenChange={setSidebarOpen}>
       <div className="flex h-screen w-full overflow-hidden bg-background">
         <AppSidebar />
         <SidebarInset className="flex flex-1 flex-col overflow-hidden relative">
-          {/* Debug bar to check if layout is updating */}
-          <div className="h-0.5 w-full bg-primary/20 absolute top-0 z-50 pointer-events-none" />
           
           <Topbar />
           

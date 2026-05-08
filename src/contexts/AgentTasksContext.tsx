@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -33,6 +33,13 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
   const [recentTasks, setRecentTasks] = useState<AgentTask[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // ── Stable refs for toast/navigate so the subscription effect
+  // doesn't re-subscribe every time these refs change identity ──────────────
+  const toastRef = useRef(toast);
+  const navigateRef = useRef(navigate);
+  useEffect(() => { toastRef.current = toast; }, [toast]);
+  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
+
   // Fetch initial state — silently ignore if table doesn't exist (406/404)
   const fetchTasks = useCallback(async () => {
     if (!user) { setIsLoading(false); return; }
@@ -66,6 +73,8 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
   }, [fetchTasks]);
 
   // Subscribe to realtime updates
+  // Deps: only user.id — toast/navigate are accessed via stable refs so the
+  // subscription is created ONCE per user session, never on every re-render.
   useEffect(() => {
     if (!user) return;
 
@@ -81,14 +90,13 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
         },
         (payload) => {
           const updatedTask = payload.new as AgentTask;
-          
+
           if (payload.eventType === 'INSERT') {
             if (updatedTask.status === 'processing') {
               setActiveTasks(prev => [updatedTask, ...prev]);
             }
             setRecentTasks(prev => [updatedTask, ...prev.slice(0, 19)]);
           } else if (payload.eventType === 'UPDATE') {
-            // Update active tasks
             setActiveTasks(prev => {
               if (updatedTask.status !== 'processing') {
                 return prev.filter(t => t.id !== updatedTask.id);
@@ -96,25 +104,20 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
               return prev.map(t => t.id === updatedTask.id ? updatedTask : t);
             });
 
-            // Update recent tasks
             setRecentTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
 
-            // Show notifications for completion/failure
             if (updatedTask.status === 'completed') {
               const url = getAgentUrl(updatedTask.agent_id);
-              
-              toast({
+              toastRef.current({
                 title: `✨ Tarefa Concluída!`,
                 description: `${getAgentName(updatedTask.agent_id)} terminou o que estava fazendo. Clique para ver.`,
                 variant: 'default',
                 onClick: () => {
-                  if (url) {
-                    navigate(`${url}?taskId=${updatedTask.id}`);
-                  }
+                  if (url) navigateRef.current(`${url}?taskId=${updatedTask.id}`);
                 }
               } as any);
             } else if (updatedTask.status === 'failed') {
-              toast({
+              toastRef.current({
                 title: `⚠️ Erro no Agente`,
                 description: `Houve um problema com a tarefa de ${getAgentName(updatedTask.agent_id)}.`,
                 variant: 'destructive',
@@ -128,7 +131,8 @@ export function AgentTasksProvider({ children }: { children: React.ReactNode }) 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, toast, navigate]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const createTask = async (agentId: string, taskType: string, payload: any) => {
     if (!user) return '';
