@@ -10,27 +10,32 @@ import "./index.css";
 // leaving `inert` stuck on the app content → entire UI becomes non-interactive
 // visually-correct but totally unresponsive. This hook cleans up before each update.
 if (import.meta.hot) {
-  import.meta.hot.on("vite:beforeUpdate", () => {
-    // Remove stuck `inert` from every element (aria-hidden lib marks them with
-    // `data-inert-ed` so we can find them precisely)
+  // Helper — strips every stuck `inert` / `aria-hidden` the aria-hidden lib
+  // (used by Radix UI) may have left behind after a modal was open during HMR.
+  // Radix applies these to SIBLINGS of the portal inside #root, never to #root
+  // itself, so we must querySelectorAll the whole document.
+  function clearRadixLocks() {
     document.querySelectorAll<HTMLElement>("[inert]").forEach((el) => {
       el.removeAttribute("inert");
       el.removeAttribute("data-inert-ed");
     });
-
-    // Remove stuck `aria-hidden` markers (aria-hidden lib uses `data-aria-hidden`)
     document.querySelectorAll<HTMLElement>("[data-aria-hidden]").forEach((el) => {
       el.removeAttribute("aria-hidden");
       el.removeAttribute("data-aria-hidden");
     });
-
-    // Reset body scroll-lock that Radix applies when a modal is open
     document.body.removeAttribute("data-scroll-locked");
     document.body.style.removeProperty("overflow");
     document.body.style.removeProperty("padding-right");
-
-    // Reset pointer-events on body in case any library applied it globally
     document.body.style.removeProperty("pointer-events");
+  }
+
+  // Before the module swap — clears any pre-existing locks
+  import.meta.hot.on("vite:beforeUpdate", clearRadixLocks);
+
+  // After the module swap — Radix cleanup effects may fire during reconciliation
+  // and re-apply `inert`; rAF lets React finish painting first, then we clean.
+  import.meta.hot.on("vite:afterUpdate", () => {
+    requestAnimationFrame(clearRadixLocks);
   });
 }
 

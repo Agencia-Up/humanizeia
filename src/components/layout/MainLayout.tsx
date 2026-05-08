@@ -28,15 +28,21 @@ export function MainLayout({ children }: MainLayoutProps) {
   // cleanup may not have completed. We re-check on every layout paint and
   // remove any stuck markers so the layout is always interactive.
   useLayoutEffect(() => {
-    const root = document.getElementById('root');
-    if (root?.hasAttribute('inert')) {
-      root.removeAttribute('inert');
-      root.removeAttribute('data-inert-ed');
-    }
-    if (root?.getAttribute('aria-hidden') === 'true') {
-      root.removeAttribute('aria-hidden');
-      root.removeAttribute('data-aria-hidden');
-    }
+    // Radix UI applies `inert` to SIBLINGS of the portal inside #root,
+    // not to #root itself — so we must querySelectorAll the whole document.
+    document.querySelectorAll<HTMLElement>('[inert]').forEach(el => {
+      el.removeAttribute('inert');
+      el.removeAttribute('data-inert-ed');
+    });
+    document.querySelectorAll<HTMLElement>('[data-aria-hidden="true"]').forEach(el => {
+      el.removeAttribute('aria-hidden');
+      el.removeAttribute('data-aria-hidden');
+    });
+    // Unstick body scroll-lock that Radix/vaul applies when a modal is open
+    document.body.removeAttribute('data-scroll-locked');
+    document.body.style.removeProperty('overflow');
+    document.body.style.removeProperty('padding-right');
+    document.body.style.removeProperty('pointer-events');
   });
 
   return (
