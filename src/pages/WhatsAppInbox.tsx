@@ -386,8 +386,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
             remote_jid: jid,
             lead_name: selectedConv?.contact_name || phone,
             status: 'transferido',
-            assigned_to_member_id: memberId,
-            transferred_at: new Date().toISOString(),
+            assigned_to_id: memberId,
+            last_interaction_at: new Date().toISOString(),
           })
           .select()
           .single();
@@ -398,9 +398,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
           .from('ai_crm_leads')
           .update({
             status: 'transferido',
-            assigned_to_member_id: memberId,
-            transferred_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+            assigned_to_id: memberId,
+            last_interaction_at: new Date().toISOString(),
           } as any)
           .eq('id', leadId);
       }

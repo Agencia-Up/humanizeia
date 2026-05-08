@@ -7,8 +7,22 @@ const corsHeaders = {
 };
 
 // ── Função auxiliar: round-robin ──────────────────────────────────────────────
-function pickNextSeller(sellers: any[], recentTransfers: any[], excludeId?: string): any | null {
-  const active = sellers.filter(s => s.is_active && s.id !== excludeId);
+function sellerPhoneKey(seller: any): string {
+  const digits = String(seller?.whatsapp_number || "").replace(/\D/g, "");
+  const local = digits.startsWith("55") && digits.length >= 12 ? digits.slice(2) : digits;
+  if (local.length === 11 && local[2] === "9") return `${local.slice(0, 2)}${local.slice(3)}`;
+  return local.slice(-10);
+}
+
+function pickNextSeller(sellers: any[], recentTransfers: any[], excludeId?: string, excludePhoneKey?: string): any | null {
+  const seenPhones = new Set<string>();
+  const active = sellers.filter(s => {
+    const phoneKey = sellerPhoneKey(s);
+    if (!s.is_active || s.id === excludeId || (excludePhoneKey && phoneKey === excludePhoneKey)) return false;
+    if (phoneKey && seenPhones.has(phoneKey)) return false;
+    if (phoneKey) seenPhones.add(phoneKey);
+    return true;
+  });
   if (!active.length) return null;
 
   const lastMap = new Map<string, number>();
@@ -28,12 +42,12 @@ function pickNextSeller(sellers: any[], recentTransfers: any[], excludeId?: stri
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  // Aceita chamada via cron (service key no header) ou interna
+  // Aceita chamada via cron/gateway com JWT valido.
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const authHeader = req.headers.get("authorization") ?? "";
   const token = authHeader.replace("Bearer ", "");
 
-  if (token !== serviceKey) {
+  if (!token) {
     return new Response(JSON.stringify({ error: "Não autorizado" }), {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -77,7 +91,7 @@ serve(async (req) => {
         id, user_id, lead_id, to_member_id,
         lead:ai_crm_leads(id, remote_jid, lead_name, summary, agent_id,
           agent:wa_ai_agents(id, name, instance_ids)),
-        member:ai_team_members(id, name, whatsapp_number, agent_id)
+        member:ai_team_members!ai_lead_transfers_to_member_id_fkey(id, name, whatsapp_number, agent_id)
       `)
       .eq("transfer_status", "pending")
       .eq("is_confirmed", false)
@@ -145,7 +159,7 @@ serve(async (req) => {
         const { data: allSellers } = await supabase
           .from("ai_team_members")
           .select("*")
-          .eq("agent_id", agentId)
+          .eq("user_id", transfer.user_id)
           .eq("is_active", true);
 
         const { data: recentTransfers } = await supabase
@@ -158,7 +172,8 @@ serve(async (req) => {
         const nextSeller = pickNextSeller(
           allSellers || [],
           recentTransfers || [],
-          expiredSeller.id           // exclui quem acabou de perder
+          expiredSeller.id,
+          sellerPhoneKey(expiredSeller)
         );
 
         if (!nextSeller) {

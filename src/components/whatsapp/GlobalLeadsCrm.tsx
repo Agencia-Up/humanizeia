@@ -161,18 +161,17 @@ export function GlobalLeadsCrm() {
       const lead = leads.find(l => l.id === leadId);
       await (supabase as any).from('ai_crm_leads').update({
         status: 'transferido',
-        transferred_at: new Date().toISOString(),
         assigned_to_id: memberId,
+        last_interaction_at: new Date().toISOString(),
       }).eq('id', leadId);
 
       await (supabase as any).from('ai_lead_transfers').insert({
         user_id: user.id,
         lead_id: leadId,
-        from_agent_id: lead?.agent_id || null,
         to_member_id: memberId,
         transfer_reason: 'manual',
         notes: 'Transferência manual pelo gerente',
-      });
+      } as any);
 
       const member = teamMembers.find(m => m.id === memberId);
       if (member) {

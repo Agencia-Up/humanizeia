@@ -34,6 +34,24 @@ async function sendUazapiTextMessage(baseUrl: string, instKey: string, instanceN
   return false;
 }
 
+function sellerPhoneKey(seller: any): string {
+  const digits = String(seller?.whatsapp_number || '').replace(/\D/g, '');
+  const local = digits.startsWith('55') && digits.length >= 12 ? digits.slice(2) : digits;
+  if (local.length === 11 && local[2] === '9') return `${local.slice(0, 2)}${local.slice(3)}`;
+  return local.slice(-10);
+}
+
+function uniqueSellersByPhone(sellers: any[] = [], excludeId?: string, excludePhoneKey?: string): any[] {
+  const seenPhones = new Set<string>();
+  return sellers.filter((seller) => {
+    const phoneKey = sellerPhoneKey(seller);
+    if (!seller.is_active || seller.id === excludeId || (excludePhoneKey && phoneKey === excludePhoneKey)) return false;
+    if (phoneKey && seenPhones.has(phoneKey)) return false;
+    if (phoneKey) seenPhones.add(phoneKey);
+    return true;
+  });
+}
+
 /**
  * Verifica se o horário atual está dentro da janela de rodízio vendedor -> vendedor.
  * Regra de negócio: 10:11 até 20:59 (horário de Brasília).
@@ -133,13 +151,18 @@ serve(async (req) => {
           const { data: teamMembers } = await supabase
             .from('ai_team_members')
             .select('*')
-            .eq('agent_id', agentId)
+            .eq('user_id', lead.user_id)
             .eq('is_active', true)
-            .neq('id', currentSellerId)
             .order('last_lead_received_at', { ascending: true, nullsFirst: true })
-            .limit(1);
+            .limit(50);
 
-          if (!teamMembers || teamMembers.length === 0) {
+          const availableSellers = uniqueSellersByPhone(
+            teamMembers || [],
+            currentSellerId,
+            sellerPhoneKey({ whatsapp_number: transfer.ai_team_members?.whatsapp_number })
+          );
+
+          if (availableSellers.length === 0) {
             console.log(`[Cron] Nenhum outro vendedor disponível para o agente ${agentId}. Lead ${lead.id} permanece com vendedor atual.`);
             // Repassar de volta para o mesmo (sem outros disponíveis)
             await supabase.from('ai_lead_transfers')
@@ -148,7 +171,7 @@ serve(async (req) => {
             continue;
           }
 
-          const nextSeller = teamMembers[0];
+          const nextSeller = availableSellers[0];
           console.log(`[Cron] Repassando lead ${lead.id} de ${currentSellerId} para ${nextSeller.name} (não respondeu em 10min).`);
 
           // Atualizar lead com novo vendedor
@@ -167,11 +190,11 @@ serve(async (req) => {
             lead_id: lead.id,
             from_member_id: currentSellerId,
             to_member_id: nextSeller.id,
-            from_agent_id: agentId,
             transfer_reason: 'Rodízio por Inatividade do Vendedor (10min)',
             notes: `Repassado de ${currentSellerId} para ${nextSeller.name} por falta de resposta em 10 minutos`,
             transfer_status: 'pending',
             is_confirmed: false,
+            confirmation_timeout_at: new Date(now.getTime() + 15 * 60000).toISOString(),
           });
 
           // Notificar próximo vendedor
@@ -305,16 +328,17 @@ serve(async (req) => {
         const { data: teamMembers } = await supabase
           .from('ai_team_members')
           .select('*')
-          .eq('agent_id', agentId)
+          .eq('user_id', lead.user_id)
           .eq('is_active', true)
           .order('last_lead_received_at', { ascending: true, nullsFirst: true })
-          .limit(1);
+          .limit(50);
 
         let selectedSellerId = null;
         let sellerName = 'Especialista';
+        const availableSellers = uniqueSellersByPhone(teamMembers || []);
 
-        if (teamMembers && teamMembers.length > 0) {
-          const seller = teamMembers[0];
+        if (availableSellers.length > 0) {
+          const seller = availableSellers[0];
           selectedSellerId = seller.id;
           sellerName = seller.name;
 
@@ -329,11 +353,11 @@ serve(async (req) => {
             user_id: lead.user_id,
             lead_id: lead.id,
             to_member_id: seller.id,
-            from_agent_id: agentId,
             transfer_reason: 'Inatividade do cliente (10 minutos)',
             notes: `Transferido automaticamente para ${seller.name} via cron`,
             transfer_status: 'pending',
             is_confirmed: false,
+            confirmation_timeout_at: new Date(now.getTime() + 15 * 60000).toISOString(),
           });
 
           await supabase.from('ai_team_members').update({
