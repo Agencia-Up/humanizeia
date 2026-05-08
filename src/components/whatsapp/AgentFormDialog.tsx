@@ -655,22 +655,18 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   };
 
   const isSdr = agentType === 'sdr';
+  const handleDialogOpenChange = (val: boolean) => {
+    if (!val) {
+      stopPolling();
+      setQrCode(null);
+      setIsGeneratingQr(false);
+    }
+    onOpenChange(val);
+  };
 
   return (
-    <Dialog 
-      open={open} 
-      onOpenChange={(val) => {
-        if (!val && qrCode) {
-            if (!confirm('O QR Code ainda está ativo. Deseja realmente fechar?')) return;
-        }
-        onOpenChange(val);
-      }}
-    >
-      <DialogContent 
-        className="sm:max-w-2xl max-h-[90vh]"
-        onPointerDownOutside={(e) => { if (qrCode) e.preventDefault(); }}
-        onEscapeKeyDown={(e) => { if (qrCode) e.preventDefault(); }}
-      >
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-primary" />
@@ -1066,7 +1062,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         </ScrollArea>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button variant="outline" onClick={() => handleDialogOpenChange(false)}>Cancelar</Button>
           <Button onClick={handleSave} disabled={saving || syncing}>
             {(saving || syncing) ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
             {syncing ? 'Sincronizando...' : agent ? 'Salvar' : 'Criar Agente'}
