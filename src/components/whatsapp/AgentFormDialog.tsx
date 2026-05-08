@@ -706,7 +706,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
             {/* ── Tab: Vendedores (Repasse) ── */}
             <TabsContent value="equipe" className="space-y-6 mt-0">
-               <AgentCrmEquipeTab agentId={agent?.id || null} userId={user?.id || ''} />
+              <AgentCrmEquipeTab agentId={agent?.id || null} userId={user?.id || ''} />
             </TabsContent>
 
             {/* ── Tab: General ── */}
