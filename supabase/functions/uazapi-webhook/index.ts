@@ -2207,6 +2207,19 @@ Responda de forma humana, comercial e natural, sem mencionar que você "não abr
             .eq('remote_jid', remoteJid)
             .maybeSingle();
 
+          let preferredAssignedToId = existingLead?.assigned_to_id || null;
+          if (!preferredAssignedToId) {
+            const { data: previousLeadSeller } = await supabase.from('ai_crm_leads')
+              .select('assigned_to_id, last_interaction_at')
+              .eq('user_id', agent.user_id)
+              .eq('remote_jid', remoteJid)
+              .not('assigned_to_id', 'is', null)
+              .order('last_interaction_at', { ascending: false, nullsFirst: false })
+              .limit(1)
+              .maybeSingle();
+            preferredAssignedToId = previousLeadSeller?.assigned_to_id || null;
+          }
+
           const alreadyTransferred = existingLead && (existingLead.status === 'transferido' || existingLead.status === 'qualificado');
 
           const crmStatusPayload = {
@@ -2217,7 +2230,7 @@ Responda de forma humana, comercial e natural, sem mencionar que você "não abr
             summary: args.resumo,
             last_interaction_at: new Date().toISOString(),
             lead_name: pushName,
-            assigned_to_id: existingLead?.assigned_to_id || null
+            assigned_to_id: preferredAssignedToId
           };
           await supabase.from('ai_crm_leads').upsert(crmStatusPayload, { onConflict: 'agent_id, remote_jid' });
           if (supabaseNew) {
@@ -2241,9 +2254,9 @@ Responda de forma humana, comercial e natural, sem mencionar que você "não abr
             } else {
             let selectedSeller = null;
 
-            // Tentar manter o mesmo vendedor se o lead ja estiver designado e o vendedor estiver ativo
-            if (existingLead && existingLead.assigned_to_id) {
-              const { data: currentSeller } = await supabase.from('ai_team_members').select('*').eq('id', existingLead.assigned_to_id).eq('is_active', true).maybeSingle();
+            // Tentar manter o mesmo vendedor se o telefone ja tiver atendimento anterior
+            if (preferredAssignedToId) {
+              const { data: currentSeller } = await supabase.from('ai_team_members').select('*').eq('id', preferredAssignedToId).eq('is_active', true).maybeSingle();
               if (currentSeller) {
                 selectedSeller = currentSeller;
                 console.log(`[CRM] Lead recorrente. Re-notificando vendedor designado: ${selectedSeller.name}`);

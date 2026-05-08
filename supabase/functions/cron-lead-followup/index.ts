@@ -338,7 +338,21 @@ serve(async (req) => {
         const availableSellers = uniqueSellersByPhone(teamMembers || []);
 
         if (availableSellers.length > 0) {
-          const seller = availableSellers[0];
+          let seller = availableSellers[0];
+          const { data: previousLeadSeller } = await supabase
+            .from('ai_crm_leads')
+            .select('assigned_to_id')
+            .eq('user_id', lead.user_id)
+            .eq('remote_jid', lead.remote_jid)
+            .not('assigned_to_id', 'is', null)
+            .order('last_interaction_at', { ascending: false, nullsFirst: false })
+            .limit(1)
+            .maybeSingle();
+          const previousSeller = availableSellers.find((member: any) => member.id === previousLeadSeller?.assigned_to_id);
+          if (previousSeller) {
+            seller = previousSeller;
+            console.log(`[Cron] Lead recorrente ${phoneNumber}. Mantendo vendedor anterior: ${seller.name}`);
+          }
           selectedSellerId = seller.id;
           sellerName = seller.name;
 
