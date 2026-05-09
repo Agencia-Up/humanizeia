@@ -289,7 +289,6 @@ export function AppSidebar() {
             {/* ── Dashboard ── */}
             <NavGroup label="Painel" collapsed={collapsed}>
               <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
-              <NavItem collapsed={collapsed} item={{ title: 'Pedro SDR', url: '/pedro', icon: Zap }} />
             </NavGroup>
 
             {/* ── Marcos — Captação de Leads & WhatsApp ── */}

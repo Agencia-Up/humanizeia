@@ -207,23 +207,25 @@ export default function AgentHub() {
           </div>
         </div>
 
-        {/* ── Banner de resultados ──────────────────────────────────────────── */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="flex cursor-pointer items-center gap-4 rounded-xl border border-primary/20 bg-primary/5 p-4 transition-all hover:border-primary/40 hover:bg-primary/8"
-          onClick={() => navigate('/metrics')}
-        >
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15">
-            <BarChart3 className="h-5 w-5 text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-foreground">Ver resultados das campanhas</p>
-            <p className="text-xs text-muted-foreground">Métricas em tempo real — investimento, cliques, leads e muito mais</p>
-          </div>
-          <ArrowRight className="h-4 w-4 shrink-0 text-primary/60" />
-        </motion.div>
+        {/* ── Banner de resultados (só admin) ──────────────────────────────── */}
+        {isAdmin && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+            className="flex cursor-pointer items-center gap-4 rounded-xl border border-primary/20 bg-primary/5 p-4 transition-all hover:border-primary/40 hover:bg-primary/8"
+            onClick={() => navigate('/metrics')}
+          >
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15">
+              <BarChart3 className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-foreground">Ver resultados das campanhas</p>
+              <p className="text-xs text-muted-foreground">Métricas em tempo real — investimento, cliques, leads e muito mais</p>
+            </div>
+            <ArrowRight className="h-4 w-4 shrink-0 text-primary/60" />
+          </motion.div>
+        )}
 
       </div>
     </MainLayout>
