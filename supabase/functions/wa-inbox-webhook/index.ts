@@ -1760,7 +1760,7 @@ async function transferLeadToSeller(
     const { data: sellers } = await supabase
       .from("ai_team_members")
       .select("*")
-      .eq("agent_id", agent.id)
+      .eq("user_id", instance.user_id)
       .eq("is_active", true)
       .order("last_lead_received_at", { ascending: true, nullsFirst: true });
 
@@ -1772,13 +1772,13 @@ async function transferLeadToSeller(
     // 1.5. Prevent Duplicate Transfers via Concurrency Hook
     const { data: existingLead } = await supabase
       .from("ai_crm_leads")
-      .select("status, assigned_to_member_id")
+      .select("status, assigned_to_id")
       .eq("agent_id", agent.id)
       .eq("remote_jid", phone)
       .maybeSingle();
 
-    if (existingLead && existingLead.assigned_to_member_id) {
-       console.log(`[transfer] Lead ${phone} already assigned to member ${existingLead.assigned_to_member_id}. Aborting duplicate broadcast.`);
+    if (existingLead && existingLead.assigned_to_id) {
+       console.log(`[transfer] Lead ${phone} already assigned to member ${existingLead.assigned_to_id}. Aborting duplicate broadcast.`);
        return;
     }
 
@@ -1886,18 +1886,19 @@ ${conversationText}
       await supabase.from("ai_lead_transfers").insert({
         user_id: instance.user_id,
         lead_id: leadData.id,
-        from_agent_id: agent.id,
         to_member_id: selectedSeller.id,
         transfer_reason: "round_robin",
         notes: `Transferido automaticamente para ${selectedSeller.name} via round-robin. Resumo: ${summary}`,
+        transfer_status: "pending",
+        is_confirmed: false,
+        confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       });
 
       // Update lead with transfer info
       await supabase.from("ai_crm_leads").update({
         status: "transferido",
-        assigned_to_member_id: selectedSeller.id,
-        transferred_at: new Date().toISOString(),
-        transfer_reason: `Encaminhado para ${selectedSeller.name}`,
+        assigned_to_id: selectedSeller.id,
+        last_interaction_at: new Date().toISOString(),
       }).eq("id", leadData.id);
     }
 

@@ -226,7 +226,6 @@ _Gerado automaticamente pelo Pedro SDR_`;
     await supabase.from("ai_crm_leads").update({
       status: "transferido",
       assigned_to_id: member.id,
-      assigned_to_member_id: member.id,
       last_interaction_at: new Date().toISOString(),
     }).eq("id", lead.id);
 
@@ -234,7 +233,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
     await supabase.from("ai_lead_transfers").insert({
       user_id: userId,
       lead_id: lead.id,
-      from_member_id: lead.assigned_to_member_id,
+      from_member_id: lead.assigned_to_id,
       to_member_id: member.id,
       transfer_reason: "manual",
       notes: notes,

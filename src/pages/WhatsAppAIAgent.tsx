@@ -130,6 +130,7 @@ function AgentCard({
   onDelete: () => void;
   onToggle: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const modelInfo = MODEL_LABELS[agent.model] || { short: agent.model.split('/').pop() || agent.model, color: 'bg-muted text-muted-foreground border-border' };
   const tokenCount = Math.ceil((agent.system_prompt || '').length / 4);
 
@@ -143,6 +144,12 @@ function AgentCard({
   const instanceConnected = agent.instance_ids?.length
     ? agent.instance_ids.some(id => instances.find(i => i.id === id)?.is_active)
     : (agent.instance_id ? instances.find(i => i.id === agent.instance_id)?.is_active : false);
+
+  const handleMenuEdit = (event: Event) => {
+    event.preventDefault();
+    setMenuOpen(false);
+    window.setTimeout(onEdit, 0);
+  };
 
   return (
     <div
@@ -180,14 +187,14 @@ function AgentCard({
             </p>
           </div>
 
-          <DropdownMenu>
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                 <MoreVertical className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuItem onClick={onEdit}>
+              <DropdownMenuItem onSelect={handleMenuEdit}>
                 <Edit2 className="h-3.5 w-3.5 mr-2" /> Editar
               </DropdownMenuItem>
               <DropdownMenuItem onClick={onDuplicate}>

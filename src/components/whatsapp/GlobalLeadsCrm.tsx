@@ -161,18 +161,20 @@ export function GlobalLeadsCrm() {
       const lead = leads.find(l => l.id === leadId);
       await (supabase as any).from('ai_crm_leads').update({
         status: 'transferido',
-        transferred_at: new Date().toISOString(),
         assigned_to_id: memberId,
+        last_interaction_at: new Date().toISOString(),
       }).eq('id', leadId);
 
       await (supabase as any).from('ai_lead_transfers').insert({
         user_id: user.id,
         lead_id: leadId,
-        from_agent_id: lead?.agent_id || null,
         to_member_id: memberId,
         transfer_reason: 'manual',
+        transfer_status: 'pending',
+        is_confirmed: false,
+        confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         notes: 'Transferência manual pelo gerente',
-      });
+      } as any);
 
       const member = teamMembers.find(m => m.id === memberId);
       if (member) {
@@ -190,13 +192,16 @@ export function GlobalLeadsCrm() {
   };
 
   const handleNextInQueueTransfer = async (leadId: string) => {
-    const nextMember = getNextMemberInQueue(teamMembers, transfers);
+    const lead = leads.find(l => l.id === leadId);
+    const previousMember = getPreviousMemberForLead(lead, leads, teamMembers);
+    const nextMember = previousMember || getNextMemberInQueue(teamMembers, transfers);
     if (!nextMember) {
       toast({ title: 'Nenhum vendedor ativo na fila', variant: 'destructive' });
       return;
     }
     
-    if (!confirm(`Deseja transferir este lead para ${nextMember.name} (Próximo da fila)?`)) return;
+    const reason = previousMember ? 'mesmo vendedor que ja atendeu este numero' : 'proximo da fila';
+    if (!confirm(`Deseja transferir este lead para ${nextMember.name} (${reason})?`)) return;
     
     await handleManualTransfer(leadId, nextMember.id);
   };
@@ -588,8 +593,24 @@ function getNextInQueue(members: any[], transfers: any[]): string {
   return member ? member.name : 'Nenhum vendedor ativo';
 }
 
+function getPreviousMemberForLead(lead: any, leads: any[], members: any[]): any | null {
+  if (!lead?.remote_jid) return null;
+  const previousLead = leads
+    .filter(l => l.id !== lead.id && l.remote_jid === lead.remote_jid && l.assigned_to_id)
+    .sort((a, b) => new Date(b.last_interaction_at || b.created_at || 0).getTime() - new Date(a.last_interaction_at || a.created_at || 0).getTime())[0];
+  if (!previousLead?.assigned_to_id) return null;
+  return members.find(m => m.id === previousLead.assigned_to_id && m.is_active) || null;
+}
+
 function getNextMemberInQueue(members: any[], transfers: any[]): any | null {
-  const active = members.filter(m => m.is_active);
+  const seenPhones = new Set<string>();
+  const active = members.filter(m => {
+    if (!m.is_active) return false;
+    const phoneKey = String(m.whatsapp_number || '').replace(/\D/g, '').slice(-10);
+    if (phoneKey && seenPhones.has(phoneKey)) return false;
+    if (phoneKey) seenPhones.add(phoneKey);
+    return true;
+  });
   if (active.length === 0) return null;
   if (transfers.length === 0) return active[0] || null;
 
