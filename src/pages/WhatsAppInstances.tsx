@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { useSubscription } from '@/hooks/useSubscription';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { EvolutionConnectDialog } from '@/components/evolution/EvolutionConnectDialog';
 import {
   Smartphone,
@@ -80,9 +82,19 @@ function getHealthBg(score: number | null) {
   return 'bg-red-500';
 }
 
+const INSTANCE_LIMITS: Record<string, number> = {
+  basico: 5,
+  pro: 10,
+  enterprise: 15,
+};
+
 export default function WhatsAppInstances({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { subscription } = useSubscription();
+  const { isAdmin } = useIsAdmin();
+  const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
+  const maxInstances = INSTANCE_LIMITS[userPlan] ?? 5;
   const [instances, setInstances] = useState<WaInstance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [connectOpen, setConnectOpen] = useState(false);
@@ -257,11 +269,21 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
               </Button>
             )}
             <Button
-              onClick={() => setConnectOpen(true)}
+              onClick={() => {
+                if (instances.length >= maxInstances) {
+                  toast({
+                    title: `Limite de ${maxInstances} instâncias atingido`,
+                    description: 'Faça upgrade do seu plano para conectar mais números.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
+                setConnectOpen(true);
+              }}
               className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white gap-2"
             >
               <Plus className="h-4 w-4" />
-              Conectar Número
+              Conectar Número ({instances.length}/{maxInstances})
             </Button>
           </div>
         </div>

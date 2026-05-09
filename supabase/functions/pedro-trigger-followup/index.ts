@@ -24,7 +24,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ── Mesmo helper usado por cron-lead-followup ─────────────────────────────────
+// ── Helpers de envio via UazAPI ───────────────────────────────────────────────
 async function sendUazapiTextMessage(
   baseUrl: string,
   instKey: string,
@@ -37,6 +37,55 @@ async function sendUazapiTextMessage(
     { url: `${baseUrl}/send/text`, body: { number: phoneNumber, text } },
     { url: `${baseUrl}/send/text`, body: { remoteJid, text } },
     { url: `${baseUrl}/message/sendText/${instanceName}`, body: { number: phoneNumber, text } },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const res = await fetch(attempt.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "token": instKey, "apikey": instKey },
+        body: JSON.stringify(attempt.body),
+      });
+      if (res.ok) return true;
+    } catch {
+      // tenta próxima estratégia
+    }
+  }
+  return false;
+}
+
+// Envia mídia (imagem, áudio, vídeo) via UazAPI
+async function sendUazapiMediaMessage(
+  baseUrl: string,
+  instKey: string,
+  instanceName: string,
+  phoneNumber: string,
+  remoteJid: string,
+  mediaUrl: string,
+  mediaType: string, // 'image' | 'audio' | 'video'
+  caption?: string,
+): Promise<boolean> {
+  // Mapeia tipo para endpoint UazAPI
+  const endpointMap: Record<string, string> = {
+    image: "image",
+    audio: "audio",
+    video: "video",
+  };
+  const mediaEndpoint = endpointMap[mediaType] || "image";
+
+  const attempts = [
+    {
+      url: `${baseUrl}/send/${mediaEndpoint}`,
+      body: { number: phoneNumber, url: mediaUrl, caption: caption || "" },
+    },
+    {
+      url: `${baseUrl}/send/${mediaEndpoint}`,
+      body: { remoteJid, url: mediaUrl, caption: caption || "" },
+    },
+    {
+      url: `${baseUrl}/message/sendMedia/${instanceName}`,
+      body: { number: phoneNumber, mediatype: mediaEndpoint, media: mediaUrl, caption: caption || "" },
+    },
   ];
 
   for (const attempt of attempts) {
@@ -109,11 +158,30 @@ serve(async (req) => {
         const remoteJid   = lead.remote_jid;
         const phoneNumber = remoteJid.split("@")[0];
 
-        // 3. Envia via UazAPI
-        const sent = await sendUazapiTextMessage(
-          baseUrl, instKey, instName, phoneNumber, remoteJid,
-          schedule.message_template,
-        );
+        // 3. Envia via UazAPI (com ou sem mídia)
+        let sent = false;
+        const hasMedia = schedule.media_url && schedule.media_type;
+
+        if (hasMedia) {
+          // Envia mídia primeiro
+          sent = await sendUazapiMediaMessage(
+            baseUrl, instKey, instName, phoneNumber, remoteJid,
+            schedule.media_url, schedule.media_type,
+            schedule.message_template, // caption
+          );
+          // Se mídia falhar, tenta enviar só texto
+          if (!sent) {
+            sent = await sendUazapiTextMessage(
+              baseUrl, instKey, instName, phoneNumber, remoteJid,
+              schedule.message_template,
+            );
+          }
+        } else {
+          sent = await sendUazapiTextMessage(
+            baseUrl, instKey, instName, phoneNumber, remoteJid,
+            schedule.message_template,
+          );
+        }
 
         if (!sent) {
           await supabase.from("pedro_followup_schedules")

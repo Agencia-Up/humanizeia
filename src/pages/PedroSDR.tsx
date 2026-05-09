@@ -15,6 +15,7 @@ import {
   ArrowRightLeft, TrendingUp, Clock, CheckCircle2, AlertCircle,
   Zap, PhoneCall, NotebookPen, Send, CalendarClock, Flag,
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
+  Pin, PinOff, Image, Mic, Video, Smartphone, Upload, X, Trash2,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -24,8 +25,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 
-const WhatsAppAIAgent = lazy(() => import('./WhatsAppAIAgent'));
-const CrmAoVivo       = lazy(() => import('./CrmAoVivo'));
+const WhatsAppAIAgent    = lazy(() => import('./WhatsAppAIAgent'));
+const CrmAoVivo          = lazy(() => import('./CrmAoVivo'));
+const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
+import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
 
 const TabLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -45,6 +48,7 @@ interface PerfData {
   leadsPorStatus: { name: string; value: number; color: string }[];
   atividadeSemanal: { dia: string; leads: number; transferencias: number }[];
   agentes: { nome: string; respostas: number; leads: number }[];
+  vendedores: { nome: string; leads: number; qualificados: number; whatsapp: string }[];
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -72,10 +76,10 @@ function usePerfData(userId: string | undefined) {
         hoje.setHours(0, 0, 0, 0);
         const seteAtras = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-        const [leadsRes, transRes, agentRes] = await Promise.all([
+        const [leadsRes, transRes, agentRes, teamRes] = await Promise.all([
           (supabase as any)
             .from('ai_crm_leads')
-            .select('id, status, created_at')
+            .select('id, status, status_crm, assigned_to_id, created_at')
             .eq('user_id', userId),
           (supabase as any)
             .from('ai_lead_transfers')
@@ -85,11 +89,16 @@ function usePerfData(userId: string | undefined) {
             .from('wa_ai_agents')
             .select('id, name, total_replies, is_active')
             .eq('user_id', userId),
+          (supabase as any)
+            .from('ai_team_members')
+            .select('id, name, whatsapp_number, is_active')
+            .eq('user_id', userId),
         ]);
 
-        const leads: any[]  = leadsRes.data  || [];
-        const trans: any[]  = transRes.data  || [];
-        const agents: any[] = agentRes.data  || [];
+        const leads: any[]   = leadsRes.data  || [];
+        const trans: any[]   = transRes.data  || [];
+        const agents: any[]  = agentRes.data  || [];
+        const sellers: any[] = teamRes.data   || [];
 
         // ── métricas brutas ─────────────────────────────────────────────────
         const totalLeads     = leads.length;
@@ -137,10 +146,29 @@ function usePerfData(userId: string | undefined) {
           leads: leads.filter((l: any) => l.agent_id === a.id).length,
         })).sort((a, b) => b.respostas - a.respostas).slice(0, 5);
 
+        // ── ranking de vendedores ─────────────────────────────────────────────
+        // Deduplica por whatsapp_number
+        const sellerMap = new Map<string, { nome: string; whatsapp: string; ids: string[] }>();
+        for (const s of sellers) {
+          const key = s.whatsapp_number || s.id;
+          const existing = sellerMap.get(key);
+          if (!existing) {
+            sellerMap.set(key, { nome: s.name, whatsapp: s.whatsapp_number || '', ids: [s.id] });
+          } else {
+            existing.ids.push(s.id);
+          }
+        }
+        const vendedoresRank = Array.from(sellerMap.values()).map(s => ({
+          nome: s.nome,
+          whatsapp: s.whatsapp,
+          leads: leads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id)).length,
+          qualificados: leads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id) && l.status_crm === 'qualificado').length,
+        })).sort((a, b) => b.leads - a.leads);
+
         setData({
           totalLeads, leadsHoje, transferencias, taxaConversao,
           totalRespostas, agentesAtivos, leadsPorStatus,
-          atividadeSemanal, agentes: agentesRank,
+          atividadeSemanal, agentes: agentesRank, vendedores: vendedoresRank,
         });
       } catch {
         // silently ignore — tables may not exist in all envs
@@ -337,45 +365,98 @@ function PerformanceTab({ userId }: { userId: string | undefined }) {
         </Card>
       </div>
 
-      {/* ── Ranking de Agentes ───────────────────────────────────── */}
-      {data.agentes.length > 0 && (
-        <Card className="bg-card border-border/50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Bot className="h-4 w-4 text-cyan-400" />
-              Ranking de Agentes
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {data.agentes.map((a, i) => {
-                const maxR = Math.max(...data.agentes.map(x => x.respostas), 1);
-                const pct  = Math.round((a.respostas / maxR) * 100);
-                return (
-                  <div key={i} className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground w-4 text-right">{i + 1}.</span>
-                        <span className="font-medium text-foreground">{a.nome}</span>
+      {/* ── Rankings ───────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Ranking de Vendedores */}
+        {data.vendedores.length > 0 && (
+          <Card className="bg-card border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Users className="h-4 w-4 text-emerald-400" />
+                Ranking de Vendedores
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {data.vendedores.map((v, i) => {
+                  const maxL = Math.max(...data.vendedores.map(x => x.leads), 1);
+                  const pct  = Math.round((v.leads / maxL) * 100);
+                  return (
+                    <div key={i} className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                            i === 0 ? 'bg-amber-500/20 text-amber-400' :
+                            i === 1 ? 'bg-slate-400/20 text-slate-300' :
+                            i === 2 ? 'bg-orange-500/20 text-orange-400' :
+                            'bg-muted text-muted-foreground'
+                          }`}>
+                            {i + 1}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-medium text-foreground">{v.nome}</span>
+                            {v.whatsapp && <p className="text-[10px] text-muted-foreground">{v.whatsapp}</p>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 text-muted-foreground shrink-0">
+                          <span className="text-blue-400 font-semibold">{v.leads} leads</span>
+                          <span className="text-emerald-400">{v.qualificados} qualif.</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3 text-muted-foreground">
-                        <span>{a.respostas.toLocaleString()} respostas</span>
-                        {a.leads > 0 && <span className="text-blue-400">{a.leads} leads</span>}
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-700"
+                          style={{ width: `${pct}%` }}
+                        />
                       </div>
                     </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-700"
-                        style={{ width: `${pct}%` }}
-                      />
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Ranking de Agentes */}
+        {data.agentes.length > 0 && (
+          <Card className="bg-card border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Bot className="h-4 w-4 text-cyan-400" />
+                Ranking de Agentes IA
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {data.agentes.map((a, i) => {
+                  const maxR = Math.max(...data.agentes.map(x => x.respostas), 1);
+                  const pct  = Math.round((a.respostas / maxR) * 100);
+                  return (
+                    <div key={i} className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground w-4 text-right">{i + 1}.</span>
+                          <span className="font-medium text-foreground">{a.nome}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-muted-foreground">
+                          <span>{a.respostas.toLocaleString()} respostas</span>
+                          {a.leads > 0 && <span className="text-blue-400">{a.leads} leads</span>}
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-700"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }
@@ -435,6 +516,7 @@ interface Note {
   id: string;
   lead_id: string;
   content: string;
+  is_pinned: boolean;
   created_at: string;
   member?: { name: string } | null;
 }
@@ -499,6 +581,11 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [fuDate, setFuDate]               = useState('');
   const [fuInstance, setFuInstance]       = useState('');
   const [fuLoading, setFuLoading]         = useState(false);
+  const [fuMediaFile, setFuMediaFile]     = useState<File | null>(null);
+  const [fuMediaUrl, setFuMediaUrl]       = useState('');
+  const [fuUploading, setFuUploading]     = useState(false);
+  const fuFileRef = useRef<HTMLInputElement>(null);
+  const [funnelOpen, setFunnelOpen]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
@@ -600,8 +687,9 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     const [notesRes, schedRes] = await Promise.all([
       (supabase as any)
         .from('pedro_crm_notes')
-        .select('id, lead_id, content, created_at, member:ai_team_members(name)')
+        .select('id, lead_id, content, is_pinned, created_at, member:ai_team_members(name)')
         .eq('lead_id', lead.id)
+        .order('is_pinned', { ascending: false })
         .order('created_at', { ascending: false }),
       (supabase as any)
         .from('pedro_followup_schedules')
@@ -634,10 +722,65 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     }
   };
 
+  const toggleNotePin = async (noteId: string, currentPinned: boolean) => {
+    try {
+      await (supabase as any).from('pedro_crm_notes').update({ is_pinned: !currentPinned }).eq('id', noteId);
+      setNotes(prev => prev.map(n => n.id === noteId ? { ...n, is_pinned: !currentPinned } : n)
+        .sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0)));
+      toast({ title: !currentPinned ? '📌 Nota fixada!' : 'Nota desafixada' });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const sendNoteToManager = async (note: Note) => {
+    if (!selectedLead || !userId) return;
+    try {
+      await supabase.functions.invoke('pedro-process-feedback', {
+        body: {
+          lead_id: selectedLead.id,
+          member_id: memberId,
+          content: `📌 Anotação: ${note.content}`,
+          priority: 'normal',
+        },
+      });
+      toast({ title: '✅ Nota enviada ao gerente!' });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !userId) return;
+    const maxSize = file.type.startsWith('video/') ? 16 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast({ title: 'Arquivo muito grande', description: `Máximo ${maxSize / (1024 * 1024)}MB`, variant: 'destructive' });
+      return;
+    }
+    setFuUploading(true);
+    setFuMediaFile(file);
+    try {
+      const ext = file.name.split('.').pop() || 'bin';
+      const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('followup-media').upload(path, file);
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from('followup-media').getPublicUrl(path);
+      setFuMediaUrl(urlData.publicUrl);
+    } catch (err: any) {
+      toast({ title: 'Erro ao enviar arquivo', description: err.message, variant: 'destructive' });
+      setFuMediaFile(null);
+    } finally {
+      setFuUploading(false);
+      if (e.target) e.target.value = '';
+    }
+  };
+
   const handleScheduleFollowup = async () => {
     if (!fuMsg.trim() || !fuDate || !selectedLead || !userId) return;
     setFuLoading(true);
     try {
+      const mediaType = fuMediaFile ? fuMediaFile.type.split('/')[0] : null; // 'image' | 'video' | 'audio'
       const { error } = await (supabase as any).from('pedro_followup_schedules').insert({
         lead_id:          selectedLead.id,
         user_id:          userId,
@@ -646,11 +789,14 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         message_template: fuMsg.trim(),
         instance_id:      fuInstance || null,
         status:           'pending',
+        media_url:        fuMediaUrl || null,
+        media_type:       mediaType,
       });
       if (error) throw error;
       // Atualiza next_followup_at no lead
       await (supabase as any).from('ai_crm_leads').update({ next_followup_at: new Date(fuDate).toISOString() }).eq('id', selectedLead.id);
       setFuMsg(''); setFuDate(''); setFuInstance('');
+      setFuMediaFile(null); setFuMediaUrl('');
       toast({ title: '✅ Follow-up agendado!' });
       await loadLeadDetail(selectedLead);
     } catch (err: any) {
@@ -852,9 +998,32 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                   <p className="text-xs text-muted-foreground text-center py-4">Nenhuma anotação ainda.</p>
                 )}
                 {notes.map(n => (
-                  <div key={n.id} className="bg-muted/40 rounded-lg p-3 space-y-1">
-                    <p className="text-xs text-foreground leading-relaxed">{n.content}</p>
-                    <p className="text-[10px] text-muted-foreground">{n.member?.name ?? 'Vendedor'} · {fmtDate(n.created_at)}</p>
+                  <div key={n.id} className={`rounded-lg p-3 space-y-1 ${n.is_pinned ? 'bg-yellow-500/10 border border-yellow-500/20' : 'bg-muted/40'}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs text-foreground leading-relaxed flex-1">{n.content}</p>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <Button
+                          variant="ghost" size="sm"
+                          onClick={() => toggleNotePin(n.id, n.is_pinned)}
+                          className={`h-6 w-6 p-0 ${n.is_pinned ? 'text-yellow-400 hover:text-yellow-300' : 'text-muted-foreground hover:text-foreground'}`}
+                          title={n.is_pinned ? 'Desafixar nota' : 'Fixar nota'}
+                        >
+                          {n.is_pinned ? <PinOff className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
+                        </Button>
+                        <Button
+                          variant="ghost" size="sm"
+                          onClick={() => sendNoteToManager(n)}
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-blue-400"
+                          title="Enviar ao gerente"
+                        >
+                          <Send className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {n.is_pinned && <Pin className="h-2.5 w-2.5 text-yellow-400" />}
+                      <p className="text-[10px] text-muted-foreground">{n.member?.name ?? 'Vendedor'} · {fmtDate(n.created_at)}</p>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -864,17 +1033,97 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           {/* ── Follow-up ─────────────────────────────────────────────── */}
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <CalendarClock className="h-4 w-4 text-cyan-400" /> Agendar Follow-up
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <CalendarClock className="h-4 w-4 text-cyan-400" /> Agendar Follow-up
+                </span>
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => setFunnelOpen(!funnelOpen)}
+                  className="h-7 text-[10px] gap-1 border-primary/30 text-primary hover:bg-primary/10"
+                >
+                  <Zap className="h-3 w-3" />
+                  {funnelOpen ? 'Fechar Funil' : 'Funil Automático'}
+                </Button>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              {/* Funil automático */}
+              {funnelOpen && selectedLead && (
+                <FollowupFunnelBuilder
+                  leadId={selectedLead.id}
+                  userId={userId!}
+                  memberId={memberId}
+                  instanceId={fuInstance}
+                  onClose={() => setFunnelOpen(false)}
+                  onSaved={() => loadLeadDetail(selectedLead)}
+                />
+              )}
+
               <Textarea
                 value={fuMsg}
                 onChange={e => setFuMsg(e.target.value)}
                 placeholder="Mensagem a enviar ao lead..."
                 className="min-h-[60px] text-xs resize-none"
               />
+
+              {/* Upload de mídia */}
+              <div className="flex items-center gap-1.5">
+                <input
+                  ref={fuFileRef}
+                  type="file"
+                  accept="image/*,video/*,audio/*"
+                  className="hidden"
+                  onChange={handleMediaUpload}
+                />
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => { if (fuFileRef.current) { fuFileRef.current.accept = 'image/*'; fuFileRef.current.click(); } }}
+                  className="h-7 text-[10px] gap-1 flex-1"
+                  disabled={fuUploading}
+                >
+                  <Image className="h-3 w-3" /> Imagem
+                </Button>
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => { if (fuFileRef.current) { fuFileRef.current.accept = 'audio/*'; fuFileRef.current.click(); } }}
+                  className="h-7 text-[10px] gap-1 flex-1"
+                  disabled={fuUploading}
+                >
+                  <Mic className="h-3 w-3" /> Áudio
+                </Button>
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => { if (fuFileRef.current) { fuFileRef.current.accept = 'video/*'; fuFileRef.current.click(); } }}
+                  className="h-7 text-[10px] gap-1 flex-1"
+                  disabled={fuUploading}
+                >
+                  <Video className="h-3 w-3" /> Vídeo
+                </Button>
+              </div>
+
+              {/* Preview da mídia selecionada */}
+              {fuUploading && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 rounded-lg p-2">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Enviando arquivo...
+                </div>
+              )}
+              {fuMediaFile && !fuUploading && (
+                <div className="flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-3 py-2">
+                  {fuMediaFile.type.startsWith('image/') && <Image className="h-3.5 w-3.5 text-primary shrink-0" />}
+                  {fuMediaFile.type.startsWith('audio/') && <Mic className="h-3.5 w-3.5 text-primary shrink-0" />}
+                  {fuMediaFile.type.startsWith('video/') && <Video className="h-3.5 w-3.5 text-primary shrink-0" />}
+                  <span className="text-[10px] text-foreground truncate flex-1">{fuMediaFile.name}</span>
+                  <Button
+                    variant="ghost" size="sm"
+                    onClick={() => { setFuMediaFile(null); setFuMediaUrl(''); }}
+                    className="h-5 w-5 p-0 text-red-400 hover:text-red-500"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              )}
+
               <div className="flex gap-2">
                 <Input
                   type="datetime-local"
@@ -901,7 +1150,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                 size="sm" className="w-full h-8 text-xs"
               >
                 {fuLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <CalendarClock className="h-3.5 w-3.5 mr-1.5" />}
-                Agendar Follow-up
+                Agendar Follow-up{fuMediaFile ? ' (com mídia)' : ''}
               </Button>
 
               {/* Lista de agendamentos */}
@@ -1318,6 +1567,7 @@ const TABS = [
   { id: 'crm',         label: 'CRM Avançado', icon: NotebookPen,  emoji: '🗒️' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,          emoji: '🤖' },
   { id: 'ao-vivo',     label: 'CRM ao Vivo',  icon: MonitorPlay,  emoji: '📺' },
+  { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,   emoji: '📱' },
 ];
 
 export default function PedroSDR() {
@@ -1378,6 +1628,9 @@ export default function PedroSDR() {
               </TabsContent>
               <TabsContent value="ao-vivo"  className="mt-0 h-full">
                 <CrmAoVivo embedded />
+              </TabsContent>
+              <TabsContent value="instancias" className="mt-0 h-full">
+                <WhatsAppInstances embedded />
               </TabsContent>
             </Suspense>
           </div>
