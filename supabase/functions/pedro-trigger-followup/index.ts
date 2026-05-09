@@ -5,8 +5,9 @@
  * com scheduled_at ≤ now, converte em entradas na `followup_queue` (canal WhatsApp)
  * e marca como 'sent'.
  *
- * Invocação: Supabase Cron ou n8n — a cada 5 min durante horário comercial.
- * Também pode ser chamado manualmente pelo frontend para forçar processamento.
+ * Invocação: manual pelo usuário via botão "Disparar Follow-ups" na tab
+ * CRM Avançado do Pedro. Não há agendamento automático — o disparo é
+ * sempre iniciado pelo usuário.
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";

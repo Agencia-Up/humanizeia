@@ -460,6 +460,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [fuInstance, setFuInstance]       = useState('');
   const [fuLoading, setFuLoading]         = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
+  const [triggerLoading, setTriggerLoading] = useState(false);
 
   // detect seller vs gerente
   useEffect(() => {
@@ -606,6 +607,25 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const markFeedbackRead = async (id: string) => {
     await (supabase as any).from('pedro_manager_feedback').update({ read_at: new Date().toISOString() }).eq('id', id);
     setFeedbacks(prev => prev.map(f => f.id === id ? { ...f, read_at: new Date().toISOString() } : f));
+  };
+
+  const handleTriggerFollowups = async () => {
+    setTriggerLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('pedro-trigger-followup', { body: {} });
+      if (error) throw error;
+      const { processed = 0, failed = 0 } = (data as any) ?? {};
+      toast({
+        title: processed > 0 ? `✅ ${processed} follow-up(s) disparado(s)` : 'Nenhum follow-up pendente',
+        description: failed > 0 ? `${failed} falharam — verifique as instâncias.` : undefined,
+        variant: failed > 0 ? 'destructive' : 'default',
+      });
+      if (processed > 0) await fetchData(true);
+    } catch (err: any) {
+      toast({ title: 'Erro ao disparar follow-ups', description: err.message, variant: 'destructive' });
+    } finally {
+      setTriggerLoading(false);
+    }
   };
 
   if (loading) {
@@ -798,14 +818,27 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             </button>
           ))}
         </div>
-        <Button
-          variant="ghost" size="sm"
-          onClick={() => fetchData(true)}
-          disabled={refreshing}
-          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="outline" size="sm"
+            onClick={handleTriggerFollowups}
+            disabled={triggerLoading}
+            className="h-7 px-2.5 text-xs gap-1.5 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
+          >
+            {triggerLoading
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Zap className="h-3.5 w-3.5" />}
+            Disparar Follow-ups
+          </Button>
+          <Button
+            variant="ghost" size="sm"
+            onClick={() => fetchData(true)}
+            disabled={refreshing}
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
       </div>
 
       {/* ── Leads List ──────────────────────────────────────────────── */}
