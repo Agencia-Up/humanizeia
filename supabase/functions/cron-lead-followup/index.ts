@@ -147,7 +147,7 @@ serve(async (req) => {
             continue;
           }
 
-          // Buscar próximo vendedor na fila (excluindo o atual que não respondeu)
+          // Buscar TODOS os vendedores (inclusive o atual, para poder notificá-lo)
           const { data: teamMembers } = await supabase
             .from('ai_team_members')
             .select('*')
@@ -156,10 +156,31 @@ serve(async (req) => {
             .order('last_lead_received_at', { ascending: true, nullsFirst: true })
             .limit(50);
 
+          // ── Notifica o vendedor que PERDEU o lead ──────────────────────
+          const expiredSeller = (teamMembers || []).find((m: any) => m.id === currentSellerId);
+          if (expiredSeller?.whatsapp_number) {
+            const agentData = lead.wa_ai_agents;
+            let targetInstanceId = agentData?.instance_id;
+            if (!targetInstanceId && agentData?.instance_ids?.length > 0) targetInstanceId = agentData.instance_ids[0];
+            const expiredInstance = allInstances?.find((i: any) => i.id === targetInstanceId);
+
+            if (expiredInstance) {
+              const expBaseUrl = expiredInstance.api_url?.replace(/\/$/, '');
+              const expInstKey = expiredInstance.api_key_encrypted || expiredInstance.api_key;
+              let expSellerNum = expiredSeller.whatsapp_number.replace(/\D/g, '');
+              if (expSellerNum.length === 10 || expSellerNum.length === 11) expSellerNum = `55${expSellerNum}`;
+
+              const missedMsg = `⚠️ *LEAD REPASSADO*\n\nO lead *${lead.lead_name || 'Desconhecido'}* não teve sua confirmação dentro de 10 minutos e foi passado para o próximo da fila.\n\n🚫 *Por favor, NÃO entre em contato com este cliente.*`;
+
+              await sendUazapiTextMessage(expBaseUrl, expInstKey, expiredInstance.instance_name, expSellerNum, `${expSellerNum}@s.whatsapp.net`, missedMsg);
+              console.log(`[Cron] ⚠️ Aviso enviado para ${expiredSeller.name} (perdeu o lead por inatividade).`);
+            }
+          }
+
           const availableSellers = uniqueSellersByPhone(
             teamMembers || [],
             currentSellerId,
-            sellerPhoneKey({ whatsapp_number: transfer.ai_team_members?.whatsapp_number })
+            sellerPhoneKey({ whatsapp_number: expiredSeller?.whatsapp_number })
           );
 
           if (availableSellers.length === 0) {
@@ -172,7 +193,7 @@ serve(async (req) => {
           }
 
           const nextSeller = availableSellers[0];
-          console.log(`[Cron] Repassando lead ${lead.id} de ${currentSellerId} para ${nextSeller.name} (não respondeu em 10min).`);
+          console.log(`[Cron] Repassando lead ${lead.id} de ${expiredSeller?.name || currentSellerId} para ${nextSeller.name} (não respondeu em 10min).`);
 
           // Atualizar lead com novo vendedor
           await supabase.from('ai_crm_leads').update({
