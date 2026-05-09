@@ -1,19 +1,27 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useToast } from '@/hooks/use-toast';
 import {
   Bot, MonitorPlay, BarChart3, Loader2, Users, MessageSquare,
   ArrowRightLeft, TrendingUp, Clock, CheckCircle2, AlertCircle,
-  Zap, PhoneCall,
+  Zap, PhoneCall, NotebookPen, Send, CalendarClock, Flag,
+  ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
 } from 'lucide-react';
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from 'recharts';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 
 const WhatsAppAIAgent = lazy(() => import('./WhatsAppAIAgent'));
 const CrmAoVivo       = lazy(() => import('./CrmAoVivo'));
@@ -371,10 +379,540 @@ function PerformanceTab({ userId }: { userId: string | undefined }) {
   );
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const PRIORITY_CONFIG = {
+  low:    { label: 'Baixa',   color: 'text-slate-400',   bg: 'bg-slate-500/10' },
+  normal: { label: 'Normal',  color: 'text-blue-400',    bg: 'bg-blue-500/10'  },
+  high:   { label: 'Alta',    color: 'text-orange-400',  bg: 'bg-orange-500/10'},
+  urgent: { label: 'Urgente', color: 'text-red-400',     bg: 'bg-red-500/10'   },
+} as const;
+
+function fmtDate(iso: string) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(iso));
+}
+
+// ─── Tab CRM Avançado ─────────────────────────────────────────────────────────
+
+interface CrmLead {
+  id: string;
+  lead_name: string;
+  remote_jid: string;
+  status_crm: string;
+  next_followup_at: string | null;
+  seller_notes_count: number;
+  assigned_to_id: string | null;
+  member?: { id: string; name: string } | null;
+  created_at: string;
+}
+
+interface Note {
+  id: string;
+  lead_id: string;
+  content: string;
+  created_at: string;
+  member?: { name: string } | null;
+}
+
+interface Feedback {
+  id: string;
+  lead_id: string;
+  content: string;
+  priority: string;
+  read_at: string | null;
+  created_at: string;
+  member?: { name: string } | null;
+  lead?: { lead_name: string } | null;
+}
+
+interface FollowupSchedule {
+  id: string;
+  lead_id: string;
+  scheduled_at: string;
+  message_template: string;
+  status: string;
+  created_at: string;
+}
+
+function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
+  const { toast } = useToast();
+  const [isSeller, setIsSeller] = useState(false);
+  const [memberId, setMemberId] = useState<string | null>(null);
+  const [leads, setLeads] = useState<CrmLead[]>([]);
+  const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
+  const [instances, setInstances] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
+  const [view, setView] = useState<'leads' | 'feedbacks'>('leads');
+
+  // form states
+  const [newNote, setNewNote]             = useState('');
+  const [noteLoading, setNoteLoading]     = useState(false);
+  const [fbContent, setFbContent]         = useState('');
+  const [fbPriority, setFbPriority]       = useState<'low'|'normal'|'high'|'urgent'>('normal');
+  const [fbLoading, setFbLoading]         = useState(false);
+  const [fuMsg, setFuMsg]                 = useState('');
+  const [fuDate, setFuDate]               = useState('');
+  const [fuInstance, setFuInstance]       = useState('');
+  const [fuLoading, setFuLoading]         = useState(false);
+  const [refreshing, setRefreshing]       = useState(false);
+
+  // detect seller vs gerente
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('ai_team_members')
+        .select('id, user_id')
+        .eq('auth_user_id', userId)
+        .maybeSingle();
+      if (data) { setIsSeller(true); setMemberId(data.id); }
+    })();
+  }, [userId]);
+
+  const fetchData = async (silent = false) => {
+    if (!userId) return;
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const effectiveUserId = isSeller
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
+        : userId;
+
+      const [leadsRes, fbRes, instRes] = await Promise.all([
+        (supabase as any)
+          .from('ai_crm_leads')
+          .select('id, lead_name, remote_jid, status_crm, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name)')
+          .eq('user_id', effectiveUserId)
+          .order('created_at', { ascending: false })
+          .limit(60),
+        (supabase as any)
+          .from('pedro_manager_feedback')
+          .select('id, lead_id, content, priority, read_at, created_at, member:ai_team_members(name), lead:ai_crm_leads(lead_name)')
+          .eq('user_id', isSeller ? userId : effectiveUserId)
+          .order('created_at', { ascending: false })
+          .limit(50),
+        (supabase as any)
+          .from('wa_instances')
+          .select('id, friendly_name')
+          .eq('user_id', effectiveUserId)
+          .eq('is_active', true),
+      ]);
+
+      setLeads(leadsRes.data || []);
+      setFeedbacks(fbRes.data || []);
+      setInstances(instRes.data || []);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, [userId, isSeller]);
+
+  const loadLeadDetail = async (lead: CrmLead) => {
+    setSelectedLead(lead);
+    const [notesRes, schedRes] = await Promise.all([
+      (supabase as any)
+        .from('pedro_crm_notes')
+        .select('id, lead_id, content, created_at, member:ai_team_members(name)')
+        .eq('lead_id', lead.id)
+        .order('created_at', { ascending: false }),
+      (supabase as any)
+        .from('pedro_followup_schedules')
+        .select('id, lead_id, scheduled_at, message_template, status, created_at')
+        .eq('lead_id', lead.id)
+        .order('scheduled_at', { ascending: true }),
+    ]);
+    setNotes(notesRes.data || []);
+    setSchedules(schedRes.data || []);
+  };
+
+  const handleAddNote = async () => {
+    if (!newNote.trim() || !selectedLead || !userId) return;
+    setNoteLoading(true);
+    try {
+      const { error } = await (supabase as any).from('pedro_crm_notes').insert({
+        lead_id:   selectedLead.id,
+        user_id:   userId,
+        member_id: memberId,
+        content:   newNote.trim(),
+      });
+      if (error) throw error;
+      setNewNote('');
+      toast({ title: '✅ Anotação salva!' });
+      await loadLeadDetail(selectedLead);
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally {
+      setNoteLoading(false);
+    }
+  };
+
+  const handleScheduleFollowup = async () => {
+    if (!fuMsg.trim() || !fuDate || !selectedLead || !userId) return;
+    setFuLoading(true);
+    try {
+      const { error } = await (supabase as any).from('pedro_followup_schedules').insert({
+        lead_id:          selectedLead.id,
+        user_id:          userId,
+        member_id:        memberId,
+        scheduled_at:     new Date(fuDate).toISOString(),
+        message_template: fuMsg.trim(),
+        instance_id:      fuInstance || null,
+        status:           'pending',
+      });
+      if (error) throw error;
+      // Atualiza next_followup_at no lead
+      await (supabase as any).from('ai_crm_leads').update({ next_followup_at: new Date(fuDate).toISOString() }).eq('id', selectedLead.id);
+      setFuMsg(''); setFuDate(''); setFuInstance('');
+      toast({ title: '✅ Follow-up agendado!' });
+      await loadLeadDetail(selectedLead);
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally {
+      setFuLoading(false);
+    }
+  };
+
+  const handleSendFeedback = async () => {
+    if (!fbContent.trim() || !selectedLead || !userId) return;
+    setFbLoading(true);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const token = session.session?.access_token;
+      const res = await supabase.functions.invoke('pedro-process-feedback', {
+        body: {
+          lead_id:   selectedLead.id,
+          member_id: memberId,
+          content:   fbContent.trim(),
+          priority:  fbPriority,
+        },
+      });
+      if (res.error) throw res.error;
+      setFbContent(''); setFbPriority('normal');
+      toast({ title: '✅ Feedback enviado ao gerente!' });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally {
+      setFbLoading(false);
+    }
+  };
+
+  const markFeedbackRead = async (id: string) => {
+    await (supabase as any).from('pedro_manager_feedback').update({ read_at: new Date().toISOString() }).eq('id', id);
+    setFeedbacks(prev => prev.map(f => f.id === id ? { ...f, read_at: new Date().toISOString() } : f));
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-7 w-7 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // ── Lead Detail Panel ──────────────────────────────────────────────────────
+  if (selectedLead) {
+    return (
+      <div className="p-4 lg:p-6 space-y-5">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setSelectedLead(null)} className="h-8 px-2 gap-1 text-xs text-muted-foreground">
+            <ChevronRight className="h-3.5 w-3.5 rotate-180" /> Voltar
+          </Button>
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
+            <p className="text-xs text-muted-foreground">{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* ── Anotações ─────────────────────────────────────────────── */}
+          <Card className="bg-card border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <StickyNote className="h-4 w-4 text-yellow-400" /> Anotações
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex gap-2">
+                <Textarea
+                  value={newNote}
+                  onChange={e => setNewNote(e.target.value)}
+                  placeholder="Escreva uma anotação sobre este lead..."
+                  className="min-h-[70px] text-xs resize-none"
+                />
+                <Button onClick={handleAddNote} disabled={noteLoading || !newNote.trim()} size="sm" className="h-auto px-3 self-end">
+                  {noteLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+              <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                {notes.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-4">Nenhuma anotação ainda.</p>
+                )}
+                {notes.map(n => (
+                  <div key={n.id} className="bg-muted/40 rounded-lg p-3 space-y-1">
+                    <p className="text-xs text-foreground leading-relaxed">{n.content}</p>
+                    <p className="text-[10px] text-muted-foreground">{n.member?.name ?? 'Vendedor'} · {fmtDate(n.created_at)}</p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ── Follow-up ─────────────────────────────────────────────── */}
+          <Card className="bg-card border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <CalendarClock className="h-4 w-4 text-cyan-400" /> Agendar Follow-up
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Textarea
+                value={fuMsg}
+                onChange={e => setFuMsg(e.target.value)}
+                placeholder="Mensagem a enviar ao lead..."
+                className="min-h-[60px] text-xs resize-none"
+              />
+              <div className="flex gap-2">
+                <Input
+                  type="datetime-local"
+                  value={fuDate}
+                  onChange={e => setFuDate(e.target.value)}
+                  className="text-xs h-8 flex-1"
+                />
+                {instances.length > 0 && (
+                  <Select value={fuInstance} onValueChange={setFuInstance}>
+                    <SelectTrigger className="h-8 text-xs w-36">
+                      <SelectValue placeholder="Instância" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {instances.map(i => (
+                        <SelectItem key={i.id} value={i.id} className="text-xs">{i.friendly_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              <Button
+                onClick={handleScheduleFollowup}
+                disabled={fuLoading || !fuMsg.trim() || !fuDate}
+                size="sm" className="w-full h-8 text-xs"
+              >
+                {fuLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <CalendarClock className="h-3.5 w-3.5 mr-1.5" />}
+                Agendar Follow-up
+              </Button>
+
+              {/* Lista de agendamentos */}
+              {schedules.filter(s => s.status === 'pending').length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Agendados</p>
+                  {schedules.filter(s => s.status === 'pending').map(s => (
+                    <div key={s.id} className="flex items-start gap-2 bg-muted/40 rounded-lg px-3 py-2">
+                      <Clock className="h-3 w-3 text-cyan-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-[10px] text-cyan-400 font-medium">{fmtDate(s.scheduled_at)}</p>
+                        <p className="text-[10px] text-muted-foreground line-clamp-1">{s.message_template}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* ── Feedback para Gerente ──────────────────────────────────── */}
+        <Card className="bg-card border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <BellRing className="h-4 w-4 text-orange-400" /> Feedback para Gerente
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Textarea
+                value={fbContent}
+                onChange={e => setFbContent(e.target.value)}
+                placeholder="Descreva o que o gerente precisa saber sobre este lead..."
+                className="min-h-[80px] text-xs resize-none flex-1"
+              />
+              <div className="flex flex-col gap-2 sm:w-40">
+                <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
+                      <SelectItem key={k} value={k} className="text-xs">
+                        <span className={v.color}>{v.label}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={handleSendFeedback}
+                  disabled={fbLoading || !fbContent.trim()}
+                  size="sm" className="h-8 text-xs"
+                >
+                  {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                  Enviar
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // ── Main Panel ─────────────────────────────────────────────────────────────
+  const unreadFeedbacks = feedbacks.filter(f => !f.read_at);
+
+  return (
+    <div className="p-4 lg:p-6 space-y-4">
+      {/* Sub-nav + refresh */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1 bg-muted/40 rounded-lg p-1">
+          {[
+            { id: 'leads',     label: 'Leads',    icon: Users },
+            { id: 'feedbacks', label: 'Feedbacks', icon: BellRing, badge: unreadFeedbacks.length },
+          ].map(v => (
+            <button
+              key={v.id}
+              onClick={() => setView(v.id as any)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                view === v.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <v.icon className="h-3.5 w-3.5" />
+              {v.label}
+              {v.badge ? (
+                <span className="ml-0.5 bg-orange-500 text-white rounded-full px-1.5 py-0.5 text-[9px] font-bold">{v.badge}</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+        <Button
+          variant="ghost" size="sm"
+          onClick={() => fetchData(true)}
+          disabled={refreshing}
+          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
+
+      {/* ── Leads List ──────────────────────────────────────────────── */}
+      {view === 'leads' && (
+        <div className="space-y-2">
+          {leads.length === 0 && (
+            <div className="text-center py-16 text-muted-foreground text-sm">
+              <Users className="h-8 w-8 mx-auto mb-3 opacity-30" />
+              Nenhum lead encontrado.
+            </div>
+          )}
+          {leads.map(lead => (
+            <button
+              key={lead.id}
+              onClick={() => loadLeadDetail(lead)}
+              className="w-full text-left bg-card border border-border/50 rounded-xl px-4 py-3 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all group"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                    <Users className="h-4 w-4 text-blue-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {lead.lead_name || lead.remote_jid}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {lead.member?.name ?? 'Sem vendedor'} · {fmtDate(lead.created_at)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {lead.seller_notes_count > 0 && (
+                    <span className="flex items-center gap-1 text-[10px] text-yellow-400">
+                      <StickyNote className="h-3 w-3" />{lead.seller_notes_count}
+                    </span>
+                  )}
+                  {lead.next_followup_at && (
+                    <span className="flex items-center gap-1 text-[10px] text-cyan-400">
+                      <Clock className="h-3 w-3" />{fmtDate(lead.next_followup_at)}
+                    </span>
+                  )}
+                  <Badge variant="outline" className="text-[10px] h-5 capitalize">
+                    {lead.status_crm || 'novo'}
+                  </Badge>
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Feedbacks List (gerente) ─────────────────────────────────── */}
+      {view === 'feedbacks' && (
+        <div className="space-y-2">
+          {feedbacks.length === 0 && (
+            <div className="text-center py-16 text-muted-foreground text-sm">
+              <BellRing className="h-8 w-8 mx-auto mb-3 opacity-30" />
+              Nenhum feedback recebido ainda.
+            </div>
+          )}
+          {feedbacks.map(fb => {
+            const pCfg = PRIORITY_CONFIG[fb.priority as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.normal;
+            return (
+              <div
+                key={fb.id}
+                className={`bg-card border rounded-xl px-4 py-3 transition-colors ${
+                  fb.read_at ? 'border-border/40 opacity-70' : 'border-orange-500/30 bg-orange-500/5'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1 flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${pCfg.bg} ${pCfg.color}`}>
+                        {pCfg.label}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {fb.member?.name ?? 'Vendedor'} · {fb.lead?.lead_name ?? 'Lead'} · {fmtDate(fb.created_at)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-foreground leading-relaxed">{fb.content}</p>
+                  </div>
+                  {!fb.read_at && (
+                    <Button
+                      variant="ghost" size="sm"
+                      onClick={() => markFeedbackRead(fb.id)}
+                      className="h-7 px-2 text-[10px] text-muted-foreground hover:text-foreground shrink-0"
+                    >
+                      <Eye className="h-3 w-3 mr-1" /> Lido
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 const TABS = [
   { id: 'performance', label: 'Performance',  icon: BarChart3,    emoji: '📊' },
+  { id: 'crm',         label: 'CRM Avançado', icon: NotebookPen,  emoji: '🗒️' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,          emoji: '🤖' },
   { id: 'ao-vivo',     label: 'CRM ao Vivo',  icon: MonitorPlay,  emoji: '📺' },
 ];
@@ -423,6 +961,10 @@ export default function PedroSDR() {
           <div className="flex-1 min-h-0 overflow-auto">
             <TabsContent value="performance" className="mt-0">
               <PerformanceTab userId={user?.id} />
+            </TabsContent>
+
+            <TabsContent value="crm" className="mt-0">
+              <CrmAvancadoTab userId={user?.id} />
             </TabsContent>
 
             <Suspense fallback={<TabLoader />}>
