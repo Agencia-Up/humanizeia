@@ -21,9 +21,10 @@ const agents = [
   { name: 'João', role: 'Email', icon: Mail, color: '#a78bfa', url: '/joao', desc: 'Email marketing e automações', active: true },
   { name: 'Marcos', role: 'CRM & WhatsApp', icon: Users, color: '#a855f7', url: '/marcos', desc: 'CRM, leads e toda estrutura WhatsApp', active: true },
   { name: 'Pedro', role: 'SDR & Agente IA', icon: Bot, color: '#34d399', url: '/pedro', desc: 'Qualificação de leads, CRM avançado e automação comercial', active: true, subItems: [
-    { label: 'Agente IA',    url: '/whatsapp/ai-agent',    icon: MessageCircle },
-    { label: 'CRM Avançado', url: '/pedro?tab=crm',        icon: ClipboardList },
-    { label: 'CRM ao Vivo',  url: '/whatsapp/crm-ao-vivo', icon: MonitorPlay },
+    { label: 'Painel Pedro',  url: '/pedro',                icon: Bot },
+    { label: 'Agente IA',     url: '/whatsapp/ai-agent',    icon: MessageCircle },
+    { label: 'CRM Avançado',  url: '/pedro?tab=crm',        icon: ClipboardList },
+    { label: 'CRM ao Vivo',   url: '/whatsapp/crm-ao-vivo', icon: MonitorPlay },
   ] },
   { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', desc: 'Planejamento e análise estratégica', active: true },
 ];
