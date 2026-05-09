@@ -210,23 +210,23 @@ Deno.serve(async (req) => {
     const agentName = agentConfig?.name || lead.agent?.name || "Pedro";
     const transferredAt = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 
-    // 5. Send WhatsApp to SELLER
-    const sellerMsg = `🚨 *TRANSFERÊNCIA MANUAL DE LEAD*
+    // 5. Send WhatsApp to SELLER (mensagem completa com resumo da conversa)
+    const sellerMsg = `🚨 *TRANSFERÊNCIA DE LEAD*
 
 👤 *Nome do Cliente:* ${pushName}
 📱 *Contato:* ${phone}
 🤖 *Agente IA:* ${agentName}
+🕐 *Horário:* ${transferredAt}
+📊 *Status:* ${lead.status || "qualificado"}
 
 ━━━━━━━━━━━━━━━━━━━━
-
-📝 *Observação:*
-${notes || "Sem observações adicionais."}
-
+${lead.summary ? `\n📝 *Resumo da Conversa:*\n${lead.summary.substring(0, 500)}\n` : ""}
 ━━━━━━━━━━━━━━━━━━━━
-
+${notes ? `\n💬 *Observação:* ${notes}\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}
 👉 *Atender agora:* https://wa.me/${phone}
 
-⚡ O cliente está aguardando seu contato!`;
+⚡ O cliente está aguardando seu contato!
+⏰ *Responda em até 15 minutos para confirmar o recebimento.*`;
 
     if (instance) {
       await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
