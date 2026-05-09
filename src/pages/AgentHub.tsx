@@ -7,7 +7,6 @@ import {
   Layers, Megaphone, Bot, Brain, BarChart3,
   ArrowRight, Lock, MessageCircle, FileText, Zap,
   TrendingUp, Mail, Instagram, MessageSquare,
-  MonitorPlay, ClipboardList,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 
@@ -20,12 +19,7 @@ const agents = [
   { name: 'Davi', role: 'Social Media', icon: Instagram, color: '#60a5fa', url: '/davi', desc: 'Gestão de redes sociais e conteúdo', active: true },
   { name: 'João', role: 'Email', icon: Mail, color: '#a78bfa', url: '/joao', desc: 'Email marketing e automações', active: true },
   { name: 'Marcos', role: 'CRM & WhatsApp', icon: Users, color: '#a855f7', url: '/marcos', desc: 'CRM, leads e toda estrutura WhatsApp', active: true },
-  { name: 'Pedro', role: 'SDR & Agente IA', icon: Bot, color: '#34d399', url: '/pedro', desc: 'Qualificação de leads, CRM avançado e automação comercial', active: true, subItems: [
-    { label: 'Painel Pedro',  url: '/pedro',                icon: Bot },
-    { label: 'Agente IA',     url: '/whatsapp/ai-agent',    icon: MessageCircle },
-    { label: 'CRM Avançado',  url: '/pedro?tab=crm',        icon: ClipboardList },
-    { label: 'CRM ao Vivo',   url: '/whatsapp/crm-ao-vivo', icon: MonitorPlay },
-  ] },
+  { name: 'Pedro', role: 'SDR & Agente IA', icon: Bot, color: '#34d399', url: '/pedro', desc: 'Qualificação de leads, CRM avançado e automação comercial', active: true },
   { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', desc: 'Planejamento e análise estratégica', active: true },
 ];
 
@@ -179,21 +173,6 @@ export default function AgentHub() {
                         {agent.active ? agent.role : 'Em breve'}
                       </p>
                     </div>
-                    {/* Sub-links para agentes com subItems (Pedro) */}
-                    {agent.active && (agent as any).subItems && (
-                      <div className="w-full pt-1 border-t border-border/30 space-y-1 mt-1">
-                        {((agent as any).subItems as { label: string; url: string; icon: React.ComponentType<{ className?: string }> }[]).map(sub => (
-                          <button
-                            key={sub.url}
-                            onClick={e => { e.stopPropagation(); navigate(sub.url); }}
-                            className="flex items-center gap-1.5 w-full px-2 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
-                          >
-                            <sub.icon className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{sub.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
                   </CardContent>
                 </Card>
               </motion.div>
