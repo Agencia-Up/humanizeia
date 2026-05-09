@@ -388,6 +388,16 @@ const PRIORITY_CONFIG = {
   urgent: { label: 'Urgente', color: 'text-red-400',     bg: 'bg-red-500/10'   },
 } as const;
 
+const STATUS_CRM_OPTIONS = [
+  { value: 'novo',         label: 'Novo',          color: 'text-blue-400'   },
+  { value: 'em_atendimento', label: 'Em Atendimento', color: 'text-cyan-400' },
+  { value: 'interessado',  label: 'Interessado',   color: 'text-yellow-400' },
+  { value: 'qualificado',  label: 'Qualificado',   color: 'text-emerald-400'},
+  { value: 'negociacao',   label: 'Negociação',    color: 'text-purple-400' },
+  { value: 'fechado',      label: 'Fechado',       color: 'text-green-400'  },
+  { value: 'perdido',      label: 'Perdido',       color: 'text-red-400'    },
+];
+
 function fmtDate(iso: string) {
   return new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
@@ -436,6 +446,17 @@ interface FollowupSchedule {
   created_at: string;
 }
 
+interface TeamMember {
+  id: string;
+  name: string;
+  whatsapp_number: string | null;
+  is_active: boolean;
+  last_lead_received_at: string | null;
+  agent_id: string | null;
+  leadsCount?: number;
+  qualifiedCount?: number;
+}
+
 function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const { toast } = useToast();
   const [isSeller, setIsSeller] = useState(false);
@@ -443,11 +464,17 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [instances, setInstances] = useState<any[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
-  const [view, setView] = useState<'leads' | 'feedbacks'>('leads');
+  const [view, setView] = useState<'leads' | 'feedbacks' | 'sellers'>('leads');
+
+  // filter states
+  const [filterStatus, setFilterStatus]   = useState<string>('all');
+  const [filterSeller, setFilterSeller]   = useState<string>('all');
+  const [searchTerm,   setSearchTerm]     = useState('');
 
   // form states
   const [newNote, setNewNote]             = useState('');
@@ -461,6 +488,8 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [fuLoading, setFuLoading]         = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
+  const [reassigning, setReassigning]       = useState<string | null>(null);
 
   // detect seller vs gerente
   useEffect(() => {
@@ -484,13 +513,13 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
         : userId;
 
-      const [leadsRes, fbRes, instRes] = await Promise.all([
+      const [leadsRes, fbRes, instRes, teamRes] = await Promise.all([
         (supabase as any)
           .from('ai_crm_leads')
           .select('id, lead_name, remote_jid, status_crm, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name)')
           .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false })
-          .limit(60),
+          .limit(100),
         (supabase as any)
           .from('pedro_manager_feedback')
           .select('id, lead_id, content, priority, read_at, created_at, member:ai_team_members(name), lead:ai_crm_leads(lead_name)')
@@ -502,11 +531,28 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           .select('id, friendly_name')
           .eq('user_id', effectiveUserId)
           .eq('is_active', true),
+        (supabase as any)
+          .from('ai_team_members')
+          .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
+          .eq('user_id', effectiveUserId)
+          .order('is_active', { ascending: false })
+          .order('name', { ascending: true }),
       ]);
 
-      setLeads(leadsRes.data || []);
+      const leadsData: CrmLead[] = leadsRes.data || [];
+      const teamData:  TeamMember[] = teamRes.data || [];
+
+      // Calcula leads por vendedor (para a tela de Vendedores)
+      const enrichedTeam = teamData.map(m => ({
+        ...m,
+        leadsCount:     leadsData.filter(l => l.assigned_to_id === m.id).length,
+        qualifiedCount: leadsData.filter(l => l.assigned_to_id === m.id && l.status_crm === 'qualificado').length,
+      }));
+
+      setLeads(leadsData);
       setFeedbacks(fbRes.data || []);
       setInstances(instRes.data || []);
+      setTeamMembers(enrichedTeam);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -609,6 +655,61 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     setFeedbacks(prev => prev.map(f => f.id === id ? { ...f, read_at: new Date().toISOString() } : f));
   };
 
+  const updateLeadStatus = async (newStatus: string) => {
+    if (!selectedLead || !userId) return;
+    setStatusUpdating(true);
+    try {
+      const { error } = await (supabase as any)
+        .from('ai_crm_leads')
+        .update({ status_crm: newStatus })
+        .eq('id', selectedLead.id);
+      if (error) throw error;
+      setSelectedLead({ ...selectedLead, status_crm: newStatus });
+      setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, status_crm: newStatus } : l));
+      toast({ title: '✅ Status atualizado!' });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
+
+  const reassignLead = async (leadId: string, newMemberId: string | null) => {
+    setReassigning(leadId);
+    try {
+      const { error } = await (supabase as any)
+        .from('ai_crm_leads')
+        .update({ assigned_to_id: newMemberId })
+        .eq('id', leadId);
+      if (error) throw error;
+      const newMember = newMemberId ? teamMembers.find(m => m.id === newMemberId) ?? null : null;
+      setLeads(prev => prev.map(l => l.id === leadId ? {
+        ...l,
+        assigned_to_id: newMemberId,
+        member: newMember ? { id: newMember.id, name: newMember.name } : null,
+      } : l));
+      toast({ title: '✅ Lead reatribuído!' });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally {
+      setReassigning(null);
+    }
+  };
+
+  const toggleSellerActive = async (memberId: string, currentActive: boolean) => {
+    try {
+      const { error } = await (supabase as any)
+        .from('ai_team_members')
+        .update({ is_active: !currentActive })
+        .eq('id', memberId);
+      if (error) throw error;
+      setTeamMembers(prev => prev.map(m => m.id === memberId ? { ...m, is_active: !currentActive } : m));
+      toast({ title: currentActive ? '⛔ Vendedor pausado' : '✅ Vendedor ativado' });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const handleTriggerFollowups = async () => {
     setTriggerLoading(true);
     try {
@@ -645,9 +746,45 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           <Button variant="ghost" size="sm" onClick={() => setSelectedLead(null)} className="h-8 px-2 gap-1 text-xs text-muted-foreground">
             <ChevronRight className="h-3.5 w-3.5 rotate-180" /> Voltar
           </Button>
-          <div>
-            <h2 className="text-base font-semibold text-foreground">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-semibold text-foreground truncate">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
             <p className="text-xs text-muted-foreground">{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}</p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] text-muted-foreground hidden sm:inline">Status:</span>
+            <Select
+              value={selectedLead.status_crm || 'novo'}
+              onValueChange={updateLeadStatus}
+              disabled={statusUpdating}
+            >
+              <SelectTrigger className="h-8 text-xs w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STATUS_CRM_OPTIONS.map(opt => (
+                  <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                    <span className={opt.color}>{opt.label}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!isSeller && teamMembers.length > 0 && (
+              <Select
+                value={selectedLead.assigned_to_id || 'unassigned'}
+                onValueChange={v => reassignLead(selectedLead.id, v === 'unassigned' ? null : v)}
+                disabled={reassigning === selectedLead.id}
+              >
+                <SelectTrigger className="h-8 text-xs w-44">
+                  <SelectValue placeholder="Atribuir vendedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
+                  {teamMembers.filter(m => m.is_active).map(m => (
+                    <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
 
@@ -797,11 +934,12 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   return (
     <div className="p-4 lg:p-6 space-y-4">
       {/* Sub-nav + refresh */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-1 bg-muted/40 rounded-lg p-1">
           {[
-            { id: 'leads',     label: 'Leads',    icon: Users },
+            { id: 'leads',     label: 'Leads',    icon: Users,    badge: 0 },
             { id: 'feedbacks', label: 'Feedbacks', icon: BellRing, badge: unreadFeedbacks.length },
+            ...(!isSeller ? [{ id: 'sellers', label: 'Vendedores', icon: Users, badge: 0 }] : []),
           ].map(v => (
             <button
               key={v.id}
@@ -841,16 +979,77 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         </div>
       </div>
 
-      {/* ── Leads List ──────────────────────────────────────────────── */}
+      {/* ── Filtros (só na view de leads) ────────────────────────────── */}
       {view === 'leads' && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="🔍 Buscar lead..."
+            className="h-8 text-xs flex-1 min-w-[180px] max-w-[280px]"
+          />
+          <Select value={filterStatus} onValueChange={setFilterStatus}>
+            <SelectTrigger className="h-8 text-xs w-40">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" className="text-xs">Todos os status</SelectItem>
+              {STATUS_CRM_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                  <span className={opt.color}>{opt.label}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {!isSeller && teamMembers.length > 0 && (
+            <Select value={filterSeller} onValueChange={setFilterSeller}>
+              <SelectTrigger className="h-8 text-xs w-44">
+                <SelectValue placeholder="Vendedor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all"        className="text-xs">Todos vendedores</SelectItem>
+                <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
+                {teamMembers.map(m => (
+                  <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {(filterStatus !== 'all' || filterSeller !== 'all' || searchTerm) && (
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => { setFilterStatus('all'); setFilterSeller('all'); setSearchTerm(''); }}
+              className="h-8 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              Limpar
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* ── Leads List ──────────────────────────────────────────────── */}
+      {view === 'leads' && (() => {
+        const filtered = leads.filter(l => {
+          if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
+          if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
+          if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
+          if (searchTerm) {
+            const t = searchTerm.toLowerCase();
+            const name = (l.lead_name || '').toLowerCase();
+            const phone = (l.remote_jid || '').toLowerCase();
+            if (!name.includes(t) && !phone.includes(t)) return false;
+          }
+          return true;
+        });
+        return (
         <div className="space-y-2">
-          {leads.length === 0 && (
+          {filtered.length === 0 && (
             <div className="text-center py-16 text-muted-foreground text-sm">
               <Users className="h-8 w-8 mx-auto mb-3 opacity-30" />
-              Nenhum lead encontrado.
+              {leads.length === 0 ? 'Nenhum lead encontrado.' : 'Nenhum lead corresponde aos filtros.'}
             </div>
           )}
-          {leads.map(lead => (
+          {filtered.map(lead => (
             <button
               key={lead.id}
               onClick={() => loadLeadDetail(lead)}
@@ -890,7 +1089,8 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             </button>
           ))}
         </div>
-      )}
+        );
+      })()}
 
       {/* ── Feedbacks List (gerente) ─────────────────────────────────── */}
       {view === 'feedbacks' && (
@@ -935,6 +1135,72 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Sellers (gerente apenas) ────────────────────────────────── */}
+      {view === 'sellers' && !isSeller && (
+        <div className="space-y-2">
+          {teamMembers.length === 0 && (
+            <div className="text-center py-16 text-muted-foreground text-sm">
+              <Users className="h-8 w-8 mx-auto mb-3 opacity-30" />
+              Nenhum vendedor cadastrado.
+            </div>
+          )}
+          {teamMembers.map(m => (
+            <div
+              key={m.id}
+              className="bg-card border border-border/50 rounded-xl px-4 py-3 hover:border-blue-500/30 transition-colors"
+            >
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${
+                    m.is_active
+                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-muted text-muted-foreground border border-border/40'
+                  }`}>
+                    {m.name.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-foreground truncate">{m.name}</p>
+                      {m.is_active ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold">ATIVO</span>
+                      ) : (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400 font-semibold">PAUSADO</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {m.whatsapp_number ?? 'Sem WhatsApp'}
+                      {m.last_lead_received_at && ` · Último lead: ${fmtDate(m.last_lead_received_at)}`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right">
+                    <p className="text-base font-bold text-foreground leading-none">{m.leadsCount ?? 0}</p>
+                    <p className="text-[10px] text-muted-foreground">leads</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-base font-bold text-emerald-400 leading-none">{m.qualifiedCount ?? 0}</p>
+                    <p className="text-[10px] text-muted-foreground">qualificados</p>
+                  </div>
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={() => toggleSellerActive(m.id, m.is_active)}
+                    className={`h-8 px-2.5 text-[11px] gap-1 ${
+                      m.is_active
+                        ? 'border-orange-500/30 text-orange-400 hover:bg-orange-500/10'
+                        : 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'
+                    }`}
+                  >
+                    {m.is_active ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                    {m.is_active ? 'Pausar' : 'Ativar'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
