@@ -126,10 +126,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
 
   // ── DETECÇÃO DE RESPOSTA DE VENDEDOR ────────────────────────────────
-  // Se a mensagem vier do número de um vendedor, confirma o transfer pendente
-  // e retorna sem deixar o Pedro responder ao vendedor.
+  // Se a mensagem vier do número de um vendedor, confirma o transfer pendente,
+  // envia mensagem de confirmação e retorna sem deixar o Pedro responder.
   const senderDigits = remoteJid.replace(/\D/g, '').slice(-10); // últimos 10 dígitos
-  const { data: senderSeller } = await supabase
+
+  // 1. Busca vendedor por agent_id
+  let { data: senderSeller } = await supabase
     .from('ai_team_members')
     .select('id, name')
     .eq('agent_id', agent.id)
@@ -137,12 +139,24 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     .ilike('whatsapp_number', `%${senderDigits}`)
     .maybeSingle();
 
+  // 2. Fallback: busca vendedor por user_id (vendedores podem não ter agent_id)
+  if (!senderSeller) {
+    const { data: fallbackSeller } = await supabase
+      .from('ai_team_members')
+      .select('id, name')
+      .eq('user_id', agent.user_id)
+      .eq('is_active', true)
+      .ilike('whatsapp_number', `%${senderDigits}`)
+      .maybeSingle();
+    senderSeller = fallbackSeller;
+  }
+
   if (senderSeller) {
     console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} — verificando transfer pendente`);
     const now = new Date().toISOString();
     const { data: pendingTransfer } = await supabase
       .from('ai_lead_transfers')
-      .select('id')
+      .select('id, lead_id')
       .eq('to_member_id', senderSeller.id)
       .eq('transfer_status', 'pending')
       .eq('is_confirmed', false)
@@ -152,6 +166,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       .maybeSingle();
 
     if (pendingTransfer) {
+      // Confirma o transfer
       await supabase.from('ai_lead_transfers').update({
         transfer_status: 'confirmed',
         is_confirmed: true,
@@ -162,9 +177,36 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         last_lead_received_at: now,
       }).eq('id', senderSeller.id);
 
+      // Atualiza status do lead para 'em_atendimento'
+      if (pendingTransfer.lead_id) {
+        await supabase.from('ai_crm_leads').update({
+          status: 'em_atendimento',
+          last_interaction_at: now,
+        }).eq('id', pendingTransfer.lead_id);
+      }
+
+      // Envia mensagem de confirmação para o vendedor via WhatsApp
+      try {
+        const sellerBaseUrl = (waInstance.api_url || '').replace(/\/$/, '');
+        const sellerInstKey = waInstance.api_key_encrypted || '';
+        let sellerDest = remoteJid.replace(/\D/g, '');
+        if (sellerDest.length === 10 || sellerDest.length === 11) sellerDest = `55${sellerDest}`;
+
+        const confirmMsg = `✅ *Atendimento Confirmado!*\n\nO lead foi atribuído a você no CRM. Pode seguir com a venda! 🚀`;
+
+        await fetch(`${sellerBaseUrl}/send/text`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'token': sellerInstKey },
+          body: JSON.stringify({ number: sellerDest, text: confirmMsg }),
+        });
+        console.log(`[Transfer] ✅ Confirmação enviada para vendedor ${senderSeller.name}`);
+      } catch (confirmErr) {
+        console.warn(`[Transfer] Erro ao enviar confirmação para vendedor:`, confirmErr);
+      }
+
       console.log(`[Transfer] ✅ Vendedor ${senderSeller.name} confirmou o lead`);
     }
-    // Vendedor não recebe resposta do Pedro
+    // Vendedor não recebe resposta do Pedro (IA)
     return new Response(JSON.stringify({ ok: true, seller_ack: true }), { headers: corsHeaders });
   }
   // ────────────────────────────────────────────────────────────────────
