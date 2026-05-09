@@ -355,14 +355,13 @@ export function AppSidebar() {
               <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
             </NavGroup>
 
-            {/* ── Agentes ── */}
-            <NavGroup label="Agentes IA" collapsed={collapsed}>
-              {agentItems.map(item => (
-                <NavAgent key={item.url} item={item} collapsed={collapsed} />
-              ))}
-              {/* Pedro — SDR & Agente IA */}
+            {/* ── Pedro — SDR & Agente IA ── */}
+            <NavGroup label="Pedro SDR" collapsed={collapsed}>
               <NavPedroExpandable collapsed={collapsed} />
-              {/* Marcos — Captação de Leads & WhatsApp */}
+            </NavGroup>
+
+            {/* ── Marcos — Captação de Leads & WhatsApp ── */}
+            <NavGroup label="Marcos CRM" collapsed={collapsed}>
               <NavMarcosExpandable collapsed={collapsed} />
             </NavGroup>
 
