@@ -70,7 +70,7 @@ serve(async (req) => {
       .select(`
         *,
         lead:ai_crm_leads(id, remote_jid, agent_id, user_id),
-        instance:wa_instances(id, api_url, api_key, api_key_encrypted, instance_name)
+        instance:wa_instances(id, api_url, api_key_encrypted, instance_name)
       `)
       .eq("status", "pending")
       .lte("scheduled_at", nowIso)
@@ -104,7 +104,7 @@ serve(async (req) => {
 
         // 2. Extrai dados de envio (mesmo padrão do cron-lead-followup)
         const baseUrl  = instance.api_url.replace(/\/$/, "");
-        const instKey  = instance.api_key_encrypted || instance.api_key;
+        const instKey  = instance.api_key_encrypted || "";
         const instName = instance.instance_name;
         const remoteJid   = lead.remote_jid;
         const phoneNumber = remoteJid.split("@")[0];
