@@ -407,15 +407,27 @@ function fmtDate(iso: string) {
 
 // ─── Tab CRM Avançado ─────────────────────────────────────────────────────────
 
+const PIPELINE_COLUMNS = [
+  { id: 'novo',           title: 'Novo',           emoji: '🔰', border: 'border-slate-500/30',  bg: 'bg-slate-500/10',  dot: 'bg-slate-400'  },
+  { id: 'interessado',    title: 'Interessado',    emoji: '👀', border: 'border-yellow-500/30', bg: 'bg-yellow-500/10', dot: 'bg-yellow-400' },
+  { id: 'qualificado',    title: 'Qualificado',    emoji: '🎯', border: 'border-emerald-500/30',bg: 'bg-emerald-500/10',dot: 'bg-emerald-400'},
+  { id: 'em_atendimento', title: 'Em Atendimento', emoji: '💬', border: 'border-cyan-500/30',   bg: 'bg-cyan-500/10',   dot: 'bg-cyan-400'  },
+  { id: 'negociacao',     title: 'Negociação',     emoji: '🤝', border: 'border-purple-500/30', bg: 'bg-purple-500/10', dot: 'bg-purple-400' },
+  { id: 'fechado',        title: 'Fechado',        emoji: '✅', border: 'border-green-500/30',  bg: 'bg-green-500/10',  dot: 'bg-green-400'  },
+  { id: 'perdido',        title: 'Perdido',        emoji: '❌', border: 'border-red-500/30',    bg: 'bg-red-500/10',    dot: 'bg-red-400'    },
+];
+
 interface CrmLead {
   id: string;
   lead_name: string;
   remote_jid: string;
   status_crm: string;
+  summary?: string | null;
   next_followup_at: string | null;
   seller_notes_count: number;
   assigned_to_id: string | null;
   member?: { id: string; name: string } | null;
+  agent?: { name: string } | null;
   created_at: string;
 }
 
@@ -470,7 +482,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
-  const [view, setView] = useState<'leads' | 'feedbacks' | 'sellers'>('leads');
+  const [view, setView] = useState<'pipeline' | 'leads' | 'feedbacks' | 'sellers'>('pipeline');
 
   // filter states
   const [filterStatus, setFilterStatus]   = useState<string>('all');
@@ -517,7 +529,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       const [leadsRes, fbRes, instRes, teamRes] = await Promise.all([
         (supabase as any)
           .from('ai_crm_leads')
-          .select('id, lead_name, remote_jid, status_crm, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name)')
+          .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
           .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false })
           .limit(100),
@@ -932,14 +944,54 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   // ── Main Panel ─────────────────────────────────────────────────────────────
   const unreadFeedbacks = feedbacks.filter(f => !f.read_at);
 
+  // Métricas
+  const today = new Date(); today.setHours(0,0,0,0);
+  const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 7);
+  const monthAgo = new Date(today); monthAgo.setDate(monthAgo.getDate() - 30);
+  const leadsHoje = leads.filter(l => new Date(l.created_at) >= today).length;
+  const leadsSemana = leads.filter(l => new Date(l.created_at) >= weekAgo).length;
+  const leadsMes = leads.filter(l => new Date(l.created_at) >= monthAgo).length;
+
+  // Filtro universal
+  const filteredLeads = leads.filter(l => {
+    if (isSeller && l.assigned_to_id !== memberId) return false;
+    if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
+    if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
+    if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
+    if (searchTerm) {
+      const t = searchTerm.toLowerCase();
+      if (!(l.lead_name || '').toLowerCase().includes(t) && !(l.remote_jid || '').toLowerCase().includes(t)) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="p-4 lg:p-6 space-y-4">
-      {/* Sub-nav + refresh */}
+      {/* ── Métricas ────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: 'Total Leads',  value: leads.length,  icon: Users,       color: 'text-blue-400' },
+          { label: 'Hoje',         value: leadsHoje,     icon: Clock,       color: 'text-emerald-400' },
+          { label: 'Na Semana',    value: leadsSemana,   icon: TrendingUp,  color: 'text-cyan-400' },
+          { label: 'No Mês',       value: leadsMes,      icon: BarChart3,   color: 'text-purple-400' },
+        ].map(m => (
+          <div key={m.label} className="bg-card border border-border/50 rounded-xl px-4 py-3 flex items-center gap-3">
+            <m.icon className={`h-5 w-5 ${m.color} shrink-0`} />
+            <div>
+              <p className="text-xl font-bold text-foreground leading-none">{m.value}</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">{m.label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Sub-nav + busca + refresh ────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-1 bg-muted/40 rounded-lg p-1">
           {[
-            { id: 'leads',     label: 'Leads',    icon: Users,    badge: 0 },
-            { id: 'feedbacks', label: 'Feedbacks', icon: BellRing, badge: unreadFeedbacks.length },
+            { id: 'pipeline',  label: 'Pipeline',   icon: ArrowRightLeft, badge: 0 },
+            { id: 'leads',     label: 'Lista',      icon: Users,          badge: 0 },
+            { id: 'feedbacks', label: 'Feedbacks',   icon: BellRing,      badge: unreadFeedbacks.length },
             ...(!isSeller ? [{ id: 'sellers', label: 'Vendedores', icon: Users, badge: 0 }] : []),
           ].map(v => (
             <button
@@ -958,99 +1010,135 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           ))}
         </div>
         <div className="flex items-center gap-1.5">
+          <Input
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="🔍 Buscar..."
+            className="h-7 text-xs w-40"
+          />
+          {!isSeller && teamMembers.length > 0 && (view === 'pipeline' || view === 'leads') && (
+            <Select value={filterSeller} onValueChange={setFilterSeller}>
+              <SelectTrigger className="h-7 text-xs w-36">
+                <SelectValue placeholder="Vendedor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-xs">Todos</SelectItem>
+                <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
+                {teamMembers.filter(m => m.is_active).map(m => (
+                  <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Button
             variant="outline" size="sm"
             onClick={handleTriggerFollowups}
             disabled={triggerLoading}
             className="h-7 px-2.5 text-xs gap-1.5 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
           >
-            {triggerLoading
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              : <Zap className="h-3.5 w-3.5" />}
-            Disparar Follow-ups
+            {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+            Follow-ups
           </Button>
-          <Button
-            variant="ghost" size="sm"
-            onClick={() => fetchData(true)}
-            disabled={refreshing}
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-          >
+          <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
         </div>
       </div>
 
-      {/* ── Filtros (só na view de leads) ────────────────────────────── */}
-      {view === 'leads' && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <Input
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            placeholder="🔍 Buscar lead..."
-            className="h-8 text-xs flex-1 min-w-[180px] max-w-[280px]"
-          />
-          <Select value={filterStatus} onValueChange={setFilterStatus}>
-            <SelectTrigger className="h-8 text-xs w-40">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all" className="text-xs">Todos os status</SelectItem>
-              {STATUS_CRM_OPTIONS.map(opt => (
-                <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                  <span className={opt.color}>{opt.label}</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {!isSeller && teamMembers.length > 0 && (
-            <Select value={filterSeller} onValueChange={setFilterSeller}>
-              <SelectTrigger className="h-8 text-xs w-44">
-                <SelectValue placeholder="Vendedor" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all"        className="text-xs">Todos vendedores</SelectItem>
-                <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
-                {teamMembers.map(m => (
-                  <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {(filterStatus !== 'all' || filterSeller !== 'all' || searchTerm) && (
-            <Button
-              variant="ghost" size="sm"
-              onClick={() => { setFilterStatus('all'); setFilterSeller('all'); setSearchTerm(''); }}
-              className="h-8 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              Limpar
-            </Button>
-          )}
+      {/* ── PIPELINE (Kanban) ───────────────────────────────────────── */}
+      {view === 'pipeline' && (
+        <div className="overflow-x-auto pb-2 -mx-4 px-4">
+          <div className="flex gap-3 min-w-max">
+            {PIPELINE_COLUMNS.map(col => {
+              const colLeads = filteredLeads.filter(l => (l.status_crm || 'novo') === col.id);
+              return (
+                <div key={col.id} className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}>
+                  {/* Column header */}
+                  <div className={`px-3 py-2.5 rounded-t-xl ${col.bg} flex items-center justify-between`}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">{col.emoji}</span>
+                      <span className="text-xs font-semibold text-foreground">{col.title}</span>
+                    </div>
+                    <span className={`w-5 h-5 rounded-full ${col.bg} flex items-center justify-center text-[10px] font-bold text-foreground`}>
+                      {colLeads.length}
+                    </span>
+                  </div>
+                  {/* Column body */}
+                  <div className="p-2 space-y-2 max-h-[60vh] overflow-y-auto">
+                    {colLeads.length === 0 && (
+                      <p className="text-center text-[10px] text-muted-foreground py-6">Nenhum lead</p>
+                    )}
+                    {colLeads.map(lead => (
+                      <button
+                        key={lead.id}
+                        onClick={() => loadLeadDetail(lead)}
+                        className="w-full text-left bg-background border border-border/40 rounded-lg p-3 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all space-y-2 group"
+                      >
+                        <div>
+                          <p className="text-xs font-semibold text-foreground truncate">{lead.lead_name || 'Lead'}</p>
+                          <p className="text-[10px] text-muted-foreground">{lead.remote_jid?.replace(/@.*/, '')}</p>
+                        </div>
+                        {lead.summary && (
+                          <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2">{lead.summary}</p>
+                        )}
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1.5">
+                            {lead.member && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-medium truncate max-w-[80px]">
+                                {lead.member.name}
+                              </span>
+                            )}
+                            {lead.seller_notes_count > 0 && (
+                              <span className="flex items-center gap-0.5 text-[9px] text-yellow-400">
+                                <StickyNote className="h-2.5 w-2.5" />{lead.seller_notes_count}
+                              </span>
+                            )}
+                          </div>
+                          {!isSeller && !lead.member && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 font-medium">
+                              Sem vendedor
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {/* ── Leads List ──────────────────────────────────────────────── */}
-      {view === 'leads' && (() => {
-        const filtered = leads.filter(l => {
-          if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
-          if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
-          if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
-          if (searchTerm) {
-            const t = searchTerm.toLowerCase();
-            const name = (l.lead_name || '').toLowerCase();
-            const phone = (l.remote_jid || '').toLowerCase();
-            if (!name.includes(t) && !phone.includes(t)) return false;
-          }
-          return true;
-        });
-        return (
+      {/* ── LISTA de Leads ──────────────────────────────────────────── */}
+      {view === 'leads' && (
         <div className="space-y-2">
-          {filtered.length === 0 && (
+          {view === 'leads' && filterStatus === 'all' && (
+            <div className="flex gap-1 flex-wrap mb-2">
+              {STATUS_CRM_OPTIONS.map(opt => {
+                const count = leads.filter(l => (l.status_crm || 'novo') === opt.value).length;
+                if (!count) return null;
+                return (
+                  <button key={opt.value} onClick={() => setFilterStatus(opt.value)}
+                    className={`text-[10px] px-2 py-1 rounded-full border border-border/40 hover:bg-accent/60 transition-colors ${opt.color}`}>
+                    {opt.label} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {filterStatus !== 'all' && (
+            <Button variant="ghost" size="sm" onClick={() => setFilterStatus('all')} className="h-6 px-2 text-[10px] text-muted-foreground mb-1">
+              ← Todos os status
+            </Button>
+          )}
+          {filteredLeads.length === 0 && (
             <div className="text-center py-16 text-muted-foreground text-sm">
               <Users className="h-8 w-8 mx-auto mb-3 opacity-30" />
               {leads.length === 0 ? 'Nenhum lead encontrado.' : 'Nenhum lead corresponde aos filtros.'}
             </div>
           )}
-          {filtered.map(lead => (
+          {filteredLeads.map(lead => (
             <button
               key={lead.id}
               onClick={() => loadLeadDetail(lead)}
@@ -1062,36 +1150,25 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                     <Users className="h-4 w-4 text-blue-400" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">
-                      {lead.lead_name || lead.remote_jid}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {lead.member?.name ?? 'Sem vendedor'} · {fmtDate(lead.created_at)}
-                    </p>
+                    <p className="text-sm font-medium text-foreground truncate">{lead.lead_name || lead.remote_jid}</p>
+                    <p className="text-[11px] text-muted-foreground">{lead.member?.name ?? 'Sem vendedor'} · {fmtDate(lead.created_at)}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {lead.seller_notes_count > 0 && (
-                    <span className="flex items-center gap-1 text-[10px] text-yellow-400">
-                      <StickyNote className="h-3 w-3" />{lead.seller_notes_count}
-                    </span>
+                    <span className="flex items-center gap-1 text-[10px] text-yellow-400"><StickyNote className="h-3 w-3" />{lead.seller_notes_count}</span>
                   )}
                   {lead.next_followup_at && (
-                    <span className="flex items-center gap-1 text-[10px] text-cyan-400">
-                      <Clock className="h-3 w-3" />{fmtDate(lead.next_followup_at)}
-                    </span>
+                    <span className="flex items-center gap-1 text-[10px] text-cyan-400"><Clock className="h-3 w-3" />{fmtDate(lead.next_followup_at)}</span>
                   )}
-                  <Badge variant="outline" className="text-[10px] h-5 capitalize">
-                    {lead.status_crm || 'novo'}
-                  </Badge>
+                  <Badge variant="outline" className="text-[10px] h-5 capitalize">{lead.status_crm || 'novo'}</Badge>
                   <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
                 </div>
               </div>
             </button>
           ))}
         </div>
-        );
-      })()}
+      )}
 
       {/* ── Feedbacks List (gerente) ─────────────────────────────────── */}
       {view === 'feedbacks' && (

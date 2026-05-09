@@ -14,8 +14,6 @@ import { AgentFormDialog } from '@/components/whatsapp/AgentFormDialog';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { GlobalLeadsCrm } from '@/components/whatsapp/GlobalLeadsCrm';
 
 interface AIAgent {
   id: string;
@@ -368,25 +366,8 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
   return (
     <Wrapper>
       <div className="space-y-4 max-w-6xl">
-        <Tabs defaultValue="agentes" className="w-full">
-          <div className="px-1 mb-4 flex justify-between items-center w-full">
-            <TabsList className="bg-muted/50 p-1">
-              <TabsTrigger value="agentes" className="gap-2 px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary transition-all">
-                <Bot className="h-4 w-4" /> Configuração do Agente
-              </TabsTrigger>
-              <TabsTrigger value="crm" className="gap-2 px-6 data-[state=active]:bg-blue-500/10 data-[state=active]:text-blue-500 transition-all">
-                <Users className="h-4 w-4" /> CRM de Leads
-              </TabsTrigger>
-            </TabsList>
-            
-            {/* Action buttons could go here if needed in the future */}
-          </div>
-
-          <TabsContent value="crm" className="mt-0 outline-none">
-            <GlobalLeadsCrm />
-          </TabsContent>
-
-          <TabsContent value="agentes" className="space-y-8 mt-0 outline-none">
+        <div className="w-full">
+          <div className="space-y-8">
             {/* ── Hero Header ─────────────────────────────────── */}
         <div className="relative rounded-2xl overflow-hidden border border-border/50 bg-gradient-to-br from-primary/10 via-card to-card p-6">
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,theme(colors.primary/0.15),transparent_60%)]" />
@@ -510,8 +491,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
             ))}
           </div>
         </div>
-      </TabsContent>
-      </Tabs>
+      </div>
       </div>
 
       <AgentFormDialog
