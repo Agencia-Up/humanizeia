@@ -49,6 +49,7 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 import { useState } from 'react';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
+import { useSubscription } from '@/hooks/useSubscription';
 
 // ── Agentes (sem Pedro e Marcos — têm navegação própria expandível) ───────────
 const agentItems = [
@@ -246,6 +247,9 @@ export function AppSidebar() {
   const collapsed = state === 'collapsed';
   const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { isAdmin } = useIsAdmin();
+  const { subscription } = useSubscription();
+  const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
+  const showMarcos = userPlan === 'pro' || userPlan === 'enterprise';
 
   const handleLogout = async () => {
     await signOut();
@@ -294,8 +298,8 @@ export function AppSidebar() {
               <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
             </NavGroup>
 
-            {/* ── Marcos — Captação de Leads & WhatsApp (só admin) ── */}
-            {isAdmin && (
+            {/* ── Marcos — Captação de Leads & WhatsApp (Pro ou superior) ── */}
+            {showMarcos && (
               <NavGroup label="Marcos CRM" collapsed={collapsed}>
                 <NavMarcosExpandable collapsed={collapsed} />
               </NavGroup>

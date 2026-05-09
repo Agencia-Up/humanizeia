@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
+import { useSubscription } from '@/hooks/useSubscription';
 import { motion } from 'framer-motion';
 import {
   Sparkles, Radar, Users, PenTool, Palette, Send,
@@ -12,22 +13,21 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
-// ── Agentes livres (todos os planos) ────────────────────────────────────────
-const freeAgents = [
-  { name: 'Pedro', role: 'SDR & Agente IA', icon: Bot, color: '#34d399', url: '/pedro', desc: 'Qualificação de leads, CRM avançado e automação comercial' },
+// ── Todos os agentes com tier mínimo necessário ─────────────────────────────
+// basico = liberado no Básico, pro = liberado no Pro, enterprise = liberado no Pro Max
+const allAgentsList = [
+  { name: 'Pedro',   role: 'SDR & Agente IA',  icon: Bot,      color: '#34d399', url: '/pedro',           desc: 'Qualificação de leads, CRM avançado e automação comercial', tier: 'basico' as const },
+  { name: 'Marcos',  role: 'CRM & WhatsApp',   icon: Users,    color: '#a855f7', url: '/marcos',          desc: 'CRM, leads e toda estrutura WhatsApp',                      tier: 'pro' as const },
+  { name: 'José',    role: 'Tráfego Pago',     icon: Radar,    color: '#f97316', url: '/jose',            desc: 'Meta Ads, Google Ads e otimização de campanhas',            tier: 'pro' as const },
+  { name: 'Salomão', role: 'Orquestrador',     icon: Sparkles, color: '#f59e0b', url: '/salomao',         desc: 'Coordena todos os agentes e estratégias',                   tier: 'enterprise' as const },
+  { name: 'Paulo',   role: 'Copywriter',       icon: PenTool,  color: '#22d3a0', url: '/copywriter',      desc: 'Copies persuasivas geradas por IA',                         tier: 'enterprise' as const },
+  { name: 'Maria',   role: 'Design',           icon: Palette,  color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA',                        tier: 'enterprise' as const },
+  { name: 'Davi',    role: 'Social Media',     icon: Instagram, color: '#60a5fa', url: '/davi',           desc: 'Gestão de redes sociais e conteúdo',                        tier: 'enterprise' as const },
+  { name: 'João',    role: 'Email',            icon: Mail,     color: '#a78bfa', url: '/joao',            desc: 'Email marketing e automações',                              tier: 'enterprise' as const },
+  { name: 'Daniel',  role: 'Estratégia',       icon: Brain,    color: '#f87171', url: '/daniel',          desc: 'Planejamento e análise estratégica',                        tier: 'enterprise' as const },
 ];
 
-// ── Agentes travados (apenas admin / plano superior) ────────────────────────
-const lockedAgents = [
-  { name: 'Marcos', role: 'CRM & WhatsApp', icon: Users, color: '#a855f7', url: '/marcos', desc: 'CRM, leads e toda estrutura WhatsApp' },
-  { name: 'Salomão', role: 'Orquestrador', icon: Sparkles, color: '#f59e0b', url: '/salomao', desc: 'Coordena todos os agentes e estratégias' },
-  { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#f97316', url: '/jose', desc: 'Meta Ads, Google Ads e otimização de campanhas' },
-  { name: 'Paulo', role: 'Copywriter', icon: PenTool, color: '#22d3a0', url: '/copywriter', desc: 'Copies persuasivas geradas por IA' },
-  { name: 'Maria', role: 'Design', icon: Palette, color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA' },
-  { name: 'Davi', role: 'Social Media', icon: Instagram, color: '#60a5fa', url: '/davi', desc: 'Gestão de redes sociais e conteúdo' },
-  { name: 'João', role: 'Email', icon: Mail, color: '#a78bfa', url: '/joao', desc: 'Email marketing e automações' },
-  { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', desc: 'Planejamento e análise estratégica' },
-];
+const TIER_ORDER = { basico: 0, pro: 1, enterprise: 2 };
 
 // ── Ações Rápidas — o que o usuário faz com mais frequência ──────────────────
 const quickActions = [
@@ -83,12 +83,34 @@ const quickActions = [
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Mapeamento de ações rápidas por tier ────────────────────────────────────
+const QUICK_ACTION_TIERS: Record<string, 'basico' | 'pro' | 'enterprise'> = {
+  '/copywriter': 'enterprise',
+  '/whatsapp/broadcast': 'pro',
+  '/metrics': 'pro',
+  '/davi': 'enterprise',
+  '/marcos': 'pro',
+  '/daniel': 'enterprise',
+  '/pedro': 'basico',
+};
+
 export default function AgentHub() {
   const { user } = useAuth();
   const { isAdmin } = useIsAdmin();
+  const { subscription } = useSubscription();
   const navigate = useNavigate();
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
-  const allAgents = isAdmin ? [...freeAgents, ...lockedAgents] : freeAgents;
+
+  // Admin sempre vê tudo; senão usa o plano real do usuário
+  const userTier = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
+  const userTierLevel = TIER_ORDER[userTier] ?? 0;
+
+  // Separar agentes desbloqueados vs travados
+  const unlockedAgents = allAgentsList.filter(a => userTierLevel >= TIER_ORDER[a.tier]);
+  const lockedAgents = allAgentsList.filter(a => userTierLevel < TIER_ORDER[a.tier]);
+
+  // Badge label para cada tier
+  const tierBadge = (tier: string) => tier === 'pro' ? 'Pro' : 'Pro Max';
 
   return (
     <MainLayout>
@@ -115,7 +137,10 @@ export default function AgentHub() {
             Ações rápidas
           </h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {quickActions.filter(a => isAdmin || ['/whatsapp/broadcast', '/pedro'].some(u => a.url.startsWith(u))).map((action, i) => (
+            {quickActions.filter(a => {
+              const actionTier = QUICK_ACTION_TIERS[a.url] || 'basico';
+              return userTierLevel >= TIER_ORDER[actionTier];
+            }).map((action, i) => (
               <motion.button
                 key={action.url}
                 initial={{ opacity: 0, y: 16 }}
@@ -146,7 +171,8 @@ export default function AgentHub() {
             Seus agentes
           </h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {allAgents.map((agent, i) => (
+            {/* Agentes desbloqueados */}
+            {unlockedAgents.map((agent, i) => (
               <motion.div
                 key={agent.name}
                 initial={{ opacity: 0, y: 20 }}
@@ -175,18 +201,18 @@ export default function AgentHub() {
               </motion.div>
             ))}
 
-            {/* ── Agentes travados (apenas para não-admin) ── */}
-            {!isAdmin && lockedAgents.map((agent, i) => (
+            {/* Agentes travados — mostram badge do plano necessário */}
+            {lockedAgents.map((agent, i) => (
               <motion.div
                 key={agent.name}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: (allAgents.length + i) * 0.04 }}
+                transition={{ delay: (unlockedAgents.length + i) * 0.04 }}
               >
                 <Card className="relative cursor-not-allowed border-border/20 bg-card/30 backdrop-blur-sm h-full opacity-50 grayscale-[0.6]">
                   <div className="absolute top-2 right-2 z-10">
                     <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px] px-1.5 py-0 gap-1">
-                      <Crown className="h-2.5 w-2.5" /> Pro
+                      <Crown className="h-2.5 w-2.5" /> {tierBadge(agent.tier)}
                     </Badge>
                   </div>
                   <CardContent className="flex flex-col items-center text-center gap-3 p-4">
@@ -207,8 +233,8 @@ export default function AgentHub() {
           </div>
         </div>
 
-        {/* ── Banner de resultados (só admin) ──────────────────────────────── */}
-        {isAdmin && (
+        {/* ── Banner de resultados (Pro ou superior) ──────────────────────── */}
+        {userTierLevel >= TIER_ORDER.pro && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

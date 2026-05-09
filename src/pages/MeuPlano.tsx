@@ -59,42 +59,42 @@ function buildChartData(transactions: any[]) {
 /* ── Plan comparison card ───────────────────────────────────────────── */
 const PLAN_FEATURES: Record<PlanId, string[]> = {
   basico: [
-    'Dashboard de métricas essenciais',
-    'Copywriting IA inteligente',
-    '1 rede social',
-    'Funil WhatsApp simplificado (1 funil)',
+    '🤖 Agente Pedro (SDR & IA)',
+    'Área de membros / treinamento',
+    '50.000 tokens/mês',
     'Até 5 instâncias de WhatsApp',
-    'Geração de imagens até 300/mês',
-    '1 conta de Instagram conectada',
-    '1 perfil de Facebook conectado',
-    '4 pesquisas/mês com Agente Estratégico',
-    'Design básico IA',
+    'Dashboard básico',
+    'Configurações essenciais',
+    'Suporte via WhatsApp',
   ],
   pro: [
-    'Dashboard avançado com insights preditivos',
-    'Copywriting estratégico IA',
-    'Até 3 redes sociais',
-    'Funil WhatsApp + CRM de leads integrado',
+    '🤖 Agente Pedro (SDR & IA)',
+    '🤝 Agente Marcos (CRM & WhatsApp)',
+    '🎯 Agente José (Tráfego Pago)',
+    'Área de membros / treinamento',
+    '150.000 tokens/mês',
     'Até 10 instâncias de WhatsApp',
-    'Geração de imagens até 500/mês',
-    '2 contas de Instagram conectadas',
-    '2 perfis de Facebook conectados',
-    '8 pesquisas/mês com Agente Estratégico',
-    'Design criativo (imagens + vídeo IA)',
-    'Gestão de múltiplos usuários',
+    'Dashboard avançado com métricas',
+    'CRM de leads integrado',
+    'Disparo em massa WhatsApp',
+    'Gestão de Meta Ads e Google Ads',
+    'Suporte prioritário',
   ],
   enterprise: [
-    'Tudo do Pro sem restrições de volume',
-    'Até 20 instâncias de WhatsApp',
-    'Geração de imagens até 800/mês',
-    '5 contas de Instagram conectadas',
-    '5 perfis de Facebook conectados',
-    '20 pesquisas/mês com Agente Estratégico',
-    'IA adaptativa com aprendizado contínuo',
+    '🤖 Todos os 9 agentes IA liberados',
+    'Pedro, Marcos, José, Paulo, Maria',
+    'Davi, João, Daniel, Salomão',
+    'Área de membros / treinamento',
+    '500.000 tokens/mês',
+    'Até 15 instâncias de WhatsApp',
+    'Copywriting IA (Paulo)',
+    'Design criativo IA (Maria)',
+    'Social Media IA (Davi)',
+    'Email Marketing IA (João)',
+    'Estratégia de negócio (Daniel)',
+    'Orquestrador central (Salomão)',
     'Suporte SLA + gerente exclusivo',
-    'Consultoria estratégica trimestral',
-    'Integrações ERP/CRM customizadas',
-    'Relatórios executivos customizáveis',
+    'Consultoria estratégica',
   ],
 };
 
@@ -393,7 +393,8 @@ export default function MeuPlano() {
                   <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
                     <p>{fmt(p.tokensIncluded)} tokens/mês</p>
                     <p className="text-primary font-medium">Recarga: R$ {p.tokenCostPer1k.toFixed(2).replace('.', ',')}/1k</p>
-                    {!isCurrent && (
+                    <p className="text-amber-400 font-medium">Implementação: R$ {p.setup.toLocaleString('pt-BR')}</p>
+                    {!isCurrent && plan.tokenCostPer1k > p.tokenCostPer1k && (
                       <p className="text-green-400 font-medium">
                         Economia {Math.round((1 - p.tokenCostPer1k / plan.tokenCostPer1k) * 100)}% por token vs. atual
                       </p>
