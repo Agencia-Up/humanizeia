@@ -64,8 +64,10 @@ const agentItems = [
 
 // ── Pedro — sub-itens SDR ─────────────────────────────────────────────────────
 const pedroSubItems = [
-  { title: 'Agente IA',    url: '/pedro',                icon: Bot },
-  { title: 'CRM ao Vivo',  url: '/whatsapp/crm-ao-vivo', icon: MonitorPlay },
+  { title: 'Painel Pedro',   url: '/pedro',                icon: Bot },
+  { title: 'Agente IA',      url: '/whatsapp/ai-agent',    icon: MessageCircle },
+  { title: 'CRM Avançado',   url: '/pedro?tab=crm',        icon: ClipboardList },
+  { title: 'CRM ao Vivo',    url: '/whatsapp/crm-ao-vivo', icon: MonitorPlay },
 ];
 
 // ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
