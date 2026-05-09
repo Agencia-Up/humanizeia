@@ -229,6 +229,67 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     followup_5min_sent: false,
   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
+  // ── DETECÇÃO DE LEAD QUE RETORNOU (já transferido/qualificado) ─────────────
+  // Se o lead já estava com vendedor, notifica o vendedor e reseta o status
+  // para que as regras de 5min/10min voltem a funcionar nesta nova conversa.
+  {
+    const { data: existingLead } = await supabase
+      .from('ai_crm_leads')
+      .select('id, status, assigned_to_id, lead_name')
+      .eq('agent_id', agent.id)
+      .eq('remote_jid', remoteJid)
+      .maybeSingle();
+
+    if (existingLead &&
+        ['transferido', 'qualificado', 'em_atendimento'].includes(existingLead.status) &&
+        existingLead.assigned_to_id) {
+      console.log(`[Webhook] 🔄 Lead RETORNOU! Status era '${existingLead.status}', assigned_to=${existingLead.assigned_to_id}. Resetando...`);
+
+      // 1. Buscar vendedor que estava atendendo
+      const { data: assignedSeller } = await supabase
+        .from('ai_team_members')
+        .select('id, name, whatsapp_number')
+        .eq('id', existingLead.assigned_to_id)
+        .maybeSingle();
+
+      // 2. Resetar lead — status volta para 'novo', sem vendedor, regras reativam
+      await supabase.from('ai_crm_leads').update({
+        status: 'novo',
+        status_crm: 'novo',
+        assigned_to_id: null,
+        followup_5min_sent: false,
+      }).eq('id', existingLead.id);
+
+      // 3. Notificar vendedor via WhatsApp que o cliente voltou
+      if (assignedSeller?.whatsapp_number) {
+        try {
+          const retBaseUrl = (waInstance.api_url || '').replace(/\/$/, '');
+          const retInstKey = waInstance.api_key_encrypted || '';
+          let sellerNum = assignedSeller.whatsapp_number.replace(/\D/g, '');
+          if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
+          const clientPhone = remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
+
+          const returnNotification =
+            `🔄 *LEAD RETORNOU!*\n\n` +
+            `O cliente *${pushName || existingLead.lead_name || 'Desconhecido'}* voltou a conversar.\n` +
+            `📱 *Contato:* +${clientPhone}\n\n` +
+            `A IA está respondendo enquanto isso. Se quiser assumir, entre em contato:\n` +
+            `👉 https://wa.me/${clientPhone}\n\n` +
+            `⏰ Se ninguém assumir em 10 min, o lead será redistribuído automaticamente.`;
+
+          await fetch(`${retBaseUrl}/send/text`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'token': retInstKey },
+            body: JSON.stringify({ number: sellerNum, text: returnNotification }),
+          });
+          console.log(`[Webhook] 🔄 Notificação de retorno enviada para ${assignedSeller.name}`);
+        } catch (notifyErr) {
+          console.error('[Webhook] Erro ao notificar vendedor sobre retorno:', notifyErr);
+        }
+      }
+    }
+  }
+
   const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
 
   // Tools
