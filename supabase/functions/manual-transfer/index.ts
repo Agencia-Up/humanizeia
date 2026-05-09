@@ -6,22 +6,37 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-/** Send a WhatsApp text message via UazAPI / Evolution */
+/** Send a WhatsApp text message via UazAPI / Evolution (3 fallback attempts) */
 async function sendWAMessage(instance: any, phone: string, text: string) {
   let dest = phone.replace(/\D/g, "");
   if (dest.length === 10 || dest.length === 11) dest = `55${dest}`;
-  const apiUrl = (instance.api_url as string).replace(/\/+$/, "");
-  const apiKey = instance.api_key_encrypted as string;
-  // UazAPI endpoint
-  const url = `${apiUrl}/message/sendText/${instance.instance_name}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: apiKey },
-    body: JSON.stringify({ number: dest, text }),
-  });
-  if (!res.ok) {
-    console.warn(`WA send failed to ${dest}: ${res.status} - ${await res.text()}`);
+  const baseUrl = (instance.api_url as string).replace(/\/+$/, "");
+  const instKey = instance.api_key_encrypted || instance.api_key || "";
+  const remoteJid = `${dest}@s.whatsapp.net`;
+
+  const attempts = [
+    { label: "send-text-number", url: `${baseUrl}/send/text`, body: { number: dest, text } },
+    { label: "send-text-remotejid", url: `${baseUrl}/send/text`, body: { remoteJid, text } },
+    { label: "message-sendText", url: `${baseUrl}/message/sendText/${instance.instance_name}`, body: { number: dest, text } },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const res = await fetch(attempt.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", token: instKey, apikey: instKey },
+        body: JSON.stringify(attempt.body),
+      });
+      if (res.ok) {
+        console.log(`WA send OK (${attempt.label}) to ${dest}`);
+        return;
+      }
+      console.warn(`WA send ${attempt.label} failed: ${res.status}`);
+    } catch (err) {
+      console.warn(`WA send ${attempt.label} error:`, err);
+    }
   }
+  console.error(`WA send FAILED all attempts to ${dest}`);
 }
 
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
@@ -153,23 +168,42 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 3. Fetch WhatsApp instance (prefer connected ones)
-    const { data: instances } = await supabase
-      .from("wa_instances")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("is_active", true)
-      .eq("status", "connected")
-      .limit(1);
-
-    const instance = instances?.[0] || null;
-
-    // 4. Fetch agent config (for gerente_phone)
+    // 3. Fetch agent config (for gerente_phone + instance_ids)
     const { data: agentConfig } = await supabase
       .from("wa_ai_agents")
-      .select("gerente_phone, name")
+      .select("gerente_phone, name, instance_ids, instance_id")
       .eq("id", lead.agent_id)
       .maybeSingle();
+
+    // 4. Fetch WhatsApp instance — prioriza a instância do agente
+    let instance: any = null;
+    const agentInstanceIds: string[] = agentConfig?.instance_ids || [];
+    if (agentConfig?.instance_id) agentInstanceIds.push(agentConfig.instance_id);
+
+    if (agentInstanceIds.length > 0) {
+      const { data: agentInstances } = await supabase
+        .from("wa_instances")
+        .select("*")
+        .in("id", agentInstanceIds)
+        .limit(1);
+      instance = agentInstances?.[0] || null;
+    }
+
+    // Fallback: qualquer instância conectada do usuário
+    if (!instance) {
+      const { data: fallbackInstances } = await supabase
+        .from("wa_instances")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("is_active", true)
+        .eq("status", "connected")
+        .limit(1);
+      instance = fallbackInstances?.[0] || null;
+    }
+
+    if (!instance) {
+      console.error("[manual-transfer] Nenhuma instância WhatsApp encontrada");
+    }
 
     const phone = lead.remote_jid.replace(/\D/g, "");
     const pushName = lead.lead_name || "Não informado";
