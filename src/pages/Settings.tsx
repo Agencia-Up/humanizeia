@@ -25,9 +25,21 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { profile } = useAuth();
-  const [activeTab, setActiveTab] = useState('company');
+  const tabParam = searchParams.get('tab');
+  const validTabs = ['company', 'profile', 'ai', 'whatsapp', 'sync', 'admin'];
+  const [activeTab, setActiveTab] = useState(
+    tabParam && validTabs.includes(tabParam) ? tabParam : 'company'
+  );
 
   const isSuperAdmin = profile?.is_superadmin === true;
+
+  // Atualiza tab quando URL muda (ex: clicar em "Perfil" no Topbar)
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && validTabs.includes(tab)) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const code = searchParams.get('code');

@@ -109,29 +109,45 @@ export function useSubscription() {
 
     setLoading(true);
     try {
-      const { data, error } = await (supabase as any)
+      let { data, error } = await (supabase as any)
         .from('user_subscriptions')
         .select('*')
         .eq('user_id', user.id)
         .maybeSingle();
 
-      if (error || !data) {
-        setSubscription(DEMO_SUBSCRIPTION);
-        setTransactions(DEMO_TRANSACTIONS);
-      } else {
-        setSubscription(data as Subscription);
-        // fetch transactions
-        const { data: txData } = await (supabase as any)
-          .from('token_transactions')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(50);
-        setTransactions((txData as TokenTransaction[]) || DEMO_TRANSACTIONS);
+      // Se nao existe subscription, cria uma automaticamente (plano basico)
+      if (!data || error) {
+        const newSub = {
+          user_id: user.id,
+          plan_id: 'basico',
+          status: 'active',
+          tokens_included: 50000,
+          tokens_used: 0,
+          tokens_purchased: 0,
+          renewal_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        };
+        const { data: inserted } = await (supabase as any)
+          .from('user_subscriptions')
+          .upsert(newSub, { onConflict: 'user_id' })
+          .select()
+          .maybeSingle();
+        data = inserted || newSub;
       }
+
+      setSubscription(data as Subscription);
+
+      // fetch real transactions
+      const { data: txData } = await (supabase as any)
+        .from('token_transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      setTransactions((txData as TokenTransaction[]) || []);
     } catch {
-      setSubscription(DEMO_SUBSCRIPTION);
-      setTransactions(DEMO_TRANSACTIONS);
+      // Em caso de erro grave, mostra zeros em vez de dados falsos
+      setSubscription(null);
+      setTransactions([]);
     } finally {
       setLoading(false);
     }

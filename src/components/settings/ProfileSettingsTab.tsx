@@ -1,16 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { User, Loader2, Save, RotateCcw, Sparkles } from 'lucide-react';
+import { User, Loader2, Save, RotateCcw, Sparkles, Camera, Upload } from 'lucide-react';
 
 
 interface Profile {
@@ -21,6 +21,9 @@ interface Profile {
   monthly_ad_spend_range: string | null;
   preferred_language: string | null;
   timezone: string | null;
+  avatar_url: string | null;
+  phone: string | null;
+  whatsapp_support: string | null;
 }
 
 export function ProfileSettingsTab() {
@@ -29,6 +32,7 @@ export function ProfileSettingsTab() {
   const navigate = useNavigate();
   const [isResettingQuiz, setIsResettingQuiz] = useState(false);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState<Profile>({
     full_name: '',
     company_name: '',
@@ -37,9 +41,13 @@ export function ProfileSettingsTab() {
     monthly_ad_spend_range: '',
     preferred_language: 'pt-BR',
     timezone: 'America/Sao_Paulo',
+    avatar_url: null,
+    phone: null,
+    whatsapp_support: null,
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     if (user) loadProfile();
@@ -49,7 +57,7 @@ export function ProfileSettingsTab() {
     setIsLoading(true);
     const { data, error } = await supabase
       .from('profiles')
-      .select('full_name, company_name, industry, experience_level, monthly_ad_spend_range, preferred_language, timezone')
+      .select('full_name, company_name, industry, experience_level, monthly_ad_spend_range, preferred_language, timezone, avatar_url')
       .eq('id', user!.id)
       .single();
 
@@ -62,10 +70,38 @@ export function ProfileSettingsTab() {
         monthly_ad_spend_range: data.monthly_ad_spend_range || '',
         preferred_language: data.preferred_language || 'pt-BR',
         timezone: data.timezone || 'America/Sao_Paulo',
+        avatar_url: (data as any).avatar_url || null,
+        phone: (data as any).phone || null,
+        whatsapp_support: (data as any).whatsapp_support || null,
       });
     }
     if (error) console.error('Error loading profile:', error);
     setIsLoading(false);
+  };
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast({ title: 'Arquivo muito grande', description: 'Maximo 2MB', variant: 'destructive' });
+      return;
+    }
+    setIsUploading(true);
+    try {
+      const ext = file.name.split('.').pop() || 'png';
+      const path = `avatars/${user.id}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+      const avatarUrl = urlData.publicUrl + '?t=' + Date.now();
+      await supabase.from('profiles').update({ avatar_url: avatarUrl } as any).eq('id', user.id);
+      setProfile(prev => ({ ...prev, avatar_url: avatarUrl }));
+      toast({ title: 'Logo atualizada!' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao subir imagem', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -149,14 +185,28 @@ export function ProfileSettingsTab() {
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex items-center gap-4">
-            <Avatar className="h-20 w-20">
-              <AvatarFallback className="bg-primary/10 text-primary text-2xl">
-                {profile.full_name?.charAt(0)?.toUpperCase() || '?'}
-              </AvatarFallback>
-            </Avatar>
+            <div className="relative group">
+              <Avatar className="h-20 w-20">
+                {profile.avatar_url && <AvatarImage src={profile.avatar_url} alt="Avatar" />}
+                <AvatarFallback className="bg-primary/10 text-primary text-2xl">
+                  {profile.full_name?.charAt(0)?.toUpperCase() || '?'}
+                </AvatarFallback>
+              </Avatar>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+              >
+                {isUploading ? <Loader2 className="h-5 w-5 animate-spin text-white" /> : <Camera className="h-5 w-5 text-white" />}
+              </button>
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
+            </div>
             <div>
               <p className="font-medium text-lg">{profile.full_name || 'Sem nome'}</p>
               <p className="text-sm text-muted-foreground">{user?.email}</p>
+              <button onClick={() => fileInputRef.current?.click()} className="text-xs text-primary hover:underline mt-1 flex items-center gap-1">
+                <Upload className="h-3 w-3" /> Alterar logo / foto
+              </button>
             </div>
           </div>
 
@@ -189,6 +239,23 @@ export function ProfileSettingsTab() {
                 onChange={(e) => updateField('industry', e.target.value)}
                 placeholder="Ex: E-commerce, SaaS, Educação"
               />
+            </div>
+            <div className="space-y-2">
+              <Label>Telefone</Label>
+              <Input
+                value={profile.phone || ''}
+                onChange={(e) => updateField('phone', e.target.value)}
+                placeholder="(11) 99999-9999"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>WhatsApp de Suporte (Agente IA)</Label>
+              <Input
+                value={profile.whatsapp_support || ''}
+                onChange={(e) => updateField('whatsapp_support', e.target.value)}
+                placeholder="5511999999999"
+              />
+              <p className="text-[10px] text-muted-foreground">Numero que o agente IA usara para transferir atendimentos</p>
             </div>
           </div>
         </CardContent>

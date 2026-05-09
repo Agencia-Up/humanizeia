@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Mail,
   Users,
+  GraduationCap,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -72,9 +73,9 @@ const marcosSubItems = [
 
 // ── Sistema ───────────────────────────────────────────────────────────────────
 const systemItems = [
+  { title: 'Treinamento',      url: '/treinamento',   icon: GraduationCap },
   { title: 'Meu Plano',        url: '/meu-plano',     icon: CreditCard },
   { title: 'Integrações',      url: '/integrations',  icon: Plug },
-  { title: 'Tutoriais',        url: '/tutorials',     icon: FileText },
   { title: 'Configurações',    url: '/settings',      icon: Settings },
 ];
 
@@ -288,6 +289,7 @@ export function AppSidebar() {
             {/* ── Dashboard ── */}
             <NavGroup label="Painel" collapsed={collapsed}>
               <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+              <NavItem collapsed={collapsed} item={{ title: 'Pedro SDR', url: '/pedro', icon: Zap }} />
             </NavGroup>
 
             {/* ── Marcos — Captação de Leads & WhatsApp ── */}

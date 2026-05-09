@@ -1,26 +1,32 @@
 import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/hooks/useAuth';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { motion } from 'framer-motion';
 import {
   Sparkles, Radar, Users, PenTool, Palette, Send,
   Layers, Megaphone, Bot, Brain, BarChart3,
   ArrowRight, Lock, MessageCircle, FileText, Zap,
-  TrendingUp, Mail, Instagram, MessageSquare,
+  TrendingUp, Mail, Instagram, MessageSquare, Crown,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
-// ── Agentes ──────────────────────────────────────────────────────────────────
-const agents = [
-  { name: 'Salomão', role: 'Orquestrador', icon: Sparkles, color: '#f59e0b', url: '/salomao', desc: 'Coordena todos os agentes e estratégias', active: true },
-  { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#f97316', url: '/jose', desc: 'Meta Ads, Google Ads e otimização de campanhas', active: true },
-  { name: 'Paulo', role: 'Copywriter', icon: PenTool, color: '#22d3a0', url: '/copywriter', desc: 'Copies persuasivas geradas por IA', active: true },
-  { name: 'Maria', role: 'Design', icon: Palette, color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA', active: true },
-  { name: 'Davi', role: 'Social Media', icon: Instagram, color: '#60a5fa', url: '/davi', desc: 'Gestão de redes sociais e conteúdo', active: true },
-  { name: 'João', role: 'Email', icon: Mail, color: '#a78bfa', url: '/joao', desc: 'Email marketing e automações', active: true },
-  { name: 'Marcos', role: 'CRM & WhatsApp', icon: Users, color: '#a855f7', url: '/marcos', desc: 'CRM, leads e toda estrutura WhatsApp', active: true },
-  { name: 'Pedro', role: 'SDR & Agente IA', icon: Bot, color: '#34d399', url: '/pedro', desc: 'Qualificação de leads, CRM avançado e automação comercial', active: true },
-  { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', desc: 'Planejamento e análise estratégica', active: true },
+// ── Agentes livres (todos os planos) ────────────────────────────────────────
+const freeAgents = [
+  { name: 'Pedro', role: 'SDR & Agente IA', icon: Bot, color: '#34d399', url: '/pedro', desc: 'Qualificação de leads, CRM avançado e automação comercial' },
+  { name: 'Marcos', role: 'CRM & WhatsApp', icon: Users, color: '#a855f7', url: '/marcos', desc: 'CRM, leads e toda estrutura WhatsApp' },
+];
+
+// ── Agentes travados (apenas admin / plano superior) ────────────────────────
+const lockedAgents = [
+  { name: 'Salomão', role: 'Orquestrador', icon: Sparkles, color: '#f59e0b', url: '/salomao', desc: 'Coordena todos os agentes e estratégias' },
+  { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#f97316', url: '/jose', desc: 'Meta Ads, Google Ads e otimização de campanhas' },
+  { name: 'Paulo', role: 'Copywriter', icon: PenTool, color: '#22d3a0', url: '/copywriter', desc: 'Copies persuasivas geradas por IA' },
+  { name: 'Maria', role: 'Design', icon: Palette, color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA' },
+  { name: 'Davi', role: 'Social Media', icon: Instagram, color: '#60a5fa', url: '/davi', desc: 'Gestão de redes sociais e conteúdo' },
+  { name: 'João', role: 'Email', icon: Mail, color: '#a78bfa', url: '/joao', desc: 'Email marketing e automações' },
+  { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', desc: 'Planejamento e análise estratégica' },
 ];
 
 // ── Ações Rápidas — o que o usuário faz com mais frequência ──────────────────
@@ -79,8 +85,10 @@ const quickActions = [
 
 export default function AgentHub() {
   const { user } = useAuth();
+  const { isAdmin } = useIsAdmin();
   const navigate = useNavigate();
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
+  const allAgents = isAdmin ? [...freeAgents, ...lockedAgents] : freeAgents;
 
   return (
     <MainLayout>
@@ -107,7 +115,7 @@ export default function AgentHub() {
             Ações rápidas
           </h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {quickActions.map((action, i) => (
+            {quickActions.filter(a => isAdmin || ['/whatsapp/broadcast', '/marcos', '/pedro'].some(u => a.url.startsWith(u))).map((action, i) => (
               <motion.button
                 key={action.url}
                 initial={{ opacity: 0, y: 16 }}
@@ -131,14 +139,14 @@ export default function AgentHub() {
           </div>
         </div>
 
-        {/* ── Agentes Especializados ────────────────────────────────────────── */}
+        {/* ── Seus Agentes ────────────────────────────────────────────────── */}
         <div>
           <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-foreground">
             <Sparkles className="h-4 w-4 text-primary" />
-            Todos os agentes
+            Seus agentes
           </h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {agents.map((agent, i) => (
+            {allAgents.map((agent, i) => (
               <motion.div
                 key={agent.name}
                 initial={{ opacity: 0, y: 20 }}
@@ -148,18 +156,9 @@ export default function AgentHub() {
                 whileTap={{ scale: 0.97 }}
               >
                 <Card
-                  className={`relative cursor-pointer border-border/30 bg-card/50 backdrop-blur-sm hover:shadow-lg transition-all h-full group ${
-                    !agent.active && 'opacity-60 grayscale-[0.5]'
-                  }`}
-                  onClick={() => agent.active && navigate(agent.url)}
+                  className="relative cursor-pointer border-border/30 bg-card/50 backdrop-blur-sm hover:shadow-lg transition-all h-full group"
+                  onClick={() => navigate(agent.url)}
                 >
-                  {!agent.active && (
-                    <div className="absolute top-2 right-2 z-10">
-                      <div className="bg-black/60 backdrop-blur-md rounded-full p-1 border border-white/10">
-                        <Lock className="h-3 w-3 text-amber-500" />
-                      </div>
-                    </div>
-                  )}
                   <CardContent className="flex flex-col items-center text-center gap-3 p-4">
                     <div
                       className="flex h-12 w-12 items-center justify-center rounded-2xl transition-transform group-hover:scale-110"
@@ -169,9 +168,37 @@ export default function AgentHub() {
                     </div>
                     <div>
                       <p className="font-bold text-sm text-foreground">{agent.name}</p>
-                      <p className="text-[11px] text-muted-foreground leading-tight">
-                        {agent.active ? agent.role : 'Em breve'}
-                      </p>
+                      <p className="text-[11px] text-muted-foreground leading-tight">{agent.role}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))}
+
+            {/* ── Agentes travados (apenas para não-admin) ── */}
+            {!isAdmin && lockedAgents.map((agent, i) => (
+              <motion.div
+                key={agent.name}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: (allAgents.length + i) * 0.04 }}
+              >
+                <Card className="relative cursor-not-allowed border-border/20 bg-card/30 backdrop-blur-sm h-full opacity-50 grayscale-[0.6]">
+                  <div className="absolute top-2 right-2 z-10">
+                    <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px] px-1.5 py-0 gap-1">
+                      <Crown className="h-2.5 w-2.5" /> Pro
+                    </Badge>
+                  </div>
+                  <CardContent className="flex flex-col items-center text-center gap-3 p-4">
+                    <div
+                      className="flex h-12 w-12 items-center justify-center rounded-2xl"
+                      style={{ backgroundColor: `${agent.color}10` }}
+                    >
+                      <Lock className="h-5 w-5 text-muted-foreground/50" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm text-muted-foreground/70">{agent.name}</p>
+                      <p className="text-[11px] text-muted-foreground/50 leading-tight">{agent.role}</p>
                     </div>
                   </CardContent>
                 </Card>
