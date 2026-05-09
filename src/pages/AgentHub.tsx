@@ -15,11 +15,11 @@ import { Badge } from '@/components/ui/badge';
 // ── Agentes livres (todos os planos) ────────────────────────────────────────
 const freeAgents = [
   { name: 'Pedro', role: 'SDR & Agente IA', icon: Bot, color: '#34d399', url: '/pedro', desc: 'Qualificação de leads, CRM avançado e automação comercial' },
-  { name: 'Marcos', role: 'CRM & WhatsApp', icon: Users, color: '#a855f7', url: '/marcos', desc: 'CRM, leads e toda estrutura WhatsApp' },
 ];
 
 // ── Agentes travados (apenas admin / plano superior) ────────────────────────
 const lockedAgents = [
+  { name: 'Marcos', role: 'CRM & WhatsApp', icon: Users, color: '#a855f7', url: '/marcos', desc: 'CRM, leads e toda estrutura WhatsApp' },
   { name: 'Salomão', role: 'Orquestrador', icon: Sparkles, color: '#f59e0b', url: '/salomao', desc: 'Coordena todos os agentes e estratégias' },
   { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#f97316', url: '/jose', desc: 'Meta Ads, Google Ads e otimização de campanhas' },
   { name: 'Paulo', role: 'Copywriter', icon: PenTool, color: '#22d3a0', url: '/copywriter', desc: 'Copies persuasivas geradas por IA' },
@@ -115,7 +115,7 @@ export default function AgentHub() {
             Ações rápidas
           </h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {quickActions.filter(a => isAdmin || ['/whatsapp/broadcast', '/marcos', '/pedro'].some(u => a.url.startsWith(u))).map((action, i) => (
+            {quickActions.filter(a => isAdmin || ['/whatsapp/broadcast', '/pedro'].some(u => a.url.startsWith(u))).map((action, i) => (
               <motion.button
                 key={action.url}
                 initial={{ opacity: 0, y: 16 }}
