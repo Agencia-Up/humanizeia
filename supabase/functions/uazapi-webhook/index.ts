@@ -170,13 +170,22 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // ────────────────────────────────────────────────────────────────────
 
   // Registrar Lead no CRM
+  const nowStr = new Date().toISOString();
   await supabase.from('ai_crm_leads').upsert({
     user_id: agent.user_id,
     agent_id: agent.id,
     remote_jid: remoteJid,
     lead_name: pushName,
-    last_interaction_at: new Date().toISOString()
+    last_interaction_at: nowStr
   }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
+
+  // ── CRITICAL: Atualiza timestamps para as regras de 5min/10min (cron-lead-followup) ──
+  // last_user_reply_at = quando o CLIENTE enviou a última mensagem
+  // followup_5min_sent = reset para false para o cron enviar novo follow-up se necessário
+  await supabase.from('ai_crm_leads').update({
+    last_user_reply_at: nowStr,
+    followup_5min_sent: false,
+  }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
   const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
 
@@ -727,6 +736,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     user_id: agent.user_id, agent_id: agent.id, instance_id: instanceName,
     remote_jid: remoteJid, role: 'assistant', content: aiResponse
   })
+
+  // ── CRITICAL: Atualiza last_agent_reply_at para regra de 5min/10min ──
+  // O cron-lead-followup usa este campo para saber quando o agente IA respondeu pela última vez
+  const agentReplyTs = new Date().toISOString();
+  await supabase.from('ai_crm_leads').update({
+    last_agent_reply_at: agentReplyTs,
+    last_interaction_at: agentReplyTs,
+  }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
   // Salvar resposta do AGENTE IA no wa_inbox (para aparecer no Inbox do Marcos)
   await supabase.from('wa_inbox').insert({
