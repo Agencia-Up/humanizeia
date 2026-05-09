@@ -76,6 +76,7 @@ const systemItems = [
   { title: 'Treinamento',      url: '/treinamento',   icon: GraduationCap },
   { title: 'Meu Plano',        url: '/meu-plano',     icon: CreditCard },
   { title: 'Integrações',      url: '/integrations',  icon: Plug },
+  { title: 'Meu Perfil',       url: '/perfil',        icon: Users },
   { title: 'Configurações',    url: '/settings',      icon: Settings },
 ];
 

@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
-import { ProfileSettingsTab } from '@/components/settings/ProfileSettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
 import { AdminSettingsTab } from '@/components/settings/AdminSettingsTab';
@@ -26,7 +25,7 @@ export default function SettingsPage() {
   const [searchParams] = useSearchParams();
   const { profile } = useAuth();
   const tabParam = searchParams.get('tab');
-  const validTabs = ['company', 'profile', 'ai', 'whatsapp', 'sync', 'admin'];
+  const validTabs = ['company', 'ai', 'whatsapp', 'sync', 'admin'];
   const [activeTab, setActiveTab] = useState(
     tabParam && validTabs.includes(tabParam) ? tabParam : 'company'
   );
@@ -51,7 +50,7 @@ export default function SettingsPage() {
 
   const setupSteps = [
     { label: 'Dados da empresa', description: 'Nome, nicho e informações do negócio', tab: 'company', icon: Building2 },
-    { label: 'Seu perfil', description: 'Nome e preferências pessoais', tab: 'profile', icon: User },
+    { label: 'Seu perfil', description: 'Nome e preferências pessoais', tab: null, route: '/perfil', icon: User },
     { label: 'Conectar anúncios', description: 'Meta Ads, Google Ads e WhatsApp', tab: null, route: '/connect-accounts', icon: RefreshCw },
     { label: 'Configurar IA', description: 'Personalizar como os agentes falam', tab: 'ai', icon: Sparkles },
     { label: 'WhatsApp', description: 'Número e instância para disparos', tab: 'whatsapp', icon: MessageCircle },
@@ -103,10 +102,6 @@ export default function SettingsPage() {
               <Building2 className="h-4 w-4" />
               Empresa
             </TabsTrigger>
-            <TabsTrigger value="profile" className="gap-2">
-              <User className="h-4 w-4" />
-              Perfil
-            </TabsTrigger>
             <TabsTrigger value="ai" className="gap-2">
               <Sparkles className="h-4 w-4" />
               IA
@@ -128,7 +123,6 @@ export default function SettingsPage() {
           </TabsList>
 
           <TabsContent value="company"><CompanySettingsTab /></TabsContent>
-          <TabsContent value="profile"><ProfileSettingsTab /></TabsContent>
           <TabsContent value="ai"><AISettingsTab /></TabsContent>
           <TabsContent value="whatsapp"><WhatsAppSettingsTab /></TabsContent>
           <TabsContent value="sync"><DataSyncSettingsTab /></TabsContent>

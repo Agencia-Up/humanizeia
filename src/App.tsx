@@ -139,6 +139,7 @@ const ConfirmEmail = lazy(() => import("./pages/ConfirmEmail"));
 const CrmFormularios = lazy(() => import("./pages/CrmFormularios"));
 const FormPublico = lazy(() => import("./pages/FormPublico"));
 const Treinamento = lazy(() => import("./pages/Treinamento"));
+const Profile = lazy(() => import("./pages/Profile"));
 
 
 const queryClient = new QueryClient();
@@ -186,6 +187,7 @@ const App = () => (
                 <Route path="/library"            element={<ProtectedRoute><AdminRoute><Lazy><CreativeLibrary /></Lazy></AdminRoute></ProtectedRoute>} />
                 <Route path="/reports"            element={<ProtectedRoute><AdminRoute><Lazy><Reports /></Lazy></AdminRoute></ProtectedRoute>} />
                 <Route path="/academy"            element={<ProtectedRoute><AdminRoute><Lazy><AIAcademy /></Lazy></AdminRoute></ProtectedRoute>} />
+                <Route path="/perfil"             element={<ProtectedRoute><Lazy><Profile /></Lazy></ProtectedRoute>} />
                 <Route path="/settings"           element={<ProtectedRoute><Lazy><Settings /></Lazy></ProtectedRoute>} />
                 <Route path="/pixel"              element={<ProtectedRoute><Lazy><UnifiedPixel /></Lazy></ProtectedRoute>} />
                 <Route path="/integrations"       element={<ProtectedRoute><Lazy><Integrations /></Lazy></ProtectedRoute>} />
