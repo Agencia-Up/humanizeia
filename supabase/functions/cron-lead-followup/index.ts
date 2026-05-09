@@ -54,7 +54,7 @@ function uniqueSellersByPhone(sellers: any[] = [], excludeId?: string, excludePh
 
 /**
  * Verifica se o horário atual está dentro da janela de rodízio vendedor -> vendedor.
- * Regra de negócio: 10:11 até 20:59 (horário de Brasília).
+ * Regra de negócio: 10:11 até 19:00 (horário de Brasília).
  * A transferência inicial do lead para o primeiro vendedor segue ativa 24h.
  */
 function isDentroDoHorarioOperacional(now: Date): boolean {
@@ -64,8 +64,8 @@ function isDentroDoHorarioOperacional(now: Date): boolean {
   const minuto = nowBrasilia.getUTCMinutes();
   const minutosDoDia = hora * 60 + minuto;
 
-  const inicioRodizio = 10 * 60 + 11;
-  const fimRodizio = 20 * 60 + 59;
+  const inicioRodizio = 10 * 60 + 11; // 10:11
+  const fimRodizio = 19 * 60;         // 19:00
   const ativo = minutosDoDia >= inicioRodizio && minutosDoDia <= fimRodizio;
   console.log(`[Cron] Hora Brasília: ${hora}:${String(minuto).padStart(2, '0')} | Horário operacional: ${ativo ? 'SIM ✅' : 'NÃO ⛔'}`);
   return ativo;

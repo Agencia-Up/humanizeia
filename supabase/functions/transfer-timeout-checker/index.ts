@@ -60,13 +60,13 @@ serve(async (req) => {
   );
 
   try {
-    // ── Janela de atendimento: 9h–20h (horário de Brasília, UTC-3) ──────────
+    // ── Janela de atendimento: 10h–19h (horário de Brasília, UTC-3) ──────────
     const nowDate = new Date();
     const utcMinutes = nowDate.getUTCHours() * 60 + nowDate.getUTCMinutes();
     const brasiliaMinutes = ((utcMinutes - 180) + 1440) % 1440; // UTC-3
     const brasiliaHour = Math.floor(brasiliaMinutes / 60);
 
-    const isWorkingHours = brasiliaHour >= 9 && brasiliaHour < 20;
+    const isWorkingHours = brasiliaHour >= 10 && brasiliaHour < 19;
 
     if (!isWorkingHours) {
       console.log(`[Timeout] Fora da janela de atendimento — ${brasiliaHour}h Brasília. Nenhum repasse feito.`);
