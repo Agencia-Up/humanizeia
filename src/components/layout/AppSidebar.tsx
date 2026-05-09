@@ -10,7 +10,6 @@ import {
   Sun,
   X,
   LogOut,
-  MessageCircle,
   Send,
   Inbox,
   Zap,
@@ -20,9 +19,7 @@ import {
   CreditCard,
   Kanban,
   FileText,
-  Bot,
   ClipboardList,
-  MonitorPlay,
   ChevronDown,
   Mail,
   Users,
@@ -60,14 +57,6 @@ const agentItems = [
   { title: 'Davi',    subtitle: 'Social Media',  url: '/davi',           icon: Instagram, emoji: '📱' },
   { title: 'João',    subtitle: 'E-mail',        url: '/joao',           icon: Mail,      emoji: '📧' },
   { title: 'Daniel',  subtitle: 'Estratégia',    url: '/daniel',         icon: Brain,     emoji: '🧠' },
-];
-
-// ── Pedro — sub-itens SDR ─────────────────────────────────────────────────────
-const pedroSubItems = [
-  { title: 'Painel Pedro',   url: '/pedro',                icon: Bot },
-  { title: 'Agente IA',      url: '/whatsapp/ai-agent',    icon: MessageCircle },
-  { title: 'CRM Avançado',   url: '/pedro?tab=crm',        icon: ClipboardList },
-  { title: 'CRM ao Vivo',    url: '/whatsapp/crm-ao-vivo', icon: MonitorPlay },
 ];
 
 // ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
@@ -146,60 +135,6 @@ function NavAgent({
           )}
         </NavLink>
       </SidebarMenuButton>
-    </SidebarMenuItem>
-  );
-}
-
-// ── NavPedroExpandable — Pedro SDR ───────────────────────────────────────────
-function NavPedroExpandable({ collapsed }: { collapsed?: boolean }) {
-  const { openSidebarGroups, toggleSidebarGroup } = useAppStore();
-  const key = 'pedro-sub';
-  const isOpen = openSidebarGroups.includes(key);
-
-  if (collapsed) {
-    return (
-      <SidebarMenuItem>
-        <SidebarMenuButton asChild tooltip="Pedro — SDR & IA">
-          <NavLink
-            to="/pedro"
-            className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/60 hover:text-foreground"
-            activeClassName="bg-primary/10 text-primary font-medium border-l-2 border-primary pl-[9px]"
-          >
-            <span className="text-base leading-none">💬</span>
-          </NavLink>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    );
-  }
-
-  return (
-    <SidebarMenuItem>
-      <div
-        className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground cursor-pointer hover:bg-accent/60 hover:text-foreground transition-all select-none"
-        onClick={() => toggleSidebarGroup(key)}
-      >
-        <span className="text-sm leading-none w-5 text-center">💬</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium leading-tight">Pedro</p>
-          <p className="text-[10px] text-muted-foreground/70 leading-tight">SDR & Agente IA</p>
-        </div>
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`} />
-      </div>
-      {isOpen && (
-        <div className="ml-4 mt-0.5 border-l border-border/40 pl-2 space-y-0.5">
-          {pedroSubItems.map(sub => (
-            <NavLink
-              key={sub.url}
-              to={sub.url}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-all"
-              activeClassName="text-primary font-medium bg-primary/10"
-            >
-              <sub.icon className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{sub.title}</span>
-            </NavLink>
-          ))}
-        </div>
-      )}
     </SidebarMenuItem>
   );
 }
@@ -353,11 +288,6 @@ export function AppSidebar() {
             {/* ── Dashboard ── */}
             <NavGroup label="Painel" collapsed={collapsed}>
               <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
-            </NavGroup>
-
-            {/* ── Pedro — SDR & Agente IA ── */}
-            <NavGroup label="Pedro SDR" collapsed={collapsed}>
-              <NavPedroExpandable collapsed={collapsed} />
             </NavGroup>
 
             {/* ── Marcos — Captação de Leads & WhatsApp ── */}
