@@ -555,12 +555,33 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       const leadsData: CrmLead[] = leadsRes.data || [];
       const teamData:  TeamMember[] = teamRes.data || [];
 
-      // Calcula leads por vendedor (para a tela de Vendedores)
-      const enrichedTeam = teamData.map(m => ({
-        ...m,
-        leadsCount:     leadsData.filter(l => l.assigned_to_id === m.id).length,
-        qualifiedCount: leadsData.filter(l => l.assigned_to_id === m.id && l.status_crm === 'qualificado').length,
-      }));
+      // Deduplica vendedores pelo whatsapp_number (mesmo vendedor pode estar em vários agentes)
+      const deduped = new Map<string, TeamMember>();
+      for (const m of teamData) {
+        const key = m.whatsapp_number || m.id; // fallback para id se sem número
+        const existing = deduped.get(key);
+        if (!existing) {
+          deduped.set(key, m);
+        } else {
+          // Mantém o mais recente / ativo; junta IDs para contagem
+          if (m.is_active && !existing.is_active) {
+            deduped.set(key, { ...m, _allIds: [...(existing as any)._allIds || [existing.id], m.id] });
+          } else {
+            (existing as any)._allIds = [...((existing as any)._allIds || [existing.id]), m.id];
+          }
+        }
+      }
+      const uniqueTeam = Array.from(deduped.values());
+
+      // Calcula leads por vendedor (soma de todos os IDs do mesmo vendedor)
+      const enrichedTeam = uniqueTeam.map(m => {
+        const allIds: string[] = (m as any)._allIds || [m.id];
+        return {
+          ...m,
+          leadsCount:     leadsData.filter(l => l.assigned_to_id && allIds.includes(l.assigned_to_id)).length,
+          qualifiedCount: leadsData.filter(l => l.assigned_to_id && allIds.includes(l.assigned_to_id) && l.status_crm === 'qualificado').length,
+        };
+      });
 
       setLeads(leadsData);
       setFeedbacks(fbRes.data || []);
@@ -711,10 +732,15 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
   const toggleSellerActive = async (memberId: string, currentActive: boolean) => {
     try {
+      // Encontra todos os IDs deste vendedor (pode ter múltiplos agent_id)
+      const member = teamMembers.find(m => m.id === memberId);
+      const allIds: string[] = (member as any)?._allIds || [memberId];
+
+      // Atualiza todos os registros do mesmo vendedor
       const { error } = await (supabase as any)
         .from('ai_team_members')
         .update({ is_active: !currentActive })
-        .eq('id', memberId);
+        .in('id', allIds);
       if (error) throw error;
       setTeamMembers(prev => prev.map(m => m.id === memberId ? { ...m, is_active: !currentActive } : m));
       toast({ title: currentActive ? '⛔ Vendedor pausado' : '✅ Vendedor ativado' });
