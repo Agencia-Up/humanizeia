@@ -62,6 +62,13 @@ const agentItems = [
   { title: 'Daniel',  subtitle: 'Estratégia',    url: '/daniel',         icon: Brain,     emoji: '🧠' },
 ];
 
+// ── Pedro Seller — sub-itens limitados para vendedores ───────────────────────
+const pedroSellerSubItems = [
+  { title: 'CRM',        url: '/pedro?tab=crm',        icon: Kanban },
+  { title: 'Inbox',      url: '/pedro?tab=inbox',       icon: Inbox },
+  { title: 'Instâncias', url: '/pedro?tab=instancias',  icon: Smartphone },
+];
+
 // ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
 const marcosSubItems = [
   { title: 'CRM',             url: '/crm',               icon: Kanban },
@@ -200,6 +207,61 @@ function NavMarcosExpandable({ collapsed }: { collapsed?: boolean }) {
   );
 }
 
+// ── NavPedroSellerExpandable — Pedro com sub-itens para vendedores ────────────
+function NavPedroSellerExpandable({ collapsed }: { collapsed?: boolean }) {
+  const { openSidebarGroups, toggleSidebarGroup } = useAppStore();
+  const key = 'pedro-seller-sub';
+  const isOpen = openSidebarGroups.includes(key);
+
+  if (collapsed) {
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton asChild tooltip="Pedro — CRM do Vendedor">
+          <NavLink
+            to="/pedro"
+            className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/60 hover:text-foreground"
+            activeClassName="bg-primary/10 text-primary font-medium border-l-2 border-primary pl-[9px]"
+          >
+            <span className="text-base leading-none">🤖</span>
+          </NavLink>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
+
+  return (
+    <SidebarMenuItem>
+      <div
+        className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground cursor-pointer hover:bg-accent/60 hover:text-foreground transition-all select-none"
+        onClick={() => toggleSidebarGroup(key)}
+      >
+        <span className="text-sm leading-none w-5 text-center">🤖</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium leading-tight">Pedro</p>
+          <p className="text-[10px] text-muted-foreground/70 leading-tight">CRM do Vendedor</p>
+        </div>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`} />
+      </div>
+
+      {isOpen && (
+        <div className="ml-4 mt-0.5 border-l border-border/40 pl-2 space-y-0.5">
+          {pedroSellerSubItems.map(sub => (
+            <NavLink
+              key={sub.url}
+              to={sub.url}
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-all"
+              activeClassName="text-primary font-medium bg-primary/10"
+            >
+              <sub.icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{sub.title}</span>
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </SidebarMenuItem>
+  );
+}
+
 // ── NavGroup colapsável ────────────────────────────────────────────────────────
 function NavGroup({
   label, children, defaultOpen = true, collapsed,
@@ -286,9 +348,9 @@ export function AppSidebar() {
       <SidebarContent className={`py-2 ${collapsed ? 'px-1' : 'px-2'}`}>
 
         {sellerLoading ? null : isSeller ? (
-          /* ── SELLER: apenas Marcos ── */
-          <NavGroup label="Marcos" collapsed={collapsed}>
-            <NavMarcosExpandable collapsed={collapsed} />
+          /* ── SELLER: apenas Pedro (CRM limitado do vendedor) ── */
+          <NavGroup label="Pedro" collapsed={collapsed}>
+            <NavPedroSellerExpandable collapsed={collapsed} />
           </NavGroup>
         ) : (
           /* ── MASTER: visão completa ── */

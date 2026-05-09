@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import {
   Search, Send, Loader2, CheckCheck, Check,
@@ -110,6 +111,10 @@ function initials(name: string) {
 export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { isSeller, seller, masterUserId } = useSellerProfile(user?.id);
+
+  // O userId efetivo para queries: vendedor usa o ID do master
+  const effectiveUserId = (isSeller && masterUserId) ? masterUserId : user?.id;
 
   const [instances, setInstances]             = useState<WaInstance[]>([]);
   const [allInstances, setAllInstances]       = useState<WaInstance[]>([]);
@@ -127,33 +132,58 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const [teamMembers, setTeamMembers]         = useState<any[]>([]);
   const [sendInstanceId, setSendInstanceId]   = useState<string>('');
   const [isMobileChat, setIsMobileChat]       = useState(false);
+  const [sellerLeadPhones, setSellerLeadPhones] = useState<Set<string> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
 
+  /* ── Fetch phones dos leads atribuídos ao vendedor ────────────── */
+  useEffect(() => {
+    if (!isSeller || !seller || !effectiveUserId) return;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('ai_crm_leads')
+        .select('remote_jid')
+        .eq('user_id', effectiveUserId)
+        .eq('assigned_to_id', seller.id);
+      const phones = new Set<string>(
+        (data || []).map((l: any) => (l.remote_jid || '').split('@')[0]).filter(Boolean)
+      );
+      setSellerLeadPhones(phones);
+    })();
+  }, [isSeller, seller, effectiveUserId]);
+
   /* ── Fetch instâncias (conectadas + não conectadas para exibir) ── */
   const fetchInstances = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     const { data } = await supabase
       .from('wa_instances')
       .select('id, instance_name, friendly_name, phone_number, status, is_active')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId as string)
       .eq('is_active', true)
       .order('instance_name');
-    const all = (data || []) as unknown as WaInstance[];
+    let all = (data || []) as unknown as WaInstance[];
+    // Vendedor: filtra só a instância que contém o número dele
+    if (isSeller && seller?.whatsapp_number) {
+      all = all.filter(i =>
+        i.phone_number?.replace(/\D/g, '').endsWith(seller.whatsapp_number.slice(-8))
+      );
+    }
     setAllInstances(all);
     setInstances(all.filter(i => i.status === 'connected'));
-  }, [user]);
+  }, [effectiveUserId, isSeller, seller]);
 
   /* ── Fetch conversas agrupadas ─────────────────────────────────── */
   const fetchConversations = useCallback(async (isInitial = false) => {
-    if (!user) return;
+    if (!effectiveUserId) return;
+    // Vendedor: espera carregar os phones dos leads dele
+    if (isSeller && sellerLeadPhones === null) return;
     if (isInitial) setLoading(true);
 
     let query = supabase
       .from('wa_inbox')
       .select('phone, contact_name, content, ai_category, is_read, created_at, instance_id, direction')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId as string)
       .neq('is_archived', true)
       .order('created_at', { ascending: false })
       .limit(500);
@@ -182,19 +212,24 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       if (msg.ai_category) c.ai_category = msg.ai_category;
     }
 
-    setConversations(Array.from(convMap.values()));
+    let convList = Array.from(convMap.values());
+    // Vendedor: filtra conversas apenas dos leads atribuídos a ele
+    if (isSeller && sellerLeadPhones) {
+      convList = convList.filter(c => sellerLeadPhones.has(c.phone));
+    }
+    setConversations(convList);
     if (isInitial) setLoading(false);
-  }, [user, activeInstanceTab]);
+  }, [effectiveUserId, activeInstanceTab, isSeller, sellerLeadPhones]);
 
   /* ── Fetch mensagens da conversa selecionada ───────────────────── */
   const fetchMessages = useCallback(async (phone: string, instanceId: string | null) => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setLoadingMsgs(true);
 
     let query = supabase
       .from('wa_inbox')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId as string)
       .eq('phone', phone)
       .order('created_at', { ascending: true })
       .limit(300);
@@ -208,12 +243,12 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       await supabase
         .from('wa_inbox')
         .update({ is_read: true } as any)
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId as string)
         .eq('phone', phone)
         .eq('is_read', false);
     }
     setLoadingMsgs(false);
-  }, [user]);
+  }, [effectiveUserId]);
 
   /* ── Fetch tags dos contatos ───────────────────────────────────── */
   // Usa ref para conversations para evitar recriar o callback (e re-executar o
@@ -224,35 +259,35 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
   const fetchContactTags = useCallback(async () => {
     const convs = conversationsRef.current;
-    if (!user || convs.length === 0) return;
+    if (!effectiveUserId || convs.length === 0) return;
     const phones = [...new Set(convs.map(c => c.phone))];
     const { data } = await supabase
       .from('wa_contacts')
       .select('phone, tags')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId as string)
       .in('phone', phones);
     if (data) {
       const map: Record<string, string[]> = {};
       for (const c of data) if (c.tags?.length) map[c.phone] = c.tags as string[];
       setContactTags(map);
     }
-  }, [user]); // conversations removido das deps — usa ref acima
+  }, [effectiveUserId]); // conversations removido das deps — usa ref acima
 
   /* ── Fetch vendedores (equipe) ────────────────────────────────── */
   const fetchTeamMembers = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     const { data } = await supabase
       .from('ai_team_members')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId as string)
       .eq('is_active', true)
       .order('name');
     setTeamMembers(data || []);
-  }, [user]);
+  }, [effectiveUserId]);
 
   const updateContactTags = async (phone: string, tags: string[]) => {
-    if (!user) return;
-    await supabase.from('wa_contacts').update({ tags } as any).eq('user_id', user.id).eq('phone', phone);
+    if (!effectiveUserId) return;
+    await supabase.from('wa_contacts').update({ tags } as any).eq('user_id', effectiveUserId as string).eq('phone', phone);
     setContactTags(prev => ({ ...prev, [phone]: tags }));
   };
 
@@ -276,14 +311,16 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   useEffect(() => { selectedConvKeyRef.current = selectedConvKey; }, [selectedConvKey]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     const ch = supabase
-      .channel('wa-inbox-rt')
+      .channel(`wa-inbox-rt-${effectiveUserId}`)
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'wa_inbox',
-        filter: `user_id=eq.${user.id}`,
+        filter: `user_id=eq.${effectiveUserId}`,
       }, (payload) => {
         const msg = payload.new as unknown as InboxMessage;
+        // Vendedor: ignora mensagens de leads que não são dele
+        if (isSeller && sellerLeadPhones && !sellerLeadPhones.has(msg.phone)) return;
         fetchConversationsRef.current(false);
         const convKey = selectedConvKeyRef.current;
         if (convKey) {
@@ -296,7 +333,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [user]); // apenas user — refs garantem acesso à versão atual
+  }, [effectiveUserId, isSeller, sellerLeadPhones]); // refs garantem acesso à versão atual
 
   /* ── Selecionar conversa ───────────────────────────────────────── */
   const selectConversation = (conv: Conversation) => {
@@ -362,7 +399,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   };
 
   const handleTransfer = async (memberId: string) => {
-    if (!selectedConvKey || !user) return;
+    if (!selectedConvKey || !effectiveUserId) return;
     const [phone] = selectedConvKey.split('::');
     const jid = `${phone}@s.whatsapp.net`;
     const member = teamMembers.find(m => m.id === memberId);
@@ -372,7 +409,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       const { data: lead } = await supabase
         .from('ai_crm_leads')
         .select('id')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId as string)
         .eq('remote_jid', jid)
         .maybeSingle();
 
@@ -382,7 +419,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         const { data: newLead, error: createError } = await (supabase as any)
           .from('ai_crm_leads')
           .insert({
-            user_id: user.id,
+            user_id: effectiveUserId,
             remote_jid: jid,
             lead_name: selectedConv?.contact_name || phone,
             status: 'transferido',
@@ -406,7 +443,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
       // 2. Registrar a transferência
       await supabase.from('ai_lead_transfers').insert({
-        user_id: user.id,
+        user_id: effectiveUserId,
         lead_id: leadId,
         to_member_id: memberId,
         transfer_reason: 'manual',

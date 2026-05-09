@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { useSubscription } from '@/hooks/useSubscription';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { EvolutionConnectDialog } from '@/components/evolution/EvolutionConnectDialog';
 import {
   Smartphone,
@@ -93,8 +94,10 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   const { toast } = useToast();
   const { subscription } = useSubscription();
   const { isAdmin } = useIsAdmin();
+  const { isSeller, seller, masterUserId } = useSellerProfile(user?.id);
+  const effectiveUserId = (isSeller && masterUserId) ? masterUserId : user?.id;
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
-  const maxInstances = INSTANCE_LIMITS[userPlan] ?? 5;
+  const maxInstances = isSeller ? 1 : (INSTANCE_LIMITS[userPlan] ?? 5);
   const [instances, setInstances] = useState<WaInstance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [connectOpen, setConnectOpen] = useState(false);
@@ -151,17 +154,24 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   };
 
   const fetchInstances = async (skipVerify = false) => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setIsLoading(true);
     try {
       const { data, error } = await supabase
         .from('wa_instances')
         .select('id, instance_name, friendly_name, phone_number, status, is_active, health_score, provider, api_url, created_at, updated_at, failover_status')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId as string)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      const list = (data as unknown as WaInstance[]) || [];
+      let list = (data as unknown as WaInstance[]) || [];
+      // Vendedor: filtra só instâncias que contêm o número dele
+      if (isSeller && seller?.whatsapp_number) {
+        const sellerDigits = seller.whatsapp_number.slice(-8);
+        list = list.filter(i =>
+          i.phone_number?.replace(/\D/g, '').endsWith(sellerDigits)
+        );
+      }
       setInstances(list);
       // Auto-verify all Evolution instances on first load
       if (!skipVerify && list.length > 0) {

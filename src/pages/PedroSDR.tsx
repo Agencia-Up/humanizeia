@@ -28,7 +28,10 @@ import {
 const WhatsAppAIAgent    = lazy(() => import('./WhatsAppAIAgent'));
 const CrmAoVivo          = lazy(() => import('./CrmAoVivo'));
 const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
+const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
+import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 
 const TabLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -1562,19 +1565,49 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
 // ─── Página principal ─────────────────────────────────────────────────────────
 
-const TABS = [
+// Tabs do gerente (master) — todas as abas
+const MASTER_TABS = [
   { id: 'performance', label: 'Performance',  icon: BarChart3,    emoji: '📊' },
   { id: 'crm',         label: 'CRM Avançado', icon: NotebookPen,  emoji: '🗒️' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,          emoji: '🤖' },
   { id: 'ao-vivo',     label: 'CRM ao Vivo',  icon: MonitorPlay,  emoji: '📺' },
   { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,   emoji: '📱' },
+  { id: 'vendedores',  label: 'Vendedores',   icon: Users,        emoji: '👥' },
+];
+
+// Tabs do vendedor (seller) — limitadas
+const SELLER_TABS = [
+  { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,  emoji: '🗒️' },
+  { id: 'inbox',       label: 'Inbox',        icon: MessageSquare, emoji: '💬' },
+  { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,   emoji: '📱' },
 ];
 
 export default function PedroSDR() {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const [activeTab, setActiveTab] = useState(tabParam === 'crm' ? 'crm' : 'performance');
+
+  const tabs = isSeller ? SELLER_TABS : MASTER_TABS;
+  const defaultTab = isSeller ? 'crm' : (tabParam || 'performance');
+  const [activeTab, setActiveTab] = useState(defaultTab);
+
+  // Se tab param mudar (ex: vendedor clicando no sidebar)
+  useEffect(() => {
+    if (tabParam && tabs.some(t => t.id === tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [tabParam, tabs]);
+
+  if (sellerLoading) {
+    return (
+      <MainLayout>
+        <div className="flex items-center justify-center py-24">
+          <Loader2 className="h-7 w-7 animate-spin text-primary" />
+        </div>
+      </MainLayout>
+    );
+  }
 
   return (
     <MainLayout>
@@ -1591,8 +1624,15 @@ export default function PedroSDR() {
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse mr-1.5 inline-block" />
                 Agente Online
               </Badge>
+              {isSeller && (
+                <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[10px]">
+                  Vendedor: {seller?.name}
+                </Badge>
+              )}
             </div>
-            <p className="text-xs text-muted-foreground">SDR — Qualificação de Leads & Automação Comercial</p>
+            <p className="text-xs text-muted-foreground">
+              {isSeller ? 'Painel do Vendedor — seus leads e atendimentos' : 'SDR — Qualificação de Leads & Automação Comercial'}
+            </p>
           </div>
         </div>
 
@@ -1600,7 +1640,7 @@ export default function PedroSDR() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
           <div className="border-b border-border/40">
             <TabsList className="h-auto bg-transparent p-0 gap-1">
-              {TABS.map(tab => (
+              {tabs.map(tab => (
                 <TabsTrigger
                   key={tab.id}
                   value={tab.id}
@@ -1614,24 +1654,51 @@ export default function PedroSDR() {
           </div>
 
           <div className="flex-1 min-h-0 overflow-auto">
-            <TabsContent value="performance" className="mt-0">
-              <PerformanceTab userId={user?.id} />
-            </TabsContent>
+            {/* Performance — master only */}
+            {!isSeller && (
+              <TabsContent value="performance" className="mt-0">
+                <PerformanceTab userId={user?.id} />
+              </TabsContent>
+            )}
 
+            {/* CRM Avançado — both (seller sees only their leads via existing filter) */}
             <TabsContent value="crm" className="mt-0">
               <CrmAvancadoTab userId={user?.id} />
             </TabsContent>
 
+            {/* Vendedores — master only */}
+            {!isSeller && (
+              <TabsContent value="vendedores" className="mt-0">
+                {user?.id && <SellerManagerTab userId={user.id} />}
+              </TabsContent>
+            )}
+
             <Suspense fallback={<TabLoader />}>
-              <TabsContent value="agente"   className="mt-0 h-full">
-                <WhatsAppAIAgent embedded />
-              </TabsContent>
-              <TabsContent value="ao-vivo"  className="mt-0 h-full">
-                <CrmAoVivo embedded />
-              </TabsContent>
+              {/* Agente IA — master only */}
+              {!isSeller && (
+                <TabsContent value="agente" className="mt-0 h-full">
+                  <WhatsAppAIAgent embedded />
+                </TabsContent>
+              )}
+
+              {/* CRM ao Vivo — master only */}
+              {!isSeller && (
+                <TabsContent value="ao-vivo" className="mt-0 h-full">
+                  <CrmAoVivo embedded />
+                </TabsContent>
+              )}
+
+              {/* Instâncias — both (seller filtered in WhatsAppInstances) */}
               <TabsContent value="instancias" className="mt-0 h-full">
                 <WhatsAppInstances embedded />
               </TabsContent>
+
+              {/* Inbox — seller only (embedded WhatsApp inbox filtered to their leads) */}
+              {isSeller && (
+                <TabsContent value="inbox" className="mt-0 h-full">
+                  <WhatsAppInbox embedded />
+                </TabsContent>
+              )}
             </Suspense>
           </div>
         </Tabs>
