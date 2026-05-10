@@ -6,20 +6,87 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ── Horário operacional: 10:11–19:29 Brasília ────────────────────────────────
-// Leads criados fora dessa janela NÃO são repassados, mesmo que o vendedor
+// ── Horário operacional (Brasília) ───────────────────────────────────────────
+// Dias normais (seg–sáb): 10:11 – 19:29
+// Domingos e feriados:     11:11 – 17:29
+// Leads criados fora da janela NÃO são repassados, mesmo que o vendedor
 // não confirme. Ao entrar no horário, leads da noite NÃO são repassados
-// retroativamente — só novos leads a partir de 10:11 entram no rodízio.
+// retroativamente — só novos leads a partir do início da janela entram no rodízio.
+
 function brasiliaMinutesOfDay(dt: Date): number {
   const utcMin = dt.getUTCHours() * 60 + dt.getUTCMinutes();
   return ((utcMin - 180) + 1440) % 1440; // UTC-3
 }
-const REPASS_START = 10 * 60 + 11; // 10:11 = 611 min
-const REPASS_END   = 19 * 60 + 29; // 19:29 = 1169 min
+
+function toBrasilia(dt: Date): Date {
+  return new Date(dt.getTime() - 3 * 60 * 60 * 1000);
+}
+
+// ── Páscoa (algoritmo Computus) e feriados nacionais ─────────────────────────
+function getEasterDate(year: number): Date {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function getBrazilianHolidays(year: number): Set<string> {
+  const holidays = new Set<string>();
+  const fmt = (d: Date) =>
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400000);
+
+  // Feriados fixos
+  holidays.add(`${year}-01-01`); // Confraternização Universal
+  holidays.add(`${year}-04-21`); // Tiradentes
+  holidays.add(`${year}-05-01`); // Dia do Trabalho
+  holidays.add(`${year}-09-07`); // Independência
+  holidays.add(`${year}-10-12`); // Nossa Sra. Aparecida
+  holidays.add(`${year}-11-02`); // Finados
+  holidays.add(`${year}-11-15`); // Proclamação da República
+  holidays.add(`${year}-12-25`); // Natal
+
+  // Feriados móveis (baseados na Páscoa)
+  const easter = getEasterDate(year);
+  holidays.add(fmt(addDays(easter, -48))); // Segunda de Carnaval
+  holidays.add(fmt(addDays(easter, -47))); // Terça de Carnaval
+  holidays.add(fmt(addDays(easter, -2)));  // Sexta-feira Santa
+  holidays.add(fmt(addDays(easter, 60)));  // Corpus Christi
+
+  return holidays;
+}
+
+function isDomingoOuFeriado(dt: Date): boolean {
+  const brasilia = toBrasilia(dt);
+  if (brasilia.getUTCDay() === 0) return true; // Domingo
+  const year = brasilia.getUTCFullYear();
+  const dateStr = `${year}-${String(brasilia.getUTCMonth() + 1).padStart(2, "0")}-${String(brasilia.getUTCDate()).padStart(2, "0")}`;
+  return getBrazilianHolidays(year).has(dateStr);
+}
+
+// Janela dinâmica conforme o dia
+function getRepassWindow(dt: Date): { start: number; end: number; label: string } {
+  if (isDomingoOuFeriado(dt)) {
+    return { start: 11 * 60 + 11, end: 17 * 60 + 29, label: "11:11–17:29 (dom/feriado)" };
+  }
+  return { start: 10 * 60 + 11, end: 19 * 60 + 29, label: "10:11–19:29" };
+}
 
 function isWithinRepassWindow(dt: Date): boolean {
   const min = brasiliaMinutesOfDay(dt);
-  return min >= REPASS_START && min <= REPASS_END;
+  const { start, end } = getRepassWindow(dt);
+  return min >= start && min <= end;
 }
 
 // ── Função auxiliar: round-robin ──────────────────────────────────────────────
@@ -76,21 +143,23 @@ serve(async (req) => {
   );
 
   try {
-    // ── Janela de repasse: 10:11–19:29 (horário de Brasília, UTC-3) ─────────
+    // ── Janela de repasse (horário de Brasília, UTC-3) ──────────────────────
+    // Seg–Sáb: 10:11–19:29 | Dom/Feriado: 11:11–17:29
     const nowDate = new Date();
     const brasilMin = brasiliaMinutesOfDay(nowDate);
     const brasiliaHour = Math.floor(brasilMin / 60);
     const brasiliaMinute = brasilMin % 60;
+    const window = getRepassWindow(nowDate);
 
     const isWorkingHours = isWithinRepassWindow(nowDate);
 
     if (!isWorkingHours) {
-      console.log(`[Timeout] Fora da janela de repasse — ${brasiliaHour}:${String(brasiliaMinute).padStart(2, '0')} Brasília (ativo 10:11–19:29). Nenhum repasse feito.`);
+      console.log(`[Timeout] Fora da janela de repasse — ${brasiliaHour}:${String(brasiliaMinute).padStart(2, '0')} Brasília (janela: ${window.label}). Nenhum repasse feito.`);
       return new Response(
         JSON.stringify({
           ok: true,
           processed: 0,
-          message: `Fora do horário de repasse (10:11–19:29). Hora atual em Brasília: ${brasiliaHour}:${String(brasiliaMinute).padStart(2, '0')}`,
+          message: `Fora do horário de repasse (${window.label}). Hora atual em Brasília: ${brasiliaHour}:${String(brasiliaMinute).padStart(2, '0')}`,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );

@@ -52,35 +52,99 @@ function uniqueSellersByPhone(sellers: any[] = [], excludeId?: string, excludePh
   });
 }
 
-// ── Horário operacional de repasse: 10:11–19:29 Brasília ─────────────────────
-// Leads que chegam das 19:30 às 10:10 NÃO entram no rodízio de repasse.
-// Às 10:11 os leads da noite NÃO são repassados retroativamente.
-const REPASS_START = 10 * 60 + 11; // 10:11 = 611 min
-const REPASS_END   = 19 * 60 + 29; // 19:29 = 1169 min
+// ── Horário operacional de repasse (Brasília) ────────────────────────────────
+// Seg–Sáb: 10:11 – 19:29 | Dom/Feriado: 11:11 – 17:29
+// Leads criados fora da janela NÃO entram no rodízio de repasse.
+// Ao entrar no horário, leads da noite NÃO são repassados retroativamente.
 
 function brasiliaMinOfDay(dt: Date): number {
   const nowBrasilia = new Date(dt.getTime() - 3 * 60 * 60 * 1000);
   return nowBrasilia.getUTCHours() * 60 + nowBrasilia.getUTCMinutes();
 }
 
+function toBrasilia(dt: Date): Date {
+  return new Date(dt.getTime() - 3 * 60 * 60 * 1000);
+}
+
+// ── Páscoa (algoritmo Computus) e feriados nacionais ─────────────────────────
+function getEasterDate(year: number): Date {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function getBrazilianHolidays(year: number): Set<string> {
+  const holidays = new Set<string>();
+  const fmt = (d: Date) =>
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400000);
+
+  holidays.add(`${year}-01-01`); // Confraternização Universal
+  holidays.add(`${year}-04-21`); // Tiradentes
+  holidays.add(`${year}-05-01`); // Dia do Trabalho
+  holidays.add(`${year}-09-07`); // Independência
+  holidays.add(`${year}-10-12`); // Nossa Sra. Aparecida
+  holidays.add(`${year}-11-02`); // Finados
+  holidays.add(`${year}-11-15`); // Proclamação da República
+  holidays.add(`${year}-12-25`); // Natal
+
+  const easter = getEasterDate(year);
+  holidays.add(fmt(addDays(easter, -48))); // Segunda de Carnaval
+  holidays.add(fmt(addDays(easter, -47))); // Terça de Carnaval
+  holidays.add(fmt(addDays(easter, -2)));  // Sexta-feira Santa
+  holidays.add(fmt(addDays(easter, 60)));  // Corpus Christi
+
+  return holidays;
+}
+
+function isDomingoOuFeriado(dt: Date): boolean {
+  const brasilia = toBrasilia(dt);
+  if (brasilia.getUTCDay() === 0) return true;
+  const year = brasilia.getUTCFullYear();
+  const dateStr = `${year}-${String(brasilia.getUTCMonth() + 1).padStart(2, '0')}-${String(brasilia.getUTCDate()).padStart(2, '0')}`;
+  return getBrazilianHolidays(year).has(dateStr);
+}
+
+function getRepassWindow(dt: Date): { start: number; end: number; label: string } {
+  if (isDomingoOuFeriado(dt)) {
+    return { start: 11 * 60 + 11, end: 17 * 60 + 29, label: '11:11–17:29 (dom/feriado)' };
+  }
+  return { start: 10 * 60 + 11, end: 19 * 60 + 29, label: '10:11–19:29' };
+}
+
 /**
  * Verifica se o horário atual está dentro da janela de rodízio vendedor -> vendedor.
- * Regra de negócio: 10:11 até 19:29 (horário de Brasília).
+ * Seg–Sáb: 10:11–19:29 | Dom/Feriado: 11:11–17:29
  * A transferência inicial do lead para o primeiro vendedor segue ativa 24h.
  */
 function isDentroDoHorarioOperacional(now: Date): boolean {
   const minutosDoDia = brasiliaMinOfDay(now);
   const hora = Math.floor(minutosDoDia / 60);
   const minuto = minutosDoDia % 60;
-  const ativo = minutosDoDia >= REPASS_START && minutosDoDia <= REPASS_END;
-  console.log(`[Cron] Hora Brasília: ${hora}:${String(minuto).padStart(2, '0')} | Horário operacional: ${ativo ? 'SIM ✅' : 'NÃO ⛔'} (10:11–19:29)`);
+  const { start, end, label } = getRepassWindow(now);
+  const ativo = minutosDoDia >= start && minutosDoDia <= end;
+  console.log(`[Cron] Hora Brasília: ${hora}:${String(minuto).padStart(2, '0')} | Horário operacional: ${ativo ? 'SIM ✅' : 'NÃO ⛔'} (${label})`);
   return ativo;
 }
 
-/** Verifica se um transfer foi CRIADO dentro da janela de repasse (10:11–19:29) */
+/** Verifica se um transfer foi CRIADO dentro da janela de repasse do dia em questão */
 function transferCriadoNoHorario(createdAt: string): boolean {
-  const min = brasiliaMinOfDay(new Date(createdAt));
-  return min >= REPASS_START && min <= REPASS_END;
+  const dt = new Date(createdAt);
+  const min = brasiliaMinOfDay(dt);
+  const { start, end } = getRepassWindow(dt);
+  return min >= start && min <= end;
 }
 
 serve(async (req) => {
