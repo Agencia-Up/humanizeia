@@ -52,23 +52,35 @@ function uniqueSellersByPhone(sellers: any[] = [], excludeId?: string, excludePh
   });
 }
 
+// ── Horário operacional de repasse: 10:11–19:29 Brasília ─────────────────────
+// Leads que chegam das 19:30 às 10:10 NÃO entram no rodízio de repasse.
+// Às 10:11 os leads da noite NÃO são repassados retroativamente.
+const REPASS_START = 10 * 60 + 11; // 10:11 = 611 min
+const REPASS_END   = 19 * 60 + 29; // 19:29 = 1169 min
+
+function brasiliaMinOfDay(dt: Date): number {
+  const nowBrasilia = new Date(dt.getTime() - 3 * 60 * 60 * 1000);
+  return nowBrasilia.getUTCHours() * 60 + nowBrasilia.getUTCMinutes();
+}
+
 /**
  * Verifica se o horário atual está dentro da janela de rodízio vendedor -> vendedor.
- * Regra de negócio: 10:11 até 19:00 (horário de Brasília).
+ * Regra de negócio: 10:11 até 19:29 (horário de Brasília).
  * A transferência inicial do lead para o primeiro vendedor segue ativa 24h.
  */
 function isDentroDoHorarioOperacional(now: Date): boolean {
-  // Converte para horário de Brasília (UTC-3)
-  const nowBrasilia = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-  const hora = nowBrasilia.getUTCHours();
-  const minuto = nowBrasilia.getUTCMinutes();
-  const minutosDoDia = hora * 60 + minuto;
-
-  const inicioRodizio = 10 * 60 + 11; // 10:11
-  const fimRodizio = 19 * 60;         // 19:00
-  const ativo = minutosDoDia >= inicioRodizio && minutosDoDia <= fimRodizio;
-  console.log(`[Cron] Hora Brasília: ${hora}:${String(minuto).padStart(2, '0')} | Horário operacional: ${ativo ? 'SIM ✅' : 'NÃO ⛔'}`);
+  const minutosDoDia = brasiliaMinOfDay(now);
+  const hora = Math.floor(minutosDoDia / 60);
+  const minuto = minutosDoDia % 60;
+  const ativo = minutosDoDia >= REPASS_START && minutosDoDia <= REPASS_END;
+  console.log(`[Cron] Hora Brasília: ${hora}:${String(minuto).padStart(2, '0')} | Horário operacional: ${ativo ? 'SIM ✅' : 'NÃO ⛔'} (10:11–19:29)`);
   return ativo;
+}
+
+/** Verifica se um transfer foi CRIADO dentro da janela de repasse (10:11–19:29) */
+function transferCriadoNoHorario(createdAt: string): boolean {
+  const min = brasiliaMinOfDay(new Date(createdAt));
+  return min >= REPASS_START && min <= REPASS_END;
 }
 
 serve(async (req) => {
@@ -113,6 +125,16 @@ serve(async (req) => {
           const lead = transfer.lead;
           if (!lead) {
             console.warn(`[Cron] Transferência ${transfer.id} sem lead associado. Pulando.`);
+            continue;
+          }
+
+          // ── Regra de horário: só repassa se o transfer foi CRIADO dentro de
+          //    10:11–19:29 Brasília. Leads da noite ficam com o vendedor. ─────
+          if (!transferCriadoNoHorario(transfer.created_at)) {
+            console.log(`[Cron] Transfer ${transfer.id} criado fora do horário de repasse (${transfer.created_at}). Auto-confirmando — lead fica com vendedor atual.`);
+            await supabase.from('ai_lead_transfers')
+              .update({ transfer_status: 'confirmed', is_confirmed: true })
+              .eq('id', transfer.id);
             continue;
           }
 

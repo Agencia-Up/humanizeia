@@ -6,6 +6,22 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ── Horário operacional: 10:11–19:29 Brasília ────────────────────────────────
+// Leads criados fora dessa janela NÃO são repassados, mesmo que o vendedor
+// não confirme. Ao entrar no horário, leads da noite NÃO são repassados
+// retroativamente — só novos leads a partir de 10:11 entram no rodízio.
+function brasiliaMinutesOfDay(dt: Date): number {
+  const utcMin = dt.getUTCHours() * 60 + dt.getUTCMinutes();
+  return ((utcMin - 180) + 1440) % 1440; // UTC-3
+}
+const REPASS_START = 10 * 60 + 11; // 10:11 = 611 min
+const REPASS_END   = 19 * 60 + 29; // 19:29 = 1169 min
+
+function isWithinRepassWindow(dt: Date): boolean {
+  const min = brasiliaMinutesOfDay(dt);
+  return min >= REPASS_START && min <= REPASS_END;
+}
+
 // ── Função auxiliar: round-robin ──────────────────────────────────────────────
 function sellerPhoneKey(seller: any): string {
   const digits = String(seller?.whatsapp_number || "").replace(/\D/g, "");
@@ -60,21 +76,21 @@ serve(async (req) => {
   );
 
   try {
-    // ── Janela de atendimento: 10h–19h (horário de Brasília, UTC-3) ──────────
+    // ── Janela de repasse: 10:11–19:29 (horário de Brasília, UTC-3) ─────────
     const nowDate = new Date();
-    const utcMinutes = nowDate.getUTCHours() * 60 + nowDate.getUTCMinutes();
-    const brasiliaMinutes = ((utcMinutes - 180) + 1440) % 1440; // UTC-3
-    const brasiliaHour = Math.floor(brasiliaMinutes / 60);
+    const brasilMin = brasiliaMinutesOfDay(nowDate);
+    const brasiliaHour = Math.floor(brasilMin / 60);
+    const brasiliaMinute = brasilMin % 60;
 
-    const isWorkingHours = brasiliaHour >= 10 && brasiliaHour < 19;
+    const isWorkingHours = isWithinRepassWindow(nowDate);
 
     if (!isWorkingHours) {
-      console.log(`[Timeout] Fora da janela de atendimento — ${brasiliaHour}h Brasília. Nenhum repasse feito.`);
+      console.log(`[Timeout] Fora da janela de repasse — ${brasiliaHour}:${String(brasiliaMinute).padStart(2, '0')} Brasília (ativo 10:11–19:29). Nenhum repasse feito.`);
       return new Response(
         JSON.stringify({
           ok: true,
           processed: 0,
-          message: `Fora do horário de atendimento (9h–20h). Hora atual em Brasília: ${brasiliaHour}h`,
+          message: `Fora do horário de repasse (10:11–19:29). Hora atual em Brasília: ${brasiliaHour}:${String(brasiliaMinute).padStart(2, '0')}`,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -117,6 +133,18 @@ serve(async (req) => {
           // Marca como expirado mesmo sem dados completos
           await supabase.from("ai_lead_transfers")
             .update({ transfer_status: "expired" })
+            .eq("id", transfer.id);
+          continue;
+        }
+
+        // ── Regra de horário: só repassa se o transfer foi CRIADO dentro da
+        //    janela 10:11–19:29 Brasília. Leads que chegaram durante a noite
+        //    ficam com o vendedor — não são repassados retroativamente. ──────
+        const transferCreatedAt = new Date(transfer.created_at || now);
+        if (!isWithinRepassWindow(transferCreatedAt)) {
+          console.log(`[Timeout] Transfer ${transfer.id} criado fora do horário de repasse (${transferCreatedAt.toISOString()}). Auto-confirmando — lead fica com vendedor atual.`);
+          await supabase.from("ai_lead_transfers")
+            .update({ transfer_status: "confirmed", is_confirmed: true })
             .eq("id", transfer.id);
           continue;
         }
