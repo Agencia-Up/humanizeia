@@ -117,11 +117,18 @@ function isDomingoOuFeriado(dt: Date): boolean {
   return getBrazilianHolidays(year).has(dateStr);
 }
 
+// Seg–Sex: 10:11–19:29 | Sáb: 10:11–18:29 | Dom/Feriado: 11:11–17:29
 function getRepassWindow(dt: Date): { start: number; end: number; label: string } {
-  if (isDomingoOuFeriado(dt)) {
+  const brasilia = toBrasilia(dt);
+  const dow = brasilia.getUTCDay(); // 0=dom, 6=sáb
+
+  if (dow === 0 || isDomingoOuFeriado(dt)) {
     return { start: 11 * 60 + 11, end: 17 * 60 + 29, label: '11:11–17:29 (dom/feriado)' };
   }
-  return { start: 10 * 60 + 11, end: 19 * 60 + 29, label: '10:11–19:29' };
+  if (dow === 6) {
+    return { start: 10 * 60 + 11, end: 18 * 60 + 29, label: '10:11–18:29 (sábado)' };
+  }
+  return { start: 10 * 60 + 11, end: 19 * 60 + 29, label: '10:11–19:29 (seg–sex)' };
 }
 
 /**
