@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useRef, lazy, Suspense, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,7 +16,9 @@ import {
   Zap, PhoneCall, NotebookPen, Send, CalendarClock, Flag,
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
   Pin, PinOff, Image, Mic, Video, Smartphone, Upload, X, Trash2,
+  Plus, GripVertical,
 } from 'lucide-react';
+import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
@@ -917,6 +919,82 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     }
   };
 
+  // ── Estados e handlers: adicionar lead manual, apagar lead, drag-drop ────
+  const [addLeadOpen, setAddLeadOpen]   = useState(false);
+  const [addLeadName, setAddLeadName]   = useState('');
+  const [addLeadPhone, setAddLeadPhone] = useState('');
+  const [addLeadSaving, setAddLeadSaving] = useState(false);
+  const [deletingLead, setDeletingLead] = useState(false);
+
+  const handleAddLeadManual = async () => {
+    if (!addLeadName.trim() || !addLeadPhone.trim() || !userId) return;
+    setAddLeadSaving(true);
+    try {
+      const cleanPhone = addLeadPhone.replace(/\D/g, '');
+      const remoteJid = `${cleanPhone}@s.whatsapp.net`;
+      const effectiveUserId = isSeller
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
+        : userId;
+      const { error } = await (supabase as any).from('ai_crm_leads').insert({
+        user_id:     effectiveUserId,
+        lead_name:   addLeadName.trim(),
+        remote_jid:  remoteJid,
+        status_crm:  'novo',
+        status:      'novo',
+        assigned_to_id: memberId || null,
+      });
+      if (error) throw error;
+      toast({ title: '✅ Lead adicionado ao CRM!' });
+      setAddLeadName(''); setAddLeadPhone(''); setAddLeadOpen(false);
+      await fetchData(true);
+    } catch (err: any) {
+      toast({ title: 'Erro ao adicionar lead', description: err.message, variant: 'destructive' });
+    } finally {
+      setAddLeadSaving(false);
+    }
+  };
+
+  const handleDeleteLead = async (leadId: string) => {
+    if (!confirm('Deseja excluir este lead permanentemente? Esta ação não pode ser desfeita.')) return;
+    setDeletingLead(true);
+    try {
+      // Remove notas, followups e feedbacks associados primeiro
+      await Promise.all([
+        (supabase as any).from('pedro_crm_notes').delete().eq('lead_id', leadId),
+        (supabase as any).from('pedro_followup_schedules').delete().eq('lead_id', leadId),
+        (supabase as any).from('pedro_manager_feedback').delete().eq('lead_id', leadId),
+      ]);
+      const { error } = await (supabase as any).from('ai_crm_leads').delete().eq('id', leadId);
+      if (error) throw error;
+      toast({ title: '🗑️ Lead excluído!' });
+      setSelectedLead(null);
+      setLeads(prev => prev.filter(l => l.id !== leadId));
+    } catch (err: any) {
+      toast({ title: 'Erro ao excluir', description: err.message, variant: 'destructive' });
+    } finally {
+      setDeletingLead(false);
+    }
+  };
+
+  const handleDragEnd = async (result: DropResult) => {
+    const { draggableId, destination, source } = result;
+    if (!destination || destination.droppableId === source.droppableId) return;
+    const newStatus = destination.droppableId;
+    // Atualiza localmente de imediato (optimistic)
+    setLeads(prev => prev.map(l => l.id === draggableId ? { ...l, status_crm: newStatus } : l));
+    try {
+      const { error } = await (supabase as any)
+        .from('ai_crm_leads')
+        .update({ status_crm: newStatus })
+        .eq('id', draggableId);
+      if (error) throw error;
+      toast({ title: `✅ Lead movido para ${PIPELINE_COLUMNS.find(c => c.id === newStatus)?.title || newStatus}` });
+    } catch (err: any) {
+      toast({ title: 'Erro ao mover lead', description: err.message, variant: 'destructive' });
+      await fetchData(true); // Revert on failure
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -973,6 +1051,16 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                 </SelectContent>
               </Select>
             )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleDeleteLead(selectedLead.id)}
+              disabled={deletingLead}
+              className="h-8 w-8 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+              title="Excluir lead"
+            >
+              {deletingLead ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            </Button>
           </div>
         </div>
 
@@ -1320,72 +1408,148 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
+          <Button
+            variant={addLeadOpen ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => setAddLeadOpen(!addLeadOpen)}
+            className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+          >
+            {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+            {addLeadOpen ? 'Fechar' : 'Adicionar Lead'}
+          </Button>
         </div>
       </div>
 
-      {/* ── PIPELINE (Kanban) ───────────────────────────────────────── */}
-      {view === 'pipeline' && (
-        <div className="overflow-x-auto pb-2 -mx-4 px-4">
-          <div className="flex gap-3 min-w-max">
-            {PIPELINE_COLUMNS.map(col => {
-              const colLeads = filteredLeads.filter(l => (l.status_crm || 'novo') === col.id);
-              return (
-                <div key={col.id} className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}>
-                  {/* Column header */}
-                  <div className={`px-3 py-2.5 rounded-t-xl ${col.bg} flex items-center justify-between`}>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">{col.emoji}</span>
-                      <span className="text-xs font-semibold text-foreground">{col.title}</span>
-                    </div>
-                    <span className={`w-5 h-5 rounded-full ${col.bg} flex items-center justify-center text-[10px] font-bold text-foreground`}>
-                      {colLeads.length}
-                    </span>
-                  </div>
-                  {/* Column body */}
-                  <div className="p-2 space-y-2 max-h-[60vh] overflow-y-auto">
-                    {colLeads.length === 0 && (
-                      <p className="text-center text-[10px] text-muted-foreground py-6">Nenhum lead</p>
-                    )}
-                    {colLeads.map(lead => (
-                      <button
-                        key={lead.id}
-                        onClick={() => loadLeadDetail(lead)}
-                        className="w-full text-left bg-background border border-border/40 rounded-lg p-3 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all space-y-2 group"
-                      >
-                        <div>
-                          <p className="text-xs font-semibold text-foreground truncate">{lead.lead_name || 'Lead'}</p>
-                          <p className="text-[10px] text-muted-foreground">{lead.remote_jid?.replace(/@.*/, '')}</p>
-                        </div>
-                        {lead.summary && (
-                          <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2">{lead.summary}</p>
-                        )}
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1.5">
-                            {lead.member && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-medium truncate max-w-[80px]">
-                                {lead.member.name}
-                              </span>
-                            )}
-                            {lead.seller_notes_count > 0 && (
-                              <span className="flex items-center gap-0.5 text-[9px] text-yellow-400">
-                                <StickyNote className="h-2.5 w-2.5" />{lead.seller_notes_count}
-                              </span>
-                            )}
-                          </div>
-                          {!isSeller && !lead.member && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 font-medium">
-                              Sem vendedor
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+      {/* ── Formulário adicionar lead ─────────────────────────────────── */}
+      {addLeadOpen && (
+        <div className="flex items-end gap-2 bg-card border border-emerald-500/20 rounded-xl p-3">
+          <div className="flex-1 space-y-1">
+            <label className="text-[10px] text-muted-foreground font-medium">Nome</label>
+            <Input
+              value={addLeadName}
+              onChange={e => setAddLeadName(e.target.value)}
+              placeholder="Nome do lead"
+              className="h-8 text-xs"
+            />
           </div>
+          <div className="flex-1 space-y-1">
+            <label className="text-[10px] text-muted-foreground font-medium">Telefone (WhatsApp)</label>
+            <Input
+              value={addLeadPhone}
+              onChange={e => setAddLeadPhone(e.target.value)}
+              placeholder="5511999999999"
+              className="h-8 text-xs"
+            />
+          </div>
+          <Button
+            onClick={handleAddLeadManual}
+            disabled={addLeadSaving || !addLeadName.trim() || !addLeadPhone.trim()}
+            size="sm"
+            className="h-8 px-4 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            {addLeadSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            Salvar
+          </Button>
         </div>
+      )}
+
+      {/* ── PIPELINE (Kanban) com Drag & Drop ──────────────────────── */}
+      {view === 'pipeline' && (
+        <DragDropContext onDragEnd={handleDragEnd}>
+          <div className="overflow-x-auto pb-2 -mx-4 px-4">
+            <div className="flex gap-3 min-w-max">
+              {PIPELINE_COLUMNS.map(col => {
+                const colLeads = filteredLeads.filter(l => (l.status_crm || 'novo') === col.id);
+                return (
+                  <div key={col.id} className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}>
+                    {/* Column header */}
+                    <div className={`px-3 py-2.5 rounded-t-xl ${col.bg} flex items-center justify-between`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">{col.emoji}</span>
+                        <span className="text-xs font-semibold text-foreground">{col.title}</span>
+                      </div>
+                      <span className={`w-5 h-5 rounded-full ${col.bg} flex items-center justify-center text-[10px] font-bold text-foreground`}>
+                        {colLeads.length}
+                      </span>
+                    </div>
+                    {/* Column body — droppable */}
+                    <Droppable droppableId={col.id}>
+                      {(provided, snapshot) => (
+                        <div
+                          ref={provided.innerRef}
+                          {...provided.droppableProps}
+                          className={`p-2 space-y-2 max-h-[60vh] overflow-y-auto min-h-[60px] transition-colors ${
+                            snapshot.isDraggingOver ? 'bg-blue-500/5' : ''
+                          }`}
+                        >
+                          {colLeads.length === 0 && !snapshot.isDraggingOver && (
+                            <p className="text-center text-[10px] text-muted-foreground py-6">Nenhum lead</p>
+                          )}
+                          {colLeads.map((lead, index) => (
+                            <Draggable key={lead.id} draggableId={lead.id} index={index}>
+                              {(dragProvided, dragSnapshot) => (
+                                <div
+                                  ref={dragProvided.innerRef}
+                                  {...dragProvided.draggableProps}
+                                  className={`w-full text-left bg-background border rounded-lg p-3 transition-all space-y-2 group ${
+                                    dragSnapshot.isDragging
+                                      ? 'border-blue-500/60 shadow-lg shadow-blue-500/10 ring-1 ring-blue-500/30'
+                                      : 'border-border/40 hover:border-blue-500/40 hover:bg-blue-500/5'
+                                  }`}
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <div
+                                      {...dragProvided.dragHandleProps}
+                                      className="mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground"
+                                    >
+                                      <GripVertical className="h-3.5 w-3.5" />
+                                    </div>
+                                    <button
+                                      onClick={() => loadLeadDetail(lead)}
+                                      className="flex-1 text-left min-w-0"
+                                    >
+                                      <p className="text-xs font-semibold text-foreground truncate">{lead.lead_name || 'Lead'}</p>
+                                      <p className="text-[10px] text-muted-foreground">{lead.remote_jid?.replace(/@.*/, '')}</p>
+                                    </button>
+                                  </div>
+                                  {lead.summary && (
+                                    <button onClick={() => loadLeadDetail(lead)} className="w-full text-left">
+                                      <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2">{lead.summary}</p>
+                                    </button>
+                                  )}
+                                  <div className="flex items-center justify-between gap-1">
+                                    <div className="flex items-center gap-1.5">
+                                      {lead.member && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-medium truncate max-w-[80px]">
+                                          {lead.member.name}
+                                        </span>
+                                      )}
+                                      {lead.seller_notes_count > 0 && (
+                                        <span className="flex items-center gap-0.5 text-[9px] text-yellow-400">
+                                          <StickyNote className="h-2.5 w-2.5" />{lead.seller_notes_count}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {!isSeller && !lead.member && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 font-medium">
+                                        Sem vendedor
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </Draggable>
+                          ))}
+                          {provided.placeholder}
+                        </div>
+                      )}
+                    </Droppable>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </DragDropContext>
       )}
 
       {/* ── LISTA de Leads ──────────────────────────────────────────── */}
