@@ -1,6 +1,171 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// ─── Inline PostgREST client (no external imports) ──────────────────────────
+function createSupabaseClient(url: string, key: string) {
+  const restBase = `${url}/rest/v1`;
+  const baseHeaders: Record<string, string> = {
+    'apikey': key,
+    'Authorization': `Bearer ${key}`,
+    'Content-Type': 'application/json',
+  };
 
+  type FilterEntry = { col: string; op: string; val: string };
+  type OrderEntry = { column: string; ascending: boolean; nullsFirst: boolean };
+
+  function buildQuery(table: string) {
+    let _select: string | null = null;
+    let _filters: FilterEntry[] = [];
+    let _orders: OrderEntry[] = [];
+    let _limit: number | null = null;
+    let _maybeSingle = false;
+    let _body: any = null;
+    let _method: 'GET' | 'POST' | 'PATCH' = 'GET';
+    let _returnSelect: string | null = null; // for update().select()
+
+    const builder = {
+      select(cols?: string) {
+        if (_method === 'PATCH') {
+          // .update(data).select('id') → return representation with select
+          _returnSelect = cols || '*';
+          return builder;
+        }
+        _select = cols || '*';
+        return builder;
+      },
+      eq(col: string, val: any) {
+        _filters.push({ col, op: 'eq', val: String(val) });
+        return builder;
+      },
+      lte(col: string, val: any) {
+        _filters.push({ col, op: 'lte', val: String(val) });
+        return builder;
+      },
+      is(col: string, val: any) {
+        _filters.push({ col, op: 'is', val: String(val) });
+        return builder;
+      },
+      not(col: string, op: string, val: any) {
+        _filters.push({ col, op: `not.${op}`, val: String(val) });
+        return builder;
+      },
+      in(col: string, vals: any[]) {
+        const list = vals.map((v: any) => `"${v}"`).join(',');
+        _filters.push({ col, op: 'in', val: `(${list})` });
+        return builder;
+      },
+      order(column: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) {
+        _orders.push({
+          column,
+          ascending: opts?.ascending ?? true,
+          nullsFirst: opts?.nullsFirst ?? false,
+        });
+        return builder;
+      },
+      limit(n: number) {
+        _limit = n;
+        return builder;
+      },
+      maybeSingle() {
+        _maybeSingle = true;
+        return builder._execute();
+      },
+      update(data: any) {
+        _method = 'PATCH';
+        _body = data;
+        return builder;
+      },
+      insert(data: any) {
+        _method = 'POST';
+        _body = data;
+        return builder._execute();
+      },
+      then(resolve: (v: any) => void, reject?: (e: any) => void) {
+        return builder._execute().then(resolve, reject);
+      },
+      async _execute(): Promise<{ data: any; error: any }> {
+        const params = new URLSearchParams();
+
+        // select param
+        const selectVal = _method === 'PATCH' ? (_returnSelect || undefined) : (_select || '*');
+        if (selectVal) params.set('select', selectVal);
+
+        // filters
+        for (const f of _filters) {
+          params.append(f.col, `${f.op}.${f.val}`);
+        }
+
+        // order
+        for (const o of _orders) {
+          let orderStr = o.column;
+          if (!o.ascending) orderStr += '.desc';
+          else orderStr += '.asc';
+          if (o.nullsFirst) orderStr += '.nullsfirst';
+          else orderStr += '.nullslast';
+          params.append('order', orderStr);
+        }
+
+        // limit
+        if (_limit !== null) {
+          params.set('limit', String(_limit));
+        }
+
+        const queryStr = params.toString();
+        const urlStr = `${restBase}/${table}${queryStr ? '?' + queryStr : ''}`;
+
+        const headers: Record<string, string> = { ...baseHeaders };
+
+        if (_method === 'PATCH' && _returnSelect) {
+          headers['Prefer'] = 'return=representation';
+        }
+        if (_method === 'POST') {
+          headers['Prefer'] = 'return=minimal';
+        }
+        if (_maybeSingle) {
+          headers['Accept'] = 'application/vnd.pgrst.object+json';
+        }
+
+        try {
+          const res = await fetch(urlStr, {
+            method: _method,
+            headers,
+            body: _body ? JSON.stringify(_body) : undefined,
+          });
+
+          if (_maybeSingle && res.status === 406) {
+            return { data: null, error: null };
+          }
+
+          if (!res.ok) {
+            const errBody = await res.text();
+            return { data: null, error: { message: errBody, status: res.status } };
+          }
+
+          if (_method === 'POST' && !_returnSelect) {
+            return { data: null, error: null };
+          }
+
+          const contentType = res.headers.get('content-type') || '';
+          if (!contentType.includes('json')) {
+            return { data: null, error: null };
+          }
+
+          const data = await res.json();
+          return { data, error: null };
+        } catch (err: any) {
+          return { data: null, error: { message: err.message } };
+        }
+      },
+    };
+
+    return builder;
+  }
+
+  return {
+    from(table: string) {
+      return buildQuery(table);
+    },
+  };
+}
+
+// ─── CORS headers ───────────────────────────────────────────────────────────
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -52,10 +217,10 @@ function uniqueSellersByPhone(sellers: any[] = [], excludeId?: string, excludePh
   });
 }
 
-// ── Horário operacional de repasse (Brasília) ────────────────────────────────
-// Seg–Sáb: 10:11 – 19:29 | Dom/Feriado: 11:11 – 17:29
-// Leads criados fora da janela NÃO entram no rodízio de repasse.
-// Ao entrar no horário, leads da noite NÃO são repassados retroativamente.
+// ── Horario operacional de repasse (Brasilia) ────────────────────────────────
+// Seg-Sab: 10:11 - 19:29 | Dom/Feriado: 11:11 - 17:29
+// Leads criados fora da janela NAO entram no rodizio de repasse.
+// Ao entrar no horario, leads da noite NAO sao repassados retroativamente.
 
 function brasiliaMinOfDay(dt: Date): number {
   const nowBrasilia = new Date(dt.getTime() - 3 * 60 * 60 * 1000);
@@ -66,7 +231,7 @@ function toBrasilia(dt: Date): Date {
   return new Date(dt.getTime() - 3 * 60 * 60 * 1000);
 }
 
-// ── Páscoa (algoritmo Computus) e feriados nacionais ─────────────────────────
+// ── Pascoa (algoritmo Computus) e feriados nacionais ─────────────────────────
 function getEasterDate(year: number): Date {
   const a = year % 19;
   const b = Math.floor(year / 100);
@@ -91,18 +256,18 @@ function getBrazilianHolidays(year: number): Set<string> {
     `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
   const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400000);
 
-  holidays.add(`${year}-01-01`); // Confraternização Universal
+  holidays.add(`${year}-01-01`); // Confraternizacao Universal
   holidays.add(`${year}-04-21`); // Tiradentes
   holidays.add(`${year}-05-01`); // Dia do Trabalho
-  holidays.add(`${year}-09-07`); // Independência
+  holidays.add(`${year}-09-07`); // Independencia
   holidays.add(`${year}-10-12`); // Nossa Sra. Aparecida
   holidays.add(`${year}-11-02`); // Finados
-  holidays.add(`${year}-11-15`); // Proclamação da República
+  holidays.add(`${year}-11-15`); // Proclamacao da Republica
   holidays.add(`${year}-12-25`); // Natal
 
   const easter = getEasterDate(year);
   holidays.add(fmt(addDays(easter, -48))); // Segunda de Carnaval
-  holidays.add(fmt(addDays(easter, -47))); // Terça de Carnaval
+  holidays.add(fmt(addDays(easter, -47))); // Terca de Carnaval
   holidays.add(fmt(addDays(easter, -2)));  // Sexta-feira Santa
   holidays.add(fmt(addDays(easter, 60)));  // Corpus Christi
 
@@ -117,24 +282,24 @@ function isDomingoOuFeriado(dt: Date): boolean {
   return getBrazilianHolidays(year).has(dateStr);
 }
 
-// Seg–Sex: 10:11–19:29 | Sáb: 10:11–18:29 | Dom/Feriado: 11:11–17:29
+// Seg-Sex: 10:11-19:29 | Sab: 10:11-18:29 | Dom/Feriado: 11:11-17:29
 function getRepassWindow(dt: Date): { start: number; end: number; label: string } {
   const brasilia = toBrasilia(dt);
-  const dow = brasilia.getUTCDay(); // 0=dom, 6=sáb
+  const dow = brasilia.getUTCDay(); // 0=dom, 6=sab
 
   if (dow === 0 || isDomingoOuFeriado(dt)) {
-    return { start: 11 * 60 + 11, end: 17 * 60 + 29, label: '11:11–17:29 (dom/feriado)' };
+    return { start: 11 * 60 + 11, end: 17 * 60 + 29, label: '11:11-17:29 (dom/feriado)' };
   }
   if (dow === 6) {
-    return { start: 10 * 60 + 11, end: 18 * 60 + 29, label: '10:11–18:29 (sábado)' };
+    return { start: 10 * 60 + 11, end: 18 * 60 + 29, label: '10:11-18:29 (sabado)' };
   }
-  return { start: 10 * 60 + 11, end: 19 * 60 + 29, label: '10:11–19:29 (seg–sex)' };
+  return { start: 10 * 60 + 11, end: 19 * 60 + 29, label: '10:11-19:29 (seg-sex)' };
 }
 
 /**
- * Verifica se o horário atual está dentro da janela de rodízio vendedor -> vendedor.
- * Seg–Sáb: 10:11–19:29 | Dom/Feriado: 11:11–17:29
- * A transferência inicial do lead para o primeiro vendedor segue ativa 24h.
+ * Verifica se o horario atual esta dentro da janela de rodizio vendedor -> vendedor.
+ * Seg-Sab: 10:11-19:29 | Dom/Feriado: 11:11-17:29
+ * A transferencia inicial do lead para o primeiro vendedor segue ativa 24h.
  */
 function isDentroDoHorarioOperacional(now: Date): boolean {
   const minutosDoDia = brasiliaMinOfDay(now);
@@ -142,11 +307,11 @@ function isDentroDoHorarioOperacional(now: Date): boolean {
   const minuto = minutosDoDia % 60;
   const { start, end, label } = getRepassWindow(now);
   const ativo = minutosDoDia >= start && minutosDoDia <= end;
-  console.log(`[Cron] Hora Brasília: ${hora}:${String(minuto).padStart(2, '0')} | Horário operacional: ${ativo ? 'SIM ✅' : 'NÃO ⛔'} (${label})`);
+  console.log(`[Cron] Hora Brasilia: ${hora}:${String(minuto).padStart(2, '0')} | Horario operacional: ${ativo ? 'SIM' : 'NAO'} (${label})`);
   return ativo;
 }
 
-/** Verifica se um transfer foi CRIADO dentro da janela de repasse do dia em questão */
+/** Verifica se um transfer foi CRIADO dentro da janela de repasse do dia em questao */
 function transferCriadoNoHorario(createdAt: string): boolean {
   const dt = new Date(createdAt);
   const min = brasiliaMinOfDay(dt);
@@ -154,7 +319,7 @@ function transferCriadoNoHorario(createdAt: string): boolean {
   return min >= start && min <= end;
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -162,7 +327,7 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const supabase = createClient(supabaseUrl, supabaseKey)
+    const supabase = createSupabaseClient(supabaseUrl, supabaseKey)
 
     const now = new Date();
     const fiveMinsAgo = new Date(now.getTime() - 5 * 60000).toISOString();
@@ -173,43 +338,43 @@ serve(async (req) => {
     const operacional = isDentroDoHorarioOperacional(now);
 
     // ════════════════════════════════════════════════════════════════
-    // SEÇÃO 1: ROTATIVIDADE DE VENDEDORES (transferência pendente > 10 min)
+    // SECAO 1: ROTATIVIDADE DE VENDEDORES (transferencia pendente > 10 min)
     // REGRA: O vendedor tem 10 minutos para responder "Ok" a partir do momento
-    //        em que RECEBEU a notificação (ai_lead_transfers.created_at).
-    //        Usa ai_lead_transfers como fonte de verdade, NÃO last_interaction_at.
-    //        Só executa dentro do horário operacional (10:10 - 21:30 Brasília).
+    //        em que RECEBEU a notificacao (ai_lead_transfers.created_at).
+    //        Usa ai_lead_transfers como fonte de verdade, NAO last_interaction_at.
+    //        So executa dentro do horario operacional (10:10 - 21:30 Brasilia).
     // ════════════════════════════════════════════════════════════════
     if (operacional) {
-      // Buscar transferências pendentes onde o vendedor NÃO confirmou em 10 minutos
+      // Buscar transferencias pendentes onde o vendedor NAO confirmou em 10 minutos
       const { data: pendingTransfers } = await supabase
         .from('ai_lead_transfers')
         .select('*, lead:ai_crm_leads(*, wa_ai_agents(id, name, instance_id, instance_ids))')
         .eq('is_confirmed', false)
         .eq('transfer_status', 'pending')
-        .lte('created_at', tenMinsAgo); // A notificação foi criada há mais de 10 minutos
+        .lte('created_at', tenMinsAgo); // A notificacao foi criada ha mais de 10 minutos
 
       if (pendingTransfers && pendingTransfers.length > 0) {
-        console.log(`[Cron] Encontradas ${pendingTransfers.length} transferências pendentes há mais de 10 min.`);
+        console.log(`[Cron] Encontradas ${pendingTransfers.length} transferencias pendentes ha mais de 10 min.`);
         const { data: allInstances } = await supabase.from('wa_instances').select('*');
 
         for (const transfer of pendingTransfers) {
           const lead = transfer.lead;
           if (!lead) {
-            console.warn(`[Cron] Transferência ${transfer.id} sem lead associado. Pulando.`);
+            console.warn(`[Cron] Transferencia ${transfer.id} sem lead associado. Pulando.`);
             continue;
           }
 
-          // ── Regra de horário: só repassa se o transfer foi CRIADO dentro de
-          //    10:11–19:29 Brasília. Leads da noite ficam com o vendedor. ─────
+          // ── Regra de horario: so repassa se o transfer foi CRIADO dentro de
+          //    10:11-19:29 Brasilia. Leads da noite ficam com o vendedor. ─────
           if (!transferCriadoNoHorario(transfer.created_at)) {
-            console.log(`[Cron] Transfer ${transfer.id} criado fora do horário de repasse (${transfer.created_at}). Auto-confirmando — lead fica com vendedor atual.`);
+            console.log(`[Cron] Transfer ${transfer.id} criado fora do horario de repasse (${transfer.created_at}). Auto-confirmando - lead fica com vendedor atual.`);
             await supabase.from('ai_lead_transfers')
               .update({ transfer_status: 'confirmed', is_confirmed: true })
               .eq('id', transfer.id);
             continue;
           }
 
-          // Verificar se o lead ainda está 'qualificado' (vendedor pode ter confirmado manualmente)
+          // Verificar se o lead ainda esta 'qualificado' (vendedor pode ter confirmado manualmente)
           const { data: freshLead } = await supabase
             .from('ai_crm_leads')
             .select('id, status, assigned_to_id')
@@ -217,7 +382,7 @@ serve(async (req) => {
             .maybeSingle();
 
           if (!freshLead || freshLead.status !== 'qualificado') {
-            console.log(`[Cron] Lead ${lead.id} não está mais qualificado (status: ${freshLead?.status}). Marcando transferência como expirada e pulando.`);
+            console.log(`[Cron] Lead ${lead.id} nao esta mais qualificado (status: ${freshLead?.status}). Marcando transferencia como expirada e pulando.`);
             await supabase.from('ai_lead_transfers')
               .update({ transfer_status: 'expired' })
               .eq('id', transfer.id);
@@ -227,20 +392,20 @@ serve(async (req) => {
           const agentId = lead.agent_id;
           const currentSellerId = transfer.to_member_id;
 
-          // Marcar a transferência atual como expirada ATOMICAMENTE antes de repassar
+          // Marcar a transferencia atual como expirada ATOMICAMENTE antes de repassar
           const { data: expireResult } = await supabase
             .from('ai_lead_transfers')
             .update({ transfer_status: 'expired' })
             .eq('id', transfer.id)
-            .eq('transfer_status', 'pending') // SÓ expira se ainda for pending
+            .eq('transfer_status', 'pending') // SO expira se ainda for pending
             .select('id');
 
           if (!expireResult || expireResult.length === 0) {
-            console.log(`[Cron] Transferência ${transfer.id} já foi processada por outro worker. Pulando.`);
+            console.log(`[Cron] Transferencia ${transfer.id} ja foi processada por outro worker. Pulando.`);
             continue;
           }
 
-          // Buscar TODOS os vendedores (inclusive o atual, para poder notificá-lo)
+          // Buscar TODOS os vendedores (inclusive o atual, para poder notifica-lo)
           const { data: teamMembers } = await supabase
             .from('ai_team_members')
             .select('*')
@@ -263,10 +428,10 @@ serve(async (req) => {
               let expSellerNum = expiredSeller.whatsapp_number.replace(/\D/g, '');
               if (expSellerNum.length === 10 || expSellerNum.length === 11) expSellerNum = `55${expSellerNum}`;
 
-              const missedMsg = `⚠️ *LEAD REPASSADO*\n\nO lead *${lead.lead_name || 'Desconhecido'}* não teve sua confirmação dentro de 10 minutos e foi passado para o próximo da fila.\n\n🚫 *Por favor, NÃO entre em contato com este cliente.*`;
+              const missedMsg = `*LEAD REPASSADO*\n\nO lead *${lead.lead_name || 'Desconhecido'}* nao teve sua confirmacao dentro de 10 minutos e foi passado para o proximo da fila.\n\n*Por favor, NAO entre em contato com este cliente.*`;
 
               await sendUazapiTextMessage(expBaseUrl, expInstKey, expiredInstance.instance_name, expSellerNum, `${expSellerNum}@s.whatsapp.net`, missedMsg);
-              console.log(`[Cron] ⚠️ Aviso enviado para ${expiredSeller.name} (perdeu o lead por inatividade).`);
+              console.log(`[Cron] Aviso enviado para ${expiredSeller.name} (perdeu o lead por inatividade).`);
             }
           }
 
@@ -277,8 +442,8 @@ serve(async (req) => {
           );
 
           if (availableSellers.length === 0) {
-            console.log(`[Cron] Nenhum outro vendedor disponível para o agente ${agentId}. Lead ${lead.id} permanece com vendedor atual.`);
-            // Repassar de volta para o mesmo (sem outros disponíveis)
+            console.log(`[Cron] Nenhum outro vendedor disponivel para o agente ${agentId}. Lead ${lead.id} permanece com vendedor atual.`);
+            // Repassar de volta para o mesmo (sem outros disponiveis)
             await supabase.from('ai_lead_transfers')
               .update({ transfer_status: 'pending' })
               .eq('id', transfer.id);
@@ -286,7 +451,7 @@ serve(async (req) => {
           }
 
           const nextSeller = availableSellers[0];
-          console.log(`[Cron] Repassando lead ${lead.id} de ${expiredSeller?.name || currentSellerId} para ${nextSeller.name} (não respondeu em 10min).`);
+          console.log(`[Cron] Repassando lead ${lead.id} de ${expiredSeller?.name || currentSellerId} para ${nextSeller.name} (nao respondeu em 10min).`);
 
           // Atualizar lead com novo vendedor
           await supabase.from('ai_crm_leads').update({
@@ -298,20 +463,20 @@ serve(async (req) => {
             last_lead_received_at: now.toISOString(),
           }).eq('id', nextSeller.id);
 
-          // Criar nova transferência para o próximo vendedor
+          // Criar nova transferencia para o proximo vendedor
           await supabase.from('ai_lead_transfers').insert({
             user_id: lead.user_id,
             lead_id: lead.id,
             from_member_id: currentSellerId,
             to_member_id: nextSeller.id,
-            transfer_reason: 'Rodízio por Inatividade do Vendedor (10min)',
+            transfer_reason: 'Rodizio por Inatividade do Vendedor (10min)',
             notes: `Repassado de ${currentSellerId} para ${nextSeller.name} por falta de resposta em 10 minutos`,
             transfer_status: 'pending',
             is_confirmed: false,
             confirmation_timeout_at: new Date(now.getTime() + 15 * 60000).toISOString(),
           });
 
-          // Notificar próximo vendedor
+          // Notificar proximo vendedor
           const agentData = lead.wa_ai_agents;
           let targetInstanceId = agentData?.instance_id;
           if (!targetInstanceId && agentData?.instance_ids?.length > 0) targetInstanceId = agentData.instance_ids[0];
@@ -323,7 +488,7 @@ serve(async (req) => {
             const cleanSellerNum = nextSeller.whatsapp_number.replace(/\D/g, '');
             const phoneNumber = lead.remote_jid.split('@')[0];
 
-            // Gerar resumo para o próximo vendedor
+            // Gerar resumo para o proximo vendedor
             let aiGeneratedSummary = lead.summary || 'Lead qualificado aguardando atendimento.';
             try {
               const { data: fullChat } = await supabase
@@ -347,7 +512,7 @@ serve(async (req) => {
                     model: 'gpt-4o-mini',
                     temperature: 0.3,
                     messages: [
-                      { role: 'system', content: `Gere um briefing curto e objetivo para um vendedor de carros que está recebendo um lead repassado. Inclua: veículo de interesse, perfil do cliente e dica de abordagem. Máximo 5 linhas.` },
+                      { role: 'system', content: `Gere um briefing curto e objetivo para um vendedor de carros que esta recebendo um lead repassado. Inclua: veiculo de interesse, perfil do cliente e dica de abordagem. Maximo 5 linhas.` },
                       { role: 'user', content: `Conversa:\n${chatTranscript}\n\nGere o briefing.` }
                     ]
                   })
@@ -360,23 +525,23 @@ serve(async (req) => {
               }
             } catch (e) { /* silencioso */ }
 
-            const notificationMsg = `🚨 *LEAD REPASSADO (Vendedor anterior não respondeu em 10min)*\n\n👤 *Nome:* ${lead.lead_name || 'Desconhecido'}\n📱 *Número:* +${phoneNumber}\n🤖 *Agente IA:* ${agentData?.name || 'Assistente'}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
+            const notificationMsg = `*LEAD REPASSADO (Vendedor anterior nao respondeu em 10min)*\n\n*Nome:* ${lead.lead_name || 'Desconhecido'}\n*Numero:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Assistente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
 
             await sendUazapiTextMessage(baseUrl, instKey, instance.instance_name, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
-            console.log(`[Cron] Notificação enviada para ${nextSeller.name}.`);
+            console.log(`[Cron] Notificacao enviada para ${nextSeller.name}.`);
           }
         }
       } else {
-        console.log('[Cron] Nenhuma transferência pendente com timeout.');
+        console.log('[Cron] Nenhuma transferencia pendente com timeout.');
       }
     } else {
-      console.log('[Cron] Fora do horário operacional. Seção 1 (rodízio) ignorada.');
+      console.log('[Cron] Fora do horario operacional. Secao 1 (rodizio) ignorada.');
     }
 
     // ════════════════════════════════════════════════════════════════
-    // SEÇÃO 2: FOLLOW-UP + TRANSFERÊNCIA POR INATIVIDADE DO CLIENTE
-    // 5 min → ping de follow-up (funciona 24h)
-    // 10 min → transferência para vendedor (só dentro do horário operacional)
+    // SECAO 2: FOLLOW-UP + TRANSFERENCIA POR INATIVIDADE DO CLIENTE
+    // 5 min -> ping de follow-up (funciona 24h)
+    // 10 min -> transferencia para vendedor (so dentro do horario operacional)
     // ════════════════════════════════════════════════════════════════
     const { data: leads, error } = await supabase
       .from('ai_crm_leads')
@@ -420,8 +585,8 @@ serve(async (req) => {
       const is10MinPassed = new Date(lead.last_agent_reply_at) <= new Date(tenMinsAgo);
 
       if (is10MinPassed) {
-        // --- REGRA DE 10 MINUTOS: TRANSFERÊNCIA PARA VENDEDOR (Funciona 24/7) ---
-        // Sempre envia o lead inicial para o funil do vendedor, independente do horário.
+        // --- REGRA DE 10 MINUTOS: TRANSFERENCIA PARA VENDEDOR (Funciona 24/7) ---
+        // Sempre envia o lead inicial para o funil do vendedor, independente do horario.
         const { data: updatedRows, error: updateError } = await supabase
           .from('ai_crm_leads')
           .update({
@@ -433,11 +598,11 @@ serve(async (req) => {
           .select('id');
 
         if (updateError || !updatedRows || updatedRows.length === 0) {
-          console.log(`[Cron] Lead ${phoneNumber} já foi processado. Pulando.`);
+          console.log(`[Cron] Lead ${phoneNumber} ja foi processado. Pulando.`);
           continue;
         }
 
-        console.log(`[Cron] Lead ${phoneNumber} inativo há 10 min. Status → qualificado. Buscando vendedor...`);
+        console.log(`[Cron] Lead ${phoneNumber} inativo ha 10 min. Status -> qualificado. Buscando vendedor...`);
 
         const { data: teamMembers } = await supabase
           .from('ai_team_members')
@@ -518,7 +683,7 @@ serve(async (req) => {
                     model: 'gpt-4o-mini',
                     temperature: 0.3,
                     messages: [
-                      { role: 'system', content: `Você é um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSeções obrigatórias:\n🚗 *VEÍCULO DE INTERESSE:*\n📢 *ORIGEM DO LEAD:*\n👤 *PERFIL DO CLIENTE:*\n💡 *DICA PARA RETOMADA:*\n\nSeja direto. Não invente informações.` },
+                      { role: 'system', content: `Voce e um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL DO CLIENTE:*\n*DICA PARA RETOMADA:*\n\nSeja direto. Nao invente informacoes.` },
                       { role: 'user', content: `Conversa:\n${chatTranscript}\n\nGere o briefing.` }
                     ]
                   })
@@ -531,7 +696,7 @@ serve(async (req) => {
               }
             } catch (e) { /* silencioso */ }
 
-            const notificationMsg = `🔥 *NOVO LEAD QUALIFICADO (Inatividade)*\n\n👤 *Cliente:* ${lead.lead_name || 'Desconhecido'}\n📱 *Contato:* +${phoneNumber}\n🤖 *Agente IA:* ${agentData?.name || 'Agente'}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 *ANÁLISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n━━━━━━━━━━━━━━━━━━━━\n\n👉 *Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!* ⏳`;
+            const notificationMsg = `*NOVO LEAD QUALIFICADO (Inatividade)*\n\n*Cliente:* ${lead.lead_name || 'Desconhecido'}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
 
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }
@@ -543,7 +708,7 @@ serve(async (req) => {
 
       } else if (!lead.followup_5min_sent) {
         // --- REGRA DE 5 MINUTOS (FOLLOW-UP) — Funciona 24h ---
-        console.log(`[Cron] Lead ${phoneNumber} inativo há 5 min. Enviando ping...`);
+        console.log(`[Cron] Lead ${phoneNumber} inativo ha 5 min. Enviando ping...`);
         const randomMsg = FIVE_MIN_MESSAGES[Math.floor(Math.random() * FIVE_MIN_MESSAGES.length)];
 
         const sent = await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, randomMsg);
@@ -575,5 +740,3 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: err.message }), { headers: corsHeaders, status: 500 })
   }
 })
-
-
