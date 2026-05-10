@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, lazy, Suspense, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, lazy, Suspense, useCallback, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,7 +16,7 @@ import {
   Zap, PhoneCall, NotebookPen, Send, CalendarClock, Flag,
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
   Pin, PinOff, Image, Mic, Video, Smartphone, Upload, X, Trash2,
-  Plus, GripVertical,
+  Plus, GripVertical, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle,
 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import {
@@ -26,6 +26,10 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import * as XLSX from 'xlsx';
 
 const WhatsAppAIAgent    = lazy(() => import('./WhatsAppAIAgent'));
 const CrmAoVivo          = lazy(() => import('./CrmAoVivo'));
@@ -926,6 +930,109 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
 
+  // ── Bulk upload states ──
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [bulkLeads, setBulkLeads] = useState<{ name: string; phone: string; valid: boolean }[]>([]);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState(0);
+  const [bulkResult, setBulkResult] = useState<{ success: number; failed: number } | null>(null);
+  const bulkFileRef = useRef<HTMLInputElement>(null);
+
+  const handleBulkFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+        // Detect columns: look for name/nome and phone/telefone/whatsapp/numero
+        let nameCol = -1;
+        let phoneCol = -1;
+        const headerRow = (rows[0] || []).map((h: any) => String(h || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+        headerRow.forEach((h: string, i: number) => {
+          if (nameCol === -1 && (h.includes('nome') || h.includes('name') || h.includes('cliente') || h.includes('lead'))) nameCol = i;
+          if (phoneCol === -1 && (h.includes('telefone') || h.includes('phone') || h.includes('whatsapp') || h.includes('celular') || h.includes('numero') || h.includes('fone'))) phoneCol = i;
+        });
+        // Fallback: first col = name, second col = phone
+        if (nameCol === -1) nameCol = 0;
+        if (phoneCol === -1) phoneCol = nameCol === 0 ? 1 : 0;
+
+        const startRow = headerRow.some((h: string) => h.includes('nome') || h.includes('name') || h.includes('telefone') || h.includes('phone') || h.includes('whatsapp')) ? 1 : 0;
+
+        const parsed: { name: string; phone: string; valid: boolean }[] = [];
+        for (let i = startRow; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row || row.length === 0) continue;
+          const rawName = String(row[nameCol] || '').trim();
+          const rawPhone = String(row[phoneCol] || '').replace(/\D/g, '');
+          if (!rawName && !rawPhone) continue;
+          const valid = rawName.length >= 2 && rawPhone.length >= 10 && rawPhone.length <= 15;
+          parsed.push({ name: rawName, phone: rawPhone, valid });
+        }
+        setBulkLeads(parsed);
+        setBulkResult(null);
+        setBulkProgress(0);
+        setBulkDialogOpen(true);
+      } catch (err: any) {
+        toast({ title: 'Erro ao ler arquivo', description: 'Verifique se o arquivo é .csv, .xlsx ou .xls válido.', variant: 'destructive' });
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    // Reset input so the same file can be selected again
+    e.target.value = '';
+  };
+
+  const handleBulkInsert = async () => {
+    if (!userId) return;
+    const validLeads = bulkLeads.filter(l => l.valid);
+    if (validLeads.length === 0) return;
+    setBulkSaving(true);
+    setBulkProgress(0);
+    setBulkResult(null);
+    let success = 0;
+    let failed = 0;
+    try {
+      const effectiveUserId = isSeller
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
+        : userId;
+
+      // Insert in batches of 50
+      const batchSize = 50;
+      for (let i = 0; i < validLeads.length; i += batchSize) {
+        const batch = validLeads.slice(i, i + batchSize).map(l => ({
+          user_id:     effectiveUserId,
+          lead_name:   l.name,
+          remote_jid:  `${l.phone}@s.whatsapp.net`,
+          status_crm:  'novo',
+          status:      'novo',
+          assigned_to_id: memberId || null,
+        }));
+        const { error } = await (supabase as any).from('ai_crm_leads').insert(batch);
+        if (error) {
+          failed += batch.length;
+        } else {
+          success += batch.length;
+        }
+        setBulkProgress(Math.min(100, Math.round(((i + batch.length) / validLeads.length) * 100)));
+      }
+      setBulkResult({ success, failed });
+      if (success > 0) await fetchData(true);
+      toast({
+        title: `✅ ${success} lead(s) importado(s)!`,
+        description: failed > 0 ? `${failed} falharam.` : undefined,
+        variant: failed > 0 && success === 0 ? 'destructive' : 'default',
+      });
+    } catch (err: any) {
+      toast({ title: 'Erro na importação', description: err.message, variant: 'destructive' });
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   const handleAddLeadManual = async () => {
     if (!addLeadName.trim() || !addLeadPhone.trim() || !userId) return;
     setAddLeadSaving(true);
@@ -1417,6 +1524,22 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
             {addLeadOpen ? 'Fechar' : 'Adicionar Lead'}
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => bulkFileRef.current?.click()}
+            className="h-7 px-2.5 text-xs gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            Importar Planilha
+          </Button>
+          <input
+            ref={bulkFileRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            onChange={handleBulkFileChange}
+            className="hidden"
+          />
         </div>
       </div>
 
@@ -1723,6 +1846,122 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           ))}
         </div>
       )}
+
+      {/* ── Dialog: Importar Planilha em Massa ──────────────────────── */}
+      <Dialog open={bulkDialogOpen} onOpenChange={(open) => { if (!bulkSaving) setBulkDialogOpen(open); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <FileSpreadsheet className="h-5 w-5 text-amber-400" />
+              Importar Leads em Massa
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Confira os dados abaixo antes de importar. A planilha deve ter colunas de <strong>Nome</strong> e <strong>Telefone</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Summary */}
+          <div className="flex items-center gap-4 py-2">
+            <div className="flex items-center gap-1.5 text-xs">
+              <Users className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-muted-foreground">Total:</span>
+              <span className="font-bold text-foreground">{bulkLeads.length}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs">
+              <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="text-muted-foreground">Válidos:</span>
+              <span className="font-bold text-emerald-400">{bulkLeads.filter(l => l.valid).length}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs">
+              <XCircle className="h-3.5 w-3.5 text-red-400" />
+              <span className="text-muted-foreground">Inválidos:</span>
+              <span className="font-bold text-red-400">{bulkLeads.filter(l => !l.valid).length}</span>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="flex-1 overflow-y-auto border border-border/50 rounded-lg min-h-0">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm z-10">
+                <tr>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium w-8">#</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Nome</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Telefone</th>
+                  <th className="text-center px-3 py-2 text-muted-foreground font-medium w-16">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulkLeads.map((row, i) => (
+                  <tr key={i} className={`border-t border-border/30 ${!row.valid ? 'bg-red-500/5' : ''}`}>
+                    <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
+                    <td className="px-3 py-2 text-foreground">{row.name || <span className="text-red-400 italic">vazio</span>}</td>
+                    <td className="px-3 py-2 text-foreground font-mono">{row.phone || <span className="text-red-400 italic">vazio</span>}</td>
+                    <td className="px-3 py-2 text-center">
+                      {row.valid ? (
+                        <CheckCircle className="h-3.5 w-3.5 text-emerald-400 mx-auto" />
+                      ) : (
+                        <AlertTriangle className="h-3.5 w-3.5 text-red-400 mx-auto" />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Info */}
+          {bulkLeads.some(l => !l.valid) && (
+            <p className="text-[10px] text-red-400 flex items-center gap-1">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              Linhas inválidas (nome muito curto ou telefone fora do formato) serão ignoradas na importação.
+            </p>
+          )}
+
+          {/* Progress */}
+          {bulkSaving && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                <span>Importando leads...</span>
+                <span>{bulkProgress}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                <div className="h-full bg-amber-500 rounded-full transition-all duration-300" style={{ width: `${bulkProgress}%` }} />
+              </div>
+            </div>
+          )}
+
+          {/* Result */}
+          {bulkResult && (
+            <div className="flex items-center gap-3 py-1">
+              <span className="text-xs text-emerald-400 font-medium">{bulkResult.success} importado(s)</span>
+              {bulkResult.failed > 0 && <span className="text-xs text-red-400 font-medium">{bulkResult.failed} falharam</span>}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setBulkDialogOpen(false); setBulkLeads([]); setBulkResult(null); }}
+              disabled={bulkSaving}
+              className="text-xs"
+            >
+              {bulkResult ? 'Fechar' : 'Cancelar'}
+            </Button>
+            {!bulkResult && (
+              <Button
+                size="sm"
+                onClick={handleBulkInsert}
+                disabled={bulkSaving || bulkLeads.filter(l => l.valid).length === 0}
+                className="text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                {bulkSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                Importar {bulkLeads.filter(l => l.valid).length} Lead(s)
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
