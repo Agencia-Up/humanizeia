@@ -652,13 +652,21 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         return query;
       };
 
+      // Seller: filtra por assigned_to_id no banco e busca todos os seus leads
+      // Master: busca os 100 mais recentes (sem filtro de seller)
+      const leadsQuery = (supabase as any)
+        .from('ai_crm_leads')
+        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
+        .eq('user_id', effectiveUserId)
+        .order('created_at', { ascending: false });
+      if (isSeller && memberId) {
+        leadsQuery.eq('assigned_to_id', memberId);
+      } else {
+        leadsQuery.limit(100);
+      }
+
       const [leadsRes, fbRes, instRes, teamRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
-        (supabase as any)
-          .from('ai_crm_leads')
-          .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
-          .eq('user_id', effectiveUserId)
-          .order('created_at', { ascending: false })
-          .limit(100),
+        leadsQuery,
         (supabase as any)
           .from('pedro_manager_feedback')
           .select('id, lead_id, content, priority, read_at, created_at, member:ai_team_members(name), lead:ai_crm_leads(lead_name)')
