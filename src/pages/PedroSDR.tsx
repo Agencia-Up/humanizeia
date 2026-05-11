@@ -11,7 +11,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Bot, MonitorPlay, BarChart3, Loader2, Users, MessageSquare,
+  Bot, MonitorPlay, BarChart3, Loader2, Users, MessageSquare, Inbox,
   ArrowRightLeft, TrendingUp, Clock, CheckCircle2, AlertCircle,
   Zap, PhoneCall, NotebookPen, Send, CalendarClock, Flag,
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
@@ -37,6 +37,7 @@ const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
+import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 
 const TabLoader = () => (
@@ -1970,12 +1971,13 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
 // Tabs do gerente (master) — todas as abas
 const MASTER_TABS = [
-  { id: 'performance', label: 'Performance',  icon: BarChart3,    emoji: '📊' },
-  { id: 'crm',         label: 'CRM Avançado', icon: NotebookPen,  emoji: '🗒️' },
-  { id: 'agente',      label: 'Agente IA',    icon: Bot,          emoji: '🤖' },
-  { id: 'ao-vivo',     label: 'CRM ao Vivo',  icon: MonitorPlay,  emoji: '📺' },
-  { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,   emoji: '📱' },
-  { id: 'vendedores',  label: 'Vendedores',   icon: Users,        emoji: '👥' },
+  { id: 'performance',  label: 'Performance',  icon: BarChart3,     emoji: '📊' },
+  { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
+  { id: 'inbox-ia',     label: 'Inbox IA',     icon: Inbox,         emoji: '📨' },
+  { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
+  { id: 'ao-vivo',      label: 'CRM ao Vivo',  icon: MonitorPlay,   emoji: '📺' },
+  { id: 'instancias',   label: 'Instâncias',   icon: Smartphone,    emoji: '📱' },
+  { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
 ];
 
 // Todas as tabs possíveis para o seller (filtradas por visible_features)
@@ -2074,6 +2076,11 @@ export default function PedroSDR() {
             {/* CRM / Meus Leads */}
             <TabsContent value="crm" className="mt-0">
               <CrmAvancadoTab userId={user?.id} />
+            </TabsContent>
+
+            {/* Inbox IA — conversas do agente com pause/resume */}
+            <TabsContent value="inbox-ia" className="mt-0 h-full">
+              {user?.id && <AgentInboxTab userId={user.id} />}
             </TabsContent>
 
             {/* Vendedores */}

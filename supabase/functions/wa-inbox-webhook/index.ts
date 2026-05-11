@@ -1190,6 +1190,19 @@ async function handleAIAgentReply(
       return;
     }
 
+    // Check if AI is paused for this specific conversation (human takeover)
+    const { data: leadForPause } = await supabase
+      .from("ai_crm_leads")
+      .select("ai_paused")
+      .eq("agent_id", agent.id)
+      .eq("remote_jid", phone)
+      .maybeSingle();
+
+    if (leadForPause?.ai_paused) {
+      console.log(`[ai-agent] AI paused for conversation ${phone} — human takeover active, skipping`);
+      return;
+    }
+
     // Check business hours
     if (agent.business_hours_only) {
       const now = new Date();
