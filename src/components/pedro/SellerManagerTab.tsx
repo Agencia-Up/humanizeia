@@ -132,11 +132,12 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
           .eq('user_id', userId),
       ]);
 
-      // Deduplicate by whatsapp_number
+      // Deduplicate by whatsapp_number — prefer active record
       const deduped = new Map<string, SellerMember>();
       for (const s of (sellersRes.data || [])) {
         const key = s.whatsapp_number || s.id;
-        if (!deduped.has(key)) {
+        const existing = deduped.get(key);
+        if (!existing || (!existing.is_active && s.is_active)) {
           deduped.set(key, s);
         }
       }

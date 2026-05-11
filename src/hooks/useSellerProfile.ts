@@ -88,10 +88,13 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
       }
 
       // 2. Se é seller, busca os dados do ai_team_members (inclui visible_features)
+      //    Ordena por is_active desc + created_at desc para garantir pegar o registro ativo mais recente
       const { data: memberData } = await (supabase as any)
         .from('ai_team_members')
         .select('id, name, whatsapp_number, email, user_id, agent_id, is_active, visible_features')
         .eq('auth_user_id', authUserId)
+        .order('is_active', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(1);
 
       if (cancelled) return;
