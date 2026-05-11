@@ -158,7 +158,8 @@ async function authAdminInviteUserByEmail(
   redirectTo: string
 ): Promise<{ data: any; error: any }> {
   try {
-    const res = await fetch(`${supabaseUrl}/auth/v1/admin/invite`, {
+    // CORRETO: endpoint é /auth/v1/invite (NÃO /auth/v1/admin/invite)
+    const res = await fetch(`${supabaseUrl}/auth/v1/invite`, {
       method: 'POST',
       headers: {
         'apikey': serviceKey,

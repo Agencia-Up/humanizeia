@@ -456,12 +456,13 @@ Deno.serve(async (req) => {
           }
         }
 
-        // 4. Round-robin — escolhe próximo vendedor
+        // 4. Round-robin — escolhe próximo vendedor (filtra por agent_id do lead)
         const { data: allSellers } = await supabase
           .from('ai_team_members')
           .select('*')
           .eq('user_id', transfer.user_id)
-          .eq('is_active', true);
+          .eq('is_active', true)
+          .eq('agent_id', lead.agent_id);
 
         const { data: recentTransfers } = await supabase
           .from('ai_lead_transfers')

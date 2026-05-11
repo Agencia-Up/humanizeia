@@ -12,23 +12,22 @@ export default function ConfirmEmail() {
   useEffect(() => {
     const handleConfirm = async () => {
       try {
-        // Supabase PKCE: token vem como query param
         const url = new URL(window.location.href);
         const tokenHash = url.searchParams.get('token_hash');
         const type = url.searchParams.get('type') as any;
         const code = url.searchParams.get('code');
 
+        // 1. PKCE code flow (invite, magiclink, signup, recovery)
         if (code) {
-          // OAuth / PKCE code flow
-          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
           setStatus('success');
           setTimeout(() => navigate('/dashboard'), 2000);
           return;
         }
 
+        // 2. Token hash flow (email confirmation, invite)
         if (tokenHash && type) {
-          // Email confirmation via token_hash
           const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
           if (error) throw error;
           setStatus('success');
@@ -36,7 +35,19 @@ export default function ConfirmEmail() {
           return;
         }
 
-        // Fallback: token no fragment (#access_token=...) — Supabase detecta automaticamente
+        // 3. Hash fragment flow (#access_token=...) — Supabase detecta automaticamente
+        const hash = window.location.hash;
+        if (hash && hash.includes('access_token')) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+            setStatus('success');
+            setTimeout(() => navigate('/dashboard'), 2000);
+            return;
+          }
+        }
+
+        // 4. Fallback: sessão já criada pelo onAuthStateChange
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
           setStatus('success');
@@ -44,8 +55,9 @@ export default function ConfirmEmail() {
           return;
         }
 
-        throw new Error('Link de confirmação inválido ou expirado.');
+        throw new Error('Link de confirmação inválido ou expirado. Solicite um novo convite.');
       } catch (err: any) {
+        console.error('[ConfirmEmail] Erro:', err);
         setErrorMsg(err.message || 'Erro ao confirmar email.');
         setStatus('error');
       }
