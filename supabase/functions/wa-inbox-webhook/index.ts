@@ -1383,43 +1383,86 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
 
     const crmToolInstruction = `
 
-FERRAMENTA DE CRM - QUALIFICAÃ‡ÃƒO DE LEADS:
-VocÃª tem acesso a uma ferramenta chamada "atualizar_etapa_crm" que deve ser usada para classificar o status do lead durante a conversa.
+FERRAMENTA DE CRM - COLETA DE DADOS E QUALIFICACAO:
+Voce tem acesso a ferramenta "atualizar_etapa_crm" para salvar dados do cliente e atualizar o status do lead.
+Esta ferramenta agora aceita CAMPOS ESTRUTURADOS alem do status e resumo.
 
-USE esta ferramenta quando:
-- O cliente demonstrar interesse real no produto/serviÃ§o â†’ status: "interessado"
-- O cliente pedir preÃ§o, condiÃ§Ãµes, ou quiser avanÃ§ar â†’ status: "qualificado"  
-- O cliente disser que nÃ£o tem interesse â†’ status: "encerrado"
-- No inÃ­cio da conversa â†’ status: "novo"
+REGRA CRITICA - COLETA DE DADOS DO CLIENTE:
+Voce DEVE coletar dados do cliente ao longo da conversa e salvar usando a ferramenta.
+NAO espere ter todos os dados para chamar a ferramenta. Chame SEMPRE que coletar uma informacao nova.
 
-IMPORTANTE: Quando o status for "qualificado", vocÃª DEVE:
-1. Chamar a ferramenta com status "qualificado" e um resumo detalhado da conversa
-2. O resumo deve incluir: nome do cliente, o que ele procura, principais dÃºvidas, orÃ§amento mencionado, e qualquer informaÃ§Ã£o relevante
-3. ApÃ³s qualificar, responda ao cliente informando que um especialista vai entrar em contato
+DADOS A COLETAR (um por vez, de forma natural na conversa):
+1. ABORDAGEM: nome completo do cliente, cidade
+2. MODELAGEM: veiculo de interesse, forma de pagamento (a_vista, troca, financiamento)
+3. SE FINANCIAMENTO: CPF, data de nascimento, valor de parcela ideal, valor de entrada
+4. SE TROCA: descricao do carro de troca (modelo, ano, km), como pagar a diferenca
+5. SE A VISTA: tentar agendar visita
+6. FECHAMENTO: confirmar todos os dados e qualificar
+
+QUANDO CHAMAR A FERRAMENTA:
+- Primeira mensagem do cliente -> status: "novo", salve nome e cidade se souber
+- Cliente informou nome ou cidade -> chame com os dados coletados (mantenha status atual)
+- Cliente demonstrou interesse real -> status: "interessado", salve veiculo_interesse
+- Cliente informou forma de pagamento -> salve forma_pagamento, atualize etapa_funil para "modelagem"
+- Cliente deu dados de financiamento (CPF, entrada, parcela) -> salve cada dado conforme coletar
+- Cliente pronto para comprar/visitar/falar com consultor -> status: "qualificado", etapa_funil: "fechamento"
+- Cliente sem interesse ou despedida definitiva -> status: "encerrado"
+
+CAMPOS DISPONIVEIS NA FERRAMENTA (todos opcionais exceto status e resumo):
+- status: "novo", "interessado", "qualificado", "encerrado"
+- resumo: texto livre com resumo da conversa
+- nome_cliente: nome REAL do cliente (NAO o nome do WhatsApp)
+- cidade: cidade do cliente
+- veiculo_interesse: modelo/tipo de veiculo que o cliente quer
+- forma_pagamento: "a_vista", "troca" ou "financiamento"
+- orcamento: faixa de preco ou valor maximo
+- carro_troca: descricao do carro de troca (ex: "Gol 2018, 95mil km, prata")
+- entrada: valor de entrada mencionado
+- parcela_ideal: valor de parcela que cabe no bolso do cliente
+- cpf: CPF do cliente (somente para financiamento)
+- data_nascimento: data de nascimento (somente para financiamento)
+- etapa_funil: "abordagem", "modelagem" ou "fechamento"
+- temperatura: "frio", "morno" ou "quente"
+- visita_agendada: dia/horario da visita se agendada (ex: "quinta-feira as 15h")
+- observacoes: qualquer info extra relevante (familiar que vai consultar, urgencia, etc.)
+
+COMO DEFINIR TEMPERATURA:
+- "frio": cliente so perguntou algo basico, sem engajamento
+- "morno": cliente demonstrou interesse, fez perguntas, mas nao avancou para pagamento
+- "quente": cliente perguntou preco, financiamento, troca, quer visitar, ou esta pronto para fechar
+
+REGRA DE OURO: NUNCA deixe uma conversa terminar sem tentar coletar pelo menos nome e cidade.
+Se o cliente se despedir sem dar dados, chame a ferramenta com status "encerrado" e observacoes explicando o motivo.
+
+QUANDO STATUS FOR "qualificado":
+1. Certifique-se de que coletou: nome_cliente, cidade, veiculo_interesse, forma_pagamento
+2. Preencha o resumo com TUDO que sabe sobre o cliente
+3. Defina temperatura como "quente"
+4. Apos chamar a ferramenta, informe ao cliente que um consultor especialista vai continuar o atendimento
 
 FERRAMENTA DE ESTOQUE BNDV:
-VocÃª tambÃ©m tem acesso a uma ferramenta chamada "consultar_estoque_bndv".
+Voce tambem tem acesso a ferramenta "consultar_estoque_bndv".
 USE esta ferramenta sempre que o cliente perguntar sobre:
-- carros disponÃ­veis no estoque
-- preÃ§o de veÃ­culo
-- ano, versÃ£o, cÃ¢mbio, combustÃ­vel, quilometragem ou cor
-- opÃ§Ãµes atÃ© um orÃ§amento especÃ­fico
+- carros disponiveis no estoque
+- preco de veiculo
+- ano, versao, cambio, combustivel, quilometragem ou cor
+- opcoes ate um orcamento especifico
 
 IMPORTANTE:
-- Nunca invente estoque ou preÃ§o sem consultar a ferramenta.
-- Se a ferramenta nÃ£o encontrar veÃ­culos, informe isso claramente e sugira alternativas prÃ³ximas.
+- Nunca invente estoque ou preco sem consultar a ferramenta.
+- Se nao encontrar veiculos, informe claramente e sugira alternativas do MESMO SEGMENTO.
 
 FOTOS DE VEICULOS:
-Quando a consulta de estoque retornar veiculos, cada veiculo tera um campo "fotos" com URLs de imagens reais do veiculo.
-Voce tem acesso a ferramenta "enviar_foto" para enviar essas fotos ao cliente pelo WhatsApp.
+Quando a consulta de estoque retornar veiculos, cada veiculo tera um campo "fotos" com URLs de imagens reais.
+Use a ferramenta "enviar_foto" para enviar fotos ao cliente pelo WhatsApp.
 
 REGRAS PARA FOTOS:
-- Quando o cliente pedir para ver fotos de um veiculo, use "enviar_foto" com as URLs do campo "fotos" do resultado da consulta.
-- Envie 1 foto por chamada da ferramenta. Se quiser enviar varias, chame a ferramenta multiplas vezes.
-- Sempre adicione uma legenda descritiva (ex: "Fiat Pulse Drive 2024 - Vista frontal").
-- Se o campo "fotos" estiver vazio, informe ao cliente que nao ha fotos disponiveis no momento.
-- SEMPRE que apresentar um veiculo e ele tiver fotos, OFERECA envia-las ao cliente proativamente (ex: "Posso te enviar as fotos desse veiculo, quer ver?").
-- Se o cliente pedir fotos e voce ainda nao consultou o estoque, primeiro use "consultar_estoque_bndv" e depois envie as fotos.
+- Quando o cliente pedir fotos, use "enviar_foto" com as URLs do campo "fotos".
+- Envie 1 foto por chamada da ferramenta.
+- Sempre adicione uma legenda descritiva.
+- Se nao ha fotos disponiveis, informe ao cliente.
+- SEMPRE que apresentar um veiculo com fotos, OFERECA envia-las proativamente.
+- Se o cliente pedir fotos sem consulta previa, primeiro use "consultar_estoque_bndv".
 `;
 
     const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction + crmToolInstruction;
@@ -1452,18 +1495,77 @@ REGRAS PARA FOTOS:
         type: "function",
         function: {
           name: "atualizar_etapa_crm",
-          description: "Atualiza o status do lead no CRM e registra um resumo da conversa. Use quando identificar mudanÃ§a de etapa do cliente.",
+          description: "Atualiza o status do lead no CRM, salva dados estruturados do cliente e registra um resumo. Use SEMPRE que coletar qualquer informacao nova do cliente (nome, cidade, veiculo, pagamento, etc). Pode chamar multiplas vezes na mesma conversa conforme coletar mais dados.",
           parameters: {
             type: "object",
             properties: {
               status: {
                 type: "string",
                 enum: ["novo", "interessado", "qualificado", "encerrado"],
-                description: "Status atual do lead baseado na conversa"
+                description: "Status atual do lead: novo (primeiro contato), interessado (demonstrou interesse), qualificado (pronto para consultor), encerrado (sem interesse)"
               },
               resumo: {
                 type: "string",
-                description: "Resumo detalhado da conversa com o cliente incluindo: nome, interesse, dÃºvidas, orÃ§amento, e informaÃ§Ãµes captadas"
+                description: "Resumo detalhado da conversa incluindo contexto, interesse, duvidas e informacoes relevantes"
+              },
+              nome_cliente: {
+                type: "string",
+                description: "Nome REAL completo do cliente coletado na conversa (nao o nome do WhatsApp)"
+              },
+              cidade: {
+                type: "string",
+                description: "Cidade do cliente"
+              },
+              veiculo_interesse: {
+                type: "string",
+                description: "Veiculo que o cliente busca (ex: 'Jeep Renegade', 'SUV automatico', 'Onix 2020')"
+              },
+              forma_pagamento: {
+                type: "string",
+                enum: ["a_vista", "troca", "financiamento"],
+                description: "Forma de pagamento escolhida pelo cliente"
+              },
+              orcamento: {
+                type: "string",
+                description: "Faixa de preco ou valor maximo (ex: 'ate 90 mil', 'entre 70 e 85 mil')"
+              },
+              carro_troca: {
+                type: "string",
+                description: "Detalhes do carro de troca (ex: 'Gol 2018, 95mil km, prata, manual')"
+              },
+              entrada: {
+                type: "string",
+                description: "Valor de entrada mencionado (ex: '15 mil', 'R$ 20.000')"
+              },
+              parcela_ideal: {
+                type: "string",
+                description: "Valor de parcela que cabe no bolso (ex: 'ate 1.500', 'entre 1.000 e 1.200')"
+              },
+              cpf: {
+                type: "string",
+                description: "CPF do cliente (somente para financiamento)"
+              },
+              data_nascimento: {
+                type: "string",
+                description: "Data de nascimento do cliente (somente para financiamento)"
+              },
+              etapa_funil: {
+                type: "string",
+                enum: ["abordagem", "modelagem", "fechamento"],
+                description: "Etapa atual no funil de vendas: abordagem (conexao inicial), modelagem (entendendo perfil/pagamento), fechamento (conduzindo para decisao)"
+              },
+              temperatura: {
+                type: "string",
+                enum: ["frio", "morno", "quente"],
+                description: "Temperatura do lead: frio (pouco interesse), morno (interesse medio), quente (pronto para comprar)"
+              },
+              visita_agendada: {
+                type: "string",
+                description: "Data/horario da visita agendada (ex: 'quinta-feira as 15h', 'semana que vem')"
+              },
+              observacoes: {
+                type: "string",
+                description: "Informacoes extras relevantes (ex: 'vai consultar esposa', 'cliente de fora - litoral SP', 'urgencia para trocar')"
               }
             },
             required: ["status", "resumo"],
@@ -1652,7 +1754,33 @@ REGRAS PARA FOTOS:
         try {
           if (toolCall.function?.name === "atualizar_etapa_crm") {
             const args = JSON.parse(toolCall.function.arguments);
-            console.log(`[ai-agent-crm] Lead ${phone} → status: ${args.status}`);
+            console.log(`[ai-agent-crm] Lead ${phone} -> status: ${args.status}, fields: ${Object.keys(args).join(",")}`);
+
+            // Build structured update data from all available fields
+            const updateData: any = {
+              status: args.status,
+              summary: args.resumo,
+              last_interaction_at: new Date().toISOString(),
+            };
+
+            // Map tool parameters to database columns
+            if (args.nome_cliente) {
+              updateData.client_name = args.nome_cliente;
+              updateData.lead_name = args.nome_cliente; // Update lead_name with real name
+            }
+            if (args.cidade) updateData.client_city = args.cidade;
+            if (args.veiculo_interesse) updateData.vehicle_interest = args.veiculo_interesse;
+            if (args.forma_pagamento) updateData.payment_method = args.forma_pagamento;
+            if (args.orcamento) updateData.budget = args.orcamento;
+            if (args.carro_troca) updateData.trade_in_vehicle = args.carro_troca;
+            if (args.entrada) updateData.down_payment = args.entrada;
+            if (args.parcela_ideal) updateData.desired_installment = args.parcela_ideal;
+            if (args.cpf) updateData.cpf = args.cpf;
+            if (args.data_nascimento) updateData.birth_date = args.data_nascimento;
+            if (args.etapa_funil) updateData.funnel_stage = args.etapa_funil;
+            if (args.temperatura) updateData.temperature = args.temperatura;
+            if (args.visita_agendada) updateData.visit_scheduled = args.visita_agendada;
+            if (args.observacoes) updateData.additional_notes = args.observacoes;
 
             const { data: existingLead } = await supabase
               .from("ai_crm_leads")
@@ -1662,21 +1790,15 @@ REGRAS PARA FOTOS:
               .maybeSingle();
 
             if (existingLead) {
-              await supabase.from("ai_crm_leads").update({
-                status: args.status,
-                summary: args.resumo,
-                last_interaction_at: new Date().toISOString(),
-              }).eq("id", existingLead.id);
+              await supabase.from("ai_crm_leads").update(updateData).eq("id", existingLead.id);
             } else {
               await supabase.from("ai_crm_leads").insert({
                 user_id: instance.user_id,
                 agent_id: agent.id,
                 instance_id: instance.id,
                 remote_jid: phone,
-                lead_name: pushName || phone,
-                status: args.status,
-                summary: args.resumo,
-                last_interaction_at: new Date().toISOString(),
+                lead_name: args.nome_cliente || pushName || phone,
+                ...updateData,
               });
             }
 
@@ -1687,7 +1809,7 @@ REGRAS PARA FOTOS:
             toolMessages.push({
               role: "tool",
               tool_call_id: toolCall.id,
-              content: JSON.stringify({ success: true, status: args.status }),
+              content: JSON.stringify({ success: true, status: args.status, dados_salvos: Object.keys(updateData).length }),
             });
           }
 
@@ -2065,51 +2187,92 @@ async function transferLeadToSeller(
       return;
     }
 
-    // 1.5. Prevent Duplicate Transfers via Concurrency Hook
-    const { data: existingLead } = await supabase
+    // 1.5. Fetch full lead data with structured fields for the notification
+    const { data: leadRecord } = await supabase
       .from("ai_crm_leads")
-      .select("status, assigned_to_id")
+      .select("id, status, assigned_to_id, client_name, client_city, vehicle_interest, payment_method, budget, trade_in_vehicle, down_payment, desired_installment, cpf, birth_date, funnel_stage, temperature, visit_scheduled, additional_notes")
       .eq("agent_id", agent.id)
       .eq("remote_jid", phone)
       .maybeSingle();
 
-    if (existingLead && existingLead.assigned_to_id) {
-       console.log(`[transfer] Lead ${phone} already assigned to member ${existingLead.assigned_to_id}. Aborting duplicate broadcast.`);
+    // Prevent duplicate transfers
+    if (leadRecord && leadRecord.assigned_to_id) {
+       console.log(`[transfer] Lead ${phone} already assigned to member ${leadRecord.assigned_to_id}. Aborting duplicate broadcast.`);
        return;
     }
 
-    // 2. Round-Robin: pick seller with fewest leads OR oldest last_lead_received_at
+    // 2. Round-Robin: pick seller with oldest last_lead_received_at
     const selectedSeller = sellers[0]; // Already sorted by last_lead_received_at ASC (oldest first)
     console.log(`[transfer] Selected seller: ${selectedSeller.name} (${selectedSeller.whatsapp_number})`);
 
-    // 3. Build detailed conversation summary for the seller
+    // 3. Build structured seller notification with all collected client data
+    const ld = leadRecord || {} as any;
+    const clientName = ld.client_name || pushName || "Nao informado";
+    const clientCity = ld.client_city || "Nao informada";
+    const vehicleInterest = ld.vehicle_interest || "Nao informado";
+    const paymentLabels: Record<string, string> = { a_vista: "A vista", troca: "Troca", financiamento: "Financiamento" };
+    const paymentMethod = paymentLabels[ld.payment_method] || ld.payment_method || "Nao informada";
+    const tempLabels: Record<string, string> = { frio: "Frio", morno: "Morno", quente: "QUENTE" };
+    const tempLabel = tempLabels[ld.temperature] || "Morno";
+    const funnelLabels: Record<string, string> = { abordagem: "Abordagem", modelagem: "Modelagem", fechamento: "Fechamento" };
+    const funnelLabel = funnelLabels[ld.funnel_stage] || "Modelagem";
+
+    // Build optional sections only if data exists
+    let financingSection = "";
+    if (ld.payment_method === "financiamento") {
+      const parts: string[] = [];
+      if (ld.cpf) parts.push(`CPF: ${ld.cpf}`);
+      if (ld.birth_date) parts.push(`Nascimento: ${ld.birth_date}`);
+      if (ld.desired_installment) parts.push(`Parcela ideal: ${ld.desired_installment}`);
+      if (ld.down_payment) parts.push(`Entrada: ${ld.down_payment}`);
+      if (parts.length > 0) {
+        financingSection = `\n*Dados p/ financiamento:*\n${parts.join("\n")}\n`;
+      }
+    }
+
+    let tradeSection = "";
+    if (ld.payment_method === "troca" && ld.trade_in_vehicle) {
+      tradeSection = `\n*Carro de troca:* ${ld.trade_in_vehicle}\n`;
+      if (ld.down_payment) tradeSection += `*Diferenca:* ${ld.down_payment}\n`;
+    }
+
+    let visitSection = "";
+    if (ld.visit_scheduled) {
+      visitSection = `\n*Visita agendada:* ${ld.visit_scheduled}\n`;
+    }
+
+    let notesSection = "";
+    if (ld.additional_notes) {
+      notesSection = `\n*Obs:* ${ld.additional_notes}\n`;
+    }
+
     const conversationText = historyMessages
-      .slice(-10)
-      .map((m) => `${m.role === "user" ? "Cliente" : "Agente IA"}: ${m.content}`)
+      .slice(-8)
+      .map((m) => `${m.role === "user" ? "Cliente" : "IA"}: ${m.content}`)
       .join("\n");
 
-    const sellerMsg = `ðŸš¨ *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*
+    const sellerMsg = `*LEAD QUALIFICADO - ${tempLabel.toUpperCase()}*
 
-ðŸ‘¤ *Nome do Cliente:* ${pushName || "NÃ£o informado"}
-ðŸ“± *Contato:* ${phone}
-ðŸ¤– *Agente IA:* ${agent.name}
-ðŸ¢ *Empresa:* ${agent.company_name || "â€”"}
+*Nome:* ${clientName}
+*Contato:* ${phone}
+*Cidade:* ${clientCity}
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+*Veiculo:* ${vehicleInterest}
+*Pagamento:* ${paymentMethod}
+${ld.budget ? `*Orcamento:* ${ld.budget}
+` : ""}${financingSection}${tradeSection}${visitSection}${notesSection}
+*Etapa:* ${funnelLabel}
+*Temperatura:* ${tempLabel}
 
-ðŸ“ *Resumo do Atendimento pela IA:*
+*Resumo da IA:*
 ${summary}
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-
-ðŸ’¬ *Ãšltimas mensagens da conversa:*
+*Ultimas mensagens:*
 ${conversationText}
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+*Atender agora:* https://wa.me/${phone.replace(/\D/g, "")}
 
-ðŸ‘‰ *Atender agora:* https://wa.me/${phone.replace(/\D/g, "")}
-
-âš¡ O cliente estÃ¡ esperando! Ele jÃ¡ foi informado que um especialista entrarÃ¡ em contato.`;
+O cliente esta esperando!`;
 
     // 4. Send message to selected seller via WhatsApp
     let sellerPhone = selectedSeller.whatsapp_number.replace(/\D/g, "");
@@ -2170,21 +2333,14 @@ ${conversationText}
       total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
     }).eq("id", selectedSeller.id);
 
-    // 6. Record transfer in ai_lead_transfers
-    const { data: leadData } = await supabase
-      .from("ai_crm_leads")
-      .select("id")
-      .eq("agent_id", agent.id)
-      .eq("remote_jid", phone)
-      .maybeSingle();
-
-    if (leadData) {
+    // 6. Record transfer in ai_lead_transfers (reuse leadRecord from step 1.5)
+    if (leadRecord) {
       await supabase.from("ai_lead_transfers").insert({
         user_id: instance.user_id,
-        lead_id: leadData.id,
+        lead_id: leadRecord.id,
         to_member_id: selectedSeller.id,
         transfer_reason: "round_robin",
-        notes: `Transferido automaticamente para ${selectedSeller.name} via round-robin. Resumo: ${summary}`,
+        notes: `Transferido para ${selectedSeller.name}. Cliente: ${clientName}, Cidade: ${clientCity}, Veiculo: ${vehicleInterest}, Pagamento: ${paymentMethod}`,
         transfer_status: "pending",
         is_confirmed: false,
         confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
@@ -2195,10 +2351,10 @@ ${conversationText}
         status: "transferido",
         assigned_to_id: selectedSeller.id,
         last_interaction_at: new Date().toISOString(),
-      }).eq("id", leadData.id);
+      }).eq("id", leadRecord.id);
     }
 
-    console.log(`[transfer] Lead ${phone} transferred to ${selectedSeller.name} successfully`);
+    console.log(`[transfer] Lead ${phone} (${clientName}) transferred to ${selectedSeller.name} successfully`);
   } catch (err) {
     console.error("[transfer] Error transferring lead:", err);
   }
