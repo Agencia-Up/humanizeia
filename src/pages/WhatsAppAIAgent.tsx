@@ -501,6 +501,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
         instances={instances}
         agents={agents}
         onSaved={() => { setDialogOpen(false); fetchData(); }}
+        onRefreshData={fetchData}
       />
       </div>
     </Wrapper>

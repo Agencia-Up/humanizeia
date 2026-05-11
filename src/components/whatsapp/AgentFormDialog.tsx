@@ -60,6 +60,7 @@ interface AgentFormDialogProps {
   instances: Instance[];
   agents: AIAgent[]; // Novo prop para filtrar instâncias em uso
   onSaved: () => void;
+  onRefreshData?: () => void;
 }
 
 const DEFAULT_PROMPT = `Você é um atendente humanizado que conversa pelo WhatsApp como uma pessoa real. Seu objetivo é:
@@ -145,7 +146,7 @@ Técnicas:
 Mantenha a conversa fluida, natural e foque em resolver a necessidade real do cliente.`,
 };
 
-export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, onSaved }: AgentFormDialogProps) {
+export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, onSaved, onRefreshData }: AgentFormDialogProps) {
   useEffect(() => {
     if (open) {
       console.info("!!! HUMANIZEIA UAZAPI DEBUG V5.3 ACTIVE (OpenAI + Stability) !!!");
@@ -188,6 +189,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeChannel = useRef<any>(null);
   const promptInitializedRef = useRef<string>('');
+  const pendingInstanceRef = useRef<{ id?: string; slug?: string }>({});
+  const connectionHandledRef = useRef(false);
 
   const stopPolling = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
@@ -260,8 +263,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const generateSlug = (nameStr: string) =>
     nameStr.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-  const startPolling = (slug: string) => {
+  const startPolling = (slug: string, instanceId?: string) => {
     stopPolling();
+    pendingInstanceRef.current = { id: instanceId, slug };
+    connectionHandledRef.current = false;
     console.log(`[polling] Monitorando conexão de: ${slug} (Realtime + Polling fallback)`);
     
     // 1. Realtime Subscription (Mais rápido)
@@ -274,7 +279,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
           console.log('[Realtime] Mudança detectada:', payload.new.status, payload.new.is_active);
           if (payload.new.is_active || payload.new.status === 'connected') {
             console.log('[Realtime] SINAL DE CONEXÃO RECEBIDO!');
-            handleConnectionSuccess(payload.new.id);
+            handleConnectionSuccess(payload.new.id, slug);
           }
         }
       )
@@ -292,7 +297,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         }
         
         if (data?.connected) {
-          handleConnectionSuccess();
+          handleConnectionSuccess(undefined, slug);
         } else if (data?.raw_response) {
           // Fallback: Smart Frontend Detection (V5.2)
           try {
@@ -302,7 +307,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
             
             if (isConnected) {
               console.log('[polling] Detectado sucesso via Client-Side Logic!');
-              handleConnectionSuccess();
+              handleConnectionSuccess(undefined, slug);
             }
           } catch (e) {
             console.warn('[polling] Erro ao processar raw_response fallback');
@@ -318,26 +323,53 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     }, 5000);
   };
 
-  const handleConnectionSuccess = async (id?: string) => {
+  const handleConnectionSuccess = async (id?: string, slug?: string) => {
+    if (connectionHandledRef.current) return;
+    connectionHandledRef.current = true;
     console.log('[Connection] Finalizando processo de conexão bem-sucedida...');
     stopPolling();
     setQrCode(null);
     setIsInstanceConnected(true);
 
     // Buscar o ID se não foi passado (Fallback)
-    let instId = id;
+    let instId = id || pendingInstanceRef.current.id;
     if (!instId) {
-        const { data: latestInst } = await supabase.from('wa_instances')
+        const activeSlug = slug || pendingInstanceRef.current.slug;
+        let query = supabase.from('wa_instances')
             .select('id')
-            .eq('user_id', user!.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
+            .eq('user_id', user!.id);
+
+        if (activeSlug) {
+          query = query.eq('instance_name', activeSlug);
+        } else {
+          query = query.order('created_at', { ascending: false }).limit(1);
+        }
+
+        const { data: latestInst } = await query.maybeSingle();
         instId = latestInst?.id;
     }
 
     if (instId) {
         setSelectedInstanceIds([instId]); // Restringe a apenas uma
+        if (agent?.id) {
+          const { error: linkError } = await (supabase as any)
+            .from('wa_ai_agents')
+            .update({
+              instance_id: instId,
+              instance_ids: [instId],
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', agent.id);
+
+          if (linkError) {
+            connectionHandledRef.current = false;
+            throw new Error(`WhatsApp conectou, mas nao foi possivel vincular ao agente: ${linkError.message}`);
+          }
+
+          onRefreshData?.();
+          console.log('[Connection] InstÃ¢ncia vinculada ao agente automaticamente:', instId);
+        }
+
         try {
           const { data: { session } } = await supabase.auth.getSession();
           const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
@@ -368,6 +400,9 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     if (!name.trim()) { toast({ title: "Preencha o nome do agente primeiro", variant: "destructive" }); return; }
     setIsGeneratingQr(true);
     setQrCode(null); // Reset
+    setIsInstanceConnected(false);
+    connectionHandledRef.current = false;
+    pendingInstanceRef.current = {};
     const randomSuffix = Math.random().toString(36).substring(2, 6);
     const slug = `${generateSlug(name) || 'agente'}-${randomSuffix}`;
     console.log('[QR] Gerando instância única:', slug);
@@ -388,6 +423,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
       let finalQrCode = data?.qr_code;
       const createdInstanceId = data?.instance_id;
+      pendingInstanceRef.current = { id: createdInstanceId, slug };
 
       // Fallback: Se o QR não veio no create, tenta buscar via instance_id
       if (!finalQrCode && createdInstanceId) {
@@ -408,9 +444,9 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
       if (finalQrCode) {
         setQrCode(finalQrCode);
-        startPolling(slug);
+        startPolling(slug, createdInstanceId);
       } else {
-        startPolling(slug);
+        startPolling(slug, createdInstanceId);
         toast({
             title: "Instância criada, mas o QR Code demorou",
             description: "A tela continuará tentando buscar o QR automaticamente por alguns segundos.",
@@ -765,8 +801,12 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                          className="flex-1 text-xs"
                          onClick={() => {
                             // Find the non-active instance to poll for it
-                            const inst = instances.find(i => !i.is_active);
-                            if (inst) startPolling(inst.instance_name);
+                            const pending = pendingInstanceRef.current;
+                            const inst = pending.id
+                              ? instances.find(i => i.id === pending.id)
+                              : instances.find(i => !i.is_active);
+                            if (pending.slug) startPolling(pending.slug, pending.id);
+                            else if (inst) startPolling(inst.instance_name, inst.id);
                             else toast({ title: "Tente gerar um novo QR Code" });
                          }}
                        >
