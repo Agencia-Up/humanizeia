@@ -562,11 +562,19 @@ interface TeamMember {
   qualifiedCount?: number;
 }
 
+interface LeadMetrics {
+  total: number;
+  today: number;
+  week: number;
+  month: number;
+}
+
 function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const { toast } = useToast();
   const [isSeller, setIsSeller] = useState(false);
   const [memberId, setMemberId] = useState<string | null>(null);
   const [leads, setLeads] = useState<CrmLead[]>([]);
+  const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [instances, setInstances] = useState<any[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -623,7 +631,25 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
         : userId;
 
-      const [leadsRes, fbRes, instRes, teamRes] = await Promise.all([
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const weekStart = new Date(todayStart);
+      weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+      const monthStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
+
+      const leadCountQuery = (from?: Date) => {
+        let query = (supabase as any)
+          .from('ai_crm_leads')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', effectiveUserId);
+
+        if (from) query = query.gte('created_at', from.toISOString());
+        if (isSeller && memberId) query = query.eq('assigned_to_id', memberId);
+
+        return query;
+      };
+
+      const [leadsRes, fbRes, instRes, teamRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
         (supabase as any)
           .from('ai_crm_leads')
           .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
@@ -647,6 +673,10 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           .eq('user_id', effectiveUserId)
           .order('is_active', { ascending: false })
           .order('name', { ascending: true }),
+        leadCountQuery(),
+        leadCountQuery(todayStart),
+        leadCountQuery(weekStart),
+        leadCountQuery(monthStart),
       ]);
 
       const leadsData: CrmLead[] = leadsRes.data || [];
@@ -681,6 +711,12 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       });
 
       setLeads(leadsData);
+      setLeadMetrics({
+        total: totalCountRes.count ?? 0,
+        today: todayCountRes.count ?? 0,
+        week: weekCountRes.count ?? 0,
+        month: monthCountRes.count ?? 0,
+      });
       setFeedbacks(fbRes.data || []);
       setInstances(instRes.data || []);
       setTeamMembers(enrichedTeam);
@@ -1419,13 +1455,6 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const unreadFeedbacks = feedbacks.filter(f => !f.read_at);
 
   // Métricas
-  const today = new Date(); today.setHours(0,0,0,0);
-  const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 7);
-  const monthAgo = new Date(today); monthAgo.setDate(monthAgo.getDate() - 30);
-  const leadsHoje = leads.filter(l => new Date(l.created_at) >= today).length;
-  const leadsSemana = leads.filter(l => new Date(l.created_at) >= weekAgo).length;
-  const leadsMes = leads.filter(l => new Date(l.created_at) >= monthAgo).length;
-
   // Filtro universal
   const filteredLeads = leads.filter(l => {
     if (isSeller && l.assigned_to_id !== memberId) return false;
@@ -1444,10 +1473,10 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       {/* ── Métricas ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Total Leads',  value: leads.length,  icon: Users,       color: 'text-blue-400' },
-          { label: 'Hoje',         value: leadsHoje,     icon: Clock,       color: 'text-emerald-400' },
-          { label: 'Na Semana',    value: leadsSemana,   icon: TrendingUp,  color: 'text-cyan-400' },
-          { label: 'No Mês',       value: leadsMes,      icon: BarChart3,   color: 'text-purple-400' },
+          { label: 'Total Leads',  value: leadMetrics.total,  icon: Users,       color: 'text-blue-400' },
+          { label: 'Hoje',         value: leadMetrics.today,  icon: Clock,       color: 'text-emerald-400' },
+          { label: 'Na Semana',    value: leadMetrics.week,   icon: TrendingUp,  color: 'text-cyan-400' },
+          { label: 'No Mês',       value: leadMetrics.month,  icon: BarChart3,   color: 'text-purple-400' },
         ].map(m => (
           <div key={m.label} className="bg-card border border-border/50 rounded-xl px-4 py-3 flex items-center gap-3">
             <m.icon className={`h-5 w-5 ${m.color} shrink-0`} />
