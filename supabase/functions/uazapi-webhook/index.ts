@@ -654,8 +654,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   await supabase.from('ai_crm_leads').upsert({
     user_id: agent.user_id,
     agent_id: agent.id,
+    instance_id: waInstance.id,
     remote_jid: remoteJid,
     lead_name: pushName,
+    message_count: 1,
     last_interaction_at: nowStr
   }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
 
@@ -663,6 +665,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // last_user_reply_at = quando o CLIENTE enviou a última mensagem
   // followup_5min_sent = reset para false para o cron enviar novo follow-up se necessário
   await supabase.from('ai_crm_leads').update({
+    instance_id: waInstance.id,
     last_user_reply_at: nowStr,
     followup_5min_sent: false,
   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
