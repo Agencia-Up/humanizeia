@@ -58,7 +58,10 @@ function createSupabaseClient(url: string, key: string) {
       },
       contains(col: string, val: any) {
         // PostgREST @> operator → cs. filter
-        _filters.push({ col, op: 'cs', val: JSON.stringify(val) });
+        const encodedVal = Array.isArray(val)
+          ? `{${val.map((v: any) => String(v).replace(/"/g, '\\"')).join(',')}}`
+          : JSON.stringify(val);
+        _filters.push({ col, op: 'cs', val: encodedVal });
         return builder;
       },
       ilike(col: string, val: string) {
