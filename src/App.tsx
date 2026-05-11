@@ -79,6 +79,7 @@ function Lazy({ children }: { children: React.ReactNode }) {
 // Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const SetSellerPassword = lazy(() => import("./pages/SetSellerPassword"));
 const AgentHub = lazy(() => import("./pages/AgentHub"));
 const MetricsDashboard = lazy(() => import("./pages/Dashboard"));
 const Tutorials = lazy(() => import("./pages/Tutorials"));
@@ -162,6 +163,7 @@ const App = () => (
                 <Route path="/auth"          element={<Lazy><Auth /></Lazy>} />
                 <Route path="/auth/confirm"  element={<Lazy><ConfirmEmail /></Lazy>} />
                 <Route path="/reset-password"element={<Lazy><ResetPassword /></Lazy>} />
+                <Route path="/criar-senha"  element={<Lazy><SetSellerPassword /></Lazy>} />
                 <Route path="/privacy"       element={<Lazy><PrivacyPolicy /></Lazy>} />
                 <Route path="/terms"         element={<Lazy><TermsOfService /></Lazy>} />
                 <Route path="/onboarding"    element={<Lazy><Onboarding /></Lazy>} />

@@ -8,6 +8,29 @@ export default function ConfirmEmail() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('Redirecionando para o dashboard...');
+
+  /** Verifica se o usuário é seller e decide para onde redirecionar */
+  const redirectAfterConfirm = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { navigate('/dashboard'); return; }
+
+    // Checa se é seller via profiles.role
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (profile?.role === 'seller') {
+      setSuccessMsg('Convite confirmado! Redirecionando para criar sua senha...');
+      setStatus('success');
+      setTimeout(() => navigate('/criar-senha'), 2000);
+    } else {
+      setStatus('success');
+      setTimeout(() => navigate('/dashboard'), 2000);
+    }
+  };
 
   useEffect(() => {
     const handleConfirm = async () => {
@@ -21,8 +44,7 @@ export default function ConfirmEmail() {
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
-          setStatus('success');
-          setTimeout(() => navigate('/dashboard'), 2000);
+          await redirectAfterConfirm();
           return;
         }
 
@@ -30,8 +52,7 @@ export default function ConfirmEmail() {
         if (tokenHash && type) {
           const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
           if (error) throw error;
-          setStatus('success');
-          setTimeout(() => navigate('/dashboard'), 2000);
+          await redirectAfterConfirm();
           return;
         }
 
@@ -41,8 +62,7 @@ export default function ConfirmEmail() {
           await new Promise(resolve => setTimeout(resolve, 1500));
           const { data: { session } } = await supabase.auth.getSession();
           if (session) {
-            setStatus('success');
-            setTimeout(() => navigate('/dashboard'), 2000);
+            await redirectAfterConfirm();
             return;
           }
         }
@@ -50,8 +70,7 @@ export default function ConfirmEmail() {
         // 4. Fallback: sessão já criada pelo onAuthStateChange
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
-          setStatus('success');
-          setTimeout(() => navigate('/dashboard'), 2000);
+          await redirectAfterConfirm();
           return;
         }
 
@@ -80,7 +99,7 @@ export default function ConfirmEmail() {
           <>
             <CheckCircle className="h-12 w-12 mx-auto text-green-500" />
             <h2 className="text-xl font-semibold">Email confirmado!</h2>
-            <p className="text-muted-foreground">Redirecionando para o dashboard...</p>
+            <p className="text-muted-foreground">{successMsg}</p>
           </>
         )}
 
