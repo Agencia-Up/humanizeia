@@ -74,8 +74,8 @@ const allPedroSellerSubItems = [
 ];
 
 // ── Sistema Seller — filtrados por visibleFeatures ──────────────────────────
+// Dashboard NÃO fica aqui — já é tratado separadamente no grupo "Painel"
 const allSellerSystemItems = [
-  { title: 'Dashboard',      url: '/dashboard',    icon: LayoutDashboard, featureKey: 'sidebar_dashboard' as keyof VisibleFeatures },
   { title: 'Treinamento',    url: '/treinamento',  icon: GraduationCap,   featureKey: 'sidebar_treinamento' as keyof VisibleFeatures },
   { title: 'Meu Plano',      url: '/meu-plano',    icon: CreditCard,      featureKey: 'sidebar_meu_plano' as keyof VisibleFeatures },
   { title: 'Integrações',    url: '/integrations', icon: Plug,            featureKey: 'sidebar_integracoes' as keyof VisibleFeatures },
