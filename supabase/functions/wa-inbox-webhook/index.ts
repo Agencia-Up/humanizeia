@@ -622,6 +622,7 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
             fuelName
             transmissionName
             versionName
+            pictureJs
           }
         }
       `,
@@ -687,18 +688,34 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
       return Number(right?.year || 0) - Number(left?.year || 0);
     });
 
-  const capped = filtered.slice(0, Number(limite || 8)).map((vehicle: any) => ({
-    marca: vehicle?.markName || null,
-    modelo: vehicle?.modelName || null,
-    versao: vehicle?.versionName || null,
-    ano: vehicle?.year || null,
-    km: vehicle?.km || null,
-    preco: vehicle?.saleValue || null,
-    cor: vehicle?.color || null,
-    combustivel: vehicle?.fuelName || null,
-    cambio: vehicle?.transmissionName || null,
-    label: [vehicle?.markName, vehicle?.modelName, vehicle?.versionName].filter(Boolean).join(" "),
-  }));
+  const capped = filtered.slice(0, Number(limite || 8)).map((vehicle: any) => {
+    // Parse pictureJs to extract photo URLs
+    let fotos: string[] = [];
+    try {
+      const pics = vehicle?.pictureJs ? JSON.parse(vehicle.pictureJs) : [];
+      if (Array.isArray(pics)) {
+        // Sort: Principal first, then take up to 5
+        const sorted = pics.sort((a: any, b: any) =>
+          (b?.Principal === "true" ? 1 : 0) - (a?.Principal === "true" ? 1 : 0)
+        );
+        fotos = sorted.slice(0, 5).map((p: any) => p?.Link).filter(Boolean);
+      }
+    } catch {}
+
+    return {
+      marca: vehicle?.markName || null,
+      modelo: vehicle?.modelName || null,
+      versao: vehicle?.versionName || null,
+      ano: vehicle?.year || null,
+      km: vehicle?.km || null,
+      preco: vehicle?.saleValue || null,
+      cor: vehicle?.color || null,
+      combustivel: vehicle?.fuelName || null,
+      cambio: vehicle?.transmissionName || null,
+      fotos,
+      label: [vehicle?.markName, vehicle?.modelName, vehicle?.versionName].filter(Boolean).join(" "),
+    };
+  });
 
   return {
     success: true,
@@ -1350,12 +1367,46 @@ USE esta ferramenta sempre que o cliente perguntar sobre:
 IMPORTANTE:
 - Nunca invente estoque ou preÃ§o sem consultar a ferramenta.
 - Se a ferramenta nÃ£o encontrar veÃ­culos, informe isso claramente e sugira alternativas prÃ³ximas.
+
+FOTOS DE VEICULOS:
+Quando a consulta de estoque retornar veiculos, cada veiculo tera um campo "fotos" com URLs de imagens reais do veiculo.
+Voce tem acesso a ferramenta "enviar_foto" para enviar essas fotos ao cliente pelo WhatsApp.
+
+REGRAS PARA FOTOS:
+- Quando o cliente pedir para ver fotos de um veiculo, use "enviar_foto" com as URLs do campo "fotos" do resultado da consulta.
+- Envie 1 foto por chamada da ferramenta. Se quiser enviar varias, chame a ferramenta multiplas vezes.
+- Sempre adicione uma legenda descritiva (ex: "Fiat Pulse Drive 2024 - Vista frontal").
+- Se o campo "fotos" estiver vazio, informe ao cliente que nao ha fotos disponiveis no momento.
+- SEMPRE que apresentar um veiculo e ele tiver fotos, OFERECA envia-las ao cliente proativamente (ex: "Posso te enviar as fotos desse veiculo, quer ver?").
+- Se o cliente pedir fotos e voce ainda nao consultou o estoque, primeiro use "consultar_estoque_bndv" e depois envie as fotos.
 `;
 
     const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction + crmToolInstruction;
 
     // CRM Tool definition for function calling
     const crmTools = [
+      {
+        type: "function",
+        function: {
+          name: "enviar_foto",
+          description: "Envia uma foto/imagem para o cliente pelo WhatsApp. Use sempre que precisar enviar fotos de veiculos do estoque. A URL deve ser uma das fotos retornadas pela ferramenta consultar_estoque_bndv (campo 'fotos'). Pode chamar esta ferramenta varias vezes para enviar multiplas fotos.",
+          parameters: {
+            type: "object",
+            properties: {
+              url: {
+                type: "string",
+                description: "URL completa da imagem a ser enviada (ex: URL do campo fotos do BNDV)"
+              },
+              legenda: {
+                type: "string",
+                description: "Legenda curta para a foto (ex: 'Vista frontal', 'Interior', 'Painel'). Opcional."
+              }
+            },
+            required: ["url"],
+            additionalProperties: false
+          }
+        }
+      },
       {
         type: "function",
         function: {
@@ -1412,24 +1463,31 @@ IMPORTANTE:
     let aiData: any = null;
 
     if (!mediaFallbackReply && isAnthropicModel) {
-      // â”€â”€ Direct Anthropic API call â”€â”€
-      const anthropicModel = rawModel.replace("anthropic/", "");
+      // â”€â”€ Direct Anthropic API call with tool calling â”€â”€
+      const anthropicModel = rawModel.replace(“anthropic/”, “”);
       const anthropicMessages = [
         ...historyMessages.slice(-14).map((m: any) => ({
-          role: m.role === "system" ? "user" : m.role,
+          role: m.role === “system” ? “user” : m.role,
           content: m.content,
         })),
-        { role: "user", content },
+        { role: “user”, content },
       ];
 
-      console.log(`[ai-agent] Calling Anthropic directly with model: ${anthropicModel}`);
+      // Convert OpenAI-format tools to Anthropic format
+      const anthropicTools = crmTools.map((t: any) => ({
+        name: t.function.name,
+        description: t.function.description,
+        input_schema: t.function.parameters,
+      }));
 
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
+      console.log(`[ai-agent] Calling Anthropic directly with model: ${anthropicModel}, tools: ${anthropicTools.length}`);
+
+      const res = await fetch(“https://api.anthropic.com/v1/messages”, {
+        method: “POST”,
         headers: {
-          "x-api-key": ANTHROPIC_API_KEY!,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
+          “x-api-key”: ANTHROPIC_API_KEY!,
+          “anthropic-version”: “2023-06-01”,
+          “Content-Type”: “application/json”,
         },
         body: JSON.stringify({
           model: anthropicModel,
@@ -1437,19 +1495,45 @@ IMPORTANTE:
           messages: anthropicMessages,
           max_tokens: maxTokensValue,
           temperature: effectiveTemp,
+          tools: anthropicTools,
         }),
       });
 
       if (res.ok) {
         const anthropicData = await res.json();
-        // Normalize to OpenAI-like format
-        aiData = {
-          choices: [{
-            message: {
-              content: anthropicData.content?.[0]?.text || "",
+        // Check if response contains tool_use blocks
+        const toolUseBlocks = (anthropicData.content || []).filter((b: any) => b.type === “tool_use”);
+        const textBlocks = (anthropicData.content || []).filter((b: any) => b.type === “text”);
+        const textContent = textBlocks.map((b: any) => b.text).join(“\n”).trim();
+
+        if (toolUseBlocks.length > 0) {
+          // Normalize Anthropic tool_use to OpenAI-like tool_calls format
+          const toolCalls = toolUseBlocks.map((b: any) => ({
+            id: b.id,
+            type: “function”,
+            function: {
+              name: b.name,
+              arguments: JSON.stringify(b.input),
             },
-          }],
-        };
+          }));
+          aiData = {
+            choices: [{
+              message: {
+                content: textContent,
+                tool_calls: toolCalls,
+              },
+            }],
+          };
+        } else {
+          // No tool calls, just text
+          aiData = {
+            choices: [{
+              message: {
+                content: textContent,
+              },
+            }],
+          };
+        }
       } else {
         const errBody = await res.text().catch(() => "");
         console.error(`[ai-agent] Anthropic error: ${res.status} - ${errBody}`);
@@ -1576,6 +1660,103 @@ IMPORTANTE:
               content: JSON.stringify(stockResult),
             });
           }
+
+          if (toolCall.function?.name === "enviar_foto") {
+            const args = JSON.parse(toolCall.function.arguments || "{}");
+            const imageUrl = args.url;
+            const caption = args.legenda || "";
+
+            if (imageUrl) {
+              try {
+                // Get instance details for sending
+                const { data: instForPhoto } = await supabase
+                  .from("wa_instances")
+                  .select("instance_name, provider, api_url, api_key_encrypted, meta_config")
+                  .eq("id", instance.id)
+                  .single();
+
+                if (instForPhoto) {
+                  const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+                  const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+                  const destination = replyTarget || phone;
+
+                  if (instForPhoto.provider === "evolution") {
+                    const apiUrl = (evolutionApiUrl || instForPhoto.api_url).replace(/\/+$/, "");
+                    const apiKey = evolutionApiKey || instForPhoto.api_key_encrypted;
+
+                    const imgRes = await fetch(`${apiUrl}/message/sendMedia/${instForPhoto.instance_name}`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", apikey: apiKey },
+                      body: JSON.stringify({
+                        number: destination,
+                        mediatype: "image",
+                        media: imageUrl,
+                        caption: caption,
+                      }),
+                    });
+
+                    if (imgRes.ok) {
+                      console.log(`[ai-agent-foto] Foto enviada para ${destination}: ${imageUrl.substring(0, 60)}...`);
+                      // Save to inbox
+                      await supabase.from("wa_inbox").insert({
+                        user_id: instance.user_id,
+                        instance_id: instance.id,
+                        phone,
+                        direction: "outgoing",
+                        message_type: "image",
+                        content: caption || "[Foto enviada]",
+                        media_url: imageUrl,
+                        is_read: true,
+                        contact_name: pushName,
+                      });
+                    } else {
+                      const errText = await imgRes.text().catch(() => "");
+                      console.error(`[ai-agent-foto] Erro ao enviar: ${imgRes.status} - ${errText}`);
+                    }
+                  } else if (instForPhoto.provider === "meta") {
+                    const metaConfig = instForPhoto.meta_config || {};
+                    const phoneNumberId = metaConfig.phone_number_id;
+                    const accessToken = metaConfig.access_token_encrypted || instForPhoto.api_key_encrypted;
+
+                    if (phoneNumberId && accessToken) {
+                      const imgRes = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+                        method: "POST",
+                        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          messaging_product: "whatsapp",
+                          to: phone,
+                          type: "image",
+                          image: { link: imageUrl, caption: caption },
+                        }),
+                      });
+                      if (imgRes.ok) {
+                        console.log(`[ai-agent-foto] Foto Meta enviada para ${phone}`);
+                        await supabase.from("wa_inbox").insert({
+                          user_id: instance.user_id,
+                          instance_id: instance.id,
+                          phone,
+                          direction: "outgoing",
+                          message_type: "image",
+                          content: caption || "[Foto enviada]",
+                          media_url: imageUrl,
+                          is_read: true,
+                          contact_name: pushName,
+                        });
+                      }
+                    }
+                  }
+                }
+              } catch (photoErr) {
+                console.error("[ai-agent-foto] Erro:", photoErr);
+              }
+            }
+
+            toolMessages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({ success: true, message: "Foto enviada com sucesso ao cliente." }),
+            });
+          }
         } catch (err) {
           console.error(`[ai-agent] Tool call processing error (${toolCall.function?.name}):`, err);
           toolMessages.push({
@@ -1588,31 +1769,92 @@ IMPORTANTE:
 
       if (toolMessages.length > 0) {
         console.log(`[ai-agent] Follow-up após ${toolMessages.length} tool(s)`);
-        const followUpMessages = [
-          { role: "system", content: systemPrompt },
-          ...historyMessages.slice(-14),
-          { role: "user", content },
-          aiMessage,
-          ...toolMessages,
-        ];
 
-        const followUpRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
-            messages: followUpMessages,
-            temperature: effectiveTemp,
-            max_tokens: maxTokensValue,
-          }),
-        });
+        if (isAnthropicModel) {
+          // Anthropic follow-up: convert messages to Anthropic format
+          const anthropicModel = rawModel.replace("anthropic/", "");
+          // Build Anthropic-format follow-up: user msg, assistant with tool_use, tool results
+          const anthropicFollowUpMessages = [
+            ...historyMessages.slice(-14).map((m: any) => ({
+              role: m.role === "system" ? "user" : m.role,
+              content: m.content,
+            })),
+            { role: "user", content },
+            {
+              role: "assistant",
+              content: [
+                ...(aiMessage.content ? [{ type: "text", text: aiMessage.content }] : []),
+                ...aiMessage.tool_calls.map((tc: any) => ({
+                  type: "tool_use",
+                  id: tc.id,
+                  name: tc.function.name,
+                  input: JSON.parse(tc.function.arguments),
+                })),
+              ],
+            },
+            {
+              role: "user",
+              content: toolMessages.map((tm: any) => ({
+                type: "tool_result",
+                tool_use_id: tm.tool_call_id,
+                content: tm.content,
+              })),
+            },
+          ];
 
-        if (followUpRes.ok) {
-          const followUpData = await followUpRes.json();
-          replyText = followUpData.choices?.[0]?.message?.content?.trim() || replyText || "";
+          const followUpRes = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "x-api-key": ANTHROPIC_API_KEY!,
+              "anthropic-version": "2023-06-01",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: anthropicModel,
+              system: systemPrompt,
+              messages: anthropicFollowUpMessages,
+              max_tokens: maxTokensValue,
+              temperature: effectiveTemp,
+            }),
+          });
+
+          if (followUpRes.ok) {
+            const followUpData = await followUpRes.json();
+            const followUpText = (followUpData.content || [])
+              .filter((b: any) => b.type === "text")
+              .map((b: any) => b.text)
+              .join("\n")
+              .trim();
+            replyText = followUpText || replyText || "";
+          }
+        } else {
+          // Gateway follow-up (OpenAI-format)
+          const followUpMessages = [
+            { role: "system", content: systemPrompt },
+            ...historyMessages.slice(-14),
+            { role: "user", content },
+            aiMessage,
+            ...toolMessages,
+          ];
+
+          const followUpRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${LOVABLE_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "google/gemini-2.5-flash",
+              messages: followUpMessages,
+              temperature: effectiveTemp,
+              max_tokens: maxTokensValue,
+            }),
+          });
+
+          if (followUpRes.ok) {
+            const followUpData = await followUpRes.json();
+            replyText = followUpData.choices?.[0]?.message?.content?.trim() || replyText || "";
+          }
         }
       }
     }
