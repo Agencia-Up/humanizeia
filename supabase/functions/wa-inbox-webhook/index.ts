@@ -1207,6 +1207,47 @@ async function handleAIAgentReply(
       return;
     }
 
+    const nowIso = new Date().toISOString();
+    const { data: currentLead, error: currentLeadErr } = await supabase
+      .from("ai_crm_leads")
+      .select("id, message_count")
+      .eq("agent_id", agent.id)
+      .eq("remote_jid", phone)
+      .maybeSingle();
+
+    if (currentLeadErr) {
+      console.warn("[ai-agent] Failed to read CRM lead before reply:", currentLeadErr.message);
+    } else if (currentLead?.id) {
+      const updatePayload: any = {
+        instance_id: instance.id,
+        last_interaction_at: nowIso,
+        message_count: (currentLead.message_count || 0) + 1,
+      };
+      if (pushName) updatePayload.lead_name = pushName;
+
+      await supabase
+        .from("ai_crm_leads")
+        .update(updatePayload)
+        .eq("id", currentLead.id);
+    } else {
+      const { error: leadInsertErr } = await supabase
+        .from("ai_crm_leads")
+        .insert({
+          user_id: instance.user_id,
+          agent_id: agent.id,
+          instance_id: instance.id,
+          remote_jid: phone,
+          lead_name: pushName || phone,
+          status: "novo",
+          last_interaction_at: nowIso,
+          message_count: 1,
+        });
+
+      if (leadInsertErr) {
+        console.warn("[ai-agent] Failed to register CRM lead before reply:", leadInsertErr.message);
+      }
+    }
+
     // Check if AI is paused for this specific conversation (human takeover)
     const { data: leadForPause } = await supabase
       .from("ai_crm_leads")

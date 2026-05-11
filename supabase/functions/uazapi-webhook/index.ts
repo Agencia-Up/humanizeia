@@ -654,8 +654,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   await supabase.from('ai_crm_leads').upsert({
     user_id: agent.user_id,
     agent_id: agent.id,
+    instance_id: waInstance.id,
     remote_jid: remoteJid,
     lead_name: pushName,
+    message_count: 1,
     last_interaction_at: nowStr
   }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
 
@@ -663,6 +665,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // last_user_reply_at = quando o CLIENTE enviou a última mensagem
   // followup_5min_sent = reset para false para o cron enviar novo follow-up se necessário
   await supabase.from('ai_crm_leads').update({
+    instance_id: waInstance.id,
     last_user_reply_at: nowStr,
     followup_5min_sent: false,
   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
@@ -894,6 +897,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   });
 
   // Buscar histórico
+  const { data: pausedLead } = await supabase
+    .from('ai_crm_leads')
+    .select('ai_paused')
+    .eq('agent_id', agent.id)
+    .eq('remote_jid', remoteJid)
+    .maybeSingle();
+
+  if (pausedLead?.ai_paused) {
+    console.log(`[Webhook] IA pausada para ${remoteJid}. Mensagem registrada, resposta automatica ignorada.`);
+    return new Response(JSON.stringify({ ok: true, ai_paused: true }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
   const { data: history } = await supabase.from('wa_chat_history')
     .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(10)
 
@@ -1430,7 +1447,23 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       if (vehicle.principal_image) {
         try {
           const caption = `${vehicle.marca} ${vehicle.modelo} ${vehicle.versao} ${vehicle.ano}\n💰 R$ ${vehicle.preco.toLocaleString('pt-BR')}\n🔄 ${vehicle.km.toLocaleString('pt-BR')} km | ⛽ ${vehicle.combustivel} | 🎨 ${vehicle.cor}`;
-          await sendVehicleImage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, vehicle.principal_image, caption);
+          const imageSent = await sendVehicleImage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, vehicle.principal_image, caption);
+          if (imageSent) {
+            await supabase.from('wa_inbox').insert({
+              user_id: waInstance.user_id,
+              instance_id: waInstance.id,
+              phone: phoneNumber,
+              contact_name: pushName || null,
+              direction: 'outgoing',
+              message_type: 'image',
+              content: caption,
+              media_url: vehicle.principal_image,
+              is_read: true,
+              ai_category: 'agent',
+            }).then(({ error }: any) => {
+              if (error) console.error('[uazapi-webhook] wa_inbox image insert error:', error.message);
+            });
+          }
         } catch (imgErr) {
           console.error(`[BNDV-IMG] Erro ao enviar imagem de ${vehicle.label}:`, imgErr);
         }

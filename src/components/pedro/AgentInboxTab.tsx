@@ -42,6 +42,7 @@ interface Lead {
 interface Message {
   id: string;
   phone: string;
+  instance_id: string | null;
   direction: 'incoming' | 'outgoing';
   content: string | null;
   message_type: string;
@@ -64,7 +65,23 @@ function fmtTime(iso: string) {
 
 function initials(name: string | null, phone: string) {
   if (name && name.length >= 2) return name.slice(0, 2).toUpperCase();
-  return phone.slice(-2);
+  return cleanPhone(phone).slice(-2);
+}
+
+function cleanPhone(value: string | null | undefined) {
+  return (value || '').replace(/@.*$/, '').replace(/\D/g, '');
+}
+
+function phoneCandidates(value: string | null | undefined) {
+  const raw = (value || '').trim();
+  const digits = cleanPhone(raw);
+  const candidates = [raw, digits, digits ? `${digits}@s.whatsapp.net` : '']
+    .filter(Boolean);
+  return Array.from(new Set(candidates));
+}
+
+function displayPhone(value: string | null | undefined) {
+  return cleanPhone(value) || value || '';
 }
 
 /* ── Componente Principal ──────────────────────────────────────────── */
@@ -134,21 +151,56 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     fetchLeads();
   }, [fetchLeads]);
 
+  const selectedLeadId = selectedLead?.id || '';
+  const selectedLeadPhone = selectedLead?.remote_jid || '';
+  const selectedLeadInstanceId = selectedLead?.instance_id || null;
+
   /* ── Fetch messages for selected lead ──────────────────────────── */
-  const fetchMessages = useCallback(async () => {
-    if (!selectedLead) return;
-    setLoadingMessages(true);
-    const { data } = await (supabase as any)
-      .from('wa_inbox')
-      .select('id, phone, direction, content, message_type, media_url, created_at, contact_name')
-      .eq('user_id', userId)
-      .eq('phone', selectedLead.remote_jid)
+  const fetchMessages = useCallback(async (silent = false) => {
+    if (!selectedLeadId || !selectedLeadPhone) return;
+    if (!silent) setLoadingMessages(true);
+    try {
+      let query = (supabase as any)
+        .from('wa_inbox')
+        .select('id, phone, instance_id, direction, content, message_type, media_url, created_at, contact_name')
+        .eq('user_id', userId)
+        .in('phone', phoneCandidates(selectedLeadPhone));
+
+    if (selectedLeadInstanceId) {
+      query = query.eq('instance_id', selectedLeadInstanceId);
+    }
+
+    const { data } = await query
       .order('created_at', { ascending: true })
-      .limit(100);
-    setMessages(data || []);
-    setLoadingMessages(false);
-    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-  }, [selectedLead, userId]);
+      .range(0, 999);
+
+    const rows = data || [];
+    setMessages(rows);
+    if (rows.length > 0) {
+      const latestInstanceId = [...rows].reverse().find((m: Message) => m.instance_id)?.instance_id || null;
+      setSelectedLead(prev => {
+        if (!prev || prev.id !== selectedLeadId) return prev;
+        const nextInstanceId = prev.instance_id || latestInstanceId;
+        const nextMessageCount = Math.max(prev.message_count || 0, rows.length);
+        if (prev.instance_id === nextInstanceId && prev.message_count === nextMessageCount) return prev;
+        return { ...prev, instance_id: nextInstanceId, message_count: nextMessageCount };
+      });
+
+      setLeads(prev => prev.map(lead => {
+        if (lead.id !== selectedLeadId) return lead;
+        const nextInstanceId = lead.instance_id || latestInstanceId;
+        const nextMessageCount = Math.max(lead.message_count || 0, rows.length);
+        if (lead.instance_id === nextInstanceId && lead.message_count === nextMessageCount) return lead;
+        return { ...lead, instance_id: nextInstanceId, message_count: nextMessageCount };
+      }));
+    }
+    } finally {
+      if (!silent) {
+        setLoadingMessages(false);
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      }
+    }
+  }, [selectedLeadId, selectedLeadPhone, selectedLeadInstanceId, userId]);
 
   useEffect(() => {
     fetchMessages();
@@ -157,16 +209,16 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
   /* ── Polling para novas mensagens ──────────────────────────────── */
   useEffect(() => {
     if (pollingRef.current) clearInterval(pollingRef.current);
-    if (!selectedLead) return;
+    if (!selectedLeadId) return;
 
     pollingRef.current = setInterval(() => {
-      fetchMessages();
-    }, 5000);
+      fetchMessages(true);
+    }, 7000);
 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [selectedLead, fetchMessages]);
+  }, [selectedLeadId, fetchMessages]);
 
   /* ── Pause / Resume AI ──────────────────────────────────────────── */
   const handleTogglePause = async (lead: Lead) => {
@@ -203,10 +255,23 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
   /* ── Enviar resposta manual ──────────────────────────────────────── */
   const handleSend = async () => {
     if (!replyText.trim() || !selectedLead || sending) return;
+    if (!selectedLead.ai_paused) {
+      toast({
+        title: 'Pause a IA primeiro',
+        description: 'Assim o agente nao responde junto com voce nesta conversa.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setSending(true);
 
     // Find instance for this lead
-    const instId = selectedLead.instance_id;
+    const agentForLead = agents.find(a => a.id === selectedLead.agent_id);
+    const instId = selectedLead.instance_id
+      || [...messages].reverse().find(m => m.instance_id)?.instance_id
+      || agentForLead?.instance_id
+      || agentForLead?.instance_ids?.[0]
+      || null;
     if (!instId) {
       toast({ title: 'Sem instancia vinculada a este lead', variant: 'destructive' });
       setSending(false);
@@ -214,12 +279,14 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     }
 
     const text = replyText.trim();
+    const phone = cleanPhone(selectedLead.remote_jid);
     setReplyText('');
 
     // Optimistic message
     const opt: Message = {
       id: `opt-${Date.now()}`,
-      phone: selectedLead.remote_jid,
+      phone,
+      instance_id: instId,
       direction: 'outgoing',
       content: text,
       message_type: 'text',
@@ -232,9 +299,10 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
 
     try {
       const { error } = await supabase.functions.invoke('wa-send-reply', {
-        body: { instance_id: instId, phone: selectedLead.remote_jid, content: text },
+        body: { instance_id: instId, phone, content: text },
       });
       if (error) throw error;
+      await fetchMessages(true);
     } catch (err: any) {
       toast({ title: 'Erro ao enviar', description: err.message, variant: 'destructive' });
     } finally {
@@ -251,7 +319,8 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
     return (l.lead_name || '').toLowerCase().includes(term)
-      || l.remote_jid.includes(term);
+      || l.remote_jid.includes(term)
+      || cleanPhone(l.remote_jid).includes(term.replace(/\D/g, ''));
   });
 
   /* ── Status label ──────────────────────────────────────────────── */
@@ -436,7 +505,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
                   <p className="text-sm font-semibold truncate">{selectedLead.lead_name || selectedLead.remote_jid}</p>
                   <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                     <Phone className="h-2.5 w-2.5" />
-                    {selectedLead.remote_jid}
+                    {displayPhone(selectedLead.remote_jid)}
                     <span className="mx-1">|</span>
                     <MessageCircle className="h-2.5 w-2.5" />
                     {selectedLead.message_count} msgs
@@ -534,8 +603,9 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
                       onKeyDown={handleKeyDown}
                       placeholder={selectedLead.ai_paused
                         ? 'Digite sua resposta manual...'
-                        : 'Pausar IA primeiro para responder manualmente, ou digite para enviar...'
+                        : 'Pause a IA para responder manualmente...'
                       }
+                      disabled={!selectedLead.ai_paused}
                       rows={1}
                       className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
                     />
@@ -544,7 +614,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
                     size="sm"
                     className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
                     onClick={handleSend}
-                    disabled={!replyText.trim() || sending}
+                    disabled={!selectedLead.ai_paused || !replyText.trim() || sending}
                   >
                     {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   </Button>
