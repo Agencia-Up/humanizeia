@@ -99,14 +99,32 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
     if (!configSellerId) return;
     setSavingConfig(true);
     try {
+      // Busca o auth_user_id do vendedor sendo configurado
+      const targetSeller = sellers.find(s => s.id === configSellerId);
+      const authUid = targetSeller?.auth_user_id;
+
+      // Atualiza o registro atual
       const { error } = await (supabase as any)
         .from('ai_team_members')
         .update({ visible_features: configFeatures })
         .eq('id', configSellerId);
       if (error) throw error;
+
+      // Se o vendedor tem auth_user_id, sincroniza features em TODOS os registros dele
+      // (pode ter registros em múltiplos agentes)
+      if (authUid) {
+        await (supabase as any)
+          .from('ai_team_members')
+          .update({ visible_features: configFeatures })
+          .eq('auth_user_id', authUid)
+          .neq('id', configSellerId);
+      }
+
       // Update local state
       setSellers(prev => prev.map(s =>
-        s.id === configSellerId ? { ...s, visible_features: configFeatures } : s
+        s.id === configSellerId ? { ...s, visible_features: configFeatures }
+          : (authUid && s.auth_user_id === authUid) ? { ...s, visible_features: configFeatures }
+          : s
       ));
       toast({ title: '✅ Painel do vendedor configurado!' });
       setConfigSellerId(null);

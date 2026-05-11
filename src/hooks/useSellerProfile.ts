@@ -87,27 +87,31 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
         return;
       }
 
-      // 2. Se é seller, busca os dados do ai_team_members (inclui visible_features)
-      //    Ordena por is_active desc + created_at desc para garantir pegar o registro ativo mais recente
+      // 2. Se é seller, busca TODOS os registros do ai_team_members
+      //    (o vendedor pode pertencer a múltiplos agentes, cada um com suas visible_features)
       const { data: memberData } = await (supabase as any)
         .from('ai_team_members')
         .select('id, name, whatsapp_number, email, user_id, agent_id, is_active, visible_features')
         .eq('auth_user_id', authUserId)
         .order('is_active', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(1);
+        .order('created_at', { ascending: false });
 
       if (cancelled) return;
 
-      const seller = Array.isArray(memberData) && memberData.length > 0
-        ? memberData[0] as SellerInfo
-        : null;
+      const allRecords = Array.isArray(memberData) ? memberData as SellerInfo[] : [];
+      // Usa o registro ativo mais recente como dados base (nome, email, etc.)
+      const seller = allRecords.length > 0 ? allRecords[0] : null;
 
-      // Merge com defaults — features não definidas usam o default
-      const features: VisibleFeatures = {
-        ...DEFAULT_SELLER_FEATURES,
-        ...(seller?.visible_features || {}),
-      };
+      // Merge features de TODOS os registros com lógica OR:
+      // se qualquer registro libera uma feature, o vendedor a vê
+      const features: VisibleFeatures = { ...DEFAULT_SELLER_FEATURES };
+      for (const rec of allRecords) {
+        const f = rec.visible_features;
+        if (!f) continue;
+        for (const key of Object.keys(DEFAULT_SELLER_FEATURES) as (keyof VisibleFeatures)[]) {
+          if (f[key]) features[key] = true;
+        }
+      }
 
       setResult({
         isSeller: true,
