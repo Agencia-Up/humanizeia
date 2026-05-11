@@ -82,38 +82,56 @@ function usePerfData(userId: string | undefined) {
     async function load() {
       setLoading(true);
       try {
+        // ── 1. Detecta se é vendedor e resolve IDs ──────────────────────────
+        const { data: memberRows } = await (supabase as any)
+          .from('ai_team_members')
+          .select('id, user_id')
+          .eq('auth_user_id', userId);
+        const memberList = Array.isArray(memberRows) && memberRows.length > 0 ? memberRows : null;
+        const isSeller    = !!memberList;
+        const masterUid   = isSeller ? memberList![0].user_id : userId;
+        const memberIds   = isSeller ? memberList!.map((m: any) => m.id) : [];
+
         const hoje = new Date();
         hoje.setHours(0, 0, 0, 0);
-        const seteAtras = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
+        // ── 2. Queries base (usa masterUid para buscar dados certos) ────────
         const [leadsRes, transRes, agentRes, teamRes] = await Promise.all([
           (supabase as any)
             .from('ai_crm_leads')
-            .select('id, status, status_crm, assigned_to_id, created_at')
-            .eq('user_id', userId),
+            .select('id, status, status_crm, assigned_to_id, agent_id, created_at')
+            .eq('user_id', masterUid),
           (supabase as any)
             .from('ai_lead_transfers')
-            .select('id, created_at, lead_id')
-            .eq('user_id', userId),
+            .select('id, created_at, lead_id, to_member_id')
+            .eq('user_id', masterUid),
           (supabase as any)
             .from('wa_ai_agents')
             .select('id, name, total_replies, is_active')
-            .eq('user_id', userId),
+            .eq('user_id', masterUid),
           (supabase as any)
             .from('ai_team_members')
             .select('id, name, whatsapp_number, is_active')
-            .eq('user_id', userId),
+            .eq('user_id', masterUid),
         ]);
 
-        const leads: any[]   = leadsRes.data  || [];
-        const trans: any[]   = transRes.data  || [];
-        const agents: any[]  = agentRes.data  || [];
-        const sellers: any[] = teamRes.data   || [];
+        const allLeads: any[] = leadsRes.data  || [];
+        const allTrans: any[] = transRes.data  || [];
+        const agents: any[]   = agentRes.data  || [];
+        const sellers: any[]  = teamRes.data   || [];
+
+        // ── 3. Filtra para o vendedor (se for seller) ───────────────────────
+        const leads = isSeller
+          ? allLeads.filter(l => l.assigned_to_id && memberIds.includes(l.assigned_to_id))
+          : allLeads;
+        const trans = isSeller
+          ? allTrans.filter(t => t.to_member_id && memberIds.includes(t.to_member_id))
+          : allTrans;
 
         // ── métricas brutas ─────────────────────────────────────────────────
         const totalLeads     = leads.length;
         const leadsHoje      = leads.filter(l => new Date(l.created_at) >= hoje).length;
-        const transferencias = trans.length;
+        const transferencias = isSeller ? leads.filter(l => l.status === 'transferido').length : trans.length;
         const taxaConversao  = totalLeads > 0 ? Math.round((transferencias / totalLeads) * 100) : 0;
         const totalRespostas = agents.reduce((s: number, a: any) => s + (a.total_replies || 0), 0);
         const agentesAtivos  = agents.filter((a: any) => a.is_active).length;
@@ -142,10 +160,15 @@ function usePerfData(userId: string | undefined) {
               const t = new Date(l.created_at);
               return t >= d && t < fim;
             }).length,
-            transferencias: trans.filter((t: any) => {
-              const tt = new Date(t.created_at);
-              return tt >= d && tt < fim;
-            }).length,
+            transferencias: isSeller
+              ? leads.filter((l: any) => {
+                  const t = new Date(l.created_at);
+                  return t >= d && t < fim && l.status === 'transferido';
+                }).length
+              : trans.filter((t: any) => {
+                  const tt = new Date(t.created_at);
+                  return tt >= d && tt < fim;
+                }).length,
           };
         });
 
@@ -171,8 +194,8 @@ function usePerfData(userId: string | undefined) {
         const vendedoresRank = Array.from(sellerMap.values()).map(s => ({
           nome: s.nome,
           whatsapp: s.whatsapp,
-          leads: leads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id)).length,
-          qualificados: leads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id) && l.status_crm === 'qualificado').length,
+          leads: allLeads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id)).length,
+          qualificados: allLeads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id) && l.status_crm === 'qualificado').length,
         })).sort((a, b) => b.leads - a.leads);
 
         setData({
