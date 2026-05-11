@@ -1,16 +1,451 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// ─── Inline PostgREST client (no external imports) ──────────────────────────
+function createSupabaseClient(url: string, key: string) {
+  const restBase = `${url}/rest/v1`;
+  const baseHeaders: Record<string, string> = {
+    'apikey': key,
+    'Authorization': `Bearer ${key}`,
+    'Content-Type': 'application/json',
+  };
 
+  type FilterEntry = { col: string; op: string; val: string };
+  type OrderEntry = { column: string; ascending: boolean; nullsFirst: boolean };
+
+  function buildQuery(table: string) {
+    let _select: string | null = null;
+    let _filters: FilterEntry[] = [];
+    let _orders: OrderEntry[] = [];
+    let _limit: number | null = null;
+    let _maybeSingle = false;
+    let _body: any = null;
+    let _method: 'GET' | 'POST' | 'PATCH' = 'GET';
+    let _returnSelect: string | null = null;
+    let _upsertConflict: string | null = null;
+    let _ignoreDuplicates = false;
+
+    const builder: any = {
+      select(cols?: string) {
+        if (_method === 'PATCH') {
+          _returnSelect = cols || '*';
+          return builder;
+        }
+        _select = cols || '*';
+        return builder;
+      },
+      eq(col: string, val: any) {
+        _filters.push({ col, op: 'eq', val: String(val) });
+        return builder;
+      },
+      gt(col: string, val: any) {
+        _filters.push({ col, op: 'gt', val: String(val) });
+        return builder;
+      },
+      lte(col: string, val: any) {
+        _filters.push({ col, op: 'lte', val: String(val) });
+        return builder;
+      },
+      is(col: string, val: any) {
+        _filters.push({ col, op: 'is', val: String(val) });
+        return builder;
+      },
+      not(col: string, op: string, val: any) {
+        _filters.push({ col, op: `not.${op}`, val: String(val) });
+        return builder;
+      },
+      in(col: string, vals: any[]) {
+        const list = vals.map((v: any) => `"${v}"`).join(',');
+        _filters.push({ col, op: 'in', val: `(${list})` });
+        return builder;
+      },
+      contains(col: string, val: any) {
+        // PostgREST @> operator → cs. filter
+        _filters.push({ col, op: 'cs', val: JSON.stringify(val) });
+        return builder;
+      },
+      ilike(col: string, val: string) {
+        _filters.push({ col, op: 'ilike', val });
+        return builder;
+      },
+      order(column: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) {
+        _orders.push({
+          column,
+          ascending: opts?.ascending ?? true,
+          nullsFirst: opts?.nullsFirst ?? false,
+        });
+        return builder;
+      },
+      limit(n: number) {
+        _limit = n;
+        return builder;
+      },
+      maybeSingle() {
+        _maybeSingle = true;
+        return builder._execute();
+      },
+      update(data: any) {
+        _method = 'PATCH';
+        _body = data;
+        return builder;
+      },
+      insert(data: any) {
+        _method = 'POST';
+        _body = data;
+        return builder._execute();
+      },
+      upsert(data: any, opts?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+        _method = 'POST';
+        _body = data;
+        if (opts?.onConflict) _upsertConflict = opts.onConflict;
+        if (opts?.ignoreDuplicates) _ignoreDuplicates = true;
+        return builder._execute();
+      },
+      then(resolve: (v: any) => void, reject?: (e: any) => void) {
+        return builder._execute().then(resolve, reject);
+      },
+      async _execute(): Promise<{ data: any; error: any }> {
+        const params = new URLSearchParams();
+
+        // select param
+        const selectVal = _method === 'PATCH' ? (_returnSelect || undefined) : (_select || '*');
+        if (selectVal) params.set('select', selectVal);
+
+        // filters
+        for (const f of _filters) {
+          params.append(f.col, `${f.op}.${f.val}`);
+        }
+
+        // order
+        for (const o of _orders) {
+          let orderStr = o.column;
+          if (!o.ascending) orderStr += '.desc';
+          else orderStr += '.asc';
+          if (o.nullsFirst) orderStr += '.nullsfirst';
+          else orderStr += '.nullslast';
+          params.append('order', orderStr);
+        }
+
+        // limit
+        if (_limit !== null) {
+          params.set('limit', String(_limit));
+        }
+
+        // upsert on_conflict
+        if (_upsertConflict) {
+          params.set('on_conflict', _upsertConflict);
+        }
+
+        const queryStr = params.toString();
+        const urlStr = `${restBase}/${table}${queryStr ? '?' + queryStr : ''}`;
+
+        const headers: Record<string, string> = { ...baseHeaders };
+
+        if (_method === 'PATCH' && _returnSelect) {
+          headers['Prefer'] = 'return=representation';
+        }
+        if (_method === 'POST' && _upsertConflict) {
+          // upsert
+          const parts = ['return=minimal', 'resolution=merge-duplicates'];
+          if (_ignoreDuplicates) parts[1] = 'resolution=ignore-duplicates';
+          headers['Prefer'] = parts.join(',');
+        } else if (_method === 'POST') {
+          headers['Prefer'] = 'return=minimal';
+        }
+        if (_maybeSingle) {
+          headers['Accept'] = 'application/vnd.pgrst.object+json';
+        }
+
+        try {
+          const res = await fetch(urlStr, {
+            method: _method,
+            headers,
+            body: _body ? JSON.stringify(_body) : undefined,
+          });
+
+          if (_maybeSingle && res.status === 406) {
+            return { data: null, error: null };
+          }
+
+          if (!res.ok) {
+            const errBody = await res.text();
+            return { data: null, error: { message: errBody, status: res.status } };
+          }
+
+          if (_method === 'POST' && !_returnSelect) {
+            return { data: null, error: null };
+          }
+          if (_method === 'PATCH' && !_returnSelect) {
+            return { data: null, error: null };
+          }
+
+          const contentType = res.headers.get('content-type') || '';
+          if (!contentType.includes('json')) {
+            return { data: null, error: null };
+          }
+
+          const data = await res.json();
+          return { data, error: null };
+        } catch (err: any) {
+          return { data: null, error: { message: err.message } };
+        }
+      },
+    };
+
+    return builder;
+  }
+
+  return {
+    from(table: string) {
+      return buildQuery(table);
+    },
+    async rpc(fnName: string, params: any): Promise<{ data: any; error: any }> {
+      const urlStr = `${restBase}/rpc/${fnName}`;
+      try {
+        const res = await fetch(urlStr, {
+          method: 'POST',
+          headers: { ...baseHeaders },
+          body: JSON.stringify(params),
+        });
+        if (!res.ok) {
+          const errBody = await res.text();
+          return { data: null, error: { message: errBody, status: res.status } };
+        }
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('json')) {
+          return { data: null, error: null };
+        }
+        const data = await res.json();
+        return { data, error: null };
+      } catch (err: any) {
+        return { data: null, error: { message: err.message } };
+      }
+    },
+  };
+}
+
+// ─── CORS headers ───────────────────────────────────────────────────────────
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-serve(async (req) => {
+// ─── BNDV Stock Search ──────────────────────────────────────────────────────
+async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
+  try {
+    // 1. Lookup BNDV token from platform_integrations
+    const { data: integration } = await supabase
+      .from('platform_integrations')
+      .select('api_key_encrypted')
+      .eq('user_id', userId)
+      .eq('platform', 'bndv')
+      .maybeSingle();
+
+    if (!integration?.api_key_encrypted) {
+      console.log('[BNDV] Nenhuma integração BNDV encontrada para user_id:', userId);
+      return { success: false, total: 0, items: [], error: 'Integração BNDV não configurada.' };
+    }
+
+    let apiToken = '';
+    try {
+      const parsed = JSON.parse(integration.api_key_encrypted);
+      apiToken = parsed.api_token || '';
+    } catch {
+      apiToken = integration.api_key_encrypted;
+    }
+
+    if (!apiToken) {
+      return { success: false, total: 0, items: [], error: 'Token BNDV inválido.' };
+    }
+
+    // 2. GraphQL query to BNDV
+    const graphqlQuery = `query BndvVehicles {
+  vehiclesBy {
+    modelName
+    markName
+    year
+    km
+    saleValue
+    color
+    fuelName
+    transmissionName
+    versionName
+    pictureJs
+  }
+}`;
+
+    console.log('[BNDV] Consultando estoque...');
+    const gqlRes = await fetch('https://api-estoque.azurewebsites.net/graphql', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiToken}`,
+      },
+      body: JSON.stringify({ query: graphqlQuery }),
+    });
+
+    if (!gqlRes.ok) {
+      const errText = await gqlRes.text();
+      console.error('[BNDV] Erro GraphQL:', gqlRes.status, errText);
+      return { success: false, total: 0, items: [], error: `Erro BNDV: ${gqlRes.status}` };
+    }
+
+    const gqlData = await gqlRes.json();
+    let vehicles = gqlData?.data?.vehiclesBy || [];
+    console.log(`[BNDV] Total veículos retornados: ${vehicles.length}`);
+
+    // 3. Filter/rank results
+    const normalize = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+
+    // Apply filters
+    if (filters.marca) {
+      const q = normalize(filters.marca);
+      vehicles = vehicles.filter((v: any) => normalize(v.markName).includes(q));
+    }
+    if (filters.modelo) {
+      const q = normalize(filters.modelo);
+      vehicles = vehicles.filter((v: any) => normalize(v.modelName).includes(q));
+    }
+    if (filters.versao) {
+      const q = normalize(filters.versao);
+      vehicles = vehicles.filter((v: any) => normalize(v.versionName).includes(q));
+    }
+    if (filters.combustivel) {
+      const q = normalize(filters.combustivel);
+      vehicles = vehicles.filter((v: any) => normalize(v.fuelName).includes(q));
+    }
+    if (filters.cambio) {
+      const q = normalize(filters.cambio);
+      vehicles = vehicles.filter((v: any) => normalize(v.transmissionName).includes(q));
+    }
+    if (filters.cor) {
+      const q = normalize(filters.cor);
+      vehicles = vehicles.filter((v: any) => normalize(v.color).includes(q));
+    }
+    if (filters.ano_min) {
+      vehicles = vehicles.filter((v: any) => (v.year || 0) >= filters.ano_min);
+    }
+    if (filters.ano_max) {
+      vehicles = vehicles.filter((v: any) => (v.year || 9999) <= filters.ano_max);
+    }
+    if (filters.preco_max) {
+      vehicles = vehicles.filter((v: any) => (v.saleValue || 0) <= filters.preco_max);
+    }
+    if (filters.km_max) {
+      vehicles = vehicles.filter((v: any) => (v.km || 0) <= filters.km_max);
+    }
+
+    // Free text query ranking
+    if (filters.query) {
+      const queryTokens = normalize(filters.query).split(/\s+/);
+      vehicles = vehicles.map((v: any) => {
+        const text = normalize(`${v.markName} ${v.modelName} ${v.versionName} ${v.color} ${v.fuelName} ${v.transmissionName} ${v.year}`);
+        let score = 0;
+        for (const token of queryTokens) {
+          if (text.includes(token)) score++;
+        }
+        return { ...v, _score: score };
+      }).filter((v: any) => v._score > 0)
+        .sort((a: any, b: any) => b._score - a._score);
+    }
+
+    // 4. Build result items with images
+    const items = vehicles.slice(0, 20).map((v: any) => {
+      let principalImage = '';
+      const images: string[] = [];
+
+      if (v.pictureJs) {
+        try {
+          const pics = typeof v.pictureJs === 'string' ? JSON.parse(v.pictureJs) : v.pictureJs;
+          if (Array.isArray(pics)) {
+            for (const pic of pics) {
+              if (pic.Link) {
+                images.push(pic.Link);
+                if (pic.Principal === true || pic.Principal === 'true') {
+                  principalImage = pic.Link;
+                }
+              }
+            }
+            if (!principalImage && images.length > 0) {
+              principalImage = images[0];
+            }
+          }
+        } catch {
+          // pictureJs parse failed
+        }
+      }
+
+      const preco = v.saleValue || 0;
+      const label = `${v.markName || ''} ${v.modelName || ''} ${v.versionName || ''} ${v.year || ''} - R$ ${preco.toLocaleString('pt-BR')}`.trim();
+
+      return {
+        marca: v.markName || '',
+        modelo: v.modelName || '',
+        versao: v.versionName || '',
+        ano: v.year || 0,
+        km: v.km || 0,
+        preco,
+        cor: v.color || '',
+        combustivel: v.fuelName || '',
+        cambio: v.transmissionName || '',
+        label,
+        principal_image: principalImage,
+        images,
+      };
+    });
+
+    console.log(`[BNDV] Resultados filtrados: ${items.length}`);
+    return { success: true, total: items.length, items };
+  } catch (err: any) {
+    console.error('[BNDV] Erro na consulta:', err);
+    return { success: false, total: 0, items: [], error: err.message };
+  }
+}
+
+// ─── WhatsApp Image Sending ─────────────────────────────────────────────────
+async function sendVehicleImage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption: string) {
+  const attempts = [
+    {
+      label: 'send/image',
+      url: `${baseUrl}/send/image`,
+      body: { number: phoneNumber, url: imageUrl, caption },
+    },
+    {
+      label: 'send/media',
+      url: `${baseUrl}/send/media`,
+      body: { number: phoneNumber, media: imageUrl, mediatype: 'image', caption },
+    },
+    {
+      label: 'message/sendMedia',
+      url: `${baseUrl}/message/sendMedia/${instanceName}`,
+      body: { number: phoneNumber, mediaMessage: { mediatype: 'image', media: imageUrl, caption } },
+    },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      console.log(`[BNDV-IMG] Tentando ${attempt.label}...`);
+      const res = await fetch(attempt.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
+        body: JSON.stringify(attempt.body),
+      });
+      if (res.ok) {
+        console.log(`[BNDV-IMG] Sucesso via ${attempt.label}`);
+        return true;
+      }
+      console.log(`[BNDV-IMG] ${attempt.label} retornou ${res.status}`);
+    } catch (err) {
+      console.log(`[BNDV-IMG] ${attempt.label} falhou:`, err);
+    }
+  }
+  console.warn('[BNDV-IMG] Todas as tentativas de envio de imagem falharam');
+  return false;
+}
+
+// ─── Main handler ───────────────────────────────────────────────────────────
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const supabase = createClient(
+    const supabase = createSupabaseClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
@@ -20,7 +455,7 @@ serve(async (req) => {
 
     const isUazapi = !!(payload.BaseUrl || payload.EventType || payload.instanceId)
     const isEvolution = !!(payload.event || payload.data)
-    
+
     // --- FORMATO UAZAPI ---
     if (isUazapi) {
       const eventType = String(payload.EventType || payload.eventType || '').toLowerCase()
@@ -37,31 +472,31 @@ serve(async (req) => {
         }
         return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
       }
-      
+
       if (eventType !== 'messages' && eventType !== 'message' && !eventType.includes('message')) {
         return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
       }
 
       const instanceName = payload.instance || payload.instanceName || payload.InstanceId || payload.instanceId || ''
       const chat = payload.chat || {}
-      
+
       let msgObj = null
       if (Array.isArray(payload.messages) && payload.messages.length > 0) {
         msgObj = payload.messages[0]
       } else if (payload.message) {
         msgObj = payload.message
       }
-      
+
       if (!msgObj) return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders })
       if (msgObj.fromMe === true) return new Response('Ignored fromMe', { headers: corsHeaders })
-      
+
       const remoteJid = msgObj.chatId || msgObj.chatid || msgObj.from || chat.id || chat.chatId || '';
       if (!remoteJid) { console.log('[Webhook] No remoteJid'); return new Response('No remoteJid', { headers: corsHeaders }); }
       if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return new Response('Ignored group/broadcast', { headers: corsHeaders });
 
       const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim();
       const pushName = msgObj.senderName || chat.name || msgObj.notifyName || msgObj.pushName || 'Lead';
-      
+
       console.log(`[Webhook] Mensagem recebida [UAZAPI]. Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
       return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
     }
@@ -97,11 +532,11 @@ serve(async (req) => {
     if (key.remoteJid?.includes('@broadcast') || key.remoteJid?.includes('@g.us')) return new Response('Ignored group/broadcast', { headers: corsHeaders })
 
     let userText = message.conversation || message.extendedTextMessage?.text || message.text || data.text || ''
-    
+
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
 
   } catch (error: any) {
-    console.error("[Webhook] Erro Crítico:", error)
+    console.error("[Webhook] Erro Critico:", error)
     return new Response(JSON.stringify({ error: error.message }), { headers: corsHeaders, status: 500 })
   }
 })
@@ -122,7 +557,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.log(`[Webhook] No matching active agent for instanceId: ${waInstance.id}`);
     return new Response('No matching active agent', { headers: corsHeaders })
   }
-  
+
   console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
 
   // ── DETECÇÃO DE RESPOSTA DE VENDEDOR ────────────────────────────────
@@ -293,7 +728,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
 
   // Tools
-  const tools = [
+  const tools: any[] = [
     {
       type: "function",
       function: {
@@ -306,6 +741,29 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             resumo: { type: "string", description: "O que o cliente deseja e as informações que você coletou dele até o momento. Seja breve." }
           },
           required: ["status", "resumo"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "consultar_estoque_bndv",
+        description: "Consulta o estoque real de veículos integrado ao BNDV. Use quando o cliente perguntar sobre carros disponíveis, preço, ano, versão, câmbio, combustível, cor ou faixa de valor. Nunca invente estoque sem usar esta ferramenta.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Busca livre do cliente." },
+            marca: { type: "string", description: "Marca do veículo." },
+            modelo: { type: "string", description: "Modelo do veículo." },
+            versao: { type: "string", description: "Versão do veículo." },
+            combustivel: { type: "string", description: "Combustível desejado." },
+            cambio: { type: "string", description: "Tipo de câmbio." },
+            cor: { type: "string", description: "Cor desejada." },
+            ano_min: { type: "number", description: "Ano mínimo." },
+            ano_max: { type: "number", description: "Ano máximo." },
+            preco_max: { type: "number", description: "Preço máximo." },
+            km_max: { type: "number", description: "Quilometragem máxima." },
+          }
         }
       }
     }
@@ -346,7 +804,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // Process Media se houver
   if (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image') {
     let base64 = rawMsgObj?.base64 || rawMsgObj?.message?.base64 || '';
-    
+
     // Se não veio base64, tentar download pela uazapi
     if (!base64 && messageId) {
       console.log(`[Webhook] Baixando mídia ID: ${messageId}`);
@@ -372,7 +830,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           const formData = new FormData();
           formData.append('file', blob, 'audio.ogg');
           formData.append('model', 'whisper-1');
-          
+
           console.log('[Webhook] Enviando para Whisper...');
           const wRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
             method: 'POST',
@@ -467,6 +925,23 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   if (agent.company_name) systemPrompt += `\n\nEmpresa: ${agent.company_name}`
   if (knowledgeContext) systemPrompt += `\n\n## BASE DE CONHECIMENTO:\n${knowledgeContext}`
 
+  // ── BNDV: Check if user has BNDV integration and append system prompt instruction ──
+  let hasBndvIntegration = false;
+  try {
+    const { data: bndvInteg } = await supabase
+      .from('platform_integrations')
+      .select('id')
+      .eq('user_id', agent.user_id)
+      .eq('platform', 'bndv')
+      .maybeSingle();
+    if (bndvInteg) {
+      hasBndvIntegration = true;
+      systemPrompt += `\n\nFERRAMENTA DE ESTOQUE BNDV:\nVocê tem acesso à ferramenta "consultar_estoque_bndv". USE quando o cliente perguntar sobre carros, preço, estoque, opções disponíveis. Nunca invente estoque sem consultar. Após consultar, as fotos dos veículos serão enviadas automaticamente.`;
+    }
+  } catch (bndvCheckErr) {
+    console.error('[Webhook] Erro ao verificar integração BNDV:', bndvCheckErr);
+  }
+
   let aiModel = agent.model || 'gpt-4o';
   // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
   if (aiModel.startsWith('openai/')) {
@@ -495,18 +970,87 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   }
   const openaiData = await openaiRes.json()
   const aiMessage = openaiData.choices?.[0]?.message
-  
+
   console.log(`[Webhook] Resposta da IA recebida. ToolCalls: ${aiMessage?.tool_calls?.length || 0}`);
 
   let aiResponse = aiMessage?.content || ''
 
-  // Verificar se o modelo decidiu chamar a função de CRM (atualizar_etapa_crm)
+  // ── Variable to hold BNDV results for image sending after text response ──
+  let bndvResultForImages: any = null;
+
+  // Verificar se o modelo decidiu chamar ferramentas
   if (aiMessage?.tool_calls && aiMessage.tool_calls.length > 0) {
+
+    // ── BNDV Tool Call ──────────────────────────────────────────────────
+    const bndvToolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'consultar_estoque_bndv');
+    if (bndvToolCall) {
+      try {
+        const bndvArgs = JSON.parse(bndvToolCall.function.arguments);
+        console.log(`[BNDV] Tool call com args:`, JSON.stringify(bndvArgs));
+
+        const bndvResult = await consultarEstoqueBndv(supabase, agent.user_id, bndvArgs);
+        console.log(`[BNDV] Resultado: success=${bndvResult.success}, total=${bndvResult.total}`);
+
+        // Store for image sending later
+        if (bndvResult.success && bndvResult.items.length > 0) {
+          bndvResultForImages = bndvResult;
+        }
+
+        // Build tool messages for OpenAI follow-up
+        const toolMessages: any[] = [
+          { role: 'system', content: systemPrompt },
+          ...chatHistory,
+          { role: 'user', content: userMessageContentForOpenAi },
+          aiMessage,
+          {
+            role: 'tool',
+            tool_call_id: bndvToolCall.id,
+            name: 'consultar_estoque_bndv',
+            content: JSON.stringify(bndvResult),
+          },
+        ];
+
+        // If there was also a CRM tool call, add its result too
+        const crmToolCallInBndv = aiMessage.tool_calls.find((t: any) => t.function.name === 'atualizar_etapa_crm');
+        if (crmToolCallInBndv) {
+          toolMessages.push({
+            role: 'tool',
+            tool_call_id: crmToolCallInBndv.id,
+            name: 'atualizar_etapa_crm',
+            content: '{"success": true}',
+          });
+        }
+
+        // Get follow-up text response from OpenAI
+        const bndvFollowupRes = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+          body: JSON.stringify({
+            model: aiModel,
+            messages: toolMessages,
+            temperature: agent.temperature || 0.7,
+          }),
+        });
+
+        if (bndvFollowupRes.ok) {
+          const bndvFollowupData = await bndvFollowupRes.json();
+          const bndvTextResponse = bndvFollowupData.choices?.[0]?.message?.content || '';
+          if (bndvTextResponse) {
+            aiResponse = bndvTextResponse;
+            console.log(`[BNDV] Resposta de texto gerada (${aiResponse.length} chars)`);
+          }
+        }
+      } catch (bndvErr) {
+        console.error('[BNDV] Erro ao processar tool call:', bndvErr);
+      }
+    }
+
+    // ── CRM Tool Call (atualizar_etapa_crm) ─────────────────────────────
     const toolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'atualizar_etapa_crm');
     if (toolCall) {
       try {
         const args = JSON.parse(toolCall.function.arguments);
-        
+
         // 1. Atualizar banco de dados CRM (arrastar cartão para a coluna correta)
         // Mantém status_crm sincronizado com status, exceto se já estiver
         // explicitamente definido pelo vendedor (negociacao, fechado, etc.)
@@ -683,10 +1227,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     lastMap.set(t.to_member_id, new Date(t.created_at).getTime());
                 }
                 const activeSellers = sellers || [];
-                const neverReceived = activeSellers.filter(s => !lastMap.has(s.id));
+                const neverReceived = activeSellers.filter((s: any) => !lastMap.has(s.id));
                 const nextSeller = neverReceived.length > 0
                   ? neverReceived[0]
-                  : [...activeSellers].sort((a, b) => (lastMap.get(a.id) || 0) - (lastMap.get(b.id) || 0))[0] || null;
+                  : [...activeSellers].sort((a: any, b: any) => (lastMap.get(a.id) || 0) - (lastMap.get(b.id) || 0))[0] || null;
 
                 console.log(`[Transfer] nextSeller=${nextSeller ? nextSeller.name : 'NULO'} | total ativos=${activeSellers.length}`);
 
@@ -802,8 +1346,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           }
           // Se qualificou, substituir a resposta para a de Handoff
           aiResponse = handoffMsg;
-        } else if (!aiResponse) {
+        } else if (!aiResponse && !bndvToolCall) {
           // Se não é qualificado, e o GPT não retornou texto (só o tool_call), devemos devolver o resultado da tool e pedir o texto!
+          // Only do this if we didn't already handle via BNDV tool call
           console.log(`[Webhook] IA apenas executou a tool sem texto. Solicitando resposta final...`);
           const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -811,8 +1356,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             body: JSON.stringify({
               model: aiModel,
               messages: [
-                { role: 'system', content: systemPrompt }, 
-                ...chatHistory, 
+                { role: 'system', content: systemPrompt },
+                ...chatHistory,
                 { role: 'user', content: userMessageContentForOpenAi },
                 aiMessage,
                 { role: 'tool', tool_call_id: toolCall.id, name: toolCall.function.name, content: `{"success": true}` }
@@ -872,6 +1417,22 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     })
   } catch (e) {
     console.error('[Webhook] Erro ao enviar mensagem:', e)
+  }
+
+  // ── BNDV: Send vehicle images after text response ─────────────────────
+  if (bndvResultForImages && bndvResultForImages.items.length > 0) {
+    console.log(`[BNDV-IMG] Enviando fotos de ${Math.min(3, bndvResultForImages.items.length)} veículos...`);
+    const vehiclesToSend = bndvResultForImages.items.slice(0, 3);
+    for (const vehicle of vehiclesToSend) {
+      if (vehicle.principal_image) {
+        try {
+          const caption = `${vehicle.marca} ${vehicle.modelo} ${vehicle.versao} ${vehicle.ano}\n💰 R$ ${vehicle.preco.toLocaleString('pt-BR')}\n🔄 ${vehicle.km.toLocaleString('pt-BR')} km | ⛽ ${vehicle.combustivel} | 🎨 ${vehicle.cor}`;
+          await sendVehicleImage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, vehicle.principal_image, caption);
+        } catch (imgErr) {
+          console.error(`[BNDV-IMG] Erro ao enviar imagem de ${vehicle.label}:`, imgErr);
+        }
+      }
+    }
   }
 
   return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
