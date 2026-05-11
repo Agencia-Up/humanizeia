@@ -345,13 +345,13 @@ Deno.serve(async (req) => {
         .eq('id', memberId);
     }
 
-    // Gerar um magic link para o vendedor acessar direto
+    // Gerar link de convite para o vendedor confirmar e acessar
     let magicLink = '';
     if (authUserId) {
       const { data: linkData } = await authAdminGenerateLink(
         supabaseUrl,
         serviceKey,
-        'magiclink',
+        'invite',
         email,
         redirectTo
       );
