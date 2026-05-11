@@ -61,7 +61,7 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
 
     supabase
       .from('profiles')
-      .select('organization_id, quiz_completed')
+      .select('organization_id, quiz_completed, role')
       .eq('id', user.id)
       .single()
       .then(({ data, error }) => {
@@ -71,16 +71,22 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
         if (error || !data) {
           next = 'no_org';
         } else {
-          const hasOrg   = !!data.organization_id;
-          const doneQuiz = !!(data as any).quiz_completed
-            || localStorage.getItem(`quiz_completed_${user.id}`) === 'true';
-
-          if (!hasOrg && !isOrgExempt) {
-            next = 'no_org';
-          } else if (!doneQuiz && !isQuizExempt) {
-            next = 'no_quiz';
-          } else {
+          // Sellers (funcionários) nunca precisam de org própria nem quiz
+          const isSeller = (data as any).role === 'seller';
+          if (isSeller) {
             next = 'ok';
+          } else {
+            const hasOrg   = !!data.organization_id;
+            const doneQuiz = !!(data as any).quiz_completed
+              || localStorage.getItem(`quiz_completed_${user.id}`) === 'true';
+
+            if (!hasOrg && !isOrgExempt) {
+              next = 'no_org';
+            } else if (!doneQuiz && !isQuizExempt) {
+              next = 'no_quiz';
+            } else {
+              next = 'ok';
+            }
           }
         }
 
