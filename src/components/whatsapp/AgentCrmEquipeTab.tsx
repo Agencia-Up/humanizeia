@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Users, UserPlus, Phone, Loader2, Trash2, PhoneForwarded, Pencil, Check, X, Crown, Save, Mail, Send } from 'lucide-react';
+import { Users, UserPlus, Phone, Loader2, Trash2, PhoneForwarded, Pencil, Check, X, Crown, Save, Mail, Send, RefreshCw } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 
 interface AgentCrmEquipeTabProps {
@@ -388,7 +388,7 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
 
                       {/* ── Invite section ── */}
                       {member.auth_user_id ? (
-                        <div className="flex items-center gap-2 mt-1 px-1">
+                        <div className="flex items-center gap-2 mt-1 px-1 flex-wrap">
                           <span className="text-[10px] font-semibold text-green-400 bg-green-500/10 border border-green-500/20 rounded-full px-2 py-0.5 flex items-center gap-1">
                             <Check className="h-2.5 w-2.5" /> Conta ativa
                           </span>
@@ -396,6 +396,21 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
                             <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                               <Mail className="h-2.5 w-2.5" /> {member.email}
                             </span>
+                          )}
+                          {member.email && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 px-2 text-[10px] text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border border-violet-500/20 rounded-full"
+                              onClick={() => handleInviteSeller(member)}
+                              disabled={invitingMemberId === member.id}
+                              title="Reenviar e-mail de convite para criar senha"
+                            >
+                              {invitingMemberId === member.id
+                                ? <Loader2 className="h-2.5 w-2.5 animate-spin mr-1" />
+                                : <RefreshCw className="h-2.5 w-2.5 mr-1" />}
+                              Reenviar convite
+                            </Button>
                           )}
                         </div>
                       ) : (
