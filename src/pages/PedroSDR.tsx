@@ -609,16 +609,19 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [reassigning, setReassigning]       = useState<string | null>(null);
 
-  // detect seller vs gerente
+  // detect seller vs gerente (vendedor pode ter múltiplos registros em agentes diferentes)
   useEffect(() => {
     if (!userId) return;
     (async () => {
       const { data } = await (supabase as any)
         .from('ai_team_members')
-        .select('id, user_id')
+        .select('id, user_id, is_active')
         .eq('auth_user_id', userId)
-        .maybeSingle();
-      if (data) { setIsSeller(true); setMemberId(data.id); }
+        .order('is_active', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
+      if (row) { setIsSeller(true); setMemberId(row.id); }
     })();
   }, [userId]);
 
@@ -628,7 +631,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     else setRefreshing(true);
     try {
       const effectiveUserId = isSeller
-        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
 
       const todayStart = new Date();
@@ -1034,7 +1037,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     let failed = 0;
     try {
       const effectiveUserId = isSeller
-        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
 
       // Insert in batches of 50
@@ -1077,7 +1080,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       const cleanPhone = addLeadPhone.replace(/\D/g, '');
       const remoteJid = `${cleanPhone}@s.whatsapp.net`;
       const effectiveUserId = isSeller
-        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
       const { error } = await (supabase as any).from('ai_crm_leads').insert({
         user_id:     effectiveUserId,
