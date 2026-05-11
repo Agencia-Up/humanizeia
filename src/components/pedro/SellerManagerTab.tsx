@@ -8,7 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   Users, UserPlus, Phone, Loader2, Trash2, Pencil, Check, X,
-  Crown, Save, Mail, Send, Shield, StickyNote, Eye, Settings2,
+  Crown, Save, Mail, Send, Shield, StickyNote, Eye, Settings2, RefreshCw,
 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -455,7 +455,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
 
                       {/* Invite / account status */}
                       {s.auth_user_id ? (
-                        <div className="flex items-center gap-2 px-1">
+                        <div className="flex items-center gap-2 px-1 flex-wrap">
                           <span className="text-[10px] font-semibold text-green-400 bg-green-500/10 border border-green-500/20 rounded-full px-2 py-0.5 flex items-center gap-1">
                             <Check className="h-2.5 w-2.5" /> Conta ativa
                           </span>
@@ -463,6 +463,21 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                             <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                               <Mail className="h-2.5 w-2.5" /> {s.email}
                             </span>
+                          )}
+                          {s.email && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 px-2 text-[10px] text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border border-violet-500/20 rounded-full"
+                              onClick={() => handleInviteSeller(s)}
+                              disabled={invitingId === s.id}
+                              title="Reenviar e-mail de convite para criar senha"
+                            >
+                              {invitingId === s.id
+                                ? <Loader2 className="h-2.5 w-2.5 animate-spin mr-1" />
+                                : <RefreshCw className="h-2.5 w-2.5 mr-1" />}
+                              Reenviar convite
+                            </Button>
                           )}
                         </div>
                       ) : (
