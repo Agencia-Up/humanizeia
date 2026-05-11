@@ -8,8 +8,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   Users, UserPlus, Phone, Loader2, Trash2, Pencil, Check, X,
-  Crown, Save, Mail, Send, Shield, StickyNote, Eye,
+  Crown, Save, Mail, Send, Shield, StickyNote, Eye, Settings2,
 } from 'lucide-react';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from '@/components/ui/dialog';
+import { DEFAULT_SELLER_FEATURES, type VisibleFeatures } from '@/hooks/useSellerProfile';
 import { Label } from '@/components/ui/label';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -30,7 +34,24 @@ interface SellerMember {
   total_leads_received: number;
   last_lead_received_at: string | null;
   created_at: string;
+  visible_features: VisibleFeatures | null;
 }
+
+// ── Mapeamento de features para labels legíveis ────────────────────────────
+const FEATURE_LABELS: { key: keyof VisibleFeatures; label: string; group: 'tab' | 'sidebar' }[] = [
+  { key: 'tab_crm',            label: 'Meus Leads (CRM)',        group: 'tab' },
+  { key: 'tab_inbox',          label: 'Inbox',                   group: 'tab' },
+  { key: 'tab_performance',    label: 'Performance',             group: 'tab' },
+  { key: 'tab_agente_ia',      label: 'Agente IA',               group: 'tab' },
+  { key: 'tab_crm_ao_vivo',    label: 'CRM ao Vivo',             group: 'tab' },
+  { key: 'tab_instancias',     label: 'Instâncias WhatsApp',     group: 'tab' },
+  { key: 'tab_vendedores',     label: 'Vendedores',              group: 'tab' },
+  { key: 'sidebar_dashboard',     label: 'Dashboard',            group: 'sidebar' },
+  { key: 'sidebar_treinamento',   label: 'Treinamento',          group: 'sidebar' },
+  { key: 'sidebar_meu_plano',     label: 'Meu Plano',            group: 'sidebar' },
+  { key: 'sidebar_integracoes',   label: 'Integrações',          group: 'sidebar' },
+  { key: 'sidebar_configuracoes', label: 'Configurações',        group: 'sidebar' },
+];
 
 export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   const { toast } = useToast();
@@ -60,13 +81,49 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   const [sellerNotes, setSellerNotes] = useState<any[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
 
+  // Feature config dialog state
+  const [configSellerId, setConfigSellerId] = useState<string | null>(null);
+  const [configFeatures, setConfigFeatures] = useState<VisibleFeatures>({ ...DEFAULT_SELLER_FEATURES });
+  const [savingConfig, setSavingConfig] = useState(false);
+
+  const handleOpenConfig = (s: SellerMember) => {
+    setConfigSellerId(s.id);
+    setConfigFeatures({ ...DEFAULT_SELLER_FEATURES, ...(s.visible_features || {}) });
+  };
+
+  const handleToggleFeature = (key: keyof VisibleFeatures) => {
+    setConfigFeatures(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleSaveConfig = async () => {
+    if (!configSellerId) return;
+    setSavingConfig(true);
+    try {
+      const { error } = await (supabase as any)
+        .from('ai_team_members')
+        .update({ visible_features: configFeatures })
+        .eq('id', configSellerId);
+      if (error) throw error;
+      // Update local state
+      setSellers(prev => prev.map(s =>
+        s.id === configSellerId ? { ...s, visible_features: configFeatures } : s
+      ));
+      toast({ title: '✅ Painel do vendedor configurado!' });
+      setConfigSellerId(null);
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const [sellersRes, agentsRes] = await Promise.all([
         (supabase as any)
           .from('ai_team_members')
-          .select('id, name, whatsapp_number, email, is_active, auth_user_id, agent_id, total_leads_received, last_lead_received_at, created_at')
+          .select('id, name, whatsapp_number, email, is_active, auth_user_id, agent_id, total_leads_received, last_lead_received_at, created_at, visible_features')
           .eq('user_id', userId)
           .order('created_at', { ascending: true }),
         (supabase as any)
@@ -371,6 +428,12 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                               onCheckedChange={() => handleToggleActive(s.id, s.is_active)} className="scale-90" />
                           </div>
                           <Button variant="ghost" size="sm"
+                            className="h-7 w-7 p-0 text-violet-400 hover:text-violet-300"
+                            onClick={() => handleOpenConfig(s)}
+                            title="Configurar painel do vendedor">
+                            <Settings2 className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm"
                             className="h-7 w-7 p-0 text-yellow-400 hover:text-yellow-300"
                             onClick={() => handleViewNotes(s.id)}
                             title="Ver anotações do vendedor">
@@ -461,6 +524,72 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
           })
         )}
       </div>
+
+      {/* ── Dialog: Configurar Painel do Vendedor ── */}
+      <Dialog open={!!configSellerId} onOpenChange={open => !open && setConfigSellerId(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Settings2 className="h-4 w-4 text-violet-400" />
+              Configurar Painel do Vendedor
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Selecione o que este vendedor poderá ver no painel dele. As alterações são aplicadas imediatamente ao salvar.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Tabs do Pedro */}
+            <div>
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Abas do Painel (Pedro SDR)
+              </p>
+              <div className="space-y-2">
+                {FEATURE_LABELS.filter(f => f.group === 'tab').map(f => (
+                  <div key={f.key} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
+                    <span className="text-sm text-foreground">{f.label}</span>
+                    <Switch
+                      checked={configFeatures[f.key]}
+                      onCheckedChange={() => handleToggleFeature(f.key)}
+                      className="scale-90"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Sidebar */}
+            <div>
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Menu Lateral (Sidebar)
+              </p>
+              <div className="space-y-2">
+                {FEATURE_LABELS.filter(f => f.group === 'sidebar').map(f => (
+                  <div key={f.key} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
+                    <span className="text-sm text-foreground">{f.label}</span>
+                    <Switch
+                      checked={configFeatures[f.key]}
+                      onCheckedChange={() => handleToggleFeature(f.key)}
+                      className="scale-90"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" size="sm" onClick={() => setConfigSellerId(null)} className="text-xs">
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={handleSaveConfig} disabled={savingConfig}
+              className="bg-violet-600 hover:bg-violet-700 text-white text-xs px-4">
+              {savingConfig ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+              Salvar Configuração
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -47,7 +47,7 @@ import {
 } from '@/components/ui/sidebar';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { useState } from 'react';
-import { useSellerProfile } from '@/hooks/useSellerProfile';
+import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useSubscription } from '@/hooks/useSubscription';
 
@@ -62,11 +62,24 @@ const agentItems = [
   { title: 'Daniel',  subtitle: 'Estratégia',    url: '/daniel',         icon: Brain,     emoji: '🧠' },
 ];
 
-// ── Pedro Seller — sub-itens limitados para vendedores ───────────────────────
-const pedroSellerSubItems = [
-  { title: 'CRM',        url: '/pedro?tab=crm',        icon: Kanban },
-  { title: 'Inbox',      url: '/pedro?tab=inbox',       icon: Inbox },
-  { title: 'Instâncias', url: '/pedro?tab=instancias',  icon: Smartphone },
+// ── Pedro Seller — todos sub-itens possíveis, filtrados por visibleFeatures ──
+const allPedroSellerSubItems = [
+  { title: 'Performance', url: '/pedro?tab=performance', icon: LayoutDashboard, featureKey: 'tab_performance' as keyof VisibleFeatures },
+  { title: 'CRM',         url: '/pedro?tab=crm',         icon: Kanban,          featureKey: 'tab_crm' as keyof VisibleFeatures },
+  { title: 'Agente IA',   url: '/pedro?tab=agente',      icon: Brain,           featureKey: 'tab_agente_ia' as keyof VisibleFeatures },
+  { title: 'CRM ao Vivo', url: '/pedro?tab=ao-vivo',     icon: Radar,           featureKey: 'tab_crm_ao_vivo' as keyof VisibleFeatures },
+  { title: 'Instâncias',  url: '/pedro?tab=instancias',  icon: Smartphone,      featureKey: 'tab_instancias' as keyof VisibleFeatures },
+  { title: 'Vendedores',  url: '/pedro?tab=vendedores',  icon: Users,           featureKey: 'tab_vendedores' as keyof VisibleFeatures },
+  { title: 'Inbox',       url: '/pedro?tab=inbox',       icon: Inbox,           featureKey: 'tab_inbox' as keyof VisibleFeatures },
+];
+
+// ── Sistema Seller — filtrados por visibleFeatures ──────────────────────────
+const allSellerSystemItems = [
+  { title: 'Dashboard',      url: '/dashboard',    icon: LayoutDashboard, featureKey: 'sidebar_dashboard' as keyof VisibleFeatures },
+  { title: 'Treinamento',    url: '/treinamento',  icon: GraduationCap,   featureKey: 'sidebar_treinamento' as keyof VisibleFeatures },
+  { title: 'Meu Plano',      url: '/meu-plano',    icon: CreditCard,      featureKey: 'sidebar_meu_plano' as keyof VisibleFeatures },
+  { title: 'Integrações',    url: '/integrations', icon: Plug,            featureKey: 'sidebar_integracoes' as keyof VisibleFeatures },
+  { title: 'Configurações',  url: '/settings',     icon: Settings,        featureKey: 'sidebar_configuracoes' as keyof VisibleFeatures },
 ];
 
 // ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
@@ -207,11 +220,17 @@ function NavMarcosExpandable({ collapsed }: { collapsed?: boolean }) {
   );
 }
 
-// ── NavPedroSellerExpandable — Pedro com sub-itens para vendedores ────────────
-function NavPedroSellerExpandable({ collapsed }: { collapsed?: boolean }) {
+// ── NavPedroSellerExpandable — Pedro com sub-itens filtrados por visibleFeatures
+function NavPedroSellerExpandable({ collapsed, visibleFeatures }: { collapsed?: boolean; visibleFeatures: VisibleFeatures }) {
   const { openSidebarGroups, toggleSidebarGroup } = useAppStore();
   const key = 'pedro-seller-sub';
   const isOpen = openSidebarGroups.includes(key);
+
+  const filteredSubItems = allPedroSellerSubItems.filter(
+    item => visibleFeatures[item.featureKey]
+  );
+
+  if (filteredSubItems.length === 0) return null;
 
   if (collapsed) {
     return (
@@ -245,7 +264,7 @@ function NavPedroSellerExpandable({ collapsed }: { collapsed?: boolean }) {
 
       {isOpen && (
         <div className="ml-4 mt-0.5 border-l border-border/40 pl-2 space-y-0.5">
-          {pedroSellerSubItems.map(sub => (
+          {filteredSubItems.map(sub => (
             <NavLink
               key={sub.url}
               to={sub.url}
@@ -307,7 +326,7 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === 'collapsed';
-  const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const { isAdmin } = useIsAdmin();
   const { subscription } = useSubscription();
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
@@ -348,10 +367,27 @@ export function AppSidebar() {
       <SidebarContent className={`py-2 ${collapsed ? 'px-1' : 'px-2'}`}>
 
         {sellerLoading ? null : isSeller ? (
-          /* ── SELLER: apenas Pedro (CRM limitado do vendedor) ── */
-          <NavGroup label="Pedro" collapsed={collapsed}>
-            <NavPedroSellerExpandable collapsed={collapsed} />
-          </NavGroup>
+          /* ── SELLER: Pedro + itens de sistema filtrados por visibleFeatures ── */
+          <>
+            {visibleFeatures.sidebar_dashboard && (
+              <NavGroup label="Painel" collapsed={collapsed}>
+                <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+              </NavGroup>
+            )}
+            <NavGroup label="Pedro" collapsed={collapsed}>
+              <NavPedroSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
+            </NavGroup>
+            {(() => {
+              const sellerSysItems = allSellerSystemItems.filter(i => visibleFeatures[i.featureKey]);
+              return sellerSysItems.length > 0 ? (
+                <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
+                  {sellerSysItems.map(item => (
+                    <NavItem key={item.url} item={item} collapsed={collapsed} />
+                  ))}
+                </NavGroup>
+              ) : null;
+            })()}
+          </>
         ) : (
           /* ── MASTER: visão completa ── */
           <>

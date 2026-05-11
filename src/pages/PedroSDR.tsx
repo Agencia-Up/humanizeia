@@ -1978,21 +1978,28 @@ const MASTER_TABS = [
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,        emoji: '👥' },
 ];
 
-// Tabs do vendedor (seller) — limitadas
-const SELLER_TABS = [
-  { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,  emoji: '🗒️' },
-  { id: 'inbox',       label: 'Inbox',        icon: MessageSquare, emoji: '💬' },
-  { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,   emoji: '📱' },
+// Todas as tabs possíveis para o seller (filtradas por visible_features)
+const ALL_SELLER_TABS = [
+  { id: 'performance', label: 'Performance',  icon: BarChart3,     emoji: '📊', featureKey: 'tab_performance' },
+  { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,   emoji: '🗒️', featureKey: 'tab_crm' },
+  { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
+  { id: 'ao-vivo',     label: 'CRM ao Vivo',  icon: MonitorPlay,   emoji: '📺', featureKey: 'tab_crm_ao_vivo' },
+  { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,    emoji: '📱', featureKey: 'tab_instancias' },
+  { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
+  { id: 'inbox',       label: 'Inbox',        icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },
 ];
 
 export default function PedroSDR() {
   const { user } = useAuth();
-  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, seller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
 
-  const tabs = isSeller ? SELLER_TABS : MASTER_TABS;
-  const defaultTab = isSeller ? 'crm' : (tabParam || 'performance');
+  // Seller: filtra tabs por visible_features | Master: todas
+  const tabs = isSeller
+    ? ALL_SELLER_TABS.filter(t => (visibleFeatures as any)[t.featureKey])
+    : MASTER_TABS;
+  const defaultTab = isSeller ? (tabs[0]?.id || 'crm') : (tabParam || 'performance');
   const [activeTab, setActiveTab] = useState(defaultTab);
 
   // Se tab param mudar (ex: vendedor clicando no sidebar)
@@ -2057,47 +2064,49 @@ export default function PedroSDR() {
           </div>
 
           <div className="flex-1 min-h-0 overflow-auto">
-            {/* Performance — master only */}
-            {!isSeller && (
+            {/* Performance */}
+            {(!isSeller || visibleFeatures.tab_performance) && (
               <TabsContent value="performance" className="mt-0">
                 <PerformanceTab userId={user?.id} />
               </TabsContent>
             )}
 
-            {/* CRM Avançado — both (seller sees only their leads via existing filter) */}
+            {/* CRM / Meus Leads */}
             <TabsContent value="crm" className="mt-0">
               <CrmAvancadoTab userId={user?.id} />
             </TabsContent>
 
-            {/* Vendedores — master only */}
-            {!isSeller && (
+            {/* Vendedores */}
+            {(!isSeller || visibleFeatures.tab_vendedores) && (
               <TabsContent value="vendedores" className="mt-0">
                 {user?.id && <SellerManagerTab userId={user.id} />}
               </TabsContent>
             )}
 
             <Suspense fallback={<TabLoader />}>
-              {/* Agente IA — master only */}
-              {!isSeller && (
+              {/* Agente IA */}
+              {(!isSeller || visibleFeatures.tab_agente_ia) && (
                 <TabsContent value="agente" className="mt-0 h-full">
                   <WhatsAppAIAgent embedded />
                 </TabsContent>
               )}
 
-              {/* CRM ao Vivo — master only */}
-              {!isSeller && (
+              {/* CRM ao Vivo */}
+              {(!isSeller || visibleFeatures.tab_crm_ao_vivo) && (
                 <TabsContent value="ao-vivo" className="mt-0 h-full">
                   <CrmAoVivo embedded />
                 </TabsContent>
               )}
 
-              {/* Instâncias — both (seller filtered in WhatsAppInstances) */}
-              <TabsContent value="instancias" className="mt-0 h-full">
-                <WhatsAppInstances embedded />
-              </TabsContent>
+              {/* Instâncias */}
+              {(!isSeller || visibleFeatures.tab_instancias) && (
+                <TabsContent value="instancias" className="mt-0 h-full">
+                  <WhatsAppInstances embedded />
+                </TabsContent>
+              )}
 
-              {/* Inbox — seller only (embedded WhatsApp inbox filtered to their leads) */}
-              {isSeller && (
+              {/* Inbox */}
+              {(!isSeller || visibleFeatures.tab_inbox) && (
                 <TabsContent value="inbox" className="mt-0 h-full">
                   <WhatsAppInbox embedded />
                 </TabsContent>
