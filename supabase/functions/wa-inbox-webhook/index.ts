@@ -1463,14 +1463,14 @@ REGRAS PARA FOTOS:
     let aiData: any = null;
 
     if (!mediaFallbackReply && isAnthropicModel) {
-      // â”€â”€ Direct Anthropic API call with tool calling â”€â”€
-      const anthropicModel = rawModel.replace(“anthropic/”, “”);
+      // â"€â"€ Direct Anthropic API call with tool calling â"€â"€
+      const anthropicModel = rawModel.replace("anthropic/", "");
       const anthropicMessages = [
         ...historyMessages.slice(-14).map((m: any) => ({
-          role: m.role === “system” ? “user” : m.role,
+          role: m.role === "system" ? "user" : m.role,
           content: m.content,
         })),
-        { role: “user”, content },
+        { role: "user", content },
       ];
 
       // Convert OpenAI-format tools to Anthropic format
@@ -1482,12 +1482,12 @@ REGRAS PARA FOTOS:
 
       console.log(`[ai-agent] Calling Anthropic directly with model: ${anthropicModel}, tools: ${anthropicTools.length}`);
 
-      const res = await fetch(“https://api.anthropic.com/v1/messages”, {
-        method: “POST”,
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
         headers: {
-          “x-api-key”: ANTHROPIC_API_KEY!,
-          “anthropic-version”: “2023-06-01”,
-          “Content-Type”: “application/json”,
+          "x-api-key": ANTHROPIC_API_KEY!,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           model: anthropicModel,
@@ -1502,15 +1502,15 @@ REGRAS PARA FOTOS:
       if (res.ok) {
         const anthropicData = await res.json();
         // Check if response contains tool_use blocks
-        const toolUseBlocks = (anthropicData.content || []).filter((b: any) => b.type === “tool_use”);
-        const textBlocks = (anthropicData.content || []).filter((b: any) => b.type === “text”);
-        const textContent = textBlocks.map((b: any) => b.text).join(“\n”).trim();
+        const toolUseBlocks = (anthropicData.content || []).filter((b: any) => b.type === "tool_use");
+        const textBlocks = (anthropicData.content || []).filter((b: any) => b.type === "text");
+        const textContent = textBlocks.map((b: any) => b.text).join("\n").trim();
 
         if (toolUseBlocks.length > 0) {
           // Normalize Anthropic tool_use to OpenAI-like tool_calls format
           const toolCalls = toolUseBlocks.map((b: any) => ({
             id: b.id,
-            type: “function”,
+            type: "function",
             function: {
               name: b.name,
               arguments: JSON.stringify(b.input),
