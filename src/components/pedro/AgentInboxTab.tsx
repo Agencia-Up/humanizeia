@@ -151,42 +151,56 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     fetchLeads();
   }, [fetchLeads]);
 
-  /* ── Fetch messages for selected lead ──────────────────────────── */
-  const fetchMessages = useCallback(async () => {
-    if (!selectedLead) return;
-    setLoadingMessages(true);
-    let query = (supabase as any)
-      .from('wa_inbox')
-      .select('id, phone, instance_id, direction, content, message_type, media_url, created_at, contact_name')
-      .eq('user_id', userId)
-      .in('phone', phoneCandidates(selectedLead.remote_jid));
+  const selectedLeadId = selectedLead?.id || '';
+  const selectedLeadPhone = selectedLead?.remote_jid || '';
+  const selectedLeadInstanceId = selectedLead?.instance_id || null;
 
-    if (selectedLead.instance_id) {
-      query = query.eq('instance_id', selectedLead.instance_id);
+  /* ── Fetch messages for selected lead ──────────────────────────── */
+  const fetchMessages = useCallback(async (silent = false) => {
+    if (!selectedLeadId || !selectedLeadPhone) return;
+    if (!silent) setLoadingMessages(true);
+    try {
+      let query = (supabase as any)
+        .from('wa_inbox')
+        .select('id, phone, instance_id, direction, content, message_type, media_url, created_at, contact_name')
+        .eq('user_id', userId)
+        .in('phone', phoneCandidates(selectedLeadPhone));
+
+    if (selectedLeadInstanceId) {
+      query = query.eq('instance_id', selectedLeadInstanceId);
     }
 
     const { data } = await query
       .order('created_at', { ascending: true })
-      .limit(150);
+      .range(0, 999);
 
     const rows = data || [];
     setMessages(rows);
     if (rows.length > 0) {
       const latestInstanceId = [...rows].reverse().find((m: Message) => m.instance_id)?.instance_id || null;
-      const nextLead = {
-        ...selectedLead,
-        instance_id: selectedLead.instance_id || latestInstanceId,
-        message_count: Math.max(selectedLead.message_count || 0, rows.length),
-      };
+      setSelectedLead(prev => {
+        if (!prev || prev.id !== selectedLeadId) return prev;
+        const nextInstanceId = prev.instance_id || latestInstanceId;
+        const nextMessageCount = Math.max(prev.message_count || 0, rows.length);
+        if (prev.instance_id === nextInstanceId && prev.message_count === nextMessageCount) return prev;
+        return { ...prev, instance_id: nextInstanceId, message_count: nextMessageCount };
+      });
 
-      if (nextLead.instance_id !== selectedLead.instance_id || nextLead.message_count !== selectedLead.message_count) {
-        setSelectedLead(nextLead);
-        setLeads(prev => prev.map(l => l.id === nextLead.id ? nextLead : l));
+      setLeads(prev => prev.map(lead => {
+        if (lead.id !== selectedLeadId) return lead;
+        const nextInstanceId = lead.instance_id || latestInstanceId;
+        const nextMessageCount = Math.max(lead.message_count || 0, rows.length);
+        if (lead.instance_id === nextInstanceId && lead.message_count === nextMessageCount) return lead;
+        return { ...lead, instance_id: nextInstanceId, message_count: nextMessageCount };
+      }));
+    }
+    } finally {
+      if (!silent) {
+        setLoadingMessages(false);
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       }
     }
-    setLoadingMessages(false);
-    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-  }, [selectedLead, userId]);
+  }, [selectedLeadId, selectedLeadPhone, selectedLeadInstanceId, userId]);
 
   useEffect(() => {
     fetchMessages();
@@ -195,16 +209,16 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
   /* ── Polling para novas mensagens ──────────────────────────────── */
   useEffect(() => {
     if (pollingRef.current) clearInterval(pollingRef.current);
-    if (!selectedLead) return;
+    if (!selectedLeadId) return;
 
     pollingRef.current = setInterval(() => {
-      fetchMessages();
-    }, 5000);
+      fetchMessages(true);
+    }, 7000);
 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [selectedLead, fetchMessages]);
+  }, [selectedLeadId, fetchMessages]);
 
   /* ── Pause / Resume AI ──────────────────────────────────────────── */
   const handleTogglePause = async (lead: Lead) => {
@@ -288,7 +302,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
         body: { instance_id: instId, phone, content: text },
       });
       if (error) throw error;
-      await fetchMessages();
+      await fetchMessages(true);
     } catch (err: any) {
       toast({ title: 'Erro ao enviar', description: err.message, variant: 'destructive' });
     } finally {

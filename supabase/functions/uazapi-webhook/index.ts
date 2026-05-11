@@ -1447,7 +1447,23 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       if (vehicle.principal_image) {
         try {
           const caption = `${vehicle.marca} ${vehicle.modelo} ${vehicle.versao} ${vehicle.ano}\n💰 R$ ${vehicle.preco.toLocaleString('pt-BR')}\n🔄 ${vehicle.km.toLocaleString('pt-BR')} km | ⛽ ${vehicle.combustivel} | 🎨 ${vehicle.cor}`;
-          await sendVehicleImage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, vehicle.principal_image, caption);
+          const imageSent = await sendVehicleImage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, vehicle.principal_image, caption);
+          if (imageSent) {
+            await supabase.from('wa_inbox').insert({
+              user_id: waInstance.user_id,
+              instance_id: waInstance.id,
+              phone: phoneNumber,
+              contact_name: pushName || null,
+              direction: 'outgoing',
+              message_type: 'image',
+              content: caption,
+              media_url: vehicle.principal_image,
+              is_read: true,
+              ai_category: 'agent',
+            }).then(({ error }: any) => {
+              if (error) console.error('[uazapi-webhook] wa_inbox image insert error:', error.message);
+            });
+          }
         } catch (imgErr) {
           console.error(`[BNDV-IMG] Erro ao enviar imagem de ${vehicle.label}:`, imgErr);
         }
