@@ -897,6 +897,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   });
 
   // Buscar histórico
+  const { data: pausedLead } = await supabase
+    .from('ai_crm_leads')
+    .select('ai_paused')
+    .eq('agent_id', agent.id)
+    .eq('remote_jid', remoteJid)
+    .maybeSingle();
+
+  if (pausedLead?.ai_paused) {
+    console.log(`[Webhook] IA pausada para ${remoteJid}. Mensagem registrada, resposta automatica ignorada.`);
+    return new Response(JSON.stringify({ ok: true, ai_paused: true }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
   const { data: history } = await supabase.from('wa_chat_history')
     .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(10)
 
