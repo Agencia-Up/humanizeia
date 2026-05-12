@@ -81,10 +81,11 @@ const SELLER_PALETTE = [
 ];
 
 const LIVE_COLUMNS = [
-  { id: 'novo',        title: 'Novos Leads',    main: C.cyan,   light: C.cyanL,   bg: C.cyanBg },
-  { id: 'interessado', title: 'Interessados',   main: C.amber,  light: C.amberL,  bg: C.amberBg },
-  { id: 'qualificado', title: 'Qualificados',   main: C.green,  light: C.greenL,  bg: C.greenBg },
-  { id: 'transferido', title: 'Em Atendimento', main: C.orange, light: C.orangeL, bg: C.orangeBg },
+  { id: 'novo',            title: 'Novos Leads',     main: C.cyan,   light: C.cyanL,   bg: C.cyanBg },
+  { id: 'interessado',     title: 'Interessados',    main: C.amber,  light: C.amberL,  bg: C.amberBg },
+  { id: 'qualificado',     title: 'Qualificados',    main: C.green,  light: C.greenL,  bg: C.greenBg },
+  { id: 'em_atendimento',  title: 'Atendimento IA',  main: C.purple, light: C.purpleL, bg: C.purpleBg },
+  { id: 'transferido',     title: 'Em Atendimento',  main: C.orange, light: C.orangeL, bg: C.orangeBg },
 ];
 
 /* ── helpers ──────────────────────────────────────────── */
@@ -240,9 +241,30 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransf
 /* ── COMPONENTE PRINCIPAL ──────────────────────────────── */
 export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
-  const { isSeller, seller } = useSellerProfile(user?.id);
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [sellerMemberIds, setSellerMemberIds] = useState<string[]>([]);
+
+  // effectiveUserId: master's ID for sellers, own ID for masters
+  // null while sellerProfile is loading to avoid queries with wrong ID
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
+
+  // Fetch all member IDs for the seller (may have records across multiple agents)
+  useEffect(() => {
+    if (!isSeller || !user?.id) { setSellerMemberIds([]); return; }
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('ai_team_members')
+        .select('id')
+        .eq('auth_user_id', user.id);
+      setSellerMemberIds(Array.isArray(data) ? data.map((r: any) => r.id) : []);
+    })();
+  }, [isSeller, user?.id]);
   const [refreshing, setRefreshing] = useState(false);
   const [isPortrait, setIsPortrait] = useState(() => window.innerHeight >= window.innerWidth);
   const [leads, setLeads] = useState<any[]>([]);
@@ -266,28 +288,30 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   useEffect(() => { mutedRef.current = muted; }, [muted]); // mantém ref sempre sincronizada
 
   const fetchLiveData = useCallback(async () => {
-    if (!user) { setLoading(false); return; }
-    // Sellers use the master's user_id for filtering; RLS further restricts rows to only their leads
-    const effectiveUserId = (isSeller && seller?.user_id) ? seller.user_id : user.id;
+    if (!user || !effectiveUserId) { setLoading(false); return; }
     try {
+      // Leads query — sellers only see their own assigned leads
+      let leadsQ = (supabase as any).from('ai_crm_leads')
+        .select('*, agent:wa_ai_agents(name), member:ai_team_members(id, name, whatsapp_number)')
+        .eq('user_id', effectiveUserId).neq('status', 'encerrado')
+        .order('last_interaction_at', { ascending: false });
+      if (isSeller && sellerMemberIds.length > 0) {
+        leadsQ = leadsQ.in('assigned_to_id', sellerMemberIds);
+      }
+
       const [{ data: leadsData }, { data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
-        (supabase as any).from('ai_crm_leads').select('*, agent:wa_ai_agents(name), member:ai_team_members(id, name, whatsapp_number)')
-          .eq('user_id', effectiveUserId).neq('status', 'encerrado').order('last_interaction_at', { ascending: false }),
+        leadsQ,
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
           .eq('user_id', effectiveUserId).order('created_at', { ascending: false }).limit(500),
-        isSeller
-          // Sellers see all team members of their master (for display), RLS allows this
-          ? (supabase as any).from('ai_team_members').select('*').eq('user_id', effectiveUserId)
-              .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true })
-          : (supabase as any).from('ai_team_members').select('*').eq('user_id', user.id)
-              .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
+        (supabase as any).from('ai_team_members').select('*').eq('user_id', effectiveUserId)
+          .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', effectiveUserId),
       ]);
       setLeads(leadsData || []); setTransfers(transfersData || []);
       setTeamMembers(membersData || []); setAgents(agentsData || []);
       setLastUpdatedAt(new Date().toISOString());
     } finally { setLoading(false); }
-  }, [user, isSeller, seller]);
+  }, [user, effectiveUserId, isSeller, sellerMemberIds]);
 
   // Ref estável para o callback — evita recriar subscriptions a cada render
   const fetchLiveDataRef = useRef(fetchLiveData);
@@ -447,7 +471,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   //          + atualiza dados
   // UPDATE / DELETE → só atualiza dados (drag-and-drop não gera alertas)
   useEffect(() => {
-    if (!user) return;
+    if (!user || !effectiveUserId) return;
     const iv = window.setInterval(() => fetchLiveDataRef.current(), 30000); // 30s fallback poll
 
     const triggerNewLeadAlert = () => {
@@ -457,9 +481,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     };
 
     const ch = supabase
-      .channel(`crm-ao-vivo-${user.id}`)   // nome único por usuário evita conflito de canais
+      .channel(`crm-ao-vivo-${user.id}-${effectiveUserId}`)   // nome único por usuário/master
       .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` },
+        { event: 'INSERT', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${effectiveUserId}` },
         (payload) => {
           // Alerta apenas para leads não-encerrados
           if ((payload.new as any)?.status !== 'encerrado') {
@@ -469,21 +493,21 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         }
       )
       .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` },
+        { event: 'UPDATE', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${effectiveUserId}` },
         () => fetchLiveDataRef.current()
       )
       .on('postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` },
+        { event: 'DELETE', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${effectiveUserId}` },
         () => fetchLiveDataRef.current()
       )
       .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${user.id}` },
+        { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${effectiveUserId}` },
         () => fetchLiveDataRef.current()
       )
       .subscribe();
 
     return () => { window.clearInterval(iv); supabase.removeChannel(ch); };
-  }, [user]); // apenas user
+  }, [user, effectiveUserId]);
 
   useEffect(() => {
     const h = () => setIsPortrait(window.innerHeight >= window.innerWidth);
@@ -867,8 +891,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           </span>
         )}
 
-        {/* Export to Marcos button */}
-        <button
+        {/* Export to Marcos button — hidden for sellers (uses master-only crm_leads) */}
+        {!isSeller && <button
           onClick={handleExportToMarcos}
           disabled={exportingMarcos || filteredLeads.length === 0}
           style={{
@@ -889,7 +913,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           title="Exportar leads do período para lista de contatos do Marcos (disparo em massa / follow-up)"
         >
           {exportingMarcos ? '⏳' : '📤'} Exportar para Marcos ({filteredLeads.length})
-        </button>
+        </button>}
       </div>
 
       {/* ── MÉTRICAS ──────────────────────────────── */}
@@ -976,7 +1000,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                                   transferringLeadId={transferringLeadId}
                                   onTransfer={handleManualTransfer}
                                   transfers={transfers}
-                                  dragHandleProps={prov.dragHandleProps}
+                                  dragHandleProps={isSeller ? null : prov.dragHandleProps}
                                   hideTransfer={isSeller}
                                 />
                               </div>
