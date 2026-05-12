@@ -1255,23 +1255,11 @@ async function handleAIAgentReply(
       return;
     }
 
-    // Check business hours
-    if (agent.business_hours_only) {
-      const now = new Date();
-      const hours = now.getHours();
-      const minutes = now.getMinutes();
-      const currentTime = hours * 60 + minutes;
-      
-      const [startH, startM] = (agent.business_hours_start || "08:00").split(":").map(Number);
-      const [endH, endM] = (agent.business_hours_end || "18:00").split(":").map(Number);
-      const startTime = startH * 60 + startM;
-      const endTime = endH * 60 + endM;
-
-      if (currentTime < startTime || currentTime > endTime) {
-        console.log("[ai-agent] Outside business hours, skipping");
-        return;
-      }
-    }
+    // NOTA: business_hours_only NÃO bloqueia mais o atendimento da IA.
+    // A IA responde e transfere leads para vendedores 24/7 via rodízio.
+    // O que pausa fora do horário (19:30–10:11) é apenas o REPASSE
+    // automático por falta de confirmação — controlado pelo
+    // transfer-timeout-checker (edge function separada).
 
     // Fetch conversation history for context (more messages = better context)
     const { data: history } = await supabase
