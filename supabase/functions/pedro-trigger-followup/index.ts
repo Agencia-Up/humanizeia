@@ -3,13 +3,13 @@
  *
  * Disparo MANUAL (pelo botão na tab CRM Avançado do Pedro).
  * Varre `pedro_followup_schedules` por agendamentos pendentes
- * (status='pending') com scheduled_at ≤ now e envia via Evolution API,
- * usando o mesmo padrão de envio do wa-send-reply.
+ * (status='pending') com scheduled_at ≤ now e envia via UazAPI,
+ * usando o mesmo padrão de envio do wa-inbox-webhook (sendAutoReply).
  *
  * Fluxo:
  *   1. Busca agendamentos pendentes (com ou sem instance_id)
  *   2. Se sem instance_id, resolve via agente IA do lead
- *   3. Para cada um, envia mensagem via Evolution API
+ *   3. Para cada um, envia mensagem via UazAPI
  *   4. Marca como 'sent' (sucesso) ou 'failed' (falha)
  *   5. Persiste a mensagem em wa_chat_history
  *   6. Atualiza last_followup_at no lead
@@ -23,66 +23,87 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ── Envio via Evolution API (mesmo padrão do wa-send-reply) ─────────────────
+// ── Envio via UazAPI (mesmo padrão do wa-inbox-webhook) ─────────────────────
 
-async function sendEvolutionText(
-  apiUrl: string,
-  apiKey: string,
+async function sendUazapiTextMessage(
+  baseUrl: string,
+  instKey: string,
   instanceName: string,
   phoneNumber: string,
+  remoteJid: string,
   text: string,
 ): Promise<boolean> {
-  try {
-    const res = await fetch(`${apiUrl}/message/sendText/${instanceName}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: apiKey },
-      body: JSON.stringify({ number: phoneNumber, text }),
-    });
-    if (res.ok) return true;
-    const errBody = await res.text().catch(() => "");
-    console.error(`[followup] Evolution sendText error: ${res.status} - ${errBody}`);
-    return false;
-  } catch (err) {
-    console.error("[followup] Evolution sendText exception:", err);
-    return false;
+  const attempts = [
+    { url: `${baseUrl}/send/text`, body: { number: phoneNumber, text } },
+    { url: `${baseUrl}/send/text`, body: { remoteJid, text } },
+    { url: `${baseUrl}/message/sendText/${instanceName}`, body: { number: phoneNumber, text } },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const res = await fetch(attempt.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "token": instKey, "apikey": instKey },
+        body: JSON.stringify(attempt.body),
+      });
+      if (res.ok) return true;
+      const errBody = await res.text().catch(() => "");
+      console.error(`[followup] UazAPI send error (${attempt.url}): ${res.status} - ${errBody}`);
+    } catch (err) {
+      console.error(`[followup] UazAPI send exception (${attempt.url}):`, err);
+    }
   }
+  return false;
 }
 
-async function sendEvolutionMedia(
-  apiUrl: string,
-  apiKey: string,
+// Envia mídia (imagem, áudio, vídeo) via UazAPI
+async function sendUazapiMediaMessage(
+  baseUrl: string,
+  instKey: string,
   instanceName: string,
   phoneNumber: string,
+  remoteJid: string,
   mediaUrl: string,
-  mediaType: string,
+  mediaType: string, // 'image' | 'audio' | 'video'
   caption?: string,
 ): Promise<boolean> {
   const endpointMap: Record<string, string> = {
-    image: "sendImage",
-    audio: "sendAudio",
-    video: "sendVideo",
+    image: "image",
+    audio: "audio",
+    video: "video",
   };
-  const endpoint = endpointMap[mediaType] || "sendImage";
+  const mediaEndpoint = endpointMap[mediaType] || "image";
 
-  try {
-    const res = await fetch(`${apiUrl}/message/${endpoint}/${instanceName}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: apiKey },
-      body: JSON.stringify({
-        number: phoneNumber,
-        mediatype: mediaType,
-        media: mediaUrl,
-        caption: caption || "",
-      }),
-    });
-    if (res.ok) return true;
-    const errBody = await res.text().catch(() => "");
-    console.error(`[followup] Evolution ${endpoint} error: ${res.status} - ${errBody}`);
-    return false;
-  } catch (err) {
-    console.error(`[followup] Evolution ${endpoint} exception:`, err);
-    return false;
+  const attempts = [
+    {
+      url: `${baseUrl}/send/${mediaEndpoint}`,
+      body: { number: phoneNumber, url: mediaUrl, caption: caption || "" },
+    },
+    {
+      url: `${baseUrl}/send/${mediaEndpoint}`,
+      body: { remoteJid, url: mediaUrl, caption: caption || "" },
+    },
+    {
+      url: `${baseUrl}/message/sendMedia/${instanceName}`,
+      body: { number: phoneNumber, mediatype: mediaEndpoint, media: mediaUrl, caption: caption || "" },
+    },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const res = await fetch(attempt.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "token": instKey, "apikey": instKey },
+        body: JSON.stringify(attempt.body),
+      });
+      if (res.ok) return true;
+      const errBody = await res.text().catch(() => "");
+      console.error(`[followup] UazAPI media error (${attempt.url}): ${res.status} - ${errBody}`);
+    } catch (err) {
+      console.error(`[followup] UazAPI media exception (${attempt.url}):`, err);
+    }
   }
+  return false;
 }
 
 serve(async (req) => {
@@ -137,7 +158,6 @@ serve(async (req) => {
         let instance: any = null;
 
         if (schedule.instance_id) {
-          // Usa instância especificada
           if (instanceCache[schedule.instance_id]) {
             instance = instanceCache[schedule.instance_id];
           } else {
@@ -192,7 +212,7 @@ serve(async (req) => {
           }
         }
 
-        if (!instance?.api_url || !instance?.instance_name) {
+        if (!instance?.api_url) {
           console.error(`[followup] No instance found for schedule ${schedule.id}`);
           await supabase.from("pedro_followup_schedules")
             .update({ status: "failed" })
@@ -203,31 +223,31 @@ serve(async (req) => {
 
         // 3. Extrai dados de envio
         const baseUrl     = instance.api_url.replace(/\/+$/, "");
-        const apiKey      = instance.api_key_encrypted || "";
-        const instName    = instance.instance_name;
+        const instKey     = instance.api_key_encrypted || "";
+        const instName    = instance.instance_name || "";
         const remoteJid   = lead.remote_jid;
         const phoneNumber = remoteJid.split("@")[0];
 
-        // 4. Envia via Evolution API (mesmo padrão do wa-send-reply)
+        // 4. Envia via UazAPI (com ou sem mídia)
         let sent = false;
         const hasMedia = schedule.media_url && schedule.media_type;
 
         if (hasMedia) {
-          sent = await sendEvolutionMedia(
-            baseUrl, apiKey, instName, phoneNumber,
+          sent = await sendUazapiMediaMessage(
+            baseUrl, instKey, instName, phoneNumber, remoteJid,
             schedule.media_url, schedule.media_type,
             schedule.message_template,
           );
           // Se mídia falhar, tenta enviar só texto
           if (!sent) {
-            sent = await sendEvolutionText(
-              baseUrl, apiKey, instName, phoneNumber,
+            sent = await sendUazapiTextMessage(
+              baseUrl, instKey, instName, phoneNumber, remoteJid,
               schedule.message_template,
             );
           }
         } else {
-          sent = await sendEvolutionText(
-            baseUrl, apiKey, instName, phoneNumber,
+          sent = await sendUazapiTextMessage(
+            baseUrl, instKey, instName, phoneNumber, remoteJid,
             schedule.message_template,
           );
         }
@@ -256,7 +276,7 @@ serve(async (req) => {
             instance_id: instName,
             remote_jid:  remoteJid,
             role:        "assistant",
-            content:     `[Follow-up] ${schedule.message_template}`,
+            content:     `[Follow-up manual] ${schedule.message_template}`,
           }),
         ]);
 
