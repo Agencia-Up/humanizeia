@@ -726,21 +726,15 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
 
 function shouldSkipAICategorization(content: string): boolean {
   const normalized = (content || "").trim().toLowerCase();
-  return normalized.startsWith("[imagem recebida") ||
-    normalized.startsWith("[mensagem de audio recebida sem transcricao]") ||
-    normalized.startsWith("[arquivo recebido:");
+  // Apenas documentos pulam categorizacao — imagens e audios sao processados pela IA
+  return normalized.startsWith("[arquivo recebido:");
 }
 
 function getMediaFallbackReply(content: string): string | null {
   const normalized = (content || "").trim().toLowerCase();
 
-  if (normalized.startsWith("[mensagem de audio recebida sem transcricao]")) {
-    return "Recebi seu audio aqui, mas ele chegou sem transcricao pra mim. Se puder, me manda de novo ou escreve rapidinho o ponto principal que eu continuo com voce.";
-  }
-
-  if (normalized.startsWith("[imagem recebida sem legenda]")) {
-    return "Recebi sua imagem aqui. Me diz rapidinho o que voce quer que eu avalie nela que eu sigo com voce.";
-  }
+  // Imagens e audios NAO usam fallback — sao processados pela IA
+  // A IA recebe o texto indicativo e responde naturalmente
 
   if (normalized.startsWith("[arquivo recebido:")) {
     return "Recebi seu arquivo aqui, mas por enquanto eu nao consigo abrir documentos direto. Se quiser, me resume o ponto principal em texto ou audio que eu te ajudo daqui.";
@@ -1366,10 +1360,11 @@ REGRAS AVANÃ‡ADAS DE HUMANIZAÃ‡ÃƒO (PRIORIDADE MÃXIMA):
 - Nunca repita o nome do cliente em toda mensagem
 - Se precisar listar algo, faÃ§a de forma conversacional: "tem o plano X que custa Y, e tem tambÃ©m o Z que..."
 
-[REGRAS DE CONDUTA ANTE MÃDIAS E ARQUIVOS]
-- Se o usuÃ¡rio enviar uma Imagem (serÃ¡ indicado com "[Imagem recebida]"), anÃ¡lise com precisÃ£o fotogrÃ¡fica se conseguir visualizar o anexo no seu array.
-- Se o usuÃ¡rio enviar Ãudio, a transcriÃ§Ã£o Ã© entregue como texto direto para vocÃª interpretar, lide naturalmente como se tivesse ouvido.
-- Se o usuÃ¡rio anexar Documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCÃŠ NÃƒO PODE ABRIR ARQUIVOS e NÃƒO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visÃ£o ou que nÃ£o consegue abrir documentos, sugerindo que o cliente resuma o que hÃ¡ no arquivo ou envie as dÃºvidas em Ã¡udio/texto. Nunca dÃª respostas genÃ©ricas e nunca ofereÃ§a "mais informaÃ§Ãµes" se nÃ£o sabe o conteÃºdo.
+[REGRAS DE CONDUTA ANTE MIDIAS E ARQUIVOS]
+- IMAGEM: quando receber "[Imagem recebida]" ou "[Imagem recebida sem legenda]", voce NAO consegue ver a foto. Responda de forma natural e contextual: se a conversa e sobre veiculos, pergunte "que carro e esse da foto?" ou "e foto do seu carro de troca?". Se tem legenda, use a legenda como contexto. NUNCA diga "nao consigo ver imagens" de forma robotica - seja natural como um vendedor real no WhatsApp.
+- AUDIO: quando receber "[Mensagem de audio recebida sem transcricao]", significa que o audio chegou mas nao foi possivel transcrever. Peca educadamente para o cliente repetir por texto ou mandar outro audio: "opa, seu audio nao chegou nitido aqui, me manda por texto ou tenta de novo?" - NUNCA ignore, NUNCA de respostas genericas.
+- AUDIO TRANSCRITO: quando a transcricao funciona, o texto do audio chega direto pra voce. Responda naturalmente como se tivesse ouvido o audio.
+- DOCUMENTOS/PDFs: (indicado com "[Arquivo recebido: <nome>]"), voce NAO pode abrir arquivos. Peca pro cliente resumir o conteudo em texto ou audio.
 
 RESPOSTAS ANTERIORES DO AGENTE (para NÃƒO repetir frases/aberturas):
 ${recentReplies.slice(0, 5).map((r, i) => `[${i+1}]: ${r.substring(0, 80)}`).join("\n")}
@@ -1456,13 +1451,15 @@ FOTOS DE VEICULOS:
 Quando a consulta de estoque retornar veiculos, cada veiculo tera um campo "fotos" com URLs de imagens reais.
 Use a ferramenta "enviar_foto" para enviar fotos ao cliente pelo WhatsApp.
 
-REGRAS PARA FOTOS:
-- Quando o cliente pedir fotos, use "enviar_foto" com as URLs do campo "fotos".
-- Envie 1 foto por chamada da ferramenta.
-- Sempre adicione uma legenda descritiva.
+REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
+- NUNCA cole ou escreva URLs de fotos na mensagem de texto. O cliente nao quer ver links.
+- SEMPRE use a ferramenta "enviar_foto" para enviar cada foto. Isso envia a IMAGEM real no WhatsApp.
+- Envie 1 foto por chamada da ferramenta. Para multiplas fotos, chame a ferramenta varias vezes.
+- Sempre adicione uma legenda descritiva (ex: "Vista frontal do Onix 2024", "Interior em couro").
 - Se nao ha fotos disponiveis, informe ao cliente.
 - SEMPRE que apresentar um veiculo com fotos, OFERECA envia-las proativamente.
 - Se o cliente pedir fotos sem consulta previa, primeiro use "consultar_estoque_bndv".
+- Na sua resposta em texto, diga algo como "mandei as fotos ai" ou "olha so as fotos" — SEM colar nenhum link.
 `;
 
     const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction + crmToolInstruction;
