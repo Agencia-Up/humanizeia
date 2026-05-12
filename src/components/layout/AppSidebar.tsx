@@ -83,14 +83,14 @@ const allSellerSystemItems = [
 ];
 
 // ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
-const marcosSubItems = [
-  { title: 'CRM',             url: '/crm',               icon: Kanban },
-  { title: 'Formulários',     url: '/crm/formularios',   icon: ClipboardList },
-  { title: 'Contatos',        url: '/whatsapp/contacts', icon: Users },
-  { title: 'Disparo em Massa',url: '/whatsapp/broadcast',icon: Send },
-  { title: 'Inbox',           url: '/whatsapp/inbox',    icon: Inbox },
-  { title: 'Instâncias',      url: '/whatsapp/instances',icon: Smartphone },
-  { title: 'Automações',      url: '/whatsapp/automations',icon: Zap },
+const marcosSubItems: { title: string; url: string; icon: any; featureKey: keyof VisibleFeatures }[] = [
+  { title: 'CRM',             url: '/crm',               icon: Kanban,        featureKey: 'marcos_crm' },
+  { title: 'Formulários',     url: '/crm/formularios',   icon: ClipboardList, featureKey: 'marcos_formularios' },
+  { title: 'Contatos',        url: '/whatsapp/contacts', icon: Users,         featureKey: 'marcos_contatos' },
+  { title: 'Disparo em Massa',url: '/whatsapp/broadcast',icon: Send,          featureKey: 'marcos_disparo' },
+  { title: 'Inbox',           url: '/whatsapp/inbox',    icon: Inbox,         featureKey: 'marcos_inbox' },
+  { title: 'Instâncias',      url: '/whatsapp/instances',icon: Smartphone,    featureKey: 'marcos_instancias' },
+  { title: 'Automações',      url: '/whatsapp/automations',icon: Zap,         featureKey: 'marcos_automacoes' },
 ];
 
 // ── Sistema ───────────────────────────────────────────────────────────────────
@@ -204,6 +204,67 @@ function NavMarcosExpandable({ collapsed }: { collapsed?: boolean }) {
       {isOpen && (
         <div className="ml-4 mt-0.5 border-l border-border/40 pl-2 space-y-0.5">
           {marcosSubItems.map(sub => (
+            <NavLink
+              key={sub.url}
+              to={sub.url}
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-all"
+              activeClassName="text-primary font-medium bg-primary/10"
+            >
+              <sub.icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{sub.title}</span>
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </SidebarMenuItem>
+  );
+}
+
+// ── NavMarcosSellerExpandable — Marcos filtrado por visibleFeatures ───────────
+function NavMarcosSellerExpandable({ collapsed, visibleFeatures }: { collapsed?: boolean; visibleFeatures: VisibleFeatures }) {
+  const { openSidebarGroups, toggleSidebarGroup } = useAppStore();
+  const key = 'marcos-seller-sub';
+  const isOpen = openSidebarGroups.includes(key);
+
+  const filteredSubItems = marcosSubItems.filter(
+    item => visibleFeatures[item.featureKey]
+  );
+
+  if (filteredSubItems.length === 0) return null;
+
+  if (collapsed) {
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton asChild tooltip="Marcos — CRM & Leads">
+          <NavLink
+            to={filteredSubItems[0].url}
+            className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/60 hover:text-foreground"
+            activeClassName="bg-primary/10 text-primary font-medium border-l-2 border-primary pl-[9px]"
+          >
+            <span className="text-base leading-none">🤝</span>
+          </NavLink>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
+
+  return (
+    <SidebarMenuItem>
+      <div
+        className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground cursor-pointer hover:bg-accent/60 hover:text-foreground transition-all select-none"
+        onClick={() => toggleSidebarGroup(key)}
+      >
+        <span className="text-sm leading-none w-5 text-center">🤝</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium leading-tight">Marcos</p>
+          <p className="text-[10px] text-muted-foreground/70 leading-tight">CRM & Leads</p>
+        </div>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`} />
+      </div>
+
+      {isOpen && (
+        <div className="ml-4 mt-0.5 border-l border-border/40 pl-2 space-y-0.5">
+          {filteredSubItems.map(sub => (
             <NavLink
               key={sub.url}
               to={sub.url}
@@ -367,7 +428,7 @@ export function AppSidebar() {
       <SidebarContent className={`py-2 ${collapsed ? 'px-1' : 'px-2'}`}>
 
         {sellerLoading ? null : isSeller ? (
-          /* ── SELLER: Pedro + itens de sistema filtrados por visibleFeatures ── */
+          /* ── SELLER: Pedro + Marcos + itens de sistema filtrados por visibleFeatures ── */
           <>
             {visibleFeatures.sidebar_dashboard && (
               <NavGroup label="Painel" collapsed={collapsed}>
@@ -377,6 +438,11 @@ export function AppSidebar() {
             <NavGroup label="Pedro" collapsed={collapsed}>
               <NavPedroSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
             </NavGroup>
+            {marcosSubItems.some(i => visibleFeatures[i.featureKey]) && (
+              <NavGroup label="Marcos CRM" collapsed={collapsed}>
+                <NavMarcosSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
+              </NavGroup>
+            )}
             {(() => {
               const sellerSysItems = allSellerSystemItems.filter(i => visibleFeatures[i.featureKey]);
               return sellerSysItems.length > 0 ? (

@@ -22,6 +22,14 @@ export interface VisibleFeatures {
   tab_agente_ia: boolean;
   tab_crm_ao_vivo: boolean;
   tab_vendedores: boolean;
+  // Marcos — sub-itens CRM & WhatsApp
+  marcos_crm: boolean;
+  marcos_formularios: boolean;
+  marcos_contatos: boolean;
+  marcos_disparo: boolean;
+  marcos_inbox: boolean;
+  marcos_instancias: boolean;
+  marcos_automacoes: boolean;
   // Sidebar
   sidebar_dashboard: boolean;
   sidebar_treinamento: boolean;
@@ -38,6 +46,13 @@ export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   tab_agente_ia: false,
   tab_crm_ao_vivo: false,
   tab_vendedores: false,
+  marcos_crm: false,
+  marcos_formularios: false,
+  marcos_contatos: false,
+  marcos_disparo: false,
+  marcos_inbox: false,
+  marcos_instancias: false,
+  marcos_automacoes: false,
   sidebar_dashboard: false,
   sidebar_treinamento: false,
   sidebar_meu_plano: false,

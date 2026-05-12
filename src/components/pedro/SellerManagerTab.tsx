@@ -38,7 +38,7 @@ interface SellerMember {
 }
 
 // ── Mapeamento de features para labels legíveis ────────────────────────────
-const FEATURE_LABELS: { key: keyof VisibleFeatures; label: string; group: 'tab' | 'sidebar' }[] = [
+const FEATURE_LABELS: { key: keyof VisibleFeatures; label: string; group: 'tab' | 'marcos' | 'sidebar' }[] = [
   { key: 'tab_crm',            label: 'Meus Leads (CRM)',        group: 'tab' },
   { key: 'tab_inbox',          label: 'Inbox',                   group: 'tab' },
   { key: 'tab_performance',    label: 'Performance',             group: 'tab' },
@@ -46,6 +46,13 @@ const FEATURE_LABELS: { key: keyof VisibleFeatures; label: string; group: 'tab' 
   { key: 'tab_crm_ao_vivo',    label: 'CRM ao Vivo',             group: 'tab' },
   { key: 'tab_instancias',     label: 'Instâncias WhatsApp',     group: 'tab' },
   { key: 'tab_vendedores',     label: 'Vendedores',              group: 'tab' },
+  { key: 'marcos_crm',         label: 'CRM (Kanban)',            group: 'marcos' },
+  { key: 'marcos_formularios', label: 'Formulários',             group: 'marcos' },
+  { key: 'marcos_contatos',    label: 'Contatos',                group: 'marcos' },
+  { key: 'marcos_disparo',     label: 'Disparo em Massa',        group: 'marcos' },
+  { key: 'marcos_inbox',       label: 'Inbox WhatsApp',          group: 'marcos' },
+  { key: 'marcos_instancias',  label: 'Instâncias',              group: 'marcos' },
+  { key: 'marcos_automacoes',  label: 'Automações',              group: 'marcos' },
   { key: 'sidebar_dashboard',     label: 'Dashboard',            group: 'sidebar' },
   { key: 'sidebar_treinamento',   label: 'Treinamento',          group: 'sidebar' },
   { key: 'sidebar_meu_plano',     label: 'Meu Plano',            group: 'sidebar' },
@@ -580,6 +587,25 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
               </p>
               <div className="space-y-2">
                 {FEATURE_LABELS.filter(f => f.group === 'tab').map(f => (
+                  <div key={f.key} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
+                    <span className="text-sm text-foreground">{f.label}</span>
+                    <Switch
+                      checked={configFeatures[f.key]}
+                      onCheckedChange={() => handleToggleFeature(f.key)}
+                      className="scale-90"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Marcos */}
+            <div>
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Marcos — CRM & WhatsApp
+              </p>
+              <div className="space-y-2">
+                {FEATURE_LABELS.filter(f => f.group === 'marcos').map(f => (
                   <div key={f.key} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
                     <span className="text-sm text-foreground">{f.label}</span>
                     <Switch
