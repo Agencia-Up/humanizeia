@@ -811,17 +811,16 @@ async function sendToUazAPI(
   const number = phone.replace(/\D/g, "");
   const token = instance.api_key_encrypted;
 
+  const authHeaders = { "Content-Type": "application/json", token, apikey: token };
+
   if (mediaUrl && mediaType) {
-    // Try UazAPI media endpoint first
-    const mediaEndpoint = mediaType === "image" ? "image" :
-                          mediaType === "video" ? "video"  :
-                          mediaType === "audio" ? "audio"  : "document";
+    // UazAPI V6: unified /send/media endpoint for all media types
     const mediaResponse = await fetchWithTimeout(
-      `${apiUrl}/send/${mediaEndpoint}`,
+      `${apiUrl}/send/media`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", token },
-        body: JSON.stringify({ number, url: mediaUrl, caption: text || "" }),
+        headers: authHeaders,
+        body: JSON.stringify({ number, url: mediaUrl, type: mediaType, caption: text || "" }),
       },
       OUTBOUND_FETCH_TIMEOUT_MS
     ).catch(() => null);
@@ -831,13 +830,29 @@ async function sendToUazAPI(
       return { remoteMessageId: data?.messageId || data?.id || null };
     }
 
+    // Fallback attempt 2: alternate body shape
+    const mediaResponse2 = await fetchWithTimeout(
+      `${apiUrl}/send/media`,
+      {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ number, media: mediaUrl, mediatype: mediaType, caption: text || "" }),
+      },
+      OUTBOUND_FETCH_TIMEOUT_MS
+    ).catch(() => null);
+
+    if (mediaResponse2 && mediaResponse2.ok) {
+      const data = await mediaResponse2.json().catch(() => ({}));
+      return { remoteMessageId: data?.messageId || data?.id || null };
+    }
+
     // Fallback: send text with media URL appended
     const fallbackText = text ? `${text}\n\n${mediaUrl}` : mediaUrl!;
     const fallbackResp = await fetchWithTimeout(
       `${apiUrl}/send/text`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", token },
+        headers: authHeaders,
         body: JSON.stringify({ number, text: fallbackText }),
       },
       OUTBOUND_FETCH_TIMEOUT_MS
@@ -855,7 +870,7 @@ async function sendToUazAPI(
     `${apiUrl}/send/text`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", token },
+      headers: authHeaders,
       body: JSON.stringify({ number, text }),
     },
     OUTBOUND_FETCH_TIMEOUT_MS
