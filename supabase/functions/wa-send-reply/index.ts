@@ -45,13 +45,38 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch instance (RLS ensures ownership)
-    const { data: instance, error: instErr } = await supabase
+    // Fetch instance — allow seller to use master's instances
+    // First try with user's own ID
+    let { data: instance, error: instErr } = await supabase
       .from("wa_instances")
       .select("*")
       .eq("id", instance_id)
       .eq("user_id", userId)
       .single();
+
+    // If not found, check if user is a seller and try with manager's ID
+    if (!instance) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role, manager_id")
+        .eq("id", userId)
+        .single();
+
+      if (profile?.role === "seller" && profile.manager_id) {
+        const svcSupabase = createClient(
+          Deno.env.get("SUPABASE_URL")!,
+          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        );
+        const { data: masterInst, error: masterErr } = await svcSupabase
+          .from("wa_instances")
+          .select("*")
+          .eq("id", instance_id)
+          .eq("user_id", profile.manager_id)
+          .single();
+        instance = masterInst;
+        instErr = masterErr;
+      }
+    }
 
     if (instErr || !instance) {
       return new Response(JSON.stringify({ error: "Instance not found" }), {
@@ -63,40 +88,52 @@ Deno.serve(async (req) => {
     const apiUrl = (instance.api_url as string).replace(/\/+$/, "");
     const number = phone.replace(/\D/g, "");
 
-    // Send via UazAPI
+    // Send via UazAPI — multiple endpoint fallbacks for robustness
+    const instKey = instance.api_key_encrypted as string;
+    const instName = instance.instance_name as string;
+    const sendHeaders = { "Content-Type": "application/json", token: instKey, apikey: instKey };
+
     let sendResult;
     if (media_url && media_type) {
-      const endpoint =
-        media_type === "image" ? "sendImage" :
-        media_type === "video" ? "sendVideo" :
-        media_type === "audio" ? "sendAudio" : "sendDocument";
+      const mediaEndpoint =
+        media_type === "image" ? "image" :
+        media_type === "video" ? "video" :
+        media_type === "audio" ? "audio" : "image";
 
-      const resp = await fetch(`${apiUrl}/message/${endpoint}/${instance.instance_name}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: instance.api_key_encrypted as string,
-        },
-        body: JSON.stringify({ number, mediatype: media_type, media: media_url, caption: content || "" }),
-      });
-      if (!resp.ok) throw new Error(`UazAPI error: ${resp.status} - ${await resp.text()}`);
-      sendResult = await resp.json();
+      const mediaAttempts = [
+        { url: `${apiUrl}/send/${mediaEndpoint}`, body: { number, url: media_url, caption: content || "" } },
+        { url: `${apiUrl}/message/send${mediaEndpoint.charAt(0).toUpperCase() + mediaEndpoint.slice(1)}/${instName}`, body: { number, mediatype: media_type, media: media_url, caption: content || "" } },
+      ];
+
+      let lastErr = "";
+      for (const attempt of mediaAttempts) {
+        try {
+          const resp = await fetch(attempt.url, { method: "POST", headers: sendHeaders, body: JSON.stringify(attempt.body) });
+          if (resp.ok) { sendResult = await resp.json(); break; }
+          lastErr = `${resp.status} - ${await resp.text()}`;
+        } catch (e) { lastErr = e instanceof Error ? e.message : String(e); }
+      }
+      if (!sendResult) throw new Error(`UazAPI media error: ${lastErr}`);
     } else {
-      const resp = await fetch(`${apiUrl}/message/sendText/${instance.instance_name}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: instance.api_key_encrypted as string,
-        },
-        body: JSON.stringify({ number, text: content }),
-      });
-      if (!resp.ok) throw new Error(`UazAPI error: ${resp.status} - ${await resp.text()}`);
-      sendResult = await resp.json();
+      const textAttempts = [
+        { url: `${apiUrl}/send/text`, body: { number, text: content } },
+        { url: `${apiUrl}/message/sendText/${instName}`, body: { number, text: content } },
+      ];
+
+      let lastErr = "";
+      for (const attempt of textAttempts) {
+        try {
+          const resp = await fetch(attempt.url, { method: "POST", headers: sendHeaders, body: JSON.stringify(attempt.body) });
+          if (resp.ok) { sendResult = await resp.json(); break; }
+          lastErr = `${resp.status} - ${await resp.text()}`;
+        } catch (e) { lastErr = e instanceof Error ? e.message : String(e); }
+      }
+      if (!sendResult) throw new Error(`UazAPI text error: ${lastErr}`);
     }
 
     // Save to wa_inbox as outgoing
     const { error: insertErr } = await supabase.from("wa_inbox").insert({
-      user_id: userId,
+      user_id: instance.user_id || userId,
       instance_id,
       phone: number,
       direction: "outgoing",

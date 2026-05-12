@@ -163,11 +163,13 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       .eq('is_active', true)
       .order('instance_name');
     let all = (data || []) as unknown as WaInstance[];
-    // Vendedor: filtra só a instância que contém o número dele
+    // Vendedor: tenta filtrar pela instância que contém o número dele
+    // Se nenhuma instância tiver phone_number preenchido, mantém todas
     if (isSeller && seller?.whatsapp_number) {
-      all = all.filter(i =>
+      const filtered = all.filter(i =>
         i.phone_number?.replace(/\D/g, '').endsWith(seller.whatsapp_number.slice(-8))
       );
+      if (filtered.length > 0) all = filtered;
     }
     setAllInstances(all);
     setInstances(all.filter(i => i.status === 'connected'));
