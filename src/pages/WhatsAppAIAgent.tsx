@@ -54,11 +54,14 @@ interface Instance {
 }
 
 const MODEL_LABELS: Record<string, { short: string; color: string }> = {
+  'anthropic/claude-3-5-sonnet-20241022': { short: 'Claude 3.5', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30' },
+  'anthropic/claude-3-5-sonnet': { short: 'Claude 3.5', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30' },
   'openai/gpt-4o': { short: 'GPT-4o', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' },
   'openai/gpt-4o-mini': { short: 'GPT-4o Mini', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' },
-  'google/gemini-2.0-flash': { short: 'Gemini Flash', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+  'google/gemini-2.5-pro': { short: 'Gemini Pro', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+  'google/gemini-2.5-flash': { short: 'Gemini Flash', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+  'google/gemini-2.0-flash': { short: 'Gemini 2.0', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
   'google/gemini-3-flash-preview': { short: 'Gemini 3', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
-  'anthropic/claude-3-5-sonnet': { short: 'Claude 3.5', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30' },
   'deepseek/deepseek-v3': { short: 'DeepSeek V3', color: 'bg-orange-500/20 text-orange-400 border-orange-500/30' },
 };
 

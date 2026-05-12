@@ -1594,7 +1594,15 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
 
     if (!mediaFallbackReply && isAnthropicModel) {
       // â"€â"€ Direct Anthropic API call with tool calling â"€â"€
-      const anthropicModel = rawModel.replace("anthropic/", "");
+      const anthropicModelRaw = rawModel.replace("anthropic/", "");
+      // Normalize short aliases to full valid model IDs
+      const anthropicModelMap: Record<string, string> = {
+        "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3-sonnet": "claude-3-sonnet-20240229",
+        "claude-3-haiku": "claude-3-haiku-20240307",
+      };
+      const anthropicModel = anthropicModelMap[anthropicModelRaw] || anthropicModelRaw;
       const anthropicMessages = [
         ...historyMessages.slice(-14).map((m: any) => ({
           role: m.role === "system" ? "user" : m.role,
@@ -1673,6 +1681,8 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
       const modelMap: Record<string, string> = {
         "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
         "gemini-3-flash-preview": "google/gemini-2.5-flash",
+        "google/gemini-2.0-flash": "google/gemini-2.5-flash",
+        "openai/gpt-3.5-turbo": "openai/gpt-4o-mini",
         "openai/gpt-5": "google/gemini-2.5-pro",
         "openai/gpt-5-mini": "google/gemini-2.5-flash",
         "openai/gpt-5-nano": "google/gemini-2.5-flash-lite",

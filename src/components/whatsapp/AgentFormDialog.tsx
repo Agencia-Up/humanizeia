@@ -90,11 +90,11 @@ Informações do produto/serviço:
 [EDITE AQUI COM AS INFORMAÇÕES DO SEU NEGÓCIO]`;
 
 const MODEL_OPTIONS = [
-  { value: 'openai/gpt-4o', label: 'GPT-4o (Alta Qualidade)' },
-  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Recomendado)' },
-  { value: 'openai/gpt-3.5-turbo', label: 'GPT-3.5 Turbo (Legado)' },
-  { value: 'google/gemini-2.0-flash', label: 'Gemini 2.0 Flash (Alternativo)' },
-  { value: 'anthropic/claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
+  { value: 'anthropic/claude-3-5-sonnet-20241022', label: '🏆 Claude 3.5 Sonnet (Melhor p/ SDR)' },
+  { value: 'openai/gpt-4o', label: '⭐ GPT-4o (Alta Qualidade)' },
+  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Custo-Beneficio)' },
+  { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro (Google Premium)' },
+  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Rapido e Economico)' },
 ];
 
 const AGENT_TYPES = [
