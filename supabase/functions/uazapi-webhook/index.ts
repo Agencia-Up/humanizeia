@@ -807,21 +807,87 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   if (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image') {
     let base64 = rawMsgObj?.base64 || rawMsgObj?.message?.base64 || '';
 
-    // Se não veio base64, tentar download pela uazapi
+    // Se não veio base64, tentar download pela UazAPI V6
     if (!base64 && messageId) {
-      console.log(`[Webhook] Baixando mídia ID: ${messageId}`);
+      console.log(`[Webhook] Baixando mídia ID: ${messageId}, type: ${msgType}`);
+
+      // Reconstruct the WhatsApp message key for the download API
+      const msgKey = {
+        remoteJid: remoteJid,
+        fromMe: false,
+        id: messageId,
+      };
+
+      // Build the inner message object based on type
+      const innerMessage: Record<string, any> = {};
+      if (msgType.includes('image') || msgType === 'imageMessage') {
+        innerMessage.imageMessage = rawMsgObj?.message?.imageMessage || rawMsgObj?.imageMessage || { mimetype: rawMsgObj?.mimetype || 'image/jpeg' };
+      } else if (msgType.includes('audio') || msgType === 'ptt' || msgType === 'audioMessage') {
+        innerMessage.audioMessage = rawMsgObj?.message?.audioMessage || rawMsgObj?.audioMessage || { mimetype: rawMsgObj?.mimetype || 'audio/ogg; codecs=opus', ptt: msgType === 'ptt' };
+      }
+
+      // Attempt 1: UazAPI V6 endpoint /chat/getBase64FromMediaMessage (same as wa-inbox-webhook)
       try {
-        const dRes = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
+        console.log(`[Webhook] Tentativa 1: /chat/getBase64FromMediaMessage/${instanceName}`);
+        const dRes = await fetch(`${baseUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-          body: JSON.stringify({ id: messageId, return_base64: true })
+          body: JSON.stringify({ message: { key: msgKey, message: innerMessage } })
         });
         if (dRes.ok) {
           const dData = await dRes.json();
-          base64 = dData.base64 || dData.file || '';
+          base64 = dData.base64 || dData.data?.base64 || dData.mediaBase64 || '';
+          console.log(`[Webhook] Mídia baixada via getBase64FromMediaMessage, length: ${base64.length}`);
+        } else {
+          const errText = await dRes.text();
+          console.log(`[Webhook] getBase64FromMediaMessage falhou: ${dRes.status} - ${errText}`);
         }
       } catch (err) {
-        console.error('[Webhook] Falha no download de mídia:', err);
+        console.error('[Webhook] Falha no getBase64FromMediaMessage:', err);
+      }
+
+      // Attempt 2: Retry with just the key (some UazAPI versions accept this)
+      if (!base64) {
+        try {
+          console.log(`[Webhook] Tentativa 2: /chat/getBase64FromMediaMessage/${instanceName} (only key)`);
+          const dRes2 = await fetch(`${baseUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+            body: JSON.stringify({ message: { key: msgKey } })
+          });
+          if (dRes2.ok) {
+            const dData2 = await dRes2.json();
+            base64 = dData2.base64 || dData2.data?.base64 || dData2.mediaBase64 || '';
+            console.log(`[Webhook] Mídia baixada via tentativa 2, length: ${base64.length}`);
+          } else {
+            await dRes2.text(); // consume body
+          }
+        } catch (err) {
+          console.error('[Webhook] Falha na tentativa 2:', err);
+        }
+      }
+
+      // Attempt 3: Legacy /message/download endpoint (fallback)
+      if (!base64) {
+        try {
+          console.log(`[Webhook] Tentativa 3 (legado): /message/download`);
+          const dRes3 = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+            body: JSON.stringify({ id: messageId, return_base64: true })
+          });
+          if (dRes3.ok) {
+            const dData3 = await dRes3.json();
+            base64 = dData3.base64 || dData3.file || '';
+            console.log(`[Webhook] Mídia baixada via legado, length: ${base64.length}`);
+          }
+        } catch (err) {
+          console.error('[Webhook] Falha no download legado:', err);
+        }
+      }
+
+      if (!base64) {
+        console.error(`[Webhook] FALHA: Não foi possível baixar mídia ${msgType} ID: ${messageId} após todas as tentativas`);
       }
     }
 
@@ -860,7 +926,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   }
 
   if (!finalUserText && typeof userMessageContentForOpenAi === 'string') {
-    console.log('[Webhook] Empty text after media processing');
+    const isMediaMsg = (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image');
+    if (isMediaMsg) {
+      console.error(`[Webhook] ⚠️ Mídia ${msgType} recebida mas não foi possível processar (download/transcrição falhou). Mensagem ignorada.`);
+    } else {
+      console.log('[Webhook] Empty text message — ignorando');
+    }
     return new Response('Empty text', { headers: corsHeaders });
   }
 
@@ -878,14 +949,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   })
 
   // Salvar mensagem RECEBIDA no wa_inbox (para aparecer no Inbox do Marcos)
+  const incomingMediaType = (msgType.includes('audio') || msgType === 'ptt') ? 'audio' : (msgType.includes('image') ? 'image' : 'text');
+  // Para mídia de imagem, extrair URL se disponível no payload (UazAPI pode enviar directUrl)
+  const incomingMediaUrl = rawMsgObj?.mediaUrl || rawMsgObj?.directUrl || rawMsgObj?.media_url || rawMsgObj?.url || null;
   await supabase.from('wa_inbox').insert({
     user_id: waInstance.user_id,
     instance_id: waInstance.id,
     phone: phoneNumber,
     contact_name: pushName || null,
     direction: 'incoming',
-    message_type: (msgType.includes('audio') || msgType === 'ptt') ? 'audio' : (msgType.includes('image') ? 'image' : 'text'),
-    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[Mídia recebida]',
+    message_type: incomingMediaType,
+    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : (incomingMediaType === 'image' ? '[Imagem recebida]' : '[Áudio recebido]'),
+    media_url: incomingMediaUrl,
     is_read: false,
     remote_message_id: messageId || null,
   }).then(({ error }: any) => {
@@ -963,8 +1038,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   if (aiModel.startsWith('openai/')) {
     aiModel = aiModel.replace('openai/', '');
   } else if (aiModel.includes('google/') || aiModel.includes('anthropic/')) {
-    console.log(`[Webhook] Aviso: Modelo externo (${aiModel}) detectado no endpoint OpenAI nativo. Fazendo fallback para gpt-4o-mini para evitar falha.`);
-    aiModel = 'gpt-4o-mini';
+    // Fallback para gpt-4o (NÃO gpt-4o-mini) para manter capacidade de visão/imagem
+    console.log(`[Webhook] Aviso: Modelo externo (${aiModel}) detectado no endpoint OpenAI nativo. Fazendo fallback para gpt-4o (com visão).`);
+    aiModel = 'gpt-4o';
+  }
+
+  // Se temos uma imagem para analisar, garantir que o modelo suporta visão
+  const hasImageContent = Array.isArray(userMessageContentForOpenAi) && userMessageContentForOpenAi.some((c: any) => c.type === 'image_url');
+  if (hasImageContent && (aiModel === 'gpt-4o-mini' || aiModel === 'gpt-3.5-turbo')) {
+    console.log(`[Webhook] Imagem detectada — upgrade de ${aiModel} para gpt-4o para suporte a visão`);
+    aiModel = 'gpt-4o';
+  }
+
+  if (hasImageContent) {
+    console.log(`[Webhook] 🖼️ Enviando imagem para análise com modelo: ${aiModel}`);
   }
 
   const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
