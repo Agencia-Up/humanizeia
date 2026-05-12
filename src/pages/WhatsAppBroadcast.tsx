@@ -301,6 +301,50 @@ Não numere as variações. Não inclua explicações adicionais.`
           ))}
         </div>
 
+        {/* Mini Tutorial: Boas Práticas Anti-Bloqueio */}
+        <Card className="border-amber-500/20 bg-amber-500/5">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🛡️</span>
+              <h3 className="text-sm font-bold text-amber-300">Boas Práticas para Não Tomar Bloqueio</h3>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground">
+              <div className="flex gap-2 items-start">
+                <span className="text-amber-400 shrink-0 mt-0.5">1.</span>
+                <p><strong className="text-foreground">Delay mínimo de 30s:</strong> Configure pelo menos 30-60s entre mensagens. Envios rápidos demais acionam o anti-spam do WhatsApp.</p>
+              </div>
+              <div className="flex gap-2 items-start">
+                <span className="text-amber-400 shrink-0 mt-0.5">2.</span>
+                <p><strong className="text-foreground">Máximo 200/dia por número:</strong> Não ultrapasse 200 mensagens por número por dia. Use rodízio se precisar enviar mais.</p>
+              </div>
+              <div className="flex gap-2 items-start">
+                <span className="text-amber-400 shrink-0 mt-0.5">3.</span>
+                <p><strong className="text-foreground">Ative o aquecimento:</strong> Números novos devem começar com 20-50 envios/dia e ir aumentando gradualmente ao longo de 7 dias.</p>
+              </div>
+              <div className="flex gap-2 items-start">
+                <span className="text-amber-400 shrink-0 mt-0.5">4.</span>
+                <p><strong className="text-foreground">Varie as mensagens:</strong> Use o prompt IA com nível Moderado ou Criativo. Mensagens iguais são detectadas como spam.</p>
+              </div>
+              <div className="flex gap-2 items-start">
+                <span className="text-amber-400 shrink-0 mt-0.5">5.</span>
+                <p><strong className="text-foreground">Horário comercial:</strong> Envie entre 8h-18h. Disparos de madrugada aumentam denúncias e bloqueios.</p>
+              </div>
+              <div className="flex gap-2 items-start">
+                <span className="text-amber-400 shrink-0 mt-0.5">6.</span>
+                <p><strong className="text-foreground">Evite links encurtados:</strong> Links do bit.ly, t.me e similares são filtrados pelo WhatsApp. Use links diretos.</p>
+              </div>
+              <div className="flex gap-2 items-start">
+                <span className="text-amber-400 shrink-0 mt-0.5">7.</span>
+                <p><strong className="text-foreground">Limpe sua lista:</strong> Remova números inválidos e contatos que não interagem. Alta taxa de erro = bloqueio.</p>
+              </div>
+              <div className="flex gap-2 items-start">
+                <span className="text-amber-400 shrink-0 mt-0.5">8.</span>
+                <p><strong className="text-foreground">Use opt-out:</strong> Ative os botões de opt-out para dar opção ao contato. Isso reduz denúncias drasticamente.</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[

@@ -478,7 +478,7 @@ export function CampaignFormDialog({
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={startDate} onSelect={setStartDate} disabled={d => d < new Date()} initialFocus className={cn("p-3 pointer-events-auto")} />
+                      <Calendar mode="single" selected={startDate} onSelect={setStartDate} disabled={d => { const today = new Date(); today.setHours(0,0,0,0); return d < today; }} initialFocus className={cn("p-3 pointer-events-auto")} />
                     </PopoverContent>
                   </Popover>
                   <Input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-28" />
@@ -502,7 +502,7 @@ export function CampaignFormDialog({
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={endDate} onSelect={setEndDate} disabled={d => d < new Date()} initialFocus className={cn("p-3 pointer-events-auto")} />
+                      <Calendar mode="single" selected={endDate} onSelect={setEndDate} disabled={d => { const today = new Date(); today.setHours(0,0,0,0); return d < today; }} initialFocus className={cn("p-3 pointer-events-auto")} />
                     </PopoverContent>
                   </Popover>
                   <Input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-28" />
