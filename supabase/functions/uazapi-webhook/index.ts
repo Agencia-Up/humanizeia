@@ -818,9 +818,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       console.log(`[Webhook] Baixando mídia ID: ${messageId}, type: ${msgType}`);
 
       try {
-        const dRes = await fetch(`${baseUrl}/message/download`, {
+        const dRes = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'token': instKey },
+          headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
           body: JSON.stringify({ id: messageId, return_base64: true })
         });
 
