@@ -1080,11 +1080,28 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
 
+      // Resolve agent_id: team member > any member > first active agent
+      const selectedMember = memberId ? teamMembers.find(m => m.id === memberId) : null;
+      let agentId = selectedMember?.agent_id
+        || teamMembers.find(m => m.agent_id)?.agent_id
+        || null;
+      if (!agentId) {
+        const { data: firstAgent } = await (supabase as any)
+          .from('wa_ai_agents').select('id').eq('user_id', effectiveUserId).eq('is_active', true).limit(1).single();
+        agentId = firstAgent?.id || null;
+      }
+      if (!agentId) {
+        toast({ title: 'Nenhum agente IA configurado', description: 'Crie um agente IA antes de importar leads.', variant: 'destructive' });
+        setBulkSaving(false);
+        return;
+      }
+
       // Insert in batches of 50
       const batchSize = 50;
       for (let i = 0; i < validLeads.length; i += batchSize) {
         const batch = validLeads.slice(i, i + batchSize).map(l => ({
           user_id:     effectiveUserId,
+          agent_id:    agentId,
           lead_name:   l.name,
           remote_jid:  `${l.phone}@s.whatsapp.net`,
           status_crm:  'novo',
@@ -1122,8 +1139,26 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       const effectiveUserId = isSeller
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
+
+      // Resolve agent_id: team member > any member > first active agent
+      const selectedMember = memberId ? teamMembers.find(m => m.id === memberId) : null;
+      let agentId = selectedMember?.agent_id
+        || teamMembers.find(m => m.agent_id)?.agent_id
+        || null;
+      if (!agentId) {
+        const { data: firstAgent } = await (supabase as any)
+          .from('wa_ai_agents').select('id').eq('user_id', effectiveUserId).eq('is_active', true).limit(1).single();
+        agentId = firstAgent?.id || null;
+      }
+      if (!agentId) {
+        toast({ title: 'Nenhum agente IA configurado', description: 'Crie um agente IA antes de adicionar leads.', variant: 'destructive' });
+        setAddLeadSaving(false);
+        return;
+      }
+
       const { error } = await (supabase as any).from('ai_crm_leads').insert({
         user_id:     effectiveUserId,
+        agent_id:    agentId,
         lead_name:   addLeadName.trim(),
         remote_jid:  remoteJid,
         status_crm:  'novo',
