@@ -17,6 +17,7 @@ import {
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
   Pin, PinOff, Image, Mic, Video, Smartphone, Upload, X, Trash2,
   Plus, GripVertical, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle,
+  Pencil, Check,
 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import {
@@ -1011,6 +1012,10 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [addLeadPhone, setAddLeadPhone] = useState('');
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
+  const [editingLead, setEditingLead] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
 
   // ── Bulk upload states ──
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
@@ -1178,6 +1183,44 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     }
   };
 
+  const startEditLead = () => {
+    if (!selectedLead) return;
+    const phone = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || '';
+    setEditName(selectedLead.lead_name || '');
+    setEditPhone(phone);
+    setEditingLead(true);
+  };
+
+  const handleSaveLeadEdit = async () => {
+    if (!selectedLead) return;
+    setEditSaving(true);
+    try {
+      const cleanPhone = editPhone.replace(/\D/g, '');
+      const newJid = cleanPhone ? `${cleanPhone}@s.whatsapp.net` : selectedLead.remote_jid;
+      const updateData: Record<string, string> = {};
+      if (editName !== (selectedLead.lead_name || '')) updateData.lead_name = editName;
+      if (newJid !== selectedLead.remote_jid) updateData.remote_jid = newJid;
+      if (Object.keys(updateData).length === 0) {
+        setEditingLead(false);
+        return;
+      }
+      const { error } = await (supabase as any)
+        .from('ai_crm_leads')
+        .update(updateData)
+        .eq('id', selectedLead.id);
+      if (error) throw error;
+      const updatedLead = { ...selectedLead, ...updateData };
+      setSelectedLead(updatedLead);
+      setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, ...updateData } : l));
+      setEditingLead(false);
+      toast({ title: '✅ Lead atualizado!' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const handleDeleteLead = async (leadId: string) => {
     if (!confirm('Deseja excluir este lead permanentemente? Esta ação não pode ser desfeita.')) return;
     setDeletingLead(true);
@@ -1237,8 +1280,45 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             <ChevronRight className="h-3.5 w-3.5 rotate-180" /> Voltar
           </Button>
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-foreground truncate">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
-            <p className="text-xs text-muted-foreground">{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}</p>
+            {editingLead ? (
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    placeholder="Nome do lead"
+                    className="h-8 text-sm font-semibold max-w-[200px]"
+                    autoFocus
+                  />
+                  <Input
+                    value={editPhone}
+                    onChange={e => setEditPhone(e.target.value.replace(/[^\d]/g, ''))}
+                    placeholder="5511999999999"
+                    className="h-8 text-sm max-w-[160px]"
+                  />
+                  <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
+                    {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setEditingLead(false)} className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}</p>
+              </div>
+            ) : (
+              <div className="flex items-start gap-1.5">
+                <div className="min-w-0">
+                  <h2 className="text-base font-semibold text-foreground truncate">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
+                  <p className="text-xs text-muted-foreground">
+                    {(() => { const p = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || ''; return p.length >= 12 ? `📱 (${p.slice(2,4)}) ${p.slice(4,9)}-${p.slice(9)}` : p.length >= 10 ? `📱 (${p.slice(0,2)}) ${p.slice(2,7)}-${p.slice(7)}` : p ? `📱 ${p}` : ''; })()}
+                    {selectedLead.remote_jid && ' · '}{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}
+                  </p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={startEditLead} className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground shrink-0 mt-0.5" title="Editar lead">
+                  <Pencil className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-[10px] text-muted-foreground hidden sm:inline">Status:</span>
