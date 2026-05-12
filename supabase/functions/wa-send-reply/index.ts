@@ -95,14 +95,10 @@ Deno.serve(async (req) => {
 
     let sendResult;
     if (media_url && media_type) {
-      const mediaEndpoint =
-        media_type === "image" ? "image" :
-        media_type === "video" ? "video" :
-        media_type === "audio" ? "audio" : "image";
-
+      // UazAPI V6: endpoint unificado /send/media (os antigos /send/image etc retornam 405)
       const mediaAttempts = [
-        { url: `${apiUrl}/send/${mediaEndpoint}`, body: { number, url: media_url, caption: content || "" } },
-        { url: `${apiUrl}/message/send${mediaEndpoint.charAt(0).toUpperCase() + mediaEndpoint.slice(1)}/${instName}`, body: { number, mediatype: media_type, media: media_url, caption: content || "" } },
+        { url: `${apiUrl}/send/media`, body: { number, url: media_url, type: media_type, caption: content || "" } },
+        { url: `${apiUrl}/send/media`, body: { number, media: media_url, mediatype: media_type, caption: content || "" } },
       ];
 
       let lastErr = "";

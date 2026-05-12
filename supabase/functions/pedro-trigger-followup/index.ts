@@ -56,36 +56,30 @@ async function sendUazapiTextMessage(
   return false;
 }
 
-// Envia mídia (imagem, áudio, vídeo) via UazAPI
+// Envia mídia (imagem, áudio, vídeo) via UazAPI V6
+// Endpoint unificado: /send/media (os antigos /send/image, /send/audio, /send/video retornam 405)
 async function sendUazapiMediaMessage(
   baseUrl: string,
   instKey: string,
-  instanceName: string,
+  _instanceName: string,
   phoneNumber: string,
   remoteJid: string,
   mediaUrl: string,
   mediaType: string, // 'image' | 'audio' | 'video'
   caption?: string,
 ): Promise<boolean> {
-  const endpointMap: Record<string, string> = {
-    image: "image",
-    audio: "audio",
-    video: "video",
-  };
-  const mediaEndpoint = endpointMap[mediaType] || "image";
-
   const attempts = [
     {
-      url: `${baseUrl}/send/${mediaEndpoint}`,
-      body: { number: phoneNumber, url: mediaUrl, caption: caption || "" },
+      url: `${baseUrl}/send/media`,
+      body: { number: phoneNumber, url: mediaUrl, type: mediaType, caption: caption || "" },
     },
     {
-      url: `${baseUrl}/send/${mediaEndpoint}`,
-      body: { remoteJid, url: mediaUrl, caption: caption || "" },
+      url: `${baseUrl}/send/media`,
+      body: { number: phoneNumber, media: mediaUrl, mediatype: mediaType, caption: caption || "" },
     },
     {
-      url: `${baseUrl}/message/sendMedia/${instanceName}`,
-      body: { number: phoneNumber, mediatype: mediaEndpoint, media: mediaUrl, caption: caption || "" },
+      url: `${baseUrl}/send/media`,
+      body: { remoteJid, url: mediaUrl, type: mediaType, caption: caption || "" },
     },
   ];
 

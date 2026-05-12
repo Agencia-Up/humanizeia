@@ -404,21 +404,17 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
 
 // ─── WhatsApp Image Sending ─────────────────────────────────────────────────
 async function sendVehicleImage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption: string) {
+  // UazAPI V6: endpoint unificado /send/media (os antigos /send/image etc retornam 405)
   const attempts = [
     {
-      label: 'send/image',
-      url: `${baseUrl}/send/image`,
-      body: { number: phoneNumber, url: imageUrl, caption },
+      label: 'send/media (url)',
+      url: `${baseUrl}/send/media`,
+      body: { number: phoneNumber, url: imageUrl, type: 'image', caption },
     },
     {
-      label: 'send/media',
+      label: 'send/media (media)',
       url: `${baseUrl}/send/media`,
       body: { number: phoneNumber, media: imageUrl, mediatype: 'image', caption },
-    },
-    {
-      label: 'message/sendMedia',
-      url: `${baseUrl}/message/sendMedia/${instanceName}`,
-      body: { number: phoneNumber, mediaMessage: { mediatype: 'image', media: imageUrl, caption } },
     },
   ];
 
