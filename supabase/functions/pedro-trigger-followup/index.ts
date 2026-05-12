@@ -3,17 +3,16 @@
  *
  * Disparo MANUAL (pelo botão na tab CRM Avançado do Pedro).
  * Varre `pedro_followup_schedules` por agendamentos pendentes
- * (status='pending') com scheduled_at ≤ now e envia direto via UazAPI,
- * usando o mesmo padrão de envio do cron-lead-followup.
+ * (status='pending') com scheduled_at ≤ now e envia via Evolution API,
+ * usando o mesmo padrão de envio do wa-send-reply.
  *
  * Fluxo:
- *   1. Busca agendamentos pendentes
- *   2. Para cada um, envia mensagem via UazAPI (3 tentativas com fallback)
- *   3. Marca como 'sent' (sucesso) ou 'failed' (falha)
- *   4. Persiste a mensagem em wa_chat_history
- *   5. Atualiza last_followup_at no lead
- *
- * Não há cron — disparado apenas pelo botão na interface.
+ *   1. Busca agendamentos pendentes (com ou sem instance_id)
+ *   2. Se sem instance_id, resolve via agente IA do lead
+ *   3. Para cada um, envia mensagem via Evolution API
+ *   4. Marca como 'sent' (sucesso) ou 'failed' (falha)
+ *   5. Persiste a mensagem em wa_chat_history
+ *   6. Atualiza last_followup_at no lead
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -24,83 +23,66 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ── Helpers de envio via UazAPI ───────────────────────────────────────────────
-async function sendUazapiTextMessage(
-  baseUrl: string,
-  instKey: string,
+// ── Envio via Evolution API (mesmo padrão do wa-send-reply) ─────────────────
+
+async function sendEvolutionText(
+  apiUrl: string,
+  apiKey: string,
   instanceName: string,
   phoneNumber: string,
-  remoteJid: string,
   text: string,
 ): Promise<boolean> {
-  const attempts = [
-    { url: `${baseUrl}/send/text`, body: { number: phoneNumber, text } },
-    { url: `${baseUrl}/send/text`, body: { remoteJid, text } },
-    { url: `${baseUrl}/message/sendText/${instanceName}`, body: { number: phoneNumber, text } },
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      const res = await fetch(attempt.url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "token": instKey, "apikey": instKey },
-        body: JSON.stringify(attempt.body),
-      });
-      if (res.ok) return true;
-    } catch {
-      // tenta próxima estratégia
-    }
+  try {
+    const res = await fetch(`${apiUrl}/message/sendText/${instanceName}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: apiKey },
+      body: JSON.stringify({ number: phoneNumber, text }),
+    });
+    if (res.ok) return true;
+    const errBody = await res.text().catch(() => "");
+    console.error(`[followup] Evolution sendText error: ${res.status} - ${errBody}`);
+    return false;
+  } catch (err) {
+    console.error("[followup] Evolution sendText exception:", err);
+    return false;
   }
-  return false;
 }
 
-// Envia mídia (imagem, áudio, vídeo) via UazAPI
-async function sendUazapiMediaMessage(
-  baseUrl: string,
-  instKey: string,
+async function sendEvolutionMedia(
+  apiUrl: string,
+  apiKey: string,
   instanceName: string,
   phoneNumber: string,
-  remoteJid: string,
   mediaUrl: string,
-  mediaType: string, // 'image' | 'audio' | 'video'
+  mediaType: string,
   caption?: string,
 ): Promise<boolean> {
-  // Mapeia tipo para endpoint UazAPI
   const endpointMap: Record<string, string> = {
-    image: "image",
-    audio: "audio",
-    video: "video",
+    image: "sendImage",
+    audio: "sendAudio",
+    video: "sendVideo",
   };
-  const mediaEndpoint = endpointMap[mediaType] || "image";
+  const endpoint = endpointMap[mediaType] || "sendImage";
 
-  const attempts = [
-    {
-      url: `${baseUrl}/send/${mediaEndpoint}`,
-      body: { number: phoneNumber, url: mediaUrl, caption: caption || "" },
-    },
-    {
-      url: `${baseUrl}/send/${mediaEndpoint}`,
-      body: { remoteJid, url: mediaUrl, caption: caption || "" },
-    },
-    {
-      url: `${baseUrl}/message/sendMedia/${instanceName}`,
-      body: { number: phoneNumber, mediatype: mediaEndpoint, media: mediaUrl, caption: caption || "" },
-    },
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      const res = await fetch(attempt.url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "token": instKey, "apikey": instKey },
-        body: JSON.stringify(attempt.body),
-      });
-      if (res.ok) return true;
-    } catch {
-      // tenta próxima estratégia
-    }
+  try {
+    const res = await fetch(`${apiUrl}/message/${endpoint}/${instanceName}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: apiKey },
+      body: JSON.stringify({
+        number: phoneNumber,
+        mediatype: mediaType,
+        media: mediaUrl,
+        caption: caption || "",
+      }),
+    });
+    if (res.ok) return true;
+    const errBody = await res.text().catch(() => "");
+    console.error(`[followup] Evolution ${endpoint} error: ${res.status} - ${errBody}`);
+    return false;
+  } catch (err) {
+    console.error(`[followup] Evolution ${endpoint} exception:`, err);
+    return false;
   }
-  return false;
 }
 
 serve(async (req) => {
@@ -113,19 +95,17 @@ serve(async (req) => {
     const now    = new Date();
     const nowIso = now.toISOString();
 
-    // 1. Busca agendamentos pendentes que já estão no prazo
+    // 1. Busca TODOS os agendamentos pendentes (com ou sem instance_id)
     const { data: schedules, error: fetchErr } = await supabase
       .from("pedro_followup_schedules")
       .select(`
         *,
-        lead:ai_crm_leads(id, remote_jid, agent_id, user_id),
-        instance:wa_instances(id, api_url, api_key_encrypted, instance_name)
+        lead:ai_crm_leads(id, remote_jid, agent_id, user_id)
       `)
       .eq("status", "pending")
       .lte("scheduled_at", nowIso)
-      .not("instance_id", "is", null)
       .order("scheduled_at", { ascending: true })
-      .limit(20);
+      .limit(30);
 
     if (fetchErr) throw fetchErr;
 
@@ -138,12 +118,14 @@ serve(async (req) => {
     let processed = 0;
     let failed    = 0;
 
+    // Cache de instâncias para evitar queries repetidas
+    const instanceCache: Record<string, any> = {};
+
     for (const schedule of schedules) {
       try {
-        const lead     = (schedule as any).lead;
-        const instance = (schedule as any).instance;
+        const lead = (schedule as any).lead;
 
-        if (!lead?.remote_jid || !instance?.api_url) {
+        if (!lead?.remote_jid) {
           await supabase.from("pedro_followup_schedules")
             .update({ status: "cancelled" })
             .eq("id", schedule.id);
@@ -151,34 +133,101 @@ serve(async (req) => {
           continue;
         }
 
-        // 2. Extrai dados de envio (mesmo padrão do cron-lead-followup)
-        const baseUrl  = instance.api_url.replace(/\/$/, "");
-        const instKey  = instance.api_key_encrypted || "";
-        const instName = instance.instance_name;
+        // 2. Resolve a instância: usa instance_id do schedule, ou busca do agente do lead
+        let instance: any = null;
+
+        if (schedule.instance_id) {
+          // Usa instância especificada
+          if (instanceCache[schedule.instance_id]) {
+            instance = instanceCache[schedule.instance_id];
+          } else {
+            const { data: inst } = await supabase
+              .from("wa_instances")
+              .select("id, api_url, api_key_encrypted, instance_name")
+              .eq("id", schedule.instance_id)
+              .single();
+            instance = inst;
+            if (inst) instanceCache[schedule.instance_id] = inst;
+          }
+        }
+
+        // Fallback: busca instância do agente IA do lead
+        if (!instance && lead.agent_id) {
+          const { data: agent } = await supabase
+            .from("wa_ai_agents")
+            .select("instance_id, instance_ids")
+            .eq("id", lead.agent_id)
+            .single();
+
+          if (agent) {
+            const agentInstId = agent.instance_id
+              || (Array.isArray(agent.instance_ids) && agent.instance_ids.length > 0 ? agent.instance_ids[0] : null);
+
+            if (agentInstId && !instanceCache[agentInstId]) {
+              const { data: inst } = await supabase
+                .from("wa_instances")
+                .select("id, api_url, api_key_encrypted, instance_name")
+                .eq("id", agentInstId)
+                .single();
+              if (inst) instanceCache[agentInstId] = inst;
+              instance = inst;
+            } else if (agentInstId) {
+              instance = instanceCache[agentInstId];
+            }
+          }
+        }
+
+        // Último fallback: busca qualquer instância ativa do user_id do lead
+        if (!instance && lead.user_id) {
+          const { data: fallbackInst } = await supabase
+            .from("wa_instances")
+            .select("id, api_url, api_key_encrypted, instance_name")
+            .eq("user_id", lead.user_id)
+            .eq("is_active", true)
+            .limit(1)
+            .single();
+          if (fallbackInst) {
+            instance = fallbackInst;
+            instanceCache[fallbackInst.id] = fallbackInst;
+          }
+        }
+
+        if (!instance?.api_url || !instance?.instance_name) {
+          console.error(`[followup] No instance found for schedule ${schedule.id}`);
+          await supabase.from("pedro_followup_schedules")
+            .update({ status: "failed" })
+            .eq("id", schedule.id);
+          failed++;
+          continue;
+        }
+
+        // 3. Extrai dados de envio
+        const baseUrl     = instance.api_url.replace(/\/+$/, "");
+        const apiKey      = instance.api_key_encrypted || "";
+        const instName    = instance.instance_name;
         const remoteJid   = lead.remote_jid;
         const phoneNumber = remoteJid.split("@")[0];
 
-        // 3. Envia via UazAPI (com ou sem mídia)
+        // 4. Envia via Evolution API (mesmo padrão do wa-send-reply)
         let sent = false;
         const hasMedia = schedule.media_url && schedule.media_type;
 
         if (hasMedia) {
-          // Envia mídia primeiro
-          sent = await sendUazapiMediaMessage(
-            baseUrl, instKey, instName, phoneNumber, remoteJid,
+          sent = await sendEvolutionMedia(
+            baseUrl, apiKey, instName, phoneNumber,
             schedule.media_url, schedule.media_type,
-            schedule.message_template, // caption
+            schedule.message_template,
           );
           // Se mídia falhar, tenta enviar só texto
           if (!sent) {
-            sent = await sendUazapiTextMessage(
-              baseUrl, instKey, instName, phoneNumber, remoteJid,
+            sent = await sendEvolutionText(
+              baseUrl, apiKey, instName, phoneNumber,
               schedule.message_template,
             );
           }
         } else {
-          sent = await sendUazapiTextMessage(
-            baseUrl, instKey, instName, phoneNumber, remoteJid,
+          sent = await sendEvolutionText(
+            baseUrl, apiKey, instName, phoneNumber,
             schedule.message_template,
           );
         }
@@ -191,12 +240,12 @@ serve(async (req) => {
           continue;
         }
 
-        // 4. Marca como enviado
+        // 5. Marca como enviado
         await supabase.from("pedro_followup_schedules")
           .update({ status: "sent", sent_at: nowIso })
           .eq("id", schedule.id);
 
-        // 5. Atualiza last_followup_at no lead + persiste no histórico de chat
+        // 6. Atualiza last_followup_at no lead + persiste no histórico de chat
         await Promise.all([
           supabase.from("ai_crm_leads")
             .update({ last_followup_at: nowIso, next_followup_at: null })
@@ -207,7 +256,7 @@ serve(async (req) => {
             instance_id: instName,
             remote_jid:  remoteJid,
             role:        "assistant",
-            content:     `[Follow-up manual] ${schedule.message_template}`,
+            content:     `[Follow-up] ${schedule.message_template}`,
           }),
         ]);
 

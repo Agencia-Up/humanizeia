@@ -756,7 +756,12 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         month: monthCountRes.count ?? 0,
       });
       setFeedbacks(fbRes.data || []);
-      setInstances(instRes.data || []);
+      const loadedInstances = instRes.data || [];
+      setInstances(loadedInstances);
+      // Auto-seleciona a primeira instância disponível para follow-up
+      if (loadedInstances.length > 0 && !fuInstance) {
+        setFuInstance(loadedInstances[0].id);
+      }
       setTeamMembers(enrichedTeam);
     } finally {
       setLoading(false);
