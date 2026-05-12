@@ -22,9 +22,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 const KANBAN_COLUMNS = [
   { id: 'novo', title: '🔰 Novo', borderColor: 'border-slate-500/30', headerBg: 'bg-slate-500/10', dotColor: 'bg-slate-400' },
   { id: 'interessado', title: '👀 Interessado', borderColor: 'border-yellow-500/30', headerBg: 'bg-yellow-500/10', dotColor: 'bg-yellow-400' },
+  { id: 'pouco_qualificado', title: '🧊 Pouco Qualif.', borderColor: 'border-orange-500/30', headerBg: 'bg-orange-500/10', dotColor: 'bg-orange-400' },
+  { id: 'medio_qualificado', title: '🌡️ Médio Qualif.', borderColor: 'border-amber-500/30', headerBg: 'bg-amber-500/10', dotColor: 'bg-amber-400' },
   { id: 'qualificado', title: '🎯 Qualificado', borderColor: 'border-green-500/30', headerBg: 'bg-green-500/10', dotColor: 'bg-green-400' },
   { id: 'transferido', title: '🤝 Transferido', borderColor: 'border-blue-500/30', headerBg: 'bg-blue-500/10', dotColor: 'bg-blue-400' },
-  { id: 'encerrado', title: '🚫 Encerrado', borderColor: 'border-red-500/30', headerBg: 'bg-red-500/10', dotColor: 'bg-red-400' },
 ];
 
 interface TransferStats {

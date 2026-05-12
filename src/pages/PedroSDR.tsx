@@ -63,12 +63,13 @@ interface PerfData {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  novo:       '#3B82F6',
-  qualificado:'#10B981',
-  aguardando: '#F59E0B',
-  transferido:'#8B5CF6',
-  encerrado:  '#EF4444',
-  perdido:    '#6B7280',
+  novo:               '#3B82F6',
+  pouco_qualificado:  '#EF4444',
+  medio_qualificado:  '#F59E0B',
+  qualificado:        '#10B981',
+  aguardando:         '#F59E0B',
+  transferido:        '#8B5CF6',
+  perdido:            '#6B7280',
 };
 
 // ─── Hook de dados ───────────────────────────────────────────────────────────
@@ -196,7 +197,7 @@ function usePerfData(userId: string | undefined) {
           nome: s.nome,
           whatsapp: s.whatsapp,
           leads: allLeads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id)).length,
-          qualificados: allLeads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id) && l.status_crm === 'qualificado').length,
+          qualificados: allLeads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id) && ['qualificado', 'medio_qualificado', 'pouco_qualificado'].includes(l.status_crm)).length,
         })).sort((a, b) => b.leads - a.leads);
 
         setData({
@@ -505,13 +506,15 @@ const PRIORITY_CONFIG = {
 } as const;
 
 const STATUS_CRM_OPTIONS = [
-  { value: 'novo',         label: 'Novo',          color: 'text-blue-400'   },
-  { value: 'em_atendimento', label: 'Em Atendimento', color: 'text-cyan-400' },
-  { value: 'interessado',  label: 'Interessado',   color: 'text-yellow-400' },
-  { value: 'qualificado',  label: 'Qualificado',   color: 'text-emerald-400'},
-  { value: 'negociacao',   label: 'Negociação',    color: 'text-purple-400' },
-  { value: 'fechado',      label: 'Fechado',       color: 'text-green-400'  },
-  { value: 'perdido',      label: 'Perdido',       color: 'text-red-400'    },
+  { value: 'novo',               label: 'Novo',              color: 'text-blue-400'    },
+  { value: 'em_atendimento',     label: 'Em Atendimento',    color: 'text-cyan-400'    },
+  { value: 'interessado',        label: 'Interessado',       color: 'text-yellow-400'  },
+  { value: 'pouco_qualificado',  label: 'Pouco Qualificado', color: 'text-orange-400'  },
+  { value: 'medio_qualificado',  label: 'Médio Qualificado', color: 'text-amber-400'   },
+  { value: 'qualificado',        label: 'Qualificado',       color: 'text-emerald-400' },
+  { value: 'negociacao',         label: 'Negociação',        color: 'text-purple-400'  },
+  { value: 'fechado',            label: 'Fechado',           color: 'text-green-400'   },
+  { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
 
 function fmtDate(iso: string) {
@@ -523,13 +526,15 @@ function fmtDate(iso: string) {
 // ─── Tab CRM Avançado ─────────────────────────────────────────────────────────
 
 const PIPELINE_COLUMNS = [
-  { id: 'novo',           title: 'Novo',           emoji: '🔰', border: 'border-slate-500/30',  bg: 'bg-slate-500/10',  dot: 'bg-slate-400'  },
-  { id: 'interessado',    title: 'Interessado',    emoji: '👀', border: 'border-yellow-500/30', bg: 'bg-yellow-500/10', dot: 'bg-yellow-400' },
-  { id: 'qualificado',    title: 'Qualificado',    emoji: '🎯', border: 'border-emerald-500/30',bg: 'bg-emerald-500/10',dot: 'bg-emerald-400'},
-  { id: 'em_atendimento', title: 'Em Atendimento', emoji: '💬', border: 'border-cyan-500/30',   bg: 'bg-cyan-500/10',   dot: 'bg-cyan-400'  },
-  { id: 'negociacao',     title: 'Negociação',     emoji: '🤝', border: 'border-purple-500/30', bg: 'bg-purple-500/10', dot: 'bg-purple-400' },
-  { id: 'fechado',        title: 'Fechado',        emoji: '✅', border: 'border-green-500/30',  bg: 'bg-green-500/10',  dot: 'bg-green-400'  },
-  { id: 'perdido',        title: 'Perdido',        emoji: '❌', border: 'border-red-500/30',    bg: 'bg-red-500/10',    dot: 'bg-red-400'    },
+  { id: 'novo',               title: 'Novo',               emoji: '🔰', border: 'border-slate-500/30',   bg: 'bg-slate-500/10',   dot: 'bg-slate-400'   },
+  { id: 'interessado',        title: 'Interessado',        emoji: '👀', border: 'border-yellow-500/30',  bg: 'bg-yellow-500/10',  dot: 'bg-yellow-400'  },
+  { id: 'pouco_qualificado',  title: 'Pouco Qualif.',      emoji: '🧊', border: 'border-orange-500/30',  bg: 'bg-orange-500/10',  dot: 'bg-orange-400'  },
+  { id: 'medio_qualificado',  title: 'Médio Qualif.',      emoji: '🌡️', border: 'border-amber-500/30',   bg: 'bg-amber-500/10',   dot: 'bg-amber-400'   },
+  { id: 'qualificado',        title: 'Qualificado',        emoji: '🎯', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', dot: 'bg-emerald-400' },
+  { id: 'em_atendimento',     title: 'Em Atendimento',     emoji: '💬', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
+  { id: 'negociacao',         title: 'Negociação',         emoji: '🤝', border: 'border-purple-500/30',  bg: 'bg-purple-500/10',  dot: 'bg-purple-400'  },
+  { id: 'fechado',            title: 'Fechado',            emoji: '✅', border: 'border-green-500/30',   bg: 'bg-green-500/10',   dot: 'bg-green-400'   },
+  { id: 'perdido',            title: 'Perdido',            emoji: '❌', border: 'border-red-500/30',     bg: 'bg-red-500/10',     dot: 'bg-red-400'     },
 ];
 
 interface CrmLead {

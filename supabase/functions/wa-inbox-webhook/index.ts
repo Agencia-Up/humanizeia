@@ -1397,18 +1397,30 @@ QUANDO CHAMAR A FERRAMENTA:
 - Cliente informou forma de pagamento -> salve forma_pagamento, atualize etapa_funil para "modelagem"
 - Cliente deu dados de financiamento (CPF, entrada, parcela) -> salve cada dado conforme coletar
 - Cliente pronto para comprar/visitar/falar com consultor -> status: "qualificado", etapa_funil: "fechamento"
-- NUNCA use status "encerrado". Toda despedida e toda conversa que chega ao fim deve ser tratada como "qualificado" e transferida para um vendedor humano.
+- Cliente sem interesse, nao respondeu, sumiu -> status: "pouco_qualificado" (transfere para vendedor)
+- Cliente disse "vou ver", "vou pensar", "tenho outras opcoes", parou de falar no meio -> status: "medio_qualificado" (transfere para vendedor)
+- NUNCA use status "encerrado". NAO EXISTE esse status.
 
 REGRA CRITICA DE TRANSFERENCIA (PRIORIDADE MAXIMA):
-TODA conversa que chega ao fim DEVE ser transferida para o vendedor. NAO EXISTE status "encerrado".
-Quando o cliente se despedir ("valeu", "obrigado", "vou ver", "volto depois", "tchau", etc.), marque como "qualificado" e transfira.
-Quando o cliente mencionar intencao de compra ("troca", "financiar", "fazer negocio", "entrada", "comprar", "visitar", etc.), marque como "qualificado" e transfira.
-Quando o cliente disser que nao tem interesse, marque como "qualificado" mesmo assim e transfira — o vendedor decide se insiste ou nao.
+TODA conversa que chega ao fim DEVE ser transferida para o vendedor. Existem 3 niveis:
+
+1. "pouco_qualificado" — Lead FRIO que nao respondeu, sumiu, ou nao demonstrou nenhum interesse real.
+   Exemplos: mandou "oi" e sumiu, nao respondeu apos a IA perguntar, disse "nao tenho interesse".
+   Temperatura: "frio". SEMPRE transfere para vendedor.
+
+2. "medio_qualificado" — Lead MORNO que conversou mas nao avancou para dados ou visita.
+   Exemplos: "vou ver", "vou pensar", "volto depois", "tenho outras opcoes", "vou comparar", parou de responder no meio da conversa, fez perguntas mas nao quis avancar, despedida generica ("valeu", "obrigado", "tchau", "falou").
+   Temperatura: "morno". SEMPRE transfere para vendedor.
+
+3. "qualificado" — Lead QUENTE pronto para fechar negocio.
+   Exemplos: quer ir na loja, tem carro para dar de entrada, passou dados pessoais (CPF, etc.), pediu para falar com vendedor/consultor, quer financiar e deu valores, quer reservar/separar veiculo, agendou visita.
+   Temperatura: "quente". SEMPRE transfere para vendedor.
+
 A IA NUNCA encerra conversa sozinha. O vendedor SEMPRE recebe o lead, com o resumo completo do que aconteceu.
-NAO espere coletar todos os dados antes de qualificar. Qualifique PRIMEIRO, o vendedor coleta o resto.
+NAO espere coletar todos os dados antes de transferir. Transfira PRIMEIRO, o vendedor coleta o resto.
 
 CAMPOS DISPONIVEIS NA FERRAMENTA (todos opcionais exceto status e resumo):
-- status: "novo", "interessado", "qualificado", "encerrado"
+- status: "novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado"
 - resumo: texto livre com resumo da conversa
 - nome_cliente: nome REAL do cliente (NAO o nome do WhatsApp)
 - cidade: cidade do cliente
@@ -1431,13 +1443,12 @@ COMO DEFINIR TEMPERATURA:
 - "quente": cliente perguntou preco, financiamento, troca, quer visitar, ou esta pronto para fechar
 
 REGRA DE OURO: NUNCA deixe uma conversa terminar sem tentar coletar pelo menos nome e cidade.
-Se o cliente se despedir sem dar dados, chame a ferramenta com status "encerrado" e observacoes explicando o motivo.
+Se o cliente se despedir sem dar dados, chame a ferramenta com status "pouco_qualificado" e observacoes explicando o motivo. O vendedor recebe o lead mesmo assim.
 
-QUANDO STATUS FOR "qualificado":
-1. Certifique-se de que coletou: nome_cliente, cidade, veiculo_interesse, forma_pagamento
-2. Preencha o resumo com TUDO que sabe sobre o cliente
-3. Defina temperatura como "quente"
-4. Apos chamar a ferramenta, informe ao cliente que um consultor especialista vai continuar o atendimento
+QUANDO TRANSFERIR (qualquer status de transferencia):
+- "pouco_qualificado": preencha resumo com o que aconteceu, temperatura "frio". Informe ao cliente que um consultor pode ajudar quando ele quiser.
+- "medio_qualificado": preencha resumo detalhado, temperatura "morno". Informe ao cliente que um consultor vai entrar em contato.
+- "qualificado": certifique-se de que coletou nome_cliente, cidade, veiculo_interesse, forma_pagamento. Preencha resumo com TUDO. Temperatura "quente". Informe que um consultor especialista vai continuar o atendimento.
 
 FERRAMENTA DE ESTOQUE BNDV:
 Voce tambem tem acesso a ferramenta "consultar_estoque_bndv".
@@ -1502,8 +1513,8 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
             properties: {
               status: {
                 type: "string",
-                enum: ["novo", "interessado", "qualificado"],
-                description: "Status atual do lead: novo (primeiro contato), interessado (demonstrou interesse), qualificado (pronto para consultor ou conversa chegando ao fim — SEMPRE transfira para vendedor)"
+                enum: ["novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado"],
+                description: "Status do lead: novo (primeiro contato), interessado (demonstrou interesse), pouco_qualificado (nao respondeu/sumiu/sem interesse — transfere), medio_qualificado (vou ver/vou pensar/despedida — transfere), qualificado (quer comprar/visitar/tem entrada — transfere)"
               },
               resumo: {
                 type: "string",
@@ -1881,7 +1892,7 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
               });
             }
 
-            if (args.status === "qualificado") {
+            if (args.status === "qualificado" || args.status === "medio_qualificado" || args.status === "pouco_qualificado") {
               await transferLeadToSeller(supabase, instance, agent, phone, pushName, args.resumo, historyMessages);
             }
 

@@ -81,11 +81,13 @@ const SELLER_PALETTE = [
 ];
 
 const LIVE_COLUMNS = [
-  { id: 'novo',            title: 'Novos Leads',     main: C.cyan,   light: C.cyanL,   bg: C.cyanBg },
-  { id: 'interessado',     title: 'Interessados',    main: C.amber,  light: C.amberL,  bg: C.amberBg },
-  { id: 'qualificado',     title: 'Qualificados',    main: C.green,  light: C.greenL,  bg: C.greenBg },
-  { id: 'em_atendimento',  title: 'Atendimento IA',  main: C.purple, light: C.purpleL, bg: C.purpleBg },
-  { id: 'transferido',     title: 'Em Atendimento',  main: C.orange, light: C.orangeL, bg: C.orangeBg },
+  { id: 'novo',               title: 'Novos Leads',      main: C.cyan,   light: C.cyanL,   bg: C.cyanBg },
+  { id: 'interessado',        title: 'Interessados',     main: C.amber,  light: C.amberL,  bg: C.amberBg },
+  { id: 'pouco_qualificado',  title: 'Pouco Qualif.',    main: C.red,    light: C.redL,    bg: C.redBg },
+  { id: 'medio_qualificado',  title: 'Médio Qualif.',    main: C.orange, light: C.orangeL, bg: C.orangeBg },
+  { id: 'qualificado',        title: 'Qualificados',     main: C.green,  light: C.greenL,  bg: C.greenBg },
+  { id: 'em_atendimento',     title: 'Atendimento IA',   main: C.purple, light: C.purpleL, bg: C.purpleBg },
+  { id: 'transferido',        title: 'Em Atendimento',   main: C.blue,   light: C.blueL,   bg: C.blueBg },
 ];
 
 /* ── helpers ──────────────────────────────────────────── */
@@ -293,7 +295,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       // Leads query — sellers only see their own assigned leads
       let leadsQ = (supabase as any).from('ai_crm_leads')
         .select('*, agent:wa_ai_agents(name), member:ai_team_members(id, name, whatsapp_number)')
-        .eq('user_id', effectiveUserId).neq('status', 'encerrado')
+        .eq('user_id', effectiveUserId)
         .order('last_interaction_at', { ascending: false });
       if (isSeller && sellerMemberIds.length > 0) {
         leadsQ = leadsQ.in('assigned_to_id', sellerMemberIds);
@@ -485,10 +487,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${effectiveUserId}` },
         (payload) => {
-          // Alerta apenas para leads não-encerrados
-          if ((payload.new as any)?.status !== 'encerrado') {
-            triggerNewLeadAlert();
-          }
+          triggerNewLeadAlert();
           fetchLiveDataRef.current();
         }
       )
@@ -689,7 +688,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     }
   }, []);
 
-  const totalQualified = filteredLeads.filter(l => l.status === 'qualificado' || l.status === 'transferido').length;
+  const totalQualified = filteredLeads.filter(l => ['qualificado', 'medio_qualificado', 'pouco_qualificado', 'transferido'].includes(l.status)).length;
   const attendedNow    = filteredLeads.filter(l => l.status === 'transferido').length;
 
   const handleManualTransfer = useCallback(async (leadId: string, notes: string) => {

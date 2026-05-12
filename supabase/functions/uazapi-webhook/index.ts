@@ -1166,8 +1166,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         // explicitamente definido pelo vendedor (negociacao, fechado, etc.)
         const statusCrmMap: Record<string, string> = {
           interessado: 'interessado',
+          pouco_qualificado: 'pouco_qualificado',
+          medio_qualificado: 'medio_qualificado',
           qualificado: 'qualificado',
-          encerrado:   'perdido',
         };
         await supabase.from('ai_crm_leads').update({
           status: args.status,
@@ -1178,8 +1179,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
         console.log(`[CRM] Lead ${phoneNumber} movido para: ${args.status}`);
 
-        // 2. Alertar vendedor APENAS SE status for 'qualificado'
-        if (args.status === 'qualificado') {
+        // 2. Alertar vendedor SE status indicar transferencia
+        if (args.status === 'qualificado' || args.status === 'medio_qualificado' || args.status === 'pouco_qualificado') {
           try {
             console.log(`[Transfer] Qualificado. agent.id=${agent.id} agent.user_id=${agent.user_id}`);
 

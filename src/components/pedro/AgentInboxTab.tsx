@@ -326,12 +326,13 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
   /* ── Status label ──────────────────────────────────────────────── */
   const statusLabel = (s: string) => {
     const map: Record<string, { label: string; color: string }> = {
-      novo:         { label: 'Novo',         color: 'bg-blue-500/15 text-blue-400' },
-      interessado:  { label: 'Interessado',  color: 'bg-emerald-500/15 text-emerald-400' },
-      qualificado:  { label: 'Qualificado',  color: 'bg-green-500/15 text-green-400' },
-      aguardando:   { label: 'Aguardando',   color: 'bg-amber-500/15 text-amber-400' },
-      transferido:  { label: 'Transferido',  color: 'bg-violet-500/15 text-violet-400' },
-      encerrado:    { label: 'Encerrado',    color: 'bg-slate-500/15 text-slate-400' },
+      novo:                { label: 'Novo',              color: 'bg-blue-500/15 text-blue-400' },
+      interessado:         { label: 'Interessado',       color: 'bg-emerald-500/15 text-emerald-400' },
+      pouco_qualificado:   { label: 'Pouco Qualif.',     color: 'bg-orange-500/15 text-orange-400' },
+      medio_qualificado:   { label: 'Médio Qualif.',     color: 'bg-amber-500/15 text-amber-400' },
+      qualificado:         { label: 'Qualificado',       color: 'bg-green-500/15 text-green-400' },
+      aguardando:          { label: 'Aguardando',        color: 'bg-yellow-500/15 text-yellow-400' },
+      transferido:         { label: 'Transferido',       color: 'bg-violet-500/15 text-violet-400' },
     };
     return map[s] || { label: s, color: 'bg-muted text-muted-foreground' };
   };
