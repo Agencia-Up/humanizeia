@@ -427,7 +427,7 @@ async function processEvolutionIncomingMessage(
   }
 
   if (content && content.trim().length > 0) {
-    await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget);
+    await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget, messageType, remoteMessageId, instanceName);
   }
 
   return inboxMsg.id;
@@ -843,6 +843,9 @@ async function categorizeAndAutomate(
   pushName: string | null,
   contactId: string | null,
   replyTarget?: string,
+  msgType?: string,
+  remoteMessageId?: string | null,
+  instanceName?: string,
 ) {
   try {
     // ===== Check for opt-in/opt-out button responses first =====
@@ -939,7 +942,7 @@ async function categorizeAndAutomate(
     await handleCampaignAutoReply(supabase, instance, phone, contactId, replyTarget);
 
     // ===== AI Agent Auto-Reply =====
-    await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
+    await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget, msgType, remoteMessageId, instanceName);
 
     // ===== CAPI Full-Funnel Tracking =====
     if (aiCategory.category === "interested" || aiCategory.category === "question") {
@@ -1162,6 +1165,9 @@ async function handleAIAgentReply(
   pushName: string | null,
   category: string,
   replyTarget?: string,
+  msgType?: string,
+  remoteMessageId?: string | null,
+  instanceName?: string,
 ) {
   try {
     const mediaFallbackReply = getMediaFallbackReply(content);
@@ -1349,7 +1355,7 @@ REGRAS AVANÃ‡ADAS DE HUMANIZAÃ‡ÃƒO (PRIORIDADE MÃXIMA):
 - Se precisar listar algo, faÃ§a de forma conversacional: "tem o plano X que custa Y, e tem tambÃ©m o Z que..."
 
 [REGRAS DE CONDUTA ANTE MIDIAS E ARQUIVOS]
-- IMAGEM: quando receber "[Imagem recebida]" ou "[Imagem recebida sem legenda]", voce NAO consegue ver a foto. Responda de forma natural e contextual: se a conversa e sobre veiculos, pergunte "que carro e esse da foto?" ou "e foto do seu carro de troca?". Se tem legenda, use a legenda como contexto. NUNCA diga "nao consigo ver imagens" de forma robotica - seja natural como um vendedor real no WhatsApp.
+- IMAGEM: quando a imagem vier junto com a mensagem, voce CONSEGUE ver e analisar a foto. Descreva o que ve naturalmente, como um vendedor real faria no WhatsApp: identifique o veiculo (marca, modelo, cor), detalhes visiveis, e responda de forma util. Se tem legenda, use como contexto. Quando receber apenas "[Imagem recebida sem legenda]" sem a foto anexada, pergunte sobre o que e a imagem de forma natural.
 - AUDIO: quando receber "[Mensagem de audio recebida sem transcricao]", significa que o audio chegou mas nao foi possivel transcrever. Peca educadamente para o cliente repetir por texto ou mandar outro audio: "opa, seu audio nao chegou nitido aqui, me manda por texto ou tenta de novo?" - NUNCA ignore, NUNCA de respostas genericas.
 - AUDIO TRANSCRITO: quando a transcricao funciona, o texto do audio chega direto pra voce. Responda naturalmente como se tivesse ouvido o audio.
 - DOCUMENTOS/PDFs: (indicado com "[Arquivo recebido: <nome>]"), voce NAO pode abrir arquivos. Peca pro cliente resumir o conteudo em texto ou audio.
@@ -1590,7 +1596,56 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
     const maxTokensValue = agent.max_tokens || 500;
     const effectiveTemp = Math.max(parseFloat(agent.temperature) || 0.7, 0.75);
 
+    // ── IMAGE VISION: download image and build vision content ──
+    let visionContent: any = null; // will hold [{type:"text",...},{type:"image_url",...}] if image available
+    if (msgType === "image" && remoteMessageId && instanceName) {
+      try {
+        // Get instance API details for download
+        const { data: waInst } = await supabase
+          .from("wa_instances")
+          .select("api_url, api_key_encrypted")
+          .eq("id", instance.id)
+          .maybeSingle();
+
+        if (waInst?.api_url && waInst?.api_key_encrypted) {
+          const baseUrl = (waInst.api_url || '').replace(/\/+$/, '');
+          const instKey = waInst.api_key_encrypted;
+
+          console.log(`[ai-agent] 🖼️ Downloading image for vision, msgId: ${remoteMessageId}`);
+          const dRes = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+            body: JSON.stringify({ id: remoteMessageId, return_base64: true }),
+          });
+
+          if (dRes.ok) {
+            const dData = await dRes.json();
+            const base64 = dData.base64Data || dData.base64 || dData.file || '';
+            const mimeType = dData.mimetype || 'image/jpeg';
+            if (base64 && base64.length > 100) {
+              const captionText = content.replace(/\[Imagem recebida[^\]]*\]\n?/g, '').replace(/Legenda:\s*/g, '').trim() || '[Imagem recebida]';
+              visionContent = [
+                { type: "text", text: captionText },
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+              ];
+              console.log(`[ai-agent] ✅ Image downloaded for vision (${base64.length} chars, mime: ${mimeType})`);
+            } else {
+              console.warn(`[ai-agent] ⚠️ Image download returned empty/small base64`);
+            }
+          } else {
+            const errText = await dRes.text().catch(() => '');
+            console.error(`[ai-agent] ❌ Image download failed: ${dRes.status} - ${errText}`);
+          }
+        }
+      } catch (imgErr) {
+        console.error('[ai-agent] ❌ Image vision error:', imgErr);
+      }
+    }
+
     let aiData: any = null;
+
+    // Anthropic vision content (declared here for scope across initial call and follow-up)
+    let anthropicUserContent: any = content;
 
     if (!mediaFallbackReply && isAnthropicModel) {
       // â"€â"€ Direct Anthropic API call with tool calling â"€â"€
@@ -1603,12 +1658,24 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
         "claude-3-haiku": "claude-3-haiku-20240307",
       };
       const anthropicModel = anthropicModelMap[anthropicModelRaw] || anthropicModelRaw;
+      if (visionContent) {
+        const textPart = visionContent.find((c: any) => c.type === "text");
+        const imgPart = visionContent.find((c: any) => c.type === "image_url");
+        if (imgPart?.image_url?.url?.startsWith("data:")) {
+          const [header, b64] = imgPart.image_url.url.split(",");
+          const mime = header.replace("data:", "").replace(";base64", "");
+          anthropicUserContent = [
+            { type: "text", text: textPart?.text || "[Imagem recebida]" },
+            { type: "image", source: { type: "base64", media_type: mime, data: b64 } },
+          ];
+        }
+      }
       const anthropicMessages = [
         ...historyMessages.slice(-14).map((m: any) => ({
           role: m.role === "system" ? "user" : m.role,
           content: m.content,
         })),
-        { role: "user", content },
+        { role: "user", content: anthropicUserContent },
       ];
 
       // Convert OpenAI-format tools to Anthropic format
@@ -1691,14 +1758,21 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
       const selectedModel = modelMap[rawModel] || rawModel;
       const isOpenAI = selectedModel.startsWith("openai/");
 
+      // If we have vision content and model supports it, upgrade to gpt-4o
+      let effectiveModel = selectedModel;
+      if (visionContent && (selectedModel === 'openai/gpt-4o-mini' || selectedModel === 'openai/gpt-3.5-turbo')) {
+        effectiveModel = 'openai/gpt-4o';
+        console.log(`[ai-agent] 🖼️ Image detected — upgrade model from ${selectedModel} to ${effectiveModel} for vision`);
+      }
+
       const aiMessages = [
         { role: "system", content: systemPrompt },
         ...historyMessages.slice(-14),
-        { role: "user", content },
+        { role: "user", content: visionContent || content },
       ];
 
       const aiPayload: any = {
-        model: selectedModel,
+        model: effectiveModel,
         messages: aiMessages,
         temperature: effectiveTemp,
         tools: crmTools,
@@ -1706,9 +1780,9 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
         ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
       };
 
-      console.log(`[ai-agent] Calling AI Gateway with model: ${selectedModel}, history: ${historyMessages.length} msgs`);
+      console.log(`[ai-agent] Calling AI Gateway with model: ${effectiveModel}, history: ${historyMessages.length} msgs${visionContent ? ', WITH IMAGE VISION' : ''}`);
 
-      const modelsToTry = [selectedModel, "google/gemini-2.5-flash"];
+      const modelsToTry = [effectiveModel, "google/gemini-2.5-flash"];
       const uniqueModels = [...new Set(modelsToTry)];
 
       for (const model of uniqueModels) {
@@ -1939,7 +2013,7 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
               role: m.role === "system" ? "user" : m.role,
               content: m.content,
             })),
-            { role: "user", content },
+            { role: "user", content: anthropicUserContent || content },
             {
               role: "assistant",
               content: [
@@ -1992,7 +2066,7 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
           const followUpMessages = [
             { role: "system", content: systemPrompt },
             ...historyMessages.slice(-14),
-            { role: "user", content },
+            { role: "user", content: visionContent || content },
             aiMessage,
             ...toolMessages,
           ];
