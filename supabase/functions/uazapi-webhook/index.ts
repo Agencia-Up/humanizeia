@@ -486,6 +486,20 @@ Deno.serve(async (req) => {
       const pushName = msgObj.senderName || chat.name || msgObj.notifyName || msgObj.pushName || 'Lead';
 
       console.log(`[Webhook] Mensagem recebida [UAZAPI]. Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
+
+      // ── DEDUP: se wa-inbox-webhook já processou esta mensagem, pular ──
+      const messageIdForDedup = msgObj.messageid || msgObj.id?.id || msgObj.key?.id || '';
+      if (messageIdForDedup) {
+        const { data: alreadyInInbox } = await supabase.from('wa_inbox')
+          .select('id')
+          .eq('remote_message_id', messageIdForDedup)
+          .maybeSingle();
+        if (alreadyInInbox) {
+          console.log(`[Webhook] ⏭️ Mensagem ${messageIdForDedup} já processada pelo wa-inbox-webhook. Pulando.`);
+          return new Response(JSON.stringify({ ok: true, skipped: 'dedup' }), { headers: corsHeaders });
+        }
+      }
+
       return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
     }
 
@@ -520,6 +534,19 @@ Deno.serve(async (req) => {
     if (key.remoteJid?.includes('@broadcast') || key.remoteJid?.includes('@g.us')) return new Response('Ignored group/broadcast', { headers: corsHeaders })
 
     let userText = message.conversation || message.extendedTextMessage?.text || message.text || data.text || ''
+
+    // ── DEDUP: se wa-inbox-webhook já processou esta mensagem, pular ──
+    const evMsgId = key.id || '';
+    if (evMsgId) {
+      const { data: alreadyInInbox } = await supabase.from('wa_inbox')
+        .select('id')
+        .eq('remote_message_id', evMsgId)
+        .maybeSingle();
+      if (alreadyInInbox) {
+        console.log(`[Webhook] ⏭️ Mensagem ${evMsgId} já processada pelo wa-inbox-webhook. Pulando.`);
+        return new Response(JSON.stringify({ ok: true, skipped: 'dedup' }), { headers: corsHeaders });
+      }
+    }
 
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
 
