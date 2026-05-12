@@ -820,93 +820,49 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // Process Media se houver
   // UazAPI V6: content é um objeto com URL, mimetype, mediaKey, etc. para mídia
   const contentObj = (typeof rawMsgObj?.content === 'object' && rawMsgObj?.content) || {};
-  const mediaMimetype = contentObj.mimetype || rawMsgObj?.mimetype || '';
+  let mediaMimetype = contentObj.mimetype || rawMsgObj?.mimetype || '';
 
   if (isAudio || isImage) {
     console.log(`[Webhook] 📎 Mídia detectada: isAudio=${isAudio}, isImage=${isImage}, mime=${mediaMimetype}`);
     let base64 = rawMsgObj?.base64 || rawMsgObj?.message?.base64 || '';
 
-    // Se não veio base64, tentar download pela UazAPI V6
+    // Se não veio base64, baixar via UazAPI V6: POST /message/download
+    // Testado e confirmado: endpoint aceita {id: messageId, return_base64: true}
+    // Resposta: {base64Data: "...", mimetype: "...", fileURL: "...", transcription: "..."}
     if (!base64 && messageId) {
       console.log(`[Webhook] Baixando mídia ID: ${messageId}, type: ${msgType}`);
 
-      // Reconstruct the WhatsApp message key for the download API
-      const msgKey = {
-        remoteJid: remoteJid,
-        fromMe: false,
-        id: messageId,
-      };
-
-      // Build the inner message object based on type
-      const innerMessage: Record<string, any> = {};
-      if (isImage) {
-        innerMessage.imageMessage = rawMsgObj?.message?.imageMessage || rawMsgObj?.imageMessage || contentObj || { mimetype: mediaMimetype || 'image/jpeg' };
-      } else if (isAudio) {
-        innerMessage.audioMessage = rawMsgObj?.message?.audioMessage || rawMsgObj?.audioMessage || contentObj || { mimetype: mediaMimetype || 'audio/ogg; codecs=opus', ptt: mediaType === 'ptt' || contentObj.PTT === true };
-      }
-
-      // Attempt 1: UazAPI V6 endpoint /chat/getBase64FromMediaMessage (same as wa-inbox-webhook)
       try {
-        console.log(`[Webhook] Tentativa 1: /chat/getBase64FromMediaMessage/${instanceName}`);
-        const dRes = await fetch(`${baseUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
+        const dRes = await fetch(`${baseUrl}/message/download`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-          body: JSON.stringify({ message: { key: msgKey, message: innerMessage } })
+          headers: { 'Content-Type': 'application/json', 'token': instKey },
+          body: JSON.stringify({ id: messageId, return_base64: true })
         });
+
         if (dRes.ok) {
           const dData = await dRes.json();
-          base64 = dData.base64 || dData.data?.base64 || dData.mediaBase64 || '';
-          console.log(`[Webhook] Mídia baixada via getBase64FromMediaMessage, length: ${base64.length}`);
+          // UazAPI V6 retorna base64Data (não base64)
+          base64 = dData.base64Data || dData.base64 || dData.file || '';
+          // Atualizar mimetype se veio na resposta
+          if (dData.mimetype) {
+            mediaMimetype = dData.mimetype;
+          }
+          console.log(`[Webhook] ✅ Mídia baixada! length: ${base64.length}, mime: ${dData.mimetype || 'N/A'}, cached: ${dData.cached || false}`);
+
+          // UazAPI V6 pode incluir transcrição automática para áudio
+          if (isAudio && dData.transcription && !finalUserText) {
+            console.log(`[Webhook] UazAPI já transcreveu o áudio: "${dData.transcription}"`);
+          }
         } else {
           const errText = await dRes.text();
-          console.log(`[Webhook] getBase64FromMediaMessage falhou: ${dRes.status} - ${errText}`);
+          console.error(`[Webhook] ❌ Download falhou: ${dRes.status} - ${errText}`);
         }
       } catch (err) {
-        console.error('[Webhook] Falha no getBase64FromMediaMessage:', err);
-      }
-
-      // Attempt 2: Retry with just the key (some UazAPI versions accept this)
-      if (!base64) {
-        try {
-          console.log(`[Webhook] Tentativa 2: /chat/getBase64FromMediaMessage/${instanceName} (only key)`);
-          const dRes2 = await fetch(`${baseUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-            body: JSON.stringify({ message: { key: msgKey } })
-          });
-          if (dRes2.ok) {
-            const dData2 = await dRes2.json();
-            base64 = dData2.base64 || dData2.data?.base64 || dData2.mediaBase64 || '';
-            console.log(`[Webhook] Mídia baixada via tentativa 2, length: ${base64.length}`);
-          } else {
-            await dRes2.text(); // consume body
-          }
-        } catch (err) {
-          console.error('[Webhook] Falha na tentativa 2:', err);
-        }
-      }
-
-      // Attempt 3: Legacy /message/download endpoint (fallback)
-      if (!base64) {
-        try {
-          console.log(`[Webhook] Tentativa 3 (legado): /message/download`);
-          const dRes3 = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
-            body: JSON.stringify({ id: messageId, return_base64: true })
-          });
-          if (dRes3.ok) {
-            const dData3 = await dRes3.json();
-            base64 = dData3.base64 || dData3.file || '';
-            console.log(`[Webhook] Mídia baixada via legado, length: ${base64.length}`);
-          }
-        } catch (err) {
-          console.error('[Webhook] Falha no download legado:', err);
-        }
+        console.error('[Webhook] ❌ Erro no download de mídia:', err);
       }
 
       if (!base64) {
-        console.error(`[Webhook] FALHA: Não foi possível baixar mídia ${msgType} ID: ${messageId} após todas as tentativas`);
+        console.error(`[Webhook] FALHA: Não foi possível baixar mídia ${msgType} ID: ${messageId}`);
       }
     }
 
