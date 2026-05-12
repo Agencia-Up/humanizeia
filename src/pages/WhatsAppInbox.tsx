@@ -163,13 +163,19 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       .eq('is_active', true)
       .order('instance_name');
     let all = (data || []) as unknown as WaInstance[];
-    // Vendedor: tenta filtrar pela instância que contém o número dele
-    // Se nenhuma instância tiver phone_number preenchido, mantém todas
-    if (isSeller && seller?.whatsapp_number) {
-      const filtered = all.filter(i =>
-        i.phone_number?.replace(/\D/g, '').endsWith(seller.whatsapp_number.slice(-8))
-      );
-      if (filtered.length > 0) all = filtered;
+    // Vendedor: filtra APENAS a instância vinculada ao agente dele
+    if (isSeller && seller?.agent_id) {
+      const { data: agentData } = await (supabase as any)
+        .from('wa_ai_agents').select('instance_id, instance_ids')
+        .eq('id', seller.agent_id).single();
+      const allowedIds = new Set<string>();
+      if (agentData?.instance_id) allowedIds.add(agentData.instance_id);
+      if (Array.isArray(agentData?.instance_ids)) {
+        agentData.instance_ids.forEach((id: string) => allowedIds.add(id));
+      }
+      if (allowedIds.size > 0) {
+        all = all.filter(i => allowedIds.has(i.id));
+      }
     }
     setAllInstances(all);
     setInstances(all.filter(i => i.status === 'connected'));

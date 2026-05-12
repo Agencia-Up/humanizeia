@@ -165,12 +165,26 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
 
       if (error) throw error;
       let list = (data as unknown as WaInstance[]) || [];
-      // Vendedor: filtra só instâncias que contêm o número dele
-      if (isSeller && seller?.whatsapp_number) {
-        const sellerDigits = seller.whatsapp_number.slice(-8);
-        list = list.filter(i =>
-          i.phone_number?.replace(/\D/g, '').endsWith(sellerDigits)
-        );
+      // Vendedor: filtra APENAS a instância vinculada ao agente dele
+      if (isSeller && seller) {
+        const agentId = seller.agent_id;
+        if (agentId) {
+          const { data: agentData } = await (supabase as any)
+            .from('wa_ai_agents').select('instance_id, instance_ids')
+            .eq('id', agentId).single();
+          const allowedIds = new Set<string>();
+          if (agentData?.instance_id) allowedIds.add(agentData.instance_id);
+          if (Array.isArray(agentData?.instance_ids)) {
+            agentData.instance_ids.forEach((id: string) => allowedIds.add(id));
+          }
+          if (allowedIds.size > 0) {
+            list = list.filter(i => allowedIds.has(i.id));
+          } else {
+            list = []; // Vendedor sem instância vinculada
+          }
+        } else {
+          list = []; // Vendedor sem agente
+        }
       }
       setInstances(list);
       // Auto-verify all Evolution instances on first load

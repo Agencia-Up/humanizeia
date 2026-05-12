@@ -756,30 +756,30 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         month: monthCountRes.count ?? 0,
       });
       setFeedbacks(fbRes.data || []);
-      const loadedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected');
-      setInstances(loadedInstances);
-      // Auto-seleciona instância para follow-up:
-      // Para vendedor: busca a instância do agente vinculado
-      // Para master: primeira instância conectada
-      if (loadedInstances.length > 0 && !fuInstance) {
-        if (isSeller && memberId) {
-          const sellerMember = enrichedTeam.find(m => m.id === memberId);
-          if (sellerMember?.agent_id) {
-            // Busca instância do agente do vendedor
-            const { data: agentInst } = await (supabase as any)
-              .from('wa_ai_agents').select('instance_id, instance_ids')
-              .eq('id', sellerMember.agent_id).single();
-            const agentInstId = agentInst?.instance_id
-              || (Array.isArray(agentInst?.instance_ids) && agentInst.instance_ids[0])
-              || null;
-            const matched = agentInstId ? loadedInstances.find((i: any) => i.id === agentInstId) : null;
-            setFuInstance(matched?.id || loadedInstances[0].id);
-          } else {
-            setFuInstance(loadedInstances[0].id);
+      const allConnected = (instRes.data || []).filter((i: any) => i.status === 'connected');
+
+      // Isolamento de instâncias: vendedor vê SÓ a instância do agente dele
+      let visibleInstances = allConnected;
+      if (isSeller && memberId) {
+        const sellerMember = enrichedTeam.find(m => m.id === memberId);
+        if (sellerMember?.agent_id) {
+          const { data: agentData } = await (supabase as any)
+            .from('wa_ai_agents').select('instance_id, instance_ids')
+            .eq('id', sellerMember.agent_id).single();
+          const allowedIds = new Set<string>();
+          if (agentData?.instance_id) allowedIds.add(agentData.instance_id);
+          if (Array.isArray(agentData?.instance_ids)) {
+            agentData.instance_ids.forEach((id: string) => allowedIds.add(id));
           }
-        } else {
-          setFuInstance(loadedInstances[0].id);
+          if (allowedIds.size > 0) {
+            visibleInstances = allConnected.filter((i: any) => allowedIds.has(i.id));
+          }
         }
+      }
+      setInstances(visibleInstances);
+      // Auto-seleciona a primeira (e geralmente única) instância visível
+      if (visibleInstances.length > 0 && !fuInstance) {
+        setFuInstance(visibleInstances[0].id);
       }
       setTeamMembers(enrichedTeam);
     } finally {
@@ -903,7 +903,8 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       if (error) throw error;
       // Atualiza next_followup_at no lead
       await (supabase as any).from('ai_crm_leads').update({ next_followup_at: new Date(fuDate).toISOString() }).eq('id', selectedLead.id);
-      setFuMsg(''); setFuDate(''); setFuInstance('');
+      setFuMsg(''); setFuDate('');
+      // Mantém a instância selecionada para próximos follow-ups
       setFuMediaFile(null); setFuMediaUrl('');
       toast({ title: '✅ Follow-up agendado!' });
       await loadLeadDetail(selectedLead);
