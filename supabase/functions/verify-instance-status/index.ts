@@ -62,26 +62,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    const apiUrl = Deno.env.get('EVOLUTION_API_URL')?.replace(/\/$/, '');
-    const apiKey = Deno.env.get('EVOLUTION_API_KEY');
+    // Use instance's own api_url and api_key (UazAPI)
+    const baseUrl = (instance.api_url || '').replace(/\/$/, '');
+    const instKey = instance.api_key_encrypted || '';
 
-    if (!apiUrl || !apiKey) {
-      return new Response(JSON.stringify({ error: 'Evolution API não configurada' }), {
-        status: 500,
+    if (!baseUrl) {
+      return new Response(JSON.stringify({ error: 'Instância sem URL de API configurada' }), {
+        status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const baseUrl = (instance.api_url || apiUrl || '').replace(/\/$/, '');
-    const instKey = instance.api_key_encrypted || apiKey;
-    const globalKey = apiKey;
-
-    // First try: instance/connectionState with global key AND instance key
-    const headers = { 
-      'Content-Type': 'application/json', 
-      'apikey': globalKey,
-      'admintoken': globalKey,
-      'Authorization': `Bearer ${globalKey}`
+    // Headers using instance's own API key (UazAPI pattern)
+    const headers = {
+      'Content-Type': 'application/json',
+      'token': instKey,
+      'apikey': instKey,
     };
     
     let realStatus = 'disconnected';
@@ -101,7 +97,6 @@ Deno.serve(async (req) => {
           headers: {
               'token': instKey,
               'apikey': instKey,
-              'admintoken': globalKey,
               'Content-Type': 'application/json'
           },
           body: JSON.stringify({})
