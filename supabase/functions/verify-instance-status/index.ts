@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Only check Evolution API instances
+    // Only check UazAPI instances
     if (instance.provider === 'meta') {
       return new Response(JSON.stringify({
         success: true,

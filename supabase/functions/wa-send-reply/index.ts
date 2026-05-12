@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     const apiUrl = (instance.api_url as string).replace(/\/+$/, "");
     const number = phone.replace(/\D/g, "");
 
-    // Send via Evolution API
+    // Send via UazAPI
     let sendResult;
     if (media_url && media_type) {
       const endpoint =
@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
         },
         body: JSON.stringify({ number, mediatype: media_type, media: media_url, caption: content || "" }),
       });
-      if (!resp.ok) throw new Error(`Evolution API error: ${resp.status} - ${await resp.text()}`);
+      if (!resp.ok) throw new Error(`UazAPI error: ${resp.status} - ${await resp.text()}`);
       sendResult = await resp.json();
     } else {
       const resp = await fetch(`${apiUrl}/message/sendText/${instance.instance_name}`, {
@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
         },
         body: JSON.stringify({ number, text: content }),
       });
-      if (!resp.ok) throw new Error(`Evolution API error: ${resp.status} - ${await resp.text()}`);
+      if (!resp.ok) throw new Error(`UazAPI error: ${resp.status} - ${await resp.text()}`);
       sendResult = await resp.json();
     }
 

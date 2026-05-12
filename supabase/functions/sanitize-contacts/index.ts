@@ -9,7 +9,7 @@ const corsHeaders = {
  * Sanitize Contacts Edge Function
  * 
  * Receives an array of raw contacts and returns sanitized, deduplicated contacts.
- * Also checks WhatsApp validity via Evolution API if instance config is available.
+ * Also checks WhatsApp validity via UazAPI if instance config is available.
  *
  * Input: { user_id, list_id, contacts: [{ phone, name?, group_name?, source? }], check_whatsapp?: boolean }
  * Output: { success, sanitized: [...], stats: { total_input, duplicates_removed, invalid_phones, whatsapp_invalid, total_valid } }
@@ -80,7 +80,7 @@ async function findExistingPhones(
   return existing;
 }
 
-// ===== WhatsApp Validation via Evolution API =====
+// ===== WhatsApp Validation via UazAPI =====
 async function checkWhatsAppNumbers(
   baseUrl: string,
   apiKey: string,
@@ -89,7 +89,7 @@ async function checkWhatsAppNumbers(
 ): Promise<Map<string, boolean>> {
   const results = new Map<string, boolean>();
 
-  // Evolution API supports batch number check
+  // UazAPI supports batch number check
   try {
     const res = await fetch(`${baseUrl}/chat/whatsappNumbers/${instanceName}`, {
       method: 'POST',
@@ -122,7 +122,7 @@ async function checkWhatsAppNumbers(
   return results;
 }
 
-// ===== Get Evolution API Instance =====
+// ===== Get UazAPI Instance =====
 async function getEvolutionInstance(supabase: any, userId: string) {
   const { data: instance } = await supabase
     .from('wa_instances')
@@ -302,7 +302,7 @@ Deno.serve(async (req) => {
           }
         }
       } else {
-        console.warn('[sanitize-contacts] No Evolution instance found, skipping WhatsApp check');
+        console.warn('[sanitize-contacts] No UazAPI instance found, skipping WhatsApp check');
       }
     }
 

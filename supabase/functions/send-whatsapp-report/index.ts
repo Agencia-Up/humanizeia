@@ -90,9 +90,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Send message via Evolution API
+    // Send message via UazAPI
     const evolutionUrl = `${config.api_url.replace(/\/$/, '')}/message/sendText/${config.instance_name}`;
-    console.log('Sending to Evolution API:', evolutionUrl);
+    console.log('Sending to UazAPI:', evolutionUrl);
 
     const evolutionResponse = await fetch(evolutionUrl, {
       method: 'POST',
@@ -107,10 +107,10 @@ Deno.serve(async (req) => {
     });
 
     const evolutionData = await evolutionResponse.json();
-    console.log('Evolution API response status:', evolutionResponse.status, 'data:', JSON.stringify(evolutionData));
+    console.log('UazAPI response status:', evolutionResponse.status, 'data:', JSON.stringify(evolutionData));
 
     if (!evolutionResponse.ok) {
-      throw new Error(`Evolution API error [${evolutionResponse.status}]: ${JSON.stringify(evolutionData)}`);
+      throw new Error(`UazAPI error [${evolutionResponse.status}]: ${JSON.stringify(evolutionData)}`);
     }
 
     return new Response(

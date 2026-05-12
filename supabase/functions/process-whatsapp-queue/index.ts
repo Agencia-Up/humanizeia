@@ -366,7 +366,7 @@ Deno.serve(async (req) => {
         }
 
         // ===== ANTI-BAN: Validate number exists on WhatsApp before sending =====
-        // Skip for UazAPI — endpoint not available; Evolution API only.
+        // Skip for UazAPI — endpoint not available; UazAPI only.
         if (instance.provider === "evolution" && !isUazAPIInstance(instance)) {
           const numberValid = await validateWhatsAppNumber(instance, item.phone);
           if (!numberValid) {
@@ -413,14 +413,14 @@ Deno.serve(async (req) => {
         }
 
         // Decide if opt-in/opt-out buttons should be sent
-        // Buttons only work on standard Evolution API — UazAPI uses plain text.
+        // Buttons only work on standard UazAPI — UazAPI uses plain text.
         const shouldSendOptoutButtons = campaign?.include_optout_buttons &&
           !item.contact_metadata?.last_message_at && // only for first-time contacts
           !isUazAPIInstance(instance);
 
         let sendResult: SendResult;
         if (shouldSendOptoutButtons && instance.provider === "evolution") {
-          // Send message with interactive buttons via Evolution API
+          // Send message with interactive buttons via UazAPI
           sendResult = await sendEvolutionButtonMessage(instance, item.phone, finalMessage, [
             { buttonId: "optout_continue", buttonText: { displayText: "✅ Quero Continuar Recebendo" } },
             { buttonId: "optout_stop", buttonText: { displayText: "❌ Não Quero Mais Receber" } },
@@ -774,7 +774,7 @@ async function selectSmartInstance(
 
 // ====================== PROVIDER ABSTRACTION ======================
 
-/** UazAPI (logos-ia.uazapi.com) uses a completely different endpoint format than Evolution API v2.
+/** UazAPI (logos-ia.uazapi.com) uses a completely different endpoint format than UazAPI.
  *  Detect it by the api_url so we can route accordingly. */
 function isUazAPIInstance(instance: Instance): boolean {
   return instance.api_url.includes("uazapi");
@@ -955,7 +955,7 @@ async function sendToEvolutionAPI(
   await verifyEvolutionConnection(instance);
 
   if (mediaUrl && mediaType) {
-    // Evolution API v2: /message/sendMedia/{instance}
+    // UazAPI: /message/sendMedia/{instance}
     const v2Endpoint = `${apiUrl}/message/sendMedia/${instance.instance_name}`;
     const v1Endpoints: Record<string, string> = {
       image: "sendImage",
@@ -990,7 +990,7 @@ async function sendToEvolutionAPI(
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Evolution API error (sendMedia): ${response.status} - ${errText}`);
+      throw new Error(`UazAPI error (sendMedia): ${response.status} - ${errText}`);
     }
     const responseBody = await response.text();
     const remoteMessageId = validateEvolutionResponse(responseBody, "sendMedia");
@@ -1008,7 +1008,7 @@ async function sendToEvolutionAPI(
   );
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
+    throw new Error(`UazAPI error (sendText): ${response.status} - ${errText}`);
   }
   const responseBody = await response.text();
   const remoteMessageId = validateEvolutionResponse(responseBody, "sendText");
@@ -1042,7 +1042,7 @@ async function verifyEvolutionConnection(instance: Instance) {
     }
 
     const data = await response.json();
-    // Evolution API returns { instance: { state: "open" } } when connected
+    // UazAPI returns { instance: { state: "open" } } when connected
     const state = data?.instance?.state || data?.state || data?.connectionState;
 
     if (state && state !== "open" && state !== "connected") {
@@ -1057,7 +1057,7 @@ async function verifyEvolutionConnection(instance: Instance) {
   }
 }
 
-// ===== Validate Evolution API response body for actual delivery =====
+// ===== Validate UazAPI response body for actual delivery =====
 function validateEvolutionResponse(responseBody: string, action: string): string | null {
   try {
     const data = JSON.parse(responseBody);
@@ -1084,14 +1084,14 @@ function validateEvolutionResponse(responseBody: string, action: string): string
       return remoteMessageId;
     }
 
-    console.warn(`Evolution API ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
+    console.warn(`UazAPI ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
     return null;
   } catch (err) {
     if (err instanceof Error && (err.message.includes("returned error") || err.message.includes("returned error status"))) {
       throw err;
     }
     // JSON parse error — log but don't block (some versions return plain text on success)
-    console.warn(`Could not parse Evolution API ${action} response: ${responseBody.substring(0, 200)}`);
+    console.warn(`Could not parse UazAPI ${action} response: ${responseBody.substring(0, 200)}`);
     return null;
   }
 }
@@ -1110,7 +1110,7 @@ async function sendEvolutionButtonMessage(
   // Verify connection before sending
   await verifyEvolutionConnection(instance);
 
-  // Try Evolution API v2 buttons endpoint first
+  // Try UazAPI buttons endpoint first
   const payload = {
     number,
     title: "",
@@ -1152,7 +1152,7 @@ async function sendEvolutionButtonMessage(
 
     if (!response.ok) {
       const errText2 = await response.text();
-      throw new Error(`Evolution API error (sendText fallback): ${response.status} - ${errText2}`);
+      throw new Error(`UazAPI error (sendText fallback): ${response.status} - ${errText2}`);
     }
   }
   const responseBody = await response.text();
@@ -1333,7 +1333,7 @@ async function validateWhatsAppNumber(instance: Instance, phone: string): Promis
     }
 
     const data = await response.json();
-    // Evolution API returns array: [{ exists: true/false, jid: "...", number: "..." }]
+    // UazAPI returns array: [{ exists: true/false, jid: "...", number: "..." }]
     const results = Array.isArray(data) ? data : data?.data || data?.result || [];
     
     if (results.length > 0) {

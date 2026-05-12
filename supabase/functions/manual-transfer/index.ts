@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-/** Send a WhatsApp text message via UazAPI / Evolution (3 fallback attempts) */
+/** Send a WhatsApp text message via UazAPI (3 fallback attempts) */
 async function sendWAMessage(instance: any, phone: string, text: string) {
   let dest = phone.replace(/\D/g, "");
   if (dest.length === 10 || dest.length === 11) dest = `55${dest}`;

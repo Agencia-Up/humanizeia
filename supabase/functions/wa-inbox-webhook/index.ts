@@ -239,7 +239,7 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     `[wa-inbox-webhook] Evolution event received: ${normalizedEvent || "unknown"} | instance: ${instanceName || "unknown"}`
   );
   if (messageData && typeof messageData === "object" && !Array.isArray(messageData)) {
-    console.log("[wa-inbox-webhook] Evolution data keys:", JSON.stringify(Object.keys(messageData)));
+    console.log("[wa-inbox-webhook] UazAPI data keys:", JSON.stringify(Object.keys(messageData)));
   }
 
   if (normalizedEvent === "messages.update" && messageData) {
@@ -362,7 +362,7 @@ async function processEvolutionIncomingMessage(
   } else if (message.audioMessage) {
     messageType = "audio";
     mediaUrl = message.audioMessage.url || null;
-    console.log(`[wa-inbox-webhook] Audio message detected from Evolution. mediaUrl: ${mediaUrl}, mimetype: ${message.audioMessage.mimetype}`);
+    console.log(`[wa-inbox-webhook] Audio message detected from UazAPI. mediaUrl: ${mediaUrl}, mimetype: ${message.audioMessage.mimetype}`);
     try {
       const transcription = await transcribeAudioFromEvolution(supabase, instance, messageData, instanceName);
       if (transcription) {
@@ -1116,7 +1116,7 @@ async function sendAutoReplyMessage(
         }),
       });
     } else {
-      // Send via Evolution API
+      // Send via UazAPI
       const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL");
       const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY");
       if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) return;
@@ -2037,7 +2037,7 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
     const delay = agent.reply_delay_ms || 3000;
     await new Promise(resolve => setTimeout(resolve, Math.min(delay, 10000)));
 
-    // Send the reply via Evolution API
+    // Send the reply via UazAPI
     const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
     const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
 
@@ -2071,7 +2071,7 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
       sendSuccess = sendRes.ok;
       if (!sendSuccess) {
         const errText = await sendRes.text();
-        console.error(`[ai-agent] Evolution send error: ${sendRes.status} - ${errText}`);
+        console.error(`[ai-agent] UazAPI send error: ${sendRes.status} - ${errText}`);
       }
     } else if (instanceData.provider === "meta") {
       // Meta API send
@@ -2297,7 +2297,7 @@ O cliente esta esperando!`;
           body: JSON.stringify({ number: sellerPhone, text: sellerMsg }),
         });
         if (!sRes.ok) {
-           console.error(`[transfer] Evolution Error sending to seller: ${sRes.status} - ${await sRes.text()}`);
+           console.error(`[transfer] UazAPI error sending to seller: ${sRes.status} - ${await sRes.text()}`);
         } else {
            console.log(`[transfer] Message sent to seller ${selectedSeller.name} at ${sellerPhone}`);
         }
@@ -2401,7 +2401,7 @@ async function sendAutoReply(supabase: any, instance: any, phone: string, text: 
     });
 
     if (!res.ok) {
-      console.error("[auto-reply] Evolution send error:", await res.text());
+      console.error("[auto-reply] UazAPI send error:", await res.text());
     }
   } else if (instanceData.provider === "meta") {
     const config = instanceData.meta_config || {};
@@ -2566,13 +2566,13 @@ async function transcribeAudioFromEvolution(
     const apiKey = evolutionApiKey || instanceData?.api_key_encrypted;
 
     if (!apiUrl || !apiKey) {
-      console.error("[audio-transcribe] Missing Evolution API credentials");
+      console.error("[audio-transcribe] Missing UazAPI credentials");
       return null;
     }
 
     const key = messageData.key || {};
     const message = messageData.message || messageData;
-    console.log(`[audio-transcribe] Requesting base64 from Evolution: ${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`);
+    console.log(`[audio-transcribe] Requesting base64 from UazAPI: ${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`);
     console.log(`[audio-transcribe] Key: ${JSON.stringify(key)}`);
 
     // Try V2 endpoint first, then V1
@@ -2589,18 +2589,18 @@ async function transcribeAudioFromEvolution(
       body: JSON.stringify({ message: { key, message: message } }),
     });
 
-    console.log(`[audio-transcribe] Evolution response status: ${mediaRes.status}`);
+    console.log(`[audio-transcribe] UazAPI response status: ${mediaRes.status}`);
 
     if (mediaRes.ok) {
       const mediaData = await mediaRes.json();
-      console.log(`[audio-transcribe] Evolution response keys: ${JSON.stringify(Object.keys(mediaData))}`);
+      console.log(`[audio-transcribe] UazAPI response keys: ${JSON.stringify(Object.keys(mediaData))}`);
       base64Audio = mediaData.base64 || mediaData.data?.base64 || mediaData.mediaBase64 || null;
       mimetype = mediaData.mimetype || mediaData.data?.mimetype || message.audioMessage?.mimetype || "audio/ogg";
     } else {
       const errText = await mediaRes.text();
-      console.error(`[audio-transcribe] Evolution getBase64 failed: ${mediaRes.status} - ${errText}`);
+      console.error(`[audio-transcribe] UazAPI getBase64 failed: ${mediaRes.status} - ${errText}`);
       
-      // Attempt 2: Try with just key (some Evolution versions)
+      // Attempt 2: Try with just key (some UazAPI versions)
       const mediaRes2 = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
         method: "POST",
         headers: {
@@ -2610,7 +2610,7 @@ async function transcribeAudioFromEvolution(
         body: JSON.stringify({ message: { key }, convertToMp4: false }),
       });
 
-      console.log(`[audio-transcribe] Evolution retry status: ${mediaRes2.status}`);
+      console.log(`[audio-transcribe] UazAPI retry status: ${mediaRes2.status}`);
       if (mediaRes2.ok) {
         const mediaData2 = await mediaRes2.json();
         base64Audio = mediaData2.base64 || mediaData2.data?.base64 || mediaData2.mediaBase64 || null;
@@ -2621,14 +2621,14 @@ async function transcribeAudioFromEvolution(
     }
 
     if (!base64Audio) {
-      console.error("[audio-transcribe] No base64 audio returned from Evolution after all attempts");
+      console.error("[audio-transcribe] No base64 audio returned from UazAPI after all attempts");
       return null;
     }
 
     console.log(`[audio-transcribe] Got base64 audio, length: ${base64Audio.length}, mimetype: ${mimetype}`);
     return await transcribeWithGemini(base64Audio, mimetype);
   } catch (err) {
-    console.error("[audio-transcribe] Evolution transcription error:", err);
+    console.error("[audio-transcribe] UazAPI transcription error:", err);
     return null;
   }
 }
