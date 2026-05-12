@@ -1399,6 +1399,15 @@ QUANDO CHAMAR A FERRAMENTA:
 - Cliente pronto para comprar/visitar/falar com consultor -> status: "qualificado", etapa_funil: "fechamento"
 - Cliente sem interesse ou despedida definitiva -> status: "encerrado"
 
+REGRA CRITICA DE TRANSFERENCIA (PRIORIDADE MAXIMA):
+Quando o cliente usar QUALQUER uma destas palavras/expressoes, SEMPRE marque como "qualificado" IMEDIATAMENTE:
+- "quero fazer negocio", "quero trocar", "troca", "dar a diferenca", "financiar", "entrada"
+- "quero comprar", "fechar negocio", "vou ficar com", "pode separar", "reservar"
+- "quero visitar", "posso ir ai", "agendar visita", "quando posso ir"
+- "falar com vendedor", "falar com consultor", "falar com alguem"
+MESMO que o cliente diga "vou pensar", "volto depois", "vou ver" na MESMA mensagem, se mencionou intencao de compra/troca/financiamento, e QUALIFICADO. A intencao de negocio SEMPRE tem prioridade sobre a despedida.
+NAO espere coletar todos os dados antes de qualificar. Qualifique PRIMEIRO, o vendedor coleta o resto.
+
 CAMPOS DISPONIVEIS NA FERRAMENTA (todos opcionais exceto status e resumo):
 - status: "novo", "interessado", "qualificado", "encerrado"
 - resumo: texto livre com resumo da conversa
