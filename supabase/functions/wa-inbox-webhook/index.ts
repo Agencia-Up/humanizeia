@@ -1397,15 +1397,14 @@ QUANDO CHAMAR A FERRAMENTA:
 - Cliente informou forma de pagamento -> salve forma_pagamento, atualize etapa_funil para "modelagem"
 - Cliente deu dados de financiamento (CPF, entrada, parcela) -> salve cada dado conforme coletar
 - Cliente pronto para comprar/visitar/falar com consultor -> status: "qualificado", etapa_funil: "fechamento"
-- Cliente sem interesse ou despedida definitiva -> status: "encerrado"
+- NUNCA use status "encerrado". Toda despedida e toda conversa que chega ao fim deve ser tratada como "qualificado" e transferida para um vendedor humano.
 
 REGRA CRITICA DE TRANSFERENCIA (PRIORIDADE MAXIMA):
-Quando o cliente usar QUALQUER uma destas palavras/expressoes, SEMPRE marque como "qualificado" IMEDIATAMENTE:
-- "quero fazer negocio", "quero trocar", "troca", "dar a diferenca", "financiar", "entrada"
-- "quero comprar", "fechar negocio", "vou ficar com", "pode separar", "reservar"
-- "quero visitar", "posso ir ai", "agendar visita", "quando posso ir"
-- "falar com vendedor", "falar com consultor", "falar com alguem"
-MESMO que o cliente diga "vou pensar", "volto depois", "vou ver" na MESMA mensagem, se mencionou intencao de compra/troca/financiamento, e QUALIFICADO. A intencao de negocio SEMPRE tem prioridade sobre a despedida.
+TODA conversa que chega ao fim DEVE ser transferida para o vendedor. NAO EXISTE status "encerrado".
+Quando o cliente se despedir ("valeu", "obrigado", "vou ver", "volto depois", "tchau", etc.), marque como "qualificado" e transfira.
+Quando o cliente mencionar intencao de compra ("troca", "financiar", "fazer negocio", "entrada", "comprar", "visitar", etc.), marque como "qualificado" e transfira.
+Quando o cliente disser que nao tem interesse, marque como "qualificado" mesmo assim e transfira — o vendedor decide se insiste ou nao.
+A IA NUNCA encerra conversa sozinha. O vendedor SEMPRE recebe o lead, com o resumo completo do que aconteceu.
 NAO espere coletar todos os dados antes de qualificar. Qualifique PRIMEIRO, o vendedor coleta o resto.
 
 CAMPOS DISPONIVEIS NA FERRAMENTA (todos opcionais exceto status e resumo):
@@ -1503,8 +1502,8 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
             properties: {
               status: {
                 type: "string",
-                enum: ["novo", "interessado", "qualificado", "encerrado"],
-                description: "Status atual do lead: novo (primeiro contato), interessado (demonstrou interesse), qualificado (pronto para consultor), encerrado (sem interesse)"
+                enum: ["novo", "interessado", "qualificado"],
+                description: "Status atual do lead: novo (primeiro contato), interessado (demonstrou interesse), qualificado (pronto para consultor ou conversa chegando ao fim — SEMPRE transfira para vendedor)"
               },
               resumo: {
                 type: "string",
