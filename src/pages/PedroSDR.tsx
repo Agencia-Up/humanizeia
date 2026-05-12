@@ -596,6 +596,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const { toast } = useToast();
   const [isSeller, setIsSeller] = useState(false);
   const [memberId, setMemberId] = useState<string | null>(null);
+  const [memberIds, setMemberIds] = useState<string[]>([]);
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
@@ -641,10 +642,13 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         .select('id, user_id, is_active')
         .eq('auth_user_id', userId)
         .order('is_active', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(1);
-      const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
-      if (row) { setIsSeller(true); setMemberId(row.id); }
+        .order('created_at', { ascending: false });
+      const rows = Array.isArray(data) ? data : [];
+      if (rows.length > 0) {
+        setIsSeller(true);
+        setMemberId(rows[0].id);
+        setMemberIds(rows.map((r: any) => r.id));
+      }
     })();
   }, [userId]);
 
@@ -670,20 +674,20 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           .eq('user_id', effectiveUserId);
 
         if (from) query = query.gte('created_at', from.toISOString());
-        if (isSeller && memberId) query = query.eq('assigned_to_id', memberId);
+        if (isSeller && memberIds.length > 0) query = query.in('assigned_to_id', memberIds);
 
         return query;
       };
 
-      // Seller: filtra por assigned_to_id no banco e busca todos os seus leads
+      // Seller: filtra por assigned_to_id (todos os member IDs do vendedor) no banco
       // Master: busca os 100 mais recentes (sem filtro de seller)
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
         .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
-      if (isSeller && memberId) {
-        leadsQuery.eq('assigned_to_id', memberId);
+      if (isSeller && memberIds.length > 0) {
+        leadsQuery.in('assigned_to_id', memberIds);
       } else {
         leadsQuery.limit(100);
       }
@@ -760,7 +764,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     }
   };
 
-  useEffect(() => { fetchData(); }, [userId, isSeller]);
+  useEffect(() => { fetchData(); }, [userId, isSeller, memberIds.length]);
 
   const loadLeadDetail = async (lead: CrmLead) => {
     setSelectedLead(lead);
@@ -1491,7 +1495,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   // Métricas
   // Filtro universal
   const filteredLeads = leads.filter(l => {
-    if (isSeller && l.assigned_to_id !== memberId) return false;
+    if (isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
     if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
     if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
     if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
