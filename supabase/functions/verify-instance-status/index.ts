@@ -155,11 +155,31 @@ Deno.serve(async (req) => {
       realStatus = 'error';
     }
 
+    // Try to extract the connected phone number from UazAPI response
+    let connectedPhone = '';
+    if (isConnected) {
+      const rawPhone =
+        stateData?.instance?.owner ||
+        stateData?.instance?.jid ||
+        stateData?.owner ||
+        stateData?.jid ||
+        stateData?.phoneNumber ||
+        stateData?.user?.id ||
+        stateData?.instance?.wuid ||
+        '';
+      connectedPhone = String(rawPhone).split('@')[0].split(':')[0].replace(/\D/g, '');
+    }
+
     // Update the DB with the real status
     const updateData: Record<string, unknown> = {
       status: realStatus,
       updated_at: new Date().toISOString(),
     };
+
+    // Save connected phone number if found
+    if (connectedPhone && connectedPhone.length >= 10) {
+      updateData.phone_number = connectedPhone;
+    }
 
     // If connected or connecting, activate and fix health
     if (isConnected) {

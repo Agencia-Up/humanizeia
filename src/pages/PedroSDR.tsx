@@ -702,7 +702,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           .limit(50),
         (supabase as any)
           .from('wa_instances')
-          .select('id, friendly_name')
+          .select('id, friendly_name, phone_number, instance_name, status')
           .eq('user_id', effectiveUserId)
           .eq('is_active', true),
         (supabase as any)
@@ -756,11 +756,30 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         month: monthCountRes.count ?? 0,
       });
       setFeedbacks(fbRes.data || []);
-      const loadedInstances = instRes.data || [];
+      const loadedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected');
       setInstances(loadedInstances);
-      // Auto-seleciona a primeira instância disponível para follow-up
+      // Auto-seleciona instância para follow-up:
+      // Para vendedor: busca a instância do agente vinculado
+      // Para master: primeira instância conectada
       if (loadedInstances.length > 0 && !fuInstance) {
-        setFuInstance(loadedInstances[0].id);
+        if (isSeller && memberId) {
+          const sellerMember = enrichedTeam.find(m => m.id === memberId);
+          if (sellerMember?.agent_id) {
+            // Busca instância do agente do vendedor
+            const { data: agentInst } = await (supabase as any)
+              .from('wa_ai_agents').select('instance_id, instance_ids')
+              .eq('id', sellerMember.agent_id).single();
+            const agentInstId = agentInst?.instance_id
+              || (Array.isArray(agentInst?.instance_ids) && agentInst.instance_ids[0])
+              || null;
+            const matched = agentInstId ? loadedInstances.find((i: any) => i.id === agentInstId) : null;
+            setFuInstance(matched?.id || loadedInstances[0].id);
+          } else {
+            setFuInstance(loadedInstances[0].id);
+          }
+        } else {
+          setFuInstance(loadedInstances[0].id);
+        }
       }
       setTeamMembers(enrichedTeam);
     } finally {
@@ -1446,13 +1465,17 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                 />
                 {instances.length > 0 && (
                   <Select value={fuInstance} onValueChange={setFuInstance}>
-                    <SelectTrigger className="h-8 text-xs w-36">
+                    <SelectTrigger className="h-8 text-xs w-44">
                       <SelectValue placeholder="Instância" />
                     </SelectTrigger>
                     <SelectContent>
-                      {instances.map(i => (
-                        <SelectItem key={i.id} value={i.id} className="text-xs">{i.friendly_name}</SelectItem>
-                      ))}
+                      {instances.map(i => {
+                        const phone = i.phone_number?.replace(/\D/g, '') || '';
+                        const label = phone
+                          ? `📱 ${phone.length > 8 ? `(${phone.slice(-11,-9)}) ${phone.slice(-9,-5)}-${phone.slice(-5)}` : phone}`
+                          : i.friendly_name || i.instance_name;
+                        return <SelectItem key={i.id} value={i.id} className="text-xs">{label}</SelectItem>;
+                      })}
                     </SelectContent>
                   </Select>
                 )}
