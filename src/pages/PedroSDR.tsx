@@ -593,7 +593,7 @@ interface LeadMetrics {
   month: number;
 }
 
-function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
+export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const { toast } = useToast();
   const [isSeller, setIsSeller] = useState(false);
   const [memberId, setMemberId] = useState<string | null>(null);

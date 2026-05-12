@@ -51,7 +51,6 @@ const FEATURE_LABELS: { key: keyof VisibleFeatures; label: string; group: 'tab' 
   { key: 'marcos_contatos',    label: 'Contatos',                group: 'marcos' },
   { key: 'marcos_disparo',     label: 'Disparo em Massa',        group: 'marcos' },
   { key: 'marcos_inbox',       label: 'Inbox WhatsApp',          group: 'marcos' },
-  { key: 'marcos_instancias',  label: 'Instâncias',              group: 'marcos' },
   { key: 'marcos_automacoes',  label: 'Automações',              group: 'marcos' },
   { key: 'sidebar_dashboard',     label: 'Dashboard',            group: 'sidebar' },
   { key: 'sidebar_treinamento',   label: 'Treinamento',          group: 'sidebar' },
