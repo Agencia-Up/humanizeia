@@ -404,38 +404,24 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
 
 // ─── WhatsApp Image Sending ─────────────────────────────────────────────────
 async function sendVehicleImage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption: string) {
-  // UazAPI V6: endpoint unificado /send/media (os antigos /send/image etc retornam 405)
-  const attempts = [
-    {
-      label: 'send/media (url)',
-      url: `${baseUrl}/send/media`,
-      body: { number: phoneNumber, url: imageUrl, type: 'image', caption },
-    },
-    {
-      label: 'send/media (media)',
-      url: `${baseUrl}/send/media`,
-      body: { number: phoneNumber, media: imageUrl, mediatype: 'image', caption },
-    },
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      console.log(`[BNDV-IMG] Tentando ${attempt.label}...`);
-      const res = await fetch(attempt.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-        body: JSON.stringify(attempt.body),
-      });
-      if (res.ok) {
-        console.log(`[BNDV-IMG] Sucesso via ${attempt.label}`);
-        return true;
-      }
-      console.log(`[BNDV-IMG] ${attempt.label} retornou ${res.status}`);
-    } catch (err) {
-      console.log(`[BNDV-IMG] ${attempt.label} falhou:`, err);
+  // UazAPI V6: POST /send/media com campo "file" (não "url" nem "media")
+  // Testado e confirmado: {number, file, type, caption} funciona
+  try {
+    console.log(`[BNDV-IMG] Enviando imagem via /send/media (file)...`);
+    const res = await fetch(`${baseUrl}/send/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: JSON.stringify({ number: phoneNumber, file: imageUrl, type: 'image', caption }),
+    });
+    if (res.ok) {
+      console.log(`[BNDV-IMG] ✅ Imagem enviada com sucesso`);
+      return true;
     }
+    const errText = await res.text();
+    console.error(`[BNDV-IMG] ❌ Falhou: ${res.status} - ${errText}`);
+  } catch (err) {
+    console.error(`[BNDV-IMG] ❌ Erro no envio:`, err);
   }
-  console.warn('[BNDV-IMG] Todas as tentativas de envio de imagem falharam');
   return false;
 }
 
