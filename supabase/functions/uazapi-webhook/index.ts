@@ -678,11 +678,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         .eq('id', existingLead.assigned_to_id)
         .maybeSingle();
 
-      // 2. Resetar lead — status volta para 'novo', sem vendedor, regras reativam
+      // 2. Manter vendedor atribuído — só reativar follow-ups
+      // NÃO resetar assigned_to_id (senão cron faz round-robin para vendedor errado)
+      // NÃO mudar para 'novo' (senão cron redistribui)
       await supabase.from('ai_crm_leads').update({
-        status: 'novo',
-        status_crm: 'novo',
-        assigned_to_id: null,
+        status: 'em_atendimento',
         followup_5min_sent: false,
       }).eq('id', existingLead.id);
 
@@ -699,9 +699,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             `🔄 *LEAD RETORNOU!*\n\n` +
             `O cliente *${pushName || existingLead.lead_name || 'Desconhecido'}* voltou a conversar.\n` +
             `📱 *Contato:* +${clientPhone}\n\n` +
-            `A IA está respondendo enquanto isso. Se quiser assumir, entre em contato:\n` +
-            `👉 https://wa.me/${clientPhone}\n\n` +
-            `⏰ Se ninguém assumir em 10 min, o lead será redistribuído automaticamente.`;
+            `O lead continua atribuído a você. A IA está respondendo enquanto isso.\n` +
+            `👉 https://wa.me/${clientPhone}`;
 
           await fetch(`${retBaseUrl}/send/text`, {
             method: 'POST',
@@ -887,6 +886,22 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
         ];
         console.log(`[Webhook] 🖼️ Imagem preparada para visão (mime: ${mimeType}, base64 length: ${base64.length})`);
+      }
+    } else if (isImage) {
+      // Fallback: se base64 falhou mas temos URL da mídia, enviar URL direto ao GPT-4o
+      const mediaUrl = contentObj.URL || contentObj.url || rawMsgObj?.mediaUrl || rawMsgObj?.directUrl || '';
+      if (mediaUrl) {
+        console.log(`[Webhook] 🖼️ Fallback: usando URL da mídia direto: ${mediaUrl.substring(0, 80)}...`);
+        finalUserText = finalUserText || '[Imagem recebida]';
+        userMessageContentForOpenAi = [
+          { type: "text", text: finalUserText },
+          { type: "image_url", image_url: { url: mediaUrl } }
+        ];
+      } else {
+        // Sem base64 e sem URL — informa ao usuário que não pode ver a imagem
+        finalUserText = finalUserText || '[Imagem recebida - não foi possível visualizar]';
+        userMessageContentForOpenAi = finalUserText;
+        console.error(`[Webhook] ⚠️ Imagem sem base64 e sem URL — IA responderá sem ver a imagem`);
       }
     }
   }
