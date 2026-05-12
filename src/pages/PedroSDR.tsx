@@ -700,10 +700,11 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           .eq('user_id', isSeller ? userId : effectiveUserId)
           .order('created_at', { ascending: false })
           .limit(50),
+        // Cada conta vê SOMENTE suas próprias instâncias para follow-up
         (supabase as any)
           .from('wa_instances')
           .select('id, friendly_name, phone_number, instance_name, status')
-          .eq('user_id', effectiveUserId)
+          .eq('user_id', userId)
           .eq('is_active', true),
         (supabase as any)
           .from('ai_team_members')
@@ -756,30 +757,11 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         month: monthCountRes.count ?? 0,
       });
       setFeedbacks(fbRes.data || []);
-      const allConnected = (instRes.data || []).filter((i: any) => i.status === 'connected');
-
-      // Isolamento de instâncias: vendedor vê SÓ a instância do agente dele
-      let visibleInstances = allConnected;
-      if (isSeller && memberId) {
-        const sellerMember = enrichedTeam.find(m => m.id === memberId);
-        if (sellerMember?.agent_id) {
-          const { data: agentData } = await (supabase as any)
-            .from('wa_ai_agents').select('instance_id, instance_ids')
-            .eq('id', sellerMember.agent_id).single();
-          const allowedIds = new Set<string>();
-          if (agentData?.instance_id) allowedIds.add(agentData.instance_id);
-          if (Array.isArray(agentData?.instance_ids)) {
-            agentData.instance_ids.forEach((id: string) => allowedIds.add(id));
-          }
-          if (allowedIds.size > 0) {
-            visibleInstances = allConnected.filter((i: any) => allowedIds.has(i.id));
-          }
-        }
-      }
-      setInstances(visibleInstances);
-      // Auto-seleciona a primeira (e geralmente única) instância visível
-      if (visibleInstances.length > 0 && !fuInstance) {
-        setFuInstance(visibleInstances[0].id);
+      const connectedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected');
+      setInstances(connectedInstances);
+      // Auto-seleciona a primeira instância conectada
+      if (connectedInstances.length > 0 && !fuInstance) {
+        setFuInstance(connectedInstances[0].id);
       }
       setTeamMembers(enrichedTeam);
     } finally {

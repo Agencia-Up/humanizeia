@@ -157,35 +157,15 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     if (!effectiveUserId) return;
     setIsLoading(true);
     try {
+      // Cada conta vê SOMENTE suas próprias instâncias
       const { data, error } = await supabase
         .from('wa_instances')
         .select('id, instance_name, friendly_name, phone_number, status, is_active, health_score, provider, api_url, created_at, updated_at, failover_status')
-        .eq('user_id', effectiveUserId as string)
+        .eq('user_id', user?.id as string)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      let list = (data as unknown as WaInstance[]) || [];
-      // Vendedor: filtra APENAS a instância vinculada ao agente dele
-      if (isSeller && seller) {
-        const agentId = seller.agent_id;
-        if (agentId) {
-          const { data: agentData } = await (supabase as any)
-            .from('wa_ai_agents').select('instance_id, instance_ids')
-            .eq('id', agentId).single();
-          const allowedIds = new Set<string>();
-          if (agentData?.instance_id) allowedIds.add(agentData.instance_id);
-          if (Array.isArray(agentData?.instance_ids)) {
-            agentData.instance_ids.forEach((id: string) => allowedIds.add(id));
-          }
-          if (allowedIds.size > 0) {
-            list = list.filter(i => allowedIds.has(i.id));
-          } else {
-            list = []; // Vendedor sem instância vinculada
-          }
-        } else {
-          list = []; // Vendedor sem agente
-        }
-      }
+      const list = (data as unknown as WaInstance[]) || [];
       setInstances(list);
       // Auto-verify all Evolution instances on first load
       if (!skipVerify && list.length > 0) {

@@ -162,21 +162,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       .eq('user_id', effectiveUserId as string)
       .eq('is_active', true)
       .order('instance_name');
-    let all = (data || []) as unknown as WaInstance[];
-    // Vendedor: filtra APENAS a instância vinculada ao agente dele
-    if (isSeller && seller?.agent_id) {
-      const { data: agentData } = await (supabase as any)
-        .from('wa_ai_agents').select('instance_id, instance_ids')
-        .eq('id', seller.agent_id).single();
-      const allowedIds = new Set<string>();
-      if (agentData?.instance_id) allowedIds.add(agentData.instance_id);
-      if (Array.isArray(agentData?.instance_ids)) {
-        agentData.instance_ids.forEach((id: string) => allowedIds.add(id));
-      }
-      if (allowedIds.size > 0) {
-        all = all.filter(i => allowedIds.has(i.id));
-      }
-    }
+    const all = (data || []) as unknown as WaInstance[];
     setAllInstances(all);
     setInstances(all.filter(i => i.status === 'connected'));
   }, [effectiveUserId, isSeller, seller]);
