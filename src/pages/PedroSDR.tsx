@@ -1524,7 +1524,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                   type="datetime-local"
                   value={fuDate}
                   onChange={e => setFuDate(e.target.value)}
-                  className="text-xs h-8 flex-1"
+                  className="text-xs h-8 flex-1 [&::-webkit-calendar-picker-indicator]:brightness-0 [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:sepia [&::-webkit-calendar-picker-indicator]:saturate-[10] [&::-webkit-calendar-picker-indicator]:hue-rotate-[10deg]"
                 />
                 {instances.length > 0 && (
                   <Select value={fuInstance} onValueChange={setFuInstance}>
