@@ -493,7 +493,10 @@ Deno.serve(async (req) => {
       if (!remoteJid) { console.log('[Webhook] No remoteJid'); return new Response('No remoteJid', { headers: corsHeaders }); }
       if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return new Response('Ignored group/broadcast', { headers: corsHeaders });
 
-      const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim();
+      // UazAPI V6: texto está em content (string para texto, objeto para mídia), text, ou caption
+      const rawContent = msgObj.content;
+      const textContent = (typeof rawContent === 'string') ? rawContent : '';
+      const userText = (msgObj.body || msgObj.text || textContent || msgObj.caption || '').trim();
       const pushName = msgObj.senderName || chat.name || msgObj.notifyName || msgObj.pushName || 'Lead';
 
       console.log(`[Webhook] Mensagem recebida [UAZAPI]. Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
@@ -787,8 +790,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Blob(byteArrays, {type: contentType});
   }
 
-  const msgType = rawMsgObj?.messageType || rawMsgObj?.type || '';
+  // UazAPI V6 envia messageType em PascalCase (ex: "AudioMessage", "ImageMessage", "Conversation")
+  // Normalizar para lowercase para comparação consistente
+  const rawMsgType = rawMsgObj?.messageType || rawMsgObj?.type || '';
+  const msgType = rawMsgType.toLowerCase();
+  // UazAPI também tem campo mediaType com valores como "ptt", "image", "video", "audio"
+  const mediaType = (rawMsgObj?.mediaType || '').toLowerCase();
   const messageId = rawMsgObj?.messageid || rawMsgObj?.id?.id || rawMsgObj?.key?.id || '';
+
+  console.log(`[Webhook] msgType: "${rawMsgType}" → "${msgType}", mediaType: "${mediaType}", messageId: "${messageId}"`);
 
   const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '')
   const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || ''
@@ -803,8 +813,17 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   let finalUserText = userText;
   let userMessageContentForOpenAi: any = finalUserText;
 
+  // Detectar mídia: UazAPI envia "AudioMessage"/"ImageMessage" em messageType, ou "ptt"/"image" em mediaType
+  const isAudio = msgType.includes('audio') || msgType === 'ptt' || mediaType === 'ptt' || mediaType === 'audio';
+  const isImage = msgType.includes('image') || mediaType === 'image';
+
   // Process Media se houver
-  if (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image') {
+  // UazAPI V6: content é um objeto com URL, mimetype, mediaKey, etc. para mídia
+  const contentObj = (typeof rawMsgObj?.content === 'object' && rawMsgObj?.content) || {};
+  const mediaMimetype = contentObj.mimetype || rawMsgObj?.mimetype || '';
+
+  if (isAudio || isImage) {
+    console.log(`[Webhook] 📎 Mídia detectada: isAudio=${isAudio}, isImage=${isImage}, mime=${mediaMimetype}`);
     let base64 = rawMsgObj?.base64 || rawMsgObj?.message?.base64 || '';
 
     // Se não veio base64, tentar download pela UazAPI V6
@@ -820,10 +839,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
       // Build the inner message object based on type
       const innerMessage: Record<string, any> = {};
-      if (msgType.includes('image') || msgType === 'imageMessage') {
-        innerMessage.imageMessage = rawMsgObj?.message?.imageMessage || rawMsgObj?.imageMessage || { mimetype: rawMsgObj?.mimetype || 'image/jpeg' };
-      } else if (msgType.includes('audio') || msgType === 'ptt' || msgType === 'audioMessage') {
-        innerMessage.audioMessage = rawMsgObj?.message?.audioMessage || rawMsgObj?.audioMessage || { mimetype: rawMsgObj?.mimetype || 'audio/ogg; codecs=opus', ptt: msgType === 'ptt' };
+      if (isImage) {
+        innerMessage.imageMessage = rawMsgObj?.message?.imageMessage || rawMsgObj?.imageMessage || contentObj || { mimetype: mediaMimetype || 'image/jpeg' };
+      } else if (isAudio) {
+        innerMessage.audioMessage = rawMsgObj?.message?.audioMessage || rawMsgObj?.audioMessage || contentObj || { mimetype: mediaMimetype || 'audio/ogg; codecs=opus', ptt: mediaType === 'ptt' || contentObj.PTT === true };
       }
 
       // Attempt 1: UazAPI V6 endpoint /chat/getBase64FromMediaMessage (same as wa-inbox-webhook)
@@ -892,14 +911,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
 
     if (base64) {
-      if (msgType.includes('audio') || msgType === 'ptt') {
+      if (isAudio) {
         try {
-          const blob = b64toBlob(base64, 'audio/ogg');
+          const audioMime = mediaMimetype || 'audio/ogg';
+          const blob = b64toBlob(base64, audioMime);
           const formData = new FormData();
           formData.append('file', blob, 'audio.ogg');
           formData.append('model', 'whisper-1');
 
-          console.log('[Webhook] Enviando para Whisper...');
+          console.log(`[Webhook] 🎤 Enviando áudio para Whisper (${base64.length} chars base64, mime: ${audioMime})...`);
           const wRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${openaiApiKey}` },
@@ -909,25 +929,28 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           if (wData.text) {
              finalUserText = wData.text;
              userMessageContentForOpenAi = finalUserText;
-             console.log('[Webhook] Transcrição (Whisper):', finalUserText);
+             console.log('[Webhook] ✅ Transcrição (Whisper):', finalUserText);
+          } else {
+             console.error('[Webhook] ❌ Whisper não retornou texto:', JSON.stringify(wData));
           }
         } catch(err) {
           console.error('[Webhook] Erro no Whisper:', err);
         }
-      } else if (msgType.includes('image')) {
-        const mimeType = rawMsgObj?.mimetype || 'image/jpeg';
+      } else if (isImage) {
+        // UazAPI V6: mimetype pode estar em content.mimetype ou rawMsgObj.mimetype
+        const mimeType = mediaMimetype || rawMsgObj?.mimetype || 'image/jpeg';
         finalUserText = finalUserText || '[Imagem recebida]';
         userMessageContentForOpenAi = [
           { type: "text", text: finalUserText },
           { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
         ];
+        console.log(`[Webhook] 🖼️ Imagem preparada para visão (mime: ${mimeType}, base64 length: ${base64.length})`);
       }
     }
   }
 
   if (!finalUserText && typeof userMessageContentForOpenAi === 'string') {
-    const isMediaMsg = (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image');
-    if (isMediaMsg) {
+    if (isAudio || isImage) {
       console.error(`[Webhook] ⚠️ Mídia ${msgType} recebida mas não foi possível processar (download/transcrição falhou). Mensagem ignorada.`);
     } else {
       console.log('[Webhook] Empty text message — ignorando');
@@ -949,9 +972,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   })
 
   // Salvar mensagem RECEBIDA no wa_inbox (para aparecer no Inbox do Marcos)
-  const incomingMediaType = (msgType.includes('audio') || msgType === 'ptt') ? 'audio' : (msgType.includes('image') ? 'image' : 'text');
-  // Para mídia de imagem, extrair URL se disponível no payload (UazAPI pode enviar directUrl)
-  const incomingMediaUrl = rawMsgObj?.mediaUrl || rawMsgObj?.directUrl || rawMsgObj?.media_url || rawMsgObj?.url || null;
+  const incomingMediaType = isAudio ? 'audio' : (isImage ? 'image' : 'text');
+  // Para mídia, extrair URL se disponível no payload UazAPI (content.URL ou directUrl)
+  const incomingMediaUrl = contentObj.URL || rawMsgObj?.mediaUrl || rawMsgObj?.directUrl || rawMsgObj?.media_url || rawMsgObj?.url || null;
   await supabase.from('wa_inbox').insert({
     user_id: waInstance.user_id,
     instance_id: waInstance.id,
