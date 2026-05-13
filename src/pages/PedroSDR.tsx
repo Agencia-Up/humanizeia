@@ -610,7 +610,9 @@ interface CrmLead {
   lead_name: string;
   remote_jid: string;
   status_crm: string;
-  summary?: string | null;
+  summary?: string | null;          // Resumo da IA (qualificação geral)
+  transfer_reason?: string | null;  // Motivo/feedback da IA ao transferir pro vendedor
+  transferred_at?: string | null;   // Quando foi transferido
   next_followup_at: string | null;
   seller_notes_count: number;
   assigned_to_id: string | null;
@@ -770,7 +772,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       // Master: busca os 100 mais recentes (sem filtro de seller)
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
+        .select('id, lead_name, remote_jid, status_crm, summary, transfer_reason, transferred_at, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -1492,6 +1494,53 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             </Button>
           </div>
         </div>
+
+        {/* ── Feedback da IA (qualificação no momento do repasse) ───────────
+            Mostra o que o Pedro escreveu sobre este lead quando passou
+            para o vendedor. Aparece SOMENTE se a IA gerou texto (não
+            cria nada do zero). */}
+        {(selectedLead.summary || selectedLead.transfer_reason) && (
+          <Card className="bg-gradient-to-br from-blue-500/5 to-violet-500/5 border-blue-500/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Bot className="h-4 w-4 text-blue-400" />
+                  Feedback da IA
+                  <Badge className="text-[9px] h-4 px-1.5 bg-blue-500/15 text-blue-300 border-blue-500/30">
+                    Pedro SDR
+                  </Badge>
+                </span>
+                {selectedLead.transferred_at && (
+                  <span className="text-[10px] text-muted-foreground font-normal">
+                    Repassado em {fmtDate(selectedLead.transferred_at)}
+                  </span>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {selectedLead.summary && (
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">
+                    📋 Resumo do atendimento
+                  </p>
+                  <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                    {selectedLead.summary}
+                  </p>
+                </div>
+              )}
+              {selectedLead.transfer_reason && (
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">
+                    🎯 Motivo do repasse
+                  </p>
+                  <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                    {selectedLead.transfer_reason}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* ── Anotações ─────────────────────────────────────────────── */}
