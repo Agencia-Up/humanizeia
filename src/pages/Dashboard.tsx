@@ -5,6 +5,7 @@ import { useMetaDashboard, MetaDatePreset } from '@/hooks/useMetaDashboard';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import { useCampaignNotifications } from '@/hooks/useCampaignNotifications';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,54 +20,80 @@ import {
 } from 'lucide-react';
 
 /* ── Atalhos para os agentes ──────────────────────────────────── */
-const AGENTS = [
+import type { VisibleFeatures } from '@/hooks/useSellerProfile';
+
+const AGENTS: Array<{
+  key: keyof VisibleFeatures;
+  emoji: string;
+  name: string;
+  role: string;
+  desc: string;
+  url: string;
+  color: string;
+  badge: string;
+}> = [
   {
+    key: 'agent_pedro',
+    emoji: '💬', name: 'Pedro', role: 'Atendimento',
+    desc: 'Configure respostas automáticas no WhatsApp',
+    url: '/pedro', color: 'border-teal-500/30 hover:border-teal-400/60',
+    badge: 'bg-teal-500/10 text-teal-400',
+  },
+  {
+    key: 'agent_marcos',
+    emoji: '👥', name: 'Marcos', role: 'Leads & WhatsApp',
+    desc: 'CRM, formulários, disparo em massa e inbox',
+    url: '/crm', color: 'border-purple-500/30 hover:border-purple-400/60',
+    badge: 'bg-purple-500/10 text-purple-400',
+  },
+  {
+    key: 'agent_jose',
+    emoji: '🎯', name: 'José', role: 'Anúncios',
+    desc: 'Veja o desempenho das suas campanhas de anúncios',
+    url: '/jose', color: 'border-orange-500/30 hover:border-orange-400/60',
+    badge: 'bg-orange-500/10 text-orange-400',
+  },
+  {
+    key: 'agent_salomao',
     emoji: '👑', name: 'Salomão', role: 'Ponto de partida',
     desc: 'Treine seus agentes com informações do seu negócio',
     url: '/salomao', color: 'border-yellow-500/30 hover:border-yellow-400/60',
     badge: 'bg-yellow-500/10 text-yellow-400',
   },
   {
-    emoji: '🎯', name: 'José', role: 'Anúncios',
-    desc: 'Veja o desempenho das suas campanhas de anúncios',
-    url: '/jose', color: 'border-blue-500/30 hover:border-blue-400/60',
-    badge: 'bg-blue-500/10 text-blue-400',
-  },
-  {
+    key: 'agent_paulo',
     emoji: '✍️', name: 'Paulo', role: 'Textos e anúncios',
     desc: 'Crie textos persuasivos para vender mais',
     url: '/copywriter', color: 'border-violet-500/30 hover:border-violet-400/60',
     badge: 'bg-violet-500/10 text-violet-400',
   },
   {
+    key: 'agent_maria',
     emoji: '🎨', name: 'Maria', role: 'Imagens e artes',
     desc: 'Gere imagens e criativos para suas campanhas',
     url: '/creative-studio', color: 'border-pink-500/30 hover:border-pink-400/60',
     badge: 'bg-pink-500/10 text-pink-400',
   },
   {
+    key: 'agent_davi',
     emoji: '📱', name: 'Davi', role: 'Redes sociais',
     desc: 'Crie posts e legendas para Instagram e Facebook',
     url: '/davi', color: 'border-cyan-500/30 hover:border-cyan-400/60',
     badge: 'bg-cyan-500/10 text-cyan-400',
   },
   {
+    key: 'agent_joao',
     emoji: '📧', name: 'João', role: 'E-mail marketing',
     desc: 'Monte sequências de e-mails para seus clientes',
     url: '/joao', color: 'border-emerald-500/30 hover:border-emerald-400/60',
     badge: 'bg-emerald-500/10 text-emerald-400',
   },
   {
+    key: 'agent_daniel',
     emoji: '🧠', name: 'Daniel', role: 'Estratégia',
     desc: 'Monte um plano de marketing para o seu negócio',
     url: '/daniel', color: 'border-indigo-500/30 hover:border-indigo-400/60',
     badge: 'bg-indigo-500/10 text-indigo-400',
-  },
-  {
-    emoji: '💬', name: 'Pedro', role: 'Atendimento',
-    desc: 'Configure respostas automáticas no WhatsApp',
-    url: '/whatsapp/ai-agent', color: 'border-teal-500/30 hover:border-teal-400/60',
-    badge: 'bg-teal-500/10 text-teal-400',
   },
 ];
 
@@ -92,11 +119,17 @@ function TrendBadge({ delta }: { delta?: number }) {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { isSeller, visibleFeatures } = useSellerProfile(user?.id);
   const { toast } = useToast();
   const navigate = useNavigate();
   const firstName = user?.user_metadata?.full_name?.split(' ')[0]
     || user?.email?.split('@')[0]
     || 'Usuário';
+
+  /* Filtra agentes baseado em permissões (master ve tudo, seller ve só os liberados) */
+  const visibleAgents = isSeller
+    ? AGENTS.filter(a => visibleFeatures[a.key])
+    : AGENTS;
 
   const [isSending, setIsSending] = useState(false);
   const [isRefreshingManual, setIsRefreshingManual] = useState(false);
@@ -342,7 +375,7 @@ export default function Dashboard() {
           <p className="text-xs text-muted-foreground mb-4">Escolha um agente e comece agora</p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {AGENTS.map((agent, i) => (
+            {visibleAgents.map((agent, i) => (
               <motion.button
                 key={agent.name}
                 initial={{ opacity: 0, y: 10 }}

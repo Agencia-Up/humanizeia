@@ -32,11 +32,20 @@ export interface VisibleFeatures {
   marcos_automacoes: boolean;
   // Sidebar
   sidebar_dashboard: boolean;
-  sidebar_jose: boolean;
   sidebar_treinamento: boolean;
   sidebar_meu_plano: boolean;
   sidebar_integracoes: boolean;
   sidebar_configuracoes: boolean;
+  // Agentes (controla cards do Dashboard E itens do sidebar)
+  agent_pedro: boolean;
+  agent_marcos: boolean;
+  agent_jose: boolean;
+  agent_salomao: boolean;
+  agent_paulo: boolean;
+  agent_maria: boolean;
+  agent_davi: boolean;
+  agent_joao: boolean;
+  agent_daniel: boolean;
 }
 
 export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
@@ -55,11 +64,20 @@ export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   marcos_instancias: false,
   marcos_automacoes: false,
   sidebar_dashboard: false,
-  sidebar_jose: false,
   sidebar_treinamento: false,
   sidebar_meu_plano: false,
   sidebar_integracoes: false,
   sidebar_configuracoes: false,
+  // Agentes — só Pedro ativado por padrão (master libera os demais)
+  agent_pedro: true,
+  agent_marcos: false,
+  agent_jose: false,
+  agent_salomao: false,
+  agent_paulo: false,
+  agent_maria: false,
+  agent_davi: false,
+  agent_joao: false,
+  agent_daniel: false,
 };
 
 export interface SellerProfileResult {

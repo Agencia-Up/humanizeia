@@ -3,6 +3,7 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useSubscription } from '@/hooks/useSubscription';
+import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile';
 import { motion } from 'framer-motion';
 import {
   Sparkles, Radar, Users, PenTool, Palette, Send,
@@ -15,16 +16,25 @@ import { Badge } from '@/components/ui/badge';
 
 // ── Todos os agentes com tier mínimo necessário ─────────────────────────────
 // basico = liberado no Básico, pro = liberado no Pro, enterprise = liberado no Pro Max
-const allAgentsList = [
-  { name: 'Pedro',   role: 'SDR & Agente IA',  icon: Bot,      color: '#34d399', url: '/pedro',           desc: 'Qualificação de leads, CRM avançado e automação comercial', tier: 'basico' as const },
-  { name: 'Marcos',  role: 'CRM & WhatsApp',   icon: Users,    color: '#a855f7', url: '/marcos',          desc: 'CRM, leads e toda estrutura WhatsApp',                      tier: 'pro' as const },
-  { name: 'José',    role: 'Tráfego Pago',     icon: Radar,    color: '#f97316', url: '/jose',            desc: 'Meta Ads, Google Ads e otimização de campanhas',            tier: 'pro' as const },
-  { name: 'Salomão', role: 'Orquestrador',     icon: Sparkles, color: '#f59e0b', url: '/salomao',         desc: 'Coordena todos os agentes e estratégias',                   tier: 'enterprise' as const },
-  { name: 'Paulo',   role: 'Copywriter',       icon: PenTool,  color: '#22d3a0', url: '/copywriter',      desc: 'Copies persuasivas geradas por IA',                         tier: 'enterprise' as const },
-  { name: 'Maria',   role: 'Design',           icon: Palette,  color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA',                        tier: 'enterprise' as const },
-  { name: 'Davi',    role: 'Social Media',     icon: Instagram, color: '#60a5fa', url: '/davi',           desc: 'Gestão de redes sociais e conteúdo',                        tier: 'enterprise' as const },
-  { name: 'João',    role: 'Email',            icon: Mail,     color: '#a78bfa', url: '/joao',            desc: 'Email marketing e automações',                              tier: 'enterprise' as const },
-  { name: 'Daniel',  role: 'Estratégia',       icon: Brain,    color: '#f87171', url: '/daniel',          desc: 'Planejamento e análise estratégica',                        tier: 'enterprise' as const },
+const allAgentsList: Array<{
+  name: string;
+  role: string;
+  icon: any;
+  color: string;
+  url: string;
+  desc: string;
+  tier: 'basico' | 'pro' | 'enterprise';
+  featureKey: keyof VisibleFeatures;
+}> = [
+  { name: 'Pedro',   role: 'SDR & Agente IA',  icon: Bot,      color: '#34d399', url: '/pedro',           desc: 'Qualificação de leads, CRM avançado e automação comercial', tier: 'basico',     featureKey: 'agent_pedro' },
+  { name: 'Marcos',  role: 'CRM & WhatsApp',   icon: Users,    color: '#a855f7', url: '/marcos',          desc: 'CRM, leads e toda estrutura WhatsApp',                      tier: 'pro',        featureKey: 'agent_marcos' },
+  { name: 'José',    role: 'Tráfego Pago',     icon: Radar,    color: '#f97316', url: '/jose',            desc: 'Meta Ads, Google Ads e otimização de campanhas',            tier: 'pro',        featureKey: 'agent_jose' },
+  { name: 'Salomão', role: 'Orquestrador',     icon: Sparkles, color: '#f59e0b', url: '/salomao',         desc: 'Coordena todos os agentes e estratégias',                   tier: 'enterprise', featureKey: 'agent_salomao' },
+  { name: 'Paulo',   role: 'Copywriter',       icon: PenTool,  color: '#22d3a0', url: '/copywriter',      desc: 'Copies persuasivas geradas por IA',                         tier: 'enterprise', featureKey: 'agent_paulo' },
+  { name: 'Maria',   role: 'Design',           icon: Palette,  color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA',                        tier: 'enterprise', featureKey: 'agent_maria' },
+  { name: 'Davi',    role: 'Social Media',     icon: Instagram, color: '#60a5fa', url: '/davi',           desc: 'Gestão de redes sociais e conteúdo',                        tier: 'enterprise', featureKey: 'agent_davi' },
+  { name: 'João',    role: 'Email',            icon: Mail,     color: '#a78bfa', url: '/joao',            desc: 'Email marketing e automações',                              tier: 'enterprise', featureKey: 'agent_joao' },
+  { name: 'Daniel',  role: 'Estratégia',       icon: Brain,    color: '#f87171', url: '/daniel',          desc: 'Planejamento e análise estratégica',                        tier: 'enterprise', featureKey: 'agent_daniel' },
 ];
 
 const TIER_ORDER = { basico: 0, pro: 1, enterprise: 2 };
@@ -98,6 +108,7 @@ export default function AgentHub() {
   const { user } = useAuth();
   const { isAdmin } = useIsAdmin();
   const { subscription } = useSubscription();
+  const { isSeller, visibleFeatures } = useSellerProfile(user?.id);
   const navigate = useNavigate();
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
 
@@ -105,9 +116,14 @@ export default function AgentHub() {
   const userTier = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
   const userTierLevel = TIER_ORDER[userTier] ?? 0;
 
-  // Separar agentes desbloqueados vs travados
-  const unlockedAgents = allAgentsList.filter(a => userTierLevel >= TIER_ORDER[a.tier]);
-  const lockedAgents = allAgentsList.filter(a => userTierLevel < TIER_ORDER[a.tier]);
+  // Filtragem por seller: vendedor só vê os agentes que o master liberou
+  const agentsAfterSellerFilter = isSeller
+    ? allAgentsList.filter(a => visibleFeatures[a.featureKey])
+    : allAgentsList;
+
+  // Separar agentes desbloqueados vs travados (após filtragem por seller)
+  const unlockedAgents = agentsAfterSellerFilter.filter(a => userTierLevel >= TIER_ORDER[a.tier]);
+  const lockedAgents = agentsAfterSellerFilter.filter(a => userTierLevel < TIER_ORDER[a.tier]);
 
   // Badge label para cada tier
   const tierBadge = (tier: string) => tier === 'pro' ? 'Pro' : 'Pro Max';

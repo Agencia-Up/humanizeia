@@ -82,9 +82,15 @@ const allSellerSystemItems = [
   { title: 'Configurações',  url: '/settings',     icon: Settings,        featureKey: 'sidebar_configuracoes' as keyof VisibleFeatures },
 ];
 
-// ── Agentes Seller — filtrados por visibleFeatures ──────────────────────────
-const allSellerAgentItems = [
-  { title: 'José',  url: '/jose',  icon: Radar, featureKey: 'sidebar_jose' as keyof VisibleFeatures, subtitle: 'Tráfego Pago' },
+// ── Agentes Seller — filtrados por visibleFeatures (unificado com Dashboard) ─
+const allSellerAgentItems: { title: string; url: string; icon: any; featureKey: keyof VisibleFeatures }[] = [
+  { title: 'José',    url: '/jose',            icon: Radar,     featureKey: 'agent_jose' },
+  { title: 'Salomão', url: '/salomao',         icon: Sparkles,  featureKey: 'agent_salomao' },
+  { title: 'Paulo',   url: '/copywriter',      icon: PenTool,   featureKey: 'agent_paulo' },
+  { title: 'Maria',   url: '/creative-studio', icon: Palette,   featureKey: 'agent_maria' },
+  { title: 'Davi',    url: '/davi',            icon: Instagram, featureKey: 'agent_davi' },
+  { title: 'João',    url: '/joao',            icon: Mail,      featureKey: 'agent_joao' },
+  { title: 'Daniel',  url: '/daniel',          icon: Brain,     featureKey: 'agent_daniel' },
 ];
 
 // ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
@@ -439,10 +445,12 @@ export function AppSidebar() {
                 <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
               </NavGroup>
             )}
-            <NavGroup label="Pedro" collapsed={collapsed}>
-              <NavPedroSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
-            </NavGroup>
-            {marcosSubItems.some(i => visibleFeatures[i.featureKey]) && (
+            {visibleFeatures.agent_pedro && (
+              <NavGroup label="Pedro" collapsed={collapsed}>
+                <NavPedroSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
+              </NavGroup>
+            )}
+            {visibleFeatures.agent_marcos && marcosSubItems.some(i => visibleFeatures[i.featureKey]) && (
               <NavGroup label="Marcos CRM" collapsed={collapsed}>
                 <NavMarcosSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
               </NavGroup>

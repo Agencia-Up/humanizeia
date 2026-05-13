@@ -13,6 +13,7 @@ import {
   LayoutGrid, FileText, MessageCircle, Zap, LayoutDashboard,
   GraduationCap, CreditCard, Plug, Settings, PanelLeft,
   CheckCircle2, Circle, RotateCcw, Sparkles, Radar,
+  PenTool, Palette, Instagram, Brain,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -43,7 +44,7 @@ interface SellerMember {
 }
 
 // ── Mapeamento de features para labels, ícones e descrições ─────────────────
-type FeatureGroup = 'tab' | 'marcos' | 'sidebar';
+type FeatureGroup = 'agents' | 'tab' | 'marcos' | 'sidebar';
 
 interface FeatureItem {
   key: keyof VisibleFeatures;
@@ -54,6 +55,16 @@ interface FeatureItem {
 }
 
 const FEATURE_LABELS: FeatureItem[] = [
+  // ── Acesso aos Agentes (Dashboard + Sidebar) ──
+  { key: 'agent_pedro',   label: 'Pedro',   desc: 'SDR & Atendimento',     icon: Bot,       group: 'agents' },
+  { key: 'agent_marcos',  label: 'Marcos',  desc: 'CRM & WhatsApp',         icon: Users,     group: 'agents' },
+  { key: 'agent_jose',    label: 'José',    desc: 'Tráfego Pago — Meta Ads', icon: Radar,     group: 'agents' },
+  { key: 'agent_salomao', label: 'Salomão', desc: 'Orquestrador Central',   icon: Crown,     group: 'agents' },
+  { key: 'agent_paulo',   label: 'Paulo',   desc: 'Copywriter',             icon: PenTool,   group: 'agents' },
+  { key: 'agent_maria',   label: 'Maria',   desc: 'Design Criativo',        icon: Palette,   group: 'agents' },
+  { key: 'agent_davi',    label: 'Davi',    desc: 'Social Media',           icon: Instagram, group: 'agents' },
+  { key: 'agent_joao',    label: 'João',    desc: 'E-mail Marketing',       icon: Mail,      group: 'agents' },
+  { key: 'agent_daniel',  label: 'Daniel',  desc: 'Estratégia',             icon: Brain,     group: 'agents' },
   // ── Abas do Pedro SDR ──
   { key: 'tab_crm',            label: 'Meus Leads',            desc: 'Pipeline de leads e CRM',        icon: Users,          group: 'tab' },
   { key: 'tab_inbox',          label: 'Inbox',                  desc: 'Caixa de mensagens',             icon: MessageSquare,  group: 'tab' },
@@ -72,7 +83,6 @@ const FEATURE_LABELS: FeatureItem[] = [
   { key: 'marcos_automacoes',  label: 'Automações',             desc: 'Fluxos automáticos',             icon: Zap,            group: 'marcos' },
   // ── Menu Lateral ──
   { key: 'sidebar_dashboard',     label: 'Dashboard',           desc: 'Painel principal',               icon: LayoutDashboard, group: 'sidebar' },
-  { key: 'sidebar_jose',          label: 'José — Tráfego Pago', desc: 'Meta Ads e análise com IA',      icon: Radar,           group: 'sidebar' },
   { key: 'sidebar_treinamento',   label: 'Treinamento',         desc: 'Base de conhecimento',           icon: GraduationCap,   group: 'sidebar' },
   { key: 'sidebar_meu_plano',     label: 'Meu Plano',           desc: 'Assinatura e tokens',            icon: CreditCard,      group: 'sidebar' },
   { key: 'sidebar_integracoes',   label: 'Integrações',         desc: 'Conexões externas',              icon: Plug,            group: 'sidebar' },
@@ -99,6 +109,20 @@ interface FeatureGroupStyle {
 }
 
 const FEATURE_GROUPS: FeatureGroupStyle[] = [
+  {
+    key: 'agents',
+    title: 'Acesso aos Agentes',
+    subtitle: 'Cards do Dashboard e itens do sidebar',
+    icon: Sparkles,
+    border: 'border-amber-500/30',
+    headerGradient: 'bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/5',
+    iconColor: 'text-amber-400',
+    iconColorBright: 'text-amber-300',
+    activeBg: 'bg-amber-500/10',
+    activeBorder: 'border-amber-500/40',
+    activeIconBg: 'bg-amber-500/20',
+    hoverAccent: 'hover:bg-amber-500/10 hover:text-amber-300',
+  },
   {
     key: 'tab',
     title: 'Abas do Pedro SDR',
