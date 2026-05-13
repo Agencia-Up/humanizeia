@@ -8,7 +8,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   Users, UserPlus, Phone, Loader2, Trash2, Pencil, Check, X,
-  Crown, Save, Mail, Send, Shield, StickyNote, Eye, Settings2, RefreshCw,
+  Crown, Save, Mail, Send, Shield, StickyNote, Eye, EyeOff, Settings2, RefreshCw,
+  MessageSquare, BarChart3, Bot, Radio, Smartphone, UserCog,
+  LayoutGrid, FileText, MessageCircle, Zap, LayoutDashboard,
+  GraduationCap, CreditCard, Plug, Settings, PanelLeft,
+  CheckCircle2, Circle, RotateCcw, Sparkles,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -37,26 +42,104 @@ interface SellerMember {
   visible_features: VisibleFeatures | null;
 }
 
-// ── Mapeamento de features para labels legíveis ────────────────────────────
-const FEATURE_LABELS: { key: keyof VisibleFeatures; label: string; group: 'tab' | 'marcos' | 'sidebar' }[] = [
-  { key: 'tab_crm',            label: 'Meus Leads (CRM)',        group: 'tab' },
-  { key: 'tab_inbox',          label: 'Inbox',                   group: 'tab' },
-  { key: 'tab_performance',    label: 'Performance',             group: 'tab' },
-  { key: 'tab_agente_ia',      label: 'Agente IA',               group: 'tab' },
-  { key: 'tab_crm_ao_vivo',    label: 'CRM ao Vivo',             group: 'tab' },
-  { key: 'tab_instancias',     label: 'Instâncias WhatsApp',     group: 'tab' },
-  { key: 'tab_vendedores',     label: 'Vendedores',              group: 'tab' },
-  { key: 'marcos_crm',         label: 'CRM (Kanban)',            group: 'marcos' },
-  { key: 'marcos_formularios', label: 'Formulários',             group: 'marcos' },
-  { key: 'marcos_contatos',    label: 'Contatos',                group: 'marcos' },
-  { key: 'marcos_disparo',     label: 'Disparo em Massa',        group: 'marcos' },
-  { key: 'marcos_inbox',       label: 'Inbox WhatsApp',          group: 'marcos' },
-  { key: 'marcos_automacoes',  label: 'Automações',              group: 'marcos' },
-  { key: 'sidebar_dashboard',     label: 'Dashboard',            group: 'sidebar' },
-  { key: 'sidebar_treinamento',   label: 'Treinamento',          group: 'sidebar' },
-  { key: 'sidebar_meu_plano',     label: 'Meu Plano',            group: 'sidebar' },
-  { key: 'sidebar_integracoes',   label: 'Integrações',          group: 'sidebar' },
-  { key: 'sidebar_configuracoes', label: 'Configurações',        group: 'sidebar' },
+// ── Mapeamento de features para labels, ícones e descrições ─────────────────
+type FeatureGroup = 'tab' | 'marcos' | 'sidebar';
+
+interface FeatureItem {
+  key: keyof VisibleFeatures;
+  label: string;
+  desc: string;
+  icon: LucideIcon;
+  group: FeatureGroup;
+}
+
+const FEATURE_LABELS: FeatureItem[] = [
+  // ── Abas do Pedro SDR ──
+  { key: 'tab_crm',            label: 'Meus Leads',            desc: 'Pipeline de leads e CRM',        icon: Users,          group: 'tab' },
+  { key: 'tab_inbox',          label: 'Inbox',                  desc: 'Caixa de mensagens',             icon: MessageSquare,  group: 'tab' },
+  { key: 'tab_performance',    label: 'Performance',            desc: 'Métricas e resultados',          icon: BarChart3,      group: 'tab' },
+  { key: 'tab_agente_ia',      label: 'Agente IA',              desc: 'Configuração do agente',         icon: Bot,            group: 'tab' },
+  { key: 'tab_crm_ao_vivo',    label: 'CRM ao Vivo',            desc: 'Leads em tempo real',            icon: Radio,          group: 'tab' },
+  { key: 'tab_instancias',     label: 'Instâncias WhatsApp',    desc: 'Conexões de WhatsApp',           icon: Smartphone,     group: 'tab' },
+  { key: 'tab_vendedores',     label: 'Vendedores',             desc: 'Gestão da equipe',               icon: UserCog,        group: 'tab' },
+  // ── CRM & WhatsApp (Marcos) ──
+  { key: 'marcos_crm',         label: 'CRM Kanban',             desc: 'Pipeline visual de vendas',      icon: LayoutGrid,     group: 'marcos' },
+  { key: 'marcos_formularios', label: 'Formulários',            desc: 'Captura de leads',               icon: FileText,       group: 'marcos' },
+  { key: 'marcos_contatos',    label: 'Contatos',               desc: 'Base de contatos',               icon: Users,          group: 'marcos' },
+  { key: 'marcos_disparo',     label: 'Disparo em Massa',       desc: 'Campanhas WhatsApp',             icon: Send,           group: 'marcos' },
+  { key: 'marcos_inbox',       label: 'Inbox WhatsApp',         desc: 'Mensagens diretas',              icon: MessageCircle,  group: 'marcos' },
+  { key: 'marcos_instancias',  label: 'Instâncias',             desc: 'Gerenciar conexões',             icon: Smartphone,     group: 'marcos' },
+  { key: 'marcos_automacoes',  label: 'Automações',             desc: 'Fluxos automáticos',             icon: Zap,            group: 'marcos' },
+  // ── Menu Lateral ──
+  { key: 'sidebar_dashboard',     label: 'Dashboard',           desc: 'Painel principal',               icon: LayoutDashboard, group: 'sidebar' },
+  { key: 'sidebar_treinamento',   label: 'Treinamento',         desc: 'Base de conhecimento',           icon: GraduationCap,   group: 'sidebar' },
+  { key: 'sidebar_meu_plano',     label: 'Meu Plano',           desc: 'Assinatura e tokens',            icon: CreditCard,      group: 'sidebar' },
+  { key: 'sidebar_integracoes',   label: 'Integrações',         desc: 'Conexões externas',              icon: Plug,            group: 'sidebar' },
+  { key: 'sidebar_configuracoes', label: 'Configurações',       desc: 'Opções do sistema',              icon: Settings,        group: 'sidebar' },
+];
+
+interface FeatureGroupStyle {
+  key: FeatureGroup;
+  title: string;
+  subtitle: string;
+  icon: LucideIcon;
+  // Card del grupo
+  border: string;
+  headerGradient: string;
+  // Ícone do header (sempre colorido)
+  iconColor: string;
+  iconColorBright: string;
+  // Estado ATIVO do card de feature
+  activeBg: string;
+  activeBorder: string;
+  activeIconBg: string;
+  // Hover/foco
+  hoverAccent: string;
+}
+
+const FEATURE_GROUPS: FeatureGroupStyle[] = [
+  {
+    key: 'tab',
+    title: 'Abas do Pedro SDR',
+    subtitle: 'Abas visíveis no painel do vendedor',
+    icon: LayoutDashboard,
+    border: 'border-violet-500/30',
+    headerGradient: 'bg-gradient-to-r from-violet-500/15 via-purple-500/10 to-violet-500/5',
+    iconColor: 'text-violet-400',
+    iconColorBright: 'text-violet-300',
+    activeBg: 'bg-violet-500/10',
+    activeBorder: 'border-violet-500/40',
+    activeIconBg: 'bg-violet-500/20',
+    hoverAccent: 'hover:bg-violet-500/10 hover:text-violet-300',
+  },
+  {
+    key: 'marcos',
+    title: 'CRM & WhatsApp',
+    subtitle: 'Ferramentas de CRM e comunicação',
+    icon: MessageSquare,
+    border: 'border-emerald-500/30',
+    headerGradient: 'bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/5',
+    iconColor: 'text-emerald-400',
+    iconColorBright: 'text-emerald-300',
+    activeBg: 'bg-emerald-500/10',
+    activeBorder: 'border-emerald-500/40',
+    activeIconBg: 'bg-emerald-500/20',
+    hoverAccent: 'hover:bg-emerald-500/10 hover:text-emerald-300',
+  },
+  {
+    key: 'sidebar',
+    title: 'Menu Lateral',
+    subtitle: 'Itens do menu de navegação',
+    icon: PanelLeft,
+    border: 'border-blue-500/30',
+    headerGradient: 'bg-gradient-to-r from-blue-500/15 via-sky-500/10 to-blue-500/5',
+    iconColor: 'text-blue-400',
+    iconColorBright: 'text-blue-300',
+    activeBg: 'bg-blue-500/10',
+    activeBorder: 'border-blue-500/40',
+    activeIconBg: 'bg-blue-500/20',
+    hoverAccent: 'hover:bg-blue-500/10 hover:text-blue-300',
+  },
 ];
 
 export function SellerManagerTab({ userId }: SellerManagerTabProps) {
@@ -90,15 +173,47 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   // Feature config dialog state
   const [configSellerId, setConfigSellerId] = useState<string | null>(null);
   const [configFeatures, setConfigFeatures] = useState<VisibleFeatures>({ ...DEFAULT_SELLER_FEATURES });
+  const [initialFeatures, setInitialFeatures] = useState<VisibleFeatures>({ ...DEFAULT_SELLER_FEATURES });
   const [savingConfig, setSavingConfig] = useState(false);
 
   const handleOpenConfig = (s: SellerMember) => {
+    const features = { ...DEFAULT_SELLER_FEATURES, ...(s.visible_features || {}) };
     setConfigSellerId(s.id);
-    setConfigFeatures({ ...DEFAULT_SELLER_FEATURES, ...(s.visible_features || {}) });
+    setConfigFeatures(features);
+    setInitialFeatures(features);
   };
+
+  const handleResetChanges = () => {
+    setConfigFeatures({ ...initialFeatures });
+  };
+
+  // Conta quantas features mudaram desde a abertura do dialog
+  const changedCount = Object.keys(configFeatures).reduce((acc, key) => {
+    const k = key as keyof VisibleFeatures;
+    return acc + (configFeatures[k] !== initialFeatures[k] ? 1 : 0);
+  }, 0);
+  const hasChanges = changedCount > 0;
 
   const handleToggleFeature = (key: keyof VisibleFeatures) => {
     setConfigFeatures(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleToggleGroup = (group: FeatureGroup) => {
+    const groupFeatures = FEATURE_LABELS.filter(f => f.group === group);
+    const allActive = groupFeatures.every(f => configFeatures[f.key]);
+    setConfigFeatures(prev => {
+      const next = { ...prev };
+      for (const f of groupFeatures) next[f.key] = !allActive;
+      return next;
+    });
+  };
+
+  const handleSetAll = (value: boolean) => {
+    setConfigFeatures(prev => {
+      const next = { ...prev };
+      for (const f of FEATURE_LABELS) next[f.key] = value;
+      return next;
+    });
   };
 
   const handleSaveConfig = async () => {
@@ -132,6 +247,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
           : (authUid && s.auth_user_id === authUid) ? { ...s, visible_features: configFeatures }
           : s
       ));
+      setInitialFeatures({ ...configFeatures });
       toast({ title: '✅ Painel do vendedor configurado!' });
       setConfigSellerId(null);
     } catch (err: any) {
@@ -565,88 +681,245 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
         )}
       </div>
 
-      {/* ── Dialog: Configurar Painel do Vendedor ── */}
+      {/* ── Dialog: Configurar Permissões do Vendedor ── */}
       <Dialog open={!!configSellerId} onOpenChange={open => !open && setConfigSellerId(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <Settings2 className="h-4 w-4 text-violet-400" />
-              Configurar Painel do Vendedor
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Selecione o que este vendedor poderá ver no painel dele. As alterações são aplicadas imediatamente ao salvar.
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="sm:max-w-2xl max-h-[88vh] overflow-hidden flex flex-col p-0 gap-0">
+          {(() => {
+            const currentSeller = sellers.find(s => s.id === configSellerId);
+            const totalActive = Object.values(configFeatures).filter(Boolean).length;
+            const totalFeatures = Object.keys(configFeatures).length;
 
-          <div className="space-y-4 py-2">
-            {/* Tabs do Pedro */}
-            <div>
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                Abas do Painel (Pedro SDR)
-              </p>
-              <div className="space-y-2">
-                {FEATURE_LABELS.filter(f => f.group === 'tab').map(f => (
-                  <div key={f.key} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
-                    <span className="text-sm text-foreground">{f.label}</span>
-                    <Switch
-                      checked={configFeatures[f.key]}
-                      onCheckedChange={() => handleToggleFeature(f.key)}
-                      className="scale-90"
-                    />
+            return (
+              <>
+                {/* ═══════════════════ HEADER COM IDENTIDADE ═══════════════════ */}
+                <div className="relative overflow-hidden border-b border-border/40">
+                  {/* Background gradient decorativo */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-violet-500/10 via-purple-500/5 to-transparent pointer-events-none" />
+
+                  <DialogHeader className="relative px-6 pt-5 pb-4 space-y-0">
+                    <div className="flex items-start gap-3">
+                      {/* Avatar com iniciais (igual à lista) */}
+                      <div className={`h-11 w-11 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                        currentSeller?.is_active
+                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-muted text-muted-foreground border border-border/40'
+                      }`}>
+                        {currentSeller?.name?.slice(0, 2).toUpperCase() || '??'}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <DialogTitle className="text-base flex items-center gap-2 flex-wrap">
+                          <Shield className="h-4 w-4 text-violet-400 shrink-0" />
+                          <span>Permissões de</span>
+                          <span className="text-violet-300">{currentSeller?.name || 'Vendedor'}</span>
+                          {currentSeller?.is_active ? (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold border border-emerald-500/20">
+                              ATIVO
+                            </span>
+                          ) : (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400 font-semibold border border-slate-500/20">
+                              PAUSADO
+                            </span>
+                          )}
+                        </DialogTitle>
+                        <DialogDescription className="text-xs mt-1">
+                          Defina o que este vendedor pode ver no painel dele. As alterações sincronizam em todos os agentes do vendedor.
+                        </DialogDescription>
+                      </div>
+                    </div>
+                  </DialogHeader>
+                </div>
+
+                {/* ═══════════════════ BARRA DE AÇÕES RÁPIDAS ═══════════════════ */}
+                <div className="flex items-center gap-2 px-6 py-2.5 border-b border-border/40 bg-muted/10 flex-wrap">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSetAll(true)}
+                    className="text-[11px] h-7 gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 hover:border-emerald-500/50"
+                  >
+                    <Eye className="h-3 w-3" /> Ativar Tudo
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSetAll(false)}
+                    className="text-[11px] h-7 gap-1.5 border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 hover:border-red-500/50"
+                  >
+                    <EyeOff className="h-3 w-3" /> Desativar Tudo
+                  </Button>
+                  {hasChanges && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleResetChanges}
+                      className="text-[11px] h-7 gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300 hover:border-amber-500/50"
+                      title="Reverter para o último estado salvo"
+                    >
+                      <RotateCcw className="h-3 w-3" /> Desfazer
+                    </Button>
+                  )}
+
+                  <div className="ml-auto flex items-center gap-3">
+                    {/* Progress visual */}
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 w-24 rounded-full bg-muted/60 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-violet-500 to-purple-500 transition-all duration-300"
+                          style={{ width: `${(totalActive / totalFeatures) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-[11px] text-muted-foreground font-medium tabular-nums">
+                        <span className="text-foreground font-semibold">{totalActive}</span>
+                        <span className="opacity-60">/{totalFeatures}</span>
+                      </span>
+                    </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            {/* Marcos */}
-            <div>
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                Marcos — CRM & WhatsApp
-              </p>
-              <div className="space-y-2">
-                {FEATURE_LABELS.filter(f => f.group === 'marcos').map(f => (
-                  <div key={f.key} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
-                    <span className="text-sm text-foreground">{f.label}</span>
-                    <Switch
-                      checked={configFeatures[f.key]}
-                      onCheckedChange={() => handleToggleFeature(f.key)}
-                      className="scale-90"
-                    />
+                {/* ═══════════════════ CONTEÚDO SCROLLÁVEL ═══════════════════ */}
+                <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+                  {FEATURE_GROUPS.map(group => {
+                    const items = FEATURE_LABELS.filter(f => f.group === group.key);
+                    const activeCount = items.filter(f => configFeatures[f.key]).length;
+                    const allActive = activeCount === items.length;
+                    const noneActive = activeCount === 0;
+                    const GroupIcon = group.icon;
+
+                    return (
+                      <div key={group.key} className={`rounded-xl border ${group.border} overflow-hidden bg-card/40`}>
+                        {/* ── Cabeçalho do grupo com gradiente ── */}
+                        <div className={`flex items-center justify-between px-4 py-3 ${group.headerGradient} border-b ${group.border}`}>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={`h-8 w-8 rounded-lg ${group.activeIconBg} border ${group.activeBorder} flex items-center justify-center shrink-0`}>
+                              <GroupIcon className={`h-4 w-4 ${group.iconColorBright}`} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-sm font-semibold text-foreground">{group.title}</h4>
+                                <Badge
+                                  variant="outline"
+                                  className={`text-[10px] h-5 px-1.5 ${group.border} ${group.iconColorBright} font-bold tabular-nums`}
+                                >
+                                  {activeCount}/{items.length}
+                                </Badge>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">{group.subtitle}</p>
+                            </div>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`h-7 text-[11px] gap-1 ${group.iconColor} ${group.hoverAccent} shrink-0`}
+                            onClick={() => handleToggleGroup(group.key)}
+                            title={allActive ? 'Desativar todas deste grupo' : 'Ativar todas deste grupo'}
+                          >
+                            {allActive
+                              ? <><EyeOff className="h-3 w-3" /> Desativar</>
+                              : noneActive
+                                ? <><Sparkles className="h-3 w-3" /> Ativar Todos</>
+                                : <><Eye className="h-3 w-3" /> Ativar Restantes</>
+                            }
+                          </Button>
+                        </div>
+
+                        {/* ── Grid de features ── */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 p-2">
+                          {items.map(f => {
+                            const Icon = f.icon;
+                            const isActive = configFeatures[f.key];
+                            const isChanged = isActive !== initialFeatures[f.key];
+
+                            return (
+                              <button
+                                key={f.key}
+                                type="button"
+                                onClick={() => handleToggleFeature(f.key)}
+                                className={`group/feat relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 text-left
+                                  ${isActive
+                                    ? `${group.activeBg} border ${group.activeBorder} shadow-sm`
+                                    : 'bg-muted/30 border border-border/30 hover:bg-muted/50 hover:border-border/50'
+                                  }`}
+                              >
+                                {/* Indicador "alterado" — ponto amarelo */}
+                                {isChanged && (
+                                  <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" title="Alterado" />
+                                )}
+
+                                {/* Container do ícone */}
+                                <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 transition-all
+                                  ${isActive
+                                    ? `${group.activeIconBg} ${group.iconColorBright} border ${group.activeBorder}`
+                                    : 'bg-muted/40 text-muted-foreground border border-transparent'
+                                  }`}>
+                                  <Icon className="h-4 w-4" />
+                                </div>
+
+                                {/* Texto */}
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-xs font-semibold leading-tight ${isActive ? 'text-foreground' : 'text-muted-foreground'}`}>
+                                    {f.label}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground/80 truncate leading-tight mt-0.5">
+                                    {f.desc}
+                                  </p>
+                                </div>
+
+                                {/* Indicador on/off visual (substitui o Switch) */}
+                                <div className="shrink-0">
+                                  {isActive
+                                    ? <CheckCircle2 className={`h-5 w-5 ${group.iconColorBright}`} />
+                                    : <Circle className="h-5 w-5 text-muted-foreground/40 group-hover/feat:text-muted-foreground/70 transition-colors" />
+                                  }
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* ═══════════════════ FOOTER ═══════════════════ */}
+                <div className="flex items-center justify-between px-6 py-3 border-t border-border/40 bg-muted/10">
+                  <div className="flex items-center gap-2">
+                    {hasChanges ? (
+                      <>
+                        <div className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                        <span className="text-[11px] text-amber-400 font-medium">
+                          {changedCount} {changedCount === 1 ? 'alteração pendente' : 'alterações pendentes'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="h-3 w-3 text-emerald-400" />
+                        <span className="text-[11px] text-muted-foreground">
+                          Sem alterações pendentes
+                        </span>
+                      </>
+                    )}
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Sidebar */}
-            <div>
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                Menu Lateral (Sidebar)
-              </p>
-              <div className="space-y-2">
-                {FEATURE_LABELS.filter(f => f.group === 'sidebar').map(f => (
-                  <div key={f.key} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
-                    <span className="text-sm text-foreground">{f.label}</span>
-                    <Switch
-                      checked={configFeatures[f.key]}
-                      onCheckedChange={() => handleToggleFeature(f.key)}
-                      className="scale-90"
-                    />
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setConfigSellerId(null)} className="text-xs h-8">
+                      Cancelar
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleSaveConfig}
+                      disabled={savingConfig || !hasChanges}
+                      className="bg-violet-600 hover:bg-violet-700 text-white text-xs px-5 h-8 disabled:opacity-50"
+                    >
+                      {savingConfig
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                        : <Save className="h-3.5 w-3.5 mr-1" />}
+                      Salvar Permissões
+                    </Button>
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" size="sm" onClick={() => setConfigSellerId(null)} className="text-xs">
-              Cancelar
-            </Button>
-            <Button size="sm" onClick={handleSaveConfig} disabled={savingConfig}
-              className="bg-violet-600 hover:bg-violet-700 text-white text-xs px-4">
-              {savingConfig ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Save className="h-3.5 w-3.5 mr-1" />}
-              Salvar Configuração
-            </Button>
-          </div>
+                </div>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>
