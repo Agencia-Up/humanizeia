@@ -43,7 +43,7 @@ export const supabase = createClient<Database>(
     storage: localStorage,
     storageKey: SUPABASE_AUTH_STORAGE_KEY,
     persistSession: true,
-    autoRefreshToken: true,
+    autoRefreshToken: false,
     lock: sameTabLock,
   }
   }
