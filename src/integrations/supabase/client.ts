@@ -2,12 +2,27 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+export const SUPABASE_DIRECT_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const USE_PRODUCTION_PROXY =
+  typeof window !== 'undefined' &&
+  window.location.hostname.replace(/^www\./, '') === 'logosiabrasil.com';
+
+export const SUPABASE_URL = USE_PRODUCTION_PROXY
+  ? `${window.location.origin}/supabase/`
+  : SUPABASE_DIRECT_URL;
 export const SUPABASE_PUBLIC_KEY =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   '';
 export const HAS_SUPABASE_CONFIG = Boolean(SUPABASE_URL && SUPABASE_PUBLIC_KEY);
+export const SUPABASE_PROJECT_REF = (() => {
+  try {
+    return new URL(SUPABASE_DIRECT_URL).hostname.split('.')[0] || 'default';
+  } catch {
+    return 'default';
+  }
+})();
+export const SUPABASE_AUTH_STORAGE_KEY = `sb-${SUPABASE_PROJECT_REF}-auth-token`;
 
 if (!HAS_SUPABASE_CONFIG) {
   console.error('[Supabase] Configuracao publica incompleta. Verifique VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY ou VITE_SUPABASE_ANON_KEY.');
@@ -26,6 +41,7 @@ export const supabase = createClient<Database>(
   {
   auth: {
     storage: localStorage,
+    storageKey: SUPABASE_AUTH_STORAGE_KEY,
     persistSession: true,
     autoRefreshToken: true,
     lock: sameTabLock,
