@@ -36,6 +36,21 @@ Deno.serve(async (req) => {
     }
     const userId = userData.user.id;
 
+    // Detect seller: use manager's user_id so campaign/contacts match
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const { data: profileData } = await serviceClient
+      .from("profiles")
+      .select("role, manager_id")
+      .eq("id", userId)
+      .single();
+
+    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
+    const effectiveUserId = isSeller ? profileData.manager_id : userId;
+
     const { campaign_id } = await req.json();
     if (!campaign_id) {
       return new Response(JSON.stringify({ error: "campaign_id is required" }), {
@@ -44,12 +59,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch campaign (RLS ensures ownership)
-    const { data: campaign, error: campErr } = await supabase
+    // Fetch campaign using serviceClient + effectiveUserId (seller sees master's campaigns)
+    const { data: campaign, error: campErr } = await serviceClient
       .from("wa_campaigns")
       .select("*")
       .eq("id", campaign_id)
-      .eq("user_id", userId)
+      .eq("user_id", effectiveUserId)
       .single();
 
     if (campErr || !campaign) {
@@ -78,11 +93,6 @@ Deno.serve(async (req) => {
     const delayRules = campaign.regras_delay || {};
     const minDelay = delayRules.min || campaign.min_delay_seconds || 5;
     const maxDelay = delayRules.max || campaign.max_delay_seconds || 15;
-
-    const serviceClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     // ── PAUSED RESUME WITHOUT LISTS: reactivate existing queue entries ──────────
     // When a paused campaign has no list IDs saved (older campaigns or direct imports),
@@ -151,12 +161,13 @@ Deno.serve(async (req) => {
     }
 
     // Fetch all contacts from selected lists WITH metadata for AI personalization
-    const { data: contacts, error: contactsErr } = await supabase
+    // Use serviceClient + effectiveUserId so seller can access master's contacts
+    const { data: contacts, error: contactsErr } = await serviceClient
       .from("wa_contacts")
       .select("id, phone, name, metadata")
       .in("list_id", listIds)
       .eq("is_valid", true)
-      .eq("user_id", userId);
+      .eq("user_id", effectiveUserId);
 
     if (contactsErr) {
       return new Response(JSON.stringify({ error: "Erro ao buscar contatos das listas." }), {
@@ -241,7 +252,7 @@ Deno.serve(async (req) => {
         // Resume paused/cancelled/processing from where campaign stopped
         rowsToReactivate.push({
           id: existing.id,
-          user_id: userId,
+          user_id: effectiveUserId,
           campaign_id,
           contact_id: c.id,
           phone: c.phone,
@@ -257,7 +268,7 @@ Deno.serve(async (req) => {
         });
       } else {
         rowsToInsert.push({
-          user_id: userId,
+          user_id: effectiveUserId,
           campaign_id,
           contact_id: c.id,
           phone: c.phone,

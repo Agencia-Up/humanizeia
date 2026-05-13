@@ -195,13 +195,33 @@ Deno.serve(async (req) => {
     const startOfTodayIso = startOfToday.toISOString();
 
     for (const uid of userIds) {
-      const { data: instances } = await supabase
+      let { data: instances } = await supabase
         .from("wa_instances")
         .select("*")
         .eq("user_id", uid)
         .eq("is_active", true)
         .eq("status", "connected")
         .order("health_score", { ascending: false });
+
+      // ===== SELLER FALLBACK: se vendedor não tem instâncias, usa as do dono =====
+      if (!instances || instances.length === 0) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, manager_id")
+          .eq("id", uid)
+          .single();
+        if (profile?.role === "seller" && profile?.manager_id) {
+          console.log(`[instance-fallback] User ${uid} is seller, using manager ${profile.manager_id} instances`);
+          const { data: managerInstances } = await supabase
+            .from("wa_instances")
+            .select("*")
+            .eq("user_id", profile.manager_id)
+            .eq("is_active", true)
+            .eq("status", "connected")
+            .order("health_score", { ascending: false });
+          instances = managerInstances;
+        }
+      }
 
       if (instances && instances.length > 0) {
         const typedInstances = instances as unknown as Instance[];

@@ -37,13 +37,17 @@ Deno.serve(async (req) => {
     }
     const userId = user.id;
 
-    // --- Get org_id from profile ---
+    // --- Get profile: org_id, role, manager_id ---
     const { data: profile } = await supabase
       .from("profiles")
-      .select("organization_id")
+      .select("organization_id, role, manager_id")
       .eq("id", userId)
       .single();
     const orgId = profile?.organization_id || null;
+
+    // Seller uses manager's user_id so contacts/instances match
+    const isSeller = profile?.role === "seller" && !!profile?.manager_id;
+    const effectiveUserId = isSeller ? profile.manager_id : userId;
 
     // --- Parse body ---
     const body = await req.json();
@@ -255,12 +259,12 @@ Deno.serve(async (req) => {
     );
 
     if (campaign_id) {
-      // Update: verify ownership first
-      const { data: existing, error: existErr } = await supabase
+      // Update: verify ownership (seller sees master's campaigns via effectiveUserId)
+      const { data: existing, error: existErr } = await serviceClient
         .from("wa_campaigns")
         .select("id, status")
         .eq("id", campaign_id)
-        .eq("user_id", userId)
+        .eq("user_id", effectiveUserId)
         .single();
 
       if (existErr || !existing) {
@@ -275,7 +279,7 @@ Deno.serve(async (req) => {
         .from("wa_campaigns")
         .update(payload)
         .eq("id", campaign_id)
-        .eq("user_id", userId);
+        .eq("user_id", effectiveUserId);
 
       if (updateErr) {
         console.error("Update error:", updateErr);
@@ -284,8 +288,8 @@ Deno.serve(async (req) => {
 
       return jsonResponse({ success: true, campaign_id, action: "updated" });
     } else {
-      // Create
-      payload.user_id = userId;
+      // Create — seller's campaign is saved under master's user_id
+      payload.user_id = effectiveUserId;
 
       const { data: created, error: insertErr } = await serviceClient
         .from("wa_campaigns")

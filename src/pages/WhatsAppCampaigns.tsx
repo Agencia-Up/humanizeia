@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import { useClaudeChat } from '@/hooks/useClaudeChat';
 import { CampaignFormDialog, CampaignFormData } from '@/components/whatsapp/CampaignFormDialog';
@@ -71,6 +72,7 @@ const statusMap: Record<string, { label: string; variant: 'default' | 'secondary
 
 export default function WhatsAppCampaigns() {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [contactLists, setContactLists] = useState<ContactList[]>([]);
@@ -82,43 +84,50 @@ export default function WhatsAppCampaigns() {
   const [editingCampaign, setEditingCampaign] = useState<(CampaignFormData & { id: string }) | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Vendedor usa dados do dono (listas, instâncias, campanhas)
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
+
   const { sendSingleMessage, isLoading: aiLoading } = useClaudeChat({
     context: 'copywriter',
     config: { creativity: 0.8, variations: 3 },
   });
 
   const fetchCampaigns = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setLoading(true);
     const { data, error } = await supabase
       .from('wa_campaigns')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId)
       .order('created_at', { ascending: false });
     if (!error && data) setCampaigns(data as unknown as Campaign[]);
     setLoading(false);
-  }, [user]);
+  }, [effectiveUserId]);
 
   const fetchLists = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     const { data } = await supabase
       .from('wa_contact_lists')
       .select('id, name, contact_count')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId)
       .order('name');
     if (data) setContactLists(data);
-  }, [user]);
+  }, [effectiveUserId]);
 
   const fetchInstances = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     const { data } = await supabase
       .from('wa_instances')
       .select('id, friendly_name, phone_number, status')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId)
       .eq('is_active', true)
       .order('friendly_name');
     if (data) setInstances(data);
-  }, [user]);
+  }, [effectiveUserId]);
 
   useEffect(() => {
     fetchCampaigns();
