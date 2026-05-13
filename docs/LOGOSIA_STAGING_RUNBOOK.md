@@ -31,7 +31,31 @@ O staging possui acesso local separado em:
 
 Esses arquivos sao ignorados pelo Git. Nao comitar tokens, service keys, chaves da UAZAPI, Meta, Asaas, OpenAI ou qualquer credencial.
 
-As integracoes externas nao devem ser copiadas automaticamente para staging. Primeiro usar chaves/contas de teste. Isso evita que o ambiente de testes dispare WhatsApp, cobranca, webhook ou campanha real.
+As integracoes externas podem ser ativadas no staging quando o objetivo for testar igual producao, mas com cuidado: filas antigas de disparo nao devem ser copiadas. Isso evita que o ambiente de testes dispare WhatsApp, cobranca, webhook ou campanha real sem acao humana.
+
+## Sincronizar Dados de Producao Para Staging
+
+Gerar usuarios espelho no Auth do staging, com os mesmos UUIDs da producao:
+
+```bat
+node scripts\sync-staging-auth-users.mjs
+scripts\supabase-logosia-staging.cmd db query --linked -f "E:\Projetos - Antigravity\HUMANIZEIA\humanizeia\supabase\.temp\logosia-staging-auth-users.sql"
+```
+
+Copiar configuracoes, integracoes, agentes, Pedro/CRM, inbox, contatos, historicos, formularios e bases de conhecimento:
+
+```bat
+node scripts\sync-staging-from-production.mjs
+```
+
+Ativar secrets de functions que podem ser derivados das integracoes copiadas, como UAZAPI/Evolution e fallback Meta:
+
+```bat
+node scripts\build-staging-function-secrets.mjs
+scripts\supabase-logosia-staging.cmd secrets set --project-ref ezoltigtqgbmftmiwjxh --env-file "E:\Projetos - Antigravity\HUMANIZEIA\humanizeia-staging\supabase\.env.staging.function-secrets.local"
+```
+
+O sync pula propositalmente tabelas de fila/runtime como `wa_queue`, `followup_queue`, `rule_execution_log`, `agent_executions`, `orchestrator_tasks`, `notifications`, `meta_capi_batches` e `meta_capi_events`.
 
 ## Comandos
 
@@ -96,4 +120,4 @@ As migrations antigas do projeto tinham alguns problemas para recriar um Supabas
 - uma migration usando `CREATE POLICY IF NOT EXISTS`, sintaxe nao aceita pelo Postgres;
 - tabelas/colunas que existiam na producao por evolucao manual, mas nao estavam no historico local.
 
-Por isso foi criada a migration `20260513000001_pedro_staging_schema_backfill.sql`, com correcoes seguras usando `IF NOT EXISTS`.
+Por isso foram criadas migrations de compatibilidade com correcoes seguras usando `IF NOT EXISTS`, incluindo `20260513001000_pedro_staging_schema_backfill.sql` e `20260513002000_staging_schema_compatibility.sql`.
