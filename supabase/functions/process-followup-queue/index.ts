@@ -13,19 +13,13 @@ serve(async (req) => {
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
 
   try {
-    const now = new Date().toISOString();
-
-    // Busca mensagens agendadas que já devem ser enviadas (até 10 por vez)
+    // ── REIVINDICAÇÃO ATÔMICA via RPC ─────────────────────────────────────
+    // A função claim_followup_messages usa FOR UPDATE SKIP LOCKED + UPDATE
+    // status='processing' RETURNING para garantir que cada item seja pego
+    // por SOMENTE UM worker. Resolve o bug de duplicação quando duas
+    // execuções (cron + manual ou cron sobreposto) rodam concorrentes.
     const { data: items, error } = await supabase
-      .from("followup_queue")
-      .select("*, instance:wa_instances(api_url, api_key_encrypted, instance_name)")
-      .eq("status", "scheduled")
-      .eq("channel", "whatsapp")
-      .lte("scheduled_for", now)
-      .not("phone", "is", null)
-      .not("instance_id", "is", null)
-      .order("scheduled_for", { ascending: true })
-      .limit(10);
+      .rpc("claim_followup_messages", { p_limit: 10 });
 
     if (error) throw error;
     if (!items || items.length === 0) {
@@ -38,25 +32,32 @@ serve(async (req) => {
     let sent = 0;
     let failed = 0;
 
-    for (const item of items) {
+    for (const item of items as any[]) {
       try {
-        const instance = item.instance;
-        if (!instance?.api_url) throw new Error("Instância sem api_url");
+        if (!item.api_url) throw new Error("Instância sem api_url");
 
-        const baseUrl = instance.api_url.replace(/\/$/, "");
-        const instKey = instance.api_key_encrypted || "";
+        const baseUrl = String(item.api_url).replace(/\/$/, "");
+        const instKey = item.api_key_encrypted || "";
 
         let phone = String(item.phone).replace(/\D/g, "");
         if (phone.length === 10 || phone.length === 11) phone = `55${phone}`;
 
         const res = await fetch(`${baseUrl}/send/text`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "token": instKey },
+          headers: {
+            "Content-Type": "application/json",
+            "token": instKey,
+            "apikey": instKey,
+          },
           body: JSON.stringify({ number: phone, text: item.message_content }),
         });
 
-        if (!res.ok) throw new Error(`API retornou ${res.status}`);
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          throw new Error(`API ${res.status}: ${body.slice(0, 200)}`);
+        }
 
+        // Marca como enviado (sai de 'processing' → 'sent')
         await supabase.from("followup_queue").update({
           status: "sent",
           sent_at: new Date().toISOString(),
@@ -67,6 +68,7 @@ serve(async (req) => {
       } catch (err: any) {
         console.error(`[followup-queue] Erro ao enviar item ${item.id}:`, err.message);
         const attempts = (item.attempt_count || 0) + 1;
+        // Falhou: volta para 'scheduled' (retry) ou marca 'failed' se 3+ tentativas
         await supabase.from("followup_queue").update({
           status: attempts >= 3 ? "failed" : "scheduled",
           attempt_count: attempts,
