@@ -307,17 +307,24 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   };
 
   // ===== Importação de leads do Pedro =====
+  // Vendedor: só vê leads que ELE atendeu (assigned_to_member_id = seller.id)
+  // Master: vê todos os leads do Pedro da conta
   const openPedroImportDialog = async () => {
     if (!effectiveUserId) return;
-    setPedroListName(`Leads do Pedro - ${format(new Date(), 'dd/MM/yyyy')}`);
+    const sellerLabel = isSeller && seller?.name ? ` (${seller.name})` : '';
+    setPedroListName(`Leads do Pedro${sellerLabel} - ${format(new Date(), 'dd/MM/yyyy')}`);
     setPedroAutoSync(true);
     setShowPedroImport(true);
     // Conta leads do Pedro disponíveis para importar
     try {
-      const { count } = await (supabase as any)
+      let q = (supabase as any)
         .from('ai_crm_leads')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', effectiveUserId);
+      if (isSeller && seller?.id) {
+        q = q.eq('assigned_to_member_id', seller.id);
+      }
+      const { count } = await q;
       setPedroLeadCount(count || 0);
     } catch {
       setPedroLeadCount(0);
@@ -328,7 +335,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     if (!effectiveUserId || !pedroListName.trim()) return;
     setIsSaving(true);
     try {
-      // 1. Cria a lista com flag de auto-sync (se marcada)
+      // 1. Cria a lista — se vendedor, vincula a ele via seller_member_id
       const { data: list, error: listErr } = await (supabase as any)
         .from('wa_contact_lists')
         .insert({
@@ -337,16 +344,21 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
           description: pedroAutoSync ? 'Lista sincronizada automaticamente com leads do Pedro' : 'Importada dos leads do Pedro',
           source: 'pedro_import',
           auto_sync_pedro_leads: pedroAutoSync,
+          seller_member_id: (isSeller && seller?.id) ? seller.id : null,
         } as any)
         .select('id')
         .single();
       if (listErr) throw listErr;
 
-      // 2. Busca todos os leads do Pedro do master
-      const { data: leads, error: leadsErr } = await (supabase as any)
+      // 2. Busca leads do Pedro — vendedor: só os atribuídos a ele
+      let leadsQuery = (supabase as any)
         .from('ai_crm_leads')
         .select('remote_jid, lead_name')
         .eq('user_id', effectiveUserId);
+      if (isSeller && seller?.id) {
+        leadsQuery = leadsQuery.eq('assigned_to_member_id', seller.id);
+      }
+      const { data: leads, error: leadsErr } = await leadsQuery;
       if (leadsErr) throw leadsErr;
 
       // 3. Converte para contatos (deduplicando por phone)
@@ -1174,7 +1186,9 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
               Importar Leads do Pedro
             </DialogTitle>
             <DialogDescription>
-              Cria uma lista de contatos com os leads que o Pedro qualificou no atendimento. Você pode usar essa lista em campanhas e fluxos de mensagens automáticas.
+              {isSeller
+                ? 'Cria uma lista com APENAS os leads que VOCÊ atendeu no Pedro. Útil para disparar follow-ups e campanhas para seus próprios leads.'
+                : 'Cria uma lista de contatos com os leads que o Pedro qualificou no atendimento. Você pode usar essa lista em campanhas e fluxos de mensagens automáticas.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -1187,7 +1201,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                   {pedroLeadCount === null ? '...' : pedroLeadCount} {pedroLeadCount === 1 ? 'lead disponível' : 'leads disponíveis'}
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">
-                  Todos os leads atualmente no CRM do Pedro
+                  {isSeller ? 'Apenas leads atribuídos a você' : 'Todos os leads atualmente no CRM do Pedro'}
                 </p>
               </div>
             </div>
@@ -1215,7 +1229,9 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                   Sincronizar automaticamente novos leads
                 </Label>
                 <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                  Quando o Pedro qualificar um novo lead, ele entra automaticamente nesta lista. Útil para disparar fluxos de follow-up automaticamente.
+                  {isSeller
+                    ? 'Quando o Pedro qualificar um novo lead E atribuir a você, ele entra automaticamente nesta lista. Útil para disparar fluxos de follow-up.'
+                    : 'Quando o Pedro qualificar um novo lead, ele entra automaticamente nesta lista. Útil para disparar fluxos de follow-up automaticamente.'}
                 </p>
               </div>
             </div>

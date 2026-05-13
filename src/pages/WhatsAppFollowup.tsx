@@ -228,6 +228,43 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
     fetchQueue(queueFilter);
   };
 
+  /* ── Cancelar/apagar item agendado da fila ── */
+  const cancelItem = async (id: string) => {
+    if (!confirm('Cancelar o disparo desta mensagem?')) return;
+    const { error } = await (supabase as any)
+      .from('followup_queue')
+      .delete()
+      .eq('id', id);
+    if (error) {
+      toast({ title: 'Erro ao cancelar', description: error.message, variant: 'destructive' });
+      return;
+    }
+    toast({ title: 'Mensagem cancelada e removida da fila.' });
+    fetchQueue(queueFilter);
+  };
+
+  /* ── Cancelar todos os agendados (em massa) ── */
+  const cancelAllScheduled = async () => {
+    if (!effectiveUserId) return;
+    const count = queue.filter(q => q.status === 'scheduled').length;
+    if (count === 0) {
+      toast({ title: 'Nenhuma mensagem agendada para cancelar.' });
+      return;
+    }
+    if (!confirm(`Cancelar TODAS as ${count} mensagens agendadas? Esta ação não pode ser desfeita.`)) return;
+    const { error } = await (supabase as any)
+      .from('followup_queue')
+      .delete()
+      .eq('user_id', effectiveUserId)
+      .eq('status', 'scheduled');
+    if (error) {
+      toast({ title: 'Erro ao cancelar em massa', description: error.message, variant: 'destructive' });
+      return;
+    }
+    toast({ title: `${count} mensagem(ns) cancelada(s).` });
+    fetchQueue(queueFilter);
+  };
+
   /* ── Contadores da fila ── */
   const queueCounts = {
     all:       queue.length,
@@ -399,9 +436,22 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
                 {f === 'failed' && `Falhos (${queueCounts.failed})`}
               </button>
             ))}
-            <Button size="sm" variant="ghost" className="h-7 gap-1 ml-auto" onClick={() => fetchQueue(queueFilter)}>
-              <RefreshCw className="h-3.5 w-3.5" /> Atualizar
-            </Button>
+            <div className="ml-auto flex items-center gap-2">
+              {queueCounts.scheduled > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1 text-xs text-red-400 border-red-400/30 hover:bg-red-500/10"
+                  onClick={cancelAllScheduled}
+                  title={`Cancelar ${queueCounts.scheduled} mensagem(ns) agendada(s)`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Cancelar agendados ({queueCounts.scheduled})
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={() => fetchQueue(queueFilter)}>
+                <RefreshCw className="h-3.5 w-3.5" /> Atualizar
+              </Button>
+            </div>
           </div>
 
           {loadingQueue ? (
@@ -457,17 +507,32 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
                     </div>
                   </div>
 
-                  {/* Ação: Retentar se falhou */}
-                  {item.status === 'failed' && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs gap-1 shrink-0 text-amber-500 border-amber-500/30 hover:bg-amber-500/10"
-                      onClick={() => retryItem(item.id)}
-                    >
-                      <RefreshCw className="h-3 w-3" /> Tentar
-                    </Button>
-                  )}
+                  {/* Ações */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Retentar se falhou */}
+                    {item.status === 'failed' && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs gap-1 text-amber-500 border-amber-500/30 hover:bg-amber-500/10"
+                        onClick={() => retryItem(item.id)}
+                      >
+                        <RefreshCw className="h-3 w-3" /> Tentar
+                      </Button>
+                    )}
+                    {/* Cancelar/Apagar — só para agendados e falhos (não faz sentido apagar já enviado) */}
+                    {(item.status === 'scheduled' || item.status === 'failed') && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 w-7 p-0 text-red-400 border-red-400/30 hover:bg-red-500/10"
+                        onClick={() => cancelItem(item.id)}
+                        title="Cancelar e apagar mensagem"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
