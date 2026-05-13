@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { AutomationFlowBuilder } from '@/components/marcos/AutomationFlowBuilder';
@@ -34,7 +35,14 @@ interface AutomationFlow {
 
 export default function WhatsAppAutomations({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
+
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
 
   // View state
   const [view, setView] = useState<'list' | 'builder'>('list');
@@ -48,13 +56,13 @@ export default function WhatsAppAutomations({ embedded }: { embedded?: boolean }
 
   // Fetch flows
   const fetchFlows = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setLoading(true);
     try {
       const { data, error } = await (supabase as any)
         .from('wa_automation_flows')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('updated_at', { ascending: false });
       if (error) throw error;
       setFlows((data || []) as AutomationFlow[]);
@@ -63,7 +71,7 @@ export default function WhatsAppAutomations({ embedded }: { embedded?: boolean }
     } finally {
       setLoading(false);
     }
-  }, [user, toast]);
+  }, [effectiveUserId, toast]);
 
   useEffect(() => { fetchFlows(); }, [fetchFlows]);
 

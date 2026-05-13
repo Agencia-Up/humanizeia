@@ -50,10 +50,20 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
+    // Seller detection: if user is a seller, use their manager's ID for data queries
+    const { data: profileData } = await supabaseService
+      .from("profiles")
+      .select("role, manager_id")
+      .eq("id", userId)
+      .single();
+
+    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
+    const effectiveUserId = isSeller ? profileData.manager_id : userId;
+
     const { data: config, error: configError } = await supabaseService
       .from('whatsapp_config')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', effectiveUserId)
       .maybeSingle();
 
     if (configError) {

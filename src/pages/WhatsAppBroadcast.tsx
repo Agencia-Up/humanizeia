@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import { useClaudeChat } from '@/hooks/useClaudeChat';
 import { CampaignFormDialog, CampaignFormData } from '@/components/whatsapp/CampaignFormDialog';
@@ -48,7 +49,15 @@ interface WAInstance {
 
 export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
+
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
+
   const [campaigns, setCampaigns] = useState<WACampaign[]>([]);
   const [lists, setLists] = useState<ContactList[]>([]);
   const [instances, setInstances] = useState<WAInstance[]>([]);
@@ -71,24 +80,24 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   });
 
   const fetchData = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setIsLoading(true);
     try {
       const [campaignsRes, listsRes, instancesRes] = await Promise.all([
         supabase
           .from('wa_campaigns')
           .select('*')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false }),
         supabase
           .from('wa_contact_lists')
           .select('id, name, contact_count, source, created_at')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false }),
         supabase
           .from('wa_instances')
           .select('id, friendly_name, phone_number, is_active, health_score, provider, status')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .eq('is_active', true),
       ]);
 
@@ -103,7 +112,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
     } finally {
       setIsLoading(false);
     }
-  }, [user, toast]);
+  }, [effectiveUserId, toast]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -540,7 +549,7 @@ Não numere as variações. Não inclua explicações adicionais.`
         <CSVUploadDialog
           open={showUpload}
           onOpenChange={setShowUpload}
-          userId={user.id}
+          userId={effectiveUserId || ''}
           onUploadComplete={fetchData}
         />
       )}

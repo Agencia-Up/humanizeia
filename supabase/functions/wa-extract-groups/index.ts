@@ -357,10 +357,20 @@ Deno.serve(async (req) => {
     }
     const user_id = userData.user.id;
 
+    // Seller detection: if user is a seller, use their manager's ID for data queries
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("role, manager_id")
+      .eq("id", user_id)
+      .single();
+
+    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
+    const effectiveUserId = isSeller ? profileData.manager_id : user_id;
+
     const body = await req.json();
     const { action, group_ids, groups, list_id, query, instance_id } = body;
 
-    const configs = await getInstanceConfig(supabase, user_id);
+    const configs = await getInstanceConfig(supabase, effectiveUserId);
     if (!configs || configs.length === 0) {
       return new Response(JSON.stringify({
         success: false,
@@ -405,7 +415,7 @@ Deno.serve(async (req) => {
         supabase,
         supabaseUrl,
         supabaseServiceKey,
-        user_id,
+        effectiveUserId,
         list_id,
       );
       return new Response(JSON.stringify(result), {

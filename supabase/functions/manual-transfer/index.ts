@@ -129,6 +129,16 @@ Deno.serve(async (req) => {
     }
     const userId = userData.user.id;
 
+    // Seller detection: if user is a seller, use their manager's ID for data queries
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("role, manager_id")
+      .eq("id", userId)
+      .single();
+
+    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
+    const effectiveUserId = isSeller ? profileData.manager_id : userId;
+
     const { leadId, memberId, notes } = await req.json();
 
     if (!leadId || !memberId) {
@@ -143,7 +153,7 @@ Deno.serve(async (req) => {
       .from("ai_crm_leads")
       .select("*, agent:wa_ai_agents(*)")
       .eq("id", leadId)
-      .eq("user_id", userId)
+      .eq("user_id", effectiveUserId)
       .single();
 
     if (leadErr || !lead) {
@@ -158,7 +168,7 @@ Deno.serve(async (req) => {
       .from("ai_team_members")
       .select("*")
       .eq("id", memberId)
-      .eq("user_id", userId)
+      .eq("user_id", effectiveUserId)
       .single();
 
     if (memberErr || !member) {
@@ -194,7 +204,7 @@ Deno.serve(async (req) => {
       const { data: fallbackInstances } = await supabase
         .from("wa_instances")
         .select("*")
-        .eq("user_id", userId)
+        .eq("user_id", effectiveUserId)
         .eq("is_active", true)
         .eq("status", "connected")
         .limit(1);
@@ -265,7 +275,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
 
     // 8. Record transfer
     await supabase.from("ai_lead_transfers").insert({
-      user_id: userId,
+      user_id: effectiveUserId,
       lead_id: lead.id,
       from_member_id: lead.assigned_to_id,
       to_member_id: member.id,
@@ -282,7 +292,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
     }).eq("id", member.id);
 
     // 10. Sync lead to Marcos contact list (non-blocking)
-    syncLeadToMarcos(supabase, userId, lead, member);
+    syncLeadToMarcos(supabase, effectiveUserId, lead, member);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

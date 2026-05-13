@@ -336,7 +336,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   }, []);
 
   const syncTransferredToMarcos = useCallback(async (transferredLeads: any[]): Promise<{ synced: number; errors: number }> => {
-    if (!user) return { synced: 0, errors: 0 };
+    if (!effectiveUserId) return { synced: 0, errors: 0 };
     const unsync = transferredLeads.filter(l => !syncedToMarcosRef.current.has(l.id));
     if (unsync.length === 0) return { synced: 0, errors: 0 };
 
@@ -346,7 +346,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     const { data: firstStage } = await (supabase as any)
       .from('crm_pipeline_stages')
       .select('id')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId)
       .order('position', { ascending: true })
       .limit(1)
       .maybeSingle();
@@ -355,7 +355,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     const { data: maxPosRow } = await (supabase as any)
       .from('crm_leads')
       .select('position')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId)
       .eq('stage_id', firstStage?.id || null)
       .order('position', { ascending: false })
       .limit(1)
@@ -376,7 +376,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         const { data: existing, error: lookupErr } = await (supabase as any)
           .from('crm_leads')
           .select('id')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .eq('phone', phone)
           .maybeSingle();
 
@@ -388,7 +388,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           if (updErr) throw updErr;
         } else {
           const { error: insErr } = await (supabase as any).from('crm_leads').insert({
-            user_id:  user.id,
+            user_id:  effectiveUserId,
             stage_id: firstStage?.id || null,
             name:     lead.lead_name || phone,
             phone,
@@ -406,20 +406,20 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         // ── 2. wa_contacts (lista "Leads Pedro CRM" para disparo) ───────────
         const { data: list } = await (supabase as any)
           .from('wa_contact_lists').select('id')
-          .eq('user_id', user.id).eq('name', 'Leads Pedro CRM').maybeSingle();
+          .eq('user_id', effectiveUserId).eq('name', 'Leads Pedro CRM').maybeSingle();
 
         let listId = list?.id;
         if (!listId) {
           const { data: newList } = await (supabase as any)
             .from('wa_contact_lists')
-            .insert({ user_id: user.id, name: 'Leads Pedro CRM', description: 'Leads qualificados pelo Pedro SDR' })
+            .insert({ user_id: effectiveUserId, name: 'Leads Pedro CRM', description: 'Leads qualificados pelo Pedro SDR' })
             .select('id').single();
           listId = newList?.id;
         }
 
         if (listId) {
           await (supabase as any).from('wa_contacts').upsert({
-            user_id: user.id, list_id: listId, phone,
+            user_id: effectiveUserId, list_id: listId, phone,
             name: lead.lead_name || phone,
             is_valid: true,
             metadata: {
@@ -440,7 +440,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     }
 
     return { synced, errors };
-  }, [user, normalizePhone]);
+  }, [effectiveUserId, normalizePhone]);
 
   // Dispara o sync sempre que novos leads 'transferido' aparecem
   useEffect(() => {
@@ -599,7 +599,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   // ── Exportar/forçar sync de TODOS leads do filtro para Marcos ─────────────
   const handleExportToMarcos = useCallback(async () => {
-    if (!user || filteredLeads.length === 0) return;
+    if (!effectiveUserId || filteredLeads.length === 0) return;
     setExportingMarcos(true);
     try {
       // Limpa o cache de synced para forçar re-sync de todos do filtro
@@ -615,12 +615,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       if (nonTransferred.length > 0) {
         const { data: list } = await (supabase as any)
           .from('wa_contact_lists').select('id')
-          .eq('user_id', user.id).eq('name', 'Leads Pedro CRM').maybeSingle();
+          .eq('user_id', effectiveUserId).eq('name', 'Leads Pedro CRM').maybeSingle();
         let listId = list?.id;
         if (!listId) {
           const { data: newList } = await (supabase as any)
             .from('wa_contact_lists')
-            .insert({ user_id: user.id, name: 'Leads Pedro CRM', description: 'Leads qualificados pelo Pedro SDR' })
+            .insert({ user_id: effectiveUserId, name: 'Leads Pedro CRM', description: 'Leads qualificados pelo Pedro SDR' })
             .select('id').single();
           listId = newList?.id;
         }
@@ -629,7 +629,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             .map(l => {
               const phone = normalizePhone(l.remote_jid || '');
               return {
-                user_id: user.id, list_id: listId,
+                user_id: effectiveUserId, list_id: listId,
                 phone,
                 name: l.lead_name || phone,
                 is_valid: true,
@@ -662,7 +662,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     } finally {
       setExportingMarcos(false);
     }
-  }, [user, filteredLeads, syncTransferredToMarcos, normalizePhone]);
+  }, [effectiveUserId, filteredLeads, syncTransferredToMarcos, normalizePhone]);
 
   // ── Drag-and-drop: muda status do lead entre colunas ─────────────────────
   const handleDragEnd = useCallback(async (result: DropResult) => {

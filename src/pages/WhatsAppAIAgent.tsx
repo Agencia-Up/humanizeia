@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import {
   Bot, Plus, Loader2, MessageSquare, Sparkles, Trash2, Edit2, Copy, Webhook,
@@ -278,7 +279,15 @@ function AgentCard({
 
 export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
+
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
+
   const [loading, setLoading] = useState(true);
   const isInitialMount = useRef(true);
   const [instances, setInstances] = useState<Instance[]>([]);
@@ -287,7 +296,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
   const [editingAgent, setEditingAgent] = useState<AIAgent | null>(null);
 
   const fetchData = useCallback(async () => {
-    if (!user) {
+    if (!effectiveUserId) {
       setInstances([]);
       setAgents([]);
       setLoading(false);
@@ -296,8 +305,8 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
     if (isInitialMount.current) setLoading(true);
     try {
       const [{ data: inst, error: instancesError }, { data: agentsData, error: agentsError }] = await Promise.all([
-        supabase.from('wa_instances').select('id, friendly_name, instance_name, is_active, provider').eq('user_id', user.id),
-        (supabase as any).from('wa_ai_agents').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('wa_instances').select('id, friendly_name, instance_name, is_active, provider').eq('user_id', effectiveUserId),
+        (supabase as any).from('wa_ai_agents').select('*').eq('user_id', effectiveUserId).order('created_at', { ascending: false }),
       ]);
       if (instancesError) throw instancesError;
       if (agentsError) throw agentsError;
@@ -316,7 +325,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
       setLoading(false);
       isInitialMount.current = false;
     }
-  }, [user]);
+  }, [effectiveUserId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -326,7 +335,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
     try {
       const ids = agent.instance_ids?.length ? agent.instance_ids : (agent.instance_id ? [agent.instance_id] : []);
       if (ids.length > 0) {
-        await Promise.all(ids.map(id => supabase.functions.invoke('delete-evolution-instance', { body: { instance_id: id, user_id: user?.id } })));
+        await Promise.all(ids.map(id => supabase.functions.invoke('delete-evolution-instance', { body: { instance_id: id, user_id: effectiveUserId } })));
       }
       const { error } = await (supabase as any).from('wa_ai_agents').delete().eq('id', agent.id);
       if (error) throw error;
@@ -341,7 +350,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
 
   const handleDuplicate = async (agent: AIAgent) => {
     const { id, created_at, total_replies, ...rest } = agent;
-    const { error } = await (supabase as any).from('wa_ai_agents').insert({ ...rest, name: `${agent.name} (cópia)`, user_id: user!.id, total_replies: 0, is_active: false });
+    const { error } = await (supabase as any).from('wa_ai_agents').insert({ ...rest, name: `${agent.name} (cópia)`, user_id: effectiveUserId, total_replies: 0, is_active: false });
     if (error) toast({ title: 'Erro ao duplicar', description: error.message, variant: 'destructive' });
     else { toast({ title: 'Agente duplicado!' }); fetchData(); }
   };

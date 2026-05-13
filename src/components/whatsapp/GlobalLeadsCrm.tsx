@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useNavigate } from 'react-router-dom';
 import { 
   Loader2, Users, Search, MoreVertical, ArrowRightLeft, Flag,
@@ -39,6 +40,12 @@ interface TransferStats {
 
 export function GlobalLeadsCrm() {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [leads, setLeads] = useState<any[]>([]);
@@ -50,32 +57,32 @@ export function GlobalLeadsCrm() {
   const { toast } = useToast();
 
   const fetchAll = useCallback(async () => {
-    if (!user) { setLoading(false); return; }
+    if (!effectiveUserId) { setLoading(false); return; }
     setLoading(true);
     try {
       const { data: leadsData } = await (supabase as any)
         .from('ai_crm_leads')
         .select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('last_interaction_at', { ascending: false });
 
       const { data: transfersData } = await (supabase as any)
         .from('ai_lead_transfers')
         .select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false })
         .limit(200);
 
       const { data: teamData } = await (supabase as any)
         .from('ai_team_members')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: true });
 
       const { data: agentsData } = await (supabase as any)
         .from('wa_ai_agents')
         .select('id, name')
-        .eq('user_id', user.id);
+        .eq('user_id', effectiveUserId);
 
       setLeads(leadsData || []);
       setTransfers(transfersData || []);
@@ -86,19 +93,19 @@ export function GlobalLeadsCrm() {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [effectiveUserId]);
 
   // Ref estável — subscription criada uma única vez por user, sempre chama versão atual do fetchAll
   const fetchAllRef = useRef(fetchAll);
   useEffect(() => { fetchAllRef.current = fetchAll; }, [fetchAll]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!effectiveUserId) return;
 
     fetchAllRef.current();
 
     const channel = supabase.channel('crm-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${user.id}` }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${effectiveUserId}` }, (payload) => {
         fetchAllRef.current();
         if (payload.eventType === 'INSERT') {
           const newLead = payload.new as any;
@@ -108,11 +115,11 @@ export function GlobalLeadsCrm() {
           });
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${user.id}` }, () => fetchAllRef.current())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_lead_transfers', filter: `user_id=eq.${effectiveUserId}` }, () => fetchAllRef.current())
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [user]); // apenas user — não fetchAll
+  }, [effectiveUserId]); // apenas effectiveUserId — não fetchAll
 
   const transferStats = useMemo((): TransferStats[] => {
     const now = new Date();
@@ -157,7 +164,7 @@ export function GlobalLeadsCrm() {
   };
 
   const handleManualTransfer = async (leadId: string, memberId: string) => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     try {
       const lead = leads.find(l => l.id === leadId);
       await (supabase as any).from('ai_crm_leads').update({
@@ -167,7 +174,7 @@ export function GlobalLeadsCrm() {
       }).eq('id', leadId);
 
       await (supabase as any).from('ai_lead_transfers').insert({
-        user_id: user.id,
+        user_id: effectiveUserId,
         lead_id: leadId,
         to_member_id: memberId,
         transfer_reason: 'manual',

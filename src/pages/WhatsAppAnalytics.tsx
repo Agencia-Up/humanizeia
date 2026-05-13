@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import {
   BarChart3, Send, MessageCircle, CheckCheck, XCircle,
   Sparkles, Heart, TrendingUp, Loader2, Activity,
@@ -59,6 +60,14 @@ interface InstanceHealth {
 
 export default function WhatsAppAnalytics() {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
+
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('7d');
   const [kpis, setKpis] = useState({ sent: 0, delivered: 0, confirmedDelivered: 0, responses: 0, qualified: 0, optOut: 0 });
@@ -75,7 +84,7 @@ export default function WhatsAppAnalytics() {
   }, [period]);
 
   const fetchData = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setLoading(true);
     const since = getPeriodDate();
 
@@ -84,31 +93,31 @@ export default function WhatsAppAnalytics() {
       supabase
         .from('wa_queue')
         .select('status, sent_at, instance_id')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .in('status', ['sent', 'delivered', 'read', 'failed'])
         .gte('sent_at', since),
       supabase
         .from('wa_queue')
         .select('id')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .in('status', ['delivered', 'read'])
         .not('delivery_confirmed_at', 'is', null)
         .gte('sent_at', since),
       supabase
         .from('wa_inbox')
         .select('direction, ai_category, created_at, phone')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .gte('created_at', since),
       supabase
         .from('wa_campaigns')
         .select('id, name, total_contacts, sent_count, delivered_count, failed_count, status')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false })
         .limit(20),
       supabase
         .from('wa_instances')
         .select('id, friendly_name, instance_name, health_score, messages_sent_today, status, is_active, shadow_ban_suspect, consecutive_undelivered')
-        .eq('user_id', user.id),
+        .eq('user_id', effectiveUserId),
     ]);
 
     // KPIs
@@ -184,7 +193,7 @@ export default function WhatsAppAnalytics() {
     setInstances(normalizedInstances);
 
     setLoading(false);
-  }, [user, getPeriodDate]);
+  }, [effectiveUserId, getPeriodDate]);
 
   useEffect(() => {
     fetchData();

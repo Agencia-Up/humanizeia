@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -59,7 +60,14 @@ const STATUS_BADGE: Record<string, { label: string; class: string }> = {
 /* ── Componente principal ── */
 export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
+
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
 
   const [sequences, setSequences]   = useState<Sequence[]>([]);
   const [queue, setQueue]           = useState<QueueItem[]>([]);
@@ -82,19 +90,19 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
 
   /* ── Fetch ── */
   const fetchAll = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setLoading(true);
     try {
       const [{ data: seqs }, { data: inst }] = await Promise.all([
         (supabase as any)
           .from('followup_sequences')
           .select('*, form:capture_forms(title), instance:wa_instances(instance_name), steps:followup_sequence_steps(*)')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false }),
         (supabase as any)
           .from('wa_instances')
           .select('id, instance_name')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .eq('is_active', true),
       ]);
       setSequences(
@@ -107,16 +115,16 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [effectiveUserId]);
 
   const fetchQueue = useCallback(async (filter: typeof queueFilter = 'all') => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setLoadingQueue(true);
     try {
       let q = (supabase as any)
         .from('followup_queue')
         .select('*, step:followup_sequence_steps(message_text)')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('scheduled_for', { ascending: false })
         .limit(100);
       if (filter !== 'all') q = q.eq('status', filter);
@@ -125,7 +133,7 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
     } finally {
       setLoadingQueue(false);
     }
-  }, [user]);
+  }, [effectiveUserId]);
 
   useEffect(() => { fetchAll(); fetchQueue(); }, [fetchAll, fetchQueue]);
 
@@ -154,7 +162,7 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
 
   /* ── Salvar sequência ── */
   const handleSave = async () => {
-    if (!user || !seqName.trim()) {
+    if (!effectiveUserId || !seqName.trim()) {
       toast({ title: 'Informe o nome da sequência.', variant: 'destructive' }); return;
     }
     if (steps.some(s => !s.message_text.trim())) {
@@ -166,7 +174,7 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
       if (!seqId) {
         const { data: newSeq, error } = await (supabase as any)
           .from('followup_sequences')
-          .insert({ user_id: user.id, name: seqName, instance_id: seqInstance || null, is_active: seqActive })
+          .insert({ user_id: effectiveUserId, name: seqName, instance_id: seqInstance || null, is_active: seqActive })
           .select('id').single();
         if (error) throw error;
         seqId = newSeq.id;
@@ -181,7 +189,7 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
       await (supabase as any).from('followup_sequence_steps').delete().eq('sequence_id', seqId);
       for (let i = 0; i < steps.length; i++) {
         await (supabase as any).from('followup_sequence_steps').insert({
-          sequence_id: seqId, user_id: user.id, step_order: i + 1,
+          sequence_id: seqId, user_id: effectiveUserId, step_order: i + 1,
           delay_hours: steps[i].delay_hours, message_text: steps[i].message_text,
         });
       }

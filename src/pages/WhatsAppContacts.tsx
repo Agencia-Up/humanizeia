@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import {
   Contact, Search, Trash2, Loader2, Plus, FolderOpen, Users, Phone, Tag,
@@ -139,7 +140,15 @@ function GroupTable({
 
 export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
+
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
+
   const [mainTab, setMainTab] = useState('lists');
 
   // === Contact Lists state ===
@@ -200,26 +209,26 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const [hasInstance, setHasInstance] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     (async () => {
       const { count } = await supabase
         .from('wa_instances')
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .eq('provider', 'evolution');
       setHasInstance((count ?? 0) > 0);
     })();
-  }, [user]);
+  }, [effectiveUserId]);
 
   // ============= Contact Lists Logic =============
   const fetchLists = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setIsLoading(true);
     try {
       const { data, error } = await supabase
         .from('wa_contact_lists')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (error) throw error;
       setLists((data as ContactList[]) || []);
@@ -228,15 +237,15 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     } finally {
       setIsLoading(false);
     }
-  }, [user, toast]);
+  }, [effectiveUserId, toast]);
 
   const fetchContacts = useCallback(async (listId: string) => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     try {
       const { data, error } = await supabase
         .from('wa_contacts')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .eq('list_id', listId)
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -250,7 +259,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
           .from('followup_queue')
           .select('phone, status, sent_at')
           .in('phone', phones)
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false });
         // Pega o status mais recente por telefone
         const map: Record<string, { status: string; sent_at: string | null }> = {};
@@ -264,7 +273,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     }
-  }, [user, toast]);
+  }, [effectiveUserId, toast]);
 
   useEffect(() => { fetchLists(); }, [fetchLists]);
   useEffect(() => {
@@ -273,11 +282,11 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   }, [selectedList, fetchContacts]);
 
   const createList = async () => {
-    if (!user || !formListName.trim()) return;
+    if (!effectiveUserId || !formListName.trim()) return;
     setIsSaving(true);
     try {
       const { error } = await supabase.from('wa_contact_lists').insert({
-        user_id: user.id, name: formListName.trim(), description: formListDesc.trim() || null, source: 'manual',
+        user_id: effectiveUserId, name: formListName.trim(), description: formListDesc.trim() || null, source: 'manual',
       });
       if (error) throw error;
       toast({ title: 'Lista criada!' });
@@ -322,13 +331,13 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   };
 
   const addBulkContacts = async () => {
-    if (!user || !targetListId || !bulkPhones.trim()) return;
+    if (!effectiveUserId || !targetListId || !bulkPhones.trim()) return;
     setIsSaving(true);
     try {
       const phones = bulkPhones.split(/[\n,;]+/).map(p => p.replace(/\D/g, '').trim()).filter(p => p.length >= 10);
       if (phones.length === 0) { toast({ title: 'Nenhum número válido encontrado', variant: 'destructive' }); setIsSaving(false); return; }
       const unique = [...new Set(phones)];
-      const rows = unique.map(phone => ({ user_id: user.id, list_id: targetListId, phone, source: 'manual' as const }));
+      const rows = unique.map(phone => ({ user_id: effectiveUserId, list_id: targetListId, phone, source: 'manual' as const }));
       const { error } = await supabase.from('wa_contacts').insert(rows);
       if (error) throw error;
       const { count } = await supabase.from('wa_contacts').select('id', { count: 'exact', head: true }).eq('list_id', targetListId);
@@ -433,15 +442,15 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
 
   /** Exporta uma lista diretamente do card (sem precisar entrar nela) */
   const exportListDirect = async (list: ContactList) => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     try {
-      const { data } = await supabase.from('wa_contacts').select('*').eq('user_id', user.id).eq('list_id', list.id).order('created_at', { ascending: false });
+      const { data } = await supabase.from('wa_contacts').select('*').eq('user_id', effectiveUserId).eq('list_id', list.id).order('created_at', { ascending: false });
       const rows = (data as WAContact[]) || [];
       if (rows.length === 0) { toast({ title: 'Lista sem contatos para exportar', variant: 'destructive' }); return; }
 
       // Busca followup status para esses contatos
       const phones = rows.map(c => c.phone);
-      const { data: fq } = await (supabase as any).from('followup_queue').select('phone, status, sent_at').in('phone', phones).eq('user_id', user.id).order('created_at', { ascending: false });
+      const { data: fq } = await (supabase as any).from('followup_queue').select('phone, status, sent_at').in('phone', phones).eq('user_id', effectiveUserId).order('created_at', { ascending: false });
       const statusMap: Record<string, { status: string; sent_at: string | null }> = {};
       for (const row of (fq || [])) {
         if (!statusMap[row.phone]) statusMap[row.phone] = { status: row.status, sent_at: row.sent_at };
@@ -455,10 +464,10 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   };
 
   const extractGoogleMaps = async () => {
-    if (!user || !mapsQuery.trim()) return;
+    if (!effectiveUserId || !mapsQuery.trim()) return;
     setIsExtractingMaps(true);
     try {
-      const payload: any = { user_id: user.id, search_query: mapsQuery.trim() };
+      const payload: any = { user_id: effectiveUserId, search_query: mapsQuery.trim() };
       if (mapsListMode === 'existing' && mapsTargetListId) payload.list_id = mapsTargetListId;
       else if (mapsListMode === 'new' && mapsNewListName.trim()) payload.list_name = mapsNewListName.trim();
       const { data, error } = await supabase.functions.invoke('extract-google-maps-leads', { body: payload });
@@ -473,11 +482,11 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
 
   // ============= Group Extraction Logic =============
   const fetchOwnGroups = async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setIsLoadingOwn(true);
     try {
-      console.log('[WhatsAppContacts] Fetching groups for user:', user.id);
-      const { data, error } = await supabase.functions.invoke('wa-extract-groups', { body: { user_id: user.id } });
+      console.log('[WhatsAppContacts] Fetching groups for user:', effectiveUserId);
+      const { data, error } = await supabase.functions.invoke('wa-extract-groups', { body: { user_id: effectiveUserId } });
       console.log('[WhatsAppContacts] Response:', JSON.stringify(data), 'Error:', error);
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao buscar grupos');
@@ -491,11 +500,11 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   };
 
   const searchGroupsByNiche = async () => {
-    if (!user || !searchQuery.trim()) return;
+    if (!effectiveUserId || !searchQuery.trim()) return;
     setIsSearching(true);
     try {
       const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
-        body: { user_id: user.id, action: 'search_groups', query: searchQuery.trim() },
+        body: { user_id: effectiveUserId, action: 'search_groups', query: searchQuery.trim() },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao pesquisar grupos');
@@ -519,21 +528,21 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const currentGroups = extractSource === 'own' ? ownGroups : searchResults;
 
   const extractGroupContacts = async () => {
-    if (!user || currentSelectedGroups.length === 0) return;
+    if (!effectiveUserId || currentSelectedGroups.length === 0) return;
     setIsExtracting(true);
     try {
       let listId = extractListMode === 'existing' ? extractTargetListId : undefined;
       if (extractListMode === 'new' && extractNewListName.trim()) {
         const { data: newList, error: listErr } = await supabase
           .from('wa_contact_lists')
-          .insert({ user_id: user.id, name: extractNewListName.trim(), source: 'group_extract', contact_count: 0 })
+          .insert({ user_id: effectiveUserId, name: extractNewListName.trim(), source: 'group_extract', contact_count: 0 })
           .select('id').single();
         if (listErr) throw listErr;
         listId = newList.id;
       }
       const selectedGroupData = currentGroups.filter(g => currentSelectedGroups.includes(g.id));
       const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
-        body: { user_id: user.id, action: 'extract_contacts', group_ids: currentSelectedGroups, groups: selectedGroupData, list_id: listId },
+        body: { user_id: effectiveUserId, action: 'extract_contacts', group_ids: currentSelectedGroups, groups: selectedGroupData, list_id: listId },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao extrair contatos');
@@ -1163,7 +1172,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       <FileImportDialog
         open={showFileImport}
         onOpenChange={setShowFileImport}
-        userId={user?.id || ''}
+        userId={effectiveUserId || ''}
         lists={lists.map(l => ({ id: l.id, name: l.name }))}
         onSuccess={fetchLists}
       />

@@ -1,5 +1,7 @@
+import { useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { toast } from 'sonner';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
@@ -49,76 +51,82 @@ const DEFAULT_STAGES = [
 
 export function useFluxCRM() {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
   const queryClient = useQueryClient();
 
   // Load Stages
   const { data: stages = [], isLoading: loadingStages } = useQuery({
-    queryKey: ['crm-stages', user?.id],
+    queryKey: ['crm-stages', effectiveUserId],
     queryFn: async () => {
-      if (!user) return [];
+      if (!effectiveUserId) return [];
       const { data, error } = await supabase
         .from('crm_pipeline_stages')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('position');
 
       if (error) throw error;
-      
+
       let stagesData = (data || []) as unknown as PipelineStage[];
 
       // Seed default stages if none exist
       if (stagesData.length === 0) {
-        const toInsert = DEFAULT_STAGES.map((s) => ({ ...s, user_id: user.id, is_default: true }));
+        const toInsert = DEFAULT_STAGES.map((s) => ({ ...s, user_id: effectiveUserId, is_default: true }));
         await supabase
           .from('crm_pipeline_stages')
           .upsert(toInsert, { onConflict: 'user_id,name', ignoreDuplicates: true });
-        
+
         const { data: fresh } = await supabase
           .from('crm_pipeline_stages')
           .select('*')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .order('position');
-        
+
         stagesData = (fresh || []) as unknown as PipelineStage[];
       }
       return stagesData;
     },
-    enabled: !!user,
+    enabled: !!effectiveUserId,
   });
 
   // Load Leads
   const { data: leads = [], isLoading: loadingLeads, refetch: refetchLeads } = useQuery({
-    queryKey: ['crm-leads', user?.id],
+    queryKey: ['crm-leads', effectiveUserId],
     queryFn: async () => {
-      if (!user) return [];
+      if (!effectiveUserId) return [];
       const { data, error } = await supabase
         .from('crm_leads')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('position');
 
       if (error) throw error;
       return (data || []) as unknown as CRMLead[];
     },
-    enabled: !!user,
+    enabled: !!effectiveUserId,
   });
 
   // Mutations
   const addLeadMutation = useMutation({
     mutationFn: async (lead: Partial<CRMLead>) => {
-      if (!user) throw new Error('Not authenticated');
+      if (!effectiveUserId) throw new Error('Not authenticated');
       const { data, error } = await supabase
         .from('crm_leads')
-        .insert({ ...lead, user_id: user.id } as never)
+        .insert({ ...lead, user_id: effectiveUserId } as never)
         .select()
         .single();
-      
+
       if (error) throw error;
       return data;
     },
     onSuccess: (insertedLead) => {
       toast.success('Lead criado!');
-      queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['crm-leads', effectiveUserId] });
       triggerWebhook(insertedLead);
     },
     onError: () => toast.error('Erro ao criar lead'),
@@ -134,22 +142,22 @@ export function useFluxCRM() {
     },
     // ── Optimistic update: move card instantly, rollback on failure ──────────
     onMutate: async ({ leadId, stageId, position }) => {
-      await queryClient.cancelQueries({ queryKey: ['crm-leads', user?.id] });
-      const previousLeads = queryClient.getQueryData<CRMLead[]>(['crm-leads', user?.id]);
-      queryClient.setQueryData<CRMLead[]>(['crm-leads', user?.id], (old = []) =>
+      await queryClient.cancelQueries({ queryKey: ['crm-leads', effectiveUserId] });
+      const previousLeads = queryClient.getQueryData<CRMLead[]>(['crm-leads', effectiveUserId]);
+      queryClient.setQueryData<CRMLead[]>(['crm-leads', effectiveUserId], (old = []) =>
         old.map((l) => l.id === leadId ? { ...l, stage_id: stageId, position } : l)
       );
       return { previousLeads };
     },
     onError: (err, _, context) => {
       if (context?.previousLeads) {
-        queryClient.setQueryData(['crm-leads', user?.id], context.previousLeads);
+        queryClient.setQueryData(['crm-leads', effectiveUserId], context.previousLeads);
       }
       console.error(err);
       toast.error('Erro ao mover lead');
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['crm-leads', effectiveUserId] });
     },
   });
 
@@ -162,19 +170,19 @@ export function useFluxCRM() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['crm-leads', effectiveUserId] });
       toast.success('Lead atualizado!');
     },
     onError: () => toast.error('Erro ao atualizar lead'),
   });
 
   const triggerWebhook = async (lead: any) => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     try {
       const { data: automations } = await supabase
         .from('wa_automations')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .eq('is_active', true)
         .eq('trigger_event', 'new_lead')
         .eq('action_type', 'notify_webhook');
@@ -209,7 +217,7 @@ export function useFluxCRM() {
     const { error } = await supabase.from('crm_leads').delete().eq('id', id);
     if (error) { toast.error('Erro ao excluir lead'); return; }
     toast.success('Lead excluído');
-    queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+    queryClient.invalidateQueries({ queryKey: ['crm-leads', effectiveUserId] });
   };
 
   const updateLead = async (id: string, updates: Partial<CRMLead>) => {
@@ -219,7 +227,7 @@ export function useFluxCRM() {
       .eq('id', id);
     if (error) { toast.error('Erro ao atualizar lead'); return; }
     toast.success('Lead atualizado!');
-    queryClient.invalidateQueries({ queryKey: ['crm-leads', user?.id] });
+    queryClient.invalidateQueries({ queryKey: ['crm-leads', effectiveUserId] });
   };
 
   const totalValue = leads.reduce((sum, l) => sum + (l.value || 0), 0);

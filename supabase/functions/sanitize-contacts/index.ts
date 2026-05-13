@@ -201,6 +201,16 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Seller detection: if user is a seller, use their manager's ID for data queries
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("role, manager_id")
+      .eq("id", user_id)
+      .single();
+
+    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
+    const effectiveUserId = isSeller ? profileData.manager_id : user_id;
+
     const body = await req.json();
     const {
       list_id,
@@ -263,7 +273,7 @@ Deno.serve(async (req) => {
 
     // Step 2: Check for duplicates in database
     const phonesToCheck = Array.from(formattedMap.keys());
-    const existingPhones = await findExistingPhones(supabase, user_id, phonesToCheck);
+    const existingPhones = await findExistingPhones(supabase, effectiveUserId, phonesToCheck);
 
     // Remove duplicates that already exist in DB
     for (const phone of existingPhones) {
@@ -277,7 +287,7 @@ Deno.serve(async (req) => {
 
     // Step 3: WhatsApp validation (optional)
     if (check_whatsapp && formattedMap.size > 0) {
-      const evolutionConfig = await getEvolutionInstance(supabase, user_id);
+      const evolutionConfig = await getEvolutionInstance(supabase, effectiveUserId);
 
       if (evolutionConfig) {
         const phonesForCheck = Array.from(formattedMap.keys());
@@ -308,7 +318,7 @@ Deno.serve(async (req) => {
 
     // Step 4: Prepare final sanitized contacts
     const sanitized = Array.from(formattedMap.values()).map(c => ({
-      user_id,
+      user_id: effectiveUserId,
       list_id: list_id || null,
       phone: c.phone,
       name: c.name,

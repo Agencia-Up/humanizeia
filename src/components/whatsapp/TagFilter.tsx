@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { Filter, Check } from 'lucide-react';
@@ -19,21 +20,27 @@ interface TagFilterProps {
 
 export function TagFilter({ activeTags, onFilterChange }: TagFilterProps) {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
   const [tags, setTags] = useState<WaTag[]>([]);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    if (user && open) {
+    if (effectiveUserId && open) {
       supabase
         .from('wa_tags')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('name')
         .then(({ data }) => {
           if (data) setTags(data as unknown as WaTag[]);
         });
     }
-  }, [user, open]);
+  }, [effectiveUserId, open]);
 
   const toggleTag = (tagName: string) => {
     if (activeTags.includes(tagName)) {

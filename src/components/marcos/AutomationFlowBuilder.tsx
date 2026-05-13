@@ -8,6 +8,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -687,6 +688,12 @@ export function AutomationFlowBuilder({
   flowId, initialName, initialNodes, initialEdges, isActive: initActive, onBack,
 }: FlowBuilderProps) {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
   const { toast } = useToast();
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
@@ -722,16 +729,16 @@ export function AutomationFlowBuilder({
 
   // Load contact lists
   useEffect(() => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     (async () => {
       const { data } = await supabase
         .from('wa_contact_lists')
         .select('id, name, contact_count, source')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (data) setLists(data as ContactList[]);
     })();
-  }, [user]);
+  }, [effectiveUserId]);
 
   // ─── Connection handler ─────────────────────────────────────
   const onConnect = useCallback(
@@ -815,11 +822,11 @@ export function AutomationFlowBuilder({
 
   // ─── Save flow ──────────────────────────────────────────────
   const handleSave = async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setSaving(true);
     try {
       const payload = {
-        user_id: user.id,
+        user_id: effectiveUserId,
         name: flowName,
         is_active: isActive,
         nodes: nodes,
