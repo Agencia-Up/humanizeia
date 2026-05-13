@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -94,7 +95,8 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   const { toast } = useToast();
   const { subscription } = useSubscription();
   const { isAdmin } = useIsAdmin();
-  const { isSeller } = useSellerProfile(user?.id);
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.marcos_instancias && !embedded;
   // Instâncias são POR USUÁRIO — vendedor vê as DELE, master vê as do MASTER
   // NÃO usar effectiveUserId aqui
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
@@ -249,6 +251,11 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     : 0;
 
   const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <div className="h-full overflow-y-auto">{children}</div> : MainLayout;
+
+  // Bloqueia vendedor sem permissão marcos_instancias (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <Wrapper>

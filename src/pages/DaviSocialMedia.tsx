@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
+import { Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -146,6 +148,8 @@ function enrichVisualPrompt(prompt: string, isPersonal: boolean = false): string
 
 export default function DaviSocialMedia() {
   const { user } = useAuth();
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.agent_davi;
   const { toast } = useToast();
   const { posts, schedulePost, saveDraft, fetchPosts, generateCarousel, generateCarouselV2 } = useSocialMedia();
   const { getHistory } = useAgentChat();
@@ -1020,6 +1024,11 @@ ${pautasStr}`;
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
+
+  // Bloqueia vendedor sem permissão agent_davi (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <MainLayout>

@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { Navigate } from 'react-router-dom';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -52,6 +54,8 @@ interface EmailDraft {
 
 export default function JoaoEmail() {
   const { user } = useAuth();
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.agent_joao;
   const { toast } = useToast();
   const { createTask } = useAgentTasks();
   const { getHistory, saveMessage, clearHistory } = useAgentChat();
@@ -177,6 +181,11 @@ export default function JoaoEmail() {
   const draftCount = drafts.filter(d => d.status === 'draft').length;
   const sentCount = drafts.filter(d => d.status === 'sent').length;
   const avgOpenRate = drafts.filter(d => d.open_rate != null).reduce((s, d) => s + (d.open_rate || 0), 0) / (drafts.filter(d => d.open_rate != null).length || 1);
+
+  // Bloqueia vendedor sem permissão agent_joao (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <MainLayout>

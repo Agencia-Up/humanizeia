@@ -1,5 +1,6 @@
 import { useState, useRef, lazy, Suspense, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Navigate } from 'react-router-dom';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -170,6 +171,8 @@ const tabConfig = [
 export default function AICreativeStudio() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.agent_maria;
   const { createTask, recentTasks } = useAgentTasks();
   const { getHistory, saveMessage, clearHistory } = useAgentChat();
   const [searchParams] = useSearchParams();
@@ -1027,6 +1030,11 @@ export default function AICreativeStudio() {
 
     </>
   );
+
+  // Bloqueia vendedor sem permissão agent_maria (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <MainLayout>

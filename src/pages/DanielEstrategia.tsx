@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -98,6 +99,8 @@ interface GeneratedStrategy {
 
 export default function DanielEstrategia() {
   const { user } = useAuth();
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.agent_daniel;
   const { toast } = useToast();
   const { createTask } = useAgentTasks();
   const { getHistory, saveMessage, clearHistory } = useAgentChat();
@@ -215,6 +218,11 @@ export default function DanielEstrategia() {
     setResearchPlatforms(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
 
   // ── Render ────────────────────────────────────────────────────────────────
+
+  // Bloqueia vendedor sem permissão agent_daniel (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <MainLayout>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -49,8 +50,9 @@ interface WAInstance {
 
 export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
-  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, seller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.marcos_disparo && !embedded;
 
   const effectiveUserId = useMemo(() => {
     if (sellerLoading) return null;
@@ -573,6 +575,11 @@ Não numere as variações. Não inclua explicações adicionais.`
       </AlertDialog>
     </>
   );
+
+  // Bloqueia vendedor sem permissão marcos_disparo (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   if (embedded) {
     return <div className="h-full overflow-y-auto">{mainContent}{modals}</div>;

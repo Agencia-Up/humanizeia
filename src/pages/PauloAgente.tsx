@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { Navigate } from 'react-router-dom';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -209,6 +211,8 @@ Obrigatório: Crie entre 4 a 8 slides por carrossel. Seja prolixo, entregue text
 
 export default function PauloAgente() {
   const { user } = useAuth();
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.agent_paulo;
   const { toast } = useToast();
   const { createTask } = useAgentTasks();
   const { getHistory } = useAgentChat();
@@ -831,6 +835,11 @@ INSTRUÇÕES CRÍTICAS:
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
+
+  // Bloqueia vendedor sem permissão agent_paulo (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <MainLayout>

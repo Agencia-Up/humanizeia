@@ -1,4 +1,7 @@
 import React, { useState, useRef, useEffect, memo, useCallback } from 'react';
+import { Navigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { OrchestrationPanel } from '@/components/salomao/OrchestrationPanel';
 import { BriefingSmartUpload } from '@/components/salomao/BriefingSmartUpload';
 import { AgentKnowledgeBase } from '@/features/orchestrator/components/AgentKnowledgeBase';
@@ -176,6 +179,9 @@ const GeneratedPromptDisplay = memo(({ prompt }: { prompt: string }) => {
 export default function SalomaoOrchestrator() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth();
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.agent_salomao;
   const { createTask } = useAgentTasks();
   const { getHistory, saveMessage, clearHistory } = useAgentChat();
 
@@ -331,6 +337,11 @@ export default function SalomaoOrchestrator() {
     toast({ title: 'Copiado!', description: 'Prompt copiado para a área de transferência.' });
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Bloqueia vendedor sem permissão agent_salomao (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <MainLayout>

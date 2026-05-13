@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -141,8 +142,9 @@ function GroupTable({
 
 export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
-  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, seller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.marcos_contatos && !embedded;
 
   const effectiveUserId = useMemo(() => {
     if (sellerLoading) return null;
@@ -1346,6 +1348,11 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       />
     </>
   );
+
+  // Bloqueia vendedor sem permissão marcos_contatos (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return embedded ? (
     <div className="h-full overflow-y-auto">{content}</div>
