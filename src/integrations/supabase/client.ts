@@ -13,6 +13,9 @@ if (!HAS_SUPABASE_CONFIG) {
   console.error('[Supabase] Configuracao publica incompleta. Verifique VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY ou VITE_SUPABASE_ANON_KEY.');
 }
 
+const sameTabLock = async <R,>(_name: string, _acquireTimeout: number, fn: () => Promise<R>): Promise<R> => {
+  return fn();
+};
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
@@ -25,6 +28,7 @@ export const supabase = createClient<Database>(
     storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
+    lock: sameTabLock,
   }
   }
 );
