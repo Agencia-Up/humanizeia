@@ -12,7 +12,7 @@ import {
   MessageSquare, BarChart3, Bot, Radio, Smartphone, UserCog,
   LayoutGrid, FileText, MessageCircle, Zap, LayoutDashboard,
   GraduationCap, CreditCard, Plug, Settings, PanelLeft,
-  CheckCircle2, Circle, RotateCcw, Sparkles,
+  CheckCircle2, Circle, RotateCcw, Sparkles, Radar,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -72,6 +72,7 @@ const FEATURE_LABELS: FeatureItem[] = [
   { key: 'marcos_automacoes',  label: 'Automações',             desc: 'Fluxos automáticos',             icon: Zap,            group: 'marcos' },
   // ── Menu Lateral ──
   { key: 'sidebar_dashboard',     label: 'Dashboard',           desc: 'Painel principal',               icon: LayoutDashboard, group: 'sidebar' },
+  { key: 'sidebar_jose',          label: 'José — Tráfego Pago', desc: 'Meta Ads e análise com IA',      icon: Radar,           group: 'sidebar' },
   { key: 'sidebar_treinamento',   label: 'Treinamento',         desc: 'Base de conhecimento',           icon: GraduationCap,   group: 'sidebar' },
   { key: 'sidebar_meu_plano',     label: 'Meu Plano',           desc: 'Assinatura e tokens',            icon: CreditCard,      group: 'sidebar' },
   { key: 'sidebar_integracoes',   label: 'Integrações',         desc: 'Conexões externas',              icon: Plug,            group: 'sidebar' },

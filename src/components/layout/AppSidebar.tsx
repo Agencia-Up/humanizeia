@@ -82,6 +82,11 @@ const allSellerSystemItems = [
   { title: 'Configurações',  url: '/settings',     icon: Settings,        featureKey: 'sidebar_configuracoes' as keyof VisibleFeatures },
 ];
 
+// ── Agentes Seller — filtrados por visibleFeatures ──────────────────────────
+const allSellerAgentItems = [
+  { title: 'José',  url: '/jose',  icon: Radar, featureKey: 'sidebar_jose' as keyof VisibleFeatures, subtitle: 'Tráfego Pago' },
+];
+
 // ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
 const marcosSubItems: { title: string; url: string; icon: any; featureKey: keyof VisibleFeatures }[] = [
   { title: 'CRM',             url: '/crm',               icon: Kanban,        featureKey: 'marcos_crm' },
@@ -442,6 +447,16 @@ export function AppSidebar() {
                 <NavMarcosSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
               </NavGroup>
             )}
+            {(() => {
+              const sellerAgentItems = allSellerAgentItems.filter(i => visibleFeatures[i.featureKey]);
+              return sellerAgentItems.length > 0 ? (
+                <NavGroup label="Agentes" collapsed={collapsed}>
+                  {sellerAgentItems.map(item => (
+                    <NavItem key={item.url} item={item} collapsed={collapsed} />
+                  ))}
+                </NavGroup>
+              ) : null;
+            })()}
             {(() => {
               const sellerSysItems = allSellerSystemItems.filter(i => visibleFeatures[i.featureKey]);
               return sellerSysItems.length > 0 ? (
