@@ -12,59 +12,52 @@ import { AgentChatProvider } from "@/contexts/AgentChatContext";
 
 // ── Error Boundary ────────────────────────────────────────────────────────────
 // Catches render errors so a broken page never crashes the entire app.
-// Auto-retries transient errors (race conditions, lazy load timing) silently,
-// and resets automatically when the user navigates to a different route.
-const MAX_AUTO_RETRIES = 2;
+// Detects stale lazy-chunk errors (após deploy) e força reload da página.
+// Resets automatically when the user navigates to a different route.
+
+function isStaleChunkError(err: Error): boolean {
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    msg.includes('failed to fetch dynamically imported module') ||
+    msg.includes('loading chunk') ||
+    msg.includes('loading css chunk') ||
+    msg.includes('importing a module script failed')
+  );
+}
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode; resetKey?: string },
-  { hasError: boolean; autoRetries: number; renderKey: number; lastError?: Error }
+  { hasError: boolean }
 > {
-  private retryTimer?: ReturnType<typeof setTimeout>;
-
   constructor(props: { children: React.ReactNode; resetKey?: string }) {
     super(props);
-    this.state = { hasError: false, autoRetries: 0, renderKey: 0 };
+    this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, lastError: error };
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
   }
 
   componentDidCatch(err: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] Page render error:', err);
     console.error('[ErrorBoundary] Component stack:', info.componentStack);
 
-    // Tenta retentar automaticamente erros transientes (race conditions
-    // típicas em primeiras renderizações: lazy load + hooks + queries).
-    // IMPORTANTE: primeira retentativa NÃO incrementa renderKey — preserva
-    // o estado da sub-árvore (URL, activeTab, etc.). Só remonta tudo a
-    // partir da SEGUNDA retentativa.
-    if (this.state.autoRetries < MAX_AUTO_RETRIES) {
-      const attemptNumber = this.state.autoRetries + 1;
-      this.retryTimer = setTimeout(() => {
-        this.setState(prev => ({
-          hasError: false,
-          autoRetries: prev.autoRetries + 1,
-          // renderKey só incrementa a partir da 2ª tentativa (preserva estado)
-          renderKey: attemptNumber >= 2 ? prev.renderKey + 1 : prev.renderKey,
-        }));
-      }, 80);
+    // Erros de chunk após deploy: força reload (UMA vez via sessionStorage)
+    // para o browser baixar os novos chunks.
+    if (isStaleChunkError(err)) {
+      const flag = 'logosia_chunk_reload_attempted';
+      if (!sessionStorage.getItem(flag)) {
+        sessionStorage.setItem(flag, '1');
+        window.location.reload();
+      }
     }
   }
 
   componentDidUpdate(prevProps: { children: React.ReactNode; resetKey?: string }) {
     // Auto-reset quando rota muda — próxima página parte do zero
-    if (prevProps.resetKey !== this.props.resetKey) {
-      if (this.retryTimer) clearTimeout(this.retryTimer);
-      if (this.state.hasError || this.state.autoRetries > 0) {
-        this.setState({ hasError: false, autoRetries: 0, renderKey: 0 });
-      }
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
     }
-  }
-
-  componentWillUnmount() {
-    if (this.retryTimer) clearTimeout(this.retryTimer);
   }
 
   render() {
@@ -76,19 +69,17 @@ class ErrorBoundary extends React.Component<
           </p>
           <button
             className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-            onClick={() => this.setState(prev => ({
-              hasError: false,
-              autoRetries: 0,
-              renderKey: prev.renderKey + 1,
-            }))}
+            onClick={() => {
+              sessionStorage.removeItem('logosia_chunk_reload_attempted');
+              this.setState({ hasError: false });
+            }}
           >
             Tentar novamente
           </button>
         </div>
       );
     }
-    // renderKey força React a remontar a sub-árvore após retentativa
-    return <React.Fragment key={this.state.renderKey}>{this.props.children}</React.Fragment>;
+    return this.props.children;
   }
 }
 
