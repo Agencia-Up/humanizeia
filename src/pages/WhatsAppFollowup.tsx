@@ -63,11 +63,8 @@ export default function WhatsAppFollowup({ embedded }: { embedded?: boolean } = 
   const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
 
-  const effectiveUserId = useMemo(() => {
-    if (sellerLoading) return null;
-    if (isSeller && seller?.user_id) return seller.user_id;
-    return user?.id || null;
-  }, [sellerLoading, isSeller, seller, user]);
+  // Follow-up: vendedor usa as PRÓPRIAS instâncias e sequências
+  const effectiveUserId = user?.id || null;
 
   const [sequences, setSequences]   = useState<Sequence[]>([]);
   const [queue, setQueue]           = useState<QueueItem[]>([]);

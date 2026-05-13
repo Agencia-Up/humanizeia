@@ -136,11 +136,8 @@ export default function WhatsAppGroups() {
   const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
 
-  const effectiveUserId = useMemo(() => {
-    if (sellerLoading) return null;
-    if (isSeller && seller?.user_id) return seller.user_id;
-    return user?.id || null;
-  }, [sellerLoading, isSeller, seller, user]);
+  // Grupos: vendedor usa as PRÓPRIAS instâncias e salva nos próprios dados
+  const effectiveUserId = user?.id || null;
   const [activeTab, setActiveTab] = useState<'own' | 'search'>('own');
 
   // Own groups state

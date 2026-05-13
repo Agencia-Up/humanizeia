@@ -38,11 +38,8 @@ export default function WhatsAppAutomations({ embedded }: { embedded?: boolean }
   const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
 
-  const effectiveUserId = useMemo(() => {
-    if (sellerLoading) return null;
-    if (isSeller && seller?.user_id) return seller.user_id;
-    return user?.id || null;
-  }, [sellerLoading, isSeller, seller, user]);
+  // Automações são PER-USER — vendedor vê as DELE
+  const effectiveUserId = user?.id || null;
 
   // View state
   const [view, setView] = useState<'list' | 'builder'>('list');

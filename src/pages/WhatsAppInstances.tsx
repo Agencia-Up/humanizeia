@@ -94,8 +94,9 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   const { toast } = useToast();
   const { subscription } = useSubscription();
   const { isAdmin } = useIsAdmin();
-  const { isSeller, seller, masterUserId } = useSellerProfile(user?.id);
-  const effectiveUserId = (isSeller && masterUserId) ? masterUserId : user?.id;
+  const { isSeller } = useSellerProfile(user?.id);
+  // Instâncias são POR USUÁRIO — vendedor vê as DELE, master vê as do MASTER
+  // NÃO usar effectiveUserId aqui
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
   const maxInstances = isSeller ? 1 : (INSTANCE_LIMITS[userPlan] ?? 5);
   const [instances, setInstances] = useState<WaInstance[]>([]);
@@ -154,14 +155,14 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   };
 
   const fetchInstances = async (skipVerify = false) => {
-    if (!effectiveUserId) return;
+    if (!user?.id) return;
     setIsLoading(true);
     try {
       // Cada conta vê SOMENTE suas próprias instâncias
       const { data, error } = await supabase
         .from('wa_instances')
         .select('id, instance_name, friendly_name, phone_number, status, is_active, health_score, provider, api_url, created_at, updated_at, failover_status')
-        .eq('user_id', effectiveUserId as string)
+        .eq('user_id', user?.id as string)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -180,14 +181,14 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
 
   useEffect(() => {
     fetchInstances();
-  }, [effectiveUserId]);
+  }, [user?.id]);
 
   const handleDelete = async () => {
-    if (!deleteId || !effectiveUserId) return;
+    if (!deleteId || !user?.id) return;
     setIsDeleting(true);
     try {
       const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
-        body: { instance_id: deleteId, user_id: effectiveUserId },
+        body: { instance_id: deleteId, user_id: user?.id },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao remover instância');
@@ -213,7 +214,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     setSyncingId(instance.id);
     try {
       const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
-        body: { instance_id: instance.id, user_id: effectiveUserId },
+        body: { instance_id: instance.id, user_id: user?.id },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao sincronizar webhook');

@@ -34,24 +34,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Seller detection: if user is a seller, use their manager's ID for data queries
-    const { data: profileData } = await supabase
-      .from("profiles")
-      .select("role, manager_id")
-      .eq("id", user.id)
-      .single();
-
-    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
-    const effectiveUserId = isSeller ? profileData.manager_id : user.id;
-
     const { instance_id } = await req.json();
 
-    // Get instance from DB
+    // Get instance from DB — instâncias são PER-USER, vendedor verifica as DELE
     const { data: instance, error: dbError } = await supabase
       .from('wa_instances')
       .select('id, instance_name, provider, status, is_active, api_url, api_key_encrypted')
       .eq('id', instance_id)
-      .eq('user_id', effectiveUserId)
+      .eq('user_id', user.id)
       .single();
 
     if (dbError || !instance) {
