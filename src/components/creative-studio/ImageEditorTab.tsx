@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { SUPABASE_PUBLIC_KEY, supabase } from '@/integrations/supabase/client';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
   Download, Save, RefreshCw, ImagePlus, Crop, RotateCw, RotateCcw,
@@ -585,7 +585,7 @@ export function ImageEditorTab() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          'Authorization': `Bearer ${SUPABASE_PUBLIC_KEY}`,
         },
         body: JSON.stringify({
           image: composedImage,
@@ -690,7 +690,7 @@ export function ImageEditorTab() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          'Authorization': `Bearer ${SUPABASE_PUBLIC_KEY}`,
         },
         body: JSON.stringify({ image: flatImage, prompt: aiPrompt }),
       });
@@ -761,7 +761,7 @@ export function ImageEditorTab() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          'Authorization': `Bearer ${SUPABASE_PUBLIC_KEY}`,
         },
         body: JSON.stringify({ image: flatImage, theme_image: themeImage }),
       });
@@ -837,7 +837,7 @@ export function ImageEditorTab() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          'Authorization': `Bearer ${SUPABASE_PUBLIC_KEY}`,
         },
         body: JSON.stringify({
           image: mainFlat,

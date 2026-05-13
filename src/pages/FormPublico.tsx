@@ -1,6 +1,6 @@
 import React, { useEffect, useState, memo, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
+import { SUPABASE_PUBLIC_KEY, supabase } from '@/integrations/supabase/client';
 import { Loader2, CheckCircle2, AlertCircle, Star, ChevronDown } from 'lucide-react';
 
 type FieldType = 'text' | 'textarea' | 'email' | 'tel' | 'number' | 'date'
@@ -197,8 +197,8 @@ export default function FormPublico() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'apikey': SUPABASE_PUBLIC_KEY,
+            'Authorization': `Bearer ${SUPABASE_PUBLIC_KEY}`,
           },
           body: JSON.stringify({
             form_id: formId,

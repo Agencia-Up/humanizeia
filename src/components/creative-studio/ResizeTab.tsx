@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { SUPABASE_PUBLIC_KEY, supabase } from '@/integrations/supabase/client';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -112,7 +112,7 @@ export function ResizeTab() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          Authorization: `Bearer ${SUPABASE_PUBLIC_KEY}`,
         },
         body: JSON.stringify({ image: originalImage, prompt, model: 'google/gemini-3-pro-image-preview' }),
       });

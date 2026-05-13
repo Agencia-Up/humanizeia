@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Bot, Send, Loader2, GraduationCap } from 'lucide-react';
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
-import { supabase } from '@/integrations/supabase/client';
+import { SUPABASE_PUBLIC_KEY, supabase } from '@/integrations/supabase/client';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -47,7 +47,7 @@ export function AcademyAITutor({ currentModule, currentLesson }: AcademyAITutorP
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          Authorization: `Bearer ${SUPABASE_PUBLIC_KEY}`,
         },
         body: JSON.stringify({
           messages: allMessages,
