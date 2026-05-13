@@ -1,7 +1,7 @@
 /**
  * pedro-process-feedback
  *
- * Chamada pelo frontend quando um vendedor submete feedback para o gerente.
+ * Chamada pelo frontend quando um vendedor submete feedback estruturado para o gerente.
  * Persiste em `pedro_manager_feedback` e dispara notificação WhatsApp
  * para o gerente (via gerente_phone em wa_ai_agents).
  *
@@ -9,8 +9,11 @@
  * {
  *   lead_id: string,
  *   member_id: string,
- *   content: string,
- *   priority: 'low' | 'normal' | 'high' | 'urgent'
+ *   content: string,          // resumo legível (compatibilidade)
+ *   priority: 'low' | 'normal' | 'high' | 'urgent',
+ *   city?: string,            // cidade do cliente
+ *   reason?: string,          // motivo da não-compra
+ *   observations?: string     // observações adicionais
  * }
  */
 
@@ -29,6 +32,13 @@ const PRIORITY_EMOJI: Record<string, string> = {
   urgent: "🚨",
 };
 
+const PRIORITY_LABEL: Record<string, string> = {
+  low:    "Baixa",
+  normal: "Normal",
+  high:   "Alta",
+  urgent: "Urgente",
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
@@ -45,7 +55,15 @@ serve(async (req) => {
     if (authErr || !user) throw new Error("Token inválido");
 
     const body = await req.json();
-    const { lead_id, member_id, content, priority = "normal" } = body;
+    const {
+      lead_id,
+      member_id,
+      content,
+      priority = "normal",
+      city = null,
+      reason = null,
+      observations = null,
+    } = body;
 
     if (!lead_id || !content) {
       throw new Error("lead_id e content são obrigatórios");
@@ -73,24 +91,26 @@ serve(async (req) => {
     // user_id do gerente = user_id do lead (sempre o dono)
     const gerenteUserId = lead.user_id;
 
-    // ── Persiste o feedback ───────────────────────────────────────────────────
+    // ── Persiste o feedback (com campos estruturados) ────────────────────────
     const { data: feedback, error: insertErr } = await supabase
       .from("pedro_manager_feedback" as any)
       .insert({
         lead_id,
-        user_id:   gerenteUserId,   // filtro de RLS do gerente
-        member_id: member_id || null,
+        user_id:      gerenteUserId,
+        member_id:    member_id || null,
         content,
         priority,
+        city:         city || null,
+        reason:       reason || null,
+        observations: observations || null,
       })
       .select("id")
       .single();
 
     if (insertErr) throw insertErr;
 
-    // ── Notificação WhatsApp para o gerente (opcional) ────────────────────────
+    // ── Notificação WhatsApp para o gerente ──────────────────────────────────
     try {
-      // Busca gerente_phone e instância ativa do agente do membro
       const agentId = member?.agent_id;
       if (agentId) {
         const { data: agent } = await supabase
@@ -111,20 +131,47 @@ serve(async (req) => {
             .single();
 
           if (instance && (instance as any).api_url) {
-            const emoji = PRIORITY_EMOJI[priority] || "💬";
-            const leadName   = lead.lead_name   || lead.remote_jid || "Lead";
-            const sellerName = member?.name || "Vendedor";
+            const emoji       = PRIORITY_EMOJI[priority] || "💬";
+            const prioLabel   = PRIORITY_LABEL[priority] || priority;
+            const leadName    = lead.lead_name || lead.remote_jid || "Lead";
+            const sellerName  = member?.name || "Vendedor";
+            const now         = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 
-            const msg = [
-              `${emoji} *Feedback do Vendedor*`,
+            // ── Mensagem formatada estilo "RELATÓRIO DE LEAD" ────────────
+            const lines: string[] = [
+              `${emoji} *FEEDBACK DO VENDEDOR*`,
+              `━━━━━━━━━━━━━━━━━━━━`,
               ``,
               `👤 *Vendedor:* ${sellerName}`,
               `📋 *Lead:* ${leadName}`,
-              `🔖 *Prioridade:* ${priority.charAt(0).toUpperCase() + priority.slice(1)}`,
+              `🕐 *Horário:* ${now}`,
+              `🔖 *Prioridade:* ${prioLabel}`,
               ``,
-              `💬 *Mensagem:*`,
-              content,
-            ].join("\n");
+            ];
+
+            if (city) {
+              lines.push(`🏙️ *Cidade do cliente:* ${city}`);
+            }
+
+            if (reason) {
+              lines.push(`❌ *Motivo da não-compra:*`);
+              lines.push(`_${reason}_`);
+            }
+
+            if (city || reason) {
+              lines.push(``);
+            }
+
+            if (observations) {
+              lines.push(`📝 *Observações:*`);
+              lines.push(`_${observations}_`);
+              lines.push(``);
+            }
+
+            lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+            lines.push(`_Enviado automaticamente pelo Pedro SDR_`);
+
+            const msg = lines.join("\n");
 
             const baseUrl = (instance as any).api_url.replace(/\/$/, "");
             const instKey = (instance as any).api_key_encrypted || "";
@@ -140,7 +187,6 @@ serve(async (req) => {
         }
       }
     } catch (notifyErr) {
-      // Notificação falhou — não bloqueia a resposta
       console.warn("[pedro-process-feedback] Falha na notificação:", notifyErr);
     }
 

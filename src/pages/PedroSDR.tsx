@@ -505,6 +505,65 @@ const PRIORITY_CONFIG = {
   urgent: { label: 'Urgente', color: 'text-red-400',     bg: 'bg-red-500/10'   },
 } as const;
 
+// ─── Feedback Estruturado: Opções ────────────────────────────────────────────
+
+const FEEDBACK_CITIES = [
+  'Pindamonhangaba', 'Tremembé', 'Caçapava', 'São Luís do Paraitinga',
+  'Redenção da Serra', 'Jacareí', 'São José dos Campos', 'Guaratinguetá',
+  'Campos do Jordão', 'Lorena',
+];
+
+const FEEDBACK_REASONS: { category: string; emoji: string; options: string[] }[] = [
+  {
+    category: 'Financeiros', emoji: '💰',
+    options: [
+      'Financiamento não aprovado',
+      'Parcela mais alta que o esperado',
+      'Entrada insuficiente',
+      'Score de crédito baixo',
+      'Preferiu pagar à vista mas não tinha o valor',
+    ],
+  },
+  {
+    category: 'Negociação', emoji: '🤝',
+    options: [
+      'Avaliação do carro da troca abaixo do esperado',
+      'Não aceitou o preço do veículo',
+      'Encontrou preço menor na concorrência',
+      'Não houve acordo no desconto',
+    ],
+  },
+  {
+    category: 'Produto', emoji: '🚗',
+    options: [
+      'Cor ou versão indisponível',
+      'Veículo sem os opcionais desejados',
+      'Preferiu outro modelo',
+      'Não gostou do veículo no test drive',
+    ],
+  },
+  {
+    category: 'Comportamento do cliente', emoji: '👤',
+    options: [
+      'Cliente não respondeu mais',
+      'Cliente sumiu após proposta',
+      'Está só pesquisando (sem intenção imediata)',
+      'Decidiu adiar a compra',
+      'Comprou em outra loja',
+    ],
+  },
+  {
+    category: 'Outros', emoji: '📌',
+    options: [
+      'Problemas pessoais/familiares',
+      'Perda de emprego ou renda',
+      'Mudou de ideia sobre comprar carro',
+      'Prazo de entrega longo demais',
+      'Desconfiança na loja ou vendedor',
+    ],
+  },
+];
+
 const STATUS_CRM_OPTIONS = [
   { value: 'novo',               label: 'Novo',              color: 'text-blue-400'    },
   { value: 'em_atendimento',     label: 'Em Atendimento',    color: 'text-cyan-400'    },
@@ -564,6 +623,9 @@ interface Feedback {
   id: string;
   lead_id: string;
   content: string;
+  city?: string | null;
+  reason?: string | null;
+  observations?: string | null;
   priority: string;
   read_at: string | null;
   created_at: string;
@@ -625,6 +687,16 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [fbContent, setFbContent]         = useState('');
   const [fbPriority, setFbPriority]       = useState<'low'|'normal'|'high'|'urgent'>('normal');
   const [fbLoading, setFbLoading]         = useState(false);
+  // Structured feedback form
+  const [fbCity, setFbCity]               = useState('');
+  const [fbCityCustom, setFbCityCustom]   = useState('');
+  const [fbReason, setFbReason]           = useState('');
+  const [fbReasonOpen, setFbReasonOpen]   = useState<string | null>(null);
+  const [fbObservations, setFbObservations] = useState('');
+  // Lead feedback history popup
+  const [fbHistoryOpen, setFbHistoryOpen] = useState(false);
+  const [leadFeedbacks, setLeadFeedbacks] = useState<Feedback[]>([]);
+  const [fbHistoryLoading, setFbHistoryLoading] = useState(false);
   const [fuMsg, setFuMsg]                 = useState('');
   const [fuDate, setFuDate]               = useState('');
   const [fuInstance, setFuInstance]       = useState('');
@@ -702,7 +774,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         leadsQuery,
         (supabase as any)
           .from('pedro_manager_feedback')
-          .select('id, lead_id, content, priority, read_at, created_at, member:ai_team_members(name), lead:ai_crm_leads(lead_name)')
+          .select('id, lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name), lead:ai_crm_leads(lead_name)')
           .eq('user_id', isSeller ? userId : effectiveUserId)
           .order('created_at', { ascending: false })
           .limit(50),
@@ -904,27 +976,66 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   };
 
   const handleSendFeedback = async () => {
-    if (!fbContent.trim() || !selectedLead || !userId) return;
+    if (!selectedLead || !userId) return;
+    // Validações do formulário estruturado
+    if (!fbCity) {
+      toast({ title: 'Selecione a cidade do cliente', variant: 'destructive' });
+      return;
+    }
+    if (fbCity === 'Outros' && !fbCityCustom.trim()) {
+      toast({ title: 'Digite a cidade do cliente', variant: 'destructive' });
+      return;
+    }
+    if (!fbReason) {
+      toast({ title: 'Selecione o motivo da não-compra', variant: 'destructive' });
+      return;
+    }
     setFbLoading(true);
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const token = session.session?.access_token;
+      const finalCity = fbCity === 'Outros' ? fbCityCustom.trim() : fbCity;
+      // Monta content legível para compatibilidade
+      const contentLines = [
+        `Cidade: ${finalCity}`,
+        `Motivo: ${fbReason}`,
+      ];
+      if (fbObservations.trim()) contentLines.push(`Obs: ${fbObservations.trim()}`);
+      const content = contentLines.join(' | ');
+
       const res = await supabase.functions.invoke('pedro-process-feedback', {
         body: {
-          lead_id:   selectedLead.id,
-          member_id: memberId,
-          content:   fbContent.trim(),
-          priority:  fbPriority,
+          lead_id:      selectedLead.id,
+          member_id:    memberId,
+          content,
+          priority:     fbPriority,
+          city:         finalCity,
+          reason:       fbReason,
+          observations: fbObservations.trim() || null,
         },
       });
       if (res.error) throw res.error;
-      setFbContent(''); setFbPriority('normal');
+      // Reset form
+      setFbCity(''); setFbCityCustom(''); setFbReason('');
+      setFbObservations(''); setFbPriority('normal'); setFbReasonOpen(null);
       toast({ title: '✅ Feedback enviado ao gerente!' });
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setFbLoading(false);
     }
+  };
+
+  const loadLeadFeedbackHistory = async (leadId: string) => {
+    setFbHistoryLoading(true);
+    try {
+      const { data } = await (supabase as any)
+        .from('pedro_manager_feedback')
+        .select('id, lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
+        .eq('lead_id', leadId)
+        .order('created_at', { ascending: false });
+      setLeadFeedbacks(data || []);
+    } catch { /* ignore */ }
+    setFbHistoryLoading(false);
+    setFbHistoryOpen(true);
   };
 
   const markFeedbackRead = async (id: string) => {
@@ -1576,46 +1687,166 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           </Card>
         </div>
 
-        {/* ── Feedback para Gerente ──────────────────────────────────── */}
+        {/* ── Feedback Estruturado para Gerente ──────────────────────── */}
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <BellRing className="h-4 w-4 text-orange-400" /> Feedback para Gerente
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BellRing className="h-4 w-4 text-orange-400" /> Feedback para Gerente
+              </CardTitle>
+              <Button
+                variant="ghost" size="sm"
+                className="h-7 px-2 text-[10px] text-muted-foreground hover:text-orange-400"
+                onClick={() => selectedLead && loadLeadFeedbackHistory(selectedLead.id)}
+              >
+                <Clock className="h-3 w-3 mr-1" /> Historico
+              </Button>
+            </div>
           </CardHeader>
-          <CardContent>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <Textarea
-                value={fbContent}
-                onChange={e => setFbContent(e.target.value)}
-                placeholder="Descreva o que o gerente precisa saber sobre este lead..."
-                className="min-h-[80px] text-xs resize-none flex-1"
-              />
-              <div className="flex flex-col gap-2 sm:w-40">
-                <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
-                      <SelectItem key={k} value={k} className="text-xs">
-                        <span className={v.color}>{v.label}</span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  onClick={handleSendFeedback}
-                  disabled={fbLoading || !fbContent.trim()}
-                  size="sm" className="h-8 text-xs"
-                >
-                  {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
-                  Enviar
-                </Button>
+          <CardContent className="space-y-4">
+
+            {/* Pergunta 1: Cidade */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">1. Cliente veio de qual cidade?</p>
+              <Select value={fbCity} onValueChange={v => { setFbCity(v); if (v !== 'Outros') setFbCityCustom(''); }}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Selecione a cidade..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {FEEDBACK_CITIES.map(c => (
+                    <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
+                  ))}
+                  <SelectItem value="Outros" className="text-xs font-medium text-orange-400">Outros...</SelectItem>
+                </SelectContent>
+              </Select>
+              {fbCity === 'Outros' && (
+                <Input
+                  value={fbCityCustom}
+                  onChange={e => setFbCityCustom(e.target.value)}
+                  placeholder="Digite a cidade..."
+                  className="h-8 text-xs"
+                />
+              )}
+            </div>
+
+            {/* Pergunta 2: Motivo (agrupado por categorias) */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">2. Por qual motivo o cliente nao comprou?</p>
+              <div className="space-y-1">
+                {FEEDBACK_REASONS.map(group => (
+                  <div key={group.category} className="border border-border/50 rounded-lg overflow-hidden">
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium hover:bg-muted/50 transition-colors"
+                      onClick={() => setFbReasonOpen(prev => prev === group.category ? null : group.category)}
+                    >
+                      <span>{group.emoji} {group.category}</span>
+                      <ChevronRight className={`h-3.5 w-3.5 transition-transform ${fbReasonOpen === group.category ? 'rotate-90' : ''}`} />
+                    </button>
+                    {fbReasonOpen === group.category && (
+                      <div className="px-2 pb-2 space-y-0.5">
+                        {group.options.map(opt => (
+                          <button
+                            key={opt}
+                            type="button"
+                            className={`w-full text-left px-3 py-1.5 rounded-md text-xs transition-colors ${
+                              fbReason === opt
+                                ? 'bg-orange-500/20 text-orange-300 font-medium'
+                                : 'hover:bg-muted/50 text-muted-foreground'
+                            }`}
+                            onClick={() => setFbReason(opt)}
+                          >
+                            {fbReason === opt && <Check className="h-3 w-3 inline mr-1.5" />}
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
+              {fbReason && (
+                <div className="flex items-center gap-2 px-2 py-1 bg-orange-500/10 rounded-md">
+                  <CheckCircle className="h-3 w-3 text-orange-400 shrink-0" />
+                  <span className="text-[10px] text-orange-300">{fbReason}</span>
+                  <button type="button" onClick={() => setFbReason('')} className="ml-auto">
+                    <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Observacoes adicionais (opcional) */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">3. Observacoes adicionais <span className="text-muted-foreground/60">(opcional)</span></p>
+              <Textarea
+                value={fbObservations}
+                onChange={e => setFbObservations(e.target.value)}
+                placeholder="Informacoes extras que o gerente precisa saber..."
+                className="min-h-[60px] text-xs resize-none"
+              />
+            </div>
+
+            {/* Prioridade + Enviar */}
+            <div className="flex items-center gap-3 pt-1">
+              <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
+                <SelectTrigger className="h-8 text-xs w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
+                    <SelectItem key={k} value={k} className="text-xs">
+                      <span className={v.color}>{v.label}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                onClick={handleSendFeedback}
+                disabled={fbLoading || !fbCity || !fbReason}
+                size="sm" className="h-8 text-xs flex-1"
+              >
+                {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                Enviar Feedback
+              </Button>
             </div>
           </CardContent>
         </Card>
+
+        {/* ── Popup Historico de Feedbacks do Lead ──────────────────────── */}
+        <Dialog open={fbHistoryOpen} onOpenChange={setFbHistoryOpen}>
+          <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-sm flex items-center gap-2">
+                <BellRing className="h-4 w-4 text-orange-400" />
+                Historico de Feedbacks — {selectedLead?.lead_name}
+              </DialogTitle>
+            </DialogHeader>
+            {fbHistoryLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+            ) : leadFeedbacks.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-8">Nenhum feedback enviado para este lead.</p>
+            ) : (
+              <div className="space-y-3">
+                {leadFeedbacks.map(fb => {
+                  const pCfg = PRIORITY_CONFIG[fb.priority as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.normal;
+                  return (
+                    <div key={fb.id} className="border border-border/50 rounded-lg px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${pCfg.bg} ${pCfg.color}`}>{pCfg.label}</span>
+                        <span className="text-[10px] text-muted-foreground">{fb.member?.name ?? 'Vendedor'} · {fmtDate(fb.created_at)}</span>
+                      </div>
+                      {fb.city && <p className="text-xs"><span className="text-muted-foreground">Cidade:</span> {fb.city}</p>}
+                      {fb.reason && <p className="text-xs"><span className="text-muted-foreground">Motivo:</span> {fb.reason}</p>}
+                      {fb.observations && <p className="text-xs"><span className="text-muted-foreground">Obs:</span> {fb.observations}</p>}
+                      {!fb.city && !fb.reason && <p className="text-xs text-foreground">{fb.content}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -1962,7 +2193,10 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                         {fb.member?.name ?? 'Vendedor'} · {fb.lead?.lead_name ?? 'Lead'} · {fmtDate(fb.created_at)}
                       </span>
                     </div>
-                    <p className="text-xs text-foreground leading-relaxed">{fb.content}</p>
+                    {fb.city && <p className="text-xs"><span className="text-muted-foreground">Cidade:</span> {fb.city}</p>}
+                    {fb.reason && <p className="text-xs"><span className="text-muted-foreground">Motivo:</span> {fb.reason}</p>}
+                    {fb.observations && <p className="text-xs"><span className="text-muted-foreground">Obs:</span> {fb.observations}</p>}
+                    {!fb.city && !fb.reason && <p className="text-xs text-foreground leading-relaxed">{fb.content}</p>}
                   </div>
                   {!fb.read_at && (
                     <Button
