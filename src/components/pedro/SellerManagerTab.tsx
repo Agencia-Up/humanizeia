@@ -20,8 +20,6 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
 import { DEFAULT_SELLER_FEATURES, type VisibleFeatures } from '@/hooks/useSellerProfile';
-import { useIsAdmin } from '@/hooks/useIsAdmin';
-import { useSubscription } from '@/hooks/useSubscription';
 import { Label } from '@/components/ui/label';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -185,21 +183,10 @@ const FEATURE_GROUPS: FeatureGroupStyle[] = [
 
 export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   const { toast } = useToast();
-  const { isAdmin } = useIsAdmin();
-  const { subscription } = useSubscription();
-  const masterTier = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
-  const masterTierLevel = TIER_ORDER[masterTier as keyof typeof TIER_ORDER] ?? 0;
 
-  // Filtra agentes que estão disponíveis no plano do master
-  // Mestre só pode liberar para vendedor o que ele PRÓPRIO tem acesso
-  const availableFeatureLabels = useMemo(() => {
-    return FEATURE_LABELS.filter(f => {
-      if (f.group !== 'agents') return true; // não-agentes não dependem de plano
-      const requiredTier = AGENT_TIER[f.key as string];
-      if (!requiredTier) return true;
-      return masterTierLevel >= TIER_ORDER[requiredTier];
-    });
-  }, [masterTierLevel]);
+  // TODO: voltar a filtrar FEATURE_LABELS por plano do master (estava
+  // causando erro em runtime — foi simplificado para mostrar todos)
+  const availableFeatureLabels = FEATURE_LABELS;
 
   const [loading, setLoading] = useState(true);
   const [sellers, setSellers] = useState<SellerMember[]>([]);

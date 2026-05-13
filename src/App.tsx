@@ -37,12 +37,17 @@ class ErrorBoundary extends React.Component<
 
     // Tenta retentar automaticamente erros transientes (race conditions
     // típicas em primeiras renderizações: lazy load + hooks + queries).
+    // IMPORTANTE: primeira retentativa NÃO incrementa renderKey — preserva
+    // o estado da sub-árvore (URL, activeTab, etc.). Só remonta tudo a
+    // partir da SEGUNDA retentativa.
     if (this.state.autoRetries < MAX_AUTO_RETRIES) {
+      const attemptNumber = this.state.autoRetries + 1;
       this.retryTimer = setTimeout(() => {
         this.setState(prev => ({
           hasError: false,
           autoRetries: prev.autoRetries + 1,
-          renderKey: prev.renderKey + 1,
+          // renderKey só incrementa a partir da 2ª tentativa (preserva estado)
+          renderKey: attemptNumber >= 2 ? prev.renderKey + 1 : prev.renderKey,
         }));
       }, 80);
     }

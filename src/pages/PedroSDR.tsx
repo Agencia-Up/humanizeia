@@ -2432,7 +2432,7 @@ const ALL_SELLER_TABS = [
 export default function PedroSDR() {
   const { user } = useAuth();
   const { isSeller, seller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
 
   // Seller: filtra tabs por visible_features | Master: todas
@@ -2442,7 +2442,18 @@ export default function PedroSDR() {
   const defaultTab = isSeller ? (tabs[0]?.id || 'crm') : (tabParam || 'performance');
   const [activeTab, setActiveTab] = useState(defaultTab);
 
-  // Se tab param mudar (ex: vendedor clicando no sidebar)
+  // Sincroniza activeTab → URL. Assim, mesmo se o ErrorBoundary remontar
+  // a página, a URL ainda carrega o tab atual e o useEffect abaixo restaura.
+  const handleTabChange = (newTab: string) => {
+    setActiveTab(newTab);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', newTab);
+      return next;
+    }, { replace: true });
+  };
+
+  // Se tab param mudar (ex: vendedor clicando no sidebar, ou remontagem do ErrorBoundary)
   useEffect(() => {
     if (tabParam && tabs.some(t => t.id === tabParam)) {
       setActiveTab(tabParam);
@@ -2487,7 +2498,7 @@ export default function PedroSDR() {
         </div>
 
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
           <div className="border-b border-border/40">
             <TabsList className="h-auto bg-transparent p-0 gap-1">
               {tabs.map(tab => (
