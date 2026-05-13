@@ -43,6 +43,7 @@ interface ContactList {
   tags: string[];
   created_at: string;
   updated_at: string;
+  auto_sync_pedro_leads?: boolean;
 }
 
 interface WAContact {
@@ -168,6 +169,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const [showDeleteList, setShowDeleteList] = useState(false);
   const [showFileImport, setShowFileImport] = useState(false);
   const [showGoogleMaps, setShowGoogleMaps] = useState(false);
+  const [showPedroImport, setShowPedroImport] = useState(false);
 
   // Form state
   const [formListName, setFormListName] = useState('');
@@ -176,6 +178,11 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const [targetListId, setTargetListId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [editingList, setEditingList] = useState<ContactList | null>(null);
+
+  // Pedro import form state
+  const [pedroListName, setPedroListName] = useState('');
+  const [pedroAutoSync, setPedroAutoSync] = useState(true);
+  const [pedroLeadCount, setPedroLeadCount] = useState<number | null>(null);
 
   // Google Maps state
   const [mapsQuery, setMapsQuery] = useState('');
@@ -294,6 +301,88 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       fetchLists();
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    } finally { setIsSaving(false); }
+  };
+
+  // ===== Importação de leads do Pedro =====
+  const openPedroImportDialog = async () => {
+    if (!effectiveUserId) return;
+    setPedroListName(`Leads do Pedro - ${format(new Date(), 'dd/MM/yyyy')}`);
+    setPedroAutoSync(true);
+    setShowPedroImport(true);
+    // Conta leads do Pedro disponíveis para importar
+    try {
+      const { count } = await (supabase as any)
+        .from('ai_crm_leads')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', effectiveUserId);
+      setPedroLeadCount(count || 0);
+    } catch {
+      setPedroLeadCount(0);
+    }
+  };
+
+  const createListFromPedro = async () => {
+    if (!effectiveUserId || !pedroListName.trim()) return;
+    setIsSaving(true);
+    try {
+      // 1. Cria a lista com flag de auto-sync (se marcada)
+      const { data: list, error: listErr } = await (supabase as any)
+        .from('wa_contact_lists')
+        .insert({
+          user_id: effectiveUserId,
+          name: pedroListName.trim(),
+          description: pedroAutoSync ? 'Lista sincronizada automaticamente com leads do Pedro' : 'Importada dos leads do Pedro',
+          source: 'pedro_import',
+          auto_sync_pedro_leads: pedroAutoSync,
+        } as any)
+        .select('id')
+        .single();
+      if (listErr) throw listErr;
+
+      // 2. Busca todos os leads do Pedro do master
+      const { data: leads, error: leadsErr } = await (supabase as any)
+        .from('ai_crm_leads')
+        .select('remote_jid, lead_name')
+        .eq('user_id', effectiveUserId);
+      if (leadsErr) throw leadsErr;
+
+      // 3. Converte para contatos (deduplicando por phone)
+      const seen = new Set<string>();
+      const rows = (leads || [])
+        .map((l: any) => {
+          const phone = String(l.remote_jid || '').split('@')[0].replace(/\D/g, '');
+          if (!phone || phone.length < 10 || seen.has(phone)) return null;
+          seen.add(phone);
+          return {
+            user_id: effectiveUserId,
+            list_id: (list as any).id,
+            phone,
+            name: l.lead_name || null,
+            source: 'pedro_import',
+          };
+        })
+        .filter(Boolean);
+
+      // 4. Insere em lote (Supabase suporta até ~1000 por insert)
+      if (rows.length > 0) {
+        const { error: insErr } = await (supabase as any).from('wa_contacts').insert(rows);
+        if (insErr) throw insErr;
+        await (supabase as any).from('wa_contact_lists')
+          .update({ contact_count: rows.length })
+          .eq('id', (list as any).id);
+      }
+
+      toast({
+        title: `✅ Lista criada com ${rows.length} contato(s)!`,
+        description: pedroAutoSync ? 'Novos leads do Pedro serão adicionados automaticamente.' : 'Apenas os leads atuais foram importados.',
+      });
+      setShowPedroImport(false);
+      setPedroListName('');
+      setPedroLeadCount(null);
+      fetchLists();
+    } catch (err: any) {
+      toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
     } finally { setIsSaving(false); }
   };
 
@@ -644,6 +733,13 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                   </>
                 ) : (
                   <>
+                    <Button
+                      variant="outline"
+                      onClick={openPedroImportDialog}
+                      className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
+                    >
+                      <MessageSquare className="h-4 w-4 mr-1.5" /> Importar do Pedro
+                    </Button>
                     <Button variant="outline" onClick={() => setShowFileImport(true)}>
                       <Upload className="h-4 w-4 mr-1.5" /> Importar Arquivo
                     </Button>
@@ -1064,6 +1160,78 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         </Tabs>
       </div>
       {/* ============ DIALOGS ============ */}
+
+      {/* Importar do Pedro */}
+      <Dialog open={showPedroImport} onOpenChange={setShowPedroImport}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-500/20 to-teal-500/20 border border-blue-500/30 flex items-center justify-center">
+                <MessageSquare className="h-4 w-4 text-blue-400" />
+              </div>
+              Importar Leads do Pedro
+            </DialogTitle>
+            <DialogDescription>
+              Cria uma lista de contatos com os leads que o Pedro qualificou no atendimento. Você pode usar essa lista em campanhas e fluxos de mensagens automáticas.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Contador de leads disponíveis */}
+            <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 flex items-center gap-3">
+              <Users className="h-5 w-5 text-blue-400 shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-foreground">
+                  {pedroLeadCount === null ? '...' : pedroLeadCount} {pedroLeadCount === 1 ? 'lead disponível' : 'leads disponíveis'}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Todos os leads atualmente no CRM do Pedro
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs">Nome da lista</Label>
+              <Input
+                value={pedroListName}
+                onChange={e => setPedroListName(e.target.value)}
+                placeholder="Ex: Leads do Pedro - Maio"
+                maxLength={100}
+              />
+            </div>
+
+            {/* Toggle auto-sync */}
+            <div className="rounded-lg border border-border/50 bg-muted/30 p-3 flex items-start gap-3">
+              <Checkbox
+                id="auto-sync"
+                checked={pedroAutoSync}
+                onCheckedChange={(v) => setPedroAutoSync(v === true)}
+                className="mt-0.5"
+              />
+              <div className="flex-1 cursor-pointer" onClick={() => setPedroAutoSync(!pedroAutoSync)}>
+                <Label htmlFor="auto-sync" className="text-sm font-semibold cursor-pointer">
+                  Sincronizar automaticamente novos leads
+                </Label>
+                <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                  Quando o Pedro qualificar um novo lead, ele entra automaticamente nesta lista. Útil para disparar fluxos de follow-up automaticamente.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPedroImport(false)}>Cancelar</Button>
+            <Button
+              onClick={createListFromPedro}
+              disabled={isSaving || !pedroListName.trim() || pedroLeadCount === null}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+              {pedroLeadCount === 0 && pedroAutoSync ? 'Criar Lista Vazia (auto-sync)' : `Importar ${pedroLeadCount ?? 0} contato(s)`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* New List */}
       <Dialog open={showNewList} onOpenChange={setShowNewList}>
