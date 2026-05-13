@@ -59,9 +59,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (campaign.status !== "draft" && campaign.status !== "paused") {
+    if (!["draft", "paused", "scheduled"].includes(campaign.status)) {
       return new Response(
-        JSON.stringify({ error: "Campaign must be in draft or paused status to start" }),
+        JSON.stringify({ error: "Campanha precisa estar em rascunho, pausada ou agendada para iniciar" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

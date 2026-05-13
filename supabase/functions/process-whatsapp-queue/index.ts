@@ -567,8 +567,28 @@ Deno.serve(async (req) => {
         console.error(`Error processing queue item ${item.id}:`, err);
         const errMsg = err instanceof Error ? err.message : "Unknown error";
 
-        // Circuit breaker
-        if (selectedInstance) {
+        // ===== DETECT DISCONNECTED INSTANCE (503 "session is not reconnectable") =====
+        // UazAPI returns 503 with "disconnected" or "not reconnectable" when the WhatsApp
+        // session is dead. Mark the instance as disconnected immediately in the DB so
+        // subsequent queue items don't keep retrying against a dead instance.
+        const isDisconnectedError = errMsg.includes("disconnected") ||
+                                     errMsg.includes("not reconnectable") ||
+                                     errMsg.includes("session closed");
+        if (selectedInstance && isDisconnectedError) {
+          console.warn(`[DISCONNECT] Instance ${selectedInstance.id} (${selectedInstance.instance_name}) is disconnected. Marking as inactive.`);
+          await supabase
+            .from("wa_instances")
+            .update({ status: "disconnected", is_active: false, health_score: 0 })
+            .eq("id", selectedInstance.id);
+          // Remove from in-memory map so no more items use it this invocation
+          const userInsts = instanceMap.get(item.user_id);
+          if (userInsts) {
+            instanceMap.set(item.user_id, userInsts.filter(i => i.id !== selectedInstance.id));
+          }
+        }
+
+        // Circuit breaker (for non-disconnect errors)
+        if (selectedInstance && !isDisconnectedError) {
           const currentFailures = (instanceFailures.get(selectedInstance.id) || 0) + 1;
           instanceFailures.set(selectedInstance.id, currentFailures);
           if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
