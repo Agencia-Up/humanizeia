@@ -508,9 +508,9 @@ const PRIORITY_CONFIG = {
 // ─── Feedback Estruturado: Opções ────────────────────────────────────────────
 
 const FEEDBACK_CITIES = [
-  'Pindamonhangaba', 'Tremembé', 'Caçapava', 'São Luís do Paraitinga',
-  'Redenção da Serra', 'Jacareí', 'São José dos Campos', 'Guaratinguetá',
-  'Campos do Jordão', 'Lorena',
+  'Pindamonhangaba', 'Taubaté', 'Tremembé', 'Caçapava',
+  'São Luís do Paraitinga', 'Redenção da Serra', 'Jacareí',
+  'São José dos Campos', 'Guaratinguetá', 'Campos do Jordão', 'Lorena',
 ];
 
 const FEEDBACK_REASONS: { category: string; emoji: string; options: string[] }[] = [

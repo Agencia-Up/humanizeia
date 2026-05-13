@@ -77,7 +77,7 @@ serve(async (req) => {
         .single(),
       member_id
         ? supabase.from("ai_team_members" as any)
-            .select("id, name, user_id, agent_id")
+            .select("id, name, user_id, agent_id, auth_user_id")
             .eq("id", member_id)
             .single()
         : Promise.resolve({ data: null, error: null }),
@@ -110,27 +110,64 @@ serve(async (req) => {
     if (insertErr) throw insertErr;
 
     // ── Notificação WhatsApp para o gerente ──────────────────────────────────
+    // Usa a INSTÂNCIA DO VENDEDOR (número conectado na conta dele)
+    // Fallback: instância do agente IA caso vendedor não tenha instância
     try {
       const agentId = member?.agent_id;
+      const sellerAuthId = member?.auth_user_id;
+
       if (agentId) {
+        // 1. Busca gerente_phone do agente
         const { data: agent } = await supabase
           .from("wa_ai_agents" as any)
           .select("gerente_phone, instance_id, instance_ids")
           .eq("id", agentId)
           .single();
 
-        const gerentePhone  = (agent as any)?.gerente_phone;
-        const instanceIds   = (agent as any)?.instance_ids || [];
-        const instanceId    = instanceIds[0] || (agent as any)?.instance_id;
+        const gerentePhone = (agent as any)?.gerente_phone;
+        if (!gerentePhone) {
+          console.log("[pedro-process-feedback] Sem gerente_phone configurado, pulando notificação");
+        }
 
-        if (gerentePhone && instanceId) {
-          const { data: instance } = await supabase
-            .from("wa_instances" as any)
-            .select("api_url, api_key_encrypted, instance_name")
-            .eq("id", instanceId)
-            .single();
+        if (gerentePhone) {
+          // 2. Busca instância do VENDEDOR primeiro
+          let instanceData: any = null;
 
-          if (instance && (instance as any).api_url) {
+          if (sellerAuthId) {
+            const { data: sellerInstance } = await supabase
+              .from("wa_instances" as any)
+              .select("api_url, api_key_encrypted, instance_name")
+              .eq("user_id", sellerAuthId)
+              .eq("is_active", true)
+              .eq("status", "connected")
+              .order("health_score", { ascending: false })
+              .limit(1)
+              .single();
+
+            if (sellerInstance) {
+              instanceData = sellerInstance;
+              console.log(`[pedro-process-feedback] Usando instância do vendedor: ${(sellerInstance as any).instance_name}`);
+            }
+          }
+
+          // 3. Fallback: instância do agente IA
+          if (!instanceData) {
+            const agentInstanceIds = (agent as any)?.instance_ids || [];
+            const agentInstanceId = agentInstanceIds[0] || (agent as any)?.instance_id;
+            if (agentInstanceId) {
+              const { data: agentInstance } = await supabase
+                .from("wa_instances" as any)
+                .select("api_url, api_key_encrypted, instance_name")
+                .eq("id", agentInstanceId)
+                .single();
+              if (agentInstance) {
+                instanceData = agentInstance;
+                console.log(`[pedro-process-feedback] Fallback: usando instância do agente: ${(agentInstance as any).instance_name}`);
+              }
+            }
+          }
+
+          if (instanceData && instanceData.api_url) {
             const emoji       = PRIORITY_EMOJI[priority] || "💬";
             const prioLabel   = PRIORITY_LABEL[priority] || priority;
             const leadName    = lead.lead_name || lead.remote_jid || "Lead";
@@ -173,16 +210,24 @@ serve(async (req) => {
 
             const msg = lines.join("\n");
 
-            const baseUrl = (instance as any).api_url.replace(/\/$/, "");
-            const instKey = (instance as any).api_key_encrypted || "";
+            const baseUrl = instanceData.api_url.replace(/\/$/, "");
+            const instKey = instanceData.api_key_encrypted || "";
             let phone     = gerentePhone.replace(/\D/g, "");
             if (phone.length === 10 || phone.length === 11) phone = `55${phone}`;
 
-            await fetch(`${baseUrl}/send/text`, {
+            console.log(`[pedro-process-feedback] Enviando para ${phone} via ${instanceData.instance_name}`);
+
+            const sendRes = await fetch(`${baseUrl}/send/text`, {
               method:  "POST",
-              headers: { "Content-Type": "application/json", "token": instKey },
+              headers: { "Content-Type": "application/json", "token": instKey, "apikey": instKey },
               body:    JSON.stringify({ number: phone, text: msg }),
-            }).catch(() => { /* falha silenciosa — notificação é best-effort */ });
+            });
+
+            const sendStatus = sendRes.status;
+            const sendBody   = await sendRes.text().catch(() => "");
+            console.log(`[pedro-process-feedback] UazAPI resposta: ${sendStatus} ${sendBody.slice(0, 200)}`);
+          } else {
+            console.log("[pedro-process-feedback] Nenhuma instância encontrada para envio");
           }
         }
       }
