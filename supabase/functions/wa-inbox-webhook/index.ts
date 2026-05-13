@@ -239,7 +239,7 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
     `[wa-inbox-webhook] Evolution event received: ${normalizedEvent || "unknown"} | instance: ${instanceName || "unknown"}`
   );
   if (messageData && typeof messageData === "object" && !Array.isArray(messageData)) {
-    console.log("[wa-inbox-webhook] Evolution data keys:", JSON.stringify(Object.keys(messageData)));
+    console.log("[wa-inbox-webhook] UazAPI data keys:", JSON.stringify(Object.keys(messageData)));
   }
 
   if (normalizedEvent === "messages.update" && messageData) {
@@ -362,7 +362,7 @@ async function processEvolutionIncomingMessage(
   } else if (message.audioMessage) {
     messageType = "audio";
     mediaUrl = message.audioMessage.url || null;
-    console.log(`[wa-inbox-webhook] Audio message detected from Evolution. mediaUrl: ${mediaUrl}, mimetype: ${message.audioMessage.mimetype}`);
+    console.log(`[wa-inbox-webhook] Audio message detected from UazAPI. mediaUrl: ${mediaUrl}, mimetype: ${message.audioMessage.mimetype}`);
     try {
       const transcription = await transcribeAudioFromEvolution(supabase, instance, messageData, instanceName);
       if (transcription) {
@@ -427,7 +427,7 @@ async function processEvolutionIncomingMessage(
   }
 
   if (content && content.trim().length > 0) {
-    await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget);
+    await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget, messageType, remoteMessageId, instanceName);
   }
 
   return inboxMsg.id;
@@ -726,21 +726,15 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
 
 function shouldSkipAICategorization(content: string): boolean {
   const normalized = (content || "").trim().toLowerCase();
-  return normalized.startsWith("[imagem recebida") ||
-    normalized.startsWith("[mensagem de audio recebida sem transcricao]") ||
-    normalized.startsWith("[arquivo recebido:");
+  // Apenas documentos pulam categorizacao — imagens e audios sao processados pela IA
+  return normalized.startsWith("[arquivo recebido:");
 }
 
 function getMediaFallbackReply(content: string): string | null {
   const normalized = (content || "").trim().toLowerCase();
 
-  if (normalized.startsWith("[mensagem de audio recebida sem transcricao]")) {
-    return "Recebi seu audio aqui, mas ele chegou sem transcricao pra mim. Se puder, me manda de novo ou escreve rapidinho o ponto principal que eu continuo com voce.";
-  }
-
-  if (normalized.startsWith("[imagem recebida sem legenda]")) {
-    return "Recebi sua imagem aqui. Me diz rapidinho o que voce quer que eu avalie nela que eu sigo com voce.";
-  }
+  // Imagens e audios NAO usam fallback — sao processados pela IA
+  // A IA recebe o texto indicativo e responde naturalmente
 
   if (normalized.startsWith("[arquivo recebido:")) {
     return "Recebi seu arquivo aqui, mas por enquanto eu nao consigo abrir documentos direto. Se quiser, me resume o ponto principal em texto ou audio que eu te ajudo daqui.";
@@ -849,6 +843,9 @@ async function categorizeAndAutomate(
   pushName: string | null,
   contactId: string | null,
   replyTarget?: string,
+  msgType?: string,
+  remoteMessageId?: string | null,
+  instanceName?: string,
 ) {
   try {
     // ===== Check for opt-in/opt-out button responses first =====
@@ -945,7 +942,7 @@ async function categorizeAndAutomate(
     await handleCampaignAutoReply(supabase, instance, phone, contactId, replyTarget);
 
     // ===== AI Agent Auto-Reply =====
-    await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget);
+    await handleAIAgentReply(supabase, instance, content, phone, pushName, aiCategory.category, replyTarget, msgType, remoteMessageId, instanceName);
 
     // ===== CAPI Full-Funnel Tracking =====
     if (aiCategory.category === "interested" || aiCategory.category === "question") {
@@ -1122,7 +1119,7 @@ async function sendAutoReplyMessage(
         }),
       });
     } else {
-      // Send via Evolution API
+      // Send via UazAPI
       const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL");
       const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY");
       if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) return;
@@ -1168,6 +1165,9 @@ async function handleAIAgentReply(
   pushName: string | null,
   category: string,
   replyTarget?: string,
+  msgType?: string,
+  remoteMessageId?: string | null,
+  instanceName?: string,
 ) {
   try {
     const mediaFallbackReply = getMediaFallbackReply(content);
@@ -1261,23 +1261,11 @@ async function handleAIAgentReply(
       return;
     }
 
-    // Check business hours
-    if (agent.business_hours_only) {
-      const now = new Date();
-      const hours = now.getHours();
-      const minutes = now.getMinutes();
-      const currentTime = hours * 60 + minutes;
-      
-      const [startH, startM] = (agent.business_hours_start || "08:00").split(":").map(Number);
-      const [endH, endM] = (agent.business_hours_end || "18:00").split(":").map(Number);
-      const startTime = startH * 60 + startM;
-      const endTime = endH * 60 + endM;
-
-      if (currentTime < startTime || currentTime > endTime) {
-        console.log("[ai-agent] Outside business hours, skipping");
-        return;
-      }
-    }
+    // NOTA: business_hours_only NÃO bloqueia mais o atendimento da IA.
+    // A IA responde e transfere leads para vendedores 24/7 via rodízio.
+    // O que pausa fora do horário (19:30–10:11) é apenas o REPASSE
+    // automático por falta de confirmação — controlado pelo
+    // transfer-timeout-checker (edge function separada).
 
     // Fetch conversation history for context (more messages = better context)
     const { data: history } = await supabase
@@ -1366,10 +1354,13 @@ REGRAS AVANÃ‡ADAS DE HUMANIZAÃ‡ÃƒO (PRIORIDADE MÃXIMA):
 - Nunca repita o nome do cliente em toda mensagem
 - Se precisar listar algo, faÃ§a de forma conversacional: "tem o plano X que custa Y, e tem tambÃ©m o Z que..."
 
-[REGRAS DE CONDUTA ANTE MÃDIAS E ARQUIVOS]
-- Se o usuÃ¡rio enviar uma Imagem (serÃ¡ indicado com "[Imagem recebida]"), anÃ¡lise com precisÃ£o fotogrÃ¡fica se conseguir visualizar o anexo no seu array.
-- Se o usuÃ¡rio enviar Ãudio, a transcriÃ§Ã£o Ã© entregue como texto direto para vocÃª interpretar, lide naturalmente como se tivesse ouvido.
-- Se o usuÃ¡rio anexar Documentos/PDFs (indicado com "[Arquivo recebido: <nome>]"), VOCÃŠ NÃƒO PODE ABRIR ARQUIVOS e NÃƒO DEVE INVENTAR DADOS. Responda educadamente sem fugir do personagem: informe que a plataforma limitou sua visÃ£o ou que nÃ£o consegue abrir documentos, sugerindo que o cliente resuma o que hÃ¡ no arquivo ou envie as dÃºvidas em Ã¡udio/texto. Nunca dÃª respostas genÃ©ricas e nunca ofereÃ§a "mais informaÃ§Ãµes" se nÃ£o sabe o conteÃºdo.
+[REGRAS DE CONDUTA ANTE MIDIAS E ARQUIVOS]
+- IMAGEM: quando a imagem vier junto com a mensagem, voce CONSEGUE ver e analisar a foto. Descreva o que ve naturalmente, como um vendedor real faria no WhatsApp: identifique o veiculo (marca, modelo, cor), detalhes visiveis, e responda de forma util. Se tem legenda, use como contexto. Quando receber apenas "[Imagem recebida sem legenda]" sem a foto anexada, pergunte sobre o que e a imagem de forma natural.
+- AUDIO: quando receber "[Mensagem de audio recebida sem transcricao]", significa que o audio chegou mas nao foi possivel transcrever. Peca educadamente para o cliente repetir por texto ou mandar outro audio: "opa, seu audio nao chegou nitido aqui, me manda por texto ou tenta de novo?" - NUNCA ignore, NUNCA de respostas genericas.
+- AUDIO TRANSCRITO: quando a transcricao funciona, o texto do audio chega direto pra voce. Responda naturalmente como se tivesse ouvido o audio.
+- DOCUMENTOS/PDFs: (indicado com "[Arquivo recebido: <nome>]"), voce NAO pode abrir arquivos. Peca pro cliente resumir o conteudo em texto ou audio.
+- LINKS/URLs: quando o cliente enviar uma mensagem contendo links ou URLs (ex: anuncios do Facebook, Instagram, sites), voce NAO consegue abrir ou acessar links. Mas NUNCA diga "nao consigo acessar links" ou qualquer variacao disso. Em vez disso, USE O TEXTO que acompanha o link como contexto (titulo do anuncio, descricao, nome do produto/veiculo). Responda de forma natural como se tivesse entendido o contexto: "vi que voce ta olhando esse [produto/veiculo] - conta mais, o que te chamou atencao nele?" Se nao houver texto alem do link, pergunte naturalmente: "me conta mais sobre esse link, o que voce viu la que te interessou?"
+- ENCERRAMENTO/DESPEDIDA: quando o cliente disser "obrigado", "valeu", "ate mais", "tchau", "falou" ou qualquer despedida, NUNCA responda apenas com "De nada, ate mais!" ou encerre a conversa diretamente. ANTES de se despedir, voce DEVE tentar captar informacoes de contato (nome completo, telefone, email) e entender o interesse do cliente. Exemplo: "que bom que pude ajudar! antes de a gente se despedir, me passa seu nome completo e um telefone pra contato? assim consigo te avisar quando surgir algo especial pra voce". So encerre a conversa DEPOIS de tentar essa captacao.
 
 RESPOSTAS ANTERIORES DO AGENTE (para NÃƒO repetir frases/aberturas):
 ${recentReplies.slice(0, 5).map((r, i) => `[${i+1}]: ${r.substring(0, 80)}`).join("\n")}
@@ -1383,43 +1374,107 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
 
     const crmToolInstruction = `
 
-FERRAMENTA DE CRM - QUALIFICAÃ‡ÃƒO DE LEADS:
-VocÃª tem acesso a uma ferramenta chamada "atualizar_etapa_crm" que deve ser usada para classificar o status do lead durante a conversa.
+FERRAMENTA DE CRM - COLETA DE DADOS E QUALIFICACAO:
+Voce tem acesso a ferramenta "atualizar_etapa_crm" para salvar dados do cliente e atualizar o status do lead.
+Esta ferramenta agora aceita CAMPOS ESTRUTURADOS alem do status e resumo.
 
-USE esta ferramenta quando:
-- O cliente demonstrar interesse real no produto/serviÃ§o â†’ status: "interessado"
-- O cliente pedir preÃ§o, condiÃ§Ãµes, ou quiser avanÃ§ar â†’ status: "qualificado"  
-- O cliente disser que nÃ£o tem interesse â†’ status: "encerrado"
-- No inÃ­cio da conversa â†’ status: "novo"
+REGRA CRITICA - COLETA DE DADOS DO CLIENTE:
+Voce DEVE coletar dados do cliente ao longo da conversa e salvar usando a ferramenta.
+NAO espere ter todos os dados para chamar a ferramenta. Chame SEMPRE que coletar uma informacao nova.
 
-IMPORTANTE: Quando o status for "qualificado", vocÃª DEVE:
-1. Chamar a ferramenta com status "qualificado" e um resumo detalhado da conversa
-2. O resumo deve incluir: nome do cliente, o que ele procura, principais dÃºvidas, orÃ§amento mencionado, e qualquer informaÃ§Ã£o relevante
-3. ApÃ³s qualificar, responda ao cliente informando que um especialista vai entrar em contato
+DADOS A COLETAR (um por vez, de forma natural na conversa):
+1. ABORDAGEM: nome completo do cliente, cidade
+2. MODELAGEM: veiculo de interesse, forma de pagamento (a_vista, troca, financiamento)
+3. SE FINANCIAMENTO: CPF, data de nascimento, valor de parcela ideal, valor de entrada
+4. SE TROCA: descricao do carro de troca (modelo, ano, km), como pagar a diferenca
+5. SE A VISTA: tentar agendar visita
+6. FECHAMENTO: confirmar todos os dados e qualificar
+
+QUANDO CHAMAR A FERRAMENTA:
+- Primeira mensagem do cliente -> status: "novo", salve nome e cidade se souber
+- Cliente informou nome ou cidade -> chame com os dados coletados (mantenha status atual)
+- Cliente demonstrou interesse real -> status: "interessado", salve veiculo_interesse
+- Cliente informou forma de pagamento -> salve forma_pagamento, atualize etapa_funil para "modelagem"
+- Cliente deu dados de financiamento (CPF, entrada, parcela) -> salve cada dado conforme coletar
+- Cliente pronto para comprar/visitar/falar com consultor -> status: "qualificado", etapa_funil: "fechamento"
+- Cliente sem interesse, nao respondeu, sumiu -> status: "pouco_qualificado" (transfere para vendedor)
+- Cliente disse "vou ver", "vou pensar", "tenho outras opcoes", parou de falar no meio -> status: "medio_qualificado" (transfere para vendedor)
+- NUNCA use status "encerrado". NAO EXISTE esse status.
+
+REGRA CRITICA DE TRANSFERENCIA (PRIORIDADE MAXIMA):
+TODA conversa que chega ao fim DEVE ser transferida para o vendedor. Existem 3 niveis:
+
+1. "pouco_qualificado" — Lead FRIO que nao respondeu, sumiu, ou nao demonstrou nenhum interesse real.
+   Exemplos: mandou "oi" e sumiu, nao respondeu apos a IA perguntar, disse "nao tenho interesse".
+   Temperatura: "frio". SEMPRE transfere para vendedor.
+
+2. "medio_qualificado" — Lead MORNO que conversou mas nao avancou para dados ou visita.
+   Exemplos: "vou ver", "vou pensar", "volto depois", "tenho outras opcoes", "vou comparar", parou de responder no meio da conversa, fez perguntas mas nao quis avancar, despedida generica ("valeu", "obrigado", "tchau", "falou").
+   Temperatura: "morno". SEMPRE transfere para vendedor.
+
+3. "qualificado" — Lead QUENTE pronto para fechar negocio.
+   Exemplos: quer ir na loja, tem carro para dar de entrada, passou dados pessoais (CPF, etc.), pediu para falar com vendedor/consultor, quer financiar e deu valores, quer reservar/separar veiculo, agendou visita.
+   Temperatura: "quente". SEMPRE transfere para vendedor.
+
+A IA NUNCA encerra conversa sozinha. O vendedor SEMPRE recebe o lead, com o resumo completo do que aconteceu.
+NAO espere coletar todos os dados antes de transferir. Transfira PRIMEIRO, o vendedor coleta o resto.
+
+CAMPOS DISPONIVEIS NA FERRAMENTA (todos opcionais exceto status e resumo):
+- status: "novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado"
+- resumo: texto livre com resumo da conversa
+- nome_cliente: nome REAL do cliente (NAO o nome do WhatsApp)
+- cidade: cidade do cliente
+- veiculo_interesse: modelo/tipo de veiculo que o cliente quer
+- forma_pagamento: "a_vista", "troca" ou "financiamento"
+- orcamento: faixa de preco ou valor maximo
+- carro_troca: descricao do carro de troca (ex: "Gol 2018, 95mil km, prata")
+- entrada: valor de entrada mencionado
+- parcela_ideal: valor de parcela que cabe no bolso do cliente
+- cpf: CPF do cliente (somente para financiamento)
+- data_nascimento: data de nascimento (somente para financiamento)
+- etapa_funil: "abordagem", "modelagem" ou "fechamento"
+- temperatura: "frio", "morno" ou "quente"
+- visita_agendada: dia/horario da visita se agendada (ex: "quinta-feira as 15h")
+- observacoes: qualquer info extra relevante (familiar que vai consultar, urgencia, etc.)
+
+COMO DEFINIR TEMPERATURA:
+- "frio": cliente so perguntou algo basico, sem engajamento
+- "morno": cliente demonstrou interesse, fez perguntas, mas nao avancou para pagamento
+- "quente": cliente perguntou preco, financiamento, troca, quer visitar, ou esta pronto para fechar
+
+REGRA DE OURO: NUNCA deixe uma conversa terminar sem tentar coletar pelo menos nome e cidade.
+Se o cliente se despedir sem dar dados, chame a ferramenta com status "pouco_qualificado" e observacoes explicando o motivo. O vendedor recebe o lead mesmo assim.
+
+QUANDO TRANSFERIR (qualquer status de transferencia):
+- "pouco_qualificado": preencha resumo com o que aconteceu, temperatura "frio". Informe ao cliente que um consultor pode ajudar quando ele quiser.
+- "medio_qualificado": preencha resumo detalhado, temperatura "morno". Informe ao cliente que um consultor vai entrar em contato.
+- "qualificado": certifique-se de que coletou nome_cliente, cidade, veiculo_interesse, forma_pagamento. Preencha resumo com TUDO. Temperatura "quente". Informe que um consultor especialista vai continuar o atendimento.
 
 FERRAMENTA DE ESTOQUE BNDV:
-VocÃª tambÃ©m tem acesso a uma ferramenta chamada "consultar_estoque_bndv".
+Voce tambem tem acesso a ferramenta "consultar_estoque_bndv".
 USE esta ferramenta sempre que o cliente perguntar sobre:
-- carros disponÃ­veis no estoque
-- preÃ§o de veÃ­culo
-- ano, versÃ£o, cÃ¢mbio, combustÃ­vel, quilometragem ou cor
-- opÃ§Ãµes atÃ© um orÃ§amento especÃ­fico
+- carros disponiveis no estoque
+- preco de veiculo
+- ano, versao, cambio, combustivel, quilometragem ou cor
+- opcoes ate um orcamento especifico
 
 IMPORTANTE:
-- Nunca invente estoque ou preÃ§o sem consultar a ferramenta.
-- Se a ferramenta nÃ£o encontrar veÃ­culos, informe isso claramente e sugira alternativas prÃ³ximas.
+- Nunca invente estoque ou preco sem consultar a ferramenta.
+- Se nao encontrar veiculos, informe claramente e sugira alternativas do MESMO SEGMENTO.
 
 FOTOS DE VEICULOS:
-Quando a consulta de estoque retornar veiculos, cada veiculo tera um campo "fotos" com URLs de imagens reais do veiculo.
-Voce tem acesso a ferramenta "enviar_foto" para enviar essas fotos ao cliente pelo WhatsApp.
+Quando a consulta de estoque retornar veiculos, cada veiculo tera um campo "fotos" com URLs de imagens reais.
+Use a ferramenta "enviar_foto" para enviar fotos ao cliente pelo WhatsApp.
 
-REGRAS PARA FOTOS:
-- Quando o cliente pedir para ver fotos de um veiculo, use "enviar_foto" com as URLs do campo "fotos" do resultado da consulta.
-- Envie 1 foto por chamada da ferramenta. Se quiser enviar varias, chame a ferramenta multiplas vezes.
-- Sempre adicione uma legenda descritiva (ex: "Fiat Pulse Drive 2024 - Vista frontal").
-- Se o campo "fotos" estiver vazio, informe ao cliente que nao ha fotos disponiveis no momento.
-- SEMPRE que apresentar um veiculo e ele tiver fotos, OFERECA envia-las ao cliente proativamente (ex: "Posso te enviar as fotos desse veiculo, quer ver?").
-- Se o cliente pedir fotos e voce ainda nao consultou o estoque, primeiro use "consultar_estoque_bndv" e depois envie as fotos.
+REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
+- NUNCA cole ou escreva URLs de fotos na mensagem de texto. O cliente nao quer ver links.
+- SEMPRE use a ferramenta "enviar_foto" para enviar cada foto. Isso envia a IMAGEM real no WhatsApp.
+- Envie 1 foto por chamada da ferramenta. Para multiplas fotos, chame a ferramenta varias vezes.
+- Sempre adicione uma legenda descritiva (ex: "Vista frontal do Onix 2024", "Interior em couro").
+- Se nao ha fotos disponiveis, informe ao cliente.
+- SEMPRE que apresentar um veiculo com fotos, OFERECA envia-las proativamente.
+- Se o cliente pedir fotos sem consulta previa, primeiro use "consultar_estoque_bndv".
+- Na sua resposta em texto, diga algo como "mandei as fotos ai" ou "olha so as fotos" — SEM colar nenhum link.
 `;
 
     const systemPrompt = agent.system_prompt + "\n" + humanizationRules + nameInstruction + crmToolInstruction;
@@ -1452,18 +1507,77 @@ REGRAS PARA FOTOS:
         type: "function",
         function: {
           name: "atualizar_etapa_crm",
-          description: "Atualiza o status do lead no CRM e registra um resumo da conversa. Use quando identificar mudanÃ§a de etapa do cliente.",
+          description: "Atualiza o status do lead no CRM, salva dados estruturados do cliente e registra um resumo. Use SEMPRE que coletar qualquer informacao nova do cliente (nome, cidade, veiculo, pagamento, etc). Pode chamar multiplas vezes na mesma conversa conforme coletar mais dados.",
           parameters: {
             type: "object",
             properties: {
               status: {
                 type: "string",
-                enum: ["novo", "interessado", "qualificado", "encerrado"],
-                description: "Status atual do lead baseado na conversa"
+                enum: ["novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado"],
+                description: "Status do lead: novo (primeiro contato), interessado (demonstrou interesse), pouco_qualificado (nao respondeu/sumiu/sem interesse — transfere), medio_qualificado (vou ver/vou pensar/despedida — transfere), qualificado (quer comprar/visitar/tem entrada — transfere)"
               },
               resumo: {
                 type: "string",
-                description: "Resumo detalhado da conversa com o cliente incluindo: nome, interesse, dÃºvidas, orÃ§amento, e informaÃ§Ãµes captadas"
+                description: "Resumo detalhado da conversa incluindo contexto, interesse, duvidas e informacoes relevantes"
+              },
+              nome_cliente: {
+                type: "string",
+                description: "Nome REAL completo do cliente coletado na conversa (nao o nome do WhatsApp)"
+              },
+              cidade: {
+                type: "string",
+                description: "Cidade do cliente"
+              },
+              veiculo_interesse: {
+                type: "string",
+                description: "Veiculo que o cliente busca (ex: 'Jeep Renegade', 'SUV automatico', 'Onix 2020')"
+              },
+              forma_pagamento: {
+                type: "string",
+                enum: ["a_vista", "troca", "financiamento"],
+                description: "Forma de pagamento escolhida pelo cliente"
+              },
+              orcamento: {
+                type: "string",
+                description: "Faixa de preco ou valor maximo (ex: 'ate 90 mil', 'entre 70 e 85 mil')"
+              },
+              carro_troca: {
+                type: "string",
+                description: "Detalhes do carro de troca (ex: 'Gol 2018, 95mil km, prata, manual')"
+              },
+              entrada: {
+                type: "string",
+                description: "Valor de entrada mencionado (ex: '15 mil', 'R$ 20.000')"
+              },
+              parcela_ideal: {
+                type: "string",
+                description: "Valor de parcela que cabe no bolso (ex: 'ate 1.500', 'entre 1.000 e 1.200')"
+              },
+              cpf: {
+                type: "string",
+                description: "CPF do cliente (somente para financiamento)"
+              },
+              data_nascimento: {
+                type: "string",
+                description: "Data de nascimento do cliente (somente para financiamento)"
+              },
+              etapa_funil: {
+                type: "string",
+                enum: ["abordagem", "modelagem", "fechamento"],
+                description: "Etapa atual no funil de vendas: abordagem (conexao inicial), modelagem (entendendo perfil/pagamento), fechamento (conduzindo para decisao)"
+              },
+              temperatura: {
+                type: "string",
+                enum: ["frio", "morno", "quente"],
+                description: "Temperatura do lead: frio (pouco interesse), morno (interesse medio), quente (pronto para comprar)"
+              },
+              visita_agendada: {
+                type: "string",
+                description: "Data/horario da visita agendada (ex: 'quinta-feira as 15h', 'semana que vem')"
+              },
+              observacoes: {
+                type: "string",
+                description: "Informacoes extras relevantes (ex: 'vai consultar esposa', 'cliente de fora - litoral SP', 'urgencia para trocar')"
               }
             },
             required: ["status", "resumo"],
@@ -1501,17 +1615,86 @@ REGRAS PARA FOTOS:
     const maxTokensValue = agent.max_tokens || 500;
     const effectiveTemp = Math.max(parseFloat(agent.temperature) || 0.7, 0.75);
 
+    // ── IMAGE VISION: download image and build vision content ──
+    let visionContent: any = null; // will hold [{type:"text",...},{type:"image_url",...}] if image available
+    if (msgType === "image" && remoteMessageId && instanceName) {
+      try {
+        // Get instance API details for download
+        const { data: waInst } = await supabase
+          .from("wa_instances")
+          .select("api_url, api_key_encrypted")
+          .eq("id", instance.id)
+          .maybeSingle();
+
+        if (waInst?.api_url && waInst?.api_key_encrypted) {
+          const baseUrl = (waInst.api_url || '').replace(/\/+$/, '');
+          const instKey = waInst.api_key_encrypted;
+
+          console.log(`[ai-agent] 🖼️ Downloading image for vision, msgId: ${remoteMessageId}`);
+          const dRes = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
+            body: JSON.stringify({ id: remoteMessageId, return_base64: true }),
+          });
+
+          if (dRes.ok) {
+            const dData = await dRes.json();
+            const base64 = dData.base64Data || dData.base64 || dData.file || '';
+            const mimeType = dData.mimetype || 'image/jpeg';
+            if (base64 && base64.length > 100) {
+              const captionText = content.replace(/\[Imagem recebida[^\]]*\]\n?/g, '').replace(/Legenda:\s*/g, '').trim() || '[Imagem recebida]';
+              visionContent = [
+                { type: "text", text: captionText },
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+              ];
+              console.log(`[ai-agent] ✅ Image downloaded for vision (${base64.length} chars, mime: ${mimeType})`);
+            } else {
+              console.warn(`[ai-agent] ⚠️ Image download returned empty/small base64`);
+            }
+          } else {
+            const errText = await dRes.text().catch(() => '');
+            console.error(`[ai-agent] ❌ Image download failed: ${dRes.status} - ${errText}`);
+          }
+        }
+      } catch (imgErr) {
+        console.error('[ai-agent] ❌ Image vision error:', imgErr);
+      }
+    }
+
     let aiData: any = null;
+
+    // Anthropic vision content (declared here for scope across initial call and follow-up)
+    let anthropicUserContent: any = content;
 
     if (!mediaFallbackReply && isAnthropicModel) {
       // â"€â"€ Direct Anthropic API call with tool calling â"€â"€
-      const anthropicModel = rawModel.replace("anthropic/", "");
+      const anthropicModelRaw = rawModel.replace("anthropic/", "");
+      // Normalize short aliases to full valid model IDs
+      const anthropicModelMap: Record<string, string> = {
+        "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3-sonnet": "claude-3-sonnet-20240229",
+        "claude-3-haiku": "claude-3-haiku-20240307",
+      };
+      const anthropicModel = anthropicModelMap[anthropicModelRaw] || anthropicModelRaw;
+      if (visionContent) {
+        const textPart = visionContent.find((c: any) => c.type === "text");
+        const imgPart = visionContent.find((c: any) => c.type === "image_url");
+        if (imgPart?.image_url?.url?.startsWith("data:")) {
+          const [header, b64] = imgPart.image_url.url.split(",");
+          const mime = header.replace("data:", "").replace(";base64", "");
+          anthropicUserContent = [
+            { type: "text", text: textPart?.text || "[Imagem recebida]" },
+            { type: "image", source: { type: "base64", media_type: mime, data: b64 } },
+          ];
+        }
+      }
       const anthropicMessages = [
         ...historyMessages.slice(-14).map((m: any) => ({
           role: m.role === "system" ? "user" : m.role,
           content: m.content,
         })),
-        { role: "user", content },
+        { role: "user", content: anthropicUserContent },
       ];
 
       // Convert OpenAI-format tools to Anthropic format
@@ -1584,6 +1767,8 @@ REGRAS PARA FOTOS:
       const modelMap: Record<string, string> = {
         "google/gemini-3-flash-preview": "google/gemini-2.5-flash",
         "gemini-3-flash-preview": "google/gemini-2.5-flash",
+        "google/gemini-2.0-flash": "google/gemini-2.5-flash",
+        "openai/gpt-3.5-turbo": "openai/gpt-4o-mini",
         "openai/gpt-5": "google/gemini-2.5-pro",
         "openai/gpt-5-mini": "google/gemini-2.5-flash",
         "openai/gpt-5-nano": "google/gemini-2.5-flash-lite",
@@ -1592,14 +1777,21 @@ REGRAS PARA FOTOS:
       const selectedModel = modelMap[rawModel] || rawModel;
       const isOpenAI = selectedModel.startsWith("openai/");
 
+      // If we have vision content and model supports it, upgrade to gpt-4o
+      let effectiveModel = selectedModel;
+      if (visionContent && (selectedModel === 'openai/gpt-4o-mini' || selectedModel === 'openai/gpt-3.5-turbo')) {
+        effectiveModel = 'openai/gpt-4o';
+        console.log(`[ai-agent] 🖼️ Image detected — upgrade model from ${selectedModel} to ${effectiveModel} for vision`);
+      }
+
       const aiMessages = [
         { role: "system", content: systemPrompt },
         ...historyMessages.slice(-14),
-        { role: "user", content },
+        { role: "user", content: visionContent || content },
       ];
 
       const aiPayload: any = {
-        model: selectedModel,
+        model: effectiveModel,
         messages: aiMessages,
         temperature: effectiveTemp,
         tools: crmTools,
@@ -1607,9 +1799,9 @@ REGRAS PARA FOTOS:
         ...(isOpenAI ? { max_completion_tokens: maxTokensValue } : { max_tokens: maxTokensValue }),
       };
 
-      console.log(`[ai-agent] Calling AI Gateway with model: ${selectedModel}, history: ${historyMessages.length} msgs`);
+      console.log(`[ai-agent] Calling AI Gateway with model: ${effectiveModel}, history: ${historyMessages.length} msgs${visionContent ? ', WITH IMAGE VISION' : ''}`);
 
-      const modelsToTry = [selectedModel, "google/gemini-2.5-flash"];
+      const modelsToTry = [effectiveModel, "google/gemini-2.5-flash"];
       const uniqueModels = [...new Set(modelsToTry)];
 
       for (const model of uniqueModels) {
@@ -1652,7 +1844,33 @@ REGRAS PARA FOTOS:
         try {
           if (toolCall.function?.name === "atualizar_etapa_crm") {
             const args = JSON.parse(toolCall.function.arguments);
-            console.log(`[ai-agent-crm] Lead ${phone} → status: ${args.status}`);
+            console.log(`[ai-agent-crm] Lead ${phone} -> status: ${args.status}, fields: ${Object.keys(args).join(",")}`);
+
+            // Build structured update data from all available fields
+            const updateData: any = {
+              status: args.status,
+              summary: args.resumo,
+              last_interaction_at: new Date().toISOString(),
+            };
+
+            // Map tool parameters to database columns
+            if (args.nome_cliente) {
+              updateData.client_name = args.nome_cliente;
+              updateData.lead_name = args.nome_cliente; // Update lead_name with real name
+            }
+            if (args.cidade) updateData.client_city = args.cidade;
+            if (args.veiculo_interesse) updateData.vehicle_interest = args.veiculo_interesse;
+            if (args.forma_pagamento) updateData.payment_method = args.forma_pagamento;
+            if (args.orcamento) updateData.budget = args.orcamento;
+            if (args.carro_troca) updateData.trade_in_vehicle = args.carro_troca;
+            if (args.entrada) updateData.down_payment = args.entrada;
+            if (args.parcela_ideal) updateData.desired_installment = args.parcela_ideal;
+            if (args.cpf) updateData.cpf = args.cpf;
+            if (args.data_nascimento) updateData.birth_date = args.data_nascimento;
+            if (args.etapa_funil) updateData.funnel_stage = args.etapa_funil;
+            if (args.temperatura) updateData.temperature = args.temperatura;
+            if (args.visita_agendada) updateData.visit_scheduled = args.visita_agendada;
+            if (args.observacoes) updateData.additional_notes = args.observacoes;
 
             const { data: existingLead } = await supabase
               .from("ai_crm_leads")
@@ -1662,32 +1880,26 @@ REGRAS PARA FOTOS:
               .maybeSingle();
 
             if (existingLead) {
-              await supabase.from("ai_crm_leads").update({
-                status: args.status,
-                summary: args.resumo,
-                last_interaction_at: new Date().toISOString(),
-              }).eq("id", existingLead.id);
+              await supabase.from("ai_crm_leads").update(updateData).eq("id", existingLead.id);
             } else {
               await supabase.from("ai_crm_leads").insert({
                 user_id: instance.user_id,
                 agent_id: agent.id,
                 instance_id: instance.id,
                 remote_jid: phone,
-                lead_name: pushName || phone,
-                status: args.status,
-                summary: args.resumo,
-                last_interaction_at: new Date().toISOString(),
+                lead_name: args.nome_cliente || pushName || phone,
+                ...updateData,
               });
             }
 
-            if (args.status === "qualificado") {
+            if (args.status === "qualificado" || args.status === "medio_qualificado" || args.status === "pouco_qualificado") {
               await transferLeadToSeller(supabase, instance, agent, phone, pushName, args.resumo, historyMessages);
             }
 
             toolMessages.push({
               role: "tool",
               tool_call_id: toolCall.id,
-              content: JSON.stringify({ success: true, status: args.status }),
+              content: JSON.stringify({ success: true, status: args.status, dados_salvos: Object.keys(updateData).length }),
             });
           }
 
@@ -1820,7 +2032,7 @@ REGRAS PARA FOTOS:
               role: m.role === "system" ? "user" : m.role,
               content: m.content,
             })),
-            { role: "user", content },
+            { role: "user", content: anthropicUserContent || content },
             {
               role: "assistant",
               content: [
@@ -1873,7 +2085,7 @@ REGRAS PARA FOTOS:
           const followUpMessages = [
             { role: "system", content: systemPrompt },
             ...historyMessages.slice(-14),
-            { role: "user", content },
+            { role: "user", content: visionContent || content },
             aiMessage,
             ...toolMessages,
           ];
@@ -1918,7 +2130,7 @@ REGRAS PARA FOTOS:
     const delay = agent.reply_delay_ms || 3000;
     await new Promise(resolve => setTimeout(resolve, Math.min(delay, 10000)));
 
-    // Send the reply via Evolution API
+    // Send the reply via UazAPI
     const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
     const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
 
@@ -1952,7 +2164,7 @@ REGRAS PARA FOTOS:
       sendSuccess = sendRes.ok;
       if (!sendSuccess) {
         const errText = await sendRes.text();
-        console.error(`[ai-agent] Evolution send error: ${sendRes.status} - ${errText}`);
+        console.error(`[ai-agent] UazAPI send error: ${sendRes.status} - ${errText}`);
       }
     } else if (instanceData.provider === "meta") {
       // Meta API send
@@ -2065,51 +2277,92 @@ async function transferLeadToSeller(
       return;
     }
 
-    // 1.5. Prevent Duplicate Transfers via Concurrency Hook
-    const { data: existingLead } = await supabase
+    // 1.5. Fetch full lead data with structured fields for the notification
+    const { data: leadRecord } = await supabase
       .from("ai_crm_leads")
-      .select("status, assigned_to_id")
+      .select("id, status, assigned_to_id, client_name, client_city, vehicle_interest, payment_method, budget, trade_in_vehicle, down_payment, desired_installment, cpf, birth_date, funnel_stage, temperature, visit_scheduled, additional_notes")
       .eq("agent_id", agent.id)
       .eq("remote_jid", phone)
       .maybeSingle();
 
-    if (existingLead && existingLead.assigned_to_id) {
-       console.log(`[transfer] Lead ${phone} already assigned to member ${existingLead.assigned_to_id}. Aborting duplicate broadcast.`);
+    // Prevent duplicate transfers
+    if (leadRecord && leadRecord.assigned_to_id) {
+       console.log(`[transfer] Lead ${phone} already assigned to member ${leadRecord.assigned_to_id}. Aborting duplicate broadcast.`);
        return;
     }
 
-    // 2. Round-Robin: pick seller with fewest leads OR oldest last_lead_received_at
+    // 2. Round-Robin: pick seller with oldest last_lead_received_at
     const selectedSeller = sellers[0]; // Already sorted by last_lead_received_at ASC (oldest first)
     console.log(`[transfer] Selected seller: ${selectedSeller.name} (${selectedSeller.whatsapp_number})`);
 
-    // 3. Build detailed conversation summary for the seller
+    // 3. Build structured seller notification with all collected client data
+    const ld = leadRecord || {} as any;
+    const clientName = ld.client_name || pushName || "Nao informado";
+    const clientCity = ld.client_city || "Nao informada";
+    const vehicleInterest = ld.vehicle_interest || "Nao informado";
+    const paymentLabels: Record<string, string> = { a_vista: "A vista", troca: "Troca", financiamento: "Financiamento" };
+    const paymentMethod = paymentLabels[ld.payment_method] || ld.payment_method || "Nao informada";
+    const tempLabels: Record<string, string> = { frio: "Frio", morno: "Morno", quente: "QUENTE" };
+    const tempLabel = tempLabels[ld.temperature] || "Morno";
+    const funnelLabels: Record<string, string> = { abordagem: "Abordagem", modelagem: "Modelagem", fechamento: "Fechamento" };
+    const funnelLabel = funnelLabels[ld.funnel_stage] || "Modelagem";
+
+    // Build optional sections only if data exists
+    let financingSection = "";
+    if (ld.payment_method === "financiamento") {
+      const parts: string[] = [];
+      if (ld.cpf) parts.push(`CPF: ${ld.cpf}`);
+      if (ld.birth_date) parts.push(`Nascimento: ${ld.birth_date}`);
+      if (ld.desired_installment) parts.push(`Parcela ideal: ${ld.desired_installment}`);
+      if (ld.down_payment) parts.push(`Entrada: ${ld.down_payment}`);
+      if (parts.length > 0) {
+        financingSection = `\n*Dados p/ financiamento:*\n${parts.join("\n")}\n`;
+      }
+    }
+
+    let tradeSection = "";
+    if (ld.payment_method === "troca" && ld.trade_in_vehicle) {
+      tradeSection = `\n*Carro de troca:* ${ld.trade_in_vehicle}\n`;
+      if (ld.down_payment) tradeSection += `*Diferenca:* ${ld.down_payment}\n`;
+    }
+
+    let visitSection = "";
+    if (ld.visit_scheduled) {
+      visitSection = `\n*Visita agendada:* ${ld.visit_scheduled}\n`;
+    }
+
+    let notesSection = "";
+    if (ld.additional_notes) {
+      notesSection = `\n*Obs:* ${ld.additional_notes}\n`;
+    }
+
     const conversationText = historyMessages
-      .slice(-10)
-      .map((m) => `${m.role === "user" ? "Cliente" : "Agente IA"}: ${m.content}`)
+      .slice(-8)
+      .map((m) => `${m.role === "user" ? "Cliente" : "IA"}: ${m.content}`)
       .join("\n");
 
-    const sellerMsg = `ðŸš¨ *LEAD QUALIFICADO - ATENDIMENTO IMEDIATO*
+    const sellerMsg = `*LEAD QUALIFICADO - ${tempLabel.toUpperCase()}*
 
-ðŸ‘¤ *Nome do Cliente:* ${pushName || "NÃ£o informado"}
-ðŸ“± *Contato:* ${phone}
-ðŸ¤– *Agente IA:* ${agent.name}
-ðŸ¢ *Empresa:* ${agent.company_name || "â€”"}
+*Nome:* ${clientName}
+*Contato:* ${phone}
+*Cidade:* ${clientCity}
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+*Veiculo:* ${vehicleInterest}
+*Pagamento:* ${paymentMethod}
+${ld.budget ? `*Orcamento:* ${ld.budget}
+` : ""}${financingSection}${tradeSection}${visitSection}${notesSection}
+*Etapa:* ${funnelLabel}
+*Temperatura:* ${tempLabel}
 
-ðŸ“ *Resumo do Atendimento pela IA:*
+*Resumo da IA:*
 ${summary}
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-
-ðŸ’¬ *Ãšltimas mensagens da conversa:*
+*Ultimas mensagens:*
 ${conversationText}
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+*Atender agora:* https://wa.me/${phone.replace(/\D/g, "")}
 
-ðŸ‘‰ *Atender agora:* https://wa.me/${phone.replace(/\D/g, "")}
-
-âš¡ O cliente estÃ¡ esperando! Ele jÃ¡ foi informado que um especialista entrarÃ¡ em contato.`;
+O cliente esta esperando!`;
 
     // 4. Send message to selected seller via WhatsApp
     let sellerPhone = selectedSeller.whatsapp_number.replace(/\D/g, "");
@@ -2137,7 +2390,7 @@ ${conversationText}
           body: JSON.stringify({ number: sellerPhone, text: sellerMsg }),
         });
         if (!sRes.ok) {
-           console.error(`[transfer] Evolution Error sending to seller: ${sRes.status} - ${await sRes.text()}`);
+           console.error(`[transfer] UazAPI error sending to seller: ${sRes.status} - ${await sRes.text()}`);
         } else {
            console.log(`[transfer] Message sent to seller ${selectedSeller.name} at ${sellerPhone}`);
         }
@@ -2170,21 +2423,14 @@ ${conversationText}
       total_leads_received: (selectedSeller.total_leads_received || 0) + 1,
     }).eq("id", selectedSeller.id);
 
-    // 6. Record transfer in ai_lead_transfers
-    const { data: leadData } = await supabase
-      .from("ai_crm_leads")
-      .select("id")
-      .eq("agent_id", agent.id)
-      .eq("remote_jid", phone)
-      .maybeSingle();
-
-    if (leadData) {
+    // 6. Record transfer in ai_lead_transfers (reuse leadRecord from step 1.5)
+    if (leadRecord) {
       await supabase.from("ai_lead_transfers").insert({
         user_id: instance.user_id,
-        lead_id: leadData.id,
+        lead_id: leadRecord.id,
         to_member_id: selectedSeller.id,
         transfer_reason: "round_robin",
-        notes: `Transferido automaticamente para ${selectedSeller.name} via round-robin. Resumo: ${summary}`,
+        notes: `Transferido para ${selectedSeller.name}. Cliente: ${clientName}, Cidade: ${clientCity}, Veiculo: ${vehicleInterest}, Pagamento: ${paymentMethod}`,
         transfer_status: "pending",
         is_confirmed: false,
         confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
@@ -2195,10 +2441,10 @@ ${conversationText}
         status: "transferido",
         assigned_to_id: selectedSeller.id,
         last_interaction_at: new Date().toISOString(),
-      }).eq("id", leadData.id);
+      }).eq("id", leadRecord.id);
     }
 
-    console.log(`[transfer] Lead ${phone} transferred to ${selectedSeller.name} successfully`);
+    console.log(`[transfer] Lead ${phone} (${clientName}) transferred to ${selectedSeller.name} successfully`);
   } catch (err) {
     console.error("[transfer] Error transferring lead:", err);
   }
@@ -2248,7 +2494,7 @@ async function sendAutoReply(supabase: any, instance: any, phone: string, text: 
     });
 
     if (!res.ok) {
-      console.error("[auto-reply] Evolution send error:", await res.text());
+      console.error("[auto-reply] UazAPI send error:", await res.text());
     }
   } else if (instanceData.provider === "meta") {
     const config = instanceData.meta_config || {};
@@ -2413,13 +2659,13 @@ async function transcribeAudioFromEvolution(
     const apiKey = evolutionApiKey || instanceData?.api_key_encrypted;
 
     if (!apiUrl || !apiKey) {
-      console.error("[audio-transcribe] Missing Evolution API credentials");
+      console.error("[audio-transcribe] Missing UazAPI credentials");
       return null;
     }
 
     const key = messageData.key || {};
     const message = messageData.message || messageData;
-    console.log(`[audio-transcribe] Requesting base64 from Evolution: ${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`);
+    console.log(`[audio-transcribe] Requesting base64 from UazAPI: ${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`);
     console.log(`[audio-transcribe] Key: ${JSON.stringify(key)}`);
 
     // Try V2 endpoint first, then V1
@@ -2436,18 +2682,18 @@ async function transcribeAudioFromEvolution(
       body: JSON.stringify({ message: { key, message: message } }),
     });
 
-    console.log(`[audio-transcribe] Evolution response status: ${mediaRes.status}`);
+    console.log(`[audio-transcribe] UazAPI response status: ${mediaRes.status}`);
 
     if (mediaRes.ok) {
       const mediaData = await mediaRes.json();
-      console.log(`[audio-transcribe] Evolution response keys: ${JSON.stringify(Object.keys(mediaData))}`);
+      console.log(`[audio-transcribe] UazAPI response keys: ${JSON.stringify(Object.keys(mediaData))}`);
       base64Audio = mediaData.base64 || mediaData.data?.base64 || mediaData.mediaBase64 || null;
       mimetype = mediaData.mimetype || mediaData.data?.mimetype || message.audioMessage?.mimetype || "audio/ogg";
     } else {
       const errText = await mediaRes.text();
-      console.error(`[audio-transcribe] Evolution getBase64 failed: ${mediaRes.status} - ${errText}`);
+      console.error(`[audio-transcribe] UazAPI getBase64 failed: ${mediaRes.status} - ${errText}`);
       
-      // Attempt 2: Try with just key (some Evolution versions)
+      // Attempt 2: Try with just key (some UazAPI versions)
       const mediaRes2 = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
         method: "POST",
         headers: {
@@ -2457,7 +2703,7 @@ async function transcribeAudioFromEvolution(
         body: JSON.stringify({ message: { key }, convertToMp4: false }),
       });
 
-      console.log(`[audio-transcribe] Evolution retry status: ${mediaRes2.status}`);
+      console.log(`[audio-transcribe] UazAPI retry status: ${mediaRes2.status}`);
       if (mediaRes2.ok) {
         const mediaData2 = await mediaRes2.json();
         base64Audio = mediaData2.base64 || mediaData2.data?.base64 || mediaData2.mediaBase64 || null;
@@ -2468,14 +2714,14 @@ async function transcribeAudioFromEvolution(
     }
 
     if (!base64Audio) {
-      console.error("[audio-transcribe] No base64 audio returned from Evolution after all attempts");
+      console.error("[audio-transcribe] No base64 audio returned from UazAPI after all attempts");
       return null;
     }
 
     console.log(`[audio-transcribe] Got base64 audio, length: ${base64Audio.length}, mimetype: ${mimetype}`);
     return await transcribeWithGemini(base64Audio, mimetype);
   } catch (err) {
-    console.error("[audio-transcribe] Evolution transcription error:", err);
+    console.error("[audio-transcribe] UazAPI transcription error:", err);
     return null;
   }
 }

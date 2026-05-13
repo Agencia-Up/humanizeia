@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
     const webhookUrl = `${supabaseUrl}/functions/v1/wa-inbox-webhook`;
     const baseUrl = evolutionApiUrl.replace(/\/+$/, "");
 
-    // Get all evolution instances
+    // Get all UazAPI instances
     const { data: instances } = await supabase
       .from("wa_instances")
       .select("id, instance_name, user_id")

@@ -178,9 +178,10 @@ const App = () => (
                 <Route path="/dashboard"          element={<ProtectedRoute><Lazy><AgentHub /></Lazy></ProtectedRoute>} />
                 <Route path="/metrics"            element={<ProtectedRoute><Lazy><MetricsDashboard /></Lazy></ProtectedRoute>} />
                 <Route path="/connect-accounts"   element={<ProtectedRoute><Lazy><ConnectAccounts /></Lazy></ProtectedRoute>} />
-                {/* ── Rotas bloqueadas — apenas admin ── */}
-                <Route path="/copywriter"         element={<ProtectedRoute><AdminRoute><Lazy><PauloAgente /></Lazy></AdminRoute></ProtectedRoute>} />
-                <Route path="/creative-studio"    element={<ProtectedRoute><AdminRoute><Lazy><AICreativeStudio /></Lazy></AdminRoute></ProtectedRoute>} />
+                {/* ── Agentes principais (master + sellers com permissao) ── */}
+                <Route path="/copywriter"         element={<ProtectedRoute><Lazy><PauloAgente /></Lazy></ProtectedRoute>} />
+                <Route path="/creative-studio"    element={<ProtectedRoute><Lazy><AICreativeStudio /></Lazy></ProtectedRoute>} />
+                {/* ── Rotas bloqueadas — apenas admin (ferramentas beta) ── */}
                 <Route path="/optimizer"          element={<ProtectedRoute><AdminRoute><Lazy><CampaignOptimizer /></Lazy></AdminRoute></ProtectedRoute>} />
                 <Route path="/budget"             element={<ProtectedRoute><AdminRoute><Lazy><BudgetAllocator /></Lazy></AdminRoute></ProtectedRoute>} />
                 <Route path="/analytics"          element={<ProtectedRoute><AdminRoute><Lazy><Analytics /></Lazy></AdminRoute></ProtectedRoute>} />
@@ -213,7 +214,7 @@ const App = () => (
                 <Route path="/meta-pixels"          element={<ProtectedRoute><Lazy><MetaPixels /></Lazy></ProtectedRoute>} />
                 <Route path="/meta-audiences"       element={<ProtectedRoute><Lazy><MetaAudiences /></Lazy></ProtectedRoute>} />
 
-                <Route path="/salomao"        element={<ProtectedRoute><AdminRoute><Lazy><SalomaoOrchestrator /></Lazy></AdminRoute></ProtectedRoute>} />
+                <Route path="/salomao"        element={<ProtectedRoute><Lazy><SalomaoOrchestrator /></Lazy></ProtectedRoute>} />
                 <Route path="/crm"            element={<ProtectedRoute><Lazy><FluxCRM /></Lazy></ProtectedRoute>} />
                 <Route path="/marcos"         element={<ProtectedRoute><Lazy><MarcosLeads /></Lazy></ProtectedRoute>} />
                 <Route path="/pedro"          element={<ProtectedRoute><Lazy><PedroSDR /></Lazy></ProtectedRoute>} />
@@ -225,12 +226,12 @@ const App = () => (
                 <Route path="/leads"                 element={<ProtectedRoute><Lazy><LeadManagement /></Lazy></ProtectedRoute>} />
                 <Route path="/google-ads"            element={<ProtectedRoute><AdminRoute><Lazy><GoogleAdsDashboard /></Lazy></AdminRoute></ProtectedRoute>} />
                 <Route path="/linkedin-ads"          element={<ProtectedRoute><AdminRoute><Lazy><LinkedInAdsDashboard /></Lazy></AdminRoute></ProtectedRoute>} />
-                <Route path="/davi"                  element={<ProtectedRoute><AdminRoute><Lazy><DaviSocialMedia /></Lazy></AdminRoute></ProtectedRoute>} />
-                <Route path="/joao"                  element={<ProtectedRoute><AdminRoute><Lazy><JoaoEmail /></Lazy></AdminRoute></ProtectedRoute>} />
-                <Route path="/daniel"                element={<ProtectedRoute><AdminRoute><Lazy><DanielEstrategia /></Lazy></AdminRoute></ProtectedRoute>} />
+                <Route path="/davi"                  element={<ProtectedRoute><Lazy><DaviSocialMedia /></Lazy></ProtectedRoute>} />
+                <Route path="/joao"                  element={<ProtectedRoute><Lazy><JoaoEmail /></Lazy></ProtectedRoute>} />
+                <Route path="/daniel"                element={<ProtectedRoute><Lazy><DanielEstrategia /></Lazy></ProtectedRoute>} />
                 <Route path="/meu-plano"             element={<ProtectedRoute><Lazy><MeuPlano /></Lazy></ProtectedRoute>} />
                 <Route path="/gerador-prompt"        element={<ProtectedRoute><AdminRoute><Lazy><GeradorPrompt /></Lazy></AdminRoute></ProtectedRoute>} />
-                <Route path="/jose"                  element={<ProtectedRoute><AdminRoute><Lazy><JoseTrafego /></Lazy></AdminRoute></ProtectedRoute>} />
+                <Route path="/jose"                  element={<ProtectedRoute><Lazy><JoseTrafego /></Lazy></ProtectedRoute>} />
                 <Route path="/performance"           element={<ProtectedRoute><Lazy><SupportDashboard /></Lazy></ProtectedRoute>} />
                 <Route path="*"                      element={<Lazy><NotFound /></Lazy>} />
               </Routes>

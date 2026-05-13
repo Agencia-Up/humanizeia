@@ -199,7 +199,7 @@ async function sendWhatsApp(
   });
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
-    throw new Error(`Evolution API [${res.status}]: ${JSON.stringify(errData)}`);
+    throw new Error(`UazAPI error [${res.status}]: ${JSON.stringify(errData)}`);
   }
 }
 

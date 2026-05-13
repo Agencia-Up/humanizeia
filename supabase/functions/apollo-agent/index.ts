@@ -1281,7 +1281,7 @@ async function scheduleOutcomeChecks(admin: any, userId: string, executionLog: a
 // ── WhatsApp notifications ────────────────────────────────────────────────────
 
 async function sendCriticalWhatsApp(admin: any, userId: string, aiResult: any, enriched: any[], currencySymbol: string) {
-  // Busca instância WhatsApp ativa do usuário (wa_instances = Evolution API)
+  // Busca instância WhatsApp ativa do usuário (wa_instances = UazAPI)
   const { data: instance } = await admin
     .from("wa_instances")
     .select("api_url, instance_name, api_key_encrypted")
@@ -1955,7 +1955,7 @@ async function sendDailyReport(
   // Format phone to international (55 + DDD + number)
   const intlPhone = phone.startsWith('55') ? phone : `55${phone}`;
 
-  // Busca instância WhatsApp ativa (wa_instances = Evolution API)
+  // Busca instância WhatsApp ativa (wa_instances = UazAPI)
   const { data: waCfg } = await admin
     .from("wa_instances")
     .select("api_url, instance_name, api_key_encrypted")

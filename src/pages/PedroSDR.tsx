@@ -17,6 +17,7 @@ import {
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
   Pin, PinOff, Image, Mic, Video, Smartphone, Upload, X, Trash2,
   Plus, GripVertical, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle,
+  Pencil, Check,
 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import {
@@ -62,12 +63,13 @@ interface PerfData {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  novo:       '#3B82F6',
-  qualificado:'#10B981',
-  aguardando: '#F59E0B',
-  transferido:'#8B5CF6',
-  encerrado:  '#EF4444',
-  perdido:    '#6B7280',
+  novo:               '#3B82F6',
+  pouco_qualificado:  '#EF4444',
+  medio_qualificado:  '#F59E0B',
+  qualificado:        '#10B981',
+  aguardando:         '#F59E0B',
+  transferido:        '#8B5CF6',
+  perdido:            '#6B7280',
 };
 
 // ─── Hook de dados ───────────────────────────────────────────────────────────
@@ -82,38 +84,56 @@ function usePerfData(userId: string | undefined) {
     async function load() {
       setLoading(true);
       try {
+        // ── 1. Detecta se é vendedor e resolve IDs ──────────────────────────
+        const { data: memberRows } = await (supabase as any)
+          .from('ai_team_members')
+          .select('id, user_id')
+          .eq('auth_user_id', userId);
+        const memberList = Array.isArray(memberRows) && memberRows.length > 0 ? memberRows : null;
+        const isSeller    = !!memberList;
+        const masterUid   = isSeller ? memberList![0].user_id : userId;
+        const memberIds   = isSeller ? memberList!.map((m: any) => m.id) : [];
+
         const hoje = new Date();
         hoje.setHours(0, 0, 0, 0);
-        const seteAtras = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
+        // ── 2. Queries base (usa masterUid para buscar dados certos) ────────
         const [leadsRes, transRes, agentRes, teamRes] = await Promise.all([
           (supabase as any)
             .from('ai_crm_leads')
-            .select('id, status, status_crm, assigned_to_id, created_at')
-            .eq('user_id', userId),
+            .select('id, status, status_crm, assigned_to_id, agent_id, created_at')
+            .eq('user_id', masterUid),
           (supabase as any)
             .from('ai_lead_transfers')
-            .select('id, created_at, lead_id')
-            .eq('user_id', userId),
+            .select('id, created_at, lead_id, to_member_id')
+            .eq('user_id', masterUid),
           (supabase as any)
             .from('wa_ai_agents')
             .select('id, name, total_replies, is_active')
-            .eq('user_id', userId),
+            .eq('user_id', masterUid),
           (supabase as any)
             .from('ai_team_members')
             .select('id, name, whatsapp_number, is_active')
-            .eq('user_id', userId),
+            .eq('user_id', masterUid),
         ]);
 
-        const leads: any[]   = leadsRes.data  || [];
-        const trans: any[]   = transRes.data  || [];
-        const agents: any[]  = agentRes.data  || [];
-        const sellers: any[] = teamRes.data   || [];
+        const allLeads: any[] = leadsRes.data  || [];
+        const allTrans: any[] = transRes.data  || [];
+        const agents: any[]   = agentRes.data  || [];
+        const sellers: any[]  = teamRes.data   || [];
+
+        // ── 3. Filtra para o vendedor (se for seller) ───────────────────────
+        const leads = isSeller
+          ? allLeads.filter(l => l.assigned_to_id && memberIds.includes(l.assigned_to_id))
+          : allLeads;
+        const trans = isSeller
+          ? allTrans.filter(t => t.to_member_id && memberIds.includes(t.to_member_id))
+          : allTrans;
 
         // ── métricas brutas ─────────────────────────────────────────────────
         const totalLeads     = leads.length;
         const leadsHoje      = leads.filter(l => new Date(l.created_at) >= hoje).length;
-        const transferencias = trans.length;
+        const transferencias = isSeller ? leads.filter(l => l.status === 'transferido').length : trans.length;
         const taxaConversao  = totalLeads > 0 ? Math.round((transferencias / totalLeads) * 100) : 0;
         const totalRespostas = agents.reduce((s: number, a: any) => s + (a.total_replies || 0), 0);
         const agentesAtivos  = agents.filter((a: any) => a.is_active).length;
@@ -142,10 +162,15 @@ function usePerfData(userId: string | undefined) {
               const t = new Date(l.created_at);
               return t >= d && t < fim;
             }).length,
-            transferencias: trans.filter((t: any) => {
-              const tt = new Date(t.created_at);
-              return tt >= d && tt < fim;
-            }).length,
+            transferencias: isSeller
+              ? leads.filter((l: any) => {
+                  const t = new Date(l.created_at);
+                  return t >= d && t < fim && l.status === 'transferido';
+                }).length
+              : trans.filter((t: any) => {
+                  const tt = new Date(t.created_at);
+                  return tt >= d && tt < fim;
+                }).length,
           };
         });
 
@@ -171,8 +196,8 @@ function usePerfData(userId: string | undefined) {
         const vendedoresRank = Array.from(sellerMap.values()).map(s => ({
           nome: s.nome,
           whatsapp: s.whatsapp,
-          leads: leads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id)).length,
-          qualificados: leads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id) && l.status_crm === 'qualificado').length,
+          leads: allLeads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id)).length,
+          qualificados: allLeads.filter((l: any) => l.assigned_to_id && s.ids.includes(l.assigned_to_id) && ['qualificado', 'medio_qualificado', 'pouco_qualificado'].includes(l.status_crm)).length,
         })).sort((a, b) => b.leads - a.leads);
 
         setData({
@@ -480,14 +505,75 @@ const PRIORITY_CONFIG = {
   urgent: { label: 'Urgente', color: 'text-red-400',     bg: 'bg-red-500/10'   },
 } as const;
 
+// ─── Feedback Estruturado: Opções ────────────────────────────────────────────
+
+const FEEDBACK_CITIES = [
+  'Pindamonhangaba', 'Taubaté', 'Tremembé', 'Caçapava',
+  'São Luís do Paraitinga', 'Redenção da Serra', 'Jacareí',
+  'São José dos Campos', 'Guaratinguetá', 'Campos do Jordão', 'Lorena',
+];
+
+const FEEDBACK_REASONS: { category: string; emoji: string; options: string[] }[] = [
+  {
+    category: 'Financeiros', emoji: '💰',
+    options: [
+      'Financiamento não aprovado',
+      'Parcela mais alta que o esperado',
+      'Entrada insuficiente',
+      'Score de crédito baixo',
+      'Preferiu pagar à vista mas não tinha o valor',
+    ],
+  },
+  {
+    category: 'Negociação', emoji: '🤝',
+    options: [
+      'Avaliação do carro da troca abaixo do esperado',
+      'Não aceitou o preço do veículo',
+      'Encontrou preço menor na concorrência',
+      'Não houve acordo no desconto',
+    ],
+  },
+  {
+    category: 'Produto', emoji: '🚗',
+    options: [
+      'Cor ou versão indisponível',
+      'Veículo sem os opcionais desejados',
+      'Preferiu outro modelo',
+      'Não gostou do veículo no test drive',
+    ],
+  },
+  {
+    category: 'Comportamento do cliente', emoji: '👤',
+    options: [
+      'Cliente não respondeu mais',
+      'Cliente sumiu após proposta',
+      'Está só pesquisando (sem intenção imediata)',
+      'Decidiu adiar a compra',
+      'Comprou em outra loja',
+    ],
+  },
+  {
+    category: 'Outros', emoji: '📌',
+    options: [
+      'Problemas pessoais/familiares',
+      'Perda de emprego ou renda',
+      'Mudou de ideia sobre comprar carro',
+      'Prazo de entrega longo demais',
+      'Desconfiança na loja ou vendedor',
+    ],
+  },
+];
+
 const STATUS_CRM_OPTIONS = [
-  { value: 'novo',         label: 'Novo',          color: 'text-blue-400'   },
-  { value: 'em_atendimento', label: 'Em Atendimento', color: 'text-cyan-400' },
-  { value: 'interessado',  label: 'Interessado',   color: 'text-yellow-400' },
-  { value: 'qualificado',  label: 'Qualificado',   color: 'text-emerald-400'},
-  { value: 'negociacao',   label: 'Negociação',    color: 'text-purple-400' },
-  { value: 'fechado',      label: 'Fechado',       color: 'text-green-400'  },
-  { value: 'perdido',      label: 'Perdido',       color: 'text-red-400'    },
+  { value: 'novo',               label: 'Novo',              color: 'text-blue-400'    },
+  { value: 'em_atendimento',     label: 'Em Atendimento',    color: 'text-cyan-400'    },
+  { value: 'interessado',        label: 'Interessado',       color: 'text-yellow-400'  },
+  { value: 'pouco_qualificado',  label: 'Pouco Qualificado', color: 'text-orange-400'  },
+  { value: 'medio_qualificado',  label: 'Médio Qualificado', color: 'text-amber-400'   },
+  { value: 'qualificado',        label: 'Qualificado',       color: 'text-emerald-400' },
+  { value: 'negociacao',         label: 'Negociação',        color: 'text-purple-400'  },
+  { value: 'fechado',            label: 'Fechado',           color: 'text-green-400'   },
+  { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
 
 function fmtDate(iso: string) {
@@ -499,13 +585,15 @@ function fmtDate(iso: string) {
 // ─── Tab CRM Avançado ─────────────────────────────────────────────────────────
 
 const PIPELINE_COLUMNS = [
-  { id: 'novo',           title: 'Novo',           emoji: '🔰', border: 'border-slate-500/30',  bg: 'bg-slate-500/10',  dot: 'bg-slate-400'  },
-  { id: 'interessado',    title: 'Interessado',    emoji: '👀', border: 'border-yellow-500/30', bg: 'bg-yellow-500/10', dot: 'bg-yellow-400' },
-  { id: 'qualificado',    title: 'Qualificado',    emoji: '🎯', border: 'border-emerald-500/30',bg: 'bg-emerald-500/10',dot: 'bg-emerald-400'},
-  { id: 'em_atendimento', title: 'Em Atendimento', emoji: '💬', border: 'border-cyan-500/30',   bg: 'bg-cyan-500/10',   dot: 'bg-cyan-400'  },
-  { id: 'negociacao',     title: 'Negociação',     emoji: '🤝', border: 'border-purple-500/30', bg: 'bg-purple-500/10', dot: 'bg-purple-400' },
-  { id: 'fechado',        title: 'Fechado',        emoji: '✅', border: 'border-green-500/30',  bg: 'bg-green-500/10',  dot: 'bg-green-400'  },
-  { id: 'perdido',        title: 'Perdido',        emoji: '❌', border: 'border-red-500/30',    bg: 'bg-red-500/10',    dot: 'bg-red-400'    },
+  { id: 'novo',               title: 'Novo',               emoji: '🔰', border: 'border-slate-500/30',   bg: 'bg-slate-500/10',   dot: 'bg-slate-400'   },
+  { id: 'interessado',        title: 'Interessado',        emoji: '👀', border: 'border-yellow-500/30',  bg: 'bg-yellow-500/10',  dot: 'bg-yellow-400'  },
+  { id: 'pouco_qualificado',  title: 'Pouco Qualif.',      emoji: '🧊', border: 'border-orange-500/30',  bg: 'bg-orange-500/10',  dot: 'bg-orange-400'  },
+  { id: 'medio_qualificado',  title: 'Médio Qualif.',      emoji: '🌡️', border: 'border-amber-500/30',   bg: 'bg-amber-500/10',   dot: 'bg-amber-400'   },
+  { id: 'qualificado',        title: 'Qualificado',        emoji: '🎯', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', dot: 'bg-emerald-400' },
+  { id: 'em_atendimento',     title: 'Em Atendimento',     emoji: '💬', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
+  { id: 'negociacao',         title: 'Negociação',         emoji: '🤝', border: 'border-purple-500/30',  bg: 'bg-purple-500/10',  dot: 'bg-purple-400'  },
+  { id: 'fechado',            title: 'Fechado',            emoji: '✅', border: 'border-green-500/30',   bg: 'bg-green-500/10',   dot: 'bg-green-400'   },
+  { id: 'perdido',            title: 'Perdido',            emoji: '❌', border: 'border-red-500/30',     bg: 'bg-red-500/10',     dot: 'bg-red-400'     },
 ];
 
 interface CrmLead {
@@ -535,6 +623,9 @@ interface Feedback {
   id: string;
   lead_id: string;
   content: string;
+  city?: string | null;
+  reason?: string | null;
+  observations?: string | null;
   priority: string;
   read_at: string | null;
   created_at: string;
@@ -569,10 +660,11 @@ interface LeadMetrics {
   month: number;
 }
 
-function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
+export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const { toast } = useToast();
   const [isSeller, setIsSeller] = useState(false);
   const [memberId, setMemberId] = useState<string | null>(null);
+  const [memberIds, setMemberIds] = useState<string[]>([]);
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
@@ -595,6 +687,16 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [fbContent, setFbContent]         = useState('');
   const [fbPriority, setFbPriority]       = useState<'low'|'normal'|'high'|'urgent'>('normal');
   const [fbLoading, setFbLoading]         = useState(false);
+  // Structured feedback form
+  const [fbCity, setFbCity]               = useState('');
+  const [fbCityCustom, setFbCityCustom]   = useState('');
+  const [fbReason, setFbReason]           = useState('');
+  const [fbReasonOpen, setFbReasonOpen]   = useState<string | null>(null);
+  const [fbObservations, setFbObservations] = useState('');
+  // Lead feedback history popup
+  const [fbHistoryOpen, setFbHistoryOpen] = useState(false);
+  const [leadFeedbacks, setLeadFeedbacks] = useState<Feedback[]>([]);
+  const [fbHistoryLoading, setFbHistoryLoading] = useState(false);
   const [fuMsg, setFuMsg]                 = useState('');
   const [fuDate, setFuDate]               = useState('');
   const [fuInstance, setFuInstance]       = useState('');
@@ -609,16 +711,22 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [reassigning, setReassigning]       = useState<string | null>(null);
 
-  // detect seller vs gerente
+  // detect seller vs gerente (vendedor pode ter múltiplos registros em agentes diferentes)
   useEffect(() => {
     if (!userId) return;
     (async () => {
       const { data } = await (supabase as any)
         .from('ai_team_members')
-        .select('id, user_id')
+        .select('id, user_id, is_active')
         .eq('auth_user_id', userId)
-        .maybeSingle();
-      if (data) { setIsSeller(true); setMemberId(data.id); }
+        .order('is_active', { ascending: false })
+        .order('created_at', { ascending: false });
+      const rows = Array.isArray(data) ? data : [];
+      if (rows.length > 0) {
+        setIsSeller(true);
+        setMemberId(rows[0].id);
+        setMemberIds(rows.map((r: any) => r.id));
+      }
     })();
   }, [userId]);
 
@@ -628,7 +736,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     else setRefreshing(true);
     try {
       const effectiveUserId = isSeller
-        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
 
       const todayStart = new Date();
@@ -644,28 +752,37 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           .eq('user_id', effectiveUserId);
 
         if (from) query = query.gte('created_at', from.toISOString());
-        if (isSeller && memberId) query = query.eq('assigned_to_id', memberId);
+        if (isSeller && memberIds.length > 0) query = query.in('assigned_to_id', memberIds);
 
         return query;
       };
 
+      // Seller: filtra por assigned_to_id (todos os member IDs do vendedor) no banco
+      // Master: busca os 100 mais recentes (sem filtro de seller)
+      const leadsQuery = (supabase as any)
+        .from('ai_crm_leads')
+        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
+        .eq('user_id', effectiveUserId)
+        .order('created_at', { ascending: false });
+      if (isSeller && memberIds.length > 0) {
+        leadsQuery.in('assigned_to_id', memberIds);
+      } else {
+        leadsQuery.limit(100);
+      }
+
       const [leadsRes, fbRes, instRes, teamRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
-        (supabase as any)
-          .from('ai_crm_leads')
-          .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
-          .eq('user_id', effectiveUserId)
-          .order('created_at', { ascending: false })
-          .limit(100),
+        leadsQuery,
         (supabase as any)
           .from('pedro_manager_feedback')
-          .select('id, lead_id, content, priority, read_at, created_at, member:ai_team_members(name), lead:ai_crm_leads(lead_name)')
+          .select('id, lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name), lead:ai_crm_leads(lead_name)')
           .eq('user_id', isSeller ? userId : effectiveUserId)
           .order('created_at', { ascending: false })
           .limit(50),
+        // Cada conta vê SOMENTE suas próprias instâncias para follow-up
         (supabase as any)
           .from('wa_instances')
-          .select('id, friendly_name')
-          .eq('user_id', effectiveUserId)
+          .select('id, friendly_name, phone_number, instance_name, status')
+          .eq('user_id', userId)
           .eq('is_active', true),
         (supabase as any)
           .from('ai_team_members')
@@ -718,7 +835,12 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         month: monthCountRes.count ?? 0,
       });
       setFeedbacks(fbRes.data || []);
-      setInstances(instRes.data || []);
+      const connectedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected');
+      setInstances(connectedInstances);
+      // Auto-seleciona a primeira instância conectada
+      if (connectedInstances.length > 0 && !fuInstance) {
+        setFuInstance(connectedInstances[0].id);
+      }
       setTeamMembers(enrichedTeam);
     } finally {
       setLoading(false);
@@ -726,7 +848,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     }
   };
 
-  useEffect(() => { fetchData(); }, [userId, isSeller]);
+  useEffect(() => { fetchData(); }, [userId, isSeller, memberIds.length]);
 
   const loadLeadDetail = async (lead: CrmLead) => {
     setSelectedLead(lead);
@@ -841,7 +963,8 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       if (error) throw error;
       // Atualiza next_followup_at no lead
       await (supabase as any).from('ai_crm_leads').update({ next_followup_at: new Date(fuDate).toISOString() }).eq('id', selectedLead.id);
-      setFuMsg(''); setFuDate(''); setFuInstance('');
+      setFuMsg(''); setFuDate('');
+      // Mantém a instância selecionada para próximos follow-ups
       setFuMediaFile(null); setFuMediaUrl('');
       toast({ title: '✅ Follow-up agendado!' });
       await loadLeadDetail(selectedLead);
@@ -853,27 +976,66 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   };
 
   const handleSendFeedback = async () => {
-    if (!fbContent.trim() || !selectedLead || !userId) return;
+    if (!selectedLead || !userId) return;
+    // Validações do formulário estruturado
+    if (!fbCity) {
+      toast({ title: 'Selecione a cidade do cliente', variant: 'destructive' });
+      return;
+    }
+    if (fbCity === 'Outros' && !fbCityCustom.trim()) {
+      toast({ title: 'Digite a cidade do cliente', variant: 'destructive' });
+      return;
+    }
+    if (!fbReason) {
+      toast({ title: 'Selecione o motivo da não-compra', variant: 'destructive' });
+      return;
+    }
     setFbLoading(true);
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const token = session.session?.access_token;
+      const finalCity = fbCity === 'Outros' ? fbCityCustom.trim() : fbCity;
+      // Monta content legível para compatibilidade
+      const contentLines = [
+        `Cidade: ${finalCity}`,
+        `Motivo: ${fbReason}`,
+      ];
+      if (fbObservations.trim()) contentLines.push(`Obs: ${fbObservations.trim()}`);
+      const content = contentLines.join(' | ');
+
       const res = await supabase.functions.invoke('pedro-process-feedback', {
         body: {
-          lead_id:   selectedLead.id,
-          member_id: memberId,
-          content:   fbContent.trim(),
-          priority:  fbPriority,
+          lead_id:      selectedLead.id,
+          member_id:    memberId,
+          content,
+          priority:     fbPriority,
+          city:         finalCity,
+          reason:       fbReason,
+          observations: fbObservations.trim() || null,
         },
       });
       if (res.error) throw res.error;
-      setFbContent(''); setFbPriority('normal');
+      // Reset form
+      setFbCity(''); setFbCityCustom(''); setFbReason('');
+      setFbObservations(''); setFbPriority('normal'); setFbReasonOpen(null);
       toast({ title: '✅ Feedback enviado ao gerente!' });
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setFbLoading(false);
     }
+  };
+
+  const loadLeadFeedbackHistory = async (leadId: string) => {
+    setFbHistoryLoading(true);
+    try {
+      const { data } = await (supabase as any)
+        .from('pedro_manager_feedback')
+        .select('id, lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
+        .eq('lead_id', leadId)
+        .order('created_at', { ascending: false });
+      setLeadFeedbacks(data || []);
+    } catch { /* ignore */ }
+    setFbHistoryLoading(false);
+    setFbHistoryOpen(true);
   };
 
   const markFeedbackRead = async (id: string) => {
@@ -966,6 +1128,10 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [addLeadPhone, setAddLeadPhone] = useState('');
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
+  const [editingLead, setEditingLead] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
 
   // ── Bulk upload states ──
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
@@ -1034,14 +1200,31 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     let failed = 0;
     try {
       const effectiveUserId = isSeller
-        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
+
+      // Resolve agent_id: team member > any member > first active agent
+      const selectedMember = memberId ? teamMembers.find(m => m.id === memberId) : null;
+      let agentId = selectedMember?.agent_id
+        || teamMembers.find(m => m.agent_id)?.agent_id
+        || null;
+      if (!agentId) {
+        const { data: firstAgent } = await (supabase as any)
+          .from('wa_ai_agents').select('id').eq('user_id', effectiveUserId).eq('is_active', true).limit(1).single();
+        agentId = firstAgent?.id || null;
+      }
+      if (!agentId) {
+        toast({ title: 'Nenhum agente IA configurado', description: 'Crie um agente IA antes de importar leads.', variant: 'destructive' });
+        setBulkSaving(false);
+        return;
+      }
 
       // Insert in batches of 50
       const batchSize = 50;
       for (let i = 0; i < validLeads.length; i += batchSize) {
         const batch = validLeads.slice(i, i + batchSize).map(l => ({
           user_id:     effectiveUserId,
+          agent_id:    agentId,
           lead_name:   l.name,
           remote_jid:  `${l.phone}@s.whatsapp.net`,
           status_crm:  'novo',
@@ -1077,10 +1260,28 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       const cleanPhone = addLeadPhone.replace(/\D/g, '');
       const remoteJid = `${cleanPhone}@s.whatsapp.net`;
       const effectiveUserId = isSeller
-        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).maybeSingle()).data?.user_id ?? userId
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
+
+      // Resolve agent_id: team member > any member > first active agent
+      const selectedMember = memberId ? teamMembers.find(m => m.id === memberId) : null;
+      let agentId = selectedMember?.agent_id
+        || teamMembers.find(m => m.agent_id)?.agent_id
+        || null;
+      if (!agentId) {
+        const { data: firstAgent } = await (supabase as any)
+          .from('wa_ai_agents').select('id').eq('user_id', effectiveUserId).eq('is_active', true).limit(1).single();
+        agentId = firstAgent?.id || null;
+      }
+      if (!agentId) {
+        toast({ title: 'Nenhum agente IA configurado', description: 'Crie um agente IA antes de adicionar leads.', variant: 'destructive' });
+        setAddLeadSaving(false);
+        return;
+      }
+
       const { error } = await (supabase as any).from('ai_crm_leads').insert({
         user_id:     effectiveUserId,
+        agent_id:    agentId,
         lead_name:   addLeadName.trim(),
         remote_jid:  remoteJid,
         status_crm:  'novo',
@@ -1095,6 +1296,44 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       toast({ title: 'Erro ao adicionar lead', description: err.message, variant: 'destructive' });
     } finally {
       setAddLeadSaving(false);
+    }
+  };
+
+  const startEditLead = () => {
+    if (!selectedLead) return;
+    const phone = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || '';
+    setEditName(selectedLead.lead_name || '');
+    setEditPhone(phone);
+    setEditingLead(true);
+  };
+
+  const handleSaveLeadEdit = async () => {
+    if (!selectedLead) return;
+    setEditSaving(true);
+    try {
+      const cleanPhone = editPhone.replace(/\D/g, '');
+      const newJid = cleanPhone ? `${cleanPhone}@s.whatsapp.net` : selectedLead.remote_jid;
+      const updateData: Record<string, string> = {};
+      if (editName !== (selectedLead.lead_name || '')) updateData.lead_name = editName;
+      if (newJid !== selectedLead.remote_jid) updateData.remote_jid = newJid;
+      if (Object.keys(updateData).length === 0) {
+        setEditingLead(false);
+        return;
+      }
+      const { error } = await (supabase as any)
+        .from('ai_crm_leads')
+        .update(updateData)
+        .eq('id', selectedLead.id);
+      if (error) throw error;
+      const updatedLead = { ...selectedLead, ...updateData };
+      setSelectedLead(updatedLead);
+      setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, ...updateData } : l));
+      setEditingLead(false);
+      toast({ title: '✅ Lead atualizado!' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -1157,8 +1396,45 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             <ChevronRight className="h-3.5 w-3.5 rotate-180" /> Voltar
           </Button>
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-foreground truncate">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
-            <p className="text-xs text-muted-foreground">{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}</p>
+            {editingLead ? (
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    placeholder="Nome do lead"
+                    className="h-8 text-sm font-semibold max-w-[200px]"
+                    autoFocus
+                  />
+                  <Input
+                    value={editPhone}
+                    onChange={e => setEditPhone(e.target.value.replace(/[^\d]/g, ''))}
+                    placeholder="5511999999999"
+                    className="h-8 text-sm max-w-[160px]"
+                  />
+                  <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
+                    {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setEditingLead(false)} className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}</p>
+              </div>
+            ) : (
+              <div className="flex items-start gap-1.5">
+                <div className="min-w-0">
+                  <h2 className="text-base font-semibold text-foreground truncate">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
+                  <p className="text-xs text-muted-foreground">
+                    {(() => { const p = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || ''; return p.length >= 12 ? `📱 (${p.slice(2,4)}) ${p.slice(4,9)}-${p.slice(9)}` : p.length >= 10 ? `📱 (${p.slice(0,2)}) ${p.slice(2,7)}-${p.slice(7)}` : p ? `📱 ${p}` : ''; })()}
+                    {selectedLead.remote_jid && ' · '}{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}
+                  </p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={startEditLead} className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground shrink-0 mt-0.5" title="Editar lead">
+                  <Pencil className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-[10px] text-muted-foreground hidden sm:inline">Status:</span>
@@ -1364,17 +1640,21 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                   type="datetime-local"
                   value={fuDate}
                   onChange={e => setFuDate(e.target.value)}
-                  className="text-xs h-8 flex-1"
+                  className="text-xs h-8 flex-1 [&::-webkit-calendar-picker-indicator]:brightness-0 [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:sepia [&::-webkit-calendar-picker-indicator]:saturate-[10] [&::-webkit-calendar-picker-indicator]:hue-rotate-[10deg]"
                 />
                 {instances.length > 0 && (
                   <Select value={fuInstance} onValueChange={setFuInstance}>
-                    <SelectTrigger className="h-8 text-xs w-36">
+                    <SelectTrigger className="h-8 text-xs w-44">
                       <SelectValue placeholder="Instância" />
                     </SelectTrigger>
                     <SelectContent>
-                      {instances.map(i => (
-                        <SelectItem key={i.id} value={i.id} className="text-xs">{i.friendly_name}</SelectItem>
-                      ))}
+                      {instances.map(i => {
+                        const phone = i.phone_number?.replace(/\D/g, '') || '';
+                        const label = phone
+                          ? `📱 ${phone.length > 8 ? `(${phone.slice(-11,-9)}) ${phone.slice(-9,-5)}-${phone.slice(-5)}` : phone}`
+                          : i.friendly_name || i.instance_name;
+                        return <SelectItem key={i.id} value={i.id} className="text-xs">{label}</SelectItem>;
+                      })}
                     </SelectContent>
                   </Select>
                 )}
@@ -1407,46 +1687,166 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           </Card>
         </div>
 
-        {/* ── Feedback para Gerente ──────────────────────────────────── */}
+        {/* ── Feedback Estruturado para Gerente ──────────────────────── */}
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <BellRing className="h-4 w-4 text-orange-400" /> Feedback para Gerente
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BellRing className="h-4 w-4 text-orange-400" /> Feedback para Gerente
+              </CardTitle>
+              <Button
+                variant="ghost" size="sm"
+                className="h-7 px-2 text-[10px] text-muted-foreground hover:text-orange-400"
+                onClick={() => selectedLead && loadLeadFeedbackHistory(selectedLead.id)}
+              >
+                <Clock className="h-3 w-3 mr-1" /> Historico
+              </Button>
+            </div>
           </CardHeader>
-          <CardContent>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <Textarea
-                value={fbContent}
-                onChange={e => setFbContent(e.target.value)}
-                placeholder="Descreva o que o gerente precisa saber sobre este lead..."
-                className="min-h-[80px] text-xs resize-none flex-1"
-              />
-              <div className="flex flex-col gap-2 sm:w-40">
-                <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
-                      <SelectItem key={k} value={k} className="text-xs">
-                        <span className={v.color}>{v.label}</span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  onClick={handleSendFeedback}
-                  disabled={fbLoading || !fbContent.trim()}
-                  size="sm" className="h-8 text-xs"
-                >
-                  {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
-                  Enviar
-                </Button>
+          <CardContent className="space-y-4">
+
+            {/* Pergunta 1: Cidade */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">1. Cliente veio de qual cidade?</p>
+              <Select value={fbCity} onValueChange={v => { setFbCity(v); if (v !== 'Outros') setFbCityCustom(''); }}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Selecione a cidade..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {FEEDBACK_CITIES.map(c => (
+                    <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
+                  ))}
+                  <SelectItem value="Outros" className="text-xs font-medium text-orange-400">Outros...</SelectItem>
+                </SelectContent>
+              </Select>
+              {fbCity === 'Outros' && (
+                <Input
+                  value={fbCityCustom}
+                  onChange={e => setFbCityCustom(e.target.value)}
+                  placeholder="Digite a cidade..."
+                  className="h-8 text-xs"
+                />
+              )}
+            </div>
+
+            {/* Pergunta 2: Motivo (agrupado por categorias) */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">2. Por qual motivo o cliente nao comprou?</p>
+              <div className="space-y-1">
+                {FEEDBACK_REASONS.map(group => (
+                  <div key={group.category} className="border border-border/50 rounded-lg overflow-hidden">
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium hover:bg-muted/50 transition-colors"
+                      onClick={() => setFbReasonOpen(prev => prev === group.category ? null : group.category)}
+                    >
+                      <span>{group.emoji} {group.category}</span>
+                      <ChevronRight className={`h-3.5 w-3.5 transition-transform ${fbReasonOpen === group.category ? 'rotate-90' : ''}`} />
+                    </button>
+                    {fbReasonOpen === group.category && (
+                      <div className="px-2 pb-2 space-y-0.5">
+                        {group.options.map(opt => (
+                          <button
+                            key={opt}
+                            type="button"
+                            className={`w-full text-left px-3 py-1.5 rounded-md text-xs transition-colors ${
+                              fbReason === opt
+                                ? 'bg-orange-500/20 text-orange-300 font-medium'
+                                : 'hover:bg-muted/50 text-muted-foreground'
+                            }`}
+                            onClick={() => setFbReason(opt)}
+                          >
+                            {fbReason === opt && <Check className="h-3 w-3 inline mr-1.5" />}
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
+              {fbReason && (
+                <div className="flex items-center gap-2 px-2 py-1 bg-orange-500/10 rounded-md">
+                  <CheckCircle className="h-3 w-3 text-orange-400 shrink-0" />
+                  <span className="text-[10px] text-orange-300">{fbReason}</span>
+                  <button type="button" onClick={() => setFbReason('')} className="ml-auto">
+                    <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Observacoes adicionais (opcional) */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">3. Observacoes adicionais <span className="text-muted-foreground/60">(opcional)</span></p>
+              <Textarea
+                value={fbObservations}
+                onChange={e => setFbObservations(e.target.value)}
+                placeholder="Informacoes extras que o gerente precisa saber..."
+                className="min-h-[60px] text-xs resize-none"
+              />
+            </div>
+
+            {/* Prioridade + Enviar */}
+            <div className="flex items-center gap-3 pt-1">
+              <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
+                <SelectTrigger className="h-8 text-xs w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
+                    <SelectItem key={k} value={k} className="text-xs">
+                      <span className={v.color}>{v.label}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                onClick={handleSendFeedback}
+                disabled={fbLoading || !fbCity || !fbReason}
+                size="sm" className="h-8 text-xs flex-1"
+              >
+                {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                Enviar Feedback
+              </Button>
             </div>
           </CardContent>
         </Card>
+
+        {/* ── Popup Historico de Feedbacks do Lead ──────────────────────── */}
+        <Dialog open={fbHistoryOpen} onOpenChange={setFbHistoryOpen}>
+          <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-sm flex items-center gap-2">
+                <BellRing className="h-4 w-4 text-orange-400" />
+                Historico de Feedbacks — {selectedLead?.lead_name}
+              </DialogTitle>
+            </DialogHeader>
+            {fbHistoryLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+            ) : leadFeedbacks.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-8">Nenhum feedback enviado para este lead.</p>
+            ) : (
+              <div className="space-y-3">
+                {leadFeedbacks.map(fb => {
+                  const pCfg = PRIORITY_CONFIG[fb.priority as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.normal;
+                  return (
+                    <div key={fb.id} className="border border-border/50 rounded-lg px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${pCfg.bg} ${pCfg.color}`}>{pCfg.label}</span>
+                        <span className="text-[10px] text-muted-foreground">{fb.member?.name ?? 'Vendedor'} · {fmtDate(fb.created_at)}</span>
+                      </div>
+                      {fb.city && <p className="text-xs"><span className="text-muted-foreground">Cidade:</span> {fb.city}</p>}
+                      {fb.reason && <p className="text-xs"><span className="text-muted-foreground">Motivo:</span> {fb.reason}</p>}
+                      {fb.observations && <p className="text-xs"><span className="text-muted-foreground">Obs:</span> {fb.observations}</p>}
+                      {!fb.city && !fb.reason && <p className="text-xs text-foreground">{fb.content}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -1457,7 +1857,7 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   // Métricas
   // Filtro universal
   const filteredLeads = leads.filter(l => {
-    if (isSeller && l.assigned_to_id !== memberId) return false;
+    if (isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
     if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
     if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
     if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
@@ -1793,7 +2193,10 @@ function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                         {fb.member?.name ?? 'Vendedor'} · {fb.lead?.lead_name ?? 'Lead'} · {fmtDate(fb.created_at)}
                       </span>
                     </div>
-                    <p className="text-xs text-foreground leading-relaxed">{fb.content}</p>
+                    {fb.city && <p className="text-xs"><span className="text-muted-foreground">Cidade:</span> {fb.city}</p>}
+                    {fb.reason && <p className="text-xs"><span className="text-muted-foreground">Motivo:</span> {fb.reason}</p>}
+                    {fb.observations && <p className="text-xs"><span className="text-muted-foreground">Obs:</span> {fb.observations}</p>}
+                    {!fb.city && !fb.reason && <p className="text-xs text-foreground leading-relaxed">{fb.content}</p>}
                   </div>
                   {!fb.read_at && (
                     <Button

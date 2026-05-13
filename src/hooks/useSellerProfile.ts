@@ -22,12 +22,30 @@ export interface VisibleFeatures {
   tab_agente_ia: boolean;
   tab_crm_ao_vivo: boolean;
   tab_vendedores: boolean;
+  // Marcos — sub-itens CRM & WhatsApp
+  marcos_crm: boolean;
+  marcos_formularios: boolean;
+  marcos_contatos: boolean;
+  marcos_disparo: boolean;
+  marcos_inbox: boolean;
+  marcos_instancias: boolean;
+  marcos_automacoes: boolean;
   // Sidebar
   sidebar_dashboard: boolean;
   sidebar_treinamento: boolean;
   sidebar_meu_plano: boolean;
   sidebar_integracoes: boolean;
   sidebar_configuracoes: boolean;
+  // Agentes (controla cards do Dashboard E itens do sidebar)
+  agent_pedro: boolean;
+  agent_marcos: boolean;
+  agent_jose: boolean;
+  agent_salomao: boolean;
+  agent_paulo: boolean;
+  agent_maria: boolean;
+  agent_davi: boolean;
+  agent_joao: boolean;
+  agent_daniel: boolean;
 }
 
 export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
@@ -38,11 +56,28 @@ export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   tab_agente_ia: false,
   tab_crm_ao_vivo: false,
   tab_vendedores: false,
+  marcos_crm: false,
+  marcos_formularios: false,
+  marcos_contatos: false,
+  marcos_disparo: false,
+  marcos_inbox: false,
+  marcos_instancias: false,
+  marcos_automacoes: false,
   sidebar_dashboard: false,
   sidebar_treinamento: false,
   sidebar_meu_plano: false,
   sidebar_integracoes: false,
   sidebar_configuracoes: false,
+  // Agentes — só Pedro ativado por padrão (master libera os demais)
+  agent_pedro: true,
+  agent_marcos: false,
+  agent_jose: false,
+  agent_salomao: false,
+  agent_paulo: false,
+  agent_maria: false,
+  agent_davi: false,
+  agent_joao: false,
+  agent_daniel: false,
 };
 
 export interface SellerProfileResult {
@@ -87,27 +122,31 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
         return;
       }
 
-      // 2. Se é seller, busca os dados do ai_team_members (inclui visible_features)
-      //    Ordena por is_active desc + created_at desc para garantir pegar o registro ativo mais recente
+      // 2. Se é seller, busca TODOS os registros do ai_team_members
+      //    (o vendedor pode pertencer a múltiplos agentes, cada um com suas visible_features)
       const { data: memberData } = await (supabase as any)
         .from('ai_team_members')
         .select('id, name, whatsapp_number, email, user_id, agent_id, is_active, visible_features')
         .eq('auth_user_id', authUserId)
         .order('is_active', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(1);
+        .order('created_at', { ascending: false });
 
       if (cancelled) return;
 
-      const seller = Array.isArray(memberData) && memberData.length > 0
-        ? memberData[0] as SellerInfo
-        : null;
+      const allRecords = Array.isArray(memberData) ? memberData as SellerInfo[] : [];
+      // Usa o registro ativo mais recente como dados base (nome, email, etc.)
+      const seller = allRecords.length > 0 ? allRecords[0] : null;
 
-      // Merge com defaults — features não definidas usam o default
-      const features: VisibleFeatures = {
-        ...DEFAULT_SELLER_FEATURES,
-        ...(seller?.visible_features || {}),
-      };
+      // Merge features de TODOS os registros com lógica OR:
+      // se qualquer registro libera uma feature, o vendedor a vê
+      const features: VisibleFeatures = { ...DEFAULT_SELLER_FEATURES };
+      for (const rec of allRecords) {
+        const f = rec.visible_features;
+        if (!f) continue;
+        for (const key of Object.keys(DEFAULT_SELLER_FEATURES) as (keyof VisibleFeatures)[]) {
+          if (f[key]) features[key] = true;
+        }
+      }
 
       setResult({
         isSeller: true,

@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 
 interface WhatsAppConfig {
@@ -14,6 +16,13 @@ interface WhatsAppConfig {
 }
 
 export function useWhatsAppConfig() {
+  const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
   const { toast } = useToast();
   const [config, setConfig] = useState<WhatsAppConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -21,17 +30,15 @@ export function useWhatsAppConfig() {
   const [isTesting, setIsTesting] = useState(false);
 
   const fetchConfig = useCallback(async () => {
+    if (!effectiveUserId) {
+      setIsLoading(false);
+      return;
+    }
     try {
-      const { data: session } = await supabase.auth.getSession();
-      if (!session?.session?.user) {
-        setIsLoading(false);
-        return;
-      }
-
       const { data, error } = await supabase
         .from('whatsapp_config')
         .select('id, user_id, api_url, instance_name, phone_number, is_active, send_daily_report, report_time')
-        .eq('user_id', session.session.user.id)
+        .eq('user_id', effectiveUserId)
         .maybeSingle();
 
       if (error) throw error;
@@ -41,7 +48,7 @@ export function useWhatsAppConfig() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [effectiveUserId]);
 
   useEffect(() => {
     fetchConfig();
@@ -57,10 +64,9 @@ export function useWhatsAppConfig() {
   }) => {
     setIsSaving(true);
     try {
-      const { data: session } = await supabase.auth.getSession();
-      if (!session?.session?.user) throw new Error('Não autenticado');
+      if (!effectiveUserId) throw new Error('Não autenticado');
 
-      const userId = session.session.user.id;
+      const userId = effectiveUserId;
       const { api_key, ...rest } = values;
       const payload: Record<string, unknown> = {
         ...rest,

@@ -50,10 +50,20 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
+    // Seller detection: if user is a seller, use their manager's ID for data queries
+    const { data: profileData } = await supabaseService
+      .from("profiles")
+      .select("role, manager_id")
+      .eq("id", userId)
+      .single();
+
+    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
+    const effectiveUserId = isSeller ? profileData.manager_id : userId;
+
     const { data: config, error: configError } = await supabaseService
       .from('whatsapp_config')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', effectiveUserId)
       .maybeSingle();
 
     if (configError) {
@@ -90,9 +100,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Send message via Evolution API
+    // Send message via UazAPI
     const evolutionUrl = `${config.api_url.replace(/\/$/, '')}/message/sendText/${config.instance_name}`;
-    console.log('Sending to Evolution API:', evolutionUrl);
+    console.log('Sending to UazAPI:', evolutionUrl);
 
     const evolutionResponse = await fetch(evolutionUrl, {
       method: 'POST',
@@ -107,10 +117,10 @@ Deno.serve(async (req) => {
     });
 
     const evolutionData = await evolutionResponse.json();
-    console.log('Evolution API response status:', evolutionResponse.status, 'data:', JSON.stringify(evolutionData));
+    console.log('UazAPI response status:', evolutionResponse.status, 'data:', JSON.stringify(evolutionData));
 
     if (!evolutionResponse.ok) {
-      throw new Error(`Evolution API error [${evolutionResponse.status}]: ${JSON.stringify(evolutionData)}`);
+      throw new Error(`UazAPI error [${evolutionResponse.status}]: ${JSON.stringify(evolutionData)}`);
     }
 
     return new Response(

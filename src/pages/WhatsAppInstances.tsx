@@ -94,8 +94,9 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   const { toast } = useToast();
   const { subscription } = useSubscription();
   const { isAdmin } = useIsAdmin();
-  const { isSeller, seller, masterUserId } = useSellerProfile(user?.id);
-  const effectiveUserId = (isSeller && masterUserId) ? masterUserId : user?.id;
+  const { isSeller } = useSellerProfile(user?.id);
+  // Instâncias são POR USUÁRIO — vendedor vê as DELE, master vê as do MASTER
+  // NÃO usar effectiveUserId aqui
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
   const maxInstances = isSeller ? 1 : (INSTANCE_LIMITS[userPlan] ?? 5);
   const [instances, setInstances] = useState<WaInstance[]>([]);
@@ -154,24 +155,18 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   };
 
   const fetchInstances = async (skipVerify = false) => {
-    if (!effectiveUserId) return;
+    if (!user?.id) return;
     setIsLoading(true);
     try {
+      // Cada conta vê SOMENTE suas próprias instâncias
       const { data, error } = await supabase
         .from('wa_instances')
         .select('id, instance_name, friendly_name, phone_number, status, is_active, health_score, provider, api_url, created_at, updated_at, failover_status')
-        .eq('user_id', effectiveUserId as string)
+        .eq('user_id', user?.id as string)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      let list = (data as unknown as WaInstance[]) || [];
-      // Vendedor: filtra só instâncias que contêm o número dele
-      if (isSeller && seller?.whatsapp_number) {
-        const sellerDigits = seller.whatsapp_number.slice(-8);
-        list = list.filter(i =>
-          i.phone_number?.replace(/\D/g, '').endsWith(sellerDigits)
-        );
-      }
+      const list = (data as unknown as WaInstance[]) || [];
       setInstances(list);
       // Auto-verify all Evolution instances on first load
       if (!skipVerify && list.length > 0) {
@@ -186,14 +181,14 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
 
   useEffect(() => {
     fetchInstances();
-  }, [user]);
+  }, [user?.id]);
 
   const handleDelete = async () => {
-    if (!deleteId || !user) return;
+    if (!deleteId || !user?.id) return;
     setIsDeleting(true);
     try {
       const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
-        body: { instance_id: deleteId, user_id: user.id },
+        body: { instance_id: deleteId, user_id: user?.id },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao remover instância');

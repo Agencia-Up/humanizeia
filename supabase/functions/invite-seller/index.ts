@@ -150,16 +150,16 @@ async function authGetUser(supabaseUrl: string, apiKey: string, accessToken: str
   }
 }
 
-async function authAdminInviteUserByEmail(
+async function authAdminCreateUser(
   supabaseUrl: string,
   serviceKey: string,
   email: string,
-  data: Record<string, any>,
-  redirectTo: string
+  metadata: Record<string, any>,
 ): Promise<{ data: any; error: any }> {
   try {
-    // CORRETO: endpoint é /auth/v1/invite (NÃO /auth/v1/admin/invite)
-    const res = await fetch(`${supabaseUrl}/auth/v1/invite`, {
+    // Cria usuario via Admin API SEM enviar email padrao do Supabase.
+    // O email sera enviado via Resend com o link gerado por generate_link.
+    const res = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
       method: 'POST',
       headers: {
         'apikey': serviceKey,
@@ -168,13 +168,13 @@ async function authAdminInviteUserByEmail(
       },
       body: JSON.stringify({
         email,
-        data,
-        redirect_to: redirectTo,
+        email_confirm: false,
+        user_metadata: metadata,
       }),
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { data: null, error: { message: body.message || body.msg || 'Invite failed', status: res.status } };
+      return { data: null, error: { message: body.message || body.msg || 'Create user failed', status: res.status } };
     }
     return { data: { user: body }, error: null };
   } catch (err: any) {
@@ -231,8 +231,10 @@ async function authAdminGenerateLink(
     if (!res.ok) {
       return { data: null, error: { message: body.message || 'Generate link failed' } };
     }
-    // GoTrue returns the link in properties.action_link
-    return { data: { properties: body.properties || {}, ...body }, error: null };
+    // GoTrue returns action_link at top level (NOT inside properties)
+    const actionLink = body.action_link || body.properties?.action_link || null;
+    console.log(`[invite-seller] generate_link response keys: ${Object.keys(body).join(',')}, action_link: ${actionLink ? actionLink.substring(0, 60) + '...' : 'NONE'}`);
+    return { data: { action_link: actionLink, ...body }, error: null };
   } catch (err: any) {
     return { data: null, error: { message: err.message } };
   }
@@ -299,69 +301,68 @@ Deno.serve(async (req) => {
     const origin = req.headers.get('origin') || 'https://logosiabrasil.com';
     const redirectTo = `${origin}/auth/confirm`;
 
-    // Try to invite user via GoTrue Admin API
-    const { data: inviteData, error: inviteErr } = await authAdminInviteUserByEmail(
+    // Step 1: Create user via Admin API (does NOT send default Supabase email)
+    const userMetadata = { full_name: member.name, role: 'seller', master_user_id: masterUserId };
+    const { data: createData, error: createErr } = await authAdminCreateUser(
       supabaseUrl,
       serviceKey,
       email,
-      { full_name: member.name, role: 'seller', master_user_id: masterUserId },
-      redirectTo
+      userMetadata,
     );
 
     let authUserId: string | null = null;
 
-    if (inviteErr) {
-      // User might already exist — try to find and link them
-      if (inviteErr.message?.toLowerCase().includes('already') || inviteErr.status === 422) {
+    if (createErr) {
+      // User might already exist — find and reuse them
+      const alreadyExists = createErr.message?.toLowerCase().includes('already') || createErr.status === 422;
+      if (alreadyExists) {
         const { users } = await authAdminListUsers(supabaseUrl, serviceKey, 1000);
         const existingUser = users.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
         if (existingUser) {
+          authUserId = existingUser.id;
           await supabase.from('ai_team_members')
             .update({ email, auth_user_id: existingUser.id })
             .eq('id', memberId);
-          authUserId = existingUser.id;
-
-          // Send email via Resend to notify user their account was linked
-          await sendInviteEmailViaResend(email, member.name, origin, 'linked');
-
-          return new Response(JSON.stringify({
-            success: true,
-            action: 'linked',
-            message: 'Usuário já existia e foi vinculado.',
-          }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
+          console.log(`[invite-seller] User ${email} already exists (${authUserId}), reusing for invite link`);
+        } else {
+          console.error('[invite-seller] User reportedly exists but not found in list');
+          throw new Error('User creation conflict — please try again');
         }
+      } else {
+        console.error('[invite-seller] authAdminCreateUser failed:', createErr.message);
+        throw new Error(createErr.message || 'Failed to create user');
       }
-      console.error('invite-seller: inviteUserByEmail failed:', inviteErr.message);
-      throw new Error(inviteErr.message || 'Invite failed');
+    } else {
+      // New user created successfully
+      authUserId = createData?.user?.id || null;
+      if (authUserId) {
+        await supabase.from('ai_team_members')
+          .update({ email, auth_user_id: authUserId })
+          .eq('id', memberId);
+      }
+      console.log(`[invite-seller] User ${email} created: ${authUserId}`);
     }
 
-    // Link auth_user_id
-    if (inviteData?.user?.id) {
-      authUserId = inviteData.user.id;
-      await supabase.from('ai_team_members')
-        .update({ email, auth_user_id: inviteData.user.id })
-        .eq('id', memberId);
-    }
-
-    // Gerar um magic link para o vendedor acessar direto
-    let magicLink = '';
+    // Step 2: Generate invite link (the ONLY token — no conflict)
+    let confirmUrl = redirectTo; // fallback
     if (authUserId) {
-      const { data: linkData } = await authAdminGenerateLink(
+      const { data: linkData, error: linkErr } = await authAdminGenerateLink(
         supabaseUrl,
         serviceKey,
-        'magiclink',
+        'invite',
         email,
         redirectTo
       );
-      if (linkData?.properties?.action_link) {
-        magicLink = linkData.properties.action_link;
+      const actionLink = linkData?.action_link || null;
+      if (actionLink) {
+        confirmUrl = actionLink;
+        console.log(`[invite-seller] Invite link generated: ${actionLink.substring(0, 80)}...`);
+      } else {
+        console.error(`[invite-seller] generate_link did NOT return action_link. Error: ${linkErr?.message || 'none'}. Data keys: ${linkData ? Object.keys(linkData).join(',') : 'null'}`);
       }
     }
 
-    const confirmUrl = magicLink || redirectTo;
-
+    // Step 3: Send invite email via Resend (the ONLY email the seller receives)
     const emailSent = await sendInviteEmailViaResend(
       email,
       member.name,
@@ -370,7 +371,7 @@ Deno.serve(async (req) => {
       confirmUrl,
     );
 
-    console.log(`invite-seller: convite para ${email} — auth: OK | resend email: ${emailSent ? 'OK' : 'FALHOU'}`);
+    console.log(`[invite-seller] Convite para ${email} — auth: OK | link: ${confirmUrl !== redirectTo ? 'OK' : 'FALLBACK'} | email: ${emailSent ? 'OK' : 'FALHOU'}`);
 
     return new Response(JSON.stringify({
       success: true,

@@ -47,12 +47,22 @@ Deno.serve(async (req) => {
   }
   const userId = userData.user.id;
 
+  // Seller detection: if user is a seller, use their manager's ID for data queries
+  const { data: profileData } = await supabase
+    .from("profiles")
+    .select("role, manager_id")
+    .eq("id", userId)
+    .single();
+
+  const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
+  const effectiveUserId = isSeller ? profileData.manager_id : userId;
+
   try {
     // 1. Busca todos os leads qualificados SEM vendedor atribuído
     const { data: unassigned, error: leadsErr } = await supabase
       .from("ai_crm_leads")
       .select("id, remote_jid, lead_name, summary, agent_id, status, created_at")
-      .eq("user_id", userId)
+      .eq("user_id", effectiveUserId)
       .in("status", ["qualificado"])
       .is("assigned_to_id", null)
       .order("created_at", { ascending: true });
@@ -72,7 +82,7 @@ Deno.serve(async (req) => {
     const { data: sellers, error: sellersErr } = await supabase
       .from("ai_team_members")
       .select("*")
-      .eq("user_id", userId)
+      .eq("user_id", effectiveUserId)
       .eq("is_active", true)
       .order("last_lead_received_at", { ascending: true, nullsFirst: true });
 
@@ -89,7 +99,7 @@ Deno.serve(async (req) => {
     const { data: instances } = await supabase
       .from("wa_instances")
       .select("*")
-      .eq("user_id", userId)
+      .eq("user_id", effectiveUserId)
       .eq("is_active", true)
       .eq("status", "connected")
       .limit(1);
@@ -130,7 +140,7 @@ Deno.serve(async (req) => {
 
         // 4b. Registra transfer
         await supabase.from("ai_lead_transfers").insert({
-          user_id: userId,
+          user_id: effectiveUserId,
           lead_id: lead.id,
           to_member_id: seller.id,
           transfer_reason: "bulk_reassign",

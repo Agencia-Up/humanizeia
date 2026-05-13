@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,32 +27,38 @@ const TAG_COLORS = [
 
 export function TagSelector({ selectedTags, onTagsChange, trigger }: TagSelectorProps) {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
   const [tags, setTags] = useState<WaTag[]>([]);
   const [open, setOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
-    if (user && open) fetchTags();
-  }, [user, open]);
+    if (effectiveUserId && open) fetchTags();
+  }, [effectiveUserId, open]);
 
   const fetchTags = async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     const { data } = await supabase
       .from('wa_tags')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId)
       .order('name');
     if (data) setTags(data as unknown as WaTag[]);
   };
 
   const createTag = async () => {
-    if (!user || !newTagName.trim()) return;
+    if (!effectiveUserId || !newTagName.trim()) return;
     setIsCreating(true);
     const color = TAG_COLORS[tags.length % TAG_COLORS.length];
     const { data, error } = await supabase
       .from('wa_tags')
-      .insert({ user_id: user.id, name: newTagName.trim(), color })
+      .insert({ user_id: effectiveUserId, name: newTagName.trim(), color })
       .select()
       .single();
     if (!error && data) {

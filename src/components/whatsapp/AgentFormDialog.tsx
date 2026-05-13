@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
@@ -90,11 +91,11 @@ Informações do produto/serviço:
 [EDITE AQUI COM AS INFORMAÇÕES DO SEU NEGÓCIO]`;
 
 const MODEL_OPTIONS = [
-  { value: 'openai/gpt-4o', label: 'GPT-4o (Alta Qualidade)' },
-  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Recomendado)' },
-  { value: 'openai/gpt-3.5-turbo', label: 'GPT-3.5 Turbo (Legado)' },
-  { value: 'google/gemini-2.0-flash', label: 'Gemini 2.0 Flash (Alternativo)' },
-  { value: 'anthropic/claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
+  { value: 'anthropic/claude-3-5-sonnet-20241022', label: '🏆 Claude 3.5 Sonnet (Melhor p/ SDR)' },
+  { value: 'openai/gpt-4o', label: '⭐ GPT-4o (Alta Qualidade)' },
+  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Custo-Beneficio)' },
+  { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro (Google Premium)' },
+  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Rapido e Economico)' },
 ];
 
 const AGENT_TYPES = [
@@ -153,6 +154,12 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     }
   }, [open]);
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -204,18 +211,18 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   useEffect(() => {
     // Buscar dados do briefing/quiz para o prompt
     const fetchNicheData = async () => {
-      if (!user) return;
+      if (!effectiveUserId) return;
       try {
         const { data: quizData } = await supabase
           .from('user_quiz_responses' as any)
           .select('nicho_identificado, respostas_completas')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .maybeSingle();
 
         const { data: briefingData } = await supabase
           .from('client_briefings' as any)
           .select('business_name, product_service')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .maybeSingle();
 
         setNicheData({
@@ -232,7 +239,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       fetchNicheData();
     }
     return () => stopPolling();
-  }, [user, open]);
+  }, [effectiveUserId, open]);
 
   // Efeito para atualizar prompt dinamicamente
   useEffect(() => {
@@ -289,7 +296,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     pollingRef.current = setInterval(async () => {
       try {
         const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
-          body: { user_id: user!.id, instance_name: slug },
+          body: { user_id: effectiveUserId!, instance_name: slug },
         });
         if (error) {
           console.error('[polling] Erro na Edge Function:', error);
@@ -337,7 +344,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         const activeSlug = slug || pendingInstanceRef.current.slug;
         let query = supabase.from('wa_instances')
             .select('id')
-            .eq('user_id', user!.id);
+            .eq('user_id', effectiveUserId!);
 
         if (activeSlug) {
           query = query.eq('instance_name', activeSlug);
@@ -373,7 +380,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         try {
           const { data: { session } } = await supabase.auth.getSession();
           const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
-            body: { instance_id: instId, user_id: user?.id },
+            body: { instance_id: instId, user_id: effectiveUserId },
             headers: {
               Authorization: `Bearer ${session?.access_token}`
             }
@@ -412,7 +419,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
           provider: 'evolution',
           instance_name: slug,
           friendly_name: `WhatsApp - ${name} (${randomSuffix})`,
-          user_id: user!.id,
+          user_id: effectiveUserId!,
           agent_id: agent?.id,
         },
       });
@@ -430,7 +437,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
           console.warn("[QR] QR Code não veio na resposta inicial. Tentando busca secundária via instance_id:", createdInstanceId);
           await new Promise(r => setTimeout(r, 3000));
           const { data: qrData, error: qrErr } = await supabase.functions.invoke('get-evolution-qrcode', {
-              body: { instance_id: createdInstanceId, user_id: user!.id }
+              body: { instance_id: createdInstanceId, user_id: effectiveUserId! }
           });
           console.info("[QR] Resposta fallback:", JSON.stringify(qrData));
           if (qrErr) console.error("[QR] Erro no fallback:", qrErr);
@@ -470,7 +477,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     try {
       // Step 1: Try Edge Function (Full cleanup)
       const { data, error: funcError } = await supabase.functions.invoke('delete-evolution-instance', {
-        body: { instance_id: id, user_id: user?.id }
+        body: { instance_id: id, user_id: effectiveUserId }
       });
       
       console.log('[Delete] Resultado Edge Function:', JSON.stringify(data || funcError, null, 2));
@@ -508,7 +515,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       const { data: { session } } = await supabase.auth.getSession();
       
       const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
-        body: { instance_id: id, user_id: user?.id },
+        body: { instance_id: id, user_id: effectiveUserId },
         headers: {
             Authorization: `Bearer ${session?.access_token}`
         }
@@ -590,7 +597,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   };
 
   const buildPayload = () => ({
-    user_id: user!.id,
+    user_id: effectiveUserId!,
     name: name.trim() || 'Agente IA',
     agent_type: agentType,
     system_prompt: prompt,
@@ -664,7 +671,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   };
 
   const handleSave = async () => {
-    if (!user) {
+    if (!user || !effectiveUserId) {
       toast({ title: 'Sessao expirada', description: 'Faca login novamente para salvar o agente.', variant: 'destructive' });
       return;
     }
@@ -742,7 +749,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
             {/* ── Tab: Vendedores (Repasse) ── */}
             <TabsContent value="equipe" className="space-y-6 mt-0">
-               <AgentCrmEquipeTab agentId={agent?.id || null} userId={user?.id || ''} />
+               <AgentCrmEquipeTab agentId={agent?.id || null} userId={effectiveUserId || ''} />
             </TabsContent>
 
             {/* ── Tab: General ── */}
@@ -1095,7 +1102,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
             <TabsContent value="knowledge" className="space-y-4 mt-0">
               <KnowledgeBaseManager
                 agentId={agent?.id || null}
-                userId={user?.id || ''}
+                userId={effectiveUserId || ''}
               />
             </TabsContent>
           </Tabs>

@@ -14,7 +14,7 @@ async function getInstanceConfig(supabase: any, userId: string) {
     .eq('provider', 'evolution');
 
   if (instances && instances.length > 0) {
-    // For Evolution instances, use env vars for credentials
+    // For UazAPI instances, use env vars for credentials
     const evolutionApiUrl = Deno.env.get('EVOLUTION_API_URL');
     const evolutionApiKey = Deno.env.get('EVOLUTION_API_KEY');
 
@@ -357,10 +357,20 @@ Deno.serve(async (req) => {
     }
     const user_id = userData.user.id;
 
+    // Seller detection: if user is a seller, use their manager's ID for data queries
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("role, manager_id")
+      .eq("id", user_id)
+      .single();
+
+    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
+    const effectiveUserId = isSeller ? profileData.manager_id : user_id;
+
     const body = await req.json();
     const { action, group_ids, groups, list_id, query, instance_id } = body;
 
-    const configs = await getInstanceConfig(supabase, user_id);
+    const configs = await getInstanceConfig(supabase, effectiveUserId);
     if (!configs || configs.length === 0) {
       return new Response(JSON.stringify({
         success: false,
@@ -371,13 +381,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Pick specific instance or default to first evolution one
+    // Pick specific instance or default to first UazAPI one
     let config = configs[0];
     if (instance_id) {
       const found = configs.find((c: any) => c.id === instance_id);
       if (found) config = found;
     }
-    // Prefer evolution instances for group operations
+    // Prefer UazAPI instances for group operations
     const evolutionConfig = configs.find((c: any) => c.provider === 'evolution');
     if (evolutionConfig) config = evolutionConfig;
 
@@ -405,7 +415,7 @@ Deno.serve(async (req) => {
         supabase,
         supabaseUrl,
         supabaseServiceKey,
-        user_id,
+        effectiveUserId,
         list_id,
       );
       return new Response(JSON.stringify(result), {
@@ -413,13 +423,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ===== DEFAULT: Fetch own groups from ALL evolution instances =====
+    // ===== DEFAULT: Fetch own groups from ALL UazAPI instances =====
     console.log(`[wa-extract-groups] Fetching groups for ${configs.length} instance(s)`);
     const allGroups: any[] = [];
 
     for (const c of configs) {
       if (c.provider !== 'evolution') {
-        console.log(`[wa-extract-groups] Skipping non-evolution instance: ${c.instanceName} (${c.provider})`);
+        console.log(`[wa-extract-groups] Skipping non-UazAPI instance: ${c.instanceName} (${c.provider})`);
         continue;
       }
       try {

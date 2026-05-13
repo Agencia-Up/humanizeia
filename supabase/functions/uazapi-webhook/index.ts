@@ -404,42 +404,24 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
 
 // ─── WhatsApp Image Sending ─────────────────────────────────────────────────
 async function sendVehicleImage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption: string) {
-  const attempts = [
-    {
-      label: 'send/image',
-      url: `${baseUrl}/send/image`,
-      body: { number: phoneNumber, url: imageUrl, caption },
-    },
-    {
-      label: 'send/media',
-      url: `${baseUrl}/send/media`,
-      body: { number: phoneNumber, media: imageUrl, mediatype: 'image', caption },
-    },
-    {
-      label: 'message/sendMedia',
-      url: `${baseUrl}/message/sendMedia/${instanceName}`,
-      body: { number: phoneNumber, mediaMessage: { mediatype: 'image', media: imageUrl, caption } },
-    },
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      console.log(`[BNDV-IMG] Tentando ${attempt.label}...`);
-      const res = await fetch(attempt.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'token': instKey, 'apikey': instKey },
-        body: JSON.stringify(attempt.body),
-      });
-      if (res.ok) {
-        console.log(`[BNDV-IMG] Sucesso via ${attempt.label}`);
-        return true;
-      }
-      console.log(`[BNDV-IMG] ${attempt.label} retornou ${res.status}`);
-    } catch (err) {
-      console.log(`[BNDV-IMG] ${attempt.label} falhou:`, err);
+  // UazAPI V6: POST /send/media com campo "file" (não "url" nem "media")
+  // Testado e confirmado: {number, file, type, caption} funciona
+  try {
+    console.log(`[BNDV-IMG] Enviando imagem via /send/media (file)...`);
+    const res = await fetch(`${baseUrl}/send/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'token': instKey },
+      body: JSON.stringify({ number: phoneNumber, file: imageUrl, type: 'image', caption }),
+    });
+    if (res.ok) {
+      console.log(`[BNDV-IMG] ✅ Imagem enviada com sucesso`);
+      return true;
     }
+    const errText = await res.text();
+    console.error(`[BNDV-IMG] ❌ Falhou: ${res.status} - ${errText}`);
+  } catch (err) {
+    console.error(`[BNDV-IMG] ❌ Erro no envio:`, err);
   }
-  console.warn('[BNDV-IMG] Todas as tentativas de envio de imagem falharam');
   return false;
 }
 
@@ -497,10 +479,27 @@ Deno.serve(async (req) => {
       if (!remoteJid) { console.log('[Webhook] No remoteJid'); return new Response('No remoteJid', { headers: corsHeaders }); }
       if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return new Response('Ignored group/broadcast', { headers: corsHeaders });
 
-      const userText = (msgObj.body || msgObj.text || msgObj.caption || '').trim();
+      // UazAPI V6: texto está em content (string para texto, objeto para mídia), text, ou caption
+      const rawContent = msgObj.content;
+      const textContent = (typeof rawContent === 'string') ? rawContent : '';
+      const userText = (msgObj.body || msgObj.text || textContent || msgObj.caption || '').trim();
       const pushName = msgObj.senderName || chat.name || msgObj.notifyName || msgObj.pushName || 'Lead';
 
       console.log(`[Webhook] Mensagem recebida [UAZAPI]. Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
+
+      // ── DEDUP: se wa-inbox-webhook já processou esta mensagem, pular ──
+      const messageIdForDedup = msgObj.messageid || msgObj.id?.id || msgObj.key?.id || '';
+      if (messageIdForDedup) {
+        const { data: alreadyInInbox } = await supabase.from('wa_inbox')
+          .select('id')
+          .eq('remote_message_id', messageIdForDedup)
+          .maybeSingle();
+        if (alreadyInInbox) {
+          console.log(`[Webhook] ⏭️ Mensagem ${messageIdForDedup} já processada pelo wa-inbox-webhook. Pulando.`);
+          return new Response(JSON.stringify({ ok: true, skipped: 'dedup' }), { headers: corsHeaders });
+        }
+      }
+
       return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
     }
 
@@ -535,6 +534,19 @@ Deno.serve(async (req) => {
     if (key.remoteJid?.includes('@broadcast') || key.remoteJid?.includes('@g.us')) return new Response('Ignored group/broadcast', { headers: corsHeaders })
 
     let userText = message.conversation || message.extendedTextMessage?.text || message.text || data.text || ''
+
+    // ── DEDUP: se wa-inbox-webhook já processou esta mensagem, pular ──
+    const evMsgId = key.id || '';
+    if (evMsgId) {
+      const { data: alreadyInInbox } = await supabase.from('wa_inbox')
+        .select('id')
+        .eq('remote_message_id', evMsgId)
+        .maybeSingle();
+      if (alreadyInInbox) {
+        console.log(`[Webhook] ⏭️ Mensagem ${evMsgId} já processada pelo wa-inbox-webhook. Pulando.`);
+        return new Response(JSON.stringify({ ok: true, skipped: 'dedup' }), { headers: corsHeaders });
+      }
+    }
 
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
 
@@ -693,11 +705,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         .eq('id', existingLead.assigned_to_id)
         .maybeSingle();
 
-      // 2. Resetar lead — status volta para 'novo', sem vendedor, regras reativam
+      // 2. Manter vendedor atribuído — só reativar follow-ups
+      // NÃO resetar assigned_to_id (senão cron faz round-robin para vendedor errado)
+      // NÃO mudar para 'novo' (senão cron redistribui)
       await supabase.from('ai_crm_leads').update({
-        status: 'novo',
-        status_crm: 'novo',
-        assigned_to_id: null,
+        status: 'em_atendimento',
         followup_5min_sent: false,
       }).eq('id', existingLead.id);
 
@@ -714,9 +726,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             `🔄 *LEAD RETORNOU!*\n\n` +
             `O cliente *${pushName || existingLead.lead_name || 'Desconhecido'}* voltou a conversar.\n` +
             `📱 *Contato:* +${clientPhone}\n\n` +
-            `A IA está respondendo enquanto isso. Se quiser assumir, entre em contato:\n` +
-            `👉 https://wa.me/${clientPhone}\n\n` +
-            `⏰ Se ninguém assumir em 10 min, o lead será redistribuído automaticamente.`;
+            `O lead continua atribuído a você. A IA está respondendo enquanto isso.\n` +
+            `👉 https://wa.me/${clientPhone}`;
 
           await fetch(`${retBaseUrl}/send/text`, {
             method: 'POST',
@@ -791,8 +802,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Blob(byteArrays, {type: contentType});
   }
 
-  const msgType = rawMsgObj?.messageType || rawMsgObj?.type || '';
+  // UazAPI V6 envia messageType em PascalCase (ex: "AudioMessage", "ImageMessage", "Conversation")
+  // Normalizar para lowercase para comparação consistente
+  const rawMsgType = rawMsgObj?.messageType || rawMsgObj?.type || '';
+  const msgType = rawMsgType.toLowerCase();
+  // UazAPI também tem campo mediaType com valores como "ptt", "image", "video", "audio"
+  const mediaType = (rawMsgObj?.mediaType || '').toLowerCase();
   const messageId = rawMsgObj?.messageid || rawMsgObj?.id?.id || rawMsgObj?.key?.id || '';
+
+  console.log(`[Webhook] msgType: "${rawMsgType}" → "${msgType}", mediaType: "${mediaType}", messageId: "${messageId}"`);
 
   const baseUrl = (waInstance.api_url || Deno.env.get('EVOLUTION_API_URL') || '').replace(/\/$/, '')
   const instKey = waInstance.api_key_encrypted || Deno.env.get('EVOLUTION_API_KEY') || ''
@@ -807,37 +825,69 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   let finalUserText = userText;
   let userMessageContentForOpenAi: any = finalUserText;
 
+  // Detectar mídia: UazAPI envia "AudioMessage"/"ImageMessage" em messageType, ou "ptt"/"image" em mediaType
+  const isAudio = msgType.includes('audio') || msgType === 'ptt' || mediaType === 'ptt' || mediaType === 'audio';
+  const isImage = msgType.includes('image') || mediaType === 'image';
+
   // Process Media se houver
-  if (msgType === 'audioMessage' || msgType === 'audio' || msgType === 'ptt' || msgType === 'imageMessage' || msgType === 'image') {
+  // UazAPI V6: content é um objeto com URL, mimetype, mediaKey, etc. para mídia
+  const contentObj = (typeof rawMsgObj?.content === 'object' && rawMsgObj?.content) || {};
+  let mediaMimetype = contentObj.mimetype || rawMsgObj?.mimetype || '';
+
+  if (isAudio || isImage) {
+    console.log(`[Webhook] 📎 Mídia detectada: isAudio=${isAudio}, isImage=${isImage}, mime=${mediaMimetype}`);
     let base64 = rawMsgObj?.base64 || rawMsgObj?.message?.base64 || '';
 
-    // Se não veio base64, tentar download pela uazapi
+    // Se não veio base64, baixar via UazAPI V6: POST /message/download
+    // Testado e confirmado: endpoint aceita {id: messageId, return_base64: true}
+    // Resposta: {base64Data: "...", mimetype: "...", fileURL: "...", transcription: "..."}
     if (!base64 && messageId) {
-      console.log(`[Webhook] Baixando mídia ID: ${messageId}`);
+      console.log(`[Webhook] Baixando mídia ID: ${messageId}, type: ${msgType}`);
+
       try {
         const dRes = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': instKey, 'token': instKey },
           body: JSON.stringify({ id: messageId, return_base64: true })
         });
+
         if (dRes.ok) {
           const dData = await dRes.json();
-          base64 = dData.base64 || dData.file || '';
+          // UazAPI V6 retorna base64Data (não base64)
+          base64 = dData.base64Data || dData.base64 || dData.file || '';
+          // Atualizar mimetype se veio na resposta
+          if (dData.mimetype) {
+            mediaMimetype = dData.mimetype;
+          }
+          console.log(`[Webhook] ✅ Mídia baixada! length: ${base64.length}, mime: ${dData.mimetype || 'N/A'}, cached: ${dData.cached || false}`);
+
+          // UazAPI V6 pode incluir transcrição automática para áudio
+          if (isAudio && dData.transcription && !finalUserText) {
+            console.log(`[Webhook] UazAPI já transcreveu o áudio: "${dData.transcription}"`);
+          }
+        } else {
+          const errText = await dRes.text();
+          console.error(`[Webhook] ❌ Download falhou: ${dRes.status} - ${errText}`);
         }
       } catch (err) {
-        console.error('[Webhook] Falha no download de mídia:', err);
+        console.error('[Webhook] ❌ Erro no download de mídia:', err);
+      }
+
+      if (!base64) {
+        console.error(`[Webhook] FALHA: Não foi possível baixar mídia ${msgType} ID: ${messageId}`);
       }
     }
 
     if (base64) {
-      if (msgType.includes('audio') || msgType === 'ptt') {
+      if (isAudio) {
         try {
-          const blob = b64toBlob(base64, 'audio/ogg');
+          const audioMime = mediaMimetype || 'audio/ogg';
+          const blob = b64toBlob(base64, audioMime);
           const formData = new FormData();
           formData.append('file', blob, 'audio.ogg');
           formData.append('model', 'whisper-1');
 
-          console.log('[Webhook] Enviando para Whisper...');
+          console.log(`[Webhook] 🎤 Enviando áudio para Whisper (${base64.length} chars base64, mime: ${audioMime})...`);
           const wRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${openaiApiKey}` },
@@ -847,24 +897,48 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           if (wData.text) {
              finalUserText = wData.text;
              userMessageContentForOpenAi = finalUserText;
-             console.log('[Webhook] Transcrição (Whisper):', finalUserText);
+             console.log('[Webhook] ✅ Transcrição (Whisper):', finalUserText);
+          } else {
+             console.error('[Webhook] ❌ Whisper não retornou texto:', JSON.stringify(wData));
           }
         } catch(err) {
           console.error('[Webhook] Erro no Whisper:', err);
         }
-      } else if (msgType.includes('image')) {
-        const mimeType = rawMsgObj?.mimetype || 'image/jpeg';
+      } else if (isImage) {
+        // UazAPI V6: mimetype pode estar em content.mimetype ou rawMsgObj.mimetype
+        const mimeType = mediaMimetype || rawMsgObj?.mimetype || 'image/jpeg';
         finalUserText = finalUserText || '[Imagem recebida]';
         userMessageContentForOpenAi = [
           { type: "text", text: finalUserText },
           { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }
         ];
+        console.log(`[Webhook] 🖼️ Imagem preparada para visão (mime: ${mimeType}, base64 length: ${base64.length})`);
+      }
+    } else if (isImage) {
+      // Fallback: se base64 falhou mas temos URL da mídia, enviar URL direto ao GPT-4o
+      const mediaUrl = contentObj.URL || contentObj.url || rawMsgObj?.mediaUrl || rawMsgObj?.directUrl || '';
+      if (mediaUrl) {
+        console.log(`[Webhook] 🖼️ Fallback: usando URL da mídia direto: ${mediaUrl.substring(0, 80)}...`);
+        finalUserText = finalUserText || '[Imagem recebida]';
+        userMessageContentForOpenAi = [
+          { type: "text", text: finalUserText },
+          { type: "image_url", image_url: { url: mediaUrl } }
+        ];
+      } else {
+        // Sem base64 e sem URL — informa ao usuário que não pode ver a imagem
+        finalUserText = finalUserText || '[Imagem recebida - não foi possível visualizar]';
+        userMessageContentForOpenAi = finalUserText;
+        console.error(`[Webhook] ⚠️ Imagem sem base64 e sem URL — IA responderá sem ver a imagem`);
       }
     }
   }
 
   if (!finalUserText && typeof userMessageContentForOpenAi === 'string') {
-    console.log('[Webhook] Empty text after media processing');
+    if (isAudio || isImage) {
+      console.error(`[Webhook] ⚠️ Mídia ${msgType} recebida mas não foi possível processar (download/transcrição falhou). Mensagem ignorada.`);
+    } else {
+      console.log('[Webhook] Empty text message — ignorando');
+    }
     return new Response('Empty text', { headers: corsHeaders });
   }
 
@@ -882,14 +956,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   })
 
   // Salvar mensagem RECEBIDA no wa_inbox (para aparecer no Inbox do Marcos)
+  const incomingMediaType = isAudio ? 'audio' : (isImage ? 'image' : 'text');
+  // Para mídia, extrair URL se disponível no payload UazAPI (content.URL ou directUrl)
+  const incomingMediaUrl = contentObj.URL || rawMsgObj?.mediaUrl || rawMsgObj?.directUrl || rawMsgObj?.media_url || rawMsgObj?.url || null;
   await supabase.from('wa_inbox').insert({
     user_id: waInstance.user_id,
     instance_id: waInstance.id,
     phone: phoneNumber,
     contact_name: pushName || null,
     direction: 'incoming',
-    message_type: (msgType.includes('audio') || msgType === 'ptt') ? 'audio' : (msgType.includes('image') ? 'image' : 'text'),
-    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[Mídia recebida]',
+    message_type: incomingMediaType,
+    content: typeof userMessageContentForOpenAi === 'string' ? finalUserText : (incomingMediaType === 'image' ? '[Imagem recebida]' : '[Áudio recebido]'),
+    media_url: incomingMediaUrl,
     is_read: false,
     remote_message_id: messageId || null,
   }).then(({ error }: any) => {
@@ -967,8 +1045,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   if (aiModel.startsWith('openai/')) {
     aiModel = aiModel.replace('openai/', '');
   } else if (aiModel.includes('google/') || aiModel.includes('anthropic/')) {
-    console.log(`[Webhook] Aviso: Modelo externo (${aiModel}) detectado no endpoint OpenAI nativo. Fazendo fallback para gpt-4o-mini para evitar falha.`);
-    aiModel = 'gpt-4o-mini';
+    // Fallback para gpt-4o (NÃO gpt-4o-mini) para manter capacidade de visão/imagem
+    console.log(`[Webhook] Aviso: Modelo externo (${aiModel}) detectado no endpoint OpenAI nativo. Fazendo fallback para gpt-4o (com visão).`);
+    aiModel = 'gpt-4o';
+  }
+
+  // Se temos uma imagem para analisar, garantir que o modelo suporta visão
+  const hasImageContent = Array.isArray(userMessageContentForOpenAi) && userMessageContentForOpenAi.some((c: any) => c.type === 'image_url');
+  if (hasImageContent && (aiModel === 'gpt-4o-mini' || aiModel === 'gpt-3.5-turbo')) {
+    console.log(`[Webhook] Imagem detectada — upgrade de ${aiModel} para gpt-4o para suporte a visão`);
+    aiModel = 'gpt-4o';
+  }
+
+  if (hasImageContent) {
+    console.log(`[Webhook] 🖼️ Enviando imagem para análise com modelo: ${aiModel}`);
   }
 
   const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1076,8 +1166,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         // explicitamente definido pelo vendedor (negociacao, fechado, etc.)
         const statusCrmMap: Record<string, string> = {
           interessado: 'interessado',
+          pouco_qualificado: 'pouco_qualificado',
+          medio_qualificado: 'medio_qualificado',
           qualificado: 'qualificado',
-          encerrado:   'perdido',
         };
         await supabase.from('ai_crm_leads').update({
           status: args.status,
@@ -1088,8 +1179,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
         console.log(`[CRM] Lead ${phoneNumber} movido para: ${args.status}`);
 
-        // 2. Alertar vendedor APENAS SE status for 'qualificado'
-        if (args.status === 'qualificado') {
+        // 2. Alertar vendedor SE status indicar transferencia
+        if (args.status === 'qualificado' || args.status === 'medio_qualificado' || args.status === 'pouco_qualificado') {
           try {
             console.log(`[Transfer] Qualificado. agent.id=${agent.id} agent.user_id=${agent.user_id}`);
 

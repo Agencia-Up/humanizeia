@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -117,7 +119,17 @@ const DRAFT_KEY = 'crm_formularios_editor_draft';
 /* ─── Componente principal ──────────────────────────────────────────────── */
 export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const effectiveUserId = useMemo(() => {
+    if (sellerLoading) return null;
+    if (isSeller && seller?.user_id) return seller.user_id;
+    return user?.id || null;
+  }, [sellerLoading, isSeller, seller, user]);
   const { toast } = useToast();
+
+  // Vendedor NUNCA vê formulários do master (regra: vendedor só vê leads que ele atendeu)
+  // O bloqueio precisa vir DEPOIS de todos os hooks pra não quebrar Rules of Hooks
+  const blockSellerAccess = !sellerLoading && isSeller && !embedded;
 
   const [forms, setForms] = useState<CaptureForm[]>([]);
   const [loading, setLoading] = useState(true);
@@ -183,13 +195,13 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
   /* ── fetch ── */
   const fetchAll = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setLoading(true);
     try {
       const [{ data: f, error: fErr }, { data: i, error: iErr }, { data: cl, error: clErr }] = await Promise.all([
-        (supabase as any).from('capture_forms').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
-        (supabase as any).from('wa_instances').select('id, instance_name').eq('user_id', user.id).eq('is_active', true),
-        (supabase as any).from('wa_contact_lists').select('id, name, contact_count').eq('user_id', user.id).order('name'),
+        (supabase as any).from('capture_forms').select('*').eq('user_id', effectiveUserId).order('created_at', { ascending: false }),
+        (supabase as any).from('wa_instances').select('id, instance_name').eq('user_id', effectiveUserId).eq('is_active', true),
+        (supabase as any).from('wa_contact_lists').select('id, name, contact_count').eq('user_id', effectiveUserId).order('name'),
       ]);
       if (fErr) console.error('fetchAll forms error:', fErr.message);
       if (iErr) console.error('fetchAll instances error:', iErr.message);
@@ -202,7 +214,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [effectiveUserId]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -210,7 +222,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
   const uploadImage = async (file: File, prefix: string): Promise<string | null> => {
     try {
       const ext = file.name.split('.').pop();
-      const path = `forms/${user!.id}/${prefix}_${Date.now()}.${ext}`;
+      const path = `forms/${effectiveUserId!}/${prefix}_${Date.now()}.${ext}`;
       const { error } = await supabase.storage.from('creatives').upload(path, file, { upsert: true });
       if (error) throw error;
       return supabase.storage.from('creatives').getPublicUrl(path).data.publicUrl;
@@ -248,7 +260,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
         .from('followup_sequences')
         .select('*, steps:followup_sequence_steps(*)')
         .eq('form_id', form.id)
-        .eq('user_id', user!.id)
+        .eq('user_id', effectiveUserId!)
         .maybeSingle();
       if (seq) {
         setSequence(seq);
@@ -269,13 +281,13 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
   /* ── salvar formulário (inclui sequência de follow-up) ── */
   const handleSaveForm = async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     if (!editingForm.name.trim() || !editingForm.title.trim()) {
       toast({ title: 'Preencha nome interno e título.', variant: 'destructive' }); return;
     }
     setSaving(true);
     try {
-      const payload = { ...editingForm, user_id: user.id };
+      const payload = { ...editingForm, user_id: effectiveUserId };
       let formId = editingId;
       if (editingId) {
         const { error } = await (supabase as any).from('capture_forms').update(payload).eq('id', editingId);
@@ -293,7 +305,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
         if (!seqId) {
           const { data: newSeq, error: seqErr } = await (supabase as any)
             .from('followup_sequences')
-            .insert({ user_id: user.id, form_id: formId, name: `Sequência — ${editingForm.name}`, instance_id: editingForm.instance_id || null, is_active: true })
+            .insert({ user_id: effectiveUserId, form_id: formId, name: `Sequência — ${editingForm.name}`, instance_id: editingForm.instance_id || null, is_active: true })
             .select('id').single();
           if (seqErr) console.error('Erro ao criar sequência:', seqErr.message);
           else seqId = newSeq?.id;
@@ -306,7 +318,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
           await (supabase as any).from('followup_sequence_steps').delete().eq('sequence_id', seqId);
           for (let i = 0; i < filledSteps.length; i++) {
             await (supabase as any).from('followup_sequence_steps').insert({
-              sequence_id: seqId, user_id: user.id, step_order: i + 1,
+              sequence_id: seqId, user_id: effectiveUserId, step_order: i + 1,
               delay_hours: filledSteps[i].delay_hours, message_text: filledSteps[i].message_text,
             });
           }
@@ -333,12 +345,12 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
   /* ── criar lista de contatos inline ── */
   const handleCreateList = async () => {
-    if (!user || !newListName.trim()) return;
+    if (!effectiveUserId || !newListName.trim()) return;
     setCreatingList(true);
     try {
       const { data, error } = await (supabase as any)
         .from('wa_contact_lists')
-        .insert({ user_id: user.id, name: newListName.trim(), source: 'form' })
+        .insert({ user_id: effectiveUserId, name: newListName.trim(), source: 'form' })
         .select('id, name, contact_count')
         .single();
       if (error) throw error;
@@ -360,31 +372,31 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
   };
 
   const syncSubmissionsToCRM = async () => {
-    if (!user || !submForm || submissions.length === 0) return;
+    if (!effectiveUserId || !submForm || submissions.length === 0) return;
     setSyncingCrm(true);
     try {
       // 1. Garante que o pipeline existe
       let { data: stage } = await (supabase as any)
         .from('crm_pipeline_stages')
         .select('id')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('position', { ascending: true })
         .limit(1)
         .maybeSingle();
 
       if (!stage) {
         const defaults = [
-          { user_id: user.id, name: 'Novo Lead',   color: '#6366f1', position: 0, is_default: true },
-          { user_id: user.id, name: 'Qualificado', color: '#f59e0b', position: 1, is_default: false },
-          { user_id: user.id, name: 'Proposta',    color: '#3b82f6', position: 2, is_default: false },
-          { user_id: user.id, name: 'Negociação',  color: '#8b5cf6', position: 3, is_default: false },
-          { user_id: user.id, name: 'Fechado',     color: '#10b981', position: 4, is_default: false },
+          { user_id: effectiveUserId, name: 'Novo Lead',   color: '#6366f1', position: 0, is_default: true },
+          { user_id: effectiveUserId, name: 'Qualificado', color: '#f59e0b', position: 1, is_default: false },
+          { user_id: effectiveUserId, name: 'Proposta',    color: '#3b82f6', position: 2, is_default: false },
+          { user_id: effectiveUserId, name: 'Negociação',  color: '#8b5cf6', position: 3, is_default: false },
+          { user_id: effectiveUserId, name: 'Fechado',     color: '#10b981', position: 4, is_default: false },
         ];
         await supabase.from('crm_pipeline_stages' as any).insert(defaults);
         const { data: newStage } = await (supabase as any)
           .from('crm_pipeline_stages')
           .select('id')
-          .eq('user_id', user.id)
+          .eq('user_id', effectiveUserId)
           .order('position', { ascending: true })
           .limit(1)
           .maybeSingle();
@@ -397,7 +409,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
       const { data: existingLeads } = await (supabase as any)
         .from('crm_leads')
         .select('custom_fields')
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .like('source', 'form:%');
 
       const existingSubmissionIds = new Set(
@@ -408,7 +420,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
       const toInsert = submissions
         .filter(s => !existingSubmissionIds.has(s.id))
         .map((s, i) => ({
-          user_id: user!.id,
+          user_id: effectiveUserId!,
           stage_id: stage.id,
           name: s.name || 'Lead sem nome',
           email: s.email || null,
@@ -436,27 +448,27 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
   const openSeq = async (form: CaptureForm) => {
     setSeqForm(form);
-    const { data: seq } = await (supabase as any).from('followup_sequences').select('*, steps:followup_sequence_steps(*)').eq('form_id', form.id).eq('user_id', user!.id).maybeSingle();
+    const { data: seq } = await (supabase as any).from('followup_sequences').select('*, steps:followup_sequence_steps(*)').eq('form_id', form.id).eq('user_id', effectiveUserId!).maybeSingle();
     if (seq) { setSequence(seq); setSteps([...seq.steps].sort((a: any, b: any) => a.step_order - b.step_order)); }
     else { setSequence(null); setSteps([{ step_order: 1, delay_hours: 0, message_text: '' }]); }
     setOpenSequence(true);
   };
 
   const handleSaveSequence = async () => {
-    if (!user || !seqForm) return;
+    if (!effectiveUserId || !seqForm) return;
     if (steps.some(s => !s.message_text.trim())) { toast({ title: 'Preencha todas as mensagens.', variant: 'destructive' }); return; }
     setSavingSeq(true);
     try {
       let seqId = sequence?.id;
       if (!seqId) {
-        const { data: newSeq } = await (supabase as any).from('followup_sequences').insert({ user_id: user.id, form_id: seqForm.id, name: `Sequência — ${seqForm.name}`, instance_id: seqForm.instance_id, is_active: true }).select('id').single();
+        const { data: newSeq } = await (supabase as any).from('followup_sequences').insert({ user_id: effectiveUserId, form_id: seqForm.id, name: `Sequência — ${seqForm.name}`, instance_id: seqForm.instance_id, is_active: true }).select('id').single();
         seqId = newSeq.id;
       } else {
         await (supabase as any).from('followup_sequences').update({ instance_id: seqForm.instance_id, is_active: true }).eq('id', seqId);
       }
       await (supabase as any).from('followup_sequence_steps').delete().eq('sequence_id', seqId);
       for (let i = 0; i < steps.length; i++) {
-        await (supabase as any).from('followup_sequence_steps').insert({ sequence_id: seqId, user_id: user.id, step_order: i + 1, delay_hours: steps[i].delay_hours, message_text: steps[i].message_text });
+        await (supabase as any).from('followup_sequence_steps').insert({ sequence_id: seqId, user_id: effectiveUserId, step_order: i + 1, delay_hours: steps[i].delay_hours, message_text: steps[i].message_text });
       }
       toast({ title: '✅ Sequência salva!' }); setOpenSequence(false);
     } catch (e: any) { toast({ title: 'Erro', description: e.message, variant: 'destructive' }); }
@@ -552,6 +564,12 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
   const color = editingForm.primary_color || '#6366f1';
 
   /* ── render ── */
+
+  // Vendedor não tem acesso aos formulários (master-only feature)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   if (loading) {
     const spinner = <div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
     return embedded ? spinner : <MainLayout>{spinner}</MainLayout>;

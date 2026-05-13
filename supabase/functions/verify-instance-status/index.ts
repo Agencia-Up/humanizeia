@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
 
     const { instance_id } = await req.json();
 
-    // Get instance from DB
+    // Get instance from DB — instâncias são PER-USER, vendedor verifica as DELE
     const { data: instance, error: dbError } = await supabase
       .from('wa_instances')
       .select('id, instance_name, provider, status, is_active, api_url, api_key_encrypted')
@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Only check Evolution API instances
+    // Only check UazAPI instances
     if (instance.provider === 'meta') {
       return new Response(JSON.stringify({
         success: true,
@@ -62,26 +62,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    const apiUrl = Deno.env.get('EVOLUTION_API_URL')?.replace(/\/$/, '');
-    const apiKey = Deno.env.get('EVOLUTION_API_KEY');
+    // Use instance's own api_url and api_key (UazAPI)
+    const baseUrl = (instance.api_url || '').replace(/\/$/, '');
+    const instKey = instance.api_key_encrypted || '';
 
-    if (!apiUrl || !apiKey) {
-      return new Response(JSON.stringify({ error: 'Evolution API não configurada' }), {
-        status: 500,
+    if (!baseUrl) {
+      return new Response(JSON.stringify({ error: 'Instância sem URL de API configurada' }), {
+        status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const baseUrl = (instance.api_url || apiUrl || '').replace(/\/$/, '');
-    const instKey = instance.api_key_encrypted || apiKey;
-    const globalKey = apiKey;
-
-    // First try: instance/connectionState with global key AND instance key
-    const headers = { 
-      'Content-Type': 'application/json', 
-      'apikey': globalKey,
-      'admintoken': globalKey,
-      'Authorization': `Bearer ${globalKey}`
+    // Headers using instance's own API key (UazAPI pattern)
+    const headers = {
+      'Content-Type': 'application/json',
+      'token': instKey,
+      'apikey': instKey,
     };
     
     let realStatus = 'disconnected';
@@ -101,7 +97,6 @@ Deno.serve(async (req) => {
           headers: {
               'token': instKey,
               'apikey': instKey,
-              'admintoken': globalKey,
               'Content-Type': 'application/json'
           },
           body: JSON.stringify({})
@@ -155,11 +150,31 @@ Deno.serve(async (req) => {
       realStatus = 'error';
     }
 
+    // Try to extract the connected phone number from UazAPI response
+    let connectedPhone = '';
+    if (isConnected) {
+      const rawPhone =
+        stateData?.instance?.owner ||
+        stateData?.instance?.jid ||
+        stateData?.owner ||
+        stateData?.jid ||
+        stateData?.phoneNumber ||
+        stateData?.user?.id ||
+        stateData?.instance?.wuid ||
+        '';
+      connectedPhone = String(rawPhone).split('@')[0].split(':')[0].replace(/\D/g, '');
+    }
+
     // Update the DB with the real status
     const updateData: Record<string, unknown> = {
       status: realStatus,
       updated_at: new Date().toISOString(),
     };
+
+    // Save connected phone number if found
+    if (connectedPhone && connectedPhone.length >= 10) {
+      updateData.phone_number = connectedPhone;
+    }
 
     // If connected or connecting, activate and fix health
     if (isConnected) {

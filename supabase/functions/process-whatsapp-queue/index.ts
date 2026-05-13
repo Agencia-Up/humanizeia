@@ -195,13 +195,33 @@ Deno.serve(async (req) => {
     const startOfTodayIso = startOfToday.toISOString();
 
     for (const uid of userIds) {
-      const { data: instances } = await supabase
+      let { data: instances } = await supabase
         .from("wa_instances")
         .select("*")
         .eq("user_id", uid)
         .eq("is_active", true)
         .eq("status", "connected")
         .order("health_score", { ascending: false });
+
+      // ===== SELLER FALLBACK: se vendedor não tem instâncias, usa as do dono =====
+      if (!instances || instances.length === 0) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, manager_id")
+          .eq("id", uid)
+          .single();
+        if (profile?.role === "seller" && profile?.manager_id) {
+          console.log(`[instance-fallback] User ${uid} is seller, using manager ${profile.manager_id} instances`);
+          const { data: managerInstances } = await supabase
+            .from("wa_instances")
+            .select("*")
+            .eq("user_id", profile.manager_id)
+            .eq("is_active", true)
+            .eq("status", "connected")
+            .order("health_score", { ascending: false });
+          instances = managerInstances;
+        }
+      }
 
       if (instances && instances.length > 0) {
         const typedInstances = instances as unknown as Instance[];
@@ -366,7 +386,7 @@ Deno.serve(async (req) => {
         }
 
         // ===== ANTI-BAN: Validate number exists on WhatsApp before sending =====
-        // Skip for UazAPI — endpoint not available; Evolution API only.
+        // Skip for UazAPI — endpoint not available; UazAPI only.
         if (instance.provider === "evolution" && !isUazAPIInstance(instance)) {
           const numberValid = await validateWhatsAppNumber(instance, item.phone);
           if (!numberValid) {
@@ -413,14 +433,14 @@ Deno.serve(async (req) => {
         }
 
         // Decide if opt-in/opt-out buttons should be sent
-        // Buttons only work on standard Evolution API — UazAPI uses plain text.
+        // Buttons only work on standard UazAPI — UazAPI uses plain text.
         const shouldSendOptoutButtons = campaign?.include_optout_buttons &&
           !item.contact_metadata?.last_message_at && // only for first-time contacts
           !isUazAPIInstance(instance);
 
         let sendResult: SendResult;
         if (shouldSendOptoutButtons && instance.provider === "evolution") {
-          // Send message with interactive buttons via Evolution API
+          // Send message with interactive buttons via UazAPI
           sendResult = await sendEvolutionButtonMessage(instance, item.phone, finalMessage, [
             { buttonId: "optout_continue", buttonText: { displayText: "✅ Quero Continuar Recebendo" } },
             { buttonId: "optout_stop", buttonText: { displayText: "❌ Não Quero Mais Receber" } },
@@ -567,8 +587,28 @@ Deno.serve(async (req) => {
         console.error(`Error processing queue item ${item.id}:`, err);
         const errMsg = err instanceof Error ? err.message : "Unknown error";
 
-        // Circuit breaker
-        if (selectedInstance) {
+        // ===== DETECT DISCONNECTED INSTANCE (503 "session is not reconnectable") =====
+        // UazAPI returns 503 with "disconnected" or "not reconnectable" when the WhatsApp
+        // session is dead. Mark the instance as disconnected immediately in the DB so
+        // subsequent queue items don't keep retrying against a dead instance.
+        const isDisconnectedError = errMsg.includes("disconnected") ||
+                                     errMsg.includes("not reconnectable") ||
+                                     errMsg.includes("session closed");
+        if (selectedInstance && isDisconnectedError) {
+          console.warn(`[DISCONNECT] Instance ${selectedInstance.id} (${selectedInstance.instance_name}) is disconnected. Marking as inactive.`);
+          await supabase
+            .from("wa_instances")
+            .update({ status: "disconnected", is_active: false, health_score: 0 })
+            .eq("id", selectedInstance.id);
+          // Remove from in-memory map so no more items use it this invocation
+          const userInsts = instanceMap.get(item.user_id);
+          if (userInsts) {
+            instanceMap.set(item.user_id, userInsts.filter(i => i.id !== selectedInstance.id));
+          }
+        }
+
+        // Circuit breaker (for non-disconnect errors)
+        if (selectedInstance && !isDisconnectedError) {
           const currentFailures = (instanceFailures.get(selectedInstance.id) || 0) + 1;
           instanceFailures.set(selectedInstance.id, currentFailures);
           if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
@@ -774,7 +814,7 @@ async function selectSmartInstance(
 
 // ====================== PROVIDER ABSTRACTION ======================
 
-/** UazAPI (logos-ia.uazapi.com) uses a completely different endpoint format than Evolution API v2.
+/** UazAPI (logos-ia.uazapi.com) uses a completely different endpoint format than UazAPI.
  *  Detect it by the api_url so we can route accordingly. */
 function isUazAPIInstance(instance: Instance): boolean {
   return instance.api_url.includes("uazapi");
@@ -811,17 +851,16 @@ async function sendToUazAPI(
   const number = phone.replace(/\D/g, "");
   const token = instance.api_key_encrypted;
 
+  const authHeaders = { "Content-Type": "application/json", token, apikey: token };
+
   if (mediaUrl && mediaType) {
-    // Try UazAPI media endpoint first
-    const mediaEndpoint = mediaType === "image" ? "image" :
-                          mediaType === "video" ? "video"  :
-                          mediaType === "audio" ? "audio"  : "document";
+    // UazAPI V6: unified /send/media endpoint for all media types
     const mediaResponse = await fetchWithTimeout(
-      `${apiUrl}/send/${mediaEndpoint}`,
+      `${apiUrl}/send/media`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", token },
-        body: JSON.stringify({ number, url: mediaUrl, caption: text || "" }),
+        headers: authHeaders,
+        body: JSON.stringify({ number, url: mediaUrl, type: mediaType, caption: text || "" }),
       },
       OUTBOUND_FETCH_TIMEOUT_MS
     ).catch(() => null);
@@ -831,13 +870,29 @@ async function sendToUazAPI(
       return { remoteMessageId: data?.messageId || data?.id || null };
     }
 
+    // Fallback attempt 2: alternate body shape
+    const mediaResponse2 = await fetchWithTimeout(
+      `${apiUrl}/send/media`,
+      {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ number, media: mediaUrl, mediatype: mediaType, caption: text || "" }),
+      },
+      OUTBOUND_FETCH_TIMEOUT_MS
+    ).catch(() => null);
+
+    if (mediaResponse2 && mediaResponse2.ok) {
+      const data = await mediaResponse2.json().catch(() => ({}));
+      return { remoteMessageId: data?.messageId || data?.id || null };
+    }
+
     // Fallback: send text with media URL appended
     const fallbackText = text ? `${text}\n\n${mediaUrl}` : mediaUrl!;
     const fallbackResp = await fetchWithTimeout(
       `${apiUrl}/send/text`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", token },
+        headers: authHeaders,
         body: JSON.stringify({ number, text: fallbackText }),
       },
       OUTBOUND_FETCH_TIMEOUT_MS
@@ -855,7 +910,7 @@ async function sendToUazAPI(
     `${apiUrl}/send/text`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", token },
+      headers: authHeaders,
       body: JSON.stringify({ number, text }),
     },
     OUTBOUND_FETCH_TIMEOUT_MS
@@ -955,7 +1010,7 @@ async function sendToEvolutionAPI(
   await verifyEvolutionConnection(instance);
 
   if (mediaUrl && mediaType) {
-    // Evolution API v2: /message/sendMedia/{instance}
+    // UazAPI: /message/sendMedia/{instance}
     const v2Endpoint = `${apiUrl}/message/sendMedia/${instance.instance_name}`;
     const v1Endpoints: Record<string, string> = {
       image: "sendImage",
@@ -990,7 +1045,7 @@ async function sendToEvolutionAPI(
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Evolution API error (sendMedia): ${response.status} - ${errText}`);
+      throw new Error(`UazAPI error (sendMedia): ${response.status} - ${errText}`);
     }
     const responseBody = await response.text();
     const remoteMessageId = validateEvolutionResponse(responseBody, "sendMedia");
@@ -1008,7 +1063,7 @@ async function sendToEvolutionAPI(
   );
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`Evolution API error (sendText): ${response.status} - ${errText}`);
+    throw new Error(`UazAPI error (sendText): ${response.status} - ${errText}`);
   }
   const responseBody = await response.text();
   const remoteMessageId = validateEvolutionResponse(responseBody, "sendText");
@@ -1042,7 +1097,7 @@ async function verifyEvolutionConnection(instance: Instance) {
     }
 
     const data = await response.json();
-    // Evolution API returns { instance: { state: "open" } } when connected
+    // UazAPI returns { instance: { state: "open" } } when connected
     const state = data?.instance?.state || data?.state || data?.connectionState;
 
     if (state && state !== "open" && state !== "connected") {
@@ -1057,7 +1112,7 @@ async function verifyEvolutionConnection(instance: Instance) {
   }
 }
 
-// ===== Validate Evolution API response body for actual delivery =====
+// ===== Validate UazAPI response body for actual delivery =====
 function validateEvolutionResponse(responseBody: string, action: string): string | null {
   try {
     const data = JSON.parse(responseBody);
@@ -1084,14 +1139,14 @@ function validateEvolutionResponse(responseBody: string, action: string): string
       return remoteMessageId;
     }
 
-    console.warn(`Evolution API ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
+    console.warn(`UazAPI ${action} response has no message ID - delivery uncertain: ${responseBody.substring(0, 200)}`);
     return null;
   } catch (err) {
     if (err instanceof Error && (err.message.includes("returned error") || err.message.includes("returned error status"))) {
       throw err;
     }
     // JSON parse error — log but don't block (some versions return plain text on success)
-    console.warn(`Could not parse Evolution API ${action} response: ${responseBody.substring(0, 200)}`);
+    console.warn(`Could not parse UazAPI ${action} response: ${responseBody.substring(0, 200)}`);
     return null;
   }
 }
@@ -1110,7 +1165,7 @@ async function sendEvolutionButtonMessage(
   // Verify connection before sending
   await verifyEvolutionConnection(instance);
 
-  // Try Evolution API v2 buttons endpoint first
+  // Try UazAPI buttons endpoint first
   const payload = {
     number,
     title: "",
@@ -1152,7 +1207,7 @@ async function sendEvolutionButtonMessage(
 
     if (!response.ok) {
       const errText2 = await response.text();
-      throw new Error(`Evolution API error (sendText fallback): ${response.status} - ${errText2}`);
+      throw new Error(`UazAPI error (sendText fallback): ${response.status} - ${errText2}`);
     }
   }
   const responseBody = await response.text();
@@ -1333,7 +1388,7 @@ async function validateWhatsAppNumber(instance: Instance, phone: string): Promis
     }
 
     const data = await response.json();
-    // Evolution API returns array: [{ exists: true/false, jid: "...", number: "..." }]
+    // UazAPI returns array: [{ exists: true/false, jid: "...", number: "..." }]
     const results = Array.isArray(data) ? data : data?.data || data?.result || [];
     
     if (results.length > 0) {

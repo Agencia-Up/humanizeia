@@ -162,13 +162,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       .eq('user_id', effectiveUserId as string)
       .eq('is_active', true)
       .order('instance_name');
-    let all = (data || []) as unknown as WaInstance[];
-    // Vendedor: filtra só a instância que contém o número dele
-    if (isSeller && seller?.whatsapp_number) {
-      all = all.filter(i =>
-        i.phone_number?.replace(/\D/g, '').endsWith(seller.whatsapp_number.slice(-8))
-      );
-    }
+    const all = (data || []) as unknown as WaInstance[];
     setAllInstances(all);
     setInstances(all.filter(i => i.status === 'connected'));
   }, [effectiveUserId, isSeller, seller]);
@@ -416,10 +410,22 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       let leadId = lead?.id;
 
       if (!leadId) {
+        // Resolve agent_id: from member, or first active agent
+        let agentId = member?.agent_id || null;
+        if (!agentId) {
+          const { data: firstAgent } = await (supabase as any)
+            .from('wa_ai_agents').select('id').eq('user_id', effectiveUserId).eq('is_active', true).limit(1).single();
+          agentId = firstAgent?.id || null;
+        }
+        if (!agentId) {
+          toast({ title: 'Nenhum agente IA configurado', variant: 'destructive' });
+          return;
+        }
         const { data: newLead, error: createError } = await (supabase as any)
           .from('ai_crm_leads')
           .insert({
             user_id: effectiveUserId,
+            agent_id: agentId,
             remote_jid: jid,
             lead_name: selectedConv?.contact_name || phone,
             status: 'transferido',

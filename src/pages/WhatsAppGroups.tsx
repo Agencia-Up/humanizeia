@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import {
   Users, Search, Download, Loader2, RefreshCw, WifiOff, CheckCircle, UserPlus, Plus, Globe, FolderOpen,
@@ -132,7 +133,11 @@ function GroupTable({
 
 export default function WhatsAppGroups() {
   const { user } = useAuth();
+  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
+
+  // Grupos: vendedor usa as PRÓPRIAS instâncias e salva nos próprios dados
+  const effectiveUserId = user?.id || null;
   const [activeTab, setActiveTab] = useState<'own' | 'search'>('own');
 
   // Own groups state
@@ -160,35 +165,35 @@ export default function WhatsAppGroups() {
   const [targetListId, setTargetListId] = useState('');
 
   useEffect(() => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     (async () => {
       const { data, count } = await supabase
         .from('wa_instances')
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .eq('is_active', true);
       setHasInstance((count ?? 0) > 0);
     })();
-  }, [user]);
+  }, [effectiveUserId]);
 
   const fetchLists = useCallback(async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     const { data } = await supabase
       .from('wa_contact_lists')
       .select('id, name, contact_count')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId)
       .order('created_at', { ascending: false });
     setLists((data as ContactList[]) || []);
-  }, [user]);
+  }, [effectiveUserId]);
 
   // ===== Own Groups =====
   const fetchOwnGroups = async () => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     setIsLoadingOwn(true);
     try {
-      console.log('[WhatsAppGroups] Fetching groups for user:', user.id);
+      console.log('[WhatsAppGroups] Fetching groups for user:', effectiveUserId);
       const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
-        body: { user_id: user.id },
+        body: { user_id: effectiveUserId },
       });
       console.log('[WhatsAppGroups] Response:', JSON.stringify(data), 'Error:', error);
       if (error) throw error;
@@ -207,11 +212,11 @@ export default function WhatsAppGroups() {
 
   // ===== Search Groups by Niche =====
   const searchGroupsByNiche = async () => {
-    if (!user || !searchQuery.trim()) return;
+    if (!effectiveUserId || !searchQuery.trim()) return;
     setIsSearching(true);
     try {
       const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
-        body: { user_id: user.id, action: 'search_groups', query: searchQuery.trim() },
+        body: { user_id: effectiveUserId, action: 'search_groups', query: searchQuery.trim() },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao pesquisar grupos');
@@ -238,7 +243,7 @@ export default function WhatsAppGroups() {
   const currentGroups = activeTab === 'own' ? ownGroups : searchResults;
 
   const extractContacts = async () => {
-    if (!user || currentSelected.length === 0) return;
+    if (!effectiveUserId || currentSelected.length === 0) return;
     setIsExtracting(true);
     try {
       let listId = listMode === 'existing' ? targetListId : undefined;
@@ -247,11 +252,11 @@ export default function WhatsAppGroups() {
         const { data: newList, error: listErr } = await supabase
           .from('wa_contact_lists')
           .insert({
-            user_id: user.id,
+            user_id: effectiveUserId,
             name: newListName.trim(),
             source: 'group_extract',
             contact_count: 0,
-          })
+          } as any)
           .select('id')
           .single();
         if (listErr) throw listErr;
@@ -261,7 +266,7 @@ export default function WhatsAppGroups() {
       const selectedGroupData = currentGroups.filter(g => currentSelected.includes(g.id));
       const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
         body: {
-          user_id: user.id,
+          user_id: effectiveUserId,
           action: 'extract_contacts',
           group_ids: currentSelected,
           groups: selectedGroupData,
