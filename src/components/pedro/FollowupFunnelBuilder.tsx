@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
@@ -38,10 +38,28 @@ export function FollowupFunnelBuilder({
   leadId, userId, memberId, instanceId, onClose, onSaved,
 }: FollowupFunnelBuilderProps) {
   const { toast } = useToast();
-  const [steps, setSteps] = useState<FunnelStep[]>([
-    { message: '', delayMinutes: 0 },
-  ]);
+  // Chave por lead — cada lead tem seu próprio draft persistido
+  const draftKey = `followup_draft_${leadId}`;
+
+  // Inicializa com rascunho salvo no localStorage (se existir) ou step vazio
+  const [steps, setSteps] = useState<FunnelStep[]>(() => {
+    try {
+      const saved = localStorage.getItem(draftKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {/* ignore */}
+    return [{ message: '', delayMinutes: 0 }];
+  });
   const [saving, setSaving] = useState(false);
+
+  // Persiste o draft sempre que steps mudar (rascunho permanece se usuário sair e voltar)
+  useEffect(() => {
+    try {
+      localStorage.setItem(draftKey, JSON.stringify(steps));
+    } catch {/* ignore */}
+  }, [draftKey, steps]);
 
   const addStep = () => {
     setSteps(prev => [...prev, { message: '', delayMinutes: 10 }]);
@@ -91,6 +109,8 @@ export function FollowupFunnelBuilder({
         .eq('id', leadId);
 
       toast({ title: `✅ Funil criado com ${steps.length} etapa(s)!` });
+      // Limpa o rascunho salvo após sucesso
+      try { localStorage.removeItem(draftKey); } catch {/* ignore */}
       onSaved();
       onClose();
     } catch (err: any) {

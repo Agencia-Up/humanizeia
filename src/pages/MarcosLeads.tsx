@@ -1,8 +1,11 @@
-import { useState, lazy, Suspense } from 'react';
+import { useState, lazy, Suspense, useMemo } from 'react';
+import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Users, Inbox, Send, Smartphone, Zap, Kanban, ClipboardList, Contact } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile';
 
 // Lazy load cada sub-página
 const FluxCRM           = lazy(() => import('./FluxCRM'));
@@ -19,18 +22,42 @@ const TabLoader = () => (
   </div>
 );
 
-const tabs = [
-  { id: 'crm',         label: 'CRM',              icon: Kanban,       emoji: '📊' },
-  { id: 'formularios', label: 'Formulários',      icon: ClipboardList,emoji: '📋' },
-  { id: 'contacts',    label: 'Contatos',         icon: Contact,      emoji: '👥' },
-  { id: 'broadcast',   label: 'Disparo em Massa', icon: Send,         emoji: '📤' },
-  { id: 'inbox',       label: 'Inbox',            icon: Inbox,        emoji: '💬' },
-  { id: 'instances',   label: 'Instâncias',       icon: Smartphone,   emoji: '📱' },
-  { id: 'automations', label: 'Automações',       icon: Zap,          emoji: '⚡' },
+const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKey: keyof VisibleFeatures }[] = [
+  { id: 'crm',         label: 'CRM',              icon: Kanban,       emoji: '📊', featureKey: 'marcos_crm' },
+  { id: 'formularios', label: 'Formulários',      icon: ClipboardList,emoji: '📋', featureKey: 'marcos_formularios' },
+  { id: 'contacts',    label: 'Contatos',         icon: Contact,      emoji: '👥', featureKey: 'marcos_contatos' },
+  { id: 'broadcast',   label: 'Disparo em Massa', icon: Send,         emoji: '📤', featureKey: 'marcos_disparo' },
+  { id: 'inbox',       label: 'Inbox',            icon: Inbox,        emoji: '💬', featureKey: 'marcos_inbox' },
+  { id: 'instances',   label: 'Instâncias',       icon: Smartphone,   emoji: '📱', featureKey: 'marcos_instancias' },
+  { id: 'automations', label: 'Automações',       icon: Zap,          emoji: '⚡', featureKey: 'marcos_automacoes' },
 ];
 
 export default function MarcosLeads() {
-  const [activeTab, setActiveTab] = useState('crm');
+  const { user } = useAuth();
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+
+  // Filtra tabs por permissão (master vê tudo, seller vê só o que master liberou)
+  const tabs = useMemo(() => {
+    if (!isSeller) return ALL_TABS;
+    return ALL_TABS.filter(t => visibleFeatures[t.featureKey]);
+  }, [isSeller, visibleFeatures]);
+
+  const [activeTab, setActiveTab] = useState(() => isSeller ? (tabs[0]?.id || 'crm') : 'crm');
+
+  // Se vendedor não tem permissão para Marcos OU nenhuma sub-feature, bloqueia acesso
+  if (!sellerLoading && isSeller && (!visibleFeatures.agent_marcos || tabs.length === 0)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  if (sellerLoading) {
+    return (
+      <MainLayout>
+        <div className="flex items-center justify-center py-24">
+          <Loader2 className="h-7 w-7 animate-spin text-primary" />
+        </div>
+      </MainLayout>
+    );
+  }
 
   return (
     <MainLayout>

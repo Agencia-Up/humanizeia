@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { MainLayout } from '@/components/layout/MainLayout';
@@ -125,6 +126,10 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     return user?.id || null;
   }, [sellerLoading, isSeller, seller, user]);
   const { toast } = useToast();
+
+  // Vendedor NUNCA vê formulários do master (regra: vendedor só vê leads que ele atendeu)
+  // O bloqueio precisa vir DEPOIS de todos os hooks pra não quebrar Rules of Hooks
+  const blockSellerAccess = !sellerLoading && isSeller && !embedded;
 
   const [forms, setForms] = useState<CaptureForm[]>([]);
   const [loading, setLoading] = useState(true);
@@ -559,6 +564,12 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
   const color = editingForm.primary_color || '#6366f1';
 
   /* ── render ── */
+
+  // Vendedor não tem acesso aos formulários (master-only feature)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   if (loading) {
     const spinner = <div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
     return embedded ? spinner : <MainLayout>{spinner}</MainLayout>;
