@@ -24,6 +24,7 @@ import {
   Mail,
   Users,
   GraduationCap,
+  Bot,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -402,6 +403,8 @@ export function AppSidebar() {
   const { subscription } = useSubscription();
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
   const showMarcos = userPlan === 'pro' || userPlan === 'enterprise';
+  const showJose = userPlan === 'pro' || userPlan === 'enterprise';
+  const showEnterprise = userPlan === 'enterprise';
 
   const handleLogout = async () => {
     await signOut();
@@ -477,17 +480,39 @@ export function AppSidebar() {
             })()}
           </>
         ) : (
-          /* ── MASTER: visão completa ── */
+          /* ── MASTER: visão completa filtrada por plano ── */
           <>
             {/* ── Dashboard ── */}
             <NavGroup label="Painel" collapsed={collapsed}>
               <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
             </NavGroup>
 
+            {/* ── Pedro — SDR & Atendimento (Básico ou superior) ── */}
+            <NavGroup label="Pedro" collapsed={collapsed}>
+              <NavItem collapsed={collapsed} item={{ title: 'Pedro SDR', url: '/pedro', icon: Bot }} />
+            </NavGroup>
+
             {/* ── Marcos — Captação de Leads & WhatsApp (Pro ou superior) ── */}
             {showMarcos && (
               <NavGroup label="Marcos CRM" collapsed={collapsed}>
                 <NavMarcosExpandable collapsed={collapsed} />
+              </NavGroup>
+            )}
+
+            {/* ── Agentes adicionais conforme plano ── */}
+            {(showJose || showEnterprise) && (
+              <NavGroup label="Agentes" collapsed={collapsed}>
+                {showJose && (
+                  <NavItem collapsed={collapsed} item={{ title: 'José', url: '/jose', icon: Radar }} />
+                )}
+                {showEnterprise && <>
+                  <NavItem collapsed={collapsed} item={{ title: 'Salomão', url: '/salomao', icon: Sparkles }} />
+                  <NavItem collapsed={collapsed} item={{ title: 'Paulo', url: '/copywriter', icon: PenTool }} />
+                  <NavItem collapsed={collapsed} item={{ title: 'Maria', url: '/creative-studio', icon: Palette }} />
+                  <NavItem collapsed={collapsed} item={{ title: 'Davi', url: '/davi', icon: Instagram }} />
+                  <NavItem collapsed={collapsed} item={{ title: 'João', url: '/joao', icon: Mail }} />
+                  <NavItem collapsed={collapsed} item={{ title: 'Daniel', url: '/daniel', icon: Brain }} />
+                </>}
               </NavGroup>
             )}
 

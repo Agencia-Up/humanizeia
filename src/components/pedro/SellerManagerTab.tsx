@@ -20,6 +20,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
 import { DEFAULT_SELLER_FEATURES, type VisibleFeatures } from '@/hooks/useSellerProfile';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
+import { useSubscription } from '@/hooks/useSubscription';
 import { Label } from '@/components/ui/label';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -108,6 +110,20 @@ interface FeatureGroupStyle {
   hoverAccent: string;
 }
 
+// Tier mínimo necessário por feature de agente (baseado em AgentHub.tsx)
+const AGENT_TIER: Record<string, 'basico' | 'pro' | 'enterprise'> = {
+  agent_pedro:   'basico',
+  agent_marcos:  'pro',
+  agent_jose:    'pro',
+  agent_salomao: 'enterprise',
+  agent_paulo:   'enterprise',
+  agent_maria:   'enterprise',
+  agent_davi:    'enterprise',
+  agent_joao:    'enterprise',
+  agent_daniel:  'enterprise',
+};
+const TIER_ORDER = { basico: 0, pro: 1, enterprise: 2 };
+
 const FEATURE_GROUPS: FeatureGroupStyle[] = [
   {
     key: 'agents',
@@ -169,6 +185,22 @@ const FEATURE_GROUPS: FeatureGroupStyle[] = [
 
 export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   const { toast } = useToast();
+  const { isAdmin } = useIsAdmin();
+  const { subscription } = useSubscription();
+  const masterTier = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
+  const masterTierLevel = TIER_ORDER[masterTier as keyof typeof TIER_ORDER] ?? 0;
+
+  // Filtra agentes que estão disponíveis no plano do master
+  // Mestre só pode liberar para vendedor o que ele PRÓPRIO tem acesso
+  const availableFeatureLabels = useMemo(() => {
+    return FEATURE_LABELS.filter(f => {
+      if (f.group !== 'agents') return true; // não-agentes não dependem de plano
+      const requiredTier = AGENT_TIER[f.key as string];
+      if (!requiredTier) return true;
+      return masterTierLevel >= TIER_ORDER[requiredTier];
+    });
+  }, [masterTierLevel]);
+
   const [loading, setLoading] = useState(true);
   const [sellers, setSellers] = useState<SellerMember[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
@@ -224,7 +256,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   };
 
   const handleToggleGroup = (group: FeatureGroup) => {
-    const groupFeatures = FEATURE_LABELS.filter(f => f.group === group);
+    const groupFeatures = availableFeatureLabels.filter(f => f.group === group);
     const allActive = groupFeatures.every(f => configFeatures[f.key]);
     setConfigFeatures(prev => {
       const next = { ...prev };
@@ -805,7 +837,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                 {/* ═══════════════════ CONTEÚDO SCROLLÁVEL ═══════════════════ */}
                 <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
                   {FEATURE_GROUPS.map(group => {
-                    const items = FEATURE_LABELS.filter(f => f.group === group.key);
+                    const items = availableFeatureLabels.filter(f => f.group === group.key);
                     const activeCount = items.filter(f => configFeatures[f.key]).length;
                     const allActive = activeCount === items.length;
                     const noneActive = activeCount === 0;
