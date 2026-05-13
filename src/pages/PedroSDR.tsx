@@ -498,11 +498,14 @@ function PerformanceTab({ userId }: { userId: string | undefined }) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Potencial de compra do lead — quanto mais "quente", maior a chance de fechar venda.
+// Mantemos os valores internos low/normal/high/urgent para compatibilidade com o banco;
+// só os labels mudaram para refletir potencial em vez de prioridade.
 const PRIORITY_CONFIG = {
-  low:    { label: 'Baixa',   color: 'text-slate-400',   bg: 'bg-slate-500/10' },
-  normal: { label: 'Normal',  color: 'text-blue-400',    bg: 'bg-blue-500/10'  },
-  high:   { label: 'Alta',    color: 'text-orange-400',  bg: 'bg-orange-500/10'},
-  urgent: { label: 'Urgente', color: 'text-red-400',     bg: 'bg-red-500/10'   },
+  low:    { label: '❄️ Frio',                color: 'text-slate-400',  bg: 'bg-slate-500/10',  desc: 'Pouco interesse — apenas olhando' },
+  normal: { label: '🌡️ Morno',                color: 'text-blue-400',   bg: 'bg-blue-500/10',   desc: 'Tem interesse, pode comprar' },
+  high:   { label: '🔥 Quente',              color: 'text-orange-400', bg: 'bg-orange-500/10', desc: 'Alto interesse, perto de fechar' },
+  urgent: { label: '🚀 Pronto pra comprar',  color: 'text-red-400',    bg: 'bg-red-500/10',    desc: 'Vai comprar agora — atende já' },
 } as const;
 
 // ─── Feedback Estruturado: Opções ────────────────────────────────────────────
@@ -1793,28 +1796,41 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
               />
             </div>
 
-            {/* Prioridade + Enviar */}
-            <div className="flex items-center gap-3 pt-1">
-              <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
-                <SelectTrigger className="h-8 text-xs w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
-                    <SelectItem key={k} value={k} className="text-xs">
-                      <span className={v.color}>{v.label}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                onClick={handleSendFeedback}
-                disabled={fbLoading || !fbCity || !fbReason}
-                size="sm" className="h-8 text-xs flex-1"
-              >
-                {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
-                Enviar Feedback
-              </Button>
+            {/* Potencial de compra + Enviar */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  🎯 Potencial de compra do lead
+                </span>
+                <span className="text-[10px] text-muted-foreground/70 italic">
+                  (quão perto está de fechar a venda)
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
+                  <SelectTrigger className="h-9 text-xs w-56" title="Indique o quão próximo este lead está de comprar">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
+                      <SelectItem key={k} value={k} className="text-xs">
+                        <div className="flex flex-col gap-0.5">
+                          <span className={v.color}>{v.label}</span>
+                          <span className="text-[10px] text-muted-foreground/70">{v.desc}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={handleSendFeedback}
+                  disabled={fbLoading || !fbCity || !fbReason}
+                  size="sm" className="h-9 text-xs flex-1"
+                >
+                  {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                  Enviar Feedback
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
