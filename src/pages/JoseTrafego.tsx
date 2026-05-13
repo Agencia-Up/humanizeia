@@ -528,42 +528,64 @@ export default function JoseTrafego() {
   if (!isLoadingAccount && !accountId) {
     return (
       <MainLayout>
-        <div className="flex flex-1 items-center justify-center py-10 px-4">
-          <div className="w-full max-w-md">
-            <Card className="border-border/50 bg-card/80 overflow-hidden">
-              <div className="h-1.5 w-full bg-gradient-to-r from-orange-500 to-amber-400" />
-              <CardContent className="flex flex-col items-center gap-6 p-8 text-center">
-                <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-orange-500/10 text-4xl">
-                  🎯
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold mb-2">Conectar Meta Ads</h2>
-                  <p className="text-muted-foreground text-sm leading-relaxed">
-                    Para o José monitorar e otimizar suas campanhas, precisa da permissão de acesso à sua conta do Meta.
-                  </p>
-                </div>
-                <div className="w-full space-y-2 text-left">
-                  {[
-                    { emoji: '⚡', text: 'Conexão em menos de 2 minutos' },
-                    { emoji: '🔒', text: 'Acesso seguro via Meta OAuth' },
-                    { emoji: '🤖', text: 'José analisa e otimiza automaticamente' },
-                  ].map(item => (
-                    <div key={item.text} className="flex items-center gap-3 rounded-xl bg-muted/40 px-4 py-3">
-                      <span className="text-xl">{item.emoji}</span>
-                      <span className="text-sm font-medium">{item.text}</span>
-                    </div>
-                  ))}
-                </div>
-                <Button
-                  onClick={startOAuth}
-                  disabled={isConnecting}
-                  className="w-full h-12 text-base bg-orange-500 hover:bg-orange-600"
-                >
-                  {isConnecting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Plug className="mr-2 h-5 w-5" />}
-                  {isConnecting ? 'Conectando...' : 'Conectar minha conta'}
-                </Button>
-              </CardContent>
-            </Card>
+        <div className="flex flex-col h-full">
+          {/* ── PERSONA HEADER ── */}
+          <div className="flex items-center gap-3 px-6 pt-6 pb-4">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-orange-500/20 to-red-500/20 border border-orange-500/30 flex items-center justify-center shrink-0">
+              <Radar className="h-5 w-5 text-orange-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-xl font-bold text-foreground">José</h1>
+                <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30 text-[10px]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse mr-1.5 inline-block" />
+                  Agente Online
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Gestor de Tráfego Pago — Meta Ads &amp; Análise Automática com IA
+              </p>
+            </div>
+          </div>
+
+          {/* ── Card de conexão ── */}
+          <div className="flex-1 flex items-center justify-center py-6 px-4">
+            <div className="w-full max-w-md">
+              <Card className="border-border/50 bg-card/80 overflow-hidden">
+                <div className="h-1.5 w-full bg-gradient-to-r from-orange-500 to-amber-400" />
+                <CardContent className="flex flex-col items-center gap-6 p-8 text-center">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-orange-500/10 text-4xl">
+                    🎯
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold mb-2">Conectar Meta Ads</h2>
+                    <p className="text-muted-foreground text-sm leading-relaxed">
+                      Para o José monitorar e otimizar suas campanhas, precisa da permissão de acesso à sua conta do Meta.
+                    </p>
+                  </div>
+                  <div className="w-full space-y-2 text-left">
+                    {[
+                      { emoji: '⚡', text: 'Conexão em menos de 2 minutos' },
+                      { emoji: '🔒', text: 'Acesso seguro via Meta OAuth' },
+                      { emoji: '🤖', text: 'José analisa e otimiza automaticamente' },
+                    ].map(item => (
+                      <div key={item.text} className="flex items-center gap-3 rounded-xl bg-muted/40 px-4 py-3">
+                        <span className="text-xl">{item.emoji}</span>
+                        <span className="text-sm font-medium">{item.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <Button
+                    onClick={startOAuth}
+                    disabled={isConnecting}
+                    className="w-full h-12 text-base bg-orange-500 hover:bg-orange-600"
+                  >
+                    {isConnecting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Plug className="mr-2 h-5 w-5" />}
+                    {isConnecting ? 'Conectando...' : 'Conectar minha conta'}
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       </MainLayout>
@@ -573,29 +595,34 @@ export default function JoseTrafego() {
   /* ═══ DASHBOARD PRINCIPAL ══════════════════════════════════════════════════ */
   return (
     <MainLayout>
-      <div className="space-y-5 max-w-5xl mx-auto">
+      <div className="flex flex-col h-full">
 
-        {/* ── Header ── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-              <Radar className="h-6 w-6 text-orange-400" />
-              José
-              <Badge className="text-xs bg-orange-500/20 text-orange-400 border-orange-500/30">
-                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse inline-block mr-1" />
-                Gestor de Tráfego
-              </Badge>
-            </h1>
-            <p className="text-muted-foreground text-sm mt-0.5">
-              Meta Ads · Análise e otimização automática
-            </p>
+        {/* ── PERSONA HEADER ── */}
+        <div className="flex items-start justify-between gap-3 px-6 pt-6 pb-4 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-orange-500/20 to-red-500/20 border border-orange-500/30 flex items-center justify-center shrink-0">
+              <Radar className="h-5 w-5 text-orange-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-xl font-bold text-foreground">José</h1>
+                <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30 text-[10px]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse mr-1.5 inline-block" />
+                  Agente Online
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Gestor de Tráfego Pago — Meta Ads &amp; Análise Automática com IA
+              </p>
+            </div>
           </div>
 
+          {/* ── Action controls (account switcher, date, analyze) ── */}
           <div className="flex items-center gap-2 flex-wrap">
             {/* Account switcher */}
             {connectedAccounts.length > 1 && (
               <Select value={connectedAccount?.id ?? ''} onValueChange={selectConnectedAccount}>
-                <SelectTrigger className="w-44 h-9 text-sm">
+                <SelectTrigger className="w-44 h-9 text-xs">
                   <SelectValue placeholder="Conta" />
                 </SelectTrigger>
                 <SelectContent>
@@ -610,7 +637,7 @@ export default function JoseTrafego() {
 
             {/* Date preset */}
             <Select value={datePreset} onValueChange={v => setDatePreset(v as ApolloDatePreset)}>
-              <SelectTrigger className="w-36 h-9 text-sm">
+              <SelectTrigger className="w-36 h-9 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -624,13 +651,16 @@ export default function JoseTrafego() {
             <Button
               onClick={handleAnalyze}
               disabled={isAnalyzing || isLoadingSession || !accountId}
-              className="gap-2 h-9 bg-orange-500 hover:bg-orange-600"
+              className="gap-2 h-9 bg-orange-500 hover:bg-orange-600 text-xs"
             >
               {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
               {isAnalyzing ? 'Analisando...' : 'Analisar agora'}
             </Button>
           </div>
         </div>
+
+        {/* ── CONTEÚDO SCROLLÁVEL ── */}
+        <div className="flex-1 min-h-0 overflow-auto px-6 pb-6 space-y-5">
 
         {/* ── Health banner (só após análise) ── */}
         {session && overallScore !== null && (
@@ -919,6 +949,7 @@ export default function JoseTrafego() {
             </TabsContent>
           </Tabs>
         )}
+        </div>
       </div>
     </MainLayout>
   );
