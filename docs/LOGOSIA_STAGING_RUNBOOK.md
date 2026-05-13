@@ -78,6 +78,21 @@ Build frontend apontando para staging:
 npm.cmd run build -- --mode staging
 ```
 
+## EasyPanel Staging
+
+Para publicar o ambiente de teste no EasyPanel, criar um app separado do app de producao, por exemplo `logosia-baseteste`.
+
+Usar a branch `staging` e o mesmo `Dockerfile` do projeto. Definir os build args/envs do frontend apontando para o Supabase staging:
+
+```env
+VITE_SUPABASE_URL=https://ezoltigtqgbmftmiwjxh.supabase.co
+VITE_SUPABASE_PROJECT_ID=ezoltigtqgbmftmiwjxh
+VITE_SUPABASE_ANON_KEY=<anon/public key do staging>
+VITE_SUPABASE_PUBLISHABLE_KEY=<publishable key do staging>
+```
+
+Nao usar variaveis de producao no app `logosia-baseteste`. O app de producao e o app staging devem ter dominios, envs e deploys separados.
+
 ## Checklist Antes de Subir Para Producao
 
 - Build do staging passa.
