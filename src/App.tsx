@@ -12,29 +12,54 @@ import { AgentChatProvider } from "@/contexts/AgentChatContext";
 
 // ── Error Boundary ────────────────────────────────────────────────────────────
 // Catches render errors so a broken page never crashes the entire app.
-// Resets automatically when the user navigates to a different route.
+// Auto-retries transient errors (race conditions, lazy load timing) silently,
+// and resets automatically when the user navigates to a different route.
+const MAX_AUTO_RETRIES = 2;
+
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode; resetKey?: string },
-  { hasError: boolean }
+  { hasError: boolean; autoRetries: number; renderKey: number; lastError?: Error }
 > {
+  private retryTimer?: ReturnType<typeof setTimeout>;
+
   constructor(props: { children: React.ReactNode; resetKey?: string }) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, autoRetries: 0, renderKey: 0 };
   }
 
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, lastError: error };
   }
 
-  componentDidCatch(err: Error) {
+  componentDidCatch(err: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] Page render error:', err);
+    console.error('[ErrorBoundary] Component stack:', info.componentStack);
+
+    // Tenta retentar automaticamente erros transientes (race conditions
+    // típicas em primeiras renderizações: lazy load + hooks + queries).
+    if (this.state.autoRetries < MAX_AUTO_RETRIES) {
+      this.retryTimer = setTimeout(() => {
+        this.setState(prev => ({
+          hasError: false,
+          autoRetries: prev.autoRetries + 1,
+          renderKey: prev.renderKey + 1,
+        }));
+      }, 80);
+    }
   }
 
   componentDidUpdate(prevProps: { children: React.ReactNode; resetKey?: string }) {
-    // Auto-reset when the route changes so the next page gets a clean slate
-    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false });
+    // Auto-reset quando rota muda — próxima página parte do zero
+    if (prevProps.resetKey !== this.props.resetKey) {
+      if (this.retryTimer) clearTimeout(this.retryTimer);
+      if (this.state.hasError || this.state.autoRetries > 0) {
+        this.setState({ hasError: false, autoRetries: 0, renderKey: 0 });
+      }
     }
+  }
+
+  componentWillUnmount() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
   }
 
   render() {
@@ -46,14 +71,19 @@ class ErrorBoundary extends React.Component<
           </p>
           <button
             className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-            onClick={() => this.setState({ hasError: false })}
+            onClick={() => this.setState(prev => ({
+              hasError: false,
+              autoRetries: 0,
+              renderKey: prev.renderKey + 1,
+            }))}
           >
             Tentar novamente
           </button>
         </div>
       );
     }
-    return this.props.children;
+    // renderKey força React a remontar a sub-árvore após retentativa
+    return <React.Fragment key={this.state.renderKey}>{this.props.children}</React.Fragment>;
   }
 }
 

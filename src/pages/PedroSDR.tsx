@@ -566,15 +566,22 @@ const FEEDBACK_REASONS: { category: string; emoji: string; options: string[] }[]
 
 const STATUS_CRM_OPTIONS = [
   { value: 'novo',               label: 'Novo',              color: 'text-blue-400'    },
-  { value: 'em_atendimento',     label: 'Em Atendimento',    color: 'text-cyan-400'    },
-  { value: 'interessado',        label: 'Interessado',       color: 'text-yellow-400'  },
   { value: 'pouco_qualificado',  label: 'Pouco Qualificado', color: 'text-orange-400'  },
   { value: 'medio_qualificado',  label: 'Médio Qualificado', color: 'text-amber-400'   },
   { value: 'qualificado',        label: 'Qualificado',       color: 'text-emerald-400' },
+  { value: 'em_atendimento',     label: 'Agendamento',       color: 'text-cyan-400'    },
   { value: 'negociacao',         label: 'Negociação',        color: 'text-purple-400'  },
   { value: 'fechado',            label: 'Fechado',           color: 'text-green-400'   },
   { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
+
+// Mapeia status legacy "interessado" → exibe como "novo" no kanban (compat retroativa)
+const STATUS_DISPLAY_MAP: Record<string, string> = {
+  interessado: 'novo',
+};
+function normalizeStatus(status: string): string {
+  return STATUS_DISPLAY_MAP[status] || status;
+}
 
 function fmtDate(iso: string) {
   return new Intl.DateTimeFormat('pt-BR', {
@@ -586,11 +593,10 @@ function fmtDate(iso: string) {
 
 const PIPELINE_COLUMNS = [
   { id: 'novo',               title: 'Novo',               emoji: '🔰', border: 'border-slate-500/30',   bg: 'bg-slate-500/10',   dot: 'bg-slate-400'   },
-  { id: 'interessado',        title: 'Interessado',        emoji: '👀', border: 'border-yellow-500/30',  bg: 'bg-yellow-500/10',  dot: 'bg-yellow-400'  },
   { id: 'pouco_qualificado',  title: 'Pouco Qualif.',      emoji: '🧊', border: 'border-orange-500/30',  bg: 'bg-orange-500/10',  dot: 'bg-orange-400'  },
   { id: 'medio_qualificado',  title: 'Médio Qualif.',      emoji: '🌡️', border: 'border-amber-500/30',   bg: 'bg-amber-500/10',   dot: 'bg-amber-400'   },
   { id: 'qualificado',        title: 'Qualificado',        emoji: '🎯', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', dot: 'bg-emerald-400' },
-  { id: 'em_atendimento',     title: 'Em Atendimento',     emoji: '💬', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
+  { id: 'em_atendimento',     title: 'Agendamento',        emoji: '📅', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
   { id: 'negociacao',         title: 'Negociação',         emoji: '🤝', border: 'border-purple-500/30',  bg: 'bg-purple-500/10',  dot: 'bg-purple-400'  },
   { id: 'fechado',            title: 'Fechado',            emoji: '✅', border: 'border-green-500/30',   bg: 'bg-green-500/10',   dot: 'bg-green-400'   },
   { id: 'perdido',            title: 'Perdido',            emoji: '❌', border: 'border-red-500/30',     bg: 'bg-red-500/10',     dot: 'bg-red-400'     },
@@ -2012,7 +2018,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           <div className="overflow-x-auto pb-2 -mx-4 px-4">
             <div className="flex gap-3 min-w-max">
               {PIPELINE_COLUMNS.map(col => {
-                const colLeads = filteredLeads.filter(l => (l.status_crm || 'novo') === col.id);
+                const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo') === col.id);
                 return (
                   <div key={col.id} className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}>
                     {/* Column header */}
@@ -2111,7 +2117,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           {view === 'leads' && filterStatus === 'all' && (
             <div className="flex gap-1 flex-wrap mb-2">
               {STATUS_CRM_OPTIONS.map(opt => {
-                const count = leads.filter(l => (l.status_crm || 'novo') === opt.value).length;
+                const count = leads.filter(l => normalizeStatus(l.status_crm || 'novo') === opt.value).length;
                 if (!count) return null;
                 return (
                   <button key={opt.value} onClick={() => setFilterStatus(opt.value)}

@@ -24,6 +24,7 @@ import {
   Mail,
   Users,
   GraduationCap,
+  Bot,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -402,6 +403,8 @@ export function AppSidebar() {
   const { subscription } = useSubscription();
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
   const showMarcos = userPlan === 'pro' || userPlan === 'enterprise';
+  const showJose = userPlan === 'pro' || userPlan === 'enterprise';
+  const showEnterprise = userPlan === 'enterprise';
 
   const handleLogout = async () => {
     await signOut();
@@ -438,33 +441,35 @@ export function AppSidebar() {
       <SidebarContent className={`py-2 ${collapsed ? 'px-1' : 'px-2'}`}>
 
         {sellerLoading ? null : isSeller ? (
-          /* ── SELLER: Pedro + Marcos + itens de sistema filtrados por visibleFeatures ── */
+          /* ── SELLER: tudo agrupado em "Agentes" filtrado por visibleFeatures ── */
           <>
             {visibleFeatures.sidebar_dashboard && (
               <NavGroup label="Painel" collapsed={collapsed}>
                 <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
               </NavGroup>
             )}
-            {visibleFeatures.agent_pedro && (
-              <NavGroup label="Pedro" collapsed={collapsed}>
-                <NavPedroSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
-              </NavGroup>
-            )}
-            {visibleFeatures.agent_marcos && marcosSubItems.some(i => visibleFeatures[i.featureKey]) && (
-              <NavGroup label="Marcos CRM" collapsed={collapsed}>
-                <NavMarcosSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
-              </NavGroup>
-            )}
+
             {(() => {
-              const sellerAgentItems = allSellerAgentItems.filter(i => visibleFeatures[i.featureKey]);
-              return sellerAgentItems.length > 0 ? (
+              const showPedro  = visibleFeatures.agent_pedro;
+              const showMarcosSeller = visibleFeatures.agent_marcos && marcosSubItems.some(i => visibleFeatures[i.featureKey]);
+              const sellerExtraAgents = allSellerAgentItems.filter(i => visibleFeatures[i.featureKey]);
+              const anyAgent = showPedro || showMarcosSeller || sellerExtraAgents.length > 0;
+              if (!anyAgent) return null;
+              return (
                 <NavGroup label="Agentes" collapsed={collapsed}>
-                  {sellerAgentItems.map(item => (
+                  {showPedro && (
+                    <NavPedroSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
+                  )}
+                  {showMarcosSeller && (
+                    <NavMarcosSellerExpandable collapsed={collapsed} visibleFeatures={visibleFeatures} />
+                  )}
+                  {sellerExtraAgents.map(item => (
                     <NavItem key={item.url} item={item} collapsed={collapsed} />
                   ))}
                 </NavGroup>
-              ) : null;
+              );
             })()}
+
             {(() => {
               const sellerSysItems = allSellerSystemItems.filter(i => visibleFeatures[i.featureKey]);
               return sellerSysItems.length > 0 ? (
@@ -477,19 +482,36 @@ export function AppSidebar() {
             })()}
           </>
         ) : (
-          /* ── MASTER: visão completa ── */
+          /* ── MASTER: tudo agrupado em "Agentes" filtrado por plano ── */
           <>
             {/* ── Dashboard ── */}
             <NavGroup label="Painel" collapsed={collapsed}>
               <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
             </NavGroup>
 
-            {/* ── Marcos — Captação de Leads & WhatsApp (Pro ou superior) ── */}
-            {showMarcos && (
-              <NavGroup label="Marcos CRM" collapsed={collapsed}>
-                <NavMarcosExpandable collapsed={collapsed} />
-              </NavGroup>
-            )}
+            {/* ── Agentes (Pedro + Marcos + José + demais conforme plano) ── */}
+            <NavGroup label="Agentes" collapsed={collapsed}>
+              {/* Pedro — sempre (básico+) */}
+              <NavItem collapsed={collapsed} item={{ title: 'Pedro SDR', url: '/pedro', icon: Bot }} />
+
+              {/* Marcos — Pro+ (expandível com sub-itens) */}
+              {showMarcos && <NavMarcosExpandable collapsed={collapsed} />}
+
+              {/* José — Pro+ */}
+              {showJose && (
+                <NavItem collapsed={collapsed} item={{ title: 'José', url: '/jose', icon: Radar }} />
+              )}
+
+              {/* Enterprise (Pro Max) */}
+              {showEnterprise && <>
+                <NavItem collapsed={collapsed} item={{ title: 'Salomão', url: '/salomao', icon: Sparkles }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Paulo', url: '/copywriter', icon: PenTool }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Maria', url: '/creative-studio', icon: Palette }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Davi', url: '/davi', icon: Instagram }} />
+                <NavItem collapsed={collapsed} item={{ title: 'João', url: '/joao', icon: Mail }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Daniel', url: '/daniel', icon: Brain }} />
+              </>}
+            </NavGroup>
 
             {/* ── Sistema ── */}
             <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
