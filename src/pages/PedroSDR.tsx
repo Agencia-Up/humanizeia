@@ -1523,54 +1523,92 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           </div>
         </div>
 
-        {/* ── Feedback da IA (transferências para vendedores) ──────────────
-            Mostra o feedback que o Pedro deixou em cada repasse — texto
-            que veio em ai_lead_transfers.notes. Renderiza somente se
-            houver transferência (não cria nada do zero). */}
-        {transfers.length > 0 && (
-          <Card className="bg-gradient-to-br from-blue-500/5 to-violet-500/5 border-blue-500/20">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Bot className="h-4 w-4 text-blue-400" />
-                Feedback da IA
-                <Badge className="text-[9px] h-4 px-1.5 bg-blue-500/15 text-blue-300 border-blue-500/30">
-                  Pedro SDR
-                </Badge>
-                <span className="text-[10px] text-muted-foreground font-normal ml-auto">
-                  {transfers.length} {transfers.length === 1 ? 'transferência' : 'transferências'}
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {transfers.map(t => {
-                const reasonLabel =
-                  t.transfer_reason === 'round_robin' ? 'Rodízio automático' :
-                  t.transfer_reason === 'manual'      ? 'Repasse manual'    :
-                  t.transfer_reason || '—';
-                return (
-                  <div key={t.id} className="rounded-lg bg-card/60 border border-blue-500/15 p-3 space-y-2">
+        {/* ── Feedback da IA ──────────────────────────────────────────────
+            Mostra o que o Pedro escreveu sobre esse lead. Prioridade:
+            1) Transferências com notes rico (não começa com "via cron")
+            2) ai_crm_leads.summary (resumo da IA durante qualificação)
+            3) Fallback "via cron" — texto curto antigo. */}
+        {(() => {
+          // Identifica transferências com texto rico (mais que 1 linha ou >100 chars)
+          const richTransfers = transfers.filter(t =>
+            t.notes && (t.notes.length > 100 || t.notes.includes('\n'))
+          );
+          const cronTransfers = transfers.filter(t =>
+            t.notes && !(t.notes.length > 100 || t.notes.includes('\n'))
+          );
+          const summary = selectedLead.summary;
+          const hasAnything = richTransfers.length > 0 || summary || cronTransfers.length > 0;
+          if (!hasAnything) return null;
+
+          return (
+            <Card className="bg-gradient-to-br from-blue-500/5 to-violet-500/5 border-blue-500/20">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Bot className="h-4 w-4 text-blue-400" />
+                  Feedback da IA
+                  <Badge className="text-[9px] h-4 px-1.5 bg-blue-500/15 text-blue-300 border-blue-500/30">
+                    Pedro SDR
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {/* 1) Transferências com texto rico (briefing completo da IA) */}
+                {richTransfers.map(t => (
+                  <div key={t.id} className="rounded-lg bg-card/60 border border-blue-500/20 p-3 space-y-2">
                     <div className="flex items-center justify-between flex-wrap gap-2 text-[10px]">
                       <div className="flex items-center gap-2">
                         <span className="text-muted-foreground">Repassado para:</span>
                         <span className="text-blue-300 font-semibold">
                           {t.to_member?.name || 'Vendedor'}
                         </span>
-                        <span className="text-muted-foreground">•</span>
-                        <span className="text-muted-foreground">{reasonLabel}</span>
                       </div>
                       <span className="text-muted-foreground">{fmtDate(t.created_at)}</span>
                     </div>
-                    {t.notes && (
-                      <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
-                        {t.notes}
-                      </p>
-                    )}
+                    <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                      {t.notes}
+                    </p>
                   </div>
-                );
-              })}
-            </CardContent>
-          </Card>
-        )}
+                ))}
+
+                {/* 2) Summary do lead (se não houver transfer rico mas existir summary) */}
+                {richTransfers.length === 0 && summary && (
+                  <div className="rounded-lg bg-card/60 border border-blue-500/15 p-3 space-y-1">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+                      📋 Resumo da IA
+                    </p>
+                    <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                      {summary}
+                    </p>
+                  </div>
+                )}
+
+                {/* 3) Transferências antigas com texto curto — só se NÃO houver nada melhor */}
+                {richTransfers.length === 0 && !summary && cronTransfers.map(t => {
+                  const reasonLabel =
+                    t.transfer_reason === 'round_robin' ? 'Rodízio automático' :
+                    t.transfer_reason === 'manual'      ? 'Repasse manual'    :
+                    t.transfer_reason || '—';
+                  return (
+                    <div key={t.id} className="rounded-lg bg-muted/30 border border-border/30 p-3 space-y-1 text-xs">
+                      <div className="flex items-center justify-between flex-wrap gap-2 text-[10px]">
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Repassado para:</span>
+                          <span className="text-foreground font-semibold">
+                            {t.to_member?.name || 'Vendedor'}
+                          </span>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="text-muted-foreground">{reasonLabel}</span>
+                        </div>
+                        <span className="text-muted-foreground">{fmtDate(t.created_at)}</span>
+                      </div>
+                      <p className="text-muted-foreground italic">{t.notes}</p>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* ── Anotações ─────────────────────────────────────────────── */}
