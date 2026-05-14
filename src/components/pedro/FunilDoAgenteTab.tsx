@@ -39,6 +39,7 @@ import {
   Brain,
   Eye,
   AlertCircle,
+  Wand2,
 } from 'lucide-react';
 
 // ── Tipos dos blocos ────────────────────────────────────────────────────────
@@ -73,6 +74,68 @@ const DEFAULT_CONFIG: FunnelConfig = {
   bloco8_regras: { always: [], never: [] },
   bloco9_empresa: { name: '', address: '', hours: '', website: '', price_range: '', differentiators: '' },
 };
+
+// ── Auto-seed: pré-preenche o funil com dados que o agente JÁ TEM em wa_ai_agents
+// Roda quando o usuário abre o Funil pela primeira vez (sem config salva ainda).
+// Aproveita: name, company_name, services, address, sdr_goal, qualification_questions.
+// Campos vazios o usuário preenche depois.
+function seedConfigFromAgent(agent: any): FunnelConfig {
+  const name = (agent?.name || '').trim();
+  const company = (agent?.company_name || '').trim();
+  const address = (agent?.address || '').trim();
+  const services = (agent?.services || '').trim();
+  const sdrGoal = (agent?.sdr_goal || '').trim();
+  const qq: string[] = Array.isArray(agent?.qualification_questions)
+    ? agent.qualification_questions.filter((q: any) => typeof q === 'string' && q.trim())
+    : [];
+
+  return {
+    bloco1_identidade: {
+      agent_name: name,
+      role: 'consultor de vendas',
+      company,
+      niche: '',
+    },
+    bloco3_abordagem: {
+      objective: 'Criar conexão e identificar o cliente',
+      presentation: name && company ? `Oi! Sou o ${name}, da ${company} 😊` : '',
+      first_question: 'Você é de qual cidade?',
+      avoid: ['Falar preço antes de qualificar', 'Pressionar o cliente', 'Pular etapas do funil'],
+    },
+    bloco4_qualificacao: {
+      objective: 'Entender o perfil e necessidade do cliente',
+      questions: qq.length > 0 ? qq : ['Qual é o seu nome?', 'O que você está procurando?'],
+      required_data: ['Nome completo', 'Contato (telefone)', 'Interesse específico'],
+    },
+    bloco5_ramificacoes: { branches: [] },
+    bloco6_criterios: {
+      qualified_when: ['Tem interesse real de compra', 'Tem condições financeiras compatíveis', 'Forneceu todos os dados obrigatórios'],
+      disqualified_when: ['Sem condições financeiras mínimas no momento'],
+      closing_message: '{nome}, prefiro ser honesto com você — no momento talvez não seja o melhor cenário, mas pode me chamar quando a situação mudar 😊',
+    },
+    bloco7_transferencia: {
+      required_data: ['Nome completo', 'Contato (telefone)', 'Interesse específico'],
+      customer_message: name && company
+        ? `{nome}, vou te conectar agora com nosso especialista da ${company}! 🤝`
+        : '{nome}, vou te conectar agora com nosso especialista! 🤝',
+      internal_summary_template: company
+        ? `🔔 NOVO LEAD QUALIFICADO — ${company}\nNome: {nome}\nContato: {telefone}\nInteresse: {interesse}\nTemperatura: (FRIO/MORNO/QUENTE)\nObservações: (contexto da conversa)`
+        : `🔔 NOVO LEAD QUALIFICADO\nNome: {nome}\nContato: {telefone}\nInteresse: {interesse}\nTemperatura: (FRIO/MORNO/QUENTE)\nObservações: (contexto da conversa)`,
+    },
+    bloco8_regras: {
+      always: ['Tratar o cliente pelo nome assim que souber', 'Variar tom e aberturas das mensagens'],
+      never: ['Dar desconto sem consultar o vendedor', 'Prometer prazo de entrega sem confirmar'],
+    },
+    bloco9_empresa: {
+      name: company,
+      address,
+      hours: '',
+      website: '',
+      price_range: '',
+      differentiators: services || (sdrGoal ? `Objetivo: ${sdrGoal}` : ''),
+    },
+  };
+}
 
 // ── Helpers de UI para arrays editáveis ─────────────────────────────────────
 function ArrayEditor({
@@ -190,10 +253,11 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
     (async () => {
       setLoading(true);
       try {
-        // Status do agente (use_funnel_config + tem backup?)
+        // 1) Carrega DADOS COMPLETOS do agente (precisamos pra fazer auto-seed
+        //    se a config ainda não foi salva).
         const { data: agent } = await (supabase as any)
           .from('wa_ai_agents')
-          .select('use_funnel_config, system_prompt_backup')
+          .select('name, company_name, services, address, sdr_goal, qualification_questions, use_funnel_config, system_prompt_backup')
           .eq('id', agentId)
           .maybeSingle();
         if (!cancelled && agent) {
@@ -201,23 +265,34 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
           setHasBackup(!!agent.system_prompt_backup);
         }
 
-        // Config do funil
-        const { data } = await (supabase as any)
+        // 2) Config do funil (pode não existir ainda)
+        const { data: cfgRow } = await (supabase as any)
           .from('agent_funnel_config')
           .select('*')
           .eq('agent_id', agentId)
           .maybeSingle();
 
-        if (!cancelled && data) {
+        if (cancelled) return;
+
+        if (cfgRow) {
+          // Config já salva — usa ela
           setCfg({
-            bloco1_identidade: { ...DEFAULT_CONFIG.bloco1_identidade, ...(data.bloco1_identidade || {}) },
-            bloco3_abordagem: { ...DEFAULT_CONFIG.bloco3_abordagem, ...(data.bloco3_abordagem || {}) },
-            bloco4_qualificacao: { ...DEFAULT_CONFIG.bloco4_qualificacao, ...(data.bloco4_qualificacao || {}) },
-            bloco5_ramificacoes: { ...DEFAULT_CONFIG.bloco5_ramificacoes, ...(data.bloco5_ramificacoes || {}) },
-            bloco6_criterios: { ...DEFAULT_CONFIG.bloco6_criterios, ...(data.bloco6_criterios || {}) },
-            bloco7_transferencia: { ...DEFAULT_CONFIG.bloco7_transferencia, ...(data.bloco7_transferencia || {}) },
-            bloco8_regras: { ...DEFAULT_CONFIG.bloco8_regras, ...(data.bloco8_regras || {}) },
-            bloco9_empresa: { ...DEFAULT_CONFIG.bloco9_empresa, ...(data.bloco9_empresa || {}) },
+            bloco1_identidade: { ...DEFAULT_CONFIG.bloco1_identidade, ...(cfgRow.bloco1_identidade || {}) },
+            bloco3_abordagem: { ...DEFAULT_CONFIG.bloco3_abordagem, ...(cfgRow.bloco3_abordagem || {}) },
+            bloco4_qualificacao: { ...DEFAULT_CONFIG.bloco4_qualificacao, ...(cfgRow.bloco4_qualificacao || {}) },
+            bloco5_ramificacoes: { ...DEFAULT_CONFIG.bloco5_ramificacoes, ...(cfgRow.bloco5_ramificacoes || {}) },
+            bloco6_criterios: { ...DEFAULT_CONFIG.bloco6_criterios, ...(cfgRow.bloco6_criterios || {}) },
+            bloco7_transferencia: { ...DEFAULT_CONFIG.bloco7_transferencia, ...(cfgRow.bloco7_transferencia || {}) },
+            bloco8_regras: { ...DEFAULT_CONFIG.bloco8_regras, ...(cfgRow.bloco8_regras || {}) },
+            bloco9_empresa: { ...DEFAULT_CONFIG.bloco9_empresa, ...(cfgRow.bloco9_empresa || {}) },
+          });
+        } else if (agent) {
+          // Sem config ainda — aplica seed automático com dados do agente
+          const seeded = seedConfigFromAgent(agent);
+          setCfg(seeded);
+          toast({
+            title: '🪄 Funil pré-preenchido',
+            description: 'Usamos os dados do agente como base. Revise os blocos e clique em Salvar e Gerar Prompt.',
           });
         }
       } finally {
@@ -225,7 +300,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
       }
     })();
     return () => { cancelled = true; };
-  }, [agentId]);
+  }, [agentId, toast]);
 
   // ── Salvar config + gerar prompt ──────────────────────────────────────────
   const handleSaveAndGenerate = async () => {
@@ -260,6 +335,27 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
       toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── Re-aplicar seed dos dados do agente (sobrescreve cfg local sem salvar) ──
+  const handleReseed = async () => {
+    if (!agentId) return;
+    if (!confirm('Sobrescrever o que está preenchido com os dados originais do agente? Suas alterações nos blocos serão perdidas (mas a config salva no banco continua intacta até você clicar em Salvar).')) return;
+    try {
+      const { data: agent } = await (supabase as any)
+        .from('wa_ai_agents')
+        .select('name, company_name, services, address, sdr_goal, qualification_questions')
+        .eq('id', agentId)
+        .maybeSingle();
+      if (!agent) {
+        toast({ title: 'Agente não encontrado', variant: 'destructive' });
+        return;
+      }
+      setCfg(seedConfigFromAgent(agent));
+      toast({ title: '🪄 Funil re-preenchido com os dados do agente' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao re-preencher', description: err.message, variant: 'destructive' });
     }
   };
 
@@ -392,6 +488,16 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
             >
               <Eye className="h-3.5 w-3.5" />
               Ver Prompt Gerado
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleReseed}
+              className="text-xs gap-1.5 text-violet-400 border-violet-500/30 hover:bg-violet-500/10"
+              title="Reaproveita nome, empresa, endereço, sdr_goal e qualification_questions do agente"
+            >
+              <Wand2 className="h-3.5 w-3.5" />
+              Auto-preencher do Agente
             </Button>
             {hasBackup && (
               <Button
