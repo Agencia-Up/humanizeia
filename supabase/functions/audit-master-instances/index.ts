@@ -1,0 +1,182 @@
+// ============================================================================
+// audit-master-instances
+// ----------------------------------------------------------------------------
+// Bulk verify de todas as instâncias de uma conta master contra a Evolution
+// API. Para cada instância:
+//   - Chama connectionState na Evolution
+//   - Se desconectada: marca is_active = false, status = 'disconnected',
+//     health_score = 0
+//   - Se conectada: garante is_active = true, status = 'connected'
+//
+// Retorna relatório com cada instância e seu novo estado.
+//
+// Auth: requer JWT do master (validado contra wa_instances.user_id).
+// ============================================================================
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+};
+
+interface InstanceRow {
+  id: string;
+  instance_name: string;
+  friendly_name: string | null;
+  api_url: string | null;
+  api_key_encrypted: string | null;
+  provider: string | null;
+  status: string | null;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseService = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const supabaseAnon = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!);
+
+    // Auth: precisa de JWT válido. master_user_id resolvido pelo próprio token.
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Não autorizado' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user } } = await supabaseAnon.auth.getUser(token);
+    if (!user) {
+      return new Response(JSON.stringify({ error: 'Token inválido' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Carrega instâncias da conta. Se vendedor logado, resolve master_id via ai_team_members.
+    const { data: tmRows } = await supabaseService
+      .from('ai_team_members')
+      .select('user_id')
+      .eq('auth_user_id', user.id)
+      .limit(1);
+    const masterId = (tmRows && tmRows.length > 0) ? tmRows[0].user_id : user.id;
+
+    const { data: instances, error: instErr } = await supabaseService
+      .from('wa_instances')
+      .select('id, instance_name, friendly_name, api_url, api_key_encrypted, provider, status')
+      .eq('user_id', masterId);
+
+    if (instErr) throw new Error(instErr.message);
+
+    const report: Array<{
+      id: string;
+      friendly_name: string | null;
+      previous_status: string | null;
+      current_status: string;
+      is_active: boolean;
+      changed: boolean;
+    }> = [];
+
+    for (const inst of (instances || []) as InstanceRow[]) {
+      // Meta API: sem verificação direta — confia no que está no DB
+      if (inst.provider === 'meta') {
+        report.push({
+          id: inst.id,
+          friendly_name: inst.friendly_name,
+          previous_status: inst.status,
+          current_status: inst.status || 'unknown',
+          is_active: true,
+          changed: false,
+        });
+        continue;
+      }
+
+      const baseUrl = (inst.api_url || '').replace(/\/$/, '');
+      const apiKey = inst.api_key_encrypted || '';
+      if (!baseUrl || !apiKey) {
+        report.push({
+          id: inst.id,
+          friendly_name: inst.friendly_name,
+          previous_status: inst.status,
+          current_status: 'no_credentials',
+          is_active: false,
+          changed: inst.status !== 'no_credentials',
+        });
+        await supabaseService.from('wa_instances')
+          .update({ is_active: false, status: 'no_credentials', health_score: 0 })
+          .eq('id', inst.id);
+        continue;
+      }
+
+      let realStatus = 'disconnected';
+      let isConnected = false;
+      try {
+        let res = await fetch(
+          `${baseUrl}/instance/connectionState/${inst.instance_name}`,
+          { method: 'GET', headers: { 'Content-Type': 'application/json', token: apiKey, apikey: apiKey } },
+        );
+        if (!res.ok || res.status === 404) {
+          res = await fetch(`${baseUrl}/instance/connect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', token: apiKey, apikey: apiKey },
+            body: JSON.stringify({}),
+          });
+        }
+        const txt = await res.text();
+        let payload: any = {};
+        try { payload = JSON.parse(txt); } catch {}
+        const state = String(
+          payload?.state || payload?.instance?.state ||
+          payload?.status || payload?.instance?.status || ''
+        ).toLowerCase();
+        isConnected = state === 'open' || state === 'connected'
+          || state === 'connecting' || state === 'connected_authenticated'
+          || payload?.connected === true || payload?.instance?.connected === true
+          || payload?.loggedIn === true || payload?.instance?.loggedIn === true;
+        if (isConnected) realStatus = state === 'connecting' ? 'connecting' : 'connected';
+        else if (state === 'qrcode' || payload?.base64 || payload?.qrcode) realStatus = 'waiting_qr';
+        else realStatus = state || 'disconnected';
+      } catch {
+        realStatus = 'error';
+      }
+
+      const updates: Record<string, unknown> = { status: realStatus, updated_at: new Date().toISOString() };
+      if (isConnected) {
+        updates.is_active = true;
+        updates.health_score = 100;
+      } else if (realStatus !== 'error') {
+        updates.is_active = false;
+        if (inst.status === 'connected' && realStatus === 'disconnected') {
+          updates.health_score = 0;
+        }
+      }
+      await supabaseService.from('wa_instances').update(updates).eq('id', inst.id);
+
+      report.push({
+        id: inst.id,
+        friendly_name: inst.friendly_name,
+        previous_status: inst.status,
+        current_status: realStatus,
+        is_active: isConnected,
+        changed: inst.status !== realStatus,
+      });
+    }
+
+    const summary = {
+      total: report.length,
+      connected: report.filter(r => r.is_active).length,
+      disconnected: report.filter(r => !r.is_active).length,
+      changed: report.filter(r => r.changed).length,
+    };
+
+    return new Response(JSON.stringify({ success: true, summary, report }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});

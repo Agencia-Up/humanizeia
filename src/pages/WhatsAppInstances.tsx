@@ -158,15 +158,25 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     }
   };
 
-  const verifyAllInstances = async (instanceList: WaInstance[]) => {
+  const verifyAllInstances = async (_instanceList: WaInstance[]) => {
     setIsVerifyingAll(true);
-    const evolutionInstances = instanceList.filter(i => i.provider !== 'meta');
-    for (const inst of evolutionInstances) {
-      await verifyInstanceStatus(inst.id, true);
+    try {
+      // Bulk audit no servidor: verifica todas as instâncias da conta contra a
+      // Evolution API e DESATIVA (is_active=false) as que estão zumbi.
+      const { data, error } = await supabase.functions.invoke('audit-master-instances', { body: {} });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const summary = data?.summary || {};
+      toast({
+        title: '✅ Auditoria completa',
+        description: `${summary.connected || 0} conectadas, ${summary.disconnected || 0} desativadas (${summary.changed || 0} mudaram).`,
+      });
+    } catch (err: any) {
+      toast({ title: 'Erro na auditoria', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsVerifyingAll(false);
+      await fetchInstances(true);
     }
-    setIsVerifyingAll(false);
-    // Re-fetch to get updated data
-    await fetchInstances(true);
   };
 
   const fetchInstances = async (skipVerify = false) => {

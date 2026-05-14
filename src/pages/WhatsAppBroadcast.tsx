@@ -89,12 +89,19 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // Vendedor vê apenas o que tem seller_member_id = seller.id.
       const isolateBySeller = isSeller && seller?.id;
 
+      // Disparo: vendedor só usa instâncias DELE; master só usa as PRÓPRIAS dele
+      // (NÃO pode disparar usando instância de vendedor — supervisor visualiza,
+      // mas não opera com número alheio).
       let instancesQuery = (supabase as any)
         .from('wa_instances')
         .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id')
         .eq('user_id', effectiveUserId)
         .eq('is_active', true);
-      if (isolateBySeller) instancesQuery = instancesQuery.eq('seller_member_id', seller!.id);
+      if (isolateBySeller) {
+        instancesQuery = instancesQuery.eq('seller_member_id', seller!.id);
+      } else {
+        instancesQuery = instancesQuery.is('seller_member_id', null);
+      }
 
       let campaignsQuery = (supabase as any)
         .from('wa_campaigns')

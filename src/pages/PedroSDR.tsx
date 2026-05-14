@@ -798,12 +798,22 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           .eq('user_id', isSeller ? userId : effectiveUserId)
           .order('created_at', { ascending: false })
           .limit(50),
-        // Cada conta vê SOMENTE suas próprias instâncias para follow-up
-        (supabase as any)
-          .from('wa_instances')
-          .select('id, friendly_name, phone_number, instance_name, status')
-          .eq('user_id', userId)
-          .eq('is_active', true),
+        // Follow-up: vendedor usa apenas a instância DELE; master usa apenas
+        // as próprias dele (seller_member_id IS NULL). Master NÃO usa
+        // instâncias de vendedores mesmo enxergando-as em outras telas.
+        (() => {
+          let q = (supabase as any)
+            .from('wa_instances')
+            .select('id, friendly_name, phone_number, instance_name, status, seller_member_id')
+            .eq('user_id', effectiveUserId)
+            .eq('is_active', true);
+          if (isSeller && memberIds.length > 0) {
+            q = q.in('seller_member_id', memberIds);
+          } else {
+            q = q.is('seller_member_id', null);
+          }
+          return q;
+        })(),
         (supabase as any)
           .from('ai_team_members')
           .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
