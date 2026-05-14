@@ -152,6 +152,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   useEffect(() => {
     if (open) {
       console.info("!!! HUMANIZEIA UAZAPI DEBUG V5.3 ACTIVE (OpenAI + Stability) !!!");
+    } else {
+      // Ao fechar o modal, reseta a aba pra "general" (próxima abertura
+      // sempre começa em Geral, não na última aba que ficou aberta).
+      setActiveTab('general');
     }
   }, [open]);
   const { user } = useAuth();
@@ -164,6 +168,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+
+  // Tabs controladas: garante que mudança não é resetada por re-renders
+  // (modos uncontrolled remountam pra default em alguns cenários)
+  const [activeTab, setActiveTab] = useState<string>('general');
 
   const [name, setName] = useState('Agente IA');
   const [agentType, setAgentType] = useState('generic');
@@ -710,7 +718,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="sm:max-w-4xl max-h-[92vh]">
+      <DialogContent className="w-[95vw] max-w-3xl max-h-[92vh] p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-primary" />
@@ -720,7 +728,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         </DialogHeader>
 
         <ScrollArea className="max-h-[72vh] pr-4">
-          <Tabs defaultValue="general" className="space-y-6">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <div className="w-full pb-4 border-b">
               {/* Contêiner em grid/auto-wrap para garantir que as abas não cortem */}
               <TabsList className="flex flex-wrap h-auto w-full items-center justify-start gap-1.5 bg-transparent p-0 border-none shadow-none">
