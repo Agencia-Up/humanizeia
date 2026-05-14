@@ -70,6 +70,7 @@ Deno.serve(async (req) => {
       include_optout_buttons,
       reply_auto_tag,
       reply_auto_message,
+      seller_member_id, // vendedor logado: marcar pra isolamento. master: null.
     } = body;
 
     // --- Validation ---
@@ -239,6 +240,7 @@ Deno.serve(async (req) => {
       include_optout_buttons: include_optout_buttons === true,
       reply_auto_tag: reply_auto_tag?.trim() || null,
       reply_auto_message: reply_auto_message?.trim() || null,
+      seller_member_id: seller_member_id || null,
     };
 
     // Determine status

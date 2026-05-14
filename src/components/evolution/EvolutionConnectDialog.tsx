@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -25,7 +26,14 @@ interface EvolutionConnectDialogProps {
 
 export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initialInstanceName, initialFriendlyName }: EvolutionConnectDialogProps) {
   const { user } = useAuth();
+  const { isSeller, seller } = useSellerProfile(user?.id);
   const queryClient = useQueryClient();
+
+  // Modelo unificado: TODA instância vai pra conta master (user_id = master_id).
+  // Quando vendedor cria, marcamos seller_member_id pra isolar visibilidade dele.
+  // Master logado: user_id = ele mesmo, sem seller_member_id.
+  const effectiveOwnerId = (isSeller && seller?.user_id) ? seller.user_id : user?.id;
+  const effectiveSellerMemberId = (isSeller && seller?.id) ? seller.id : null;
 
   const [step, setStep] = useState<Step>('provider');
   const [provider, setProvider] = useState<Provider>('evolution');
@@ -92,7 +100,8 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
           provider: 'evolution',
           instance_name: String(slug),
           friendly_name: String(friendlyName || activeOverride || ""),
-          user_id: String(user?.id || ""),
+          user_id: String(effectiveOwnerId || ""),
+          seller_member_id: effectiveSellerMemberId,
         },
       });
       if (error) throw error;
@@ -140,7 +149,8 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
       const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
         body: {
           provider: 'meta',
-          user_id: user!.id,
+          user_id: effectiveOwnerId,
+          seller_member_id: effectiveSellerMemberId,
           friendly_name: metaFriendlyName.trim(),
           phone_number_id: metaPhoneNumberId.trim(),
           waba_id: metaWabaId.trim() || null,

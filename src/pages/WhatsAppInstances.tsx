@@ -306,6 +306,8 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   };
 
   const activeCount = instances.filter(i => i.is_active && i.status === 'connected').length;
+  // Pool conta SOMENTE ativas (is_active = true). Desativadas liberam vaga.
+  const poolUsed = instances.filter(i => i.is_active).length;
   const totalHealth = instances.length > 0
     ? Math.round(instances.reduce((s, i) => s + (i.health_score ?? 0), 0) / instances.length)
     : 0;
@@ -342,10 +344,12 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
             )}
             <Button
               onClick={() => {
-                if (instances.length >= maxInstances) {
+                if (poolUsed >= maxInstances) {
                   toast({
                     title: `Limite de ${maxInstances} instâncias atingido`,
-                    description: 'Faça upgrade do seu plano para conectar mais números.',
+                    description: isSeller
+                      ? 'Você já possui um número conectado. Desative-o antes de conectar outro.'
+                      : 'Limite do plano atingido. Desative uma instância ou faça upgrade.',
                     variant: 'destructive',
                   });
                   return;
@@ -355,7 +359,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
               className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white gap-2"
             >
               <Plus className="h-4 w-4" />
-              Conectar Número ({instances.length}/{maxInstances})
+              Conectar Número ({poolUsed}/{maxInstances})
             </Button>
           </div>
         </div>

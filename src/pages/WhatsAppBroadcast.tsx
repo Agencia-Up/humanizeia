@@ -85,28 +85,34 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
     if (!effectiveUserId) return;
     setIsLoading(true);
     try {
-      // Vendedor: só vê instâncias atribuídas a ele (seller_member_id = seller.id)
-      // Master: vê todas as instâncias ativas da conta
+      // Modelo: master vê TUDO (instâncias + listas + campanhas da conta).
+      // Vendedor vê apenas o que tem seller_member_id = seller.id.
+      const isolateBySeller = isSeller && seller?.id;
+
       let instancesQuery = (supabase as any)
         .from('wa_instances')
         .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id')
         .eq('user_id', effectiveUserId)
         .eq('is_active', true);
-      if (isSeller && seller?.id) {
-        instancesQuery = instancesQuery.eq('seller_member_id', seller.id);
-      }
+      if (isolateBySeller) instancesQuery = instancesQuery.eq('seller_member_id', seller!.id);
+
+      let campaignsQuery = (supabase as any)
+        .from('wa_campaigns')
+        .select('*')
+        .eq('user_id', effectiveUserId)
+        .order('created_at', { ascending: false });
+      if (isolateBySeller) campaignsQuery = campaignsQuery.eq('seller_member_id', seller!.id);
+
+      let listsQuery = (supabase as any)
+        .from('wa_contact_lists')
+        .select('id, name, contact_count, source, created_at')
+        .eq('user_id', effectiveUserId)
+        .order('created_at', { ascending: false });
+      if (isolateBySeller) listsQuery = listsQuery.eq('seller_member_id', seller!.id);
 
       const [campaignsRes, listsRes, instancesRes] = await Promise.all([
-        supabase
-          .from('wa_campaigns')
-          .select('*')
-          .eq('user_id', effectiveUserId)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('wa_contact_lists')
-          .select('id, name, contact_count, source, created_at')
-          .eq('user_id', effectiveUserId)
-          .order('created_at', { ascending: false }),
+        campaignsQuery,
+        listsQuery,
         instancesQuery,
       ]);
 
@@ -168,6 +174,8 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         tags: data.tags.length > 0 ? data.tags : null,
         variation_level: data.variation_level || 'medium',
         include_optout_buttons: data.include_optout_buttons ?? false,
+        // Modelo: vendedor cria campanha → fica isolada por seller_member_id
+        seller_member_id: (isSeller && seller?.id) ? seller.id : null,
       };
 
       const { data: result, error } = await supabase.functions.invoke('save-campaign', {
