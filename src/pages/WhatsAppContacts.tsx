@@ -307,7 +307,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   };
 
   // ===== Importação de leads do Pedro =====
-  // Vendedor: só vê leads que ELE atendeu (assigned_to_id = seller.id)
+  // Vendedor: só vê leads que ELE atendeu (assigned_to_member_id = seller.id)
   // Master: vê todos os leads do Pedro da conta
   const openPedroImportDialog = async () => {
     if (!effectiveUserId) return;
@@ -322,7 +322,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         .select('id', { count: 'exact', head: true })
         .eq('user_id', effectiveUserId);
       if (isSeller && seller?.id) {
-        q = q.eq('assigned_to_id', seller.id);
+        q = q.eq('assigned_to_member_id', seller.id);
       }
       const { count } = await q;
       setPedroLeadCount(count || 0);
@@ -356,7 +356,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         .select('remote_jid, lead_name')
         .eq('user_id', effectiveUserId);
       if (isSeller && seller?.id) {
-        leadsQuery = leadsQuery.eq('assigned_to_id', seller.id);
+        leadsQuery = leadsQuery.eq('assigned_to_member_id', seller.id);
       }
       const { data: leads, error: leadsErr } = await leadsQuery;
       if (leadsErr) throw leadsErr;

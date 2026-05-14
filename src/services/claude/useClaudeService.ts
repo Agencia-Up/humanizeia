@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { SUPABASE_PUBLIC_KEY, supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/integrations/supabase/client';
 import type {
   CampaignContext,
   StrategyResponse,
@@ -16,7 +16,7 @@ const EDGE_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/cla
 
 async function getSessionToken(): Promise<string> {
   const { data } = await supabase.auth.getSession();
-  return data?.session?.access_token || SUPABASE_PUBLIC_KEY;
+  return data?.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 }
 
 export function useClaudeService() {
@@ -37,7 +37,7 @@ export function useClaudeService() {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': SUPABASE_PUBLIC_KEY,
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
         body: JSON.stringify({
           action: 'generateStrategy',
@@ -75,7 +75,7 @@ export function useClaudeService() {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': SUPABASE_PUBLIC_KEY,
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
         body: JSON.stringify({
           action: 'validateCampaign',
@@ -114,7 +114,7 @@ export function useClaudeService() {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': SUPABASE_PUBLIC_KEY,
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
         body: JSON.stringify({
           action: 'analyzeAndOptimize',
@@ -153,7 +153,7 @@ export function useClaudeService() {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': SUPABASE_PUBLIC_KEY,
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
         body: JSON.stringify({
           action: 'chat',
