@@ -139,7 +139,9 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     setLoadingLeads(true);
     const { data } = await (supabase as any)
       .from('ai_crm_leads')
-      .select('id, remote_jid, lead_name, status, ai_paused, instance_id, agent_id, message_count, last_interaction_at, summary')
+      // message_count NÃO está no SELECT porque a coluna não existe em ai_crm_leads.
+      // O valor é calculado dinamicamente abaixo via wa_chat_history (useEffect).
+      .select('id, remote_jid, lead_name, status, ai_paused, instance_id, agent_id, last_interaction_at, summary')
       .eq('agent_id', selectedAgentId)
       .eq('user_id', userId)
       .order('last_interaction_at', { ascending: false });

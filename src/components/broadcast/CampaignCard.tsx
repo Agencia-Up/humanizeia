@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { SUPABASE_PUBLIC_KEY, supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   Play, Pause, CheckCircle, XCircle, Clock, Zap, Loader2,
@@ -75,7 +75,7 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${session.access_token}`,
-            apikey: SUPABASE_PUBLIC_KEY,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
           body: JSON.stringify({ campaign_id: campaign.id }),
         }
