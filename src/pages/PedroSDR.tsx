@@ -899,6 +899,18 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     }
   };
 
+  const handleDeleteNote = async (noteId: string) => {
+    if (!confirm('Apagar esta anotação? Esta ação não pode ser desfeita.')) return;
+    try {
+      const { error } = await (supabase as any).from('pedro_crm_notes').delete().eq('id', noteId);
+      if (error) throw error;
+      setNotes(prev => prev.filter(n => n.id !== noteId));
+      toast({ title: 'Anotação apagada.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao apagar', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const toggleNotePin = async (noteId: string, currentPinned: boolean) => {
     try {
       await (supabase as any).from('pedro_crm_notes').update({ is_pinned: !currentPinned }).eq('id', noteId);
@@ -1537,6 +1549,14 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                           title="Enviar ao gerente"
                         >
                           <Send className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost" size="sm"
+                          onClick={() => handleDeleteNote(n.id)}
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-red-400"
+                          title="Apagar anotação"
+                        >
+                          <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
                     </div>
