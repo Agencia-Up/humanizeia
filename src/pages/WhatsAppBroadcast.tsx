@@ -85,6 +85,17 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
     if (!effectiveUserId) return;
     setIsLoading(true);
     try {
+      // Vendedor: só vê instâncias atribuídas a ele (seller_member_id = seller.id)
+      // Master: vê todas as instâncias ativas da conta
+      let instancesQuery = (supabase as any)
+        .from('wa_instances')
+        .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id')
+        .eq('user_id', effectiveUserId)
+        .eq('is_active', true);
+      if (isSeller && seller?.id) {
+        instancesQuery = instancesQuery.eq('seller_member_id', seller.id);
+      }
+
       const [campaignsRes, listsRes, instancesRes] = await Promise.all([
         supabase
           .from('wa_campaigns')
@@ -96,11 +107,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
           .select('id, name, contact_count, source, created_at')
           .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false }),
-        supabase
-          .from('wa_instances')
-          .select('id, friendly_name, phone_number, is_active, health_score, provider, status')
-          .eq('user_id', effectiveUserId)
-          .eq('is_active', true),
+        instancesQuery,
       ]);
 
       if (campaignsRes.error) throw campaignsRes.error;
@@ -114,7 +121,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
     } finally {
       setIsLoading(false);
     }
-  }, [effectiveUserId, toast]);
+  }, [effectiveUserId, isSeller, seller?.id, toast]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
