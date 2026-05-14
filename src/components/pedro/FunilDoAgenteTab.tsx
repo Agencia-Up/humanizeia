@@ -9,7 +9,7 @@
 // Botão "Restaurar Prompt Anterior" → rollback 1-clique.
 // ============================================================================
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,9 @@ import {
   AccordionTrigger,
 } from '@/components/ui/accordion';
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import {
   Loader2,
   Save,
   RotateCcw,
@@ -34,6 +37,8 @@ import {
   Sparkles,
   ShieldCheck,
   Brain,
+  Eye,
+  AlertCircle,
 } from 'lucide-react';
 
 // ── Tipos dos blocos ────────────────────────────────────────────────────────
@@ -157,6 +162,27 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
   const [hasBackup, setHasBackup] = useState(false);
   const [cfg, setCfg] = useState<FunnelConfig>(DEFAULT_CONFIG);
 
+  // Preview do prompt gerado
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewText, setPreviewText] = useState('');
+
+  // Validação: blocos críticos pra IA funcionar bem (não bloqueiam, só avisam)
+  const validation = useMemo(() => {
+    const missing: string[] = [];
+    if (!cfg.bloco1_identidade.agent_name?.trim()) missing.push('Bloco 1: Nome do agente');
+    if (!cfg.bloco1_identidade.company?.trim()) missing.push('Bloco 1: Empresa');
+    if (!cfg.bloco3_abordagem.presentation?.trim()) missing.push('Bloco 3: Apresentação inicial');
+    if (!cfg.bloco3_abordagem.first_question?.trim()) missing.push('Bloco 3: Primeira pergunta');
+    if (!cfg.bloco4_qualificacao.questions || cfg.bloco4_qualificacao.questions.length === 0)
+      missing.push('Bloco 4: Pelo menos 1 pergunta de qualificação');
+    if (!cfg.bloco7_transferencia.required_data || cfg.bloco7_transferencia.required_data.length === 0)
+      missing.push('Bloco 7: Dados obrigatórios para transferência');
+    if (!cfg.bloco7_transferencia.customer_message?.trim()) missing.push('Bloco 7: Mensagem ao cliente');
+    if (!cfg.bloco9_empresa.name?.trim()) missing.push('Bloco 9: Nome da empresa');
+    return { isValid: missing.length === 0, missing };
+  }, [cfg]);
+
   // ── Carrega config existente + status do agente ───────────────────────────
   useEffect(() => {
     if (!agentId) return;
@@ -237,6 +263,39 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
     }
   };
 
+  // ── Preview do prompt gerado (lê o atual do agente OU mostra gerado on-the-fly) ──
+  const handlePreview = async () => {
+    if (!agentId) return;
+    setPreviewLoading(true);
+    setPreviewOpen(true);
+    try {
+      // 1) Tenta ler o prompt gerado da tabela agent_funnel_config (último salvo)
+      const { data: cfgRow } = await (supabase as any)
+        .from('agent_funnel_config')
+        .select('generated_system_prompt')
+        .eq('agent_id', agentId)
+        .maybeSingle();
+
+      if (cfgRow?.generated_system_prompt) {
+        setPreviewText(cfgRow.generated_system_prompt);
+        return;
+      }
+
+      // 2) Fallback: lê o system_prompt atual do agente (pode ser manual)
+      const { data: agent } = await (supabase as any)
+        .from('wa_ai_agents')
+        .select('system_prompt')
+        .eq('id', agentId)
+        .maybeSingle();
+      setPreviewText(
+        agent?.system_prompt
+        || '(O funil ainda não foi gerado. Clique em "Salvar e Gerar Prompt" pra criar.)'
+      );
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   // ── Restaurar prompt anterior (rollback) ──────────────────────────────────
   const handleRestore = async () => {
     if (!agentId) return;
@@ -299,8 +358,23 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
             </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-0">
-          <div className="flex gap-2">
+        <CardContent className="pt-0 space-y-2">
+          {/* Alerta de campos faltando */}
+          {!validation.isValid && (
+            <div className="flex items-start gap-2 p-2 rounded-md border border-amber-500/30 bg-amber-500/5 text-amber-300/90">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <div className="text-[11px] leading-relaxed">
+                <span className="font-medium">Campos recomendados não preenchidos ({validation.missing.length}):</span>{' '}
+                {validation.missing.slice(0, 3).join(' · ')}
+                {validation.missing.length > 3 && ` · +${validation.missing.length - 3} outros`}
+                <div className="text-[10px] text-amber-300/60 mt-0.5">
+                  Você pode salvar mesmo assim, mas a IA pode ter respostas com lacunas.
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
               onClick={handleSaveAndGenerate}
@@ -309,6 +383,15 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
               Salvar e Gerar Prompt
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handlePreview}
+              className="text-xs gap-1.5"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              Ver Prompt Gerado
             </Button>
             {hasBackup && (
               <Button
@@ -711,7 +794,16 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
       </Accordion>
 
       {/* Botão final (mesmo do header, pra usuário não ter que rolar pra cima) */}
-      <div className="flex justify-end gap-2 pt-2 pb-6">
+      <div className="flex flex-wrap justify-end gap-2 pt-2 pb-6">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handlePreview}
+          className="text-xs gap-1.5"
+        >
+          <Eye className="h-3.5 w-3.5" />
+          Ver Prompt Gerado
+        </Button>
         {hasBackup && (
           <Button
             size="sm"
@@ -734,6 +826,55 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
           Salvar e Gerar Prompt
         </Button>
       </div>
+
+      {/* Dialog de preview do prompt gerado */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <Eye className="h-4 w-4 text-blue-400" />
+              Prompt do Funil — exatamente o que a IA recebe
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Esse é o system prompt que está atualmente em <code className="text-blue-400">wa_ai_agents.system_prompt</code>.
+              O webhook envia isso para a IA toda vez que um cliente manda mensagem.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto rounded-md border border-border/50 bg-muted/30 p-3">
+            {previewLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+              </div>
+            ) : (
+              <pre className="text-[11px] leading-relaxed whitespace-pre-wrap font-mono">
+                {previewText}
+              </pre>
+            )}
+          </div>
+          <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
+            <span className="text-[10px] text-muted-foreground">
+              {previewText.length.toLocaleString()} caracteres
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(previewText);
+                  toast({ title: '📋 Prompt copiado pra área de transferência' });
+                }}
+                disabled={previewLoading || !previewText}
+                className="text-xs"
+              >
+                Copiar
+              </Button>
+              <Button size="sm" onClick={() => setPreviewOpen(false)} className="text-xs">
+                Fechar
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
