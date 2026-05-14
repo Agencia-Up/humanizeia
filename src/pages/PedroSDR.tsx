@@ -642,6 +642,16 @@ interface Feedback {
   lead?: { lead_name: string } | null;
 }
 
+// Feedback da IA gerado no momento da transferência (ai_lead_transfers.notes)
+interface LeadTransfer {
+  id: string;
+  lead_id: string;
+  transfer_reason: string | null;
+  notes: string | null;
+  created_at: string;
+  to_member?: { name: string } | null;
+}
+
 interface FollowupSchedule {
   id: string;
   lead_id: string;
@@ -683,6 +693,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
+  const [transfers, setTransfers] = useState<LeadTransfer[]>([]);
   const [view, setView] = useState<'pipeline' | 'leads' | 'feedbacks' | 'sellers'>('pipeline');
 
   // filter states
@@ -861,7 +872,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
   const loadLeadDetail = async (lead: CrmLead) => {
     setSelectedLead(lead);
-    const [notesRes, schedRes] = await Promise.all([
+    const [notesRes, schedRes, transfersRes] = await Promise.all([
       (supabase as any)
         .from('pedro_crm_notes')
         .select('id, lead_id, content, is_pinned, created_at, member:ai_team_members(name)')
@@ -873,9 +884,16 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         .select('id, lead_id, scheduled_at, message_template, status, created_at')
         .eq('lead_id', lead.id)
         .order('scheduled_at', { ascending: true }),
+      // Feedback da IA gerado em cada transferência (ai_lead_transfers.notes)
+      (supabase as any)
+        .from('ai_lead_transfers')
+        .select('id, lead_id, transfer_reason, notes, created_at, to_member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name)')
+        .eq('lead_id', lead.id)
+        .order('created_at', { ascending: false }),
     ]);
     setNotes(notesRes.data || []);
     setSchedules(schedRes.data || []);
+    setTransfers(transfersRes.data || []);
   };
 
   const handleAddNote = async () => {
@@ -1504,6 +1522,55 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             </Button>
           </div>
         </div>
+
+        {/* ── Feedback da IA (transferências para vendedores) ──────────────
+            Mostra o feedback que o Pedro deixou em cada repasse — texto
+            que veio em ai_lead_transfers.notes. Renderiza somente se
+            houver transferência (não cria nada do zero). */}
+        {transfers.length > 0 && (
+          <Card className="bg-gradient-to-br from-blue-500/5 to-violet-500/5 border-blue-500/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Bot className="h-4 w-4 text-blue-400" />
+                Feedback da IA
+                <Badge className="text-[9px] h-4 px-1.5 bg-blue-500/15 text-blue-300 border-blue-500/30">
+                  Pedro SDR
+                </Badge>
+                <span className="text-[10px] text-muted-foreground font-normal ml-auto">
+                  {transfers.length} {transfers.length === 1 ? 'transferência' : 'transferências'}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {transfers.map(t => {
+                const reasonLabel =
+                  t.transfer_reason === 'round_robin' ? 'Rodízio automático' :
+                  t.transfer_reason === 'manual'      ? 'Repasse manual'    :
+                  t.transfer_reason || '—';
+                return (
+                  <div key={t.id} className="rounded-lg bg-card/60 border border-blue-500/15 p-3 space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2 text-[10px]">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Repassado para:</span>
+                        <span className="text-blue-300 font-semibold">
+                          {t.to_member?.name || 'Vendedor'}
+                        </span>
+                        <span className="text-muted-foreground">•</span>
+                        <span className="text-muted-foreground">{reasonLabel}</span>
+                      </div>
+                      <span className="text-muted-foreground">{fmtDate(t.created_at)}</span>
+                    </div>
+                    {t.notes && (
+                      <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                        {t.notes}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* ── Anotações ─────────────────────────────────────────────── */}
