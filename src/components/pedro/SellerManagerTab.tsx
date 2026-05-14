@@ -264,31 +264,28 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
     if (!configSellerId) return;
     setSavingConfig(true);
     try {
-      // Busca o auth_user_id do vendedor sendo configurado
+      // Identifica TODOS os registros do mesmo vendedor (mesmo whatsapp_number
+      // + mesmo master). Importante porque ele pode ter múltiplos registros
+      // (um por agente de IA), e nem todos têm auth_user_id preenchido.
       const targetSeller = sellers.find(s => s.id === configSellerId);
-      const authUid = targetSeller?.auth_user_id;
+      if (!targetSeller) throw new Error('Vendedor não encontrado');
 
-      // Atualiza o registro atual
+      const sellerWhatsapp = targetSeller.whatsapp_number;
+      const sellerMasterUserId = userId; // master logado
+
+      // Atualiza TODOS os registros que pertencem a esse vendedor
+      // (filtrando por whatsapp + master pra cobrir duplicados sem auth_user_id).
       const { error } = await (supabase as any)
         .from('ai_team_members')
         .update({ visible_features: configFeatures })
-        .eq('id', configSellerId);
+        .eq('user_id', sellerMasterUserId)
+        .eq('whatsapp_number', sellerWhatsapp);
       if (error) throw error;
 
-      // Se o vendedor tem auth_user_id, sincroniza features em TODOS os registros dele
-      // (pode ter registros em múltiplos agentes)
-      if (authUid) {
-        await (supabase as any)
-          .from('ai_team_members')
-          .update({ visible_features: configFeatures })
-          .eq('auth_user_id', authUid)
-          .neq('id', configSellerId);
-      }
-
-      // Update local state
+      // Update local state — atualiza todos os registros com mesmo whatsapp
       setSellers(prev => prev.map(s =>
-        s.id === configSellerId ? { ...s, visible_features: configFeatures }
-          : (authUid && s.auth_user_id === authUid) ? { ...s, visible_features: configFeatures }
+        s.whatsapp_number === sellerWhatsapp
+          ? { ...s, visible_features: configFeatures }
           : s
       ));
       setInitialFeatures({ ...configFeatures });
