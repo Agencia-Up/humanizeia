@@ -103,7 +103,7 @@ export default function MeuPlano() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const {
-    subscription, transactions, loading,
+    subscription, transactions, loading, error, refetch,
     tokensAvailable, tokensTotal, usagePercent,
     planInfo, purchaseTokens, upgradePlan,
   } = useSubscription();
@@ -121,7 +121,26 @@ export default function MeuPlano() {
     );
   }
 
-  if (!subscription) return null;
+  // Erro ou subscription ausente: mostra mensagem com ação (em vez de tela em branco)
+  if (error || !subscription) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center gap-3 p-6 text-center">
+        <AlertTriangle className="h-10 w-10 text-amber-500" />
+        <h2 className="text-lg font-semibold">Não foi possível carregar seu plano</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          {error || 'Não encontramos sua assinatura. Tente novamente em instantes ou contate o suporte.'}
+        </p>
+        <div className="flex gap-2 mt-2">
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Voltar ao Dashboard
+          </Button>
+          <Button onClick={() => refetch()} className="gap-2">
+            <RefreshCcw className="h-4 w-4" /> Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const plan = PLANS[subscription.plan_id];
   const remaining = 100 - usagePercent;

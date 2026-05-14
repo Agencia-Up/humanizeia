@@ -58,14 +58,15 @@ function parseUazapiState(payload: any): { isConnected: boolean; realStatus: str
   return { isConnected, realStatus };
 }
 
-async function checkUazapiInstance(baseUrl: string, instanceName: string, token: string) {
+async function checkUazapiInstance(baseUrl: string, _instanceName: string, token: string) {
   const headers = { 'Content-Type': 'application/json', token, apikey: token };
 
-  // Tentativa 1: GET /instance/connectionState/{name}
+  // Endpoint CORRETO da Uazapi V6: GET /instance/status
+  // (sem path param — o token no header identifica a instância)
+  // Resposta: { instance: { status, name, profileName, owner, ... },
+  //             status: { connected, loggedIn, ... } }
   try {
-    const res = await fetch(`${baseUrl}/instance/connectionState/${instanceName}`, {
-      method: 'GET', headers,
-    });
+    const res = await fetch(`${baseUrl}/instance/status`, { method: 'GET', headers });
     if (res.ok) {
       const txt = await res.text();
       try {
@@ -75,7 +76,7 @@ async function checkUazapiInstance(baseUrl: string, instanceName: string, token:
     }
   } catch {}
 
-  // Tentativa 2: POST /instance/connect (uazapi também responde com state)
+  // Fallback: POST /instance/connect (alguns ambientes retornam estado aqui)
   try {
     const res = await fetch(`${baseUrl}/instance/connect`, {
       method: 'POST', headers, body: JSON.stringify({}),

@@ -113,7 +113,11 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
   }
 
   if (!user) {
-    return <Navigate to="/auth" replace />;
+    // Preserva URL original (path + query) pra Auth voltar após login.
+    // Ex: /pedro?tab=agente → /auth?redirect=%2Fpedro%3Ftab%3Dagente
+    const fullPath = `${location.pathname}${location.search}`;
+    const redirectQs = fullPath !== '/' ? `?redirect=${encodeURIComponent(fullPath)}` : '';
+    return <Navigate to={`/auth${redirectQs}`} replace />;
   }
 
   if (profileState === 'no_org' && !isOrgExempt) {

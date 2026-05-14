@@ -35,6 +35,14 @@ export default function Auth() {
   // Aba inicial: se vier ?tab=signup abre Cadastro direto
   const initialTab = searchParams.get('tab') === 'signup' ? 'signup' : 'login';
 
+  // URL pós-login: se ProtectedRoute mandou ?redirect=/foo?tab=bar, vai pra lá
+  const redirectTo = (() => {
+    const r = searchParams.get('redirect');
+    // Aceita só paths internos (segurança contra open-redirect)
+    if (r && r.startsWith('/') && !r.startsWith('//')) return r;
+    return '/dashboard';
+  })();
+
   // Login
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -55,8 +63,8 @@ export default function Auth() {
 
   const [isLoading, setIsLoading] = useState(false);
 
-  // Redirect se já autenticado
-  if (user) return <Navigate to="/dashboard" replace />;
+  // Redirect se já autenticado — respeita ?redirect= se válido
+  if (user) return <Navigate to={redirectTo} replace />;
 
   // ─── LOGIN ────────────────────────────────────────────────────────────────
   const handleLogin = async (e: React.FormEvent) => {

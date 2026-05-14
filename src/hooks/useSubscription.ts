@@ -93,30 +93,47 @@ const DEMO_TRANSACTIONS: TokenTransaction[] = [
   { id: '10', user_id: 'demo', type: 'consume', amount: -10460, description: 'Copies para Google Ads + Meta', agent: 'copywriter', balance_after: 82660, created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString() },
 ];
 
+// Race promise vs timeout de N ms; rejeita se exceder
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}: timeout após ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 export function useSubscription() {
   const { user } = useAuth();
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [transactions, setTransactions] = useState<TokenTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchSubscription = useCallback(async () => {
     if (!user) {
       setSubscription(null);
       setTransactions([]);
       setLoading(false);
+      setError(null);
       return;
     }
 
     setLoading(true);
+    setError(null);
     try {
-      let { data, error } = await (supabase as any)
-        .from('user_subscriptions')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
+      let { data, error: selErr } = await withTimeout(
+        (supabase as any)
+          .from('user_subscriptions')
+          .select('*')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+        8000,
+        'select user_subscriptions',
+      );
 
-      // Se nao existe subscription, cria uma automaticamente (plano basico)
-      if (!data || error) {
+      // Se não existe subscription, cria uma automaticamente (plano basico)
+      if (!data || selErr) {
         const newSub = {
           user_id: user.id,
           plan_id: 'basico',
@@ -126,28 +143,41 @@ export function useSubscription() {
           tokens_purchased: 0,
           renewal_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         };
-        const { data: inserted } = await (supabase as any)
-          .from('user_subscriptions')
-          .upsert(newSub, { onConflict: 'user_id' })
-          .select()
-          .maybeSingle();
+        const { data: inserted } = await withTimeout(
+          (supabase as any)
+            .from('user_subscriptions')
+            .upsert(newSub, { onConflict: 'user_id' })
+            .select()
+            .maybeSingle(),
+          8000,
+          'upsert user_subscriptions',
+        );
         data = inserted || newSub;
       }
 
       setSubscription(data as Subscription);
 
-      // fetch real transactions
-      const { data: txData } = await (supabase as any)
-        .from('token_transactions')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      setTransactions((txData as TokenTransaction[]) || []);
-    } catch {
-      // Em caso de erro grave, mostra zeros em vez de dados falsos
+      // fetch real transactions (não bloqueia UI se falhar)
+      try {
+        const { data: txData } = await withTimeout(
+          (supabase as any)
+            .from('token_transactions')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(50),
+          5000,
+          'select token_transactions',
+        );
+        setTransactions((txData as TokenTransaction[]) || []);
+      } catch {
+        setTransactions([]);
+      }
+    } catch (err: any) {
+      // Erro grave (timeout, RLS, network) — guarda mensagem pra UI mostrar
       setSubscription(null);
       setTransactions([]);
+      setError(err?.message || 'Erro ao carregar plano');
     } finally {
       setLoading(false);
     }
@@ -189,6 +219,7 @@ export function useSubscription() {
     subscription,
     transactions,
     loading,
+    error,
     tokensAvailable,
     tokensTotal,
     usagePercent,
