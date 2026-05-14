@@ -31,29 +31,41 @@ interface InstanceRow {
 }
 
 function parseUazapiState(payload: any): { isConnected: boolean; realStatus: string } {
-  const state = String(
-    payload?.state
-    || payload?.instance?.state
-    || payload?.status
-    || payload?.instance?.status
-    || ''
-  ).toLowerCase();
+  // Resposta Uazapi V6 (GET /instance/status):
+  // {
+  //   instance: { status: "connected"|"disconnected"|"qrcode"|..., name, owner, ... },
+  //   status:   { connected: true, loggedIn: true, resetting: false, jid }
+  // }
+  // CUIDADO: payload.status é um OBJETO, não string. Usar instance.status pra
+  // pegar o estado textual (caso contrário String(obj) vira "[object Object]").
 
+  // Sinal booleano de conexão (mais confiável)
   const isConnected =
-    state === 'open'
-    || state === 'connected'
-    || state === 'connecting'
-    || state === 'connected_authenticated'
-    || payload?.connected === true
+    payload?.status?.connected === true
+    || payload?.status?.loggedIn === true
     || payload?.instance?.connected === true
-    || payload?.loggedIn === true
     || payload?.instance?.loggedIn === true;
 
-  let realStatus = 'disconnected';
-  if (isConnected) realStatus = state === 'connecting' ? 'connecting' : 'connected';
-  else if (state === 'qrcode' || payload?.base64 || payload?.qrcode) realStatus = 'waiting_qr';
-  else if (state === 'close' || state === 'closed') realStatus = 'disconnected';
-  else if (state) realStatus = state;
+  // String de estado (apenas pra label — nunca payload.status que é objeto)
+  const stateRaw = String(
+    payload?.instance?.status
+    || payload?.instance?.state
+    || payload?.state
+    || ''
+  ).toLowerCase().trim();
+
+  let realStatus: string;
+  if (isConnected) {
+    realStatus = stateRaw === 'connecting' ? 'connecting' : 'connected';
+  } else if (stateRaw === 'qrcode' || payload?.instance?.qrcode || payload?.qrcode) {
+    realStatus = 'waiting_qr';
+  } else if (stateRaw === 'close' || stateRaw === 'closed' || stateRaw === 'disconnected') {
+    realStatus = 'disconnected';
+  } else if (stateRaw) {
+    realStatus = stateRaw;
+  } else {
+    realStatus = 'disconnected';
+  }
 
   return { isConnected, realStatus };
 }

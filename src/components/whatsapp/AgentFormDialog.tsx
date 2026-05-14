@@ -710,7 +710,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh]">
+      <DialogContent className="sm:max-w-4xl max-h-[92vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-primary" />
@@ -719,7 +719,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
           <DialogDescription>Configure como o agente responde e quais números ele atende</DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[65vh] pr-4">
+        <ScrollArea className="max-h-[72vh] pr-4">
           <Tabs defaultValue="general" className="space-y-6">
             <div className="w-full pb-4 border-b">
               {/* Contêiner em grid/auto-wrap para garantir que as abas não cortem */}

@@ -25,9 +25,8 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from '@/components/ui/dialog';
+// Dialog do shadcn removido: causa conflito Radix quando usado dentro de
+// outro Dialog (AgentFormDialog). Preview do prompt agora é Card inline.
 import {
   Loader2,
   Save,
@@ -300,7 +299,11 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
       }
     })();
     return () => { cancelled = true; };
-  }, [agentId, toast]);
+    // toast intencionalmente fora das deps — useToast retorna função estável
+    // e incluí-la causaria loops em alguns ambientes (re-render → setLoading
+    // → re-render). Lint suprimido pra preservar essa decisão.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
 
   // ── Salvar config + gerar prompt ──────────────────────────────────────────
   const handleSaveAndGenerate = async () => {
@@ -933,54 +936,59 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
         </Button>
       </div>
 
-      {/* Dialog de preview do prompt gerado */}
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-sm">
-              <Eye className="h-4 w-4 text-blue-400" />
-              Prompt do Funil — exatamente o que a IA recebe
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Esse é o system prompt que está atualmente em <code className="text-blue-400">wa_ai_agents.system_prompt</code>.
-              O webhook envia isso para a IA toda vez que um cliente manda mensagem.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex-1 overflow-auto rounded-md border border-border/50 bg-muted/30 p-3">
-            {previewLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+      {/* Preview INLINE do prompt gerado (não Dialog aninhado — Radix tem
+          conflitos com Dialog dentro de Dialog que faziam o conteúdo do
+          Funil sumir quando aberto dentro do AgentFormDialog). */}
+      {previewOpen && (
+        <Card className="border-blue-500/30 bg-card/95 backdrop-blur-sm">
+          <CardHeader className="pb-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="space-y-0.5">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Eye className="h-4 w-4 text-blue-400" />
+                  Prompt gerado — o que a IA recebe
+                </CardTitle>
+                <CardDescription className="text-[11px]">
+                  Conteúdo atual de <code className="text-blue-400">wa_ai_agents.system_prompt</code>.
+                </CardDescription>
               </div>
-            ) : (
-              <pre className="text-[11px] leading-relaxed whitespace-pre-wrap font-mono">
-                {previewText}
-              </pre>
-            )}
-          </div>
-          <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
-            <span className="text-[10px] text-muted-foreground">
-              {previewText.length.toLocaleString()} caracteres
-            </span>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  navigator.clipboard.writeText(previewText);
-                  toast({ title: '📋 Prompt copiado pra área de transferência' });
-                }}
-                disabled={previewLoading || !previewText}
-                className="text-xs"
-              >
-                Copiar
-              </Button>
-              <Button size="sm" onClick={() => setPreviewOpen(false)} className="text-xs">
-                Fechar
-              </Button>
+              <div className="flex gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    navigator.clipboard.writeText(previewText);
+                    toast({ title: '📋 Prompt copiado' });
+                  }}
+                  disabled={previewLoading || !previewText}
+                  className="text-xs h-7"
+                >
+                  Copiar
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setPreviewOpen(false)} className="text-xs h-7">
+                  Fechar
+                </Button>
+              </div>
             </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="rounded-md border border-border/50 bg-muted/30 p-3 max-h-[400px] overflow-auto">
+              {previewLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+                </div>
+              ) : (
+                <pre className="text-[11px] leading-relaxed whitespace-pre-wrap font-mono">
+                  {previewText}
+                </pre>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1.5 text-right">
+              {previewText.length.toLocaleString()} caracteres
+            </p>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
