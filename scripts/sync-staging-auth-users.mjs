@@ -98,6 +98,14 @@ const values = users.map((user) => {
     coalesce(${sqlString(user.created_at)}::timestamptz, now()),
     now(),
     ${sqlString(user.phone || null)},
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
     false
   )`;
 });
@@ -139,6 +147,14 @@ insert into auth.users (
   created_at,
   updated_at,
   phone,
+  confirmation_token,
+  recovery_token,
+  email_change,
+  email_change_token_new,
+  email_change_token_current,
+  phone_change,
+  phone_change_token,
+  reauthentication_token,
   is_anonymous
 ) values
 ${values.join(",\n")}
@@ -148,6 +164,14 @@ on conflict (id) do update set
   email_confirmed_at = excluded.email_confirmed_at,
   raw_app_meta_data = excluded.raw_app_meta_data,
   raw_user_meta_data = excluded.raw_user_meta_data,
+  confirmation_token = '',
+  recovery_token = '',
+  email_change = '',
+  email_change_token_new = '',
+  email_change_token_current = '',
+  phone_change = '',
+  phone_change_token = '',
+  reauthentication_token = '',
   updated_at = now(),
   is_anonymous = false;
 
