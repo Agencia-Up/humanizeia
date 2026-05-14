@@ -581,12 +581,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   const senderDigits = remoteJid.replace(/\D/g, '').slice(-10); // últimos 10 dígitos
 
   // 1. Busca vendedor por agent_id
+  // IMPORTANTE: usar .limit(1) antes de .maybeSingle() porque o vendedor pode
+  // ter MÚLTIPLOS registros em ai_team_members (um por agente). Sem .limit(1),
+  // o .maybeSingle() FALHA quando bate em >1 row e a confirmação do "Ok" fica
+  // quebrada — o cron acaba repassando o lead pra outro vendedor.
   let { data: senderSeller } = await supabase
     .from('ai_team_members')
     .select('id, name')
     .eq('agent_id', agent.id)
     .eq('is_active', true)
     .ilike('whatsapp_number', `%${senderDigits}`)
+    .order('auth_user_id', { ascending: false, nullsFirst: false }) // prefere o registro com login
+    .limit(1)
     .maybeSingle();
 
   // 2. Fallback: busca vendedor por user_id (vendedores podem não ter agent_id)
@@ -597,6 +603,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       .eq('user_id', agent.user_id)
       .eq('is_active', true)
       .ilike('whatsapp_number', `%${senderDigits}`)
+      .order('auth_user_id', { ascending: false, nullsFirst: false })
+      .limit(1)
       .maybeSingle();
     senderSeller = fallbackSeller;
   }
