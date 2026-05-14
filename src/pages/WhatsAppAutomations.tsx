@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
@@ -35,8 +36,9 @@ interface AutomationFlow {
 
 export default function WhatsAppAutomations({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
-  const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, seller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.marcos_automacoes && !embedded;
 
   // Automações são PER-USER — vendedor vê as DELE
   const effectiveUserId = user?.id || null;
@@ -115,6 +117,11 @@ export default function WhatsAppAutomations({ embedded }: { embedded?: boolean }
     setDeleteFlow(null);
     setDeleting(false);
   };
+
+  // Bloqueia vendedor sem permissão marcos_automacoes (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   // ═══ Builder View ═══
   if (view === 'builder') {

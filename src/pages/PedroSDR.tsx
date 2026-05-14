@@ -498,11 +498,14 @@ function PerformanceTab({ userId }: { userId: string | undefined }) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Potencial de compra do lead — quanto mais "quente", maior a chance de fechar venda.
+// Mantemos os valores internos low/normal/high/urgent para compatibilidade com o banco;
+// só os labels mudaram para refletir potencial em vez de prioridade.
 const PRIORITY_CONFIG = {
-  low:    { label: 'Baixa',   color: 'text-slate-400',   bg: 'bg-slate-500/10' },
-  normal: { label: 'Normal',  color: 'text-blue-400',    bg: 'bg-blue-500/10'  },
-  high:   { label: 'Alta',    color: 'text-orange-400',  bg: 'bg-orange-500/10'},
-  urgent: { label: 'Urgente', color: 'text-red-400',     bg: 'bg-red-500/10'   },
+  low:    { label: '❄️ Frio',                color: 'text-slate-400',  bg: 'bg-slate-500/10',  desc: 'Pouco interesse — apenas olhando' },
+  normal: { label: '🌡️ Morno',                color: 'text-blue-400',   bg: 'bg-blue-500/10',   desc: 'Tem interesse, pode comprar' },
+  high:   { label: '🔥 Quente',              color: 'text-orange-400', bg: 'bg-orange-500/10', desc: 'Alto interesse, perto de fechar' },
+  urgent: { label: '🚀 Pronto pra comprar',  color: 'text-red-400',    bg: 'bg-red-500/10',    desc: 'Vai comprar agora — atende já' },
 } as const;
 
 // ─── Feedback Estruturado: Opções ────────────────────────────────────────────
@@ -607,7 +610,9 @@ interface CrmLead {
   lead_name: string;
   remote_jid: string;
   status_crm: string;
-  summary?: string | null;
+  summary?: string | null;          // Resumo da IA (qualificação geral)
+  transfer_reason?: string | null;  // Motivo/feedback da IA ao transferir pro vendedor
+  transferred_at?: string | null;   // Quando foi transferido
   next_followup_at: string | null;
   seller_notes_count: number;
   assigned_to_id: string | null;
@@ -767,7 +772,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       // Master: busca os 100 mais recentes (sem filtro de seller)
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
+        .select('id, lead_name, remote_jid, status_crm, summary, transfer_reason, transferred_at, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -1490,6 +1495,53 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           </div>
         </div>
 
+        {/* ── Feedback da IA (qualificação no momento do repasse) ───────────
+            Mostra o que o Pedro escreveu sobre este lead quando passou
+            para o vendedor. Aparece SOMENTE se a IA gerou texto (não
+            cria nada do zero). */}
+        {(selectedLead.summary || selectedLead.transfer_reason) && (
+          <Card className="bg-gradient-to-br from-blue-500/5 to-violet-500/5 border-blue-500/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Bot className="h-4 w-4 text-blue-400" />
+                  Feedback da IA
+                  <Badge className="text-[9px] h-4 px-1.5 bg-blue-500/15 text-blue-300 border-blue-500/30">
+                    Pedro SDR
+                  </Badge>
+                </span>
+                {selectedLead.transferred_at && (
+                  <span className="text-[10px] text-muted-foreground font-normal">
+                    Repassado em {fmtDate(selectedLead.transferred_at)}
+                  </span>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {selectedLead.summary && (
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">
+                    📋 Resumo do atendimento
+                  </p>
+                  <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                    {selectedLead.summary}
+                  </p>
+                </div>
+              )}
+              {selectedLead.transfer_reason && (
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">
+                    🎯 Motivo do repasse
+                  </p>
+                  <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                    {selectedLead.transfer_reason}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* ── Anotações ─────────────────────────────────────────────── */}
           <Card className="bg-card border-border/50">
@@ -1793,28 +1845,41 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
               />
             </div>
 
-            {/* Prioridade + Enviar */}
-            <div className="flex items-center gap-3 pt-1">
-              <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
-                <SelectTrigger className="h-8 text-xs w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
-                    <SelectItem key={k} value={k} className="text-xs">
-                      <span className={v.color}>{v.label}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                onClick={handleSendFeedback}
-                disabled={fbLoading || !fbCity || !fbReason}
-                size="sm" className="h-8 text-xs flex-1"
-              >
-                {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
-                Enviar Feedback
-              </Button>
+            {/* Potencial de compra + Enviar */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  🎯 Potencial de compra do lead
+                </span>
+                <span className="text-[10px] text-muted-foreground/70 italic">
+                  (quão perto está de fechar a venda)
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
+                  <SelectTrigger className="h-9 text-xs w-56" title="Indique o quão próximo este lead está de comprar">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
+                      <SelectItem key={k} value={k} className="text-xs">
+                        <div className="flex flex-col gap-0.5">
+                          <span className={v.color}>{v.label}</span>
+                          <span className="text-[10px] text-muted-foreground/70">{v.desc}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={handleSendFeedback}
+                  disabled={fbLoading || !fbCity || !fbReason}
+                  size="sm" className="h-9 text-xs flex-1"
+                >
+                  {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                  Enviar Feedback
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -2432,7 +2497,7 @@ const ALL_SELLER_TABS = [
 export default function PedroSDR() {
   const { user } = useAuth();
   const { isSeller, seller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
 
   // Seller: filtra tabs por visible_features | Master: todas
@@ -2442,7 +2507,18 @@ export default function PedroSDR() {
   const defaultTab = isSeller ? (tabs[0]?.id || 'crm') : (tabParam || 'performance');
   const [activeTab, setActiveTab] = useState(defaultTab);
 
-  // Se tab param mudar (ex: vendedor clicando no sidebar)
+  // Sincroniza activeTab → URL. Assim, mesmo se o ErrorBoundary remontar
+  // a página, a URL ainda carrega o tab atual e o useEffect abaixo restaura.
+  const handleTabChange = (newTab: string) => {
+    setActiveTab(newTab);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', newTab);
+      return next;
+    }, { replace: true });
+  };
+
+  // Se tab param mudar (ex: vendedor clicando no sidebar, ou remontagem do ErrorBoundary)
   useEffect(() => {
     if (tabParam && tabs.some(t => t.id === tabParam)) {
       setActiveTab(tabParam);
@@ -2487,7 +2563,7 @@ export default function PedroSDR() {
         </div>
 
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
           <div className="border-b border-border/40">
             <TabsList className="h-auto bg-transparent p-0 gap-1">
               {tabs.map(tab => (

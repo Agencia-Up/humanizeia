@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { Eraser, Download, RefreshCw, Save } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase } from '@/integrations/supabase/client';
+import { SUPABASE_PUBLIC_KEY, supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { ImageUploadArea } from './ImageUploadArea';
 
@@ -150,7 +150,7 @@ export function RemoveBackgroundTab({ initialImage, onImageConsumed }: RemoveBac
       const response = await fetch(REMOVE_BG_URL, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          'Authorization': `Bearer ${SUPABASE_PUBLIC_KEY}`,
         },
         body: formData,
       });

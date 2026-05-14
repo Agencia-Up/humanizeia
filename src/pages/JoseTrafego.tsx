@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -479,6 +481,9 @@ function CronSettings({
 
 export default function JoseTrafego() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.agent_jose;
   const {
     connectedAccount, connectedAccounts, selectConnectedAccount,
     startOAuth, isConnecting, isLoading: isLoadingAccount,
@@ -523,6 +528,11 @@ export default function JoseTrafego() {
   }, [executeAction, accountId]);
 
   const overallScore = session?.health_score ?? null;
+
+  /* ═══ BLOQUEIO POR PERMISSÃO ═══════════════════════════════════════════════ */
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   /* ═══ SEM CONTA CONECTADA ══════════════════════════════════════════════════ */
   if (!isLoadingAccount && !accountId) {

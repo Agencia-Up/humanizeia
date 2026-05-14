@@ -25,18 +25,19 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Potencial de compra do lead (low/normal/high/urgent mantidos como ids internos)
 const PRIORITY_EMOJI: Record<string, string> = {
-  low:    "ℹ️",
-  normal: "💬",
-  high:   "⚠️",
-  urgent: "🚨",
+  low:    "❄️",
+  normal: "🌡️",
+  high:   "🔥",
+  urgent: "🚀",
 };
 
 const PRIORITY_LABEL: Record<string, string> = {
-  low:    "Baixa",
-  normal: "Normal",
-  high:   "Alta",
-  urgent: "Urgente",
+  low:    "Frio",
+  normal: "Morno",
+  high:   "Quente",
+  urgent: "Pronto pra comprar",
 };
 
 serve(async (req) => {
@@ -182,7 +183,7 @@ serve(async (req) => {
               `👤 *Vendedor:* ${sellerName}`,
               `📋 *Lead:* ${leadName}`,
               `🕐 *Horário:* ${now}`,
-              `🔖 *Prioridade:* ${prioLabel}`,
+              `🎯 *Potencial de compra:* ${prioLabel}`,
               ``,
             ];
 

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { SUPABASE_PUBLIC_KEY, supabase } from '@/integrations/supabase/client';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -36,9 +37,8 @@ interface UseClaudeChatOptions {
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/claude-chat`;
 
 async function getSessionToken(): Promise<string> {
-  const { supabase } = await import('@/integrations/supabase/client');
   const { data } = await supabase.auth.getSession();
-  return data?.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  return data?.session?.access_token || SUPABASE_PUBLIC_KEY;
 }
 
 export function useClaudeChat(options: UseClaudeChatOptions) {
@@ -60,7 +60,7 @@ export function useClaudeChat(options: UseClaudeChatOptions) {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          'apikey': SUPABASE_PUBLIC_KEY,
         },
         body: JSON.stringify({
           messages,

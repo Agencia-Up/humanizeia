@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -111,7 +112,8 @@ function initials(name: string) {
 export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const { isSeller, seller, masterUserId } = useSellerProfile(user?.id);
+  const { isSeller, seller, masterUserId, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.marcos_inbox && !embedded;
 
   // O userId efetivo para queries: vendedor usa o ID do master
   const effectiveUserId = (isSeller && masterUserId) ? masterUserId : user?.id;
@@ -493,6 +495,12 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     : MainLayout;
 
   /* ── Render ─────────────────────────────────────────────────────── */
+
+  // Bloqueia vendedor sem permissão marcos_inbox (acesso direto via URL)
+  if (blockSellerAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <Wrapper>
       <div className="flex flex-col h-full overflow-hidden">
