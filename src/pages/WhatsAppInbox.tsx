@@ -155,15 +155,26 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     })();
   }, [isSeller, seller, effectiveUserId]);
 
-  /* ── Fetch instâncias (conectadas + não conectadas para exibir) ── */
+  /* ── Fetch instâncias (vendedor só vê as DELE; master vê só sem dono) ──
+   * Inbox é PESSOAL: cada usuário vê apenas inbox das instâncias que pertencem
+   * a ele. Vendedor: WHERE seller_member_id = seller.id. Master: WHERE
+   * seller_member_id IS NULL (instâncias do próprio master, não dos vendedores).
+   */
   const fetchInstances = useCallback(async () => {
     if (!effectiveUserId) return;
-    const { data } = await supabase
+    let query = (supabase as any)
       .from('wa_instances')
-      .select('id, instance_name, friendly_name, phone_number, status, is_active')
+      .select('id, instance_name, friendly_name, phone_number, status, is_active, seller_member_id')
       .eq('user_id', effectiveUserId as string)
       .eq('is_active', true)
       .order('instance_name');
+    if (isSeller && seller?.id) {
+      query = query.eq('seller_member_id', seller.id);
+    } else {
+      // Master: só inbox das próprias instâncias (não dos vendedores)
+      query = query.is('seller_member_id', null);
+    }
+    const { data } = await query;
     const all = (data || []) as unknown as WaInstance[];
     setAllInstances(all);
     setInstances(all.filter(i => i.status === 'connected'));
@@ -176,11 +187,21 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     if (isSeller && sellerLeadPhones === null) return;
     if (isInitial) setLoading(true);
 
+    // Defesa em camadas: limita conversas APENAS às instâncias visíveis ao
+    // user logado (vendedor: as dele; master: só as próprias dele, sem dono).
+    const visibleInstanceIds = allInstances.map(i => i.id);
+    if (visibleInstanceIds.length === 0) {
+      setConversations([]);
+      if (isInitial) setLoading(false);
+      return;
+    }
+
     let query = supabase
       .from('wa_inbox')
       .select('phone, contact_name, content, ai_category, is_read, created_at, instance_id, direction')
       .eq('user_id', effectiveUserId as string)
       .neq('is_archived', true)
+      .in('instance_id', visibleInstanceIds)
       .order('created_at', { ascending: false })
       .limit(500);
 
@@ -215,7 +236,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     }
     setConversations(convList);
     if (isInitial) setLoading(false);
-  }, [effectiveUserId, activeInstanceTab, isSeller, sellerLeadPhones]);
+  }, [effectiveUserId, activeInstanceTab, isSeller, sellerLeadPhones, allInstances]);
 
   /* ── Fetch mensagens da conversa selecionada ───────────────────── */
   const fetchMessages = useCallback(async (phone: string, instanceId: string | null) => {
@@ -306,6 +327,10 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const selectedConvKeyRef = useRef(selectedConvKey);
   useEffect(() => { selectedConvKeyRef.current = selectedConvKey; }, [selectedConvKey]);
 
+  // Ref de instâncias visíveis — usada pelo realtime pra ignorar inbox alheia
+  const allInstancesRef = useRef(allInstances);
+  useEffect(() => { allInstancesRef.current = allInstances; }, [allInstances]);
+
   useEffect(() => {
     if (!effectiveUserId) return;
     const ch = supabase
@@ -315,6 +340,9 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         filter: `user_id=eq.${effectiveUserId}`,
       }, (payload) => {
         const msg = payload.new as unknown as InboxMessage;
+        // Defesa: ignora mensagens de instâncias que não são visíveis ao user
+        const visibleIds = allInstancesRef.current.map(i => i.id);
+        if (msg.instance_id && !visibleIds.includes(msg.instance_id)) return;
         // Vendedor: ignora mensagens de leads que não são dele
         if (isSeller && sellerLeadPhones && !sellerLeadPhones.has(msg.phone)) return;
         fetchConversationsRef.current(false);
