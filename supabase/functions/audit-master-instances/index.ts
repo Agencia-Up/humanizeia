@@ -1,16 +1,16 @@
 // ============================================================================
 // audit-master-instances
 // ----------------------------------------------------------------------------
-// Bulk verify de todas as instâncias de uma conta master contra a Evolution
-// API. Para cada instância:
-//   - Chama connectionState na Evolution
-//   - Se desconectada: marca is_active = false, status = 'disconnected',
-//     health_score = 0
-//   - Se conectada: garante is_active = true, status = 'connected'
+// Bulk verify de todas as instâncias UAZAPI de uma conta master.
+// (Sistema usa UAZAPI — logos-ia.uazapi.com — não Evolution.com)
 //
-// Retorna relatório com cada instância e seu novo estado.
+// Para cada instância (provider != 'meta'):
+//   1. Tenta GET  ${api_url}/instance/connectionState/${instance_name}
+//   2. Se falhar, tenta POST ${api_url}/instance/connect (com token da instância)
+//   3. Parse do estado: open/connected/loggedIn → conectada
+//   4. UPDATE: is_active = bool, status = real, health_score = 100|0
 //
-// Auth: requer JWT do master (validado contra wa_instances.user_id).
+// Auth: JWT do master (ou de vendedor — resolve master_id via ai_team_members).
 // ============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -30,6 +30,66 @@ interface InstanceRow {
   status: string | null;
 }
 
+function parseUazapiState(payload: any): { isConnected: boolean; realStatus: string } {
+  const state = String(
+    payload?.state
+    || payload?.instance?.state
+    || payload?.status
+    || payload?.instance?.status
+    || ''
+  ).toLowerCase();
+
+  const isConnected =
+    state === 'open'
+    || state === 'connected'
+    || state === 'connecting'
+    || state === 'connected_authenticated'
+    || payload?.connected === true
+    || payload?.instance?.connected === true
+    || payload?.loggedIn === true
+    || payload?.instance?.loggedIn === true;
+
+  let realStatus = 'disconnected';
+  if (isConnected) realStatus = state === 'connecting' ? 'connecting' : 'connected';
+  else if (state === 'qrcode' || payload?.base64 || payload?.qrcode) realStatus = 'waiting_qr';
+  else if (state === 'close' || state === 'closed') realStatus = 'disconnected';
+  else if (state) realStatus = state;
+
+  return { isConnected, realStatus };
+}
+
+async function checkUazapiInstance(baseUrl: string, instanceName: string, token: string) {
+  const headers = { 'Content-Type': 'application/json', token, apikey: token };
+
+  // Tentativa 1: GET /instance/connectionState/{name}
+  try {
+    const res = await fetch(`${baseUrl}/instance/connectionState/${instanceName}`, {
+      method: 'GET', headers,
+    });
+    if (res.ok) {
+      const txt = await res.text();
+      try {
+        const payload = JSON.parse(txt);
+        return parseUazapiState(payload);
+      } catch {}
+    }
+  } catch {}
+
+  // Tentativa 2: POST /instance/connect (uazapi também responde com state)
+  try {
+    const res = await fetch(`${baseUrl}/instance/connect`, {
+      method: 'POST', headers, body: JSON.stringify({}),
+    });
+    const txt = await res.text();
+    try {
+      const payload = JSON.parse(txt);
+      return parseUazapiState(payload);
+    } catch {}
+  } catch {}
+
+  return { isConnected: false, realStatus: 'error' };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -40,7 +100,6 @@ Deno.serve(async (req) => {
     const supabaseService = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const supabaseAnon = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!);
 
-    // Auth: precisa de JWT válido. master_user_id resolvido pelo próprio token.
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Não autorizado' }), {
@@ -55,7 +114,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Carrega instâncias da conta. Se vendedor logado, resolve master_id via ai_team_members.
+    // Resolve master_id (vendedor → busca via ai_team_members)
     const { data: tmRows } = await supabaseService
       .from('ai_team_members')
       .select('user_id')
@@ -67,7 +126,6 @@ Deno.serve(async (req) => {
       .from('wa_instances')
       .select('id, instance_name, friendly_name, api_url, api_key_encrypted, provider, status')
       .eq('user_id', masterId);
-
     if (instErr) throw new Error(instErr.message);
 
     const report: Array<{
@@ -80,7 +138,7 @@ Deno.serve(async (req) => {
     }> = [];
 
     for (const inst of (instances || []) as InstanceRow[]) {
-      // Meta API: sem verificação direta — confia no que está no DB
+      // Meta API (Cloud API): sem verificação direta — preserva estado atual
       if (inst.provider === 'meta') {
         report.push({
           id: inst.id,
@@ -96,53 +154,22 @@ Deno.serve(async (req) => {
       const baseUrl = (inst.api_url || '').replace(/\/$/, '');
       const apiKey = inst.api_key_encrypted || '';
       if (!baseUrl || !apiKey) {
-        report.push({
-          id: inst.id,
-          friendly_name: inst.friendly_name,
-          previous_status: inst.status,
-          current_status: 'no_credentials',
-          is_active: false,
-          changed: inst.status !== 'no_credentials',
-        });
         await supabaseService.from('wa_instances')
           .update({ is_active: false, status: 'no_credentials', health_score: 0 })
           .eq('id', inst.id);
+        report.push({
+          id: inst.id, friendly_name: inst.friendly_name,
+          previous_status: inst.status, current_status: 'no_credentials',
+          is_active: false, changed: inst.status !== 'no_credentials',
+        });
         continue;
       }
 
-      let realStatus = 'disconnected';
-      let isConnected = false;
-      try {
-        let res = await fetch(
-          `${baseUrl}/instance/connectionState/${inst.instance_name}`,
-          { method: 'GET', headers: { 'Content-Type': 'application/json', token: apiKey, apikey: apiKey } },
-        );
-        if (!res.ok || res.status === 404) {
-          res = await fetch(`${baseUrl}/instance/connect`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', token: apiKey, apikey: apiKey },
-            body: JSON.stringify({}),
-          });
-        }
-        const txt = await res.text();
-        let payload: any = {};
-        try { payload = JSON.parse(txt); } catch {}
-        const state = String(
-          payload?.state || payload?.instance?.state ||
-          payload?.status || payload?.instance?.status || ''
-        ).toLowerCase();
-        isConnected = state === 'open' || state === 'connected'
-          || state === 'connecting' || state === 'connected_authenticated'
-          || payload?.connected === true || payload?.instance?.connected === true
-          || payload?.loggedIn === true || payload?.instance?.loggedIn === true;
-        if (isConnected) realStatus = state === 'connecting' ? 'connecting' : 'connected';
-        else if (state === 'qrcode' || payload?.base64 || payload?.qrcode) realStatus = 'waiting_qr';
-        else realStatus = state || 'disconnected';
-      } catch {
-        realStatus = 'error';
-      }
+      const { isConnected, realStatus } = await checkUazapiInstance(baseUrl, inst.instance_name, apiKey);
 
-      const updates: Record<string, unknown> = { status: realStatus, updated_at: new Date().toISOString() };
+      const updates: Record<string, unknown> = {
+        status: realStatus, updated_at: new Date().toISOString(),
+      };
       if (isConnected) {
         updates.is_active = true;
         updates.health_score = 100;
@@ -155,12 +182,9 @@ Deno.serve(async (req) => {
       await supabaseService.from('wa_instances').update(updates).eq('id', inst.id);
 
       report.push({
-        id: inst.id,
-        friendly_name: inst.friendly_name,
-        previous_status: inst.status,
-        current_status: realStatus,
-        is_active: isConnected,
-        changed: inst.status !== realStatus,
+        id: inst.id, friendly_name: inst.friendly_name,
+        previous_status: inst.status, current_status: realStatus,
+        is_active: isConnected, changed: inst.status !== realStatus,
       });
     }
 
