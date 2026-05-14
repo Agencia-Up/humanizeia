@@ -18,6 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
 import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
+import FunilDoAgenteTab from '@/components/pedro/FunilDoAgenteTab';
 
 interface Instance {
   id: string;
@@ -998,36 +999,22 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
             {/* ── Tab: SDR Funnel ── */}
             <TabsContent value="sdr" className="space-y-5 mt-0">
-              <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-4">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Target className="h-4 w-4 text-primary" />
-                  Qualificação do Lead (Cérebro do Agente)
+              {/* Funil do Agente — configuração estruturada de 9 blocos
+                  POR AGENTE (cada agente tem suas próprias regras).
+                  Só disponível depois que o agente foi salvo (precisa de agent.id). */}
+              {agent?.id && effectiveUserId ? (
+                <FunilDoAgenteTab agentId={agent.id} userId={effectiveUserId} />
+              ) : (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-6 text-center">
+                  <Target className="h-8 w-8 text-amber-400 mx-auto mb-2" />
+                  <div className="text-sm font-medium mb-1">Salve o agente primeiro</div>
+                  <p className="text-xs text-muted-foreground">
+                    Preencha as abas <span className="font-medium">Geral</span> e <span className="font-medium">Empresa</span>,
+                    clique em <span className="font-medium">Salvar</span>, depois reabra para configurar o Funil do Agente
+                    (as regras de qualificação ficam isoladas por agente).
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Instrua a inteligência do agente sobre o que ele deve fazer e quais perguntas precisa fazer ao cliente para considerá-lo qualificado. Essa lógica roda 100% autônoma via IA (sem depender do n8n).
-                </p>
-
-                <div className="space-y-2 pt-2">
-                  <Label>Objetivo Final (SDR Goal)</Label>
-                  <Input 
-                    value={sdrGoal} 
-                    onChange={e => setSdrGoal(e.target.value)} 
-                    placeholder="Ex: Agendar reunião, Enviar link de pagamento com o nome do cliente..." 
-                  />
-                  <p className="text-[10px] text-muted-foreground w-full">O objetivo que a IA deve cumprir silenciosamente na conversa.</p>
-                </div>
-
-                <div className="space-y-2 pt-2">
-                  <Label>Perguntas Obrigatórias para Qualificação</Label>
-                  <Textarea
-                    value={qualificationStr}
-                    onChange={e => setQualificationStr(e.target.value)}
-                    placeholder="Ex:&#10;Qual a dor principal do cliente?&#10;Vende produto físico ou digital?&#10;Já tem CRM atualmente?"
-                    className="min-h-[120px]"
-                  />
-                  <p className="text-[10px] text-muted-foreground">Insira uma pergunta por linha. O Agente não avançará para o fechamento até obter as respostas dessas perguntas listadas.</p>
-                </div>
-              </div>
+              )}
             </TabsContent>
 
             {/* ── Tab: Model Settings ── */}

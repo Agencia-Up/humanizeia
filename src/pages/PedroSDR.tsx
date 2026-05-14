@@ -39,7 +39,6 @@ const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
-import FunilDoAgenteTab from '@/components/pedro/FunilDoAgenteTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 
 const TabLoader = () => (
@@ -2557,107 +2556,6 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   );
 }
 
-// ─── Wrapper "Agente IA" com sub-tabs (Lista de Agentes + Funil do Agente) ──
-// Master vê 2 sub-tabs:
-//   1) "Lista de Agentes" → renderiza WhatsAppAIAgent (comportamento atual)
-//   2) "Funil do Agente" → seletor de agente IA + FunilDoAgenteTab (novo)
-function AgenteIAWithFunnel({ userId }: { userId: string | undefined }) {
-  const [subTab, setSubTab] = useState<'lista' | 'funil'>('lista');
-  const [agents, setAgents] = useState<{ id: string; name: string; use_funnel_config: boolean }[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
-  const [loadingAgents, setLoadingAgents] = useState(false);
-
-  useEffect(() => {
-    if (!userId || subTab !== 'funil') return;
-    let cancelled = false;
-    (async () => {
-      setLoadingAgents(true);
-      try {
-        const { data } = await (supabase as any)
-          .from('wa_ai_agents')
-          .select('id, name, use_funnel_config')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: true });
-        if (cancelled) return;
-        const list = (data || []) as { id: string; name: string; use_funnel_config: boolean }[];
-        setAgents(list);
-        if (list.length > 0 && !selectedAgentId) setSelectedAgentId(list[0].id);
-      } finally {
-        if (!cancelled) setLoadingAgents(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [userId, subTab, selectedAgentId]);
-
-  return (
-    <div className="space-y-3">
-      {/* Sub-tabs */}
-      <div className="flex gap-1 border-b border-border/40">
-        <button
-          onClick={() => setSubTab('lista')}
-          className={`px-3 py-2 text-xs font-medium border-b-2 transition-all ${
-            subTab === 'lista'
-              ? 'border-blue-500 text-blue-500'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          🤖 Lista de Agentes
-        </button>
-        <button
-          onClick={() => setSubTab('funil')}
-          className={`px-3 py-2 text-xs font-medium border-b-2 transition-all ${
-            subTab === 'funil'
-              ? 'border-blue-500 text-blue-500'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          🧠 Funil do Agente
-        </button>
-      </div>
-
-      {/* Conteúdo */}
-      {subTab === 'lista' && <WhatsAppAIAgent embedded />}
-
-      {subTab === 'funil' && (
-        <div className="space-y-3">
-          {loadingAgents ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
-            </div>
-          ) : agents.length === 0 ? (
-            <Card className="border-amber-500/20 bg-amber-500/5">
-              <CardContent className="pt-6 pb-6 text-center text-xs text-muted-foreground">
-                Nenhum agente IA encontrado. Crie um agente em "Lista de Agentes" antes de configurar o funil.
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Configurar funil para:</span>
-                <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
-                  <SelectTrigger className="text-xs h-8 w-64">
-                    <SelectValue placeholder="Selecione um agente" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {agents.map(a => (
-                      <SelectItem key={a.id} value={a.id} className="text-xs">
-                        {a.name} {a.use_funnel_config && <span className="ml-1 text-emerald-400">●</span>}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {selectedAgentId && userId && (
-                <FunilDoAgenteTab agentId={selectedAgentId} userId={userId} />
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 // Tabs do gerente (master) — todas as abas
@@ -2793,14 +2691,11 @@ export default function PedroSDR() {
             )}
 
             <Suspense fallback={<TabLoader />}>
-              {/* Agente IA */}
+              {/* Agente IA — Funil do Agente vive DENTRO do modal de cada agente
+                  (aba SDR), porque cada agente tem suas próprias regras. */}
               {(!isSeller || visibleFeatures.tab_agente_ia) && (
                 <TabsContent value="agente" className="mt-0 h-full">
-                  {isSeller ? (
-                    <WhatsAppAIAgent embedded />
-                  ) : (
-                    <AgenteIAWithFunnel userId={user?.id} />
-                  )}
+                  <WhatsAppAIAgent embedded />
                 </TabsContent>
               )}
 
