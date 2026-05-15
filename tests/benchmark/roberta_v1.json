@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "case_id": "roberta_aparecida_benchmark_v1",
+    "case_name": "Roberta Aparecida — caso real com 16 falhas",
+    "date_captured": "2026-05-15",
+    "channel": "whatsapp",
+    "source": "instagram_ad",
+    "store": "Icom Motors",
+    "location": "Taubaté-SP",
+    "ad_vehicle": "Chevrolet Onix Plus Sedan Premier 2019/2020 — R$ 72.990",
+    "actual_interest": "Fiat Strada cabine dupla flex manual",
+    "vehicle_negotiated": {
+      "id_expected": "to_be_set_by_inventory_lookup",
+      "modelo": "Fiat Strada Freedom 1.3 Flex 8V CD",
+      "ano": 2023,
+      "km": 53700,
+      "preco": 99990.00,
+      "cor": "Prata",
+      "combustivel": "Flex",
+      "cambio": "Manual"
+    },
+    "client_profile": {
+      "nome_completo": "Roberta Aparecida de Jesus",
+      "telefone": "12997426747",
+      "cidade": "não informada",
+      "conhece_loja": false,
+      "tem_acompanhante_decisao": true,
+      "acompanhante": "esposo"
+    },
+    "outcome": {
+      "transferred_to_seller": false,
+      "transfer_announced_but_not_executed": true,
+      "manual_transfer_required": true,
+      "briefing_sent_to_seller": false,
+      "total_errors_detected": 16,
+      "critical_errors": 10,
+      "high_errors": 5,
+      "medium_errors": 2,
+      "duration_minutes": 12
+    }
+  },
+  "expected_seller": {
+    "nome": "Carvalho",
+    "papel": "consultor"
+  },
+  "messages": "[58 turnos completos — ver versão full no transcript da conversa do Claude Code]",
+  "expected_state_final": {
+    "lead": {
+      "nome": "Roberta",
+      "nome_completo": "Roberta Aparecida de Jesus",
+      "telefone": "12997426747",
+      "cidade": "não informada",
+      "conhece_loja": false,
+      "acompanhante_decisao": "esposo"
+    },
+    "interesse": {
+      "modelo_desejado": "Fiat Strada",
+      "configuracao": "cabine dupla",
+      "combustivel": "flex",
+      "cambio": "manual"
+    },
+    "negociacao": {
+      "forma_pagamento": "à vista",
+      "valor_entrada": null,
+      "tem_troca": true,
+      "carro_troca": {
+        "modelo": "VW Amarok",
+        "ano": 2018,
+        "cambio": "manual",
+        "configuracao": "cabine dupla",
+        "km": null,
+        "status": "quase vendida / em negociação"
+      }
+    },
+    "veiculo_apresentado": {
+      "modelo": "Fiat Strada Freedom 1.3 Flex 8V CD",
+      "ano": 2023,
+      "preco": 99990,
+      "ja_apresentado": true,
+      "foto_enviada": true
+    },
+    "atendimento": {
+      "consultor_apresentado": true,
+      "pode_visitar_loja": false,
+      "modo_atendimento": "remoto",
+      "objecao_levantada": "esposo trabalha, distância da loja",
+      "transferencia_solicitada": true,
+      "transferencia_executada": true,
+      "briefing_enviado_ao_vendedor": true
+    },
+    "qualificacao_score": 95
+  },
+  "regression_assertions": [
+    {"id": "ASSERT_01", "rule": "Nome do cliente nunca pode ser pedido mais de 1x se já estiver no estado", "validate": "count(agent_message contains 'Qual é o seu nome' OR 'seu nome completo') <= 1 after turn 6"},
+    {"id": "ASSERT_02", "rule": "Telefone nunca pode ser pedido após estar no estado", "validate": "no agent message asks for phone after lead.telefone is set"},
+    {"id": "ASSERT_03", "rule": "Ficha completa do veículo apresentada no máximo 1x por conversa", "validate": "count(agent_message contains 'Modelo:' AND 'Ano:' AND 'Preço:') <= 1"},
+    {"id": "ASSERT_04", "rule": "Apresentação do consultor uma única vez", "validate": "count(agent_message contains 'Sou o Carvalho' OR 'Eu sou Carvalho') <= 1"},
+    {"id": "ASSERT_05", "rule": "Busca de estoque deve achar a Strada Freedom CD 2023 na primeira tentativa", "validate": "first inventory_lookup with terms ['strada', 'cabine dupla', 'flex', 'manual'] returns >= 1 result"},
+    {"id": "ASSERT_06", "rule": "Nunca enviar foto de vehicle_id diferente do veiculo_apresentado", "validate": "all image_dispatch.vehicle_id == veiculo_apresentado.vehicle_id"},
+    {"id": "ASSERT_07", "rule": "Anúncio de transferência só após tool retornar sucesso", "validate": "if agent_message contains 'vou chamar nosso consultor' OR 'transferi' then preceding turn called tool 'transferir_para_vendedor' with response.success == true"},
+    {"id": "ASSERT_08", "rule": "Briefing enviado ao vendedor em toda transferência (automática ou manual)", "validate": "event 'transfer' (any source) triggers 'briefing_dispatch' with all required fields populated"},
+    {"id": "ASSERT_09", "rule": "Após 2 recusas de visita, agente para de oferecer visita", "validate": "if count(client_message indicates visit_refusal) >= 2 then no further agent_message contains 'agendar visita' OR 'venha à loja'"},
+    {"id": "ASSERT_10", "rule": "Troca/entrada nunca perguntada mais de 1x se já fornecida", "validate": "count(agent_message asks about troca OR entrada) <= 1 after negociacao.tem_troca is set"},
+    {"id": "ASSERT_11", "rule": "Dados do carro de troca não perguntados se já fornecidos", "validate": "agent never asks for fields of carro_troca that are already set in state"},
+    {"id": "ASSERT_12", "rule": "Respostas pontuais devem ser curtas", "validate": "agent responses to single-word client questions have <= 2 sentences and <= 25 words"}
+  ]
+}
