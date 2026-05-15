@@ -2,10 +2,18 @@
 // auto-classify-leads
 // ----------------------------------------------------------------------------
 // Re-classifica leads de uma conta master nos 3 níveis SDR:
-//   1. INATIVO (lead_inativo) — sem resposta há > N dias OU nunca respondeu
-//   2. POUCO QUALIFICADO (pouco_qualificado) — conversou, deu algumas infos,
-//      mas não completou os dados essenciais
-//   3. QUALIFICADO (qualificado) — passou todas informações essenciais
+//
+//   1. INATIVO (inativo) — lead que NÃO respondeu até a IA transferi-lo
+//      automaticamente por inatividade (após 10 min sem resposta — flag
+//      usada pela cron-lead-followup quando cria registro em
+//      ai_lead_transfers com transfer_reason ILIKE '%inatividade%').
+//
+//   2. POUCO QUALIFICADO (pouco_qualificado) — cliente conversou e deu
+//      algumas informações, mas não completou os dados essenciais (nome,
+//      interesse) OU encontrou objeção no meio do caminho.
+//
+//   3. QUALIFICADO (qualificado) — cliente respondeu corretamente, passou
+//      todas as informações essenciais e tem ≥60% dos campos preenchidos.
 //
 // NÃO sobrescreve estados manuais finais: 'fechado', 'em_atendimento',
 // 'negociacao', 'agendamento', 'perdido', 'transferido' (master/seller
@@ -26,8 +34,6 @@ const corsHeaders = {
 };
 
 // Configuração da classificação
-const INACTIVE_DAYS = 3;             // > N dias sem resposta = inativo
-const NEW_NO_REPLY_DAYS = 7;         // 'novo' + sem qualquer interação há N dias = inativo
 const COMPLETION_THRESHOLD = 0.6;    // % de campos preenchidos pra 'qualificado'
 
 // Campos essenciais e de completude
@@ -58,13 +64,22 @@ interface Lead {
   summary: string | null;
 }
 
-function classify(lead: Lead, now: number): string {
+function classify(lead: Lead, isInactiveTransfer: boolean): string {
   // Status protegido — preserva
   if (lead.status_crm && PROTECTED_STATUSES.has(lead.status_crm)) {
     return lead.status_crm;
   }
 
-  // Conta campos preenchidos
+  // ── 1. INATIVO ────────────────────────────────────────────────────────
+  // Lead que foi transferido AUTOMATICAMENTE por inatividade pela cron
+  // (ai_lead_transfers.transfer_reason ILIKE '%inatividade%' — depois de
+  // 10 minutos sem resposta do cliente). Esse é o sinal definitivo do
+  // sistema de que o cliente não engajou.
+  if (isInactiveTransfer) {
+    return 'inativo';
+  }
+
+  // Conta campos preenchidos pelo agente IA
   const filledFields = COMPLETION_FIELDS.filter(f => {
     const v = (lead as any)[f];
     return v !== null && v !== undefined && String(v).trim() !== '';
@@ -75,41 +90,19 @@ function classify(lead: Lead, now: number): string {
     return v !== null && v !== undefined && String(v).trim() !== '';
   });
 
-  // Tempo desde última resposta do CLIENTE
-  const lastReplyMs = lead.last_user_reply_at
-    ? new Date(lead.last_user_reply_at).getTime()
-    : null;
-  const daysSinceReply = lastReplyMs
-    ? (now - lastReplyMs) / 86_400_000
-    : Infinity;
-
-  // Tempo desde criação
-  const createdMs = new Date(lead.created_at).getTime();
-  const daysSinceCreation = (now - createdMs) / 86_400_000;
-
-  // ── 1. INATIVO ────────────────────────────────────────────────────────
-  // a) sem resposta há > INACTIVE_DAYS E não completo
-  // b) status 'novo' há > NEW_NO_REPLY_DAYS sem qualquer reply
-  if (
-    (daysSinceReply > INACTIVE_DAYS && !hasAllRequired)
-    || (lead.status_crm === 'novo' && daysSinceCreation > NEW_NO_REPLY_DAYS && !lastReplyMs)
-  ) {
-    return 'inativo';
-  }
-
   // ── 2. QUALIFICADO ────────────────────────────────────────────────────
-  // tem todos os essenciais E >= 60% dos completion fields
+  // Cliente respondeu, deu nome+interesse e ≥60% dos campos preenchidos
   if (hasAllRequired && completion >= COMPLETION_THRESHOLD) {
     return 'qualificado';
   }
 
   // ── 3. POUCO QUALIFICADO ──────────────────────────────────────────────
-  // tem ALGUMA info coletada (cliente conversou) ou status já era pouco/medio
+  // Conversou, deu alguma info, mas faltou completar (ou objeção no meio)
   if (filledFields.length > 0 || ['pouco_qualificado', 'medio_qualificado', 'interessado'].includes(lead.status_crm || '')) {
     return 'pouco_qualificado';
   }
 
-  // Sem dados, sem indicação clara — preserva
+  // Sem dados, sem transferência — preserva (fica como 'novo')
   return lead.status_crm || 'novo';
 }
 
@@ -154,19 +147,30 @@ Deno.serve(async (req) => {
     const masterId = body?.master_user_id || await resolveMasterId(supabaseService, user.id);
     const dryRun = body?.dry_run === true;
 
-    // Carrega leads da conta
+    // 1. Carrega leads da conta
     const { data: leads, error } = await supabaseService
       .from('ai_crm_leads')
       .select('id, status_crm, client_name, vehicle_interest, payment_method, budget, client_city, visit_scheduled, last_user_reply_at, last_interaction_at, created_at, summary')
       .eq('user_id', masterId);
     if (error) throw new Error(error.message);
 
-    const now = Date.now();
+    // 2. Carrega lead_ids transferidos POR INATIVIDADE (10min sem resposta)
+    //    — esses viram automaticamente "Lead Inativo" no kanban
+    const { data: inactiveTransfers } = await supabaseService
+      .from('ai_lead_transfers')
+      .select('lead_id')
+      .eq('user_id', masterId)
+      .ilike('transfer_reason', '%inativ%');
+    const inactiveLeadIds = new Set<string>(
+      (inactiveTransfers || []).map((t: any) => t.lead_id).filter(Boolean)
+    );
+
     const changes: Array<{ id: string; from: string; to: string }> = [];
     const updates: Record<string, { newStatus: string; ids: string[] }> = {};
 
     for (const lead of (leads || []) as Lead[]) {
-      const newStatus = classify(lead, now);
+      const isInactiveTransfer = inactiveLeadIds.has(lead.id);
+      const newStatus = classify(lead, isInactiveTransfer);
       if (newStatus !== lead.status_crm) {
         changes.push({ id: lead.id, from: lead.status_crm || '(null)', to: newStatus });
         if (!updates[newStatus]) updates[newStatus] = { newStatus, ids: [] };
