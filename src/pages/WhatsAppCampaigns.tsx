@@ -446,12 +446,12 @@ Não numere as variações. Não inclua explicações adicionais.`
                                     <Pencil className="h-4 w-4" />
                                   </Button>
                                 )}
-                                {(c.status === 'draft' || c.status === 'paused') && (
-                                  <Button variant="ghost" size="icon" className="text-green-600 hover:text-green-700" onClick={() => handleStartCampaign(c.id)} title="Iniciar campanha">
+                                {(c.status === 'draft' || c.status === 'paused' || c.status === 'scheduled') && (
+                                  <Button variant="ghost" size="icon" className="text-green-600 hover:text-green-700" onClick={() => handleStartCampaign(c.id)} title="Iniciar disparo agora">
                                     <Play className="h-4 w-4" />
                                   </Button>
                                 )}
-                                {c.status === 'running' && (
+                                {(c.status === 'running' || c.status === 'scheduled') && (
                                   <Button variant="ghost" size="icon" className="text-yellow-600 hover:text-yellow-700" onClick={() => handlePauseCampaign(c.id)} title="Pausar campanha">
                                     <Pause className="h-4 w-4" />
                                   </Button>
