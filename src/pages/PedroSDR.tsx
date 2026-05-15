@@ -787,14 +787,17 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         return query;
       };
 
-      // Seller: filtra por assigned_to_id (todos os member IDs do vendedor) no banco
-      // Master: busca os 100 mais recentes (sem filtro de seller)
-      // JOIN defensivo: se ai_team_members ou wa_ai_agents quebrar (RLS, FK), a query
-      // inteira NÃO falha — só retorna null no campo. Antes (sem !left) erros silenciosos
-      // bloqueavam o array inteiro.
+      // ========================================================================
+      // ESTRATÉGIA "JOIN no JS" — mais robusta que JOIN PostgREST
+      // ========================================================================
+      // Antes: JOIN embedded com ai_team_members + wa_ai_agents fazia PostgREST
+      // retornar erro silencioso (provavelmente RLS de wa_ai_agents). Resultado:
+      // CRM totalmente vazio. Agora busca leads SEM JOIN e hidrata member/agent
+      // no JavaScript usando os arrays teamRes e agentsRes que já buscamos.
+      // ========================================================================
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members!left(id, name), agent:wa_ai_agents!left(name)')
+        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -802,8 +805,12 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       } else {
         leadsQuery.limit(100);
       }
+      const agentsQuery = (supabase as any)
+        .from('wa_ai_agents')
+        .select('id, name')
+        .eq('user_id', effectiveUserId);
 
-      const [leadsRes, fbRes, instRes, teamRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
+      const [leadsRes, fbRes, instRes, teamRes, agentsRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
         leadsQuery,
         (supabase as any)
           .from('pedro_manager_feedback')
@@ -833,6 +840,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           .eq('user_id', effectiveUserId)
           .order('is_active', { ascending: false })
           .order('name', { ascending: true }),
+        agentsQuery,
         leadCountQuery(),
         leadCountQuery(todayStart),
         leadCountQuery(weekStart),
@@ -840,8 +848,6 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       ]);
 
       // ── LOG DEFENSIVO: captura erro silencioso de query ──
-      // Antes: leadsRes.error era ignorado e leadsData ficava [] sem ninguém saber.
-      // Agora: erro vai pro console + toast pra usuário ver.
       if ((leadsRes as any)?.error) {
         console.error('[PedroSDR] ERRO ao buscar leads:', (leadsRes as any).error);
         toast({
@@ -850,31 +856,19 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           variant: 'destructive',
         });
       }
-      let leadsData: CrmLead[] = leadsRes.data || [];
+      const rawLeads: any[] = leadsRes.data || [];
       const teamData:  TeamMember[] = teamRes.data || [];
+      const agentsData: any[] = agentsRes.data || [];
 
-      // ── FALLBACK: se a query principal voltou vazia mas a contagem de total leads
-      // é > 0, refaz query SEM JOIN (pode ser que JOIN tenha quebrado por RLS de
-      // wa_ai_agents/ai_team_members). Diagnóstico ao vivo.
-      if (leadsData.length === 0 && (totalCountRes.count ?? 0) > 0) {
-        console.warn(`[PedroSDR] Query principal voltou 0 leads mas total é ${totalCountRes.count}. Tentando fallback sem JOIN...`);
-        const fallbackQ = (supabase as any)
-          .from('ai_crm_leads')
-          .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
-          .eq('user_id', effectiveUserId)
-          .order('created_at', { ascending: false });
-        if (isSeller && memberIds.length > 0) fallbackQ.in('assigned_to_id', memberIds);
-        else fallbackQ.limit(100);
-        const fbRes = await fallbackQ;
-        if (fbRes.error) {
-          console.error('[PedroSDR] Fallback TAMBÉM falhou:', fbRes.error);
-          toast({ title: '⚠️ Falha no fallback', description: fbRes.error?.message, variant: 'destructive' });
-        } else if (fbRes.data && fbRes.data.length > 0) {
-          console.log(`[PedroSDR] Fallback funcionou: ${fbRes.data.length} leads (sem JOIN). PROBLEMA É O JOIN.`);
-          toast({ title: 'ℹ️ Leads carregados (modo fallback — sem JOIN)', description: `${fbRes.data.length} leads. Reportar bug do JOIN.` });
-          leadsData = fbRes.data;
-        }
-      }
+      // ── HIDRATAÇÃO JS: monta lead.member e lead.agent usando os arrays já buscados
+      // Substitui o JOIN PostgREST que falhava silenciosamente. Mais robusto.
+      const teamById = new Map(teamData.map((t: any) => [t.id, { id: t.id, name: t.name }]));
+      const agentsById = new Map(agentsData.map((a: any) => [a.id, { name: a.name }]));
+      const leadsData: CrmLead[] = rawLeads.map((l: any) => ({
+        ...l,
+        member: l.assigned_to_id ? (teamById.get(l.assigned_to_id) ?? null) : null,
+        agent: l.agent_id ? (agentsById.get(l.agent_id) ?? null) : null,
+      }));
 
       // Deduplica vendedores pelo whatsapp_number (mesmo vendedor pode estar em vários agentes)
       const deduped = new Map<string, TeamMember>();
