@@ -9,7 +9,7 @@
 // Botão "Restaurar Prompt Anterior" → rollback 1-clique.
 // ============================================================================
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -224,6 +224,49 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
   const [hasBackup, setHasBackup] = useState(false);
   const [cfg, setCfg] = useState<FunnelConfig>(DEFAULT_CONFIG);
 
+  // ── Autosave: salva alterações automaticamente em background a cada 2s
+  // sem digitação. NÃO gera prompt (só persiste no agent_funnel_config).
+  // Garantia: mesmo que modal feche, navegação ocorra ou aba seja trocada,
+  // os blocos preenchidos ficam salvos no DB. Pra usar prompt novo na IA,
+  // usuário ainda precisa clicar "Salvar e Gerar Prompt".
+  const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const cfgInitializedRef = useRef(false);  // só autosaveia depois do load inicial
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!agentId || !userId || !cfgInitializedRef.current) return;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    setAutosaveStatus('saving');
+    autosaveTimerRef.current = setTimeout(async () => {
+      try {
+        const { error: upErr } = await (supabase as any)
+          .from('agent_funnel_config')
+          .upsert({ agent_id: agentId, user_id: userId, ...cfg }, { onConflict: 'agent_id' });
+        if (upErr) throw upErr;
+        setAutosaveStatus('saved');
+        // Volta pra idle após 2s pra UI não ficar permanente
+        setTimeout(() => setAutosaveStatus('idle'), 2000);
+      } catch {
+        setAutosaveStatus('error');
+      }
+    }, 2000);
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, [cfg, agentId, userId]);
+
+  // Aviso ao tentar fechar a aba/janela com mudanças não salvas pendentes
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (autosaveStatus === 'saving' || autosaveStatus === 'error') {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [autosaveStatus]);
+
   // Preview do prompt gerado
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -294,6 +337,10 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
             description: 'Usamos os dados do agente como base. Revise os blocos e clique em Salvar e Gerar Prompt.',
           });
         }
+        // Marca que carga inicial terminou — daqui pra frente, qualquer
+        // mudança em `cfg` dispara autosave. (Sem isso, autosave dispararia
+        // imediatamente após load com dados que vieram do próprio DB.)
+        cfgInitializedRef.current = true;
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -452,6 +499,22 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               {hasBackup && (
                 <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-400">
                   <ShieldCheck className="h-2.5 w-2.5 mr-1" /> Backup disponível
+                </Badge>
+              )}
+              {/* Status do autosave — visível pra usuário saber que está protegido */}
+              {autosaveStatus === 'saving' && (
+                <Badge variant="outline" className="text-[10px] border-blue-500/30 text-blue-400">
+                  <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> Salvando rascunho...
+                </Badge>
+              )}
+              {autosaveStatus === 'saved' && (
+                <Badge variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-400">
+                  ✓ Rascunho salvo
+                </Badge>
+              )}
+              {autosaveStatus === 'error' && (
+                <Badge variant="outline" className="text-[10px] border-red-500/30 text-red-400">
+                  ⚠ Erro no autosave
                 </Badge>
               )}
             </div>
