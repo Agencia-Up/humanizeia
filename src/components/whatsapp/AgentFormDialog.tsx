@@ -723,11 +723,16 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-primary" />
             {agent ? 'Editar Agente' : 'Novo Agente IA'}
+            <Badge variant="outline" className="ml-2 text-[10px] font-mono">
+              Aba: {activeTab}
+            </Badge>
           </DialogTitle>
           <DialogDescription>Configure como o agente responde e quais números ele atende</DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[72vh] pr-4">
+        {/* ScrollArea (Radix) substituído por div nativa — Radix ScrollArea
+            tinha conflito com Tabs aninhada que fazia conteúdo da SDR sumir */}
+        <div className="max-h-[72vh] overflow-y-auto pr-4">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <div className="w-full pb-4 border-b">
               {/* Contêiner em grid/auto-wrap para garantir que as abas não cortem */}
@@ -1101,7 +1106,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
               />
             </TabsContent>
           </Tabs>
-        </ScrollArea>
+        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => handleDialogOpenChange(false)}>Cancelar</Button>
