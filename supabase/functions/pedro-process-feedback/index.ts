@@ -92,6 +92,18 @@ serve(async (req) => {
     // user_id do gerente = user_id do lead (sempre o dono)
     const gerenteUserId = lead.user_id;
 
+    // ── Lê config de scheduling do master (auto vs scheduled batch) ──────────
+    const { data: feedbackCfg } = await supabase
+      .from("manager_feedback_config" as any)
+      .select("mode")
+      .eq("user_id", gerenteUserId)
+      .maybeSingle();
+    const mode: "auto" | "scheduled" = ((feedbackCfg as any)?.mode === "scheduled") ? "scheduled" : "auto";
+    // Se scheduled: persiste com pending_send=true e PULA envio imediato.
+    //   cron-flush-manager-feedbacks processa no horário configurado.
+    // Se auto: comportamento histórico — envia imediatamente.
+    const isScheduled = mode === "scheduled";
+
     // ── Persiste o feedback (com campos estruturados) ────────────────────────
     const { data: feedback, error: insertErr } = await supabase
       .from("pedro_manager_feedback" as any)
@@ -104,13 +116,22 @@ serve(async (req) => {
         city:         city || null,
         reason:       reason || null,
         observations: observations || null,
+        pending_send: isScheduled, // true = aguarda janela horária
       })
       .select("id")
       .single();
 
     if (insertErr) throw insertErr;
 
-    // ── Notificação WhatsApp para o gerente ──────────────────────────────────
+    if (isScheduled) {
+      // Modo scheduled — não envia agora, cron processará
+      return new Response(
+        JSON.stringify({ success: true, scheduled: true, feedback_id: (feedback as any)?.id }),
+        { headers: { ...cors, "Content-Type": "application/json" } },
+      );
+    }
+
+    // ── Notificação WhatsApp para o gerente (modo auto) ──────────────────────
     // Usa a INSTÂNCIA DO VENDEDOR (número conectado na conta dele)
     // Fallback: instância do agente IA caso vendedor não tenha instância
     try {
@@ -227,6 +248,13 @@ serve(async (req) => {
             const sendStatus = sendRes.status;
             const sendBody   = await sendRes.text().catch(() => "");
             console.log(`[pedro-process-feedback] UazAPI resposta: ${sendStatus} ${sendBody.slice(0, 200)}`);
+
+            // Marca como enviado se sucesso (200-299)
+            if (sendStatus >= 200 && sendStatus < 300 && (feedback as any)?.id) {
+              await supabase.from("pedro_manager_feedback" as any)
+                .update({ sent_to_manager_at: new Date().toISOString(), pending_send: false })
+                .eq("id", (feedback as any).id);
+            }
           } else {
             console.log("[pedro-process-feedback] Nenhuma instância encontrada para envio");
           }

@@ -38,6 +38,7 @@ const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
+import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 
@@ -2733,7 +2734,9 @@ export default function PedroSDR() {
 
             {/* Vendedores */}
             {(!isSeller || visibleFeatures.tab_vendedores) && (
-              <TabsContent value="vendedores" className="mt-0">
+              <TabsContent value="vendedores" className="mt-0 space-y-4">
+                {/* Config de entrega de feedbacks ao gerente — só pra master */}
+                {!isSeller && <ManagerFeedbackConfigCard />}
                 {user?.id && <SellerManagerTab userId={user.id} />}
               </TabsContent>
             )}
