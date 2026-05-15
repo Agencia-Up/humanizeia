@@ -149,15 +149,10 @@ Mantenha a conversa fluida, natural e foque em resolver a necessidade real do cl
 };
 
 export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, onSaved, onRefreshData }: AgentFormDialogProps) {
-  useEffect(() => {
-    if (open) {
-      console.info("!!! HUMANIZEIA UAZAPI DEBUG V5.3 ACTIVE (OpenAI + Stability) !!!");
-    } else {
-      // Ao fechar o modal, reseta a aba pra "general" (próxima abertura
-      // sempre começa em Geral, não na última aba que ficou aberta).
-      setActiveTab('general');
-    }
-  }, [open]);
+  // NOTA: removido reset de setActiveTab no useEffect [open] — estava
+  // disparando em re-renders e revertendo a aba pra 'general' quando user
+  // clicava em SDR. Reset agora é feito no handleDialogOpenChange (só
+  // quando o modal de fato fecha).
   const { user } = useAuth();
   const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const effectiveUserId = useMemo(() => {
@@ -712,6 +707,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       stopPolling();
       setQrCode(null);
       setIsGeneratingQr(false);
+      setActiveTab('general'); // reset SOMENTE no fechamento explícito
     }
     onOpenChange(val);
   };
