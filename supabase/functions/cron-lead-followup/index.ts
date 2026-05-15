@@ -381,12 +381,51 @@ Deno.serve(async (req) => {
             .eq('id', lead.id)
             .maybeSingle();
 
-          if (!freshLead || freshLead.status !== 'qualificado') {
-            console.log(`[Cron] Lead ${lead.id} nao esta mais qualificado (status: ${freshLead?.status}). Marcando transferencia como expirada e pulando.`);
+          // ── DEFESA EM PROFUNDIDADE 1: pula se status já mudou ──
+          if (!freshLead || (freshLead.status !== 'qualificado' && freshLead.status !== 'transferido')) {
+            console.log(`[Cron] Lead ${lead.id} nao esta mais qualificado/transferido (status: ${freshLead?.status}). Marcando transferencia como expirada e pulando.`);
             await supabase.from('ai_lead_transfers')
               .update({ transfer_status: 'expired' })
               .eq('id', transfer.id);
             continue;
+          }
+
+          // ── DEFESA EM PROFUNDIDADE 2: se status='em_atendimento' OU já tem transfer mais novo CONFIRMADO ─
+          // Cobre o caso "vendedor confirmou mas webhook falhou em algum step":
+          // se existe um transfer pra esse lead criado DEPOIS de transfer.created_at com is_confirmed=true,
+          // significa que houve confirmação posterior e este transfer já é stale.
+          const { data: newerConfirmed } = await supabase
+            .from('ai_lead_transfers')
+            .select('id, to_member_id, created_at, is_confirmed, transfer_status')
+            .eq('lead_id', lead.id)
+            .gt('created_at', transfer.created_at)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (newerConfirmed && (newerConfirmed.is_confirmed || newerConfirmed.transfer_status === 'confirmed')) {
+            console.log(`[Cron] Lead ${lead.id} tem transfer mais novo confirmado (${newerConfirmed.id} → ${newerConfirmed.to_member_id}). Pulando este transfer e marcando como expirado.`);
+            await supabase.from('ai_lead_transfers')
+              .update({ transfer_status: 'expired' })
+              .eq('id', transfer.id);
+            continue;
+          }
+
+          // ── DEFESA EM PROFUNDIDADE 3: se vendedor atual já recebeu OUTRO lead depois de transfer.created_at ─
+          // Sinal de atividade — vendedor está ativo no sistema, não está "inativo".
+          if (transfer.to_member_id) {
+            const { data: currentSeller } = await supabase
+              .from('ai_team_members')
+              .select('last_lead_received_at, name')
+              .eq('id', transfer.to_member_id)
+              .maybeSingle();
+            if (currentSeller?.last_lead_received_at && new Date(currentSeller.last_lead_received_at) > new Date(transfer.created_at)) {
+              console.log(`[Cron] Vendedor ${currentSeller.name} já recebeu lead mais novo (${currentSeller.last_lead_received_at}) — está ativo, não repassar. Marcando transfer como confirmed.`);
+              await supabase.from('ai_lead_transfers')
+                .update({ transfer_status: 'confirmed', is_confirmed: true, confirmed_at: now.toISOString() })
+                .eq('id', transfer.id);
+              continue;
+            }
           }
 
           const agentId = lead.agent_id;

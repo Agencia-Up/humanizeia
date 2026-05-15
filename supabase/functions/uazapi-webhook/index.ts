@@ -873,37 +873,55 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   }
 
   if (senderSeller) {
-    console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} — verificando transfer pendente`);
+    console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} (id=${senderSeller.id}, jid=${remoteJid}) — verificando transfer pendente`);
     const now = new Date().toISOString();
+    // Busca QUALQUER transfer recente do vendedor — não só pending. Cobre casos
+    // onde confirmation_timeout_at já passou mas vendedor está respondendo.
     const { data: pendingTransfer } = await supabase
       .from('ai_lead_transfers')
-      .select('id, lead_id')
+      .select('id, lead_id, transfer_status, is_confirmed, created_at')
       .eq('to_member_id', senderSeller.id)
-      .eq('transfer_status', 'pending')
-      .eq('is_confirmed', false)
-      .gt('confirmation_timeout_at', now)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-
     if (pendingTransfer) {
+      console.log(`[Transfer] Último transfer do vendedor: id=${pendingTransfer.id} status=${pendingTransfer.transfer_status} confirmed=${pendingTransfer.is_confirmed} created=${pendingTransfer.created_at}`);
+    } else {
+      console.log(`[Transfer] Nenhum transfer encontrado para vendedor ${senderSeller.name}`);
+    }
+    // Só confirma se ainda está pending E não confirmado
+    const shouldConfirm = pendingTransfer
+      && pendingTransfer.transfer_status === 'pending'
+      && !pendingTransfer.is_confirmed;
+
+    if (shouldConfirm && pendingTransfer) {
       // Confirma o transfer
-      await supabase.from('ai_lead_transfers').update({
+      const { error: updTransferErr } = await supabase.from('ai_lead_transfers').update({
         transfer_status: 'confirmed',
         is_confirmed: true,
         confirmed_at: now,
       }).eq('id', pendingTransfer.id);
+      if (updTransferErr) {
+        console.error(`[Transfer] FALHA ao marcar transfer ${pendingTransfer.id} como confirmed:`, updTransferErr);
+      } else {
+        console.log(`[Transfer] ✅ transfer ${pendingTransfer.id} marcado como confirmed`);
+      }
 
       await supabase.from('ai_team_members').update({
         last_lead_received_at: now,
       }).eq('id', senderSeller.id);
 
-      // Atualiza status do lead para 'em_atendimento'
+      // Atualiza status do lead para 'em_atendimento' — CRÍTICO pra cron não repassar
       if (pendingTransfer.lead_id) {
-        await supabase.from('ai_crm_leads').update({
+        const { error: updLeadErr } = await supabase.from('ai_crm_leads').update({
           status: 'em_atendimento',
           last_interaction_at: now,
         }).eq('id', pendingTransfer.lead_id);
+        if (updLeadErr) {
+          console.error(`[Transfer] FALHA ao atualizar lead.status para em_atendimento (lead ${pendingTransfer.lead_id}):`, updLeadErr);
+        } else {
+          console.log(`[Transfer] ✅ lead ${pendingTransfer.lead_id} status → em_atendimento`);
+        }
       }
 
       // Envia mensagem de confirmação para o vendedor via WhatsApp
