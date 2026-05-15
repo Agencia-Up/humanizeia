@@ -581,6 +581,22 @@ const STATUS_CRM_OPTIONS = [
   { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
 
+// ─── Origem do Lead (Prompt 1.1) ───────────────────────────────────────────
+// Bate com CHECK constraint da migration 20260516120000_lead_origem
+export const LEAD_ORIGEM_OPTIONS = [
+  { value: 'porta',                  label: '🚪 Porta (loja)',     short: 'Porta' },
+  { value: 'marketplace_facebook',   label: '🛒 Marketplace FB',   short: 'FB Marketplace' },
+  { value: 'marketplace_olx',        label: '🛒 OLX',              short: 'OLX' },
+  { value: 'marketplace_mercadolivre', label: '🛒 Mercado Livre',  short: 'Mercado Livre' },
+  { value: 'instagram_vendedor',     label: '📷 Instagram',        short: 'Instagram' },
+  { value: 'outros',                 label: '📌 Outros',           short: 'Outros' },
+] as const;
+const LEAD_ORIGEM_VALUES = LEAD_ORIGEM_OPTIONS.map(o => o.value) as readonly string[];
+function leadOrigemLabel(v: string | null | undefined): string | null {
+  if (!v) return null;
+  return LEAD_ORIGEM_OPTIONS.find(o => o.value === v)?.short || v;
+}
+
 // Mapeia status legacy → exibe no kanban (compat retroativa)
 // 'interessado' (antigo) → 'novo'
 // 'medio_qualificado' (antigo, removido na nova lógica de 3 níveis) → 'pouco_qualificado'
@@ -1283,6 +1299,8 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [addLeadOpen, setAddLeadOpen]   = useState(false);
   const [addLeadName, setAddLeadName]   = useState('');
   const [addLeadPhone, setAddLeadPhone] = useState('');
+  const [addLeadOrigem, setAddLeadOrigem] = useState<string>(''); // '' = origem NULL no banco
+  const [addLeadOrigemOutros, setAddLeadOrigemOutros] = useState<string>('');
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
   const [editingLead, setEditingLead] = useState(false);
@@ -1292,7 +1310,8 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
   // ── Bulk upload states ──
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
-  const [bulkLeads, setBulkLeads] = useState<{ name: string; phone: string; valid: boolean }[]>([]);
+  // Prompt 1.1: bulkLeads agora carrega origem opcional (validada contra LEAD_ORIGEM_VALUES)
+  const [bulkLeads, setBulkLeads] = useState<{ name: string; phone: string; valid: boolean; origem?: string | null; origemError?: string }[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [bulkResult, setBulkResult] = useState<{ success: number; failed: number } | null>(null);
@@ -1309,21 +1328,23 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-        // Detect columns: look for name/nome and phone/telefone/whatsapp/numero
+        // Detect columns: look for name/nome, phone/telefone/whatsapp/numero, origem (Prompt 1.1)
         let nameCol = -1;
         let phoneCol = -1;
+        let origemCol = -1;
         const headerRow = (rows[0] || []).map((h: any) => String(h || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
         headerRow.forEach((h: string, i: number) => {
           if (nameCol === -1 && (h.includes('nome') || h.includes('name') || h.includes('cliente') || h.includes('lead'))) nameCol = i;
           if (phoneCol === -1 && (h.includes('telefone') || h.includes('phone') || h.includes('whatsapp') || h.includes('celular') || h.includes('numero') || h.includes('fone'))) phoneCol = i;
+          if (origemCol === -1 && (h === 'origem' || h === 'source' || h === 'canal' || h === 'origin')) origemCol = i;
         });
         // Fallback: first col = name, second col = phone
         if (nameCol === -1) nameCol = 0;
         if (phoneCol === -1) phoneCol = nameCol === 0 ? 1 : 0;
 
-        const startRow = headerRow.some((h: string) => h.includes('nome') || h.includes('name') || h.includes('telefone') || h.includes('phone') || h.includes('whatsapp')) ? 1 : 0;
+        const startRow = headerRow.some((h: string) => h.includes('nome') || h.includes('name') || h.includes('telefone') || h.includes('phone') || h.includes('whatsapp') || h === 'origem') ? 1 : 0;
 
-        const parsed: { name: string; phone: string; valid: boolean }[] = [];
+        const parsed: { name: string; phone: string; valid: boolean; origem?: string | null; origemError?: string }[] = [];
         for (let i = startRow; i < rows.length; i++) {
           const row = rows[i];
           if (!row || row.length === 0) continue;
@@ -1331,7 +1352,20 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           const rawPhone = String(row[phoneCol] || '').replace(/\D/g, '');
           if (!rawName && !rawPhone) continue;
           const valid = rawName.length >= 2 && rawPhone.length >= 10 && rawPhone.length <= 15;
-          parsed.push({ name: rawName, phone: rawPhone, valid });
+          // Origem: opcional. Se preenchida, valida contra os 6 valores. Default 'outros'.
+          let origem: string | null = null;
+          let origemError: string | undefined;
+          if (origemCol >= 0) {
+            const rawOrigem = String(row[origemCol] || '').trim().toLowerCase();
+            if (rawOrigem) {
+              if (LEAD_ORIGEM_VALUES.includes(rawOrigem)) {
+                origem = rawOrigem;
+              } else {
+                origemError = `Origem inválida: "${rawOrigem}". Valores aceitos: ${LEAD_ORIGEM_VALUES.join(', ')}.`;
+              }
+            }
+          }
+          parsed.push({ name: rawName, phone: rawPhone, valid: valid && !origemError, origem, origemError });
         }
         setBulkLeads(parsed);
         setBulkResult(null);
@@ -1387,6 +1421,8 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           status_crm:  'novo',
           status:      'novo',
           assigned_to_id: memberId || null,
+          // Prompt 1.1: usa origem da planilha se válida, senão 'outros' como default no bulk
+          origem: l.origem || 'outros',
         }));
         const { error } = await (supabase as any).from('ai_crm_leads').insert(batch);
         if (error) {
@@ -1444,10 +1480,13 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         status_crm:  'novo',
         status:      'novo',
         assigned_to_id: memberId || null,
+        // Prompt 1.1: origem opcional. Vazio → NULL no banco.
+        origem:        addLeadOrigem || null,
+        origem_outros: addLeadOrigem === 'outros' ? (addLeadOrigemOutros.trim() || null) : null,
       });
       if (error) throw error;
       toast({ title: '✅ Lead adicionado ao CRM!' });
-      setAddLeadName(''); setAddLeadPhone(''); setAddLeadOpen(false);
+      setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros(''); setAddLeadOpen(false);
       await fetchData(true);
     } catch (err: any) {
       toast({ title: 'Erro ao adicionar lead', description: err.message, variant: 'destructive' });
@@ -1586,6 +1625,14 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                     {(() => { const p = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || ''; return p.length >= 12 ? `📱 (${p.slice(2,4)}) ${p.slice(4,9)}-${p.slice(9)}` : p.length >= 10 ? `📱 (${p.slice(0,2)}) ${p.slice(2,7)}-${p.slice(7)}` : p ? `📱 ${p}` : ''; })()}
                     {selectedLead.remote_jid && ' · '}{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}
                   </p>
+                  {/* Prompt 1.1: linha discreta de origem (badge bonita virá no Prompt 5.1) */}
+                  {(selectedLead as any).origem && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      Origem: {leadOrigemLabel((selectedLead as any).origem)}
+                      {(selectedLead as any).origem === 'outros' && (selectedLead as any).origem_outros
+                        ? ` (${(selectedLead as any).origem_outros})` : ''}
+                    </p>
+                  )}
                 </div>
                 <Button variant="ghost" size="sm" onClick={startEditLead} className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground shrink-0 mt-0.5" title="Editar lead">
                   <Pencil className="h-3 w-3" />
@@ -2265,34 +2312,61 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
       {/* ── Formulário adicionar lead ─────────────────────────────────── */}
       {addLeadOpen && (
-        <div className="flex items-end gap-2 bg-card border border-emerald-500/20 rounded-xl p-3">
-          <div className="flex-1 space-y-1">
-            <label className="text-[10px] text-muted-foreground font-medium">Nome</label>
-            <Input
-              value={addLeadName}
-              onChange={e => setAddLeadName(e.target.value)}
-              placeholder="Nome do lead"
-              className="h-8 text-xs"
-            />
+        <div className="bg-card border border-emerald-500/20 rounded-xl p-3 space-y-2">
+          <div className="flex items-end gap-2 flex-wrap">
+            <div className="flex-1 min-w-[140px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">Nome</label>
+              <Input
+                value={addLeadName}
+                onChange={e => setAddLeadName(e.target.value)}
+                placeholder="Nome do lead"
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="flex-1 min-w-[140px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">Telefone (WhatsApp)</label>
+              <Input
+                value={addLeadPhone}
+                onChange={e => setAddLeadPhone(e.target.value)}
+                placeholder="5511999999999"
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="flex-1 min-w-[160px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">Origem (opcional)</label>
+              <Select value={addLeadOrigem || 'none'} onValueChange={(v) => setAddLeadOrigem(v === 'none' ? '' : v)}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Origem do lead" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— Sem origem —</SelectItem>
+                  {LEAD_ORIGEM_OPTIONS.map(o => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              onClick={handleAddLeadManual}
+              disabled={addLeadSaving || !addLeadName.trim() || !addLeadPhone.trim()}
+              size="sm"
+              className="h-8 px-4 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              {addLeadSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+              Salvar
+            </Button>
           </div>
-          <div className="flex-1 space-y-1">
-            <label className="text-[10px] text-muted-foreground font-medium">Telefone (WhatsApp)</label>
-            <Input
-              value={addLeadPhone}
-              onChange={e => setAddLeadPhone(e.target.value)}
-              placeholder="5511999999999"
-              className="h-8 text-xs"
-            />
-          </div>
-          <Button
-            onClick={handleAddLeadManual}
-            disabled={addLeadSaving || !addLeadName.trim() || !addLeadPhone.trim()}
-            size="sm"
-            className="h-8 px-4 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-          >
-            {addLeadSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            Salvar
-          </Button>
+          {addLeadOrigem === 'outros' && (
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">Especificar origem (opcional)</label>
+              <Input
+                value={addLeadOrigemOutros}
+                onChange={e => setAddLeadOrigemOutros(e.target.value)}
+                placeholder="Ex: TikTok, indicação, panfleto..."
+                className="h-8 text-xs"
+              />
+            </div>
+          )}
         </div>
       )}
 
