@@ -789,9 +789,12 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
       // Seller: filtra por assigned_to_id (todos os member IDs do vendedor) no banco
       // Master: busca os 100 mais recentes (sem filtro de seller)
+      // JOIN defensivo: se ai_team_members ou wa_ai_agents quebrar (RLS, FK), a query
+      // inteira NÃO falha — só retorna null no campo. Antes (sem !left) erros silenciosos
+      // bloqueavam o array inteiro.
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
+        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members!left(id, name), agent:wa_ai_agents!left(name)')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -836,8 +839,42 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         leadCountQuery(monthStart),
       ]);
 
-      const leadsData: CrmLead[] = leadsRes.data || [];
+      // ── LOG DEFENSIVO: captura erro silencioso de query ──
+      // Antes: leadsRes.error era ignorado e leadsData ficava [] sem ninguém saber.
+      // Agora: erro vai pro console + toast pra usuário ver.
+      if ((leadsRes as any)?.error) {
+        console.error('[PedroSDR] ERRO ao buscar leads:', (leadsRes as any).error);
+        toast({
+          title: '⚠️ Erro ao carregar leads',
+          description: (leadsRes as any).error?.message || 'Erro desconhecido',
+          variant: 'destructive',
+        });
+      }
+      let leadsData: CrmLead[] = leadsRes.data || [];
       const teamData:  TeamMember[] = teamRes.data || [];
+
+      // ── FALLBACK: se a query principal voltou vazia mas a contagem de total leads
+      // é > 0, refaz query SEM JOIN (pode ser que JOIN tenha quebrado por RLS de
+      // wa_ai_agents/ai_team_members). Diagnóstico ao vivo.
+      if (leadsData.length === 0 && (totalCountRes.count ?? 0) > 0) {
+        console.warn(`[PedroSDR] Query principal voltou 0 leads mas total é ${totalCountRes.count}. Tentando fallback sem JOIN...`);
+        const fallbackQ = (supabase as any)
+          .from('ai_crm_leads')
+          .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
+          .eq('user_id', effectiveUserId)
+          .order('created_at', { ascending: false });
+        if (isSeller && memberIds.length > 0) fallbackQ.in('assigned_to_id', memberIds);
+        else fallbackQ.limit(100);
+        const fbRes = await fallbackQ;
+        if (fbRes.error) {
+          console.error('[PedroSDR] Fallback TAMBÉM falhou:', fbRes.error);
+          toast({ title: '⚠️ Falha no fallback', description: fbRes.error?.message, variant: 'destructive' });
+        } else if (fbRes.data && fbRes.data.length > 0) {
+          console.log(`[PedroSDR] Fallback funcionou: ${fbRes.data.length} leads (sem JOIN). PROBLEMA É O JOIN.`);
+          toast({ title: 'ℹ️ Leads carregados (modo fallback — sem JOIN)', description: `${fbRes.data.length} leads. Reportar bug do JOIN.` });
+          leadsData = fbRes.data;
+        }
+      }
 
       // Deduplica vendedores pelo whatsapp_number (mesmo vendedor pode estar em vários agentes)
       const deduped = new Map<string, TeamMember>();

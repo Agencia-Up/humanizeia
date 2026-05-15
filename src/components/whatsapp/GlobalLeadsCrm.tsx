@@ -60,11 +60,29 @@ export function GlobalLeadsCrm() {
     if (!effectiveUserId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const { data: leadsData } = await (supabase as any)
+      // !left explícito + log defensivo + fallback sem JOIN se vazio
+      const leadsRes = await (supabase as any)
         .from('ai_crm_leads')
-        .select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
+        .select('*, agent:wa_ai_agents!left(name), member:ai_team_members!left(name, whatsapp_number)')
         .eq('user_id', effectiveUserId)
         .order('last_interaction_at', { ascending: false });
+
+      if ((leadsRes as any)?.error) console.error('[GlobalLeadsCrm] ERRO query principal:', (leadsRes as any).error);
+      let leadsData = leadsRes.data;
+
+      if (!leadsData || leadsData.length === 0) {
+        console.warn('[GlobalLeadsCrm] Query voltou vazio — tentando fallback sem JOIN');
+        const fbRes = await (supabase as any)
+          .from('ai_crm_leads')
+          .select('*')
+          .eq('user_id', effectiveUserId)
+          .order('last_interaction_at', { ascending: false });
+        if (fbRes.error) console.error('[GlobalLeadsCrm] Fallback erro:', fbRes.error);
+        else if (fbRes.data && fbRes.data.length > 0) {
+          console.log(`[GlobalLeadsCrm] Fallback OK: ${fbRes.data.length} leads`);
+          leadsData = fbRes.data;
+        }
+      }
 
       const { data: transfersData } = await (supabase as any)
         .from('ai_lead_transfers')

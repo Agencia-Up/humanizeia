@@ -293,15 +293,17 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     if (!user || !effectiveUserId) { setLoading(false); return; }
     try {
       // Leads query — sellers only see their own assigned leads
+      // !left explícito: se JOIN com ai_team_members ou wa_ai_agents falhar (RLS),
+      // a query inteira não falha — só retorna null no campo embedded.
       let leadsQ = (supabase as any).from('ai_crm_leads')
-        .select('*, agent:wa_ai_agents(name), member:ai_team_members(id, name, whatsapp_number)')
+        .select('*, agent:wa_ai_agents!left(name), member:ai_team_members!left(id, name, whatsapp_number)')
         .eq('user_id', effectiveUserId)
         .order('last_interaction_at', { ascending: false });
       if (isSeller && sellerMemberIds.length > 0) {
         leadsQ = leadsQ.in('assigned_to_id', sellerMemberIds);
       }
 
-      const [{ data: leadsData }, { data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
+      const [leadsRes, transfersRes, membersRes, agentsRes] = await Promise.all([
         leadsQ,
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
           .eq('user_id', effectiveUserId).order('created_at', { ascending: false }).limit(500),
@@ -309,8 +311,31 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', effectiveUserId),
       ]);
-      setLeads(leadsData || []); setTransfers(transfersData || []);
-      setTeamMembers(membersData || []); setAgents(agentsData || []);
+
+      // Log defensivo: captura erro silencioso
+      if ((leadsRes as any)?.error) {
+        console.error('[CrmAoVivo] ERRO ao buscar leads:', (leadsRes as any).error);
+      }
+      let leadsData = leadsRes.data;
+
+      // Fallback sem JOIN se voltou vazio
+      if ((!leadsData || leadsData.length === 0)) {
+        console.warn('[CrmAoVivo] Tentando fallback sem JOIN...');
+        let fbQ = (supabase as any).from('ai_crm_leads')
+          .select('*')
+          .eq('user_id', effectiveUserId)
+          .order('last_interaction_at', { ascending: false });
+        if (isSeller && sellerMemberIds.length > 0) fbQ = fbQ.in('assigned_to_id', sellerMemberIds);
+        const fbRes = await fbQ;
+        if (fbRes.error) console.error('[CrmAoVivo] Fallback erro:', fbRes.error);
+        else if (fbRes.data && fbRes.data.length > 0) {
+          console.log(`[CrmAoVivo] Fallback OK: ${fbRes.data.length} leads (sem JOIN — JOIN tá quebrado)`);
+          leadsData = fbRes.data;
+        }
+      }
+
+      setLeads(leadsData || []); setTransfers(transfersRes.data || []);
+      setTeamMembers(membersRes.data || []); setAgents(agentsRes.data || []);
       setLastUpdatedAt(new Date().toISOString());
     } finally { setLoading(false); }
   }, [user, effectiveUserId, isSeller, sellerMemberIds]);
