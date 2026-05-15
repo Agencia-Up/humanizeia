@@ -166,9 +166,22 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
-  // Tabs controladas: garante que mudança não é resetada por re-renders
-  // (modos uncontrolled remountam pra default em alguns cenários)
-  const [activeTab, setActiveTab] = useState<string>('general');
+  // activeTab persistido em sessionStorage — Investigação ao vivo via Chrome
+  // MCP provou que o AgentFormDialog é REMONTADO após cliques de aba
+  // (provavelmente o WhatsAppAIAgent re-renderiza com nova reference, ou
+  // algum efeito do Dialog/FunilDoAgenteTab causa unmount/remount). useState
+  // sozinho perde o valor a cada remount → aba volta pra 'general'.
+  // Solução: ler do sessionStorage no initial (sobrevive remount, dá reset
+  // explícito no fechamento via handleDialogOpenChange).
+  const ACTIVE_TAB_KEY = `agentFormDialog_activeTab_${agent?.id || 'new'}`;
+  const [activeTab, setActiveTabState] = useState<string>(() => {
+    try { return sessionStorage.getItem(ACTIVE_TAB_KEY) || 'general'; }
+    catch { return 'general'; }
+  });
+  const setActiveTab = (v: string) => {
+    try { sessionStorage.setItem(ACTIVE_TAB_KEY, v); } catch {}
+    setActiveTabState(v);
+  };
 
   const [name, setName] = useState('Agente IA');
   const [agentType, setAgentType] = useState('generic');
@@ -709,7 +722,9 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       stopPolling();
       setQrCode(null);
       setIsGeneratingQr(false);
-      setActiveTab('general'); // reset SOMENTE no fechamento explícito
+      // Reset explícito + limpa sessionStorage (próxima abertura começa em Geral)
+      try { sessionStorage.removeItem(ACTIVE_TAB_KEY); } catch {}
+      setActiveTab('general');
     }
     onOpenChange(val);
   };
