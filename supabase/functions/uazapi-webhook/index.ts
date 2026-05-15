@@ -706,7 +706,13 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         existingLead.assigned_to_id) {
       console.log(`[Webhook] 🔄 Lead RETORNOU! Status era '${existingLead.status}', assigned_to=${existingLead.assigned_to_id}. Resetando...`);
 
-      // 1. Buscar vendedor que estava atendendo
+      // 1. Buscar vendedor que estava atendendo + última notificação de retorno
+      const { data: existingLeadFull } = await supabase
+        .from('ai_crm_leads')
+        .select('last_return_notify_at')
+        .eq('id', existingLead.id)
+        .maybeSingle();
+
       const { data: assignedSeller } = await supabase
         .from('ai_team_members')
         .select('id, name, whatsapp_number')
@@ -721,8 +727,16 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         followup_5min_sent: false,
       }).eq('id', existingLead.id);
 
-      // 3. Notificar vendedor via WhatsApp que o cliente voltou
-      if (assignedSeller?.whatsapp_number) {
+      // 3. Throttle: notifica vendedor APENAS se passou >= 24h da última
+      // notificação de retorno desse lead (ou se nunca foi notificado).
+      // Antes: spam — toda mensagem do cliente disparava notificação.
+      const lastNotifyMs = existingLeadFull?.last_return_notify_at
+        ? new Date(existingLeadFull.last_return_notify_at).getTime()
+        : 0;
+      const hoursSinceLastNotify = (Date.now() - lastNotifyMs) / 3_600_000;
+      const shouldNotify = hoursSinceLastNotify >= 24;
+
+      if (shouldNotify && assignedSeller?.whatsapp_number) {
         try {
           const retBaseUrl = (waInstance.api_url || '').replace(/\/$/, '');
           const retInstKey = waInstance.api_key_encrypted || '';
@@ -742,10 +756,19 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             headers: { 'Content-Type': 'application/json', 'token': retInstKey },
             body: JSON.stringify({ number: sellerNum, text: returnNotification }),
           });
-          console.log(`[Webhook] 🔄 Notificação de retorno enviada para ${assignedSeller.name}`);
+
+          // Marca timestamp pra throttle de 24h não notificar de novo
+          await supabase
+            .from('ai_crm_leads')
+            .update({ last_return_notify_at: new Date().toISOString() })
+            .eq('id', existingLead.id);
+
+          console.log(`[Webhook] 🔄 Notificação de retorno enviada para ${assignedSeller.name} (próxima só após 24h)`);
         } catch (notifyErr) {
           console.error('[Webhook] Erro ao notificar vendedor sobre retorno:', notifyErr);
         }
+      } else if (!shouldNotify) {
+        console.log(`[Webhook] 🔇 Notificação de retorno SUPRIMIDA (throttle 24h) — última foi há ${hoursSinceLastNotify.toFixed(1)}h`);
       }
     }
   }
