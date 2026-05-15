@@ -432,7 +432,15 @@ function formatStateForPrompt(state: any): string {
     lines.push('- ❌ NÃO ofereça visita à loja — cliente já recusou. Foque em fechar 100% remoto.');
   }
   if (state.veiculo_apresentado?.ja_apresentado) {
-    lines.push('- ❌ NÃO reapresente a ficha completa do veículo — já enviou. Responda perguntas pontuais em UMA frase curta. Ex: "É 2023, Roberta 😊"');
+    lines.push('- ❌ NÃO reapresente a ficha completa do veículo — já enviou. Responda perguntas pontuais em UMA frase curta.');
+    lines.push('');
+    lines.push('  EXEMPLOS DE RESPOSTA CURTA (siga este padrão — espelhe o tamanho do cliente):');
+    lines.push('  • Cliente: "Que ano?" → Você: "É 2023 😊"');
+    lines.push('  • Cliente: "Qual KM e ano?" → Você: "53.700 km, 2023" (compound: 2 dados, 2 valores curtos)');
+    lines.push('  • Cliente: "É flex?" → Você: "Sim, é flex"');
+    lines.push('  • Cliente: "Tem em outra cor?" → Você: "Tenho em prata e branco também"');
+    lines.push('  • Cliente: "Me conta mais sobre" → APRESENTAÇÃO COMPLETA OK (cliente pediu detalhe)');
+    lines.push('');
   }
   if (state.atendimento?.consultor_apresentado) {
     lines.push('- ❌ NÃO se reapresente como "Sou o Carvalho..." — cliente já sabe. Se perguntar, responda só "É o Carvalho 😊"');
@@ -441,6 +449,13 @@ function formatStateForPrompt(state: any): string {
     lines.push('- ❌ NÃO reenvie fotos do mesmo veículo (a menos que o cliente peça explicitamente).');
   }
   lines.push('- Espelhe o tamanho da mensagem do cliente. Cliente curto → resposta curta.');
+
+  // Lembrete final em CAPS — combate recency bias do GPT-4o (regra colocada no fim
+  // tem mais peso na atenção do modelo do que regras enterradas no meio)
+  if (state.veiculo_apresentado?.ja_apresentado) {
+    lines.push('');
+    lines.push('⚠️ LEMBRETE FINAL: VEÍCULO JÁ APRESENTADO. ESPELHE O TAMANHO DA PERGUNTA. CLIENTE CURTO = VOCÊ CURTO. SEMPRE.');
+  }
 
   return lines.join('\n');
 }
