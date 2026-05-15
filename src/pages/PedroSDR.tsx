@@ -38,6 +38,7 @@ const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
+import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
@@ -2456,7 +2457,11 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
       {/* ── Feedbacks List (gerente) ─────────────────────────────────── */}
       {view === 'feedbacks' && (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          {/* Dashboard analítico (apenas master + se houver feedbacks) */}
+          {!isSeller && feedbacks.length > 0 && (
+            <FeedbackAnalytics feedbacks={feedbacks as any} />
+          )}
           {feedbacks.length === 0 && (
             <div className="text-center py-16 text-muted-foreground text-sm">
               <BellRing className="h-8 w-8 mx-auto mb-3 opacity-30" />
