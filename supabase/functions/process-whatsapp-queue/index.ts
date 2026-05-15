@@ -230,6 +230,7 @@ Deno.serve(async (req) => {
     }
 
     let processed = 0, succeeded = 0, failed = 0;
+    const skipReasons: Array<{ item_id: string; reason: string; details?: unknown }> = [];
 
     // Track recent message hashes to prevent duplicate messages
     const recentMessageHashes = new Set<string>();
@@ -251,6 +252,7 @@ Deno.serve(async (req) => {
               .from("wa_queue")
               .update({ status: "pending" })
               .eq("id", item.id);
+            skipReasons.push({ item_id: item.id, reason: "campaign_paused_mid_batch", details: { status: liveStatus.status } });
             processed++;
             continue;
           }
@@ -274,6 +276,7 @@ Deno.serve(async (req) => {
 
         // Another worker already took this item
         if (!lockRow) {
+          skipReasons.push({ item_id: item.id, reason: "lock_lost_to_another_worker" });
           continue;
         }
 
@@ -281,15 +284,24 @@ Deno.serve(async (req) => {
         const allUserInstances = instanceMap.get(item.user_id);
 
         if (!allUserInstances || allUserInstances.length === 0) {
-          // No instance connected yet — defer retry instead of permanently failing
+          // No instance connected — incrementa retry_count. Após MAX_RETRIES, marca FAILED.
+          // Antes ficava em loop infinito de "defer +60s" e travava a fila inteira (item órfão
+          // de master sem instância bloqueava todos os outros porque BATCH_SIZE=1).
+          if (item.retry_count >= MAX_RETRIES) {
+            await markFailed(supabase, item.id, "Master/conta sem instância WhatsApp conectada após várias tentativas. Conecte um número e re-inicie a campanha.");
+            skipReasons.push({ item_id: item.id, reason: "no_user_instances_max_retries", details: { user_id: item.user_id, retry_count: item.retry_count } });
+            failed++; processed++; continue;
+          }
           await supabase
             .from("wa_queue")
             .update({
               status: "pending",
+              retry_count: item.retry_count + 1,
               scheduled_for: new Date(Date.now() + 60_000).toISOString(),
-              error_message: "Aguardando instância WhatsApp conectada — tentando novamente em 1 min",
+              error_message: `Aguardando instância WhatsApp conectada — tentativa ${item.retry_count + 1}/${MAX_RETRIES}`,
             })
             .eq("id", item.id);
+          skipReasons.push({ item_id: item.id, reason: "no_user_instances", details: { user_id: item.user_id, retry_count: item.retry_count + 1 } });
           processed++; continue;
         }
 
@@ -305,15 +317,24 @@ Deno.serve(async (req) => {
             (i) => i.seller_member_id === campaign.seller_member_id,
           );
           if (userInstances.length === 0) {
-            console.warn(`[seller-isolation] Vendedor ${campaign.seller_member_id} sem instância conectada — adiando 5 min`);
+            // Vendedor sem instância — incrementa retry_count. Após MAX_RETRIES, marca FAILED.
+            // (Mesmo motivo do bug anterior: defer infinito travava a fila inteira.)
+            if (item.retry_count >= MAX_RETRIES) {
+              await markFailed(supabase, item.id, "Vendedor sem instância WhatsApp conectada após várias tentativas. Conecte um número na conta do vendedor.");
+              skipReasons.push({ item_id: item.id, reason: "seller_no_instance_max_retries", details: { seller_member_id: campaign.seller_member_id, retry_count: item.retry_count } });
+              failed++; processed++; continue;
+            }
+            console.warn(`[seller-isolation] Vendedor ${campaign.seller_member_id} sem instância conectada — adiando 5 min (tentativa ${item.retry_count + 1}/${MAX_RETRIES})`);
             await supabase
               .from("wa_queue")
               .update({
                 status: "pending",
+                retry_count: item.retry_count + 1,
                 scheduled_for: new Date(Date.now() + 300_000).toISOString(),
-                error_message: "Vendedor sem instância WhatsApp conectada. Conecte um número na conta do vendedor.",
+                error_message: `Vendedor sem instância WhatsApp — tentativa ${item.retry_count + 1}/${MAX_RETRIES}. Conecte um número na conta do vendedor.`,
               })
               .eq("id", item.id);
+            skipReasons.push({ item_id: item.id, reason: "seller_no_instance", details: { seller_member_id: campaign.seller_member_id, retry_count: item.retry_count + 1 } });
             processed++; continue;
           }
         } else {
@@ -345,6 +366,7 @@ Deno.serve(async (req) => {
               error_message: "Instâncias no limite ou circuit-breaker ativo — tentando novamente em 5 min",
             })
             .eq("id", item.id);
+          skipReasons.push({ item_id: item.id, reason: "select_smart_instance_returned_null", details: { user_instances_count: userInstances.length, instance_ids: userInstances.map(i => i.id) } });
           processed++; continue;
         }
 
@@ -444,6 +466,7 @@ Deno.serve(async (req) => {
               .from("wa_queue")
               .update({ status: "pending" })
               .eq("id", item.id);
+            skipReasons.push({ item_id: item.id, reason: "campaign_paused_before_send", details: { status: statusBeforeSend.status } });
             processed++;
             continue;
           }
@@ -691,7 +714,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ processed, succeeded, failed }),
+      JSON.stringify({ processed, succeeded, failed, skipReasons }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
