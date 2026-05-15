@@ -10,7 +10,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+// Radix Tabs removido — debug ao vivo via Chrome MCP provou que TabsTrigger
+// não disparava onValueChange dentro do DialogContent. Substituído por
+// botões nativos + render condicional (mais simples, funciona 100%).
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
@@ -729,41 +731,52 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         {/* ScrollArea (Radix) substituído por div nativa — Radix ScrollArea
             tinha conflito com Tabs aninhada que fazia conteúdo da SDR sumir */}
         <div className="max-h-[72vh] overflow-y-auto pr-4">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          {/* Tabs implementadas como buttons nativos — investigação ao vivo no
+              navegador (Chrome MCP) provou que Radix TabsTrigger NÃO disparava
+              onValueChange dentro deste DialogContent (provavelmente conflito
+              de portal/event-delegation). Botões nativos com onClick direto
+              funcionam 100% e são mais simples. Mantém data-[state=active]
+              equivalente via className condicional. */}
+          <div className="space-y-6">
             <div className="w-full pb-4 border-b">
-              {/* Contêiner em grid/auto-wrap para garantir que as abas não cortem */}
-              <TabsList className="flex flex-wrap h-auto w-full items-center justify-start gap-1.5 bg-transparent p-0 border-none shadow-none">
-                <TabsTrigger value="general" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
-                  <Brain className="h-4 w-4" /> Geral
-                </TabsTrigger>
-                <TabsTrigger value="business" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
-                  <Building2 className="h-4 w-4" /> Empresa
-                </TabsTrigger>
-                <TabsTrigger value="sdr" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
-                  <Target className="h-4 w-4" /> SDR
-                </TabsTrigger>
-                <TabsTrigger value="settings" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
-                  <Settings2 className="h-4 w-4" /> Modelo
-                </TabsTrigger>
-                <TabsTrigger value="knowledge" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-purple-500/10 data-[state=active]:text-purple-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-purple-500/20">
-                  <BookOpen className="h-4 w-4" /> Base
-                </TabsTrigger>
-                <TabsTrigger value="equipe" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-blue-500/10 data-[state=active]:text-blue-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-blue-500/20">
-                  <UserCheck className="h-4 w-4" /> Vendedores
-                </TabsTrigger>
-                <TabsTrigger value="integrations" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-orange-500/10 data-[state=active]:text-orange-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-orange-500/20">
-                  <Webhook className="h-4 w-4" /> n8n
-                </TabsTrigger>
-              </TabsList>
+              <div className="flex flex-wrap h-auto w-full items-center justify-start gap-1.5 bg-transparent p-0 border-none shadow-none">
+                {[
+                  { v: 'general',      label: 'Geral',       Icon: Brain,       activeCls: 'bg-primary/10 text-primary border-primary/20' },
+                  { v: 'business',     label: 'Empresa',     Icon: Building2,   activeCls: 'bg-primary/10 text-primary border-primary/20' },
+                  { v: 'sdr',          label: 'SDR',         Icon: Target,      activeCls: 'bg-primary/10 text-primary border-primary/20' },
+                  { v: 'settings',     label: 'Modelo',      Icon: Settings2,   activeCls: 'bg-primary/10 text-primary border-primary/20' },
+                  { v: 'knowledge',    label: 'Base',        Icon: BookOpen,    activeCls: 'bg-purple-500/10 text-purple-500 border-purple-500/20' },
+                  { v: 'equipe',       label: 'Vendedores',  Icon: UserCheck,   activeCls: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
+                  { v: 'integrations', label: 'n8n',         Icon: Webhook,     activeCls: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
+                ].map(({ v, label, Icon, activeCls }) => {
+                  const isActive = activeTab === v;
+                  return (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setActiveTab(v)}
+                      className={
+                        `flex-1 min-w-[100px] gap-2 rounded-md transition-all py-2 border ` +
+                        `inline-flex items-center justify-center text-sm font-medium px-3 ` +
+                        (isActive
+                          ? `${activeCls} shadow-sm`
+                          : `bg-muted/50 border-transparent hover:bg-muted/70`)
+                      }
+                    >
+                      <Icon className="h-4 w-4" /> {label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* ── Tab: Vendedores (Repasse) ── */}
-            <TabsContent value="equipe" className="space-y-6 mt-0">
+            {activeTab === 'equipe' && <div className="space-y-6 mt-0">
                <AgentCrmEquipeTab agentId={agent?.id || null} userId={effectiveUserId || ''} />
-            </TabsContent>
+            </div>}
 
             {/* ── Tab: General ── */}
-            <TabsContent value="general" className="space-y-6 mt-0">
+            {activeTab === 'general' && <div className="space-y-6 mt-0">
               {/* Name, Type & Active */}
               <div className="flex items-end gap-3">
                 <div className="flex-1 space-y-2">
@@ -961,10 +974,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   ))}
                 </div>
               </div>
-            </TabsContent>
+            </div>}
 
             {/* ── Tab: Business / SDR ── */}
-            <TabsContent value="business" className="space-y-5 mt-0">
+            {activeTab === 'business' && <div className="space-y-5 mt-0">
               <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-4">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <Building2 className="h-4 w-4 text-primary" />
@@ -1004,10 +1017,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   </p>
                 </div>
               </div>
-            </TabsContent>
+            </div>}
 
             {/* ── Tab: SDR Funnel ── */}
-            <TabsContent value="sdr" className="space-y-5 mt-0">
+            {activeTab === 'sdr' && <div className="space-y-5 mt-0">
               {/* Funil do Agente — configuração estruturada de 9 blocos
                   POR AGENTE (cada agente tem suas próprias regras).
                   Só disponível depois que o agente foi salvo (precisa de agent.id). */}
@@ -1024,10 +1037,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   </p>
                 </div>
               )}
-            </TabsContent>
+            </div>}
 
             {/* ── Tab: Model Settings ── */}
-            <TabsContent value="settings" className="space-y-4 mt-0">
+            {activeTab === 'settings' && <div className="space-y-4 mt-0">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label className="text-xs">Modelo de IA</Label>
@@ -1055,10 +1068,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                 <Label className="text-xs">Delay antes de responder: {(replyDelay / 1000).toFixed(1)}s</Label>
                 <Slider value={[replyDelay]} onValueChange={([v]) => setReplyDelay(v)} min={1000} max={15000} step={500} />
               </div>
-            </TabsContent>
+            </div>}
 
             {/* ── Tab: n8n Integration ── */}
-            <TabsContent value="integrations" className="space-y-5 mt-0">
+            {activeTab === 'integrations' && <div className="space-y-5 mt-0">
               <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-4">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <Webhook className="h-4 w-4 text-primary" />
@@ -1093,15 +1106,15 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   </div>
                 )}
               </div>
-            </TabsContent>
+            </div>}
             {/* ── Tab: Knowledge Base ── */}
-            <TabsContent value="knowledge" className="space-y-4 mt-0">
+            {activeTab === 'knowledge' && <div className="space-y-4 mt-0">
               <KnowledgeBaseManager
                 agentId={agent?.id || null}
                 userId={effectiveUserId || ''}
               />
-            </TabsContent>
-          </Tabs>
+            </div>}
+          </div>
         </div>
 
         <DialogFooter>
