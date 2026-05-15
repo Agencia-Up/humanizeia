@@ -508,6 +508,66 @@ function buildBriefingForSeller(state: any, leadName: string, leadPhone: string,
   return lines.join('\n');
 }
 
+// ─── BNDV Synonym classes (Lote 2 Fase 2) ──────────────────────────────────
+// Resolve ERR_01/04 do benchmark Roberta: cliente diz "cabine dupla flex manual"
+// e BNDV grava "Strada Freedom CD MT Flex". Sem sinônimos, .includes() falha.
+//
+// Classes BIDIRECIONAIS de equivalência (não pares): qualquer termo da classe
+// bate com qualquer outro. Tokens curtos (≤3 chars como "cd", "mt", "at") usam
+// word boundary regex pra evitar falso positivo (ex: "cd" matchar "Picanto SE Acdi").
+const BNDV_SYNONYM_CLASSES: string[][] = [
+  ['cabine dupla', 'cab. dupla', 'cab dupla', 'cd', 'doble cab', 'double cab', 'crew cab'],
+  ['cabine simples', 'cab. simples', 'cs', 'single cab', 'reg cab'],
+  ['cabine estendida', 'ce', 'ed', 'extended cab'],
+  ['manual', 'mt', 'mec', 'mecanico', 'mecânico'],
+  ['automatico', 'automatica', 'at', 'aut', 'automatic'],
+  ['cvt', 'automatica cvt', 'continuamente variavel'],
+  ['flex', 'flexfuel', 'bicombustivel', 'bi-combustivel'],
+  ['gasolina', 'gas'],
+  ['diesel', 'dsl'],
+];
+
+function bndvNormalize(s: string): string {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+
+// Testa se token aparece em haystack. Pra tokens curtos (≤3 chars como "cd",
+// "mt", "at"), exige word boundary pra evitar falso positivo (ex: "cd" não pode
+// dar match em "Picanto SE Acdi"). Pra tokens >3 chars, .includes() basta.
+function bndvTokenInHaystack(token: string, haystack: string): boolean {
+  if (token.replace(/[^a-z0-9]/g, '').length <= 3) {
+    const escaped = token.replace(/[.()\\\\]/g, '\\$&');
+    const re = new RegExp(`\\b${escaped}\\b`, 'i');
+    return re.test(haystack);
+  }
+  return haystack.includes(token);
+}
+
+// Match com sinônimos. Retorna { matched, exact }:
+//   - exact=true: needle aparece literal em haystack (match forte, score 2)
+//   - exact=false: needle e haystack pertencem à mesma classe (match fraco, score 1)
+function semanticMatch(needle: string, haystack: string): { matched: boolean; exact: boolean } {
+  const n = bndvNormalize(needle);
+  const h = bndvNormalize(haystack);
+  if (!n) return { matched: true, exact: true }; // sem filtro = OK
+  if (!h) return { matched: false, exact: false };
+
+  // 1. Match literal (com word boundary se needle for curto)
+  if (bndvTokenInHaystack(n, h)) return { matched: true, exact: true };
+
+  // 2. Encontra a classe do needle
+  const needleClass = BNDV_SYNONYM_CLASSES.find(cls => cls.some(t => bndvNormalize(t) === n));
+  if (!needleClass) return { matched: false, exact: false };
+
+  // 3. Tenta cada termo da classe (também com word boundary se curto)
+  for (const term of needleClass) {
+    const t = bndvNormalize(term);
+    if (t === n) continue; // já tentamos
+    if (bndvTokenInHaystack(t, h)) return { matched: true, exact: false };
+  }
+  return { matched: false, exact: false };
+}
+
 // ─── BNDV Stock Search ──────────────────────────────────────────────────────
 async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
   try {
@@ -573,59 +633,71 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     console.log(`[BNDV] Total veículos retornados: ${vehicles.length}`);
 
     // 3. Filter/rank results
-    const normalize = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    // Lote 2 Fase 2: matching semântico com mapa de sinônimos (Roberta benchmark ERR_01/04).
+    // Feature flag pra rollback rápido sem redeploy: PEDRO_BNDV_SYNONYMS_ENABLED.
+    const SYNONYMS_ENABLED = Deno.env.get('PEDRO_BNDV_SYNONYMS_ENABLED') !== 'false';
+    const normalize = bndvNormalize; // reusa helper compartilhado
 
-    // Apply filters
-    if (filters.marca) {
-      const q = normalize(filters.marca);
-      vehicles = vehicles.filter((v: any) => normalize(v.markName).includes(q));
-    }
-    if (filters.modelo) {
-      const q = normalize(filters.modelo);
-      vehicles = vehicles.filter((v: any) => normalize(v.modelName).includes(q));
-    }
-    if (filters.versao) {
-      const q = normalize(filters.versao);
-      vehicles = vehicles.filter((v: any) => normalize(v.versionName).includes(q));
-    }
-    if (filters.combustivel) {
-      const q = normalize(filters.combustivel);
-      vehicles = vehicles.filter((v: any) => normalize(v.fuelName).includes(q));
-    }
-    if (filters.cambio) {
-      const q = normalize(filters.cambio);
-      vehicles = vehicles.filter((v: any) => normalize(v.transmissionName).includes(q));
-    }
-    if (filters.cor) {
-      const q = normalize(filters.cor);
-      vehicles = vehicles.filter((v: any) => normalize(v.color).includes(q));
-    }
-    if (filters.ano_min) {
-      vehicles = vehicles.filter((v: any) => (v.year || 0) >= filters.ano_min);
-    }
-    if (filters.ano_max) {
-      vehicles = vehicles.filter((v: any) => (v.year || 9999) <= filters.ano_max);
-    }
-    if (filters.preco_max) {
-      vehicles = vehicles.filter((v: any) => (v.saleValue || 0) <= filters.preco_max);
-    }
-    if (filters.km_max) {
-      vehicles = vehicles.filter((v: any) => (v.km || 0) <= filters.km_max);
-    }
+    // Score por veículo: cada filtro string que bate exato vale 2 pontos, sinonimico 1.
+    // Filtro que falha → veículo descartado. Itens ranqueados por score decrescente
+    // (preferência por matches exatos). Filtros numéricos são all-or-nothing.
+    const STRING_FILTERS: Array<[string, string]> = [
+      ['marca', 'markName'],
+      ['modelo', 'modelName'],
+      ['versao', 'versionName'],
+      ['combustivel', 'fuelName'],
+      ['cambio', 'transmissionName'],
+      ['cor', 'color'],
+    ];
 
-    // Free text query ranking
+    vehicles = vehicles.map((v: any) => {
+      let score = 0;
+      let kept = true;
+
+      // Filtros string (com ou sem sinônimos conforme flag)
+      for (const [filterKey, fieldKey] of STRING_FILTERS) {
+        const needle = filters[filterKey];
+        if (!needle) continue;
+        const haystack = v[fieldKey] || '';
+        if (SYNONYMS_ENABLED) {
+          const result = semanticMatch(needle, haystack);
+          if (!result.matched) { kept = false; break; }
+          score += result.exact ? 2 : 1;
+          if (!result.exact) {
+            console.log(`[BNDV] Match sinonimico: needle='${needle}' campo='${fieldKey}' haystack='${haystack.slice(0, 50)}'`);
+          }
+        } else {
+          // Comportamento legacy (literal apenas) — fallback se flag desligada
+          if (!normalize(haystack).includes(normalize(needle))) { kept = false; break; }
+          score += 2;
+        }
+      }
+
+      // Filtros numéricos (all-or-nothing, não somam score)
+      if (kept && filters.ano_min && (v.year || 0) < filters.ano_min) kept = false;
+      if (kept && filters.ano_max && (v.year || 9999) > filters.ano_max) kept = false;
+      if (kept && filters.preco_max && (v.saleValue || 0) > filters.preco_max) kept = false;
+      if (kept && filters.km_max && (v.km || 0) > filters.km_max) kept = false;
+
+      return { ...v, _filterScore: kept ? score : -1 };
+    }).filter((v: any) => v._filterScore >= 0)
+      .sort((a: any, b: any) => b._filterScore - a._filterScore);
+
+    // Free text query ranking — combina com _filterScore acima (não sobrescreve)
     if (filters.query) {
-      const queryTokens = normalize(filters.query).split(/\s+/);
+      const queryTokens = normalize(filters.query).split(/\s+/).filter(Boolean);
       vehicles = vehicles.map((v: any) => {
         const text = normalize(`${v.markName} ${v.modelName} ${v.versionName} ${v.color} ${v.fuelName} ${v.transmissionName} ${v.year}`);
-        let score = 0;
+        let queryScore = 0;
         for (const token of queryTokens) {
-          if (text.includes(token)) score++;
+          if (text.includes(token)) queryScore++;
         }
-        return { ...v, _score: score };
-      }).filter((v: any) => v._score > 0)
+        return { ...v, _score: (v._filterScore || 0) + queryScore };
+      }).filter((v: any) => (v._score || 0) > 0)
         .sort((a: any, b: any) => b._score - a._score);
     }
+
+    console.log(`[BNDV] synonyms_enabled=${SYNONYMS_ENABLED} | filters_aplicados=${STRING_FILTERS.filter(([k]) => filters[k]).map(([k]) => k).join(',')} | resultados=${vehicles.length}`);
 
     // 4. Build result items with images
     const items = vehicles.slice(0, 20).map((v: any) => {
