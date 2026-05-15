@@ -1034,21 +1034,39 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
               </div>
             </div>}
 
-            {/* ── Tab: SDR Funnel ── */}
+            {/* ── Tab: SDR Funnel ──
+                O Funil moveu pra página dedicada /agente/:id/funil porque
+                o componente dentro do modal sofria re-mounts intermitentes
+                que faziam o conteúdo desaparecer (debugado ao vivo via
+                Chrome MCP). Aba aqui só direciona pra essa rota. */}
             {activeTab === 'sdr' && <div className="space-y-5 mt-0">
-              {/* Funil do Agente — configuração estruturada de 9 blocos
-                  POR AGENTE (cada agente tem suas próprias regras).
-                  Só disponível depois que o agente foi salvo (precisa de agent.id). */}
-              {agent?.id && effectiveUserId ? (
-                <FunilDoAgenteTab agentId={agent.id} userId={effectiveUserId} />
+              {agent?.id ? (
+                <div className="rounded-lg border border-blue-500/30 bg-gradient-to-br from-blue-500/5 to-cyan-500/5 p-6 text-center">
+                  <Target className="h-8 w-8 text-blue-400 mx-auto mb-2" />
+                  <div className="text-base font-medium mb-1">Funil do Agente</div>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Configure os 8 blocos do funil SDR (Identidade, Abordagem, Qualificação,
+                    Ramificações, Critérios, Transferência, Regras, Empresa). Os dados existentes
+                    do agente já vêm pré-preenchidos.
+                  </p>
+                  <Button
+                    onClick={() => {
+                      // Fecha o modal antes de navegar
+                      onOpenChange(false);
+                      window.location.href = `/agente/${agent.id}/funil`;
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
+                  >
+                    🧠 Abrir Funil do Agente
+                  </Button>
+                </div>
               ) : (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-6 text-center">
                   <Target className="h-8 w-8 text-amber-400 mx-auto mb-2" />
                   <div className="text-sm font-medium mb-1">Salve o agente primeiro</div>
                   <p className="text-xs text-muted-foreground">
-                    Preencha as abas <span className="font-medium">Geral</span> e <span className="font-medium">Empresa</span>,
-                    clique em <span className="font-medium">Salvar</span>, depois reabra para configurar o Funil do Agente
-                    (as regras de qualificação ficam isoladas por agente).
+                    Preencha as abas Geral e Empresa, clique em Salvar, depois acesse o
+                    Funil pelo botão "🧠 Funil" no card do agente.
                   </p>
                 </div>
               )}

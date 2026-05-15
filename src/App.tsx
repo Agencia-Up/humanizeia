@@ -161,6 +161,7 @@ const DaviSocialMedia = lazy(() => import('./pages/DaviSocialMedia'));
 const JoaoEmail = lazy(() => import('./pages/JoaoEmail'));
 const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
 const MeuPlano = lazy(() => import('./pages/MeuPlano'));
+const AgentFunnel = lazy(() => import('./pages/AgentFunnel'));
 const GeradorPrompt = lazy(() => import('./pages/GeradorPrompt'));
 const PauloAgente = lazy(() => import('./pages/PauloAgente'));
 const JoseTrafego = lazy(() => import('./pages/JoseTrafego'));
@@ -253,6 +254,7 @@ const App = () => (
                 <Route path="/crm"            element={<ProtectedRoute><Lazy><FluxCRM /></Lazy></ProtectedRoute>} />
                 <Route path="/marcos"         element={<ProtectedRoute><Lazy><MarcosLeads /></Lazy></ProtectedRoute>} />
                 <Route path="/pedro"          element={<ProtectedRoute><Lazy><PedroSDR /></Lazy></ProtectedRoute>} />
+                <Route path="/agente/:agentId/funil" element={<ProtectedRoute><Lazy><AgentFunnel /></Lazy></ProtectedRoute>} />
                 <Route path="/crm/contacts"   element={<ProtectedRoute><Lazy><CRMContacts /></Lazy></ProtectedRoute>} />
                 <Route path="/crm/formularios"element={<ProtectedRoute><Lazy><CrmFormularios /></Lazy></ProtectedRoute>} />
 
