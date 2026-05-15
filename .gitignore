@@ -39,3 +39,6 @@ Gemini_Generated_Image_*
 
 # Claude local settings
 .claude/settings.local.json
+
+# Staging seed data (não commitado — é só pra teste local)
+tests/staging-seeds/

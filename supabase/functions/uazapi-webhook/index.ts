@@ -1038,6 +1038,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // ────────────────────────────────────────────────────────────────────
 
   // Registrar Lead no CRM
+  // Prompt 1.1: lead criado via WhatsApp recebe origem='outros' por default.
+  // O upsert tem ignoreDuplicates=true, então NÃO sobrescreve origem em leads
+  // existentes (preserva valor manual do master/vendedor).
   const nowStr = new Date().toISOString();
   await supabase.from('ai_crm_leads').upsert({
     user_id: agent.user_id,
@@ -1046,6 +1049,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     remote_jid: remoteJid,
     lead_name: pushName,
     message_count: 1,
+    origem: 'outros',
     last_interaction_at: nowStr
   }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
 

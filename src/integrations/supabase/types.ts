@@ -264,6 +264,8 @@ export type Database = {
           last_interaction_at: string | null
           lead_name: string | null
           message_count: number
+          origem: string | null
+          origem_outros: string | null
           remote_jid: string
           sentiment: string | null
           status: string
@@ -282,6 +284,8 @@ export type Database = {
           last_interaction_at?: string | null
           lead_name?: string | null
           message_count?: number
+          origem?: string | null
+          origem_outros?: string | null
           remote_jid: string
           sentiment?: string | null
           status?: string
@@ -300,6 +304,8 @@ export type Database = {
           last_interaction_at?: string | null
           lead_name?: string | null
           message_count?: number
+          origem?: string | null
+          origem_outros?: string | null
           remote_jid?: string
           sentiment?: string | null
           status?: string
