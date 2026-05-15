@@ -45,6 +45,7 @@ interface QueueItem {
 interface Instance {
   id: string;
   user_id: string;
+  seller_member_id: string | null;
   instance_name: string;
   api_url: string;
   api_key_encrypted: string;
@@ -75,6 +76,7 @@ interface Campaign {
   sent_count: number;
   instance_id: string | null;
   include_optout_buttons: boolean;
+  seller_member_id: string | null;
 }
 
 interface SendResult {
@@ -137,7 +139,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons")
+        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons, seller_member_id")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -195,33 +197,16 @@ Deno.serve(async (req) => {
     const startOfTodayIso = startOfToday.toISOString();
 
     for (const uid of userIds) {
-      let { data: instances } = await supabase
+      // Busca TODAS as instâncias da conta (master + dos vendedores).
+      // A filtragem por seller_member_id da campanha acontece no momento do envio,
+      // logo antes de chamar selectSmartInstance — assim o pool fica unificado aqui.
+      const { data: instances } = await supabase
         .from("wa_instances")
         .select("*")
         .eq("user_id", uid)
         .eq("is_active", true)
         .eq("status", "connected")
         .order("health_score", { ascending: false });
-
-      // ===== SELLER FALLBACK: se vendedor não tem instâncias, usa as do dono =====
-      if (!instances || instances.length === 0) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role, manager_id")
-          .eq("id", uid)
-          .single();
-        if (profile?.role === "seller" && profile?.manager_id) {
-          console.log(`[instance-fallback] User ${uid} is seller, using manager ${profile.manager_id} instances`);
-          const { data: managerInstances } = await supabase
-            .from("wa_instances")
-            .select("*")
-            .eq("user_id", profile.manager_id)
-            .eq("is_active", true)
-            .eq("status", "connected")
-            .order("health_score", { ascending: false });
-          instances = managerInstances;
-        }
-      }
 
       if (instances && instances.length > 0) {
         const typedInstances = instances as unknown as Instance[];
@@ -293,9 +278,9 @@ Deno.serve(async (req) => {
         }
 
         const campaign = item.campaign_id ? campaignMap.get(item.campaign_id) : null;
-        const userInstances = instanceMap.get(item.user_id);
+        const allUserInstances = instanceMap.get(item.user_id);
 
-        if (!userInstances || userInstances.length === 0) {
+        if (!allUserInstances || allUserInstances.length === 0) {
           // No instance connected yet — defer retry instead of permanently failing
           await supabase
             .from("wa_queue")
@@ -306,6 +291,38 @@ Deno.serve(async (req) => {
             })
             .eq("id", item.id);
           processed++; continue;
+        }
+
+        // ===== ISOLAMENTO POR VENDEDOR =====
+        // Se a campanha foi criada por um vendedor (seller_member_id NOT NULL),
+        // o disparo DEVE usar a instância DELE (número WhatsApp do vendedor).
+        // Master fica de fora — o cliente final precisa ver o número do vendedor.
+        // Se a campanha é do master (seller_member_id IS NULL), usa pool master
+        // (instâncias com seller_member_id IS NULL).
+        let userInstances: Instance[];
+        if (campaign?.seller_member_id) {
+          userInstances = allUserInstances.filter(
+            (i) => i.seller_member_id === campaign.seller_member_id,
+          );
+          if (userInstances.length === 0) {
+            console.warn(`[seller-isolation] Vendedor ${campaign.seller_member_id} sem instância conectada — adiando 5 min`);
+            await supabase
+              .from("wa_queue")
+              .update({
+                status: "pending",
+                scheduled_for: new Date(Date.now() + 300_000).toISOString(),
+                error_message: "Vendedor sem instância WhatsApp conectada. Conecte um número na conta do vendedor.",
+              })
+              .eq("id", item.id);
+            processed++; continue;
+          }
+        } else {
+          // Campanha do master: usa apenas instâncias do pool master (sem dono específico)
+          userInstances = allUserInstances.filter((i) => !i.seller_member_id);
+          if (userInstances.length === 0) {
+            // Sem instância do master — tenta qualquer ativa como último recurso
+            userInstances = allUserInstances;
+          }
         }
 
         // --- Smart Switcher: Instance Selection ---
