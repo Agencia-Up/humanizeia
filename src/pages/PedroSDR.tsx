@@ -64,7 +64,8 @@ interface PerfData {
 
 const STATUS_COLORS: Record<string, string> = {
   novo:               '#3B82F6',
-  pouco_qualificado:  '#EF4444',
+  inativo:            '#9CA3AF',
+  pouco_qualificado:  '#F97316',
   medio_qualificado:  '#F59E0B',
   qualificado:        '#10B981',
   aguardando:         '#F59E0B',
@@ -569,8 +570,8 @@ const FEEDBACK_REASONS: { category: string; emoji: string; options: string[] }[]
 
 const STATUS_CRM_OPTIONS = [
   { value: 'novo',               label: 'Novo',              color: 'text-blue-400'    },
+  { value: 'inativo',            label: 'Lead Inativo',      color: 'text-gray-400'    },
   { value: 'pouco_qualificado',  label: 'Pouco Qualificado', color: 'text-orange-400'  },
-  { value: 'medio_qualificado',  label: 'Médio Qualificado', color: 'text-amber-400'   },
   { value: 'qualificado',        label: 'Qualificado',       color: 'text-emerald-400' },
   { value: 'em_atendimento',     label: 'Agendamento',       color: 'text-cyan-400'    },
   { value: 'negociacao',         label: 'Negociação',        color: 'text-purple-400'  },
@@ -578,9 +579,14 @@ const STATUS_CRM_OPTIONS = [
   { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
 
-// Mapeia status legacy "interessado" → exibe como "novo" no kanban (compat retroativa)
+// Mapeia status legacy → exibe no kanban (compat retroativa)
+// 'interessado' (antigo) → 'novo'
+// 'medio_qualificado' (antigo, removido na nova lógica de 3 níveis) → 'pouco_qualificado'
+// 'encerrado' (antigo) → 'perdido'
 const STATUS_DISPLAY_MAP: Record<string, string> = {
   interessado: 'novo',
+  medio_qualificado: 'pouco_qualificado',
+  encerrado: 'perdido',
 };
 function normalizeStatus(status: string): string {
   return STATUS_DISPLAY_MAP[status] || status;
@@ -596,9 +602,11 @@ function fmtDate(iso: string) {
 
 const PIPELINE_COLUMNS = [
   { id: 'novo',               title: 'Novo',               emoji: '🔰', border: 'border-slate-500/30',   bg: 'bg-slate-500/10',   dot: 'bg-slate-400'   },
+  // 3 níveis SDR (auto-classificados pelo agente IA — edge function auto-classify-leads):
+  { id: 'inativo',            title: 'Lead Inativo',       emoji: '😴', border: 'border-gray-500/30',    bg: 'bg-gray-500/10',    dot: 'bg-gray-400'    },
   { id: 'pouco_qualificado',  title: 'Pouco Qualif.',      emoji: '🧊', border: 'border-orange-500/30',  bg: 'bg-orange-500/10',  dot: 'bg-orange-400'  },
-  { id: 'medio_qualificado',  title: 'Médio Qualif.',      emoji: '🌡️', border: 'border-amber-500/30',   bg: 'bg-amber-500/10',   dot: 'bg-amber-400'   },
   { id: 'qualificado',        title: 'Qualificado',        emoji: '🎯', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', dot: 'bg-emerald-400' },
+  // Estágios manuais (não tocados pela auto-classificação):
   { id: 'em_atendimento',     title: 'Agendamento',        emoji: '📅', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
   { id: 'negociacao',         title: 'Negociação',         emoji: '🤝', border: 'border-purple-500/30',  bg: 'bg-purple-500/10',  dot: 'bg-purple-400'  },
   { id: 'fechado',            title: 'Fechado',            emoji: '✅', border: 'border-green-500/30',   bg: 'bg-green-500/10',   dot: 'bg-green-400'   },
@@ -728,6 +736,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [funnelOpen, setFunnelOpen]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
+  const [classifyLoading, setClassifyLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [reassigning, setReassigning]       = useState<string | null>(null);
 
@@ -1168,6 +1177,32 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       toast({ title: 'Erro ao disparar follow-ups', description: err.message, variant: 'destructive' });
     } finally {
       setTriggerLoading(false);
+    }
+  };
+
+  // Re-classifica leads nos 3 níveis SDR (Inativo / Pouco Qualificado / Qualificado)
+  // Roda a edge function auto-classify-leads que analisa cada lead e ajusta status_crm
+  // baseado em campos preenchidos + tempo de inatividade do cliente.
+  const handleClassifyLeads = async () => {
+    setClassifyLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('auto-classify-leads', { body: {} });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      const total = (data as any)?.total_changes || 0;
+      const summary = (data as any)?.summary_by_new_status || {};
+      const desc = Object.keys(summary).length > 0
+        ? Object.entries(summary).map(([k, v]) => `${v} → ${k}`).join(', ')
+        : undefined;
+      toast({
+        title: total > 0 ? `🤖 ${total} lead(s) reclassificado(s)` : 'Nenhum lead precisava de reclassificação',
+        description: desc,
+      });
+      if (total > 0) await fetchData(true);
+    } catch (err: any) {
+      toast({ title: 'Erro ao reclassificar', description: err.message, variant: 'destructive' });
+    } finally {
+      setClassifyLoading(false);
     }
   };
 
@@ -2099,6 +2134,19 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
             Follow-ups
           </Button>
+          {!isSeller && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClassifyLeads}
+              disabled={classifyLoading}
+              title="Re-classifica leads nos 3 níveis SDR (Inativo / Pouco Qualificado / Qualificado) com base em respostas do cliente e dados coletados"
+              className="h-7 px-2.5 text-xs gap-1.5 border-blue-500/30 text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
+            >
+              {classifyLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span>🤖</span>}
+              Reclassificar IA
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
