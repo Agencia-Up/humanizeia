@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -120,6 +121,7 @@ function AgentCard({
   instances,
   agents,
   onEdit,
+  onOpenFunnel,
   onDuplicate,
   onDelete,
   onToggle,
@@ -128,6 +130,7 @@ function AgentCard({
   instances: Instance[];
   agents: AIAgent[];
   onEdit: () => void;
+  onOpenFunnel: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
   onToggle: () => void;
@@ -263,14 +266,25 @@ function AgentCard({
               {(agent.total_replies || 0).toLocaleString()}
             </span>
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 text-xs gap-1 text-primary hover:text-primary hover:bg-primary/10"
-            onClick={onEdit}
-          >
-            Configurar <ChevronRight className="h-3 w-3" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs gap-1 text-blue-400 hover:text-blue-400 hover:bg-blue-500/10"
+              onClick={onOpenFunnel}
+              title="Configurar Funil do Agente (8 blocos editáveis)"
+            >
+              🧠 Funil
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs gap-1 text-primary hover:text-primary hover:bg-primary/10"
+              onClick={onEdit}
+            >
+              Configurar <ChevronRight className="h-3 w-3" />
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -278,6 +292,7 @@ function AgentCard({
 }
 
 export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {}) {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const { toast } = useToast();
@@ -474,6 +489,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
                   instances={instances}
                   agents={agents}
                   onEdit={() => { setEditingAgent(agent); setDialogOpen(true); }}
+                  onOpenFunnel={() => navigate(`/agente/${agent.id}/funil`)}
                   onDuplicate={() => handleDuplicate(agent)}
                   onDelete={() => handleDelete(agent)}
                   onToggle={() => handleToggleActive(agent)}

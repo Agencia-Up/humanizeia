@@ -10,7 +10,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+// Radix Tabs removido — debug ao vivo via Chrome MCP provou que TabsTrigger
+// não disparava onValueChange dentro do DialogContent. Substituído por
+// botões nativos + render condicional (mais simples, funciona 100%).
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
@@ -18,6 +20,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
 import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
+import FunilDoAgenteTab from '@/components/pedro/FunilDoAgenteTab';
 
 interface Instance {
   id: string;
@@ -148,11 +151,10 @@ Mantenha a conversa fluida, natural e foque em resolver a necessidade real do cl
 };
 
 export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, onSaved, onRefreshData }: AgentFormDialogProps) {
-  useEffect(() => {
-    if (open) {
-      console.info("!!! HUMANIZEIA UAZAPI DEBUG V5.3 ACTIVE (OpenAI + Stability) !!!");
-    }
-  }, [open]);
+  // NOTA: removido reset de setActiveTab no useEffect [open] — estava
+  // disparando em re-renders e revertendo a aba pra 'general' quando user
+  // clicava em SDR. Reset agora é feito no handleDialogOpenChange (só
+  // quando o modal de fato fecha).
   const { user } = useAuth();
   const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
   const effectiveUserId = useMemo(() => {
@@ -163,6 +165,23 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+
+  // activeTab persistido em sessionStorage — Investigação ao vivo via Chrome
+  // MCP provou que o AgentFormDialog é REMONTADO após cliques de aba
+  // (provavelmente o WhatsAppAIAgent re-renderiza com nova reference, ou
+  // algum efeito do Dialog/FunilDoAgenteTab causa unmount/remount). useState
+  // sozinho perde o valor a cada remount → aba volta pra 'general'.
+  // Solução: ler do sessionStorage no initial (sobrevive remount, dá reset
+  // explícito no fechamento via handleDialogOpenChange).
+  const ACTIVE_TAB_KEY = `agentFormDialog_activeTab_${agent?.id || 'new'}`;
+  const [activeTab, setActiveTabState] = useState<string>(() => {
+    try { return sessionStorage.getItem(ACTIVE_TAB_KEY) || 'general'; }
+    catch { return 'general'; }
+  });
+  const setActiveTab = (v: string) => {
+    try { sessionStorage.setItem(ACTIVE_TAB_KEY, v); } catch {}
+    setActiveTabState(v);
+  };
 
   const [name, setName] = useState('Agente IA');
   const [agentType, setAgentType] = useState('generic');
@@ -703,57 +722,76 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       stopPolling();
       setQrCode(null);
       setIsGeneratingQr(false);
+      // Reset explícito + limpa sessionStorage (próxima abertura começa em Geral)
+      try { sessionStorage.removeItem(ACTIVE_TAB_KEY); } catch {}
+      setActiveTab('general');
     }
     onOpenChange(val);
   };
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh]">
+      <DialogContent className="w-[95vw] max-w-3xl max-h-[92vh] p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-primary" />
             {agent ? 'Editar Agente' : 'Novo Agente IA'}
+            <Badge variant="outline" className="ml-2 text-[10px] font-mono">
+              Aba: {activeTab}
+            </Badge>
           </DialogTitle>
           <DialogDescription>Configure como o agente responde e quais números ele atende</DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[65vh] pr-4">
-          <Tabs defaultValue="general" className="space-y-6">
+        {/* ScrollArea (Radix) substituído por div nativa — Radix ScrollArea
+            tinha conflito com Tabs aninhada que fazia conteúdo da SDR sumir */}
+        <div className="max-h-[72vh] overflow-y-auto pr-4">
+          {/* Tabs implementadas como buttons nativos — investigação ao vivo no
+              navegador (Chrome MCP) provou que Radix TabsTrigger NÃO disparava
+              onValueChange dentro deste DialogContent (provavelmente conflito
+              de portal/event-delegation). Botões nativos com onClick direto
+              funcionam 100% e são mais simples. Mantém data-[state=active]
+              equivalente via className condicional. */}
+          <div className="space-y-6">
             <div className="w-full pb-4 border-b">
-              {/* Contêiner em grid/auto-wrap para garantir que as abas não cortem */}
-              <TabsList className="flex flex-wrap h-auto w-full items-center justify-start gap-1.5 bg-transparent p-0 border-none shadow-none">
-                <TabsTrigger value="general" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
-                  <Brain className="h-4 w-4" /> Geral
-                </TabsTrigger>
-                <TabsTrigger value="business" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
-                  <Building2 className="h-4 w-4" /> Empresa
-                </TabsTrigger>
-                <TabsTrigger value="sdr" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
-                  <Target className="h-4 w-4" /> SDR
-                </TabsTrigger>
-                <TabsTrigger value="settings" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-primary/20">
-                  <Settings2 className="h-4 w-4" /> Modelo
-                </TabsTrigger>
-                <TabsTrigger value="knowledge" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-purple-500/10 data-[state=active]:text-purple-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-purple-500/20">
-                  <BookOpen className="h-4 w-4" /> Base
-                </TabsTrigger>
-                <TabsTrigger value="equipe" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-blue-500/10 data-[state=active]:text-blue-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-blue-500/20">
-                  <UserCheck className="h-4 w-4" /> Vendedores
-                </TabsTrigger>
-                <TabsTrigger value="integrations" className="flex-1 min-w-[100px] gap-2 rounded-md bg-muted/50 data-[state=active]:bg-orange-500/10 data-[state=active]:text-orange-500 data-[state=active]:shadow-sm transition-all py-2 border border-transparent data-[state=active]:border-orange-500/20">
-                  <Webhook className="h-4 w-4" /> n8n
-                </TabsTrigger>
-              </TabsList>
+              <div className="flex flex-wrap h-auto w-full items-center justify-start gap-1.5 bg-transparent p-0 border-none shadow-none">
+                {[
+                  { v: 'general',      label: 'Geral',       Icon: Brain,       activeCls: 'bg-primary/10 text-primary border-primary/20' },
+                  { v: 'business',     label: 'Empresa',     Icon: Building2,   activeCls: 'bg-primary/10 text-primary border-primary/20' },
+                  { v: 'sdr',          label: 'SDR',         Icon: Target,      activeCls: 'bg-primary/10 text-primary border-primary/20' },
+                  { v: 'settings',     label: 'Modelo',      Icon: Settings2,   activeCls: 'bg-primary/10 text-primary border-primary/20' },
+                  { v: 'knowledge',    label: 'Base',        Icon: BookOpen,    activeCls: 'bg-purple-500/10 text-purple-500 border-purple-500/20' },
+                  { v: 'equipe',       label: 'Vendedores',  Icon: UserCheck,   activeCls: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
+                  { v: 'integrations', label: 'n8n',         Icon: Webhook,     activeCls: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
+                ].map(({ v, label, Icon, activeCls }) => {
+                  const isActive = activeTab === v;
+                  return (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setActiveTab(v)}
+                      className={
+                        `flex-1 min-w-[100px] gap-2 rounded-md transition-all py-2 border ` +
+                        `inline-flex items-center justify-center text-sm font-medium px-3 ` +
+                        (isActive
+                          ? `${activeCls} shadow-sm`
+                          : `bg-muted/50 border-transparent hover:bg-muted/70`)
+                      }
+                    >
+                      <Icon className="h-4 w-4" /> {label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* ── Tab: Vendedores (Repasse) ── */}
-            <TabsContent value="equipe" className="space-y-6 mt-0">
+            {activeTab === 'equipe' && <div className="space-y-6 mt-0">
                <AgentCrmEquipeTab agentId={agent?.id || null} userId={effectiveUserId || ''} />
-            </TabsContent>
+            </div>}
 
             {/* ── Tab: General ── */}
-            <TabsContent value="general" className="space-y-6 mt-0">
+            {activeTab === 'general' && <div className="space-y-6 mt-0">
               {/* Name, Type & Active */}
               <div className="flex items-end gap-3">
                 <div className="flex-1 space-y-2">
@@ -951,10 +989,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   ))}
                 </div>
               </div>
-            </TabsContent>
+            </div>}
 
             {/* ── Tab: Business / SDR ── */}
-            <TabsContent value="business" className="space-y-5 mt-0">
+            {activeTab === 'business' && <div className="space-y-5 mt-0">
               <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-4">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <Building2 className="h-4 w-4 text-primary" />
@@ -994,44 +1032,48 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   </p>
                 </div>
               </div>
-            </TabsContent>
+            </div>}
 
-            {/* ── Tab: SDR Funnel ── */}
-            <TabsContent value="sdr" className="space-y-5 mt-0">
-              <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-4">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Target className="h-4 w-4 text-primary" />
-                  Qualificação do Lead (Cérebro do Agente)
+            {/* ── Tab: SDR Funnel ──
+                O Funil moveu pra página dedicada /agente/:id/funil porque
+                o componente dentro do modal sofria re-mounts intermitentes
+                que faziam o conteúdo desaparecer (debugado ao vivo via
+                Chrome MCP). Aba aqui só direciona pra essa rota. */}
+            {activeTab === 'sdr' && <div className="space-y-5 mt-0">
+              {agent?.id ? (
+                <div className="rounded-lg border border-blue-500/30 bg-gradient-to-br from-blue-500/5 to-cyan-500/5 p-6 text-center">
+                  <Target className="h-8 w-8 text-blue-400 mx-auto mb-2" />
+                  <div className="text-base font-medium mb-1">Funil do Agente</div>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Configure os 8 blocos do funil SDR (Identidade, Abordagem, Qualificação,
+                    Ramificações, Critérios, Transferência, Regras, Empresa). Os dados existentes
+                    do agente já vêm pré-preenchidos.
+                  </p>
+                  <Button
+                    onClick={() => {
+                      // Fecha o modal antes de navegar
+                      onOpenChange(false);
+                      window.location.href = `/agente/${agent.id}/funil`;
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
+                  >
+                    🧠 Abrir Funil do Agente
+                  </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Instrua a inteligência do agente sobre o que ele deve fazer e quais perguntas precisa fazer ao cliente para considerá-lo qualificado. Essa lógica roda 100% autônoma via IA (sem depender do n8n).
-                </p>
-
-                <div className="space-y-2 pt-2">
-                  <Label>Objetivo Final (SDR Goal)</Label>
-                  <Input 
-                    value={sdrGoal} 
-                    onChange={e => setSdrGoal(e.target.value)} 
-                    placeholder="Ex: Agendar reunião, Enviar link de pagamento com o nome do cliente..." 
-                  />
-                  <p className="text-[10px] text-muted-foreground w-full">O objetivo que a IA deve cumprir silenciosamente na conversa.</p>
+              ) : (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-6 text-center">
+                  <Target className="h-8 w-8 text-amber-400 mx-auto mb-2" />
+                  <div className="text-sm font-medium mb-1">Salve o agente primeiro</div>
+                  <p className="text-xs text-muted-foreground">
+                    Preencha as abas Geral e Empresa, clique em Salvar, depois acesse o
+                    Funil pelo botão "🧠 Funil" no card do agente.
+                  </p>
                 </div>
-
-                <div className="space-y-2 pt-2">
-                  <Label>Perguntas Obrigatórias para Qualificação</Label>
-                  <Textarea
-                    value={qualificationStr}
-                    onChange={e => setQualificationStr(e.target.value)}
-                    placeholder="Ex:&#10;Qual a dor principal do cliente?&#10;Vende produto físico ou digital?&#10;Já tem CRM atualmente?"
-                    className="min-h-[120px]"
-                  />
-                  <p className="text-[10px] text-muted-foreground">Insira uma pergunta por linha. O Agente não avançará para o fechamento até obter as respostas dessas perguntas listadas.</p>
-                </div>
-              </div>
-            </TabsContent>
+              )}
+            </div>}
 
             {/* ── Tab: Model Settings ── */}
-            <TabsContent value="settings" className="space-y-4 mt-0">
+            {activeTab === 'settings' && <div className="space-y-4 mt-0">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label className="text-xs">Modelo de IA</Label>
@@ -1059,10 +1101,10 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                 <Label className="text-xs">Delay antes de responder: {(replyDelay / 1000).toFixed(1)}s</Label>
                 <Slider value={[replyDelay]} onValueChange={([v]) => setReplyDelay(v)} min={1000} max={15000} step={500} />
               </div>
-            </TabsContent>
+            </div>}
 
             {/* ── Tab: n8n Integration ── */}
-            <TabsContent value="integrations" className="space-y-5 mt-0">
+            {activeTab === 'integrations' && <div className="space-y-5 mt-0">
               <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-4">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <Webhook className="h-4 w-4 text-primary" />
@@ -1097,16 +1139,16 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   </div>
                 )}
               </div>
-            </TabsContent>
+            </div>}
             {/* ── Tab: Knowledge Base ── */}
-            <TabsContent value="knowledge" className="space-y-4 mt-0">
+            {activeTab === 'knowledge' && <div className="space-y-4 mt-0">
               <KnowledgeBaseManager
                 agentId={agent?.id || null}
                 userId={effectiveUserId || ''}
               />
-            </TabsContent>
-          </Tabs>
-        </ScrollArea>
+            </div>}
+          </div>
+        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => handleDialogOpenChange(false)}>Cancelar</Button>

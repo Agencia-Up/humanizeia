@@ -292,16 +292,17 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const fetchLiveData = useCallback(async () => {
     if (!user || !effectiveUserId) { setLoading(false); return; }
     try {
-      // Leads query — sellers only see their own assigned leads
+      // ── Estratégia "JOIN no JS": query simples + hidratação no frontend ──
+      // Evita JOIN PostgREST que falhava silenciosamente (RLS de wa_ai_agents).
       let leadsQ = (supabase as any).from('ai_crm_leads')
-        .select('*, agent:wa_ai_agents(name), member:ai_team_members(id, name, whatsapp_number)')
+        .select('*')
         .eq('user_id', effectiveUserId)
         .order('last_interaction_at', { ascending: false });
       if (isSeller && sellerMemberIds.length > 0) {
         leadsQ = leadsQ.in('assigned_to_id', sellerMemberIds);
       }
 
-      const [{ data: leadsData }, { data: transfersData }, { data: membersData }, { data: agentsData }] = await Promise.all([
+      const [leadsRes, transfersRes, membersRes, agentsRes] = await Promise.all([
         leadsQ,
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
           .eq('user_id', effectiveUserId).order('created_at', { ascending: false }).limit(500),
@@ -309,8 +310,23 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', effectiveUserId),
       ]);
-      setLeads(leadsData || []); setTransfers(transfersData || []);
-      setTeamMembers(membersData || []); setAgents(agentsData || []);
+
+      if ((leadsRes as any)?.error) console.error('[CrmAoVivo] ERRO ao buscar leads:', (leadsRes as any).error);
+      const rawLeads = leadsRes.data || [];
+      const teamArr = membersRes.data || [];
+      const agentsArr = agentsRes.data || [];
+
+      // Hidrata member + agent via lookup map (evita N+1 e JOIN PostgREST quebrado)
+      const teamById = new Map(teamArr.map((t: any) => [t.id, { id: t.id, name: t.name, whatsapp_number: t.whatsapp_number }]));
+      const agentsById = new Map(agentsArr.map((a: any) => [a.id, { name: a.name }]));
+      const leadsData = rawLeads.map((l: any) => ({
+        ...l,
+        member: l.assigned_to_id ? (teamById.get(l.assigned_to_id) ?? null) : null,
+        agent: l.agent_id ? (agentsById.get(l.agent_id) ?? null) : null,
+      }));
+
+      setLeads(leadsData); setTransfers(transfersRes.data || []);
+      setTeamMembers(teamArr); setAgents(agentsArr);
       setLastUpdatedAt(new Date().toISOString());
     } finally { setLoading(false); }
   }, [user, effectiveUserId, isSeller, sellerMemberIds]);

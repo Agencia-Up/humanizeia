@@ -87,6 +87,75 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+// Limite de instâncias por plano (pool compartilhado: master + vendedores)
+const INSTANCE_LIMITS_BY_PLAN: Record<string, number> = {
+  basico: 5,
+  pro: 10,
+  enterprise: 15,
+};
+const DEFAULT_PLAN_LIMIT = INSTANCE_LIMITS_BY_PLAN.basico;
+
+/**
+ * Valida limites antes de criar uma instância:
+ *   1. Pool da conta master: total de wa_instances WHERE user_id = master_id
+ *      não pode passar de INSTANCE_LIMITS_BY_PLAN[plano_master].
+ *   2. Se body.seller_member_id presente: vendedor não pode ter mais que 1
+ *      instância (count WHERE seller_member_id = X).
+ *
+ * body.user_id deve ser SEMPRE o master_id (mesmo quando vendedor cria).
+ */
+async function validatePoolLimits(
+  supabase: any,
+  body: { user_id?: string; seller_member_id?: string | null },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const masterId = body.user_id;
+  if (!masterId) {
+    return { ok: false, error: 'user_id (master_id) é obrigatório' };
+  }
+
+  // 1. Pool total da conta master
+  const { data: subData } = await supabase
+    .from('user_subscriptions')
+    .select('plan_id, status')
+    .eq('user_id', masterId)
+    .maybeSingle();
+  const planId = (subData?.plan_id as string | undefined) || 'basico';
+  const poolLimit = INSTANCE_LIMITS_BY_PLAN[planId] ?? DEFAULT_PLAN_LIMIT;
+
+  // Pool conta SOMENTE instâncias ativas (is_active = true).
+  // Desativadas não consomem cota — quem desativa libera espaço.
+  const { count: totalCount } = await supabase
+    .from('wa_instances')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', masterId)
+    .eq('is_active', true);
+  const totalUsed = totalCount ?? 0;
+
+  if (totalUsed >= poolLimit) {
+    return {
+      ok: false,
+      error: `Limite de instâncias da conta atingido (${totalUsed}/${poolLimit} no plano ${planId}). Faça upgrade ou remova uma instância existente.`,
+    };
+  }
+
+  // 2. Limite individual do vendedor (1 instância ATIVA por vendedor)
+  if (body.seller_member_id) {
+    const { count: sellerCount } = await supabase
+      .from('wa_instances')
+      .select('id', { count: 'exact', head: true })
+      .eq('seller_member_id', body.seller_member_id)
+      .eq('is_active', true);
+    if ((sellerCount ?? 0) >= 1) {
+      return {
+        ok: false,
+        error: 'Este vendedor já possui uma instância conectada. Cada vendedor pode ter no máximo 1 número de WhatsApp.',
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
 Deno.serve(async (req) => {
   console.log(`[create-evolution-instance] Received ${req.method} request`);
 
@@ -101,6 +170,17 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     const provider = body.provider || 'evolution';
+
+    // ── Validação de pool de instâncias da conta (master + vendedores) ──
+    // Sempre antes de criar: count total da conta < limite do plano do master.
+    // Se vendedor: também valida que ele já não tem 1 (limite individual).
+    const validation = await validatePoolLimits(supabase, body);
+    if (!validation.ok) {
+      return new Response(JSON.stringify({ success: false, error: validation.error }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     if (provider === 'meta') {
       return await handleMetaProvider(supabase, body);
@@ -118,7 +198,7 @@ Deno.serve(async (req) => {
 });
 
 async function handleMetaProvider(supabase: any, body: any) {
-  const { user_id, friendly_name, phone_number_id, waba_id, access_token } = body;
+  const { user_id, friendly_name, phone_number_id, waba_id, access_token, seller_member_id } = body;
 
   if (!user_id || !phone_number_id || !access_token || !friendly_name) {
     return new Response(JSON.stringify({
@@ -165,6 +245,7 @@ async function handleMetaProvider(supabase: any, body: any) {
       .from('wa_instances')
       .insert({
         user_id,
+        seller_member_id: seller_member_id || null,
         instance_name: `meta-${instanceSlug}-${Date.now().toString(36)}`,
         friendly_name: verifiedName,
         api_url: 'https://graph.facebook.com/v21.0',
@@ -212,7 +293,7 @@ async function handleMetaProvider(supabase: any, body: any) {
 }
 
 async function handleEvolutionProvider(supabase: any, body: any) {
-  const { instance_name, user_id, friendly_name } = body;
+  const { instance_name, user_id, friendly_name, seller_member_id } = body;
 
   const api_url = Deno.env.get('EVOLUTION_API_URL');
   const api_key = Deno.env.get('EVOLUTION_API_KEY');
@@ -426,6 +507,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
 
   const insertPayload = {
     user_id,
+    seller_member_id: seller_member_id || null,
     instance_name,
     friendly_name: friendly_name || instance_name,
     api_url: baseUrl,

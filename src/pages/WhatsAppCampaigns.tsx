@@ -99,14 +99,20 @@ export default function WhatsAppCampaigns() {
   const fetchCampaigns = useCallback(async () => {
     if (!effectiveUserId) return;
     setLoading(true);
-    const { data, error } = await supabase
+    // Master vê TODAS as campanhas da conta (suas + dos vendedores).
+    // Vendedor vê APENAS suas (seller_member_id = seu seller.id).
+    let query = supabase
       .from('wa_campaigns')
       .select('*')
       .eq('user_id', effectiveUserId)
       .order('created_at', { ascending: false });
+    if (isSeller && seller?.id) {
+      query = query.eq('seller_member_id', seller.id);
+    }
+    const { data, error } = await query;
     if (!error && data) setCampaigns(data as unknown as Campaign[]);
     setLoading(false);
-  }, [effectiveUserId]);
+  }, [effectiveUserId, isSeller, seller?.id]);
 
   const fetchLists = useCallback(async () => {
     if (!effectiveUserId) return;
@@ -120,14 +126,20 @@ export default function WhatsAppCampaigns() {
 
   const fetchInstances = useCallback(async () => {
     if (!effectiveUserId) return;
-    const { data } = await supabase
+    // Master vê TODAS as instâncias da conta. Vendedor vê SÓ a instância dele
+    // (seller_member_id = seu seller.id) — ele só pode disparar do número dele.
+    let query = supabase
       .from('wa_instances')
-      .select('id, friendly_name, phone_number, status')
+      .select('id, friendly_name, phone_number, status, seller_member_id')
       .eq('user_id', effectiveUserId)
       .eq('is_active', true)
       .order('friendly_name');
-    if (data) setInstances(data);
-  }, [effectiveUserId]);
+    if (isSeller && seller?.id) {
+      query = query.eq('seller_member_id', seller.id);
+    }
+    const { data } = await query;
+    if (data) setInstances(data as unknown as WaInstance[]);
+  }, [effectiveUserId, isSeller, seller?.id]);
 
   useEffect(() => {
     fetchCampaigns();
@@ -164,6 +176,9 @@ export default function WhatsAppCampaigns() {
         media_type: data.media_type || null,
         tags: data.tags.length > 0 ? data.tags : null,
         variation_level: data.variation_level || 'medium',
+        // Vendedor: marca campanha como dele pra isolamento.
+        // Master: null (campanha do master, sem dono específico).
+        seller_member_id: isSeller && seller?.id ? seller.id : null,
       };
 
       const { data: result, error } = await supabase.functions.invoke('save-campaign', {
@@ -431,12 +446,12 @@ Não numere as variações. Não inclua explicações adicionais.`
                                     <Pencil className="h-4 w-4" />
                                   </Button>
                                 )}
-                                {(c.status === 'draft' || c.status === 'paused') && (
-                                  <Button variant="ghost" size="icon" className="text-green-600 hover:text-green-700" onClick={() => handleStartCampaign(c.id)} title="Iniciar campanha">
+                                {(c.status === 'draft' || c.status === 'paused' || c.status === 'scheduled') && (
+                                  <Button variant="ghost" size="icon" className="text-green-600 hover:text-green-700" onClick={() => handleStartCampaign(c.id)} title="Iniciar disparo agora">
                                     <Play className="h-4 w-4" />
                                   </Button>
                                 )}
-                                {c.status === 'running' && (
+                                {(c.status === 'running' || c.status === 'scheduled') && (
                                   <Button variant="ghost" size="icon" className="text-yellow-600 hover:text-yellow-700" onClick={() => handlePauseCampaign(c.id)} title="Pausar campanha">
                                     <Pause className="h-4 w-4" />
                                   </Button>

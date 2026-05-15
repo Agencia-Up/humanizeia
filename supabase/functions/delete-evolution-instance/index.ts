@@ -16,21 +16,31 @@ serve(async (req: Request) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    const { instance_id, user_id } = await req.json();
+    const body = await req.json();
+    const { instance_id } = body;
+    // requester_auth_id = auth.uid() do solicitante (master OU vendedor).
+    // Compat: aceita também user_id (legacy), interpretando como requester.
+    const requesterAuthId: string | undefined = body.requester_auth_id || body.user_id;
 
-    if (!instance_id || !user_id) {
-      return new Response(JSON.stringify({ success: false, error: 'instance_id e user_id são obrigatórios' }), {
+    if (!instance_id) {
+      return new Response(JSON.stringify({ success: false, error: 'instance_id é obrigatório' }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // 1. Fetch instance details
+    if (!requesterAuthId) {
+      return new Response(JSON.stringify({ success: false, error: 'requester_auth_id (ou user_id) é obrigatório' }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 1. Fetch instance details (sem filtro de user_id — vamos validar autorização abaixo)
     const { data: inst, error: fetchErr } = await supabase
       .from('wa_instances')
-      .select('*')
+      .select('id, instance_name, api_url, api_key_encrypted, user_id, seller_member_id')
       .eq('id', instance_id)
-      .eq('user_id', user_id)
       .single();
 
     if (fetchErr || !inst) {
@@ -40,27 +50,54 @@ serve(async (req: Request) => {
       });
     }
 
+    // 2. Autorização — ou é master (user_id bate) OU é vendedor dono (seller_member_id bate)
+    let authorized = false;
+    if (inst.user_id === requesterAuthId) {
+      authorized = true;
+      console.log(`[delete-instance] Autorizado como master: ${requesterAuthId}`);
+    } else if (inst.seller_member_id) {
+      // Verifica se o requester é o vendedor dono via ai_team_members.auth_user_id
+      const { data: member } = await supabase
+        .from('ai_team_members')
+        .select('id')
+        .eq('id', inst.seller_member_id)
+        .eq('auth_user_id', requesterAuthId)
+        .maybeSingle();
+      if (member) {
+        authorized = true;
+        console.log(`[delete-instance] Autorizado como vendedor dono: ${requesterAuthId} → seller_member_id=${inst.seller_member_id}`);
+      }
+    }
+
+    if (!authorized) {
+      console.warn(`[delete-instance] NEGADO: requester ${requesterAuthId} não é dono de ${instance_id} (user_id=${inst.user_id}, seller_member_id=${inst.seller_member_id})`);
+      return new Response(JSON.stringify({ success: false, error: 'Você não tem permissão para remover esta instância' }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const { instance_name, api_url, api_key_encrypted } = inst;
     const instanceToken = api_key_encrypted;
     const baseUrl = api_url?.replace(/\/$/, "") || Deno.env.get('EVOLUTION_API_URL')?.replace(/\/$/, "");
 
-    console.log(`[delete-instance V8.2] Deletando instância: ${instance_name} (${instance_id})`);
+    console.log(`[delete-instance V8.3] Deletando instância: ${instance_name} (${instance_id})`);
 
-    // 2. Delete from Uazapi — DELETE /instance com token no header (conforme docs.uazapi.com)
+    // 3. Delete from Uazapi — DELETE /instance com token no header (conforme docs.uazapi.com)
     if (baseUrl && instanceToken) {
       try {
         const delRes = await fetch(`${baseUrl}/instance`, {
           method: 'DELETE',
-          headers: { 
+          headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'token': instanceToken,
           },
         });
-        
+
         const delText = await delRes.text();
         console.log(`[delete-instance] API Response (${delRes.status}): ${delText.substring(0, 300)}`);
-        
+
         if (!delRes.ok) {
            console.warn(`[delete-instance] Falha na API Uazapi (${delRes.status}), continuando remoção do banco.`);
         }
@@ -69,7 +106,7 @@ serve(async (req: Request) => {
       }
     }
 
-    // 3. Delete from Database - ALWAYS RUN THIS
+    // 4. Delete from Database - ALWAYS RUN THIS
     console.log(`[delete-instance] Removendo registro do banco: ${instance_id}`);
     const { error: dbErr } = await supabase
       .from('wa_instances')

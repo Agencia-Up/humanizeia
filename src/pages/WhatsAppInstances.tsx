@@ -12,6 +12,9 @@ import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { EvolutionConnectDialog } from '@/components/evolution/EvolutionConnectDialog';
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
   Smartphone,
   Plus,
   CheckCircle,
@@ -27,6 +30,7 @@ import {
   WifiOff,
   Signal,
   Link2,
+  User,
 } from 'lucide-react';
 import {
   AlertDialog,
@@ -52,6 +56,12 @@ interface WaInstance {
   created_at: string | null;
   updated_at: string | null;
   failover_status: string | null;
+  seller_member_id: string | null;
+}
+
+interface TeamMemberLite {
+  id: string;
+  name: string;
 }
 
 function getStatusConfig(instance: WaInstance) {
@@ -95,13 +105,16 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   const { toast } = useToast();
   const { subscription } = useSubscription();
   const { isAdmin } = useIsAdmin();
-  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, seller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.marcos_instancias && !embedded;
-  // Instâncias são POR USUÁRIO — vendedor vê as DELE, master vê as do MASTER
-  // NÃO usar effectiveUserId aqui
+  // Instâncias multi-tenant: master vê todas as da conta + atribui a vendedores;
+  // vendedor vê só instâncias com seller_member_id = seu seller.id
+  const effectiveOwnerId = isSeller && seller?.user_id ? seller.user_id : user?.id;
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
   const maxInstances = isSeller ? 1 : (INSTANCE_LIMITS[userPlan] ?? 5);
   const [instances, setInstances] = useState<WaInstance[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMemberLite[]>([]);
+  const [assigningId, setAssigningId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [connectOpen, setConnectOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -145,27 +158,41 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     }
   };
 
-  const verifyAllInstances = async (instanceList: WaInstance[]) => {
+  const verifyAllInstances = async (_instanceList: WaInstance[]) => {
     setIsVerifyingAll(true);
-    const evolutionInstances = instanceList.filter(i => i.provider !== 'meta');
-    for (const inst of evolutionInstances) {
-      await verifyInstanceStatus(inst.id, true);
+    try {
+      // Bulk audit no servidor: verifica todas as instâncias da conta contra a
+      // Evolution API e DESATIVA (is_active=false) as que estão zumbi.
+      const { data, error } = await supabase.functions.invoke('audit-master-instances', { body: {} });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const summary = data?.summary || {};
+      toast({
+        title: '✅ Auditoria completa',
+        description: `${summary.connected || 0} conectadas, ${summary.disconnected || 0} desativadas (${summary.changed || 0} mudaram).`,
+      });
+    } catch (err: any) {
+      toast({ title: 'Erro na auditoria', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsVerifyingAll(false);
+      await fetchInstances(true);
     }
-    setIsVerifyingAll(false);
-    // Re-fetch to get updated data
-    await fetchInstances(true);
   };
 
   const fetchInstances = async (skipVerify = false) => {
-    if (!user?.id) return;
+    if (!effectiveOwnerId) return;
     setIsLoading(true);
     try {
-      // Cada conta vê SOMENTE suas próprias instâncias
-      const { data, error } = await supabase
+      // Master vê todas as instâncias da conta; vendedor vê só as atribuídas a ele
+      let query = (supabase as any)
         .from('wa_instances')
-        .select('id, instance_name, friendly_name, phone_number, status, is_active, health_score, provider, api_url, created_at, updated_at, failover_status')
-        .eq('user_id', user?.id as string)
+        .select('id, instance_name, friendly_name, phone_number, status, is_active, health_score, provider, api_url, created_at, updated_at, failover_status, seller_member_id')
+        .eq('user_id', effectiveOwnerId)
         .order('created_at', { ascending: false });
+      if (isSeller && seller?.id) {
+        query = query.eq('seller_member_id', seller.id);
+      }
+      const { data, error } = await query;
 
       if (error) throw error;
       const list = (data as unknown as WaInstance[]) || [];
@@ -181,16 +208,61 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     }
   };
 
+  // Master: carrega vendedores da conta para o dropdown de atribuição
+  const fetchTeamMembers = async () => {
+    if (!effectiveOwnerId || isSeller) return;
+    try {
+      const { data } = await (supabase as any)
+        .from('ai_team_members')
+        .select('id, name')
+        .eq('user_id', effectiveOwnerId)
+        .eq('is_active', true)
+        .order('name');
+      // Dedup por nome (vendedor pode ter múltiplos rows; UI só precisa do label)
+      const seen = new Set<string>();
+      const unique: TeamMemberLite[] = [];
+      for (const m of (data || []) as TeamMemberLite[]) {
+        if (!seen.has(m.name)) { seen.add(m.name); unique.push(m); }
+      }
+      setTeamMembers(unique);
+    } catch (err) {
+      console.error('Error fetching team members:', err);
+    }
+  };
+
+  // Master: atribui (ou desatribui) uma instância a um vendedor
+  const handleAssignSeller = async (instanceId: string, sellerMemberId: string | null) => {
+    setAssigningId(instanceId);
+    try {
+      const { error } = await (supabase as any)
+        .from('wa_instances')
+        .update({ seller_member_id: sellerMemberId })
+        .eq('id', instanceId);
+      if (error) throw error;
+      setInstances(prev => prev.map(i => i.id === instanceId ? { ...i, seller_member_id: sellerMemberId } : i));
+      toast({
+        title: sellerMemberId ? '✅ Instância atribuída ao vendedor' : 'Instância desatribuída (volta para o master)',
+      });
+    } catch (err: any) {
+      toast({ title: 'Erro ao atribuir', description: err.message, variant: 'destructive' });
+    } finally {
+      setAssigningId(null);
+    }
+  };
+
   useEffect(() => {
     fetchInstances();
-  }, [user?.id]);
+    fetchTeamMembers();
+  }, [effectiveOwnerId, isSeller, seller?.id]);
 
   const handleDelete = async () => {
     if (!deleteId || !user?.id) return;
     setIsDeleting(true);
     try {
+      // requester_auth_id = auth.uid() do solicitante (master OU vendedor).
+      // A edge function valida autorização: master via user_id, vendedor via seller_member_id.
       const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
-        body: { instance_id: deleteId, user_id: user?.id },
+        body: { instance_id: deleteId, requester_auth_id: user.id },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao remover instância');
@@ -246,6 +318,8 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   };
 
   const activeCount = instances.filter(i => i.is_active && i.status === 'connected').length;
+  // Pool conta SOMENTE ativas (is_active = true). Desativadas liberam vaga.
+  const poolUsed = instances.filter(i => i.is_active).length;
   const totalHealth = instances.length > 0
     ? Math.round(instances.reduce((s, i) => s + (i.health_score ?? 0), 0) / instances.length)
     : 0;
@@ -282,10 +356,12 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
             )}
             <Button
               onClick={() => {
-                if (instances.length >= maxInstances) {
+                if (poolUsed >= maxInstances) {
                   toast({
                     title: `Limite de ${maxInstances} instâncias atingido`,
-                    description: 'Faça upgrade do seu plano para conectar mais números.',
+                    description: isSeller
+                      ? 'Você já possui um número conectado. Desative-o antes de conectar outro.'
+                      : 'Limite do plano atingido. Desative uma instância ou faça upgrade.',
                     variant: 'destructive',
                   });
                   return;
@@ -295,7 +371,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
               className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white gap-2"
             >
               <Plus className="h-4 w-4" />
-              Conectar Número ({instances.length}/{maxInstances})
+              Conectar Número ({poolUsed}/{maxInstances})
             </Button>
           </div>
         </div>
@@ -449,6 +525,40 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
                         />
                       </div>
                     </div>
+
+                    {/* Atribuir a vendedor (apenas master) */}
+                    {!isSeller && (
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <User className="h-3 w-3 text-muted-foreground" />
+                          <span className="text-xs text-muted-foreground">Atribuído a</span>
+                          {instance.seller_member_id && (
+                            <Badge variant="outline" className="text-[9px] h-4 px-1.5 border-emerald-500/30 text-emerald-400">
+                              vendedor
+                            </Badge>
+                          )}
+                        </div>
+                        <Select
+                          value={instance.seller_member_id || 'none'}
+                          onValueChange={(v) => handleAssignSeller(instance.id, v === 'none' ? null : v)}
+                          disabled={assigningId === instance.id}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Não atribuída" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none" className="text-xs text-muted-foreground">
+                              Não atribuída (master)
+                            </SelectItem>
+                            {teamMembers.map(m => (
+                              <SelectItem key={m.id} value={m.id} className="text-xs">
+                                {m.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
 
                     {/* Actions */}
                     <div className="flex gap-2 pt-1">

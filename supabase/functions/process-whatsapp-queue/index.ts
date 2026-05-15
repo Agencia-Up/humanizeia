@@ -45,6 +45,7 @@ interface QueueItem {
 interface Instance {
   id: string;
   user_id: string;
+  seller_member_id: string | null;
   instance_name: string;
   api_url: string;
   api_key_encrypted: string;
@@ -75,6 +76,7 @@ interface Campaign {
   sent_count: number;
   instance_id: string | null;
   include_optout_buttons: boolean;
+  seller_member_id: string | null;
 }
 
 interface SendResult {
@@ -137,7 +139,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons")
+        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons, seller_member_id")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -195,33 +197,16 @@ Deno.serve(async (req) => {
     const startOfTodayIso = startOfToday.toISOString();
 
     for (const uid of userIds) {
-      let { data: instances } = await supabase
+      // Busca TODAS as instâncias da conta (master + dos vendedores).
+      // A filtragem por seller_member_id da campanha acontece no momento do envio,
+      // logo antes de chamar selectSmartInstance — assim o pool fica unificado aqui.
+      const { data: instances } = await supabase
         .from("wa_instances")
         .select("*")
         .eq("user_id", uid)
         .eq("is_active", true)
         .eq("status", "connected")
         .order("health_score", { ascending: false });
-
-      // ===== SELLER FALLBACK: se vendedor não tem instâncias, usa as do dono =====
-      if (!instances || instances.length === 0) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role, manager_id")
-          .eq("id", uid)
-          .single();
-        if (profile?.role === "seller" && profile?.manager_id) {
-          console.log(`[instance-fallback] User ${uid} is seller, using manager ${profile.manager_id} instances`);
-          const { data: managerInstances } = await supabase
-            .from("wa_instances")
-            .select("*")
-            .eq("user_id", profile.manager_id)
-            .eq("is_active", true)
-            .eq("status", "connected")
-            .order("health_score", { ascending: false });
-          instances = managerInstances;
-        }
-      }
 
       if (instances && instances.length > 0) {
         const typedInstances = instances as unknown as Instance[];
@@ -245,6 +230,7 @@ Deno.serve(async (req) => {
     }
 
     let processed = 0, succeeded = 0, failed = 0;
+    const skipReasons: Array<{ item_id: string; reason: string; details?: unknown }> = [];
 
     // Track recent message hashes to prevent duplicate messages
     const recentMessageHashes = new Set<string>();
@@ -266,6 +252,7 @@ Deno.serve(async (req) => {
               .from("wa_queue")
               .update({ status: "pending" })
               .eq("id", item.id);
+            skipReasons.push({ item_id: item.id, reason: "campaign_paused_mid_batch", details: { status: liveStatus.status } });
             processed++;
             continue;
           }
@@ -289,23 +276,74 @@ Deno.serve(async (req) => {
 
         // Another worker already took this item
         if (!lockRow) {
+          skipReasons.push({ item_id: item.id, reason: "lock_lost_to_another_worker" });
           continue;
         }
 
         const campaign = item.campaign_id ? campaignMap.get(item.campaign_id) : null;
-        const userInstances = instanceMap.get(item.user_id);
+        const allUserInstances = instanceMap.get(item.user_id);
 
-        if (!userInstances || userInstances.length === 0) {
-          // No instance connected yet — defer retry instead of permanently failing
+        if (!allUserInstances || allUserInstances.length === 0) {
+          // No instance connected — incrementa retry_count. Após MAX_RETRIES, marca FAILED.
+          // Antes ficava em loop infinito de "defer +60s" e travava a fila inteira (item órfão
+          // de master sem instância bloqueava todos os outros porque BATCH_SIZE=1).
+          if (item.retry_count >= MAX_RETRIES) {
+            await markFailed(supabase, item.id, "Master/conta sem instância WhatsApp conectada após várias tentativas. Conecte um número e re-inicie a campanha.");
+            skipReasons.push({ item_id: item.id, reason: "no_user_instances_max_retries", details: { user_id: item.user_id, retry_count: item.retry_count } });
+            failed++; processed++; continue;
+          }
           await supabase
             .from("wa_queue")
             .update({
               status: "pending",
+              retry_count: item.retry_count + 1,
               scheduled_for: new Date(Date.now() + 60_000).toISOString(),
-              error_message: "Aguardando instância WhatsApp conectada — tentando novamente em 1 min",
+              error_message: `Aguardando instância WhatsApp conectada — tentativa ${item.retry_count + 1}/${MAX_RETRIES}`,
             })
             .eq("id", item.id);
+          skipReasons.push({ item_id: item.id, reason: "no_user_instances", details: { user_id: item.user_id, retry_count: item.retry_count + 1 } });
           processed++; continue;
+        }
+
+        // ===== ISOLAMENTO POR VENDEDOR =====
+        // Se a campanha foi criada por um vendedor (seller_member_id NOT NULL),
+        // o disparo DEVE usar a instância DELE (número WhatsApp do vendedor).
+        // Master fica de fora — o cliente final precisa ver o número do vendedor.
+        // Se a campanha é do master (seller_member_id IS NULL), usa pool master
+        // (instâncias com seller_member_id IS NULL).
+        let userInstances: Instance[];
+        if (campaign?.seller_member_id) {
+          userInstances = allUserInstances.filter(
+            (i) => i.seller_member_id === campaign.seller_member_id,
+          );
+          if (userInstances.length === 0) {
+            // Vendedor sem instância — incrementa retry_count. Após MAX_RETRIES, marca FAILED.
+            // (Mesmo motivo do bug anterior: defer infinito travava a fila inteira.)
+            if (item.retry_count >= MAX_RETRIES) {
+              await markFailed(supabase, item.id, "Vendedor sem instância WhatsApp conectada após várias tentativas. Conecte um número na conta do vendedor.");
+              skipReasons.push({ item_id: item.id, reason: "seller_no_instance_max_retries", details: { seller_member_id: campaign.seller_member_id, retry_count: item.retry_count } });
+              failed++; processed++; continue;
+            }
+            console.warn(`[seller-isolation] Vendedor ${campaign.seller_member_id} sem instância conectada — adiando 5 min (tentativa ${item.retry_count + 1}/${MAX_RETRIES})`);
+            await supabase
+              .from("wa_queue")
+              .update({
+                status: "pending",
+                retry_count: item.retry_count + 1,
+                scheduled_for: new Date(Date.now() + 300_000).toISOString(),
+                error_message: `Vendedor sem instância WhatsApp — tentativa ${item.retry_count + 1}/${MAX_RETRIES}. Conecte um número na conta do vendedor.`,
+              })
+              .eq("id", item.id);
+            skipReasons.push({ item_id: item.id, reason: "seller_no_instance", details: { seller_member_id: campaign.seller_member_id, retry_count: item.retry_count + 1 } });
+            processed++; continue;
+          }
+        } else {
+          // Campanha do master: usa apenas instâncias do pool master (sem dono específico)
+          userInstances = allUserInstances.filter((i) => !i.seller_member_id);
+          if (userInstances.length === 0) {
+            // Sem instância do master — tenta qualquer ativa como último recurso
+            userInstances = allUserInstances;
+          }
         }
 
         // --- Smart Switcher: Instance Selection ---
@@ -328,6 +366,7 @@ Deno.serve(async (req) => {
               error_message: "Instâncias no limite ou circuit-breaker ativo — tentando novamente em 5 min",
             })
             .eq("id", item.id);
+          skipReasons.push({ item_id: item.id, reason: "select_smart_instance_returned_null", details: { user_instances_count: userInstances.length, instance_ids: userInstances.map(i => i.id) } });
           processed++; continue;
         }
 
@@ -427,6 +466,7 @@ Deno.serve(async (req) => {
               .from("wa_queue")
               .update({ status: "pending" })
               .eq("id", item.id);
+            skipReasons.push({ item_id: item.id, reason: "campaign_paused_before_send", details: { status: statusBeforeSend.status } });
             processed++;
             continue;
           }
@@ -674,7 +714,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ processed, succeeded, failed }),
+      JSON.stringify({ processed, succeeded, failed, skipReasons }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

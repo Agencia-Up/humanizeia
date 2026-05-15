@@ -230,15 +230,20 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   }, [effectiveUserId]);
 
   // ============= Contact Lists Logic =============
+  // Modelo: master vê TODAS as listas (suas + dos vendedores). Vendedor vê só as dele.
   const fetchLists = useCallback(async () => {
     if (!effectiveUserId) return;
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = (supabase as any)
         .from('wa_contact_lists')
         .select('*')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
+      if (isSeller && seller?.id) {
+        query = query.eq('seller_member_id', seller.id);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       setLists((data as ContactList[]) || []);
     } catch (err: any) {
@@ -246,7 +251,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     } finally {
       setIsLoading(false);
     }
-  }, [effectiveUserId, toast]);
+  }, [effectiveUserId, isSeller, seller?.id, toast]);
 
   const fetchContacts = useCallback(async (listId: string) => {
     if (!effectiveUserId) return;
@@ -294,8 +299,12 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     if (!effectiveUserId || !formListName.trim()) return;
     setIsSaving(true);
     try {
-      const { error } = await supabase.from('wa_contact_lists').insert({
-        user_id: effectiveUserId, name: formListName.trim(), description: formListDesc.trim() || null, source: 'manual',
+      const { error } = await (supabase as any).from('wa_contact_lists').insert({
+        user_id: effectiveUserId,
+        name: formListName.trim(),
+        description: formListDesc.trim() || null,
+        source: 'manual',
+        seller_member_id: (isSeller && seller?.id) ? seller.id : null,
       });
       if (error) throw error;
       toast({ title: 'Lista criada!' });
@@ -307,7 +316,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   };
 
   // ===== Importação de leads do Pedro =====
-  // Vendedor: só vê leads que ELE atendeu (assigned_to_member_id = seller.id)
+  // Vendedor: só vê leads que ELE atendeu (assigned_to_id = seller.id)
   // Master: vê todos os leads do Pedro da conta
   const openPedroImportDialog = async () => {
     if (!effectiveUserId) return;
@@ -322,7 +331,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         .select('id', { count: 'exact', head: true })
         .eq('user_id', effectiveUserId);
       if (isSeller && seller?.id) {
-        q = q.eq('assigned_to_member_id', seller.id);
+        q = q.eq('assigned_to_id', seller.id);
       }
       const { count } = await q;
       setPedroLeadCount(count || 0);
@@ -356,7 +365,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         .select('remote_jid, lead_name')
         .eq('user_id', effectiveUserId);
       if (isSeller && seller?.id) {
-        leadsQuery = leadsQuery.eq('assigned_to_member_id', seller.id);
+        leadsQuery = leadsQuery.eq('assigned_to_id', seller.id);
       }
       const { data: leads, error: leadsErr } = await leadsQuery;
       if (leadsErr) throw leadsErr;
@@ -636,9 +645,15 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     try {
       let listId = extractListMode === 'existing' ? extractTargetListId : undefined;
       if (extractListMode === 'new' && extractNewListName.trim()) {
-        const { data: newList, error: listErr } = await supabase
+        const { data: newList, error: listErr } = await (supabase as any)
           .from('wa_contact_lists')
-          .insert({ user_id: effectiveUserId, name: extractNewListName.trim(), source: 'group_extract', contact_count: 0 })
+          .insert({
+            user_id: effectiveUserId,
+            name: extractNewListName.trim(),
+            source: 'group_extract',
+            contact_count: 0,
+            seller_member_id: (isSeller && seller?.id) ? seller.id : null,
+          })
           .select('id').single();
         if (listErr) throw listErr;
         listId = newList.id;

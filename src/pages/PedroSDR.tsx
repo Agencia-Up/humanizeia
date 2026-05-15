@@ -38,6 +38,7 @@ const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
+import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 
@@ -64,7 +65,8 @@ interface PerfData {
 
 const STATUS_COLORS: Record<string, string> = {
   novo:               '#3B82F6',
-  pouco_qualificado:  '#EF4444',
+  inativo:            '#9CA3AF',
+  pouco_qualificado:  '#F97316',
   medio_qualificado:  '#F59E0B',
   qualificado:        '#10B981',
   aguardando:         '#F59E0B',
@@ -569,8 +571,8 @@ const FEEDBACK_REASONS: { category: string; emoji: string; options: string[] }[]
 
 const STATUS_CRM_OPTIONS = [
   { value: 'novo',               label: 'Novo',              color: 'text-blue-400'    },
+  { value: 'inativo',            label: 'Lead Inativo',      color: 'text-gray-400'    },
   { value: 'pouco_qualificado',  label: 'Pouco Qualificado', color: 'text-orange-400'  },
-  { value: 'medio_qualificado',  label: 'Médio Qualificado', color: 'text-amber-400'   },
   { value: 'qualificado',        label: 'Qualificado',       color: 'text-emerald-400' },
   { value: 'em_atendimento',     label: 'Agendamento',       color: 'text-cyan-400'    },
   { value: 'negociacao',         label: 'Negociação',        color: 'text-purple-400'  },
@@ -578,9 +580,14 @@ const STATUS_CRM_OPTIONS = [
   { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
 
-// Mapeia status legacy "interessado" → exibe como "novo" no kanban (compat retroativa)
+// Mapeia status legacy → exibe no kanban (compat retroativa)
+// 'interessado' (antigo) → 'novo'
+// 'medio_qualificado' (antigo, removido na nova lógica de 3 níveis) → 'pouco_qualificado'
+// 'encerrado' (antigo) → 'perdido'
 const STATUS_DISPLAY_MAP: Record<string, string> = {
   interessado: 'novo',
+  medio_qualificado: 'pouco_qualificado',
+  encerrado: 'perdido',
 };
 function normalizeStatus(status: string): string {
   return STATUS_DISPLAY_MAP[status] || status;
@@ -596,9 +603,11 @@ function fmtDate(iso: string) {
 
 const PIPELINE_COLUMNS = [
   { id: 'novo',               title: 'Novo',               emoji: '🔰', border: 'border-slate-500/30',   bg: 'bg-slate-500/10',   dot: 'bg-slate-400'   },
+  // 3 níveis SDR (auto-classificados pelo agente IA — edge function auto-classify-leads):
+  { id: 'inativo',            title: 'Lead Inativo',       emoji: '😴', border: 'border-gray-500/30',    bg: 'bg-gray-500/10',    dot: 'bg-gray-400'    },
   { id: 'pouco_qualificado',  title: 'Pouco Qualif.',      emoji: '🧊', border: 'border-orange-500/30',  bg: 'bg-orange-500/10',  dot: 'bg-orange-400'  },
-  { id: 'medio_qualificado',  title: 'Médio Qualif.',      emoji: '🌡️', border: 'border-amber-500/30',   bg: 'bg-amber-500/10',   dot: 'bg-amber-400'   },
   { id: 'qualificado',        title: 'Qualificado',        emoji: '🎯', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', dot: 'bg-emerald-400' },
+  // Estágios manuais (não tocados pela auto-classificação):
   { id: 'em_atendimento',     title: 'Agendamento',        emoji: '📅', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
   { id: 'negociacao',         title: 'Negociação',         emoji: '🤝', border: 'border-purple-500/30',  bg: 'bg-purple-500/10',  dot: 'bg-purple-400'  },
   { id: 'fechado',            title: 'Fechado',            emoji: '✅', border: 'border-green-500/30',   bg: 'bg-green-500/10',   dot: 'bg-green-400'   },
@@ -642,6 +651,16 @@ interface Feedback {
   lead?: { lead_name: string } | null;
 }
 
+// Feedback da IA gerado no momento da transferência (ai_lead_transfers.notes)
+interface LeadTransfer {
+  id: string;
+  lead_id: string;
+  transfer_reason: string | null;
+  notes: string | null;
+  created_at: string;
+  to_member?: { name: string } | null;
+}
+
 interface FollowupSchedule {
   id: string;
   lead_id: string;
@@ -683,6 +702,8 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
+  const [cancellingFollowupId, setCancellingFollowupId] = useState<string | null>(null);
+  const [transfers, setTransfers] = useState<LeadTransfer[]>([]);
   const [view, setView] = useState<'pipeline' | 'leads' | 'feedbacks' | 'sellers'>('pipeline');
 
   // filter states
@@ -717,6 +738,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [funnelOpen, setFunnelOpen]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
+  const [classifyLoading, setClassifyLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [reassigning, setReassigning]       = useState<string | null>(null);
 
@@ -766,11 +788,17 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         return query;
       };
 
-      // Seller: filtra por assigned_to_id (todos os member IDs do vendedor) no banco
-      // Master: busca os 100 mais recentes (sem filtro de seller)
+      // ========================================================================
+      // ESTRATÉGIA "JOIN no JS" — mais robusta que JOIN PostgREST
+      // ========================================================================
+      // Antes: JOIN embedded com ai_team_members + wa_ai_agents fazia PostgREST
+      // retornar erro silencioso (provavelmente RLS de wa_ai_agents). Resultado:
+      // CRM totalmente vazio. Agora busca leads SEM JOIN e hidrata member/agent
+      // no JavaScript usando os arrays teamRes e agentsRes que já buscamos.
+      // ========================================================================
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, created_at, member:ai_team_members(id, name), agent:wa_ai_agents(name)')
+        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -778,8 +806,12 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       } else {
         leadsQuery.limit(100);
       }
+      const agentsQuery = (supabase as any)
+        .from('wa_ai_agents')
+        .select('id, name')
+        .eq('user_id', effectiveUserId);
 
-      const [leadsRes, fbRes, instRes, teamRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
+      const [leadsRes, fbRes, instRes, teamRes, agentsRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
         leadsQuery,
         (supabase as any)
           .from('pedro_manager_feedback')
@@ -787,26 +819,57 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           .eq('user_id', isSeller ? userId : effectiveUserId)
           .order('created_at', { ascending: false })
           .limit(50),
-        // Cada conta vê SOMENTE suas próprias instâncias para follow-up
-        (supabase as any)
-          .from('wa_instances')
-          .select('id, friendly_name, phone_number, instance_name, status')
-          .eq('user_id', userId)
-          .eq('is_active', true),
+        // Follow-up: vendedor usa apenas a instância DELE; master usa apenas
+        // as próprias dele (seller_member_id IS NULL). Master NÃO usa
+        // instâncias de vendedores mesmo enxergando-as em outras telas.
+        (() => {
+          let q = (supabase as any)
+            .from('wa_instances')
+            .select('id, friendly_name, phone_number, instance_name, status, seller_member_id')
+            .eq('user_id', effectiveUserId)
+            .eq('is_active', true);
+          if (isSeller && memberIds.length > 0) {
+            q = q.in('seller_member_id', memberIds);
+          } else {
+            q = q.is('seller_member_id', null);
+          }
+          return q;
+        })(),
         (supabase as any)
           .from('ai_team_members')
           .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
           .eq('user_id', effectiveUserId)
           .order('is_active', { ascending: false })
           .order('name', { ascending: true }),
+        agentsQuery,
         leadCountQuery(),
         leadCountQuery(todayStart),
         leadCountQuery(weekStart),
         leadCountQuery(monthStart),
       ]);
 
-      const leadsData: CrmLead[] = leadsRes.data || [];
+      // ── LOG DEFENSIVO: captura erro silencioso de query ──
+      if ((leadsRes as any)?.error) {
+        console.error('[PedroSDR] ERRO ao buscar leads:', (leadsRes as any).error);
+        toast({
+          title: '⚠️ Erro ao carregar leads',
+          description: (leadsRes as any).error?.message || 'Erro desconhecido',
+          variant: 'destructive',
+        });
+      }
+      const rawLeads: any[] = leadsRes.data || [];
       const teamData:  TeamMember[] = teamRes.data || [];
+      const agentsData: any[] = agentsRes.data || [];
+
+      // ── HIDRATAÇÃO JS: monta lead.member e lead.agent usando os arrays já buscados
+      // Substitui o JOIN PostgREST que falhava silenciosamente. Mais robusto.
+      const teamById = new Map(teamData.map((t: any) => [t.id, { id: t.id, name: t.name }]));
+      const agentsById = new Map(agentsData.map((a: any) => [a.id, { name: a.name }]));
+      const leadsData: CrmLead[] = rawLeads.map((l: any) => ({
+        ...l,
+        member: l.assigned_to_id ? (teamById.get(l.assigned_to_id) ?? null) : null,
+        agent: l.agent_id ? (agentsById.get(l.agent_id) ?? null) : null,
+      }));
 
       // Deduplica vendedores pelo whatsapp_number (mesmo vendedor pode estar em vários agentes)
       const deduped = new Map<string, TeamMember>();
@@ -861,7 +924,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
   const loadLeadDetail = async (lead: CrmLead) => {
     setSelectedLead(lead);
-    const [notesRes, schedRes] = await Promise.all([
+    const [notesRes, schedRes, transfersRes] = await Promise.all([
       (supabase as any)
         .from('pedro_crm_notes')
         .select('id, lead_id, content, is_pinned, created_at, member:ai_team_members(name)')
@@ -873,9 +936,16 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         .select('id, lead_id, scheduled_at, message_template, status, created_at')
         .eq('lead_id', lead.id)
         .order('scheduled_at', { ascending: true }),
+      // Feedback da IA gerado em cada transferência (ai_lead_transfers.notes)
+      (supabase as any)
+        .from('ai_lead_transfers')
+        .select('id, lead_id, transfer_reason, notes, created_at, to_member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name)')
+        .eq('lead_id', lead.id)
+        .order('created_at', { ascending: false }),
     ]);
     setNotes(notesRes.data || []);
     setSchedules(schedRes.data || []);
+    setTransfers(transfersRes.data || []);
   };
 
   const handleAddNote = async () => {
@@ -993,6 +1063,45 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setFuLoading(false);
+    }
+  };
+
+  // Cancela um follow-up agendado ANTES de ser disparado.
+  // Não DELETE — só marca status='cancelled' (auditável + edge function
+  // pedro-trigger-followup já filtra por status='pending', logo ignora).
+  // Race condition aceita: se o cron disparar nos 60s entre cliques, mensagem
+  // pode ir mesmo assim (probabilidade baixa, impacto: 1 msg fora de hora).
+  const handleCancelFollowup = async (id: string) => {
+    if (!id || cancellingFollowupId) return;
+    if (!confirm('Cancelar este follow-up agendado? Ele NÃO será enviado pro lead.')) return;
+    setCancellingFollowupId(id);
+    try {
+      const { error } = await (supabase as any)
+        .from('pedro_followup_schedules')
+        .update({ status: 'cancelled' })
+        .eq('id', id)
+        .eq('status', 'pending'); // só cancela se ainda estiver pending (atômico)
+      if (error) throw error;
+      // Remove da lista local imediatamente (otimista)
+      setSchedules(prev => prev.filter(s => s.id !== id));
+      // Se era o próximo follow-up do lead, limpa o next_followup_at
+      if (selectedLead?.id) {
+        const remainingPending = schedules.filter(s => s.status === 'pending' && s.id !== id);
+        const nextScheduledAt = remainingPending.length > 0
+          ? remainingPending.reduce((min, s) =>
+              new Date(s.scheduled_at) < new Date(min) ? s.scheduled_at : min, remainingPending[0].scheduled_at)
+          : null;
+        await (supabase as any).from('ai_crm_leads')
+          .update({ next_followup_at: nextScheduledAt })
+          .eq('id', selectedLead.id);
+      }
+      toast({ title: '✅ Follow-up cancelado', description: 'Não será enviado pro lead.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao cancelar', description: err.message, variant: 'destructive' });
+      // Em caso de erro, recarrega pra garantir estado consistente
+      if (selectedLead) await loadLeadDetail(selectedLead);
+    } finally {
+      setCancellingFollowupId(null);
     }
   };
 
@@ -1140,6 +1249,32 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       toast({ title: 'Erro ao disparar follow-ups', description: err.message, variant: 'destructive' });
     } finally {
       setTriggerLoading(false);
+    }
+  };
+
+  // Re-classifica leads nos 3 níveis SDR (Inativo / Pouco Qualificado / Qualificado)
+  // Roda a edge function auto-classify-leads que analisa cada lead e ajusta status_crm
+  // baseado em campos preenchidos + tempo de inatividade do cliente.
+  const handleClassifyLeads = async () => {
+    setClassifyLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('auto-classify-leads', { body: {} });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      const total = (data as any)?.total_changes || 0;
+      const summary = (data as any)?.summary_by_new_status || {};
+      const desc = Object.keys(summary).length > 0
+        ? Object.entries(summary).map(([k, v]) => `${v} → ${k}`).join(', ')
+        : undefined;
+      toast({
+        title: total > 0 ? `🤖 ${total} lead(s) reclassificado(s)` : 'Nenhum lead precisava de reclassificação',
+        description: desc,
+      });
+      if (total > 0) await fetchData(true);
+    } catch (err: any) {
+      toast({ title: 'Erro ao reclassificar', description: err.message, variant: 'destructive' });
+    } finally {
+      setClassifyLoading(false);
     }
   };
 
@@ -1505,6 +1640,93 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           </div>
         </div>
 
+        {/* ── Feedback da IA ──────────────────────────────────────────────
+            Mostra o que o Pedro escreveu sobre esse lead. Prioridade:
+            1) Transferências com notes rico (não começa com "via cron")
+            2) ai_crm_leads.summary (resumo da IA durante qualificação)
+            3) Fallback "via cron" — texto curto antigo. */}
+        {(() => {
+          // Identifica transferências com texto rico (mais que 1 linha ou >100 chars)
+          const richTransfers = transfers.filter(t =>
+            t.notes && (t.notes.length > 100 || t.notes.includes('\n'))
+          );
+          const cronTransfers = transfers.filter(t =>
+            t.notes && !(t.notes.length > 100 || t.notes.includes('\n'))
+          );
+          const summary = selectedLead.summary;
+          const hasAnything = richTransfers.length > 0 || summary || cronTransfers.length > 0;
+          if (!hasAnything) return null;
+
+          return (
+            <Card className="bg-gradient-to-br from-blue-500/5 to-violet-500/5 border-blue-500/20">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Bot className="h-4 w-4 text-blue-400" />
+                  Feedback da IA
+                  <Badge className="text-[9px] h-4 px-1.5 bg-blue-500/15 text-blue-300 border-blue-500/30">
+                    Funil do Agente
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {/* 1) Transferências com texto rico (briefing completo da IA) */}
+                {richTransfers.map(t => (
+                  <div key={t.id} className="rounded-lg bg-card/60 border border-blue-500/20 p-3 space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2 text-[10px]">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Repassado para:</span>
+                        <span className="text-blue-300 font-semibold">
+                          {t.to_member?.name || 'Vendedor'}
+                        </span>
+                      </div>
+                      <span className="text-muted-foreground">{fmtDate(t.created_at)}</span>
+                    </div>
+                    <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                      {t.notes}
+                    </p>
+                  </div>
+                ))}
+
+                {/* 2) Summary do lead (se não houver transfer rico mas existir summary) */}
+                {richTransfers.length === 0 && summary && (
+                  <div className="rounded-lg bg-card/60 border border-blue-500/15 p-3 space-y-1">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+                      📋 Resumo da IA
+                    </p>
+                    <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                      {summary}
+                    </p>
+                  </div>
+                )}
+
+                {/* 3) Transferências antigas com texto curto — só se NÃO houver nada melhor */}
+                {richTransfers.length === 0 && !summary && cronTransfers.map(t => {
+                  const reasonLabel =
+                    t.transfer_reason === 'round_robin' ? 'Rodízio automático' :
+                    t.transfer_reason === 'manual'      ? 'Repasse manual'    :
+                    t.transfer_reason || '—';
+                  return (
+                    <div key={t.id} className="rounded-lg bg-muted/30 border border-border/30 p-3 space-y-1 text-xs">
+                      <div className="flex items-center justify-between flex-wrap gap-2 text-[10px]">
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Repassado para:</span>
+                          <span className="text-foreground font-semibold">
+                            {t.to_member?.name || 'Vendedor'}
+                          </span>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="text-muted-foreground">{reasonLabel}</span>
+                        </div>
+                        <span className="text-muted-foreground">{fmtDate(t.created_at)}</span>
+                      </div>
+                      <p className="text-muted-foreground italic">{t.notes}</p>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          );
+        })()}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* ── Anotações ─────────────────────────────────────────────── */}
           <Card className="bg-card border-border/50">
@@ -1702,12 +1924,24 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                 <div className="space-y-1.5 pt-1">
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Agendados</p>
                   {schedules.filter(s => s.status === 'pending').map(s => (
-                    <div key={s.id} className="flex items-start gap-2 bg-muted/40 rounded-lg px-3 py-2">
+                    <div key={s.id} className="flex items-start gap-2 bg-muted/40 rounded-lg px-3 py-2 group">
                       <Clock className="h-3 w-3 text-cyan-400 mt-0.5 shrink-0" />
-                      <div>
+                      <div className="flex-1 min-w-0">
                         <p className="text-[10px] text-cyan-400 font-medium">{fmtDate(s.scheduled_at)}</p>
                         <p className="text-[10px] text-muted-foreground line-clamp-1">{s.message_template}</p>
                       </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive opacity-60 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleCancelFollowup(s.id)}
+                        disabled={cancellingFollowupId === s.id}
+                        title="Cancelar follow-up agendado (não será enviado)"
+                      >
+                        {cancellingFollowupId === s.id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <Trash2 className="h-3 w-3" />}
+                      </Button>
                     </div>
                   ))}
                 </div>
@@ -1984,6 +2218,19 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
             Follow-ups
           </Button>
+          {!isSeller && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClassifyLeads}
+              disabled={classifyLoading}
+              title="Re-classifica leads nos 3 níveis SDR (Inativo / Pouco Qualificado / Qualificado) com base em respostas do cliente e dados coletados"
+              className="h-7 px-2.5 text-xs gap-1.5 border-blue-500/30 text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
+            >
+              {classifyLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span>🤖</span>}
+              Reclassificar IA
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
@@ -2528,7 +2775,7 @@ export default function PedroSDR() {
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              {isSeller ? 'Painel do Vendedor — seus leads e atendimentos' : 'SDR — Qualificação de Leads & Automação Comercial'}
+              {isSeller ? 'Painel do Vendedor — seus leads e atendimentos' : 'Funil do Agente — Qualificação de Leads & Automação Comercial'}
             </p>
           </div>
         </div>
@@ -2570,13 +2817,16 @@ export default function PedroSDR() {
 
             {/* Vendedores */}
             {(!isSeller || visibleFeatures.tab_vendedores) && (
-              <TabsContent value="vendedores" className="mt-0">
+              <TabsContent value="vendedores" className="mt-0 space-y-4">
+                {/* Config de entrega de feedbacks ao gerente — só pra master */}
+                {!isSeller && <ManagerFeedbackConfigCard />}
                 {user?.id && <SellerManagerTab userId={user.id} />}
               </TabsContent>
             )}
 
             <Suspense fallback={<TabLoader />}>
-              {/* Agente IA */}
+              {/* Agente IA — Funil do Agente vive DENTRO do modal de cada agente
+                  (aba SDR), porque cada agente tem suas próprias regras. */}
               {(!isSeller || visibleFeatures.tab_agente_ia) && (
                 <TabsContent value="agente" className="mt-0 h-full">
                   <WhatsAppAIAgent embedded />

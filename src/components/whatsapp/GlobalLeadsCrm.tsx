@@ -60,11 +60,16 @@ export function GlobalLeadsCrm() {
     if (!effectiveUserId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const { data: leadsData } = await (supabase as any)
+      // ── Estratégia "JOIN no JS": query simples + hidratação no frontend ──
+      // Evita JOIN PostgREST que falhava silenciosamente (RLS de wa_ai_agents).
+      const leadsRes = await (supabase as any)
         .from('ai_crm_leads')
-        .select('*, agent:wa_ai_agents(name), member:ai_team_members(name, whatsapp_number)')
+        .select('*')
         .eq('user_id', effectiveUserId)
         .order('last_interaction_at', { ascending: false });
+
+      if ((leadsRes as any)?.error) console.error('[GlobalLeadsCrm] ERRO query principal:', (leadsRes as any).error);
+      const rawLeads = leadsRes.data || [];
 
       const { data: transfersData } = await (supabase as any)
         .from('ai_lead_transfers')
@@ -84,10 +89,21 @@ export function GlobalLeadsCrm() {
         .select('id, name')
         .eq('user_id', effectiveUserId);
 
-      setLeads(leadsData || []);
+      // Hidrata member + agent via lookup map (substitui JOIN PostgREST quebrado)
+      const teamArr = teamData || [];
+      const agentsArr = agentsData || [];
+      const teamById = new Map(teamArr.map((t: any) => [t.id, { id: t.id, name: t.name, whatsapp_number: t.whatsapp_number }]));
+      const agentsById = new Map(agentsArr.map((a: any) => [a.id, { name: a.name }]));
+      const leadsData = rawLeads.map((l: any) => ({
+        ...l,
+        member: l.assigned_to_id ? (teamById.get(l.assigned_to_id) ?? null) : null,
+        agent: l.agent_id ? (agentsById.get(l.agent_id) ?? null) : null,
+      }));
+
+      setLeads(leadsData);
       setTransfers(transfersData || []);
-      setTeamMembers(teamData || []);
-      setAgents(agentsData || []);
+      setTeamMembers(teamArr);
+      setAgents(agentsArr);
     } catch (err) {
       console.error('Erro ao buscar dados do CRM:', err);
     } finally {

@@ -381,12 +381,51 @@ Deno.serve(async (req) => {
             .eq('id', lead.id)
             .maybeSingle();
 
-          if (!freshLead || freshLead.status !== 'qualificado') {
-            console.log(`[Cron] Lead ${lead.id} nao esta mais qualificado (status: ${freshLead?.status}). Marcando transferencia como expirada e pulando.`);
+          // ── DEFESA EM PROFUNDIDADE 1: pula se status já mudou ──
+          if (!freshLead || (freshLead.status !== 'qualificado' && freshLead.status !== 'transferido')) {
+            console.log(`[Cron] Lead ${lead.id} nao esta mais qualificado/transferido (status: ${freshLead?.status}). Marcando transferencia como expirada e pulando.`);
             await supabase.from('ai_lead_transfers')
               .update({ transfer_status: 'expired' })
               .eq('id', transfer.id);
             continue;
+          }
+
+          // ── DEFESA EM PROFUNDIDADE 2: se status='em_atendimento' OU já tem transfer mais novo CONFIRMADO ─
+          // Cobre o caso "vendedor confirmou mas webhook falhou em algum step":
+          // se existe um transfer pra esse lead criado DEPOIS de transfer.created_at com is_confirmed=true,
+          // significa que houve confirmação posterior e este transfer já é stale.
+          const { data: newerConfirmed } = await supabase
+            .from('ai_lead_transfers')
+            .select('id, to_member_id, created_at, is_confirmed, transfer_status')
+            .eq('lead_id', lead.id)
+            .gt('created_at', transfer.created_at)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (newerConfirmed && (newerConfirmed.is_confirmed || newerConfirmed.transfer_status === 'confirmed')) {
+            console.log(`[Cron] Lead ${lead.id} tem transfer mais novo confirmado (${newerConfirmed.id} → ${newerConfirmed.to_member_id}). Pulando este transfer e marcando como expirado.`);
+            await supabase.from('ai_lead_transfers')
+              .update({ transfer_status: 'expired' })
+              .eq('id', transfer.id);
+            continue;
+          }
+
+          // ── DEFESA EM PROFUNDIDADE 3: se vendedor atual já recebeu OUTRO lead depois de transfer.created_at ─
+          // Sinal de atividade — vendedor está ativo no sistema, não está "inativo".
+          if (transfer.to_member_id) {
+            const { data: currentSeller } = await supabase
+              .from('ai_team_members')
+              .select('last_lead_received_at, name')
+              .eq('id', transfer.to_member_id)
+              .maybeSingle();
+            if (currentSeller?.last_lead_received_at && new Date(currentSeller.last_lead_received_at) > new Date(transfer.created_at)) {
+              console.log(`[Cron] Vendedor ${currentSeller.name} já recebeu lead mais novo (${currentSeller.last_lead_received_at}) — está ativo, não repassar. Marcando transfer como confirmed.`);
+              await supabase.from('ai_lead_transfers')
+                .update({ transfer_status: 'confirmed', is_confirmed: true, confirmed_at: now.toISOString() })
+                .eq('id', transfer.id);
+              continue;
+            }
           }
 
           const agentId = lead.agent_id;
@@ -635,11 +674,52 @@ Deno.serve(async (req) => {
           selectedSellerId = seller.id;
           sellerName = seller.name;
 
+          // ─── GERA O BRIEFING RICO DA IA ANTES DE QUALQUER COISA ─────────
+          // (antes ficava DEPOIS do insert, então o CRM nunca recebia o
+          // texto rico — só o "via cron" curto. Agora geramos primeiro
+          // e gravamos no notes E no summary.)
+          const { data: fullChat } = await supabase
+            .from('wa_chat_history')
+            .select('role, content, created_at')
+            .eq('agent_id', agentId)
+            .eq('remote_jid', remoteJid)
+            .order('created_at', { ascending: false })
+            .limit(20);
+
+          let aiGeneratedSummary = lead.summary || 'O cliente demonstrou interesse e parou de responder durante a conversa.';
+          try {
+            const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+            if (openaiApiKey && fullChat && fullChat.length > 0) {
+              const chatTranscript = fullChat.reverse().map((m: any) =>
+                `${m.role === 'user' ? `Cliente (${lead.lead_name || 'Desconhecido'})` : 'Agente IA'}: ${String(m.content || '').substring(0, 400)}`
+              ).join('\n');
+
+              const summaryRes = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+                body: JSON.stringify({
+                  model: 'gpt-4o-mini',
+                  temperature: 0.3,
+                  messages: [
+                    { role: 'system', content: `Voce e um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL DO CLIENTE:*\n*DICA PARA RETOMADA:*\n\nSeja direto. Nao invente informacoes.` },
+                    { role: 'user', content: `Conversa:\n${chatTranscript}\n\nGere o briefing.` }
+                  ]
+                })
+              });
+              if (summaryRes.ok) {
+                const sd = await summaryRes.json();
+                const gt = sd.choices?.[0]?.message?.content;
+                if (gt) aiGeneratedSummary = gt;
+              }
+            }
+          } catch (e) { /* silencioso */ }
+
           await supabase.from('ai_crm_leads').update({
             status: 'qualificado',
             assigned_to_id: seller.id,
             followup_5min_sent: true,
-            last_interaction_at: now.toISOString()
+            last_interaction_at: now.toISOString(),
+            summary: aiGeneratedSummary, // ← grava o resumo rico no lead
           }).eq('id', lead.id);
 
           await supabase.from('ai_lead_transfers').insert({
@@ -647,7 +727,7 @@ Deno.serve(async (req) => {
             lead_id: lead.id,
             to_member_id: seller.id,
             transfer_reason: 'Inatividade do cliente (10 minutos)',
-            notes: `Transferido automaticamente para ${seller.name} via cron`,
+            notes: aiGeneratedSummary, // ← grava o resumo rico na transferência
             transfer_status: 'pending',
             is_confirmed: false,
             confirmation_timeout_at: new Date(now.getTime() + 15 * 60000).toISOString(),
@@ -659,42 +739,6 @@ Deno.serve(async (req) => {
 
           if (seller.whatsapp_number) {
             const cleanSellerNum = seller.whatsapp_number.replace(/\D/g, '');
-
-            const { data: fullChat } = await supabase
-              .from('wa_chat_history')
-              .select('role, content, created_at')
-              .eq('agent_id', agentId)
-              .eq('remote_jid', remoteJid)
-              .order('created_at', { ascending: false })
-              .limit(20);
-
-            let aiGeneratedSummary = lead.summary || 'O cliente demonstrou interesse e parou de responder durante a conversa.';
-            try {
-              const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
-              if (openaiApiKey && fullChat && fullChat.length > 0) {
-                const chatTranscript = fullChat.reverse().map((m: any) =>
-                  `${m.role === 'user' ? `Cliente (${lead.lead_name || 'Desconhecido'})` : 'Agente IA'}: ${String(m.content || '').substring(0, 400)}`
-                ).join('\n');
-
-                const summaryRes = await fetch('https://api.openai.com/v1/chat/completions', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
-                  body: JSON.stringify({
-                    model: 'gpt-4o-mini',
-                    temperature: 0.3,
-                    messages: [
-                      { role: 'system', content: `Voce e um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL DO CLIENTE:*\n*DICA PARA RETOMADA:*\n\nSeja direto. Nao invente informacoes.` },
-                      { role: 'user', content: `Conversa:\n${chatTranscript}\n\nGere o briefing.` }
-                    ]
-                  })
-                });
-                if (summaryRes.ok) {
-                  const sd = await summaryRes.json();
-                  const gt = sd.choices?.[0]?.message?.content;
-                  if (gt) aiGeneratedSummary = gt;
-                }
-              }
-            } catch (e) { /* silencioso */ }
 
             const notificationMsg = `*NOVO LEAD QUALIFICADO (Inatividade)*\n\n*Cliente:* ${lead.lead_name || 'Desconhecido'}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
 

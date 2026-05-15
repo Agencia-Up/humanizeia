@@ -20,43 +20,76 @@ Deno.serve(async (req) => {
       });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    // Fix: use getUser instead of getClaims (which doesn't exist in SDK)
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData?.user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const userId = userData.user.id;
-
-    // Detect seller: use manager's user_id so campaign/contacts match
     const serviceClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { data: profileData } = await serviceClient
-      .from("profiles")
-      .select("role, manager_id")
-      .eq("id", userId)
-      .single();
-
-    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
-    const effectiveUserId = isSeller ? profileData.manager_id : userId;
-
-    const { campaign_id } = await req.json();
+    const body = await req.json();
+    const { campaign_id, __cron } = body;
     if (!campaign_id) {
       return new Response(JSON.stringify({ error: "campaign_id is required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // ── BRANCH 1: invocação por cron (service_role) ────────────────────────
+    // O cron passa __cron=true + Bearer service_role_key. Nesse caso bypassa
+    // auth.getUser() e usa o user_id/seller_member_id que JÁ está em wa_campaigns.
+    let isSeller = false;
+    let effectiveUserId: string;
+    let sellerMemberId: string | null = null;
+
+    const incomingToken = authHeader.replace("Bearer ", "").trim();
+    const isCronCall = __cron === true && incomingToken === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    if (isCronCall) {
+      // Cron: pega user_id/seller_member_id direto da campanha
+      const { data: c } = await serviceClient
+        .from("wa_campaigns")
+        .select("user_id, seller_member_id")
+        .eq("id", campaign_id)
+        .maybeSingle();
+      if (!c?.user_id) {
+        return new Response(JSON.stringify({ error: "Campaign not found (cron)" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      effectiveUserId = c.user_id;
+      sellerMemberId = c.seller_member_id;
+      isSeller = !!sellerMemberId;
+      console.log(`[enqueue-campaign] CRON invocation campaign=${campaign_id} user=${effectiveUserId} seller=${sellerMemberId}`);
+    } else {
+      // ── BRANCH 2: invocação por usuário (master ou vendedor) via JWT ─────────
+      const userClient = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_ANON_KEY")!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: userData, error: userError } = await userClient.auth.getUser();
+      if (userError || !userData?.user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const userId = userData.user.id;
+
+      // Detect seller: use ai_team_members (modelo novo) — vendedor é dono da campanha
+      // via seller_member_id, e wa_campaigns.user_id é SEMPRE o master.
+      const { data: memberRow } = await serviceClient
+        .from("ai_team_members")
+        .select("id, user_id")
+        .eq("auth_user_id", userId)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      isSeller = !!memberRow?.user_id;
+      effectiveUserId = isSeller ? memberRow!.user_id : userId;
+      sellerMemberId = isSeller ? memberRow!.id : null;
+      console.log(`[enqueue-campaign] USER invocation requester=${userId} isSeller=${isSeller} effectiveUser=${effectiveUserId} sellerMember=${sellerMemberId}`);
     }
 
     // Fetch campaign using serviceClient + effectiveUserId (seller sees master's campaigns)
@@ -70,6 +103,15 @@ Deno.serve(async (req) => {
     if (campErr || !campaign) {
       return new Response(JSON.stringify({ error: "Campaign not found" }), {
         status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Se é vendedor: confirma que a campanha é DELE (seller_member_id bate)
+    if (isSeller && campaign.seller_member_id !== sellerMemberId) {
+      console.warn(`[enqueue-campaign] Vendedor ${sellerMemberId} tentou iniciar campanha ${campaign_id} (dono=${campaign.seller_member_id})`);
+      return new Response(JSON.stringify({ error: "Você não tem permissão pra iniciar esta campanha" }), {
+        status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

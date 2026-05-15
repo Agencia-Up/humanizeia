@@ -230,6 +230,344 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// ============================================================================
+// PEDRO CONVERSATION STATE — extração + formatação + merge
+// ============================================================================
+// Resolve causa raiz de 12/16 bugs (caso Roberta 2026-05-15): agente não tinha
+// memória estruturada, só histórico cru. Resultado: pedia nome 4x, troca 3x,
+// re-apresentava ficha 3x, etc.
+//
+// Fluxo:
+//  1. Cliente envia mensagem
+//  2. extractEntitiesWithClaude(msg, currentState) → delta JSON via Claude Haiku 4.5
+//  3. deepMerge(currentState, delta) → newState
+//  4. UPSERT em pedro_conversation_state
+//  5. formatStateForPrompt(newState) → bloco de texto injetado no system prompt do GPT-4o
+//  6. GPT-4o vê "✅ Nome: Roberta" e NUNCA mais pergunta o nome.
+// ============================================================================
+
+function deepMerge(target: any, source: any): any {
+  if (!source || typeof source !== 'object') return target;
+  const result: any = Array.isArray(target) ? [...(target || [])] : { ...(target || {}) };
+  for (const key of Object.keys(source)) {
+    const srcVal = (source as any)[key];
+    const tgtVal = result[key];
+    if (srcVal === null || srcVal === undefined) continue; // não sobrescreve com null
+    if (typeof srcVal === 'object' && !Array.isArray(srcVal) && typeof tgtVal === 'object' && tgtVal !== null && !Array.isArray(tgtVal)) {
+      result[key] = deepMerge(tgtVal, srcVal);
+    } else if (Array.isArray(srcVal) && Array.isArray(tgtVal)) {
+      // Para arrays, faz union deduplicado (caso de objecoes[])
+      result[key] = Array.from(new Set([...tgtVal, ...srcVal]));
+    } else {
+      result[key] = srcVal;
+    }
+  }
+  return result;
+}
+
+const CLAUDE_HAIKU_MODEL_CANDIDATES = [
+  'claude-haiku-4-5',
+  'claude-haiku-4-5-20251001',
+  'claude-haiku-4-5-20260101',
+  'claude-3-5-haiku-20241022', // fallback antigo se nada acima funcionar
+];
+
+async function extractEntitiesWithClaude(args: {
+  message: string;
+  currentState: any;
+  previousAgentMessage: string;
+  apiKey: string;
+}): Promise<{ delta: any; eco: boolean; objecoes: string[] }> {
+  const { message, currentState, previousAgentMessage, apiKey } = args;
+
+  const systemPrompt = `Você é um extrator de entidades pra um SDR de concessionária automotiva no WhatsApp. Sua única tarefa: receber a mensagem do cliente e devolver SOMENTE os campos NOVOS extraídos, em JSON. NÃO repita dados já presentes no estado atual. NÃO invente. Se não tem certeza, deixe null.
+
+Schema possível (extraia só o que se aplica à mensagem atual):
+{
+  "lead": { "nome", "nome_completo", "telefone", "cidade", "conhece_loja" (bool), "acompanhante_decisao" },
+  "interesse": { "modelo_desejado", "configuracao", "combustivel", "cambio", "ano_desejado" },
+  "negociacao": { "forma_pagamento" ("à vista"|"financiado"|"troca"), "valor_entrada", "tem_troca" (bool), "carro_troca": { "modelo", "ano", "cambio", "configuracao", "km", "status" } },
+  "atendimento": { "pode_visitar_loja" (bool), "modo_atendimento" ("remoto"|"presencial") },
+  "objecoes_novas": ["nao_pode_visitar"|"esposo_decide"|"longe"|"nao_quer_financiar"|"orcamento_baixo"|...],
+  "eco_detectado": true/false (cliente repetiu uma palavra que o agente acabou de dizer? ex: agente disse "Sou o Carvalho" e cliente respondeu "Carvalho" — isso é ECO, não é o nome do cliente)
+}
+
+Regras críticas:
+- "este é um problema" / "fica longe" / "não posso ir" / "só na folga do esposo" → atendimento.pode_visitar_loja=false E objecoes_novas inclui "nao_pode_visitar"
+- "à vista" / "vou pagar à vista" / "tô com o dinheiro" → negociacao.forma_pagamento="à vista"
+- "não quero financiar" → negociacao.forma_pagamento="à vista" (provavelmente)
+- "tenho um/uma X" (carro) → negociacao.tem_troca=true E carro_troca.modelo=X
+- "Cabine dupla, manual, 2018" como resposta a pergunta sobre carro → preencher carro_troca
+- Telefone (10-13 dígitos) → lead.telefone
+- Se a mensagem é claramente eco/repetição do que o agente acabou de dizer → eco_detectado=true E NÃO preencha lead.nome
+- Mensagens curtas tipo só "Sim", "Não", "Ok" sem contexto novo → retorne {}
+
+Se nada de novo, retorne {}.`;
+
+  const userMsg = `ESTADO ATUAL DA CONVERSA:\n\`\`\`json\n${JSON.stringify(currentState, null, 2)}\n\`\`\`\n\nÚLTIMA MENSAGEM DO AGENTE (para detectar eco):\n"${previousAgentMessage || '(início da conversa)'}"\n\nNOVA MENSAGEM DO CLIENTE:\n"${message}"\n\nResponda APENAS com JSON válido. Sem markdown, sem explicação.`;
+
+  // Tenta cada modelo até um funcionar (Anthropic às vezes muda IDs)
+  for (const model of CLAUDE_HAIKU_MODEL_CANDIDATES) {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMsg }],
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        if (res.status === 404 || err.includes('model')) {
+          console.warn(`[extractEntities] modelo ${model} indisponível, tentando próximo`);
+          continue;
+        }
+        console.warn(`[extractEntities] Claude ${model} erro ${res.status}: ${err.slice(0, 200)}`);
+        return { delta: {}, eco: false, objecoes: [] };
+      }
+
+      const data = await res.json();
+      const text = data?.content?.[0]?.text || '{}';
+
+      // Parse — extrai JSON do texto
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return { delta: {}, eco: false, objecoes: [] };
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      const eco = !!parsed.eco_detectado;
+      const objecoes: string[] = Array.isArray(parsed.objecoes_novas) ? parsed.objecoes_novas : [];
+      delete parsed.eco_detectado;
+      delete parsed.objecoes_novas;
+
+      console.log(`[extractEntities] modelo=${model} eco=${eco} objecoes=${objecoes.length} keys=${Object.keys(parsed).join(',')}`);
+      return { delta: parsed, eco, objecoes };
+    } catch (err) {
+      console.warn(`[extractEntities] exception com ${model}:`, err);
+      continue;
+    }
+  }
+  console.error('[extractEntities] TODOS os modelos Claude falharam — extração desabilitada neste turno');
+  return { delta: {}, eco: false, objecoes: [] };
+}
+
+function applyAgentSelfFlags(state: any, agentReply: string): any {
+  // Heurísticas pós-resposta do agente: detecta auto-apresentação, envio de ficha, etc.
+  const txt = (agentReply || '').toLowerCase();
+  const updates: any = {};
+  if (/sou (o|a)\s+\w+|eu sou\s+\w+|me chamo\s+\w+|aqui é\s+(o|a)\s+\w+/i.test(agentReply) && !state?.atendimento?.consultor_apresentado) {
+    updates.atendimento = { ...(updates.atendimento || {}), consultor_apresentado: true };
+  }
+  // Envio de ficha completa (heurística: 3+ campos típicos juntos)
+  const fichaSignals = ['modelo:', 'ano:', 'preço:', 'cor:', 'kilometragem', 'câmbio', 'combustível'];
+  const fichaMatches = fichaSignals.filter(s => txt.includes(s)).length;
+  if (fichaMatches >= 3) {
+    updates.veiculo_apresentado = { ...(updates.veiculo_apresentado || {}), ja_apresentado: true };
+  }
+  return updates;
+}
+
+function formatStateForPrompt(state: any): string {
+  if (!state || Object.keys(state).length === 0) return '';
+
+  const lines: string[] = [];
+  lines.push('## ESTADO DA CONVERSA — DADOS JÁ COLETADOS (NÃO PERGUNTAR DE NOVO)');
+  lines.push('');
+
+  // Lead
+  if (state.lead?.nome || state.lead?.nome_completo) {
+    lines.push(`✅ Nome: ${state.lead.nome_completo || state.lead.nome}`);
+  }
+  if (state.lead?.telefone) lines.push(`✅ Telefone: ${state.lead.telefone}`);
+  if (state.lead?.cidade) lines.push(`✅ Cidade: ${state.lead.cidade}`);
+  if (state.lead?.conhece_loja !== null && state.lead?.conhece_loja !== undefined) {
+    lines.push(`✅ Conhece a loja: ${state.lead.conhece_loja ? 'sim' : 'não'}`);
+  }
+  if (state.lead?.acompanhante_decisao) lines.push(`✅ Acompanhante na decisão: ${state.lead.acompanhante_decisao}`);
+
+  // Interesse
+  if (state.interesse?.modelo_desejado) {
+    const conf = [state.interesse.configuracao, state.interesse.combustivel, state.interesse.cambio, state.interesse.ano_desejado].filter(Boolean).join(', ');
+    lines.push(`✅ Modelo de interesse: ${state.interesse.modelo_desejado}${conf ? ' (' + conf + ')' : ''}`);
+  }
+
+  // Negociação
+  if (state.negociacao?.forma_pagamento) lines.push(`✅ Forma de pagamento: ${state.negociacao.forma_pagamento}`);
+  if (state.negociacao?.valor_entrada) lines.push(`✅ Valor de entrada: ${state.negociacao.valor_entrada}`);
+  if (state.negociacao?.tem_troca && state.negociacao?.carro_troca) {
+    const ct = state.negociacao.carro_troca;
+    const trocaParts = [ct.modelo, ct.ano, ct.configuracao, ct.cambio].filter(Boolean).join(' ');
+    lines.push(`✅ Carro de troca: ${trocaParts || 'sim'}${ct.status ? ' (status: ' + ct.status + ')' : ''}`);
+    if (ct.km) lines.push(`   - KM: ${ct.km}`);
+  }
+
+  // Veículo apresentado
+  if (state.veiculo_apresentado?.ja_apresentado) {
+    const vp = state.veiculo_apresentado;
+    lines.push(`✅ Veículo APRESENTADO: ${vp.modelo || ''} ${vp.ano || ''}${vp.preco ? ' — R$ ' + vp.preco : ''}`);
+    lines.push(`   - ${vp.foto_enviada ? 'Foto JÁ enviada' : 'Foto não enviada'}${vp.vehicle_id ? ' (id: ' + vp.vehicle_id + ')' : ''}`);
+  }
+
+  // Atendimento
+  if (state.atendimento?.consultor_apresentado) lines.push(`✅ Você (consultor) JÁ se apresentou`);
+  if (state.atendimento?.pode_visitar_loja === false) {
+    lines.push(`⚠️ Cliente NÃO pode visitar a loja (${state.atendimento.recusas_visita || 0} recusas) — modo: REMOTO`);
+  }
+  if (state.atendimento?.objecoes && state.atendimento.objecoes.length > 0) {
+    lines.push(`⚠️ Objeções já levantadas: ${state.atendimento.objecoes.join(', ')}`);
+  }
+
+  lines.push('');
+  lines.push('## REGRAS BASEADAS NO ESTADO ACIMA (CRÍTICAS):');
+  lines.push('- NUNCA pergunte dados marcados com ✅ — você JÁ TEM essa informação.');
+  lines.push('- Para dados ausentes, peça UM por vez na ordem natural.');
+  if (state.atendimento?.pode_visitar_loja === false) {
+    lines.push('- ❌ NÃO ofereça visita à loja — cliente já recusou. Foque em fechar 100% remoto.');
+  }
+  if (state.veiculo_apresentado?.ja_apresentado) {
+    lines.push('- ❌ NÃO reapresente a ficha completa do veículo — já enviou. Responda perguntas pontuais em UMA frase curta.');
+    lines.push('');
+    lines.push('  EXEMPLOS DE RESPOSTA CURTA (siga este padrão — espelhe o tamanho do cliente):');
+    lines.push('  • Cliente: "Que ano?" → Você: "É 2023 😊"');
+    lines.push('  • Cliente: "Qual KM e ano?" → Você: "53.700 km, 2023" (compound: 2 dados, 2 valores curtos)');
+    lines.push('  • Cliente: "É flex?" → Você: "Sim, é flex"');
+    lines.push('  • Cliente: "Tem em outra cor?" → Você: "Tenho em prata e branco também"');
+    lines.push('  • Cliente: "Me conta mais sobre" → APRESENTAÇÃO COMPLETA OK (cliente pediu detalhe)');
+    lines.push('');
+  }
+  if (state.atendimento?.consultor_apresentado) {
+    lines.push('- ❌ NÃO se reapresente como "Sou o Carvalho..." — cliente já sabe. Se perguntar, responda só "É o Carvalho 😊"');
+  }
+  if (state.veiculo_apresentado?.foto_enviada) {
+    lines.push('- ❌ NÃO reenvie fotos do mesmo veículo (a menos que o cliente peça explicitamente).');
+  }
+  lines.push('- Espelhe o tamanho da mensagem do cliente. Cliente curto → resposta curta.');
+
+  // Lembrete final em CAPS — combate recency bias do GPT-4o (regra colocada no fim
+  // tem mais peso na atenção do modelo do que regras enterradas no meio)
+  if (state.veiculo_apresentado?.ja_apresentado) {
+    lines.push('');
+    lines.push('⚠️ LEMBRETE FINAL: VEÍCULO JÁ APRESENTADO. ESPELHE O TAMANHO DA PERGUNTA. CLIENTE CURTO = VOCÊ CURTO. SEMPRE.');
+  }
+
+  return lines.join('\n');
+}
+
+function calcQualificationScore(state: any): number {
+  let s = 0;
+  if (state?.lead?.nome) s += 10;
+  if (state?.lead?.telefone) s += 20;
+  if (state?.interesse?.modelo_desejado) s += 15;
+  if (state?.negociacao?.forma_pagamento) s += 15;
+  if (state?.negociacao?.tem_troca !== null && state?.negociacao?.tem_troca !== undefined) s += 10;
+  if (state?.veiculo_apresentado?.ja_apresentado) s += 10;
+  if (state?.lead?.cidade || state?.lead?.conhece_loja !== null) s += 5;
+  if (state?.atendimento?.modo_atendimento) s += 5;
+  return Math.min(100, s);
+}
+
+function buildBriefingForSeller(state: any, leadName: string, leadPhone: string, agentName: string): string {
+  const lines: string[] = [];
+  lines.push(`🆕 *LEAD QUALIFICADO — ${state?.lead?.nome_completo || state?.lead?.nome || leadName || 'Lead'}*`);
+  lines.push(`📱 Telefone: ${state?.lead?.telefone || leadPhone}`);
+  if (state?.lead?.cidade) lines.push(`🏙️ Cidade: ${state.lead.cidade}`);
+  lines.push('');
+  if (state?.interesse?.modelo_desejado) {
+    const conf = [state.interesse.configuracao, state.interesse.combustivel, state.interesse.cambio].filter(Boolean).join(', ');
+    lines.push(`🚗 *Interesse:* ${state.interesse.modelo_desejado}${conf ? ' (' + conf + ')' : ''}`);
+  }
+  if (state?.veiculo_apresentado?.ja_apresentado) {
+    const vp = state.veiculo_apresentado;
+    lines.push(`📋 *Veículo apresentado:* ${vp.modelo || ''} ${vp.ano || ''}${vp.preco ? ' — R$ ' + vp.preco : ''}`);
+  }
+  if (state?.negociacao?.forma_pagamento) lines.push(`💰 *Forma de pagamento:* ${state.negociacao.forma_pagamento}`);
+  if (state?.negociacao?.valor_entrada) lines.push(`💵 *Entrada:* ${state.negociacao.valor_entrada}`);
+  if (state?.negociacao?.tem_troca && state?.negociacao?.carro_troca) {
+    const ct = state.negociacao.carro_troca;
+    const trocaParts = [ct.modelo, ct.ano, ct.configuracao, ct.cambio].filter(Boolean).join(' ');
+    lines.push(`🔄 *Troca:* ${trocaParts || 'sim'}${ct.status ? ' (' + ct.status + ')' : ''}`);
+  }
+  if (state?.atendimento?.pode_visitar_loja === false) {
+    lines.push(`📍 *Visita:* NÃO pode visitar — atendimento REMOTO`);
+  }
+  if (state?.atendimento?.objecoes && state.atendimento.objecoes.length > 0) {
+    lines.push(`⚠️ *Objeções:* ${state.atendimento.objecoes.join(', ')}`);
+  }
+  if (state?.lead?.acompanhante_decisao) lines.push(`👥 *Decisão envolve:* ${state.lead.acompanhante_decisao}`);
+  lines.push('');
+  lines.push(`👉 *Atender:* https://wa.me/${(state?.lead?.telefone || leadPhone || '').replace(/\D/g, '')}`);
+  lines.push('');
+  lines.push(`_Briefing gerado pelo Pedro SDR (${agentName})_`);
+  return lines.join('\n');
+}
+
+// ─── BNDV Synonym classes (Lote 2 Fase 2) ──────────────────────────────────
+// Resolve ERR_01/04 do benchmark Roberta: cliente diz "cabine dupla flex manual"
+// e BNDV grava "Strada Freedom CD MT Flex". Sem sinônimos, .includes() falha.
+//
+// Classes BIDIRECIONAIS de equivalência (não pares): qualquer termo da classe
+// bate com qualquer outro. Tokens curtos (≤3 chars como "cd", "mt", "at") usam
+// word boundary regex pra evitar falso positivo (ex: "cd" matchar "Picanto SE Acdi").
+const BNDV_SYNONYM_CLASSES: string[][] = [
+  ['cabine dupla', 'cab. dupla', 'cab dupla', 'cd', 'doble cab', 'double cab', 'crew cab'],
+  ['cabine simples', 'cab. simples', 'cs', 'single cab', 'reg cab'],
+  ['cabine estendida', 'ce', 'ed', 'extended cab'],
+  ['manual', 'mt', 'mec', 'mecanico', 'mecânico'],
+  ['automatico', 'automatica', 'at', 'aut', 'automatic'],
+  ['cvt', 'automatica cvt', 'continuamente variavel'],
+  ['flex', 'flexfuel', 'bicombustivel', 'bi-combustivel'],
+  ['gasolina', 'gas'],
+  ['diesel', 'dsl'],
+];
+
+function bndvNormalize(s: string): string {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+
+// Testa se token aparece em haystack. Pra tokens curtos (≤3 chars como "cd",
+// "mt", "at"), exige word boundary pra evitar falso positivo (ex: "cd" não pode
+// dar match em "Picanto SE Acdi"). Pra tokens >3 chars, .includes() basta.
+function bndvTokenInHaystack(token: string, haystack: string): boolean {
+  if (token.replace(/[^a-z0-9]/g, '').length <= 3) {
+    const escaped = token.replace(/[.()\\\\]/g, '\\$&');
+    const re = new RegExp(`\\b${escaped}\\b`, 'i');
+    return re.test(haystack);
+  }
+  return haystack.includes(token);
+}
+
+// Match com sinônimos. Retorna { matched, exact }:
+//   - exact=true: needle aparece literal em haystack (match forte, score 2)
+//   - exact=false: needle e haystack pertencem à mesma classe (match fraco, score 1)
+function semanticMatch(needle: string, haystack: string): { matched: boolean; exact: boolean } {
+  const n = bndvNormalize(needle);
+  const h = bndvNormalize(haystack);
+  if (!n) return { matched: true, exact: true }; // sem filtro = OK
+  if (!h) return { matched: false, exact: false };
+
+  // 1. Match literal (com word boundary se needle for curto)
+  if (bndvTokenInHaystack(n, h)) return { matched: true, exact: true };
+
+  // 2. Encontra a classe do needle
+  const needleClass = BNDV_SYNONYM_CLASSES.find(cls => cls.some(t => bndvNormalize(t) === n));
+  if (!needleClass) return { matched: false, exact: false };
+
+  // 3. Tenta cada termo da classe (também com word boundary se curto)
+  for (const term of needleClass) {
+    const t = bndvNormalize(term);
+    if (t === n) continue; // já tentamos
+    if (bndvTokenInHaystack(t, h)) return { matched: true, exact: false };
+  }
+  return { matched: false, exact: false };
+}
+
 // ─── BNDV Stock Search ──────────────────────────────────────────────────────
 async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
   try {
@@ -295,59 +633,71 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     console.log(`[BNDV] Total veículos retornados: ${vehicles.length}`);
 
     // 3. Filter/rank results
-    const normalize = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    // Lote 2 Fase 2: matching semântico com mapa de sinônimos (Roberta benchmark ERR_01/04).
+    // Feature flag pra rollback rápido sem redeploy: PEDRO_BNDV_SYNONYMS_ENABLED.
+    const SYNONYMS_ENABLED = Deno.env.get('PEDRO_BNDV_SYNONYMS_ENABLED') !== 'false';
+    const normalize = bndvNormalize; // reusa helper compartilhado
 
-    // Apply filters
-    if (filters.marca) {
-      const q = normalize(filters.marca);
-      vehicles = vehicles.filter((v: any) => normalize(v.markName).includes(q));
-    }
-    if (filters.modelo) {
-      const q = normalize(filters.modelo);
-      vehicles = vehicles.filter((v: any) => normalize(v.modelName).includes(q));
-    }
-    if (filters.versao) {
-      const q = normalize(filters.versao);
-      vehicles = vehicles.filter((v: any) => normalize(v.versionName).includes(q));
-    }
-    if (filters.combustivel) {
-      const q = normalize(filters.combustivel);
-      vehicles = vehicles.filter((v: any) => normalize(v.fuelName).includes(q));
-    }
-    if (filters.cambio) {
-      const q = normalize(filters.cambio);
-      vehicles = vehicles.filter((v: any) => normalize(v.transmissionName).includes(q));
-    }
-    if (filters.cor) {
-      const q = normalize(filters.cor);
-      vehicles = vehicles.filter((v: any) => normalize(v.color).includes(q));
-    }
-    if (filters.ano_min) {
-      vehicles = vehicles.filter((v: any) => (v.year || 0) >= filters.ano_min);
-    }
-    if (filters.ano_max) {
-      vehicles = vehicles.filter((v: any) => (v.year || 9999) <= filters.ano_max);
-    }
-    if (filters.preco_max) {
-      vehicles = vehicles.filter((v: any) => (v.saleValue || 0) <= filters.preco_max);
-    }
-    if (filters.km_max) {
-      vehicles = vehicles.filter((v: any) => (v.km || 0) <= filters.km_max);
-    }
+    // Score por veículo: cada filtro string que bate exato vale 2 pontos, sinonimico 1.
+    // Filtro que falha → veículo descartado. Itens ranqueados por score decrescente
+    // (preferência por matches exatos). Filtros numéricos são all-or-nothing.
+    const STRING_FILTERS: Array<[string, string]> = [
+      ['marca', 'markName'],
+      ['modelo', 'modelName'],
+      ['versao', 'versionName'],
+      ['combustivel', 'fuelName'],
+      ['cambio', 'transmissionName'],
+      ['cor', 'color'],
+    ];
 
-    // Free text query ranking
+    vehicles = vehicles.map((v: any) => {
+      let score = 0;
+      let kept = true;
+
+      // Filtros string (com ou sem sinônimos conforme flag)
+      for (const [filterKey, fieldKey] of STRING_FILTERS) {
+        const needle = filters[filterKey];
+        if (!needle) continue;
+        const haystack = v[fieldKey] || '';
+        if (SYNONYMS_ENABLED) {
+          const result = semanticMatch(needle, haystack);
+          if (!result.matched) { kept = false; break; }
+          score += result.exact ? 2 : 1;
+          if (!result.exact) {
+            console.log(`[BNDV] Match sinonimico: needle='${needle}' campo='${fieldKey}' haystack='${haystack.slice(0, 50)}'`);
+          }
+        } else {
+          // Comportamento legacy (literal apenas) — fallback se flag desligada
+          if (!normalize(haystack).includes(normalize(needle))) { kept = false; break; }
+          score += 2;
+        }
+      }
+
+      // Filtros numéricos (all-or-nothing, não somam score)
+      if (kept && filters.ano_min && (v.year || 0) < filters.ano_min) kept = false;
+      if (kept && filters.ano_max && (v.year || 9999) > filters.ano_max) kept = false;
+      if (kept && filters.preco_max && (v.saleValue || 0) > filters.preco_max) kept = false;
+      if (kept && filters.km_max && (v.km || 0) > filters.km_max) kept = false;
+
+      return { ...v, _filterScore: kept ? score : -1 };
+    }).filter((v: any) => v._filterScore >= 0)
+      .sort((a: any, b: any) => b._filterScore - a._filterScore);
+
+    // Free text query ranking — combina com _filterScore acima (não sobrescreve)
     if (filters.query) {
-      const queryTokens = normalize(filters.query).split(/\s+/);
+      const queryTokens = normalize(filters.query).split(/\s+/).filter(Boolean);
       vehicles = vehicles.map((v: any) => {
         const text = normalize(`${v.markName} ${v.modelName} ${v.versionName} ${v.color} ${v.fuelName} ${v.transmissionName} ${v.year}`);
-        let score = 0;
+        let queryScore = 0;
         for (const token of queryTokens) {
-          if (text.includes(token)) score++;
+          if (text.includes(token)) queryScore++;
         }
-        return { ...v, _score: score };
-      }).filter((v: any) => v._score > 0)
+        return { ...v, _score: (v._filterScore || 0) + queryScore };
+      }).filter((v: any) => (v._score || 0) > 0)
         .sort((a: any, b: any) => b._score - a._score);
     }
+
+    console.log(`[BNDV] synonyms_enabled=${SYNONYMS_ENABLED} | filters_aplicados=${STRING_FILTERS.filter(([k]) => filters[k]).map(([k]) => k).join(',')} | resultados=${vehicles.length}`);
 
     // 4. Build result items with images
     const items = vehicles.slice(0, 20).map((v: any) => {
@@ -581,12 +931,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   const senderDigits = remoteJid.replace(/\D/g, '').slice(-10); // últimos 10 dígitos
 
   // 1. Busca vendedor por agent_id
+  // IMPORTANTE: usar .limit(1) antes de .maybeSingle() porque o vendedor pode
+  // ter MÚLTIPLOS registros em ai_team_members (um por agente). Sem .limit(1),
+  // o .maybeSingle() FALHA quando bate em >1 row e a confirmação do "Ok" fica
+  // quebrada — o cron acaba repassando o lead pra outro vendedor.
   let { data: senderSeller } = await supabase
     .from('ai_team_members')
     .select('id, name')
     .eq('agent_id', agent.id)
     .eq('is_active', true)
     .ilike('whatsapp_number', `%${senderDigits}`)
+    .order('auth_user_id', { ascending: false, nullsFirst: false }) // prefere o registro com login
+    .limit(1)
     .maybeSingle();
 
   // 2. Fallback: busca vendedor por user_id (vendedores podem não ter agent_id)
@@ -597,42 +953,62 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       .eq('user_id', agent.user_id)
       .eq('is_active', true)
       .ilike('whatsapp_number', `%${senderDigits}`)
+      .order('auth_user_id', { ascending: false, nullsFirst: false })
+      .limit(1)
       .maybeSingle();
     senderSeller = fallbackSeller;
   }
 
   if (senderSeller) {
-    console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} — verificando transfer pendente`);
+    console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} (id=${senderSeller.id}, jid=${remoteJid}) — verificando transfer pendente`);
     const now = new Date().toISOString();
+    // Busca QUALQUER transfer recente do vendedor — não só pending. Cobre casos
+    // onde confirmation_timeout_at já passou mas vendedor está respondendo.
     const { data: pendingTransfer } = await supabase
       .from('ai_lead_transfers')
-      .select('id, lead_id')
+      .select('id, lead_id, transfer_status, is_confirmed, created_at')
       .eq('to_member_id', senderSeller.id)
-      .eq('transfer_status', 'pending')
-      .eq('is_confirmed', false)
-      .gt('confirmation_timeout_at', now)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-
     if (pendingTransfer) {
+      console.log(`[Transfer] Último transfer do vendedor: id=${pendingTransfer.id} status=${pendingTransfer.transfer_status} confirmed=${pendingTransfer.is_confirmed} created=${pendingTransfer.created_at}`);
+    } else {
+      console.log(`[Transfer] Nenhum transfer encontrado para vendedor ${senderSeller.name}`);
+    }
+    // Só confirma se ainda está pending E não confirmado
+    const shouldConfirm = pendingTransfer
+      && pendingTransfer.transfer_status === 'pending'
+      && !pendingTransfer.is_confirmed;
+
+    if (shouldConfirm && pendingTransfer) {
       // Confirma o transfer
-      await supabase.from('ai_lead_transfers').update({
+      const { error: updTransferErr } = await supabase.from('ai_lead_transfers').update({
         transfer_status: 'confirmed',
         is_confirmed: true,
         confirmed_at: now,
       }).eq('id', pendingTransfer.id);
+      if (updTransferErr) {
+        console.error(`[Transfer] FALHA ao marcar transfer ${pendingTransfer.id} como confirmed:`, updTransferErr);
+      } else {
+        console.log(`[Transfer] ✅ transfer ${pendingTransfer.id} marcado como confirmed`);
+      }
 
       await supabase.from('ai_team_members').update({
         last_lead_received_at: now,
       }).eq('id', senderSeller.id);
 
-      // Atualiza status do lead para 'em_atendimento'
+      // Atualiza status do lead para 'em_atendimento' — CRÍTICO pra cron não repassar
       if (pendingTransfer.lead_id) {
-        await supabase.from('ai_crm_leads').update({
+        const { error: updLeadErr } = await supabase.from('ai_crm_leads').update({
           status: 'em_atendimento',
           last_interaction_at: now,
         }).eq('id', pendingTransfer.lead_id);
+        if (updLeadErr) {
+          console.error(`[Transfer] FALHA ao atualizar lead.status para em_atendimento (lead ${pendingTransfer.lead_id}):`, updLeadErr);
+        } else {
+          console.log(`[Transfer] ✅ lead ${pendingTransfer.lead_id} status → em_atendimento`);
+        }
       }
 
       // Envia mensagem de confirmação para o vendedor via WhatsApp
@@ -698,7 +1074,13 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         existingLead.assigned_to_id) {
       console.log(`[Webhook] 🔄 Lead RETORNOU! Status era '${existingLead.status}', assigned_to=${existingLead.assigned_to_id}. Resetando...`);
 
-      // 1. Buscar vendedor que estava atendendo
+      // 1. Buscar vendedor que estava atendendo + última notificação de retorno
+      const { data: existingLeadFull } = await supabase
+        .from('ai_crm_leads')
+        .select('last_return_notify_at')
+        .eq('id', existingLead.id)
+        .maybeSingle();
+
       const { data: assignedSeller } = await supabase
         .from('ai_team_members')
         .select('id, name, whatsapp_number')
@@ -713,8 +1095,16 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         followup_5min_sent: false,
       }).eq('id', existingLead.id);
 
-      // 3. Notificar vendedor via WhatsApp que o cliente voltou
-      if (assignedSeller?.whatsapp_number) {
+      // 3. Throttle: notifica vendedor APENAS se passou >= 24h da última
+      // notificação de retorno desse lead (ou se nunca foi notificado).
+      // Antes: spam — toda mensagem do cliente disparava notificação.
+      const lastNotifyMs = existingLeadFull?.last_return_notify_at
+        ? new Date(existingLeadFull.last_return_notify_at).getTime()
+        : 0;
+      const hoursSinceLastNotify = (Date.now() - lastNotifyMs) / 3_600_000;
+      const shouldNotify = hoursSinceLastNotify >= 24;
+
+      if (shouldNotify && assignedSeller?.whatsapp_number) {
         try {
           const retBaseUrl = (waInstance.api_url || '').replace(/\/$/, '');
           const retInstKey = waInstance.api_key_encrypted || '';
@@ -734,10 +1124,19 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             headers: { 'Content-Type': 'application/json', 'token': retInstKey },
             body: JSON.stringify({ number: sellerNum, text: returnNotification }),
           });
-          console.log(`[Webhook] 🔄 Notificação de retorno enviada para ${assignedSeller.name}`);
+
+          // Marca timestamp pra throttle de 24h não notificar de novo
+          await supabase
+            .from('ai_crm_leads')
+            .update({ last_return_notify_at: new Date().toISOString() })
+            .eq('id', existingLead.id);
+
+          console.log(`[Webhook] 🔄 Notificação de retorno enviada para ${assignedSeller.name} (próxima só após 24h)`);
         } catch (notifyErr) {
           console.error('[Webhook] Erro ao notificar vendedor sobre retorno:', notifyErr);
         }
+      } else if (!shouldNotify) {
+        console.log(`[Webhook] 🔇 Notificação de retorno SUPRIMIDA (throttle 24h) — última foi há ${hoursSinceLastNotify.toFixed(1)}h`);
       }
     }
   }
@@ -781,6 +1180,27 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             preco_max: { type: "number", description: "Preço máximo." },
             km_max: { type: "number", description: "Quilometragem máxima." },
           }
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "transferir_para_vendedor",
+        description: "Transfere o lead para um vendedor humano com briefing estruturado. SÓ chame quando o ESTADO DA CONVERSA mostrar coletados: nome ✅, telefone ✅, modelo de interesse ✅, forma de pagamento ✅. Após chamar, AGUARDE o resultado antes de responder ao cliente. Se a tool retornar success=false, NÃO diga que transferiu — diga que vai chamar o consultor manualmente. Se retornar success=true, diga ao cliente o nome do vendedor que vai atendê-lo.",
+        parameters: {
+          type: "object",
+          properties: {
+            motivo: {
+              type: "string",
+              description: "Por que transferir agora. Ex: 'lead totalmente qualificado, pronto pra fechar à vista', 'cliente pediu falar com humano', 'detalhes de troca precisam de avaliação'."
+            },
+            resumo_breve: {
+              type: "string",
+              description: "1-2 frases resumindo o que o cliente quer e o que ainda falta. Será usado no briefing pro vendedor."
+            }
+          },
+          required: ["motivo"]
         }
       }
     }
@@ -955,6 +1375,105 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     lead_name: pushName
   })
 
+  // ========================================================================
+  // PEDRO STATE — extrair entidades da mensagem do cliente e atualizar state
+  // ========================================================================
+  // Roda EM PARALELO com o resto (não bloqueia a query do histórico).
+  // O resultado é usado no system prompt do GPT-4o.
+  let conversationState: any = {};
+  const stateUpdatePromise = (async () => {
+    try {
+      // 1. Buscar lead_id (necessário pra PK composta)
+      const { data: leadForState } = await supabase
+        .from('ai_crm_leads')
+        .select('id')
+        .eq('agent_id', agent.id)
+        .eq('remote_jid', remoteJid)
+        .maybeSingle();
+      if (!leadForState?.id) {
+        console.log('[PedroState] Lead ainda não existe — pulando extração neste turno');
+        return;
+      }
+      const leadIdForState = leadForState.id;
+
+      // 2. Buscar state atual
+      const { data: stateRow } = await supabase
+        .from('pedro_conversation_state')
+        .select('state')
+        .eq('lead_id', leadIdForState)
+        .eq('agent_id', agent.id)
+        .maybeSingle();
+      const currentState = stateRow?.state || {};
+
+      // 3. Buscar última mensagem do AGENTE (pra detectar eco)
+      const { data: lastAgentMsgRow } = await supabase
+        .from('wa_chat_history')
+        .select('content')
+        .eq('agent_id', agent.id)
+        .eq('remote_jid', remoteJid)
+        .eq('role', 'assistant')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const previousAgentMessage = lastAgentMsgRow?.content || '';
+
+      // 4. Extrair entidades via Claude Haiku 4.5
+      const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY') || '';
+      if (!anthropicApiKey) {
+        console.warn('[PedroState] ANTHROPIC_API_KEY não configurada — pulando extração');
+        conversationState = currentState;
+        return;
+      }
+
+      const userMsgPlain = typeof userMessageContentForOpenAi === 'string' ? finalUserText : '[Mídia recebida]';
+      const { delta, eco, objecoes } = await extractEntitiesWithClaude({
+        message: userMsgPlain,
+        currentState,
+        previousAgentMessage,
+        apiKey: anthropicApiKey,
+      });
+
+      // 5. Se for eco do nome do agente, NÃO sobrescrever lead.nome
+      const safeDelta = { ...delta };
+      if (eco && safeDelta.lead) {
+        delete safeDelta.lead.nome;
+        delete safeDelta.lead.nome_completo;
+      }
+
+      // 6. Adicionar objeções acumulativas
+      if (objecoes.length > 0) {
+        safeDelta.atendimento = safeDelta.atendimento || {};
+        safeDelta.atendimento.objecoes = objecoes;
+        if (objecoes.includes('nao_pode_visitar')) {
+          // incrementa recusas_visita (currentState pode ter o counter atual)
+          const curRecusas = currentState?.atendimento?.recusas_visita || 0;
+          safeDelta.atendimento.recusas_visita = curRecusas + 1;
+          safeDelta.atendimento.modo_atendimento = 'remoto';
+        }
+      }
+
+      // 7. Merge + UPSERT
+      const newState = deepMerge(currentState, safeDelta);
+      const score = calcQualificationScore(newState);
+      conversationState = newState;
+
+      await supabase.from('pedro_conversation_state').upsert({
+        lead_id: leadIdForState,
+        agent_id: agent.id,
+        user_id: agent.user_id,
+        state: newState,
+        qualificacao_score: score,
+        last_extracted_at: new Date().toISOString(),
+      }, { onConflict: 'lead_id,agent_id' });
+
+      console.log(`[PedroState] state atualizado | score=${score} | eco=${eco} | delta_keys=${Object.keys(delta).join(',')}`);
+    } catch (extractErr) {
+      console.warn('[PedroState] erro na extração (não bloqueia resposta):', extractErr);
+    }
+  })();
+  // Aguarda extração completar antes de montar system prompt
+  await stateUpdatePromise;
+
   // Salvar mensagem RECEBIDA no wa_inbox (para aparecer no Inbox do Marcos)
   const incomingMediaType = isAudio ? 'audio' : (isImage ? 'image' : 'text');
   // Para mídia, extrair URL se disponível no payload UazAPI (content.URL ou directUrl)
@@ -1022,6 +1541,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   let systemPrompt = agent.system_prompt || 'Você é um assistente prestativo.'
   if (agent.company_name) systemPrompt += `\n\nEmpresa: ${agent.company_name}`
   if (knowledgeContext) systemPrompt += `\n\n## BASE DE CONHECIMENTO:\n${knowledgeContext}`
+
+  // ── PEDRO STATE: bloco com dados já coletados + regras anti-repetição ──
+  const stateBlock = formatStateForPrompt(conversationState);
+  if (stateBlock) {
+    systemPrompt += `\n\n${stateBlock}`;
+  }
 
   // ── BNDV: Check if user has BNDV integration and append system prompt instruction ──
   let hasBndvIntegration = false;
@@ -1152,6 +1677,217 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         }
       } catch (bndvErr) {
         console.error('[BNDV] Erro ao processar tool call:', bndvErr);
+      }
+    }
+
+    // ── TRANSFERIR PARA VENDEDOR (tool explícita com sync feedback) ─────
+    // Resolve ERR_15 (anunciou transfer mas não executou) e ERR_16 (handoff sem briefing)
+    const transferToolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'transferir_para_vendedor');
+    if (transferToolCall) {
+      let transferResult: any = { success: false, error: 'unknown' };
+      try {
+        const transferArgs = JSON.parse(transferToolCall.function.arguments || '{}');
+        console.log(`[Transfer-Tool] motivo=${transferArgs.motivo} resumo=${transferArgs.resumo_breve?.slice(0, 100)}`);
+
+        // 1. Validar checklist mínimo no state
+        const st = conversationState || {};
+        const missing: string[] = [];
+        if (!st.lead?.nome && !st.lead?.nome_completo) missing.push('nome');
+        if (!st.lead?.telefone) missing.push('telefone');
+        if (!st.interesse?.modelo_desejado) missing.push('modelo_de_interesse');
+        if (!st.negociacao?.forma_pagamento) missing.push('forma_de_pagamento');
+
+        if (missing.length > 0) {
+          transferResult = {
+            success: false,
+            error: 'checklist_incompleto',
+            missing_fields: missing,
+            message: `Não posso transferir ainda — faltam: ${missing.join(', ')}. Pergunte ao cliente antes de tentar de novo.`,
+          };
+          console.warn(`[Transfer-Tool] BLOQUEADO — checklist incompleto: ${missing.join(',')}`);
+        } else {
+          // 2. Buscar lead row
+          const { data: leadRow } = await supabase
+            .from('ai_crm_leads')
+            .select('id, assigned_to_id')
+            .eq('agent_id', agent.id)
+            .eq('remote_jid', remoteJid)
+            .maybeSingle();
+
+          if (!leadRow?.id) {
+            transferResult = { success: false, error: 'lead_not_found' };
+          } else {
+            // 3. Selecionar vendedor — preferência: assigned_to_id existente (lead retornou)
+            let chosenSeller: any = null;
+            if (leadRow.assigned_to_id) {
+              const { data: prevSeller } = await supabase
+                .from('ai_team_members')
+                .select('*')
+                .eq('id', leadRow.assigned_to_id)
+                .eq('is_active', true)
+                .maybeSingle();
+              if (prevSeller) {
+                chosenSeller = prevSeller;
+                console.log(`[Transfer-Tool] Reusando vendedor previamente atribuído: ${prevSeller.name}`);
+              }
+            }
+
+            // Fallback: round-robin (mesma lógica do handler atualizar_etapa_crm)
+            if (!chosenSeller) {
+              let { data: sellers } = await supabase
+                .from('ai_team_members').select('*')
+                .eq('agent_id', agent.id).eq('is_active', true)
+                .order('last_lead_received_at', { ascending: true, nullsFirst: true });
+              if (!sellers || sellers.length === 0) {
+                const { data: fallbackSellers } = await supabase
+                  .from('ai_team_members').select('*')
+                  .eq('user_id', agent.user_id).eq('is_active', true)
+                  .order('last_lead_received_at', { ascending: true, nullsFirst: true });
+                sellers = fallbackSellers;
+              }
+              const { data: recentTransfers } = await supabase
+                .from('ai_lead_transfers').select('to_member_id, created_at')
+                .eq('user_id', agent.user_id)
+                .order('created_at', { ascending: false }).limit(100);
+              const lastMap = new Map<string, number>();
+              for (const t of (recentTransfers || [])) {
+                if (t.to_member_id && !lastMap.has(t.to_member_id))
+                  lastMap.set(t.to_member_id, new Date(t.created_at).getTime());
+              }
+              const activeSellers = sellers || [];
+              const neverReceived = activeSellers.filter((s: any) => !lastMap.has(s.id));
+              chosenSeller = neverReceived.length > 0
+                ? neverReceived[0]
+                : [...activeSellers].sort((a: any, b: any) => (lastMap.get(a.id) || 0) - (lastMap.get(b.id) || 0))[0] || null;
+              console.log(`[Transfer-Tool] Round-robin escolheu: ${chosenSeller?.name || 'NENHUM'}`);
+            }
+
+            if (!chosenSeller) {
+              transferResult = { success: false, error: 'no_active_seller_available' };
+            } else {
+              // 4. Inserir transfer record
+              const timeoutAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+              await supabase.from('ai_lead_transfers').insert({
+                user_id: agent.user_id,
+                lead_id: leadRow.id,
+                to_member_id: chosenSeller.id,
+                transfer_reason: leadRow.assigned_to_id === chosenSeller.id ? 'returning_lead' : 'qualified_handoff',
+                notes: transferArgs.resumo_breve || transferArgs.motivo || `Qualificado pela tool transferir_para_vendedor`,
+                transfer_status: 'pending',
+                is_confirmed: false,
+                confirmation_timeout_at: timeoutAt,
+              });
+
+              await supabase.from('ai_crm_leads').update({
+                status: 'transferido',
+                status_crm: 'qualificado',
+                assigned_to_id: chosenSeller.id,
+                summary: transferArgs.resumo_breve || null,
+              }).eq('id', leadRow.id);
+
+              // 5. Briefing estruturado pro vendedor
+              const briefing = buildBriefingForSeller(
+                conversationState,
+                pushName || conversationState?.lead?.nome || 'Lead',
+                phoneNumber,
+                agent.name || 'Pedro SDR',
+              );
+
+              let sellerNum = String(chosenSeller.whatsapp_number || '').replace(/\D/g, '');
+              if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
+
+              let briefingSent = false;
+              if (sellerNum) {
+                try {
+                  const sendRes = await fetch(`${baseUrl}/send/text`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'token': instKey },
+                    body: JSON.stringify({ number: sellerNum, text: briefing }),
+                  });
+                  briefingSent = sendRes.ok;
+                  console.log(`[Transfer-Tool] Briefing → ${chosenSeller.name} HTTP ${sendRes.status}`);
+                } catch (sendErr) {
+                  console.error('[Transfer-Tool] Falha ao enviar briefing:', sendErr);
+                }
+              }
+
+              // 6. Atualizar state com flags de transferência
+              try {
+                const updatedState = deepMerge(conversationState || {}, {
+                  atendimento: {
+                    transferencia_solicitada: true,
+                    transferencia_executada: true,
+                    briefing_enviado_ao_vendedor: briefingSent,
+                  },
+                });
+                await supabase.from('pedro_conversation_state').upsert({
+                  lead_id: leadRow.id,
+                  agent_id: agent.id,
+                  user_id: agent.user_id,
+                  state: updatedState,
+                  qualificacao_score: calcQualificationScore(updatedState),
+                  last_extracted_at: new Date().toISOString(),
+                }, { onConflict: 'lead_id,agent_id' });
+                conversationState = updatedState;
+              } catch (stUpdErr) {
+                console.warn('[Transfer-Tool] erro ao atualizar state pós-transfer:', stUpdErr);
+              }
+
+              transferResult = {
+                success: true,
+                vendedor_nome: chosenSeller.name,
+                vendedor_id: chosenSeller.id,
+                briefing_enviado: briefingSent,
+                message: briefingSent
+                  ? `Transferi com sucesso pra ${chosenSeller.name}. Pode dizer ao cliente o nome do vendedor que vai atendê-lo.`
+                  : `Transferência registrada pra ${chosenSeller.name} mas o WhatsApp dele falhou. Diga ao cliente que o consultor vai entrar em contato em instantes.`,
+              };
+              console.log(`[Transfer-Tool] ✅ SUCCESS — vendedor=${chosenSeller.name} briefing=${briefingSent}`);
+            }
+          }
+        }
+      } catch (transferErr: any) {
+        console.error('[Transfer-Tool] exception:', transferErr);
+        transferResult = { success: false, error: transferErr?.message || 'exception' };
+      }
+
+      // 7. SECOND CALL pra OpenAI gerar mensagem final ciente do resultado
+      try {
+        const followupRes = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+          body: JSON.stringify({
+            model: aiModel,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              ...chatHistory,
+              { role: 'user', content: userMessageContentForOpenAi },
+              aiMessage,
+              {
+                role: 'tool',
+                tool_call_id: transferToolCall.id,
+                name: 'transferir_para_vendedor',
+                content: JSON.stringify(transferResult),
+              },
+            ],
+            temperature: agent.temperature || 0.7,
+          }),
+        });
+        if (followupRes.ok) {
+          const followupData = await followupRes.json();
+          const finalText = followupData.choices?.[0]?.message?.content || '';
+          if (finalText) aiResponse = finalText;
+        }
+      } catch (followupErr) {
+        console.error('[Transfer-Tool] erro no follow-up OpenAI:', followupErr);
+        // Fallback determinístico se a IA falhar
+        if (transferResult.success) {
+          aiResponse = `Pronto! Acabei de passar todos os seus dados pro ${transferResult.vendedor_nome}. Ele já vai te chamar aqui em instantes pra fechar tudo. 👌`;
+        } else if (transferResult.error === 'checklist_incompleto') {
+          aiResponse = `Antes de te passar pro consultor, só preciso confirmar: ${transferResult.missing_fields?.join(', ')}.`;
+        } else {
+          aiResponse = `Só um momento, vou chamar nosso consultor manualmente pra te atender.`;
+        }
       }
     }
 
@@ -1495,6 +2231,35 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     user_id: agent.user_id, agent_id: agent.id, instance_id: instanceName,
     remote_jid: remoteJid, role: 'assistant', content: aiResponse
   })
+
+  // ── PEDRO STATE: heurísticas pós-resposta (auto-flags) ─────────────────
+  // Detecta auto-apresentação ("Sou o Carvalho..."), envio de ficha completa, etc.
+  // Sem chamar LLM — só regex barato. Evita perguntar de novo no próximo turno.
+  try {
+    const selfFlags = applyAgentSelfFlags(conversationState || {}, aiResponse);
+    if (Object.keys(selfFlags).length > 0) {
+      const { data: leadForFlags } = await supabase
+        .from('ai_crm_leads')
+        .select('id')
+        .eq('agent_id', agent.id)
+        .eq('remote_jid', remoteJid)
+        .maybeSingle();
+      if (leadForFlags?.id) {
+        const updatedState = deepMerge(conversationState || {}, selfFlags);
+        await supabase.from('pedro_conversation_state').upsert({
+          lead_id: leadForFlags.id,
+          agent_id: agent.id,
+          user_id: agent.user_id,
+          state: updatedState,
+          qualificacao_score: calcQualificationScore(updatedState),
+          last_extracted_at: new Date().toISOString(),
+        }, { onConflict: 'lead_id,agent_id' });
+        console.log(`[PedroState] auto-flags aplicadas: ${Object.keys(selfFlags).join(',')}`);
+      }
+    }
+  } catch (flagErr) {
+    console.warn('[PedroState] erro nas auto-flags (não bloqueia):', flagErr);
+  }
 
   // ── CRITICAL: Atualiza last_agent_reply_at para regra de 5min/10min ──
   // O cron-lead-followup usa este campo para saber quando o agente IA respondeu pela última vez
