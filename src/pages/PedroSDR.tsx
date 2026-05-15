@@ -702,6 +702,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
+  const [cancellingFollowupId, setCancellingFollowupId] = useState<string | null>(null);
   const [transfers, setTransfers] = useState<LeadTransfer[]>([]);
   const [view, setView] = useState<'pipeline' | 'leads' | 'feedbacks' | 'sellers'>('pipeline');
 
@@ -1062,6 +1063,45 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setFuLoading(false);
+    }
+  };
+
+  // Cancela um follow-up agendado ANTES de ser disparado.
+  // Não DELETE — só marca status='cancelled' (auditável + edge function
+  // pedro-trigger-followup já filtra por status='pending', logo ignora).
+  // Race condition aceita: se o cron disparar nos 60s entre cliques, mensagem
+  // pode ir mesmo assim (probabilidade baixa, impacto: 1 msg fora de hora).
+  const handleCancelFollowup = async (id: string) => {
+    if (!id || cancellingFollowupId) return;
+    if (!confirm('Cancelar este follow-up agendado? Ele NÃO será enviado pro lead.')) return;
+    setCancellingFollowupId(id);
+    try {
+      const { error } = await (supabase as any)
+        .from('pedro_followup_schedules')
+        .update({ status: 'cancelled' })
+        .eq('id', id)
+        .eq('status', 'pending'); // só cancela se ainda estiver pending (atômico)
+      if (error) throw error;
+      // Remove da lista local imediatamente (otimista)
+      setSchedules(prev => prev.filter(s => s.id !== id));
+      // Se era o próximo follow-up do lead, limpa o next_followup_at
+      if (selectedLead?.id) {
+        const remainingPending = schedules.filter(s => s.status === 'pending' && s.id !== id);
+        const nextScheduledAt = remainingPending.length > 0
+          ? remainingPending.reduce((min, s) =>
+              new Date(s.scheduled_at) < new Date(min) ? s.scheduled_at : min, remainingPending[0].scheduled_at)
+          : null;
+        await (supabase as any).from('ai_crm_leads')
+          .update({ next_followup_at: nextScheduledAt })
+          .eq('id', selectedLead.id);
+      }
+      toast({ title: '✅ Follow-up cancelado', description: 'Não será enviado pro lead.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao cancelar', description: err.message, variant: 'destructive' });
+      // Em caso de erro, recarrega pra garantir estado consistente
+      if (selectedLead) await loadLeadDetail(selectedLead);
+    } finally {
+      setCancellingFollowupId(null);
     }
   };
 
@@ -1884,12 +1924,24 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                 <div className="space-y-1.5 pt-1">
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Agendados</p>
                   {schedules.filter(s => s.status === 'pending').map(s => (
-                    <div key={s.id} className="flex items-start gap-2 bg-muted/40 rounded-lg px-3 py-2">
+                    <div key={s.id} className="flex items-start gap-2 bg-muted/40 rounded-lg px-3 py-2 group">
                       <Clock className="h-3 w-3 text-cyan-400 mt-0.5 shrink-0" />
-                      <div>
+                      <div className="flex-1 min-w-0">
                         <p className="text-[10px] text-cyan-400 font-medium">{fmtDate(s.scheduled_at)}</p>
                         <p className="text-[10px] text-muted-foreground line-clamp-1">{s.message_template}</p>
                       </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive opacity-60 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleCancelFollowup(s.id)}
+                        disabled={cancellingFollowupId === s.id}
+                        title="Cancelar follow-up agendado (não será enviado)"
+                      >
+                        {cancellingFollowupId === s.id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <Trash2 className="h-3 w-3" />}
+                      </Button>
                     </div>
                   ))}
                 </div>
