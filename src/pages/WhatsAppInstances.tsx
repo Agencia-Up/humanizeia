@@ -259,8 +259,10 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     if (!deleteId || !user?.id) return;
     setIsDeleting(true);
     try {
+      // requester_auth_id = auth.uid() do solicitante (master OU vendedor).
+      // A edge function valida autorização: master via user_id, vendedor via seller_member_id.
       const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
-        body: { instance_id: deleteId, user_id: user?.id },
+        body: { instance_id: deleteId, requester_auth_id: user.id },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao remover instância');
