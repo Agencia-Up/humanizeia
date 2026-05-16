@@ -124,19 +124,15 @@ serve(async (req) => {
 
     if (fetchErr) throw fetchErr;
 
-    if (!schedules || schedules.length === 0) {
-      return new Response(JSON.stringify({ ok: true, processed: 0, failed: 0 }), {
-        headers: { ...cors, "Content-Type": "application/json" },
-      });
-    }
-
     let processed = 0;
     let failed    = 0;
+    const pedroProcessedStart = processed;
+    const pedroFailedStart = failed;
 
     // Cache de instâncias para evitar queries repetidas
     const instanceCache: Record<string, any> = {};
 
-    for (const schedule of schedules) {
+    for (const schedule of schedules || []) {
       try {
         const lead = (schedule as any).lead;
 
@@ -281,8 +277,157 @@ serve(async (req) => {
       }
     }
 
+    const pedroProcessed = processed - pedroProcessedStart;
+    const pedroFailed = failed - pedroFailedStart;
+    const marcosProcessedStart = processed;
+    const marcosFailedStart = failed;
+
+    // Marcos: fila de follow-up somente envio. Nao conversa, nao chama IA.
+    const { data: marcosSchedules, error: marcosFetchErr } = await supabase
+      .from("marcos_followup_schedules")
+      .select(`
+        *,
+        lead:crm_leads(id, name, phone, user_id, assigned_to)
+      `)
+      .eq("status", "pending")
+      .lte("scheduled_at", nowIso)
+      .order("scheduled_at", { ascending: true })
+      .limit(30);
+
+    if (marcosFetchErr) throw marcosFetchErr;
+
+    for (const schedule of marcosSchedules || []) {
+      try {
+        const lead = (schedule as any).lead;
+        const digits = String(lead?.phone || "").replace(/\D/g, "");
+
+        if (!lead?.id || !digits) {
+          await supabase.from("marcos_followup_schedules")
+            .update({ status: "cancelled" })
+            .eq("id", schedule.id);
+          failed++;
+          continue;
+        }
+
+        let instance: any = null;
+        if (schedule.instance_id) {
+          if (instanceCache[schedule.instance_id]) {
+            instance = instanceCache[schedule.instance_id];
+          } else {
+            const { data: inst } = await supabase
+              .from("wa_instances")
+              .select("id, api_url, api_key_encrypted, instance_name")
+              .eq("id", schedule.instance_id)
+              .single();
+            instance = inst;
+            if (inst) instanceCache[schedule.instance_id] = inst;
+          }
+        }
+
+        const sellerMemberId = schedule.member_id || lead.assigned_to || null;
+        if (!instance && lead.user_id && sellerMemberId) {
+          const cacheKey = `marcos-seller:${lead.user_id}:${sellerMemberId}`;
+          if (instanceCache[cacheKey]) {
+            instance = instanceCache[cacheKey];
+          } else {
+            const { data: sellerInst } = await supabase
+              .from("wa_instances")
+              .select("id, api_url, api_key_encrypted, instance_name")
+              .eq("user_id", lead.user_id)
+              .eq("seller_member_id", sellerMemberId)
+              .eq("is_active", true)
+              .limit(1)
+              .maybeSingle();
+            if (sellerInst) {
+              instance = sellerInst;
+              instanceCache[cacheKey] = sellerInst;
+            }
+          }
+        }
+
+        if (!instance && lead.user_id) {
+          const cacheKey = `marcos-master:${lead.user_id}`;
+          if (instanceCache[cacheKey]) {
+            instance = instanceCache[cacheKey];
+          } else {
+            const { data: masterInst } = await supabase
+              .from("wa_instances")
+              .select("id, api_url, api_key_encrypted, instance_name")
+              .eq("user_id", lead.user_id)
+              .is("seller_member_id", null)
+              .eq("is_active", true)
+              .limit(1)
+              .maybeSingle();
+            if (masterInst) {
+              instance = masterInst;
+              instanceCache[cacheKey] = masterInst;
+            }
+          }
+        }
+
+        if (!instance?.api_url) {
+          console.error(`[marcos-followup] No instance found for schedule ${schedule.id}`);
+          await supabase.from("marcos_followup_schedules")
+            .update({ status: "failed" })
+            .eq("id", schedule.id);
+          failed++;
+          continue;
+        }
+
+        const baseUrl = instance.api_url.replace(/\/+$/, "");
+        const instKey = instance.api_key_encrypted || "";
+        const instName = instance.instance_name || "";
+        const remoteJid = `${digits}@s.whatsapp.net`;
+
+        const hasMedia = schedule.media_url && schedule.media_type;
+        let sent = false;
+        if (hasMedia) {
+          sent = await sendUazapiMediaMessage(
+            baseUrl, instKey, instName, digits, remoteJid,
+            schedule.media_url, schedule.media_type,
+            schedule.message_template,
+          );
+          if (!sent) {
+            sent = await sendUazapiTextMessage(baseUrl, instKey, instName, digits, remoteJid, schedule.message_template);
+          }
+        } else {
+          sent = await sendUazapiTextMessage(baseUrl, instKey, instName, digits, remoteJid, schedule.message_template);
+        }
+
+        if (!sent) {
+          await supabase.from("marcos_followup_schedules")
+            .update({ status: "failed" })
+            .eq("id", schedule.id);
+          failed++;
+          continue;
+        }
+
+        await Promise.all([
+          supabase.from("marcos_followup_schedules")
+            .update({ status: "sent", sent_at: nowIso })
+            .eq("id", schedule.id),
+          supabase.from("wa_chat_history").insert({
+            user_id: schedule.user_id,
+            agent_id: null,
+            instance_id: instName,
+            remote_jid: remoteJid,
+            role: "assistant",
+            content: `[Follow-up Marcos] ${schedule.message_template}`,
+          }),
+        ]);
+
+        processed++;
+      } catch (err) {
+        console.error(`[marcos-followup] Erro no agendamento ${(schedule as any).id}:`, err);
+        failed++;
+      }
+    }
+
+    const marcosProcessed = processed - marcosProcessedStart;
+    const marcosFailed = failed - marcosFailedStart;
+
     return new Response(
-      JSON.stringify({ ok: true, processed, failed }),
+      JSON.stringify({ ok: true, processed, failed, pedroProcessed, pedroFailed, marcosProcessed, marcosFailed }),
       { headers: { ...cors, "Content-Type": "application/json" } },
     );
   } catch (err: any) {

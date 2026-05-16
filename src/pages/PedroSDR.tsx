@@ -687,6 +687,9 @@ interface FollowupSchedule {
   message_template: string;
   status: string;
   created_at: string;
+  sent_at?: string | null;
+  media_url?: string | null;
+  media_type?: string | null;
 }
 
 interface TeamMember {
@@ -841,7 +844,16 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           marcosLeadsQuery = marcosLeadsQuery.in('assigned_to', memberIds);
         }
 
-        const [leadsRes, teamRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
+        let marcosInstancesQuery = (supabase as any)
+          .from('wa_instances')
+          .select('id, friendly_name, phone_number, instance_name, status, is_active, seller_member_id')
+          .eq('user_id', effectiveUserId)
+          .eq('is_active', true);
+        if (isSeller && memberIds.length > 0) {
+          marcosInstancesQuery = marcosInstancesQuery.in('seller_member_id', memberIds);
+        }
+
+        const [leadsRes, teamRes, instRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
           marcosLeadsQuery,
           (supabase as any)
             .from('ai_team_members')
@@ -849,6 +861,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             .eq('user_id', effectiveUserId)
             .order('is_active', { ascending: false })
             .order('name', { ascending: true }),
+          marcosInstancesQuery,
           leadCountQuery(),
           leadCountQuery(todayStart),
           leadCountQuery(weekStart),
@@ -886,7 +899,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
         setLeads(mappedLeads);
         setFeedbacks([]);
-        setInstances([]);
+        const connectedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected' || i.is_active);
+        setInstances(connectedInstances);
+        if (connectedInstances.length > 0 && !fuInstance) {
+          setFuInstance(connectedInstances[0].id);
+        }
         setTeamMembers(enrichedTeam);
         setTransfers([]);
         setLeadMetrics({
@@ -1077,6 +1094,24 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
   const loadLeadDetail = async (lead: CrmLead) => {
     setSelectedLead(lead);
+
+    if (isMarcosCrm) {
+      const { data: schedData, error: schedErr } = await (supabase as any)
+        .from('marcos_followup_schedules')
+        .select('id, lead_id, scheduled_at, message_template, status, created_at, sent_at, media_url, media_type')
+        .eq('lead_id', lead.id)
+        .order('scheduled_at', { ascending: true });
+
+      if (schedErr) {
+        toast({ title: 'Erro ao carregar follow-ups', description: schedErr.message, variant: 'destructive' });
+      }
+
+      setNotes([]);
+      setTransfers([]);
+      setSchedules(schedData || []);
+      return;
+    }
+
     const [notesRes, schedRes, transfersRes] = await Promise.all([
       (supabase as any)
         .from('pedro_crm_notes')
@@ -1190,9 +1225,43 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
   const handleScheduleFollowup = async () => {
     if (!fuMsg.trim() || !fuDate || !selectedLead || !userId) return;
+    if (isMarcosCrm && !fuInstance) {
+      toast({
+        title: 'Selecione uma instância',
+        description: 'Conecte ou selecione o WhatsApp que enviará este follow-up.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setFuLoading(true);
     try {
       const mediaType = fuMediaFile ? fuMediaFile.type.split('/')[0] : null; // 'image' | 'video' | 'audio'
+
+      if (isMarcosCrm) {
+        const effectiveUserId = isSeller
+          ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
+          : userId;
+        const currentSeller = await resolveCurrentSellerForMarcos();
+        const { error } = await (supabase as any).from('marcos_followup_schedules').insert({
+          lead_id:          selectedLead.id,
+          user_id:          effectiveUserId,
+          member_id:        currentSeller?.id || selectedLead.assigned_to_id || memberId,
+          scheduled_at:     new Date(fuDate).toISOString(),
+          message_template: fuMsg.trim(),
+          instance_id:      fuInstance,
+          status:           'pending',
+          media_url:        fuMediaUrl || null,
+          media_type:       mediaType,
+        });
+        if (error) throw error;
+        setFuMsg(''); setFuDate('');
+        setFuMediaFile(null); setFuMediaUrl('');
+        toast({ title: 'Follow-up do Marcos agendado!' });
+        await loadLeadDetail(selectedLead);
+        return;
+      }
+
       const { error } = await (supabase as any).from('pedro_followup_schedules').insert({
         lead_id:          selectedLead.id,
         user_id:          userId,
@@ -1229,8 +1298,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     if (!confirm('Cancelar este follow-up agendado? Ele NÃO será enviado pro lead.')) return;
     setCancellingFollowupId(id);
     try {
+      const followupTable = isMarcosCrm ? 'marcos_followup_schedules' : 'pedro_followup_schedules';
       const { error } = await (supabase as any)
-        .from('pedro_followup_schedules')
+        .from(followupTable)
         .update({ status: 'cancelled' })
         .eq('id', id)
         .eq('status', 'pending'); // só cancela se ainda estiver pending (atômico)
@@ -1238,7 +1308,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       // Remove da lista local imediatamente (otimista)
       setSchedules(prev => prev.filter(s => s.id !== id));
       // Se era o próximo follow-up do lead, limpa o next_followup_at
-      if (selectedLead?.id) {
+      if (!isMarcosCrm && selectedLead?.id) {
         const remainingPending = schedules.filter(s => s.status === 'pending' && s.id !== id);
         const nextScheduledAt = remainingPending.length > 0
           ? remainingPending.reduce((min, s) =>
@@ -2164,26 +2234,27 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           </Card>
 
           {/* ── Follow-up ─────────────────────────────────────────────── */}
-          {!isMarcosCrm && (
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center justify-between">
                 <span className="flex items-center gap-2">
                   <CalendarClock className="h-4 w-4 text-cyan-400" /> Agendar Follow-up
                 </span>
-                <Button
-                  variant="outline" size="sm"
-                  onClick={() => setFunnelOpen(!funnelOpen)}
-                  className="h-7 text-[10px] gap-1 border-primary/30 text-primary hover:bg-primary/10"
-                >
-                  <Zap className="h-3 w-3" />
-                  {funnelOpen ? 'Fechar Funil' : 'Funil Automático'}
-                </Button>
+                {!isMarcosCrm && (
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={() => setFunnelOpen(!funnelOpen)}
+                    className="h-7 text-[10px] gap-1 border-primary/30 text-primary hover:bg-primary/10"
+                  >
+                    <Zap className="h-3 w-3" />
+                    {funnelOpen ? 'Fechar Funil' : 'Funil Automático'}
+                  </Button>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {/* Funil automático */}
-              {funnelOpen && selectedLead && (
+              {!isMarcosCrm && funnelOpen && selectedLead && (
                 <FollowupFunnelBuilder
                   leadId={selectedLead.id}
                   userId={userId!}
@@ -2197,7 +2268,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               <Textarea
                 value={fuMsg}
                 onChange={e => setFuMsg(e.target.value)}
-                placeholder="Mensagem a enviar ao lead..."
+                placeholder={isMarcosCrm ? 'Mensagem que o robo de follow-up enviara ao lead...' : 'Mensagem a enviar ao lead...'}
                 className="min-h-[60px] text-xs resize-none"
               />
 
@@ -2282,9 +2353,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                   </Select>
                 )}
               </div>
+              {isMarcosCrm && instances.length === 0 && (
+                <p className="text-[10px] text-amber-300">
+                  Conecte uma instancia na aba Instancias do Marcos para enviar follow-ups.
+                </p>
+              )}
               <Button
                 onClick={handleScheduleFollowup}
-                disabled={fuLoading || !fuMsg.trim() || !fuDate}
+                disabled={fuLoading || !fuMsg.trim() || !fuDate || (isMarcosCrm && !fuInstance)}
                 size="sm" className="w-full h-8 text-xs"
               >
                 {fuLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <CalendarClock className="h-3.5 w-3.5 mr-1.5" />}
@@ -2320,7 +2396,6 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               )}
             </CardContent>
           </Card>
-          )}
         </div>
 
         {/* ── Feedback Estruturado para Gerente ──────────────────────── */}
