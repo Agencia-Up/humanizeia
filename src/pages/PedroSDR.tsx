@@ -644,6 +644,7 @@ interface CrmLead {
   agent?: { name: string } | null;
   created_at: string;
   source?: string | null;
+  custom_fields?: Record<string, any> | null;
 }
 
 interface Note {
@@ -824,24 +825,38 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             .select('id', { count: 'exact', head: true })
             .eq('user_id', effectiveUserId)
             .not('source', 'like', 'Pedro SDR%');
+          if (isSeller && memberIds.length > 0) query = query.in('assigned_to', memberIds);
           if (from) query = query.gte('created_at', from.toISOString());
           return query;
         };
 
-        const [leadsRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
+        let marcosLeadsQuery = (supabase as any)
+          .from('crm_leads')
+          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at')
+          .eq('user_id', effectiveUserId)
+          .not('source', 'like', 'Pedro SDR%')
+          .order('created_at', { ascending: false })
+          .limit(500);
+        if (isSeller && memberIds.length > 0) {
+          marcosLeadsQuery = marcosLeadsQuery.in('assigned_to', memberIds);
+        }
+
+        const [leadsRes, teamRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
+          marcosLeadsQuery,
           (supabase as any)
-            .from('crm_leads')
-            .select('id, name, phone, source, notes, stage_id, priority, created_at')
+            .from('ai_team_members')
+            .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
             .eq('user_id', effectiveUserId)
-            .not('source', 'like', 'Pedro SDR%')
-            .order('created_at', { ascending: false })
-            .limit(500),
+            .order('is_active', { ascending: false })
+            .order('name', { ascending: true }),
           leadCountQuery(),
           leadCountQuery(todayStart),
           leadCountQuery(weekStart),
           leadCountQuery(monthStart),
         ]);
 
+        const teamData: TeamMember[] = teamRes.data || [];
+        const teamById = new Map(teamData.map((t: any) => [t.id, { id: t.id, name: t.name }]));
         const mappedLeads: CrmLead[] = (leadsRes.data || []).map((lead: any) => ({
           id: lead.id,
           lead_name: lead.name || lead.phone || 'Lead',
@@ -850,17 +865,29 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           summary: lead.notes || null,
           next_followup_at: null,
           seller_notes_count: 0,
-          assigned_to_id: null,
-          member: null,
+          assigned_to_id: lead.assigned_to || lead.custom_fields?.seller_member_id || lead.custom_fields?.migrated_from_assigned_to_id || null,
+          member: (() => {
+            const sellerId = lead.assigned_to || lead.custom_fields?.seller_member_id || lead.custom_fields?.migrated_from_assigned_to_id || null;
+            return sellerId
+              ? (teamById.get(sellerId) ?? (lead.custom_fields?.seller_name ? { id: sellerId, name: lead.custom_fields.seller_name } : null))
+              : null;
+          })(),
           agent: null,
           created_at: lead.created_at,
           source: lead.source || 'manual',
+          custom_fields: lead.custom_fields || null,
+        }));
+
+        const enrichedTeam = teamData.map(m => ({
+          ...m,
+          leadsCount: mappedLeads.filter(l => l.assigned_to_id === m.id).length,
+          qualifiedCount: mappedLeads.filter(l => l.assigned_to_id === m.id && l.status_crm === 'qualificado').length,
         }));
 
         setLeads(mappedLeads);
         setFeedbacks([]);
         setInstances([]);
-        setTeamMembers([]);
+        setTeamMembers(enrichedTeam);
         setTransfers([]);
         setLeadMetrics({
           total: totalCountRes.count || 0,
@@ -1016,6 +1043,19 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   };
 
   useEffect(() => { fetchData(); }, [userId, isSeller, memberIds.length]);
+
+  const resolveCurrentSellerForMarcos = async () => {
+    if (!isMarcosCrm || !isSeller || !memberId) return null;
+    const cached = teamMembers.find(m => m.id === memberId);
+    if (cached) return cached;
+
+    const { data } = await (supabase as any)
+      .from('ai_team_members')
+      .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
+      .eq('id', memberId)
+      .maybeSingle();
+    return data || null;
+  };
 
   const loadLeadDetail = async (lead: CrmLead) => {
     setSelectedLead(lead);
@@ -1301,6 +1341,39 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const reassignLead = async (leadId: string, newMemberId: string | null) => {
     setReassigning(leadId);
     try {
+      if (isMarcosCrm) {
+        const lead = leads.find(l => l.id === leadId) || selectedLead;
+        const newMember = newMemberId ? teamMembers.find(m => m.id === newMemberId) ?? null : null;
+        const nextCustomFields = {
+          ...(lead?.custom_fields || {}),
+          seller_member_id: newMemberId,
+          seller_name: newMember?.name || null,
+          seller_assigned_at: new Date().toISOString(),
+          seller_assigned_by_auth_user_id: userId || null,
+        };
+        const { error } = await (supabase as any)
+          .from('crm_leads')
+          .update({ assigned_to: newMemberId, custom_fields: nextCustomFields })
+          .eq('id', leadId);
+        if (error) throw error;
+        setLeads(prev => prev.map(l => l.id === leadId ? {
+          ...l,
+          assigned_to_id: newMemberId,
+          member: newMember ? { id: newMember.id, name: newMember.name } : null,
+          custom_fields: nextCustomFields,
+        } : l));
+        if (selectedLead?.id === leadId) {
+          setSelectedLead({
+            ...selectedLead,
+            assigned_to_id: newMemberId,
+            member: newMember ? { id: newMember.id, name: newMember.name } : null,
+            custom_fields: nextCustomFields,
+          });
+        }
+        toast({ title: '✅ Lead reatribuído!' });
+        return;
+      }
+
       const { error } = await (supabase as any)
         .from('ai_crm_leads')
         .update({ assigned_to_id: newMemberId })
@@ -1485,6 +1558,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       if (isMarcosCrm) {
         const firstStageId = manualStages[0]?.id || null;
+        const currentSeller = await resolveCurrentSellerForMarcos();
+        const sellerCustomFields = currentSeller ? {
+          seller_member_id: currentSeller.id,
+          seller_name: currentSeller.name,
+          created_by_auth_user_id: userId,
+        } : {
+          created_by_auth_user_id: userId,
+        };
         const { data: maxPosRow } = await (supabase as any)
           .from('crm_leads')
           .select('position')
@@ -1508,7 +1589,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             currency: 'BRL',
             priority: 'medium',
             position: nextPosition++,
-            custom_fields: { crm_owner: 'marcos', input_mode: 'import' },
+            assigned_to: currentSeller?.id || null,
+            custom_fields: { crm_owner: 'marcos', input_mode: 'import', ...sellerCustomFields },
           }));
           const { error } = await (supabase as any).from('crm_leads').insert(batch);
           if (error) failed += batch.length;
@@ -1589,6 +1671,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       if (isMarcosCrm) {
         const firstStageId = manualStages[0]?.id || null;
+        const currentSeller = await resolveCurrentSellerForMarcos();
+        const sellerCustomFields = currentSeller ? {
+          seller_member_id: currentSeller.id,
+          seller_name: currentSeller.name,
+          created_by_auth_user_id: userId,
+        } : {
+          created_by_auth_user_id: userId,
+        };
         const { data: maxPosRow } = await (supabase as any)
           .from('crm_leads')
           .select('position')
@@ -1609,7 +1699,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           currency: 'BRL',
           priority: 'medium',
           position: (maxPosRow?.position ?? -1) + 1,
-          custom_fields: { crm_owner: 'marcos', input_mode: 'manual' },
+          assigned_to: currentSeller?.id || null,
+          custom_fields: { crm_owner: 'marcos', input_mode: 'manual', ...sellerCustomFields },
         });
         if (error) throw error;
         toast({ title: '✅ Lead adicionado ao CRM!' });
@@ -2381,7 +2472,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   // Métricas
   // Filtro universal
   const filteredLeads = leads.filter(l => {
-    if (!isMarcosCrm && isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
+    if (isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
     if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
     if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
     if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
