@@ -106,9 +106,11 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
+      const createdSlug = data.instance_name || slug;
+      setActiveSlug(createdSlug);
       setQrCode(data.qr_code || null);
       setStep('qrcode');
-      startPolling(slug);
+      startPolling(createdSlug);
     } catch (err: any) {
       toast.error(err.message || 'Erro ao criar instância');
     } finally {

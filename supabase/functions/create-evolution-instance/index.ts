@@ -82,6 +82,93 @@ function buildWebhookPayload(webhookUrl: string, instanceName?: string) {
   };
 }
 
+function slugSuffix(value: string | null | undefined) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .slice(0, 8)
+    .toLowerCase();
+}
+
+function normalizeUazapiInstanceName(instanceName: string, sellerMemberId?: string | null) {
+  const normalized = instanceName
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'whatsapp';
+
+  if (!sellerMemberId) return normalized;
+  const suffix = slugSuffix(sellerMemberId);
+  if (!suffix || normalized.endsWith(`-${suffix}`)) return normalized;
+  return `${normalized}-${suffix}`;
+}
+
+function isAlreadyExistsResponse(status: number, text: string) {
+  const normalized = text.toLowerCase();
+  return status === 409 ||
+    normalized.includes('already') ||
+    normalized.includes('exists') ||
+    normalized.includes('existente') ||
+    normalized.includes('duplic') ||
+    normalized.includes('ja existe') ||
+    normalized.includes('já existe');
+}
+
+function findInPayloadByName(value: unknown, instanceName: string): Record<string, unknown> | null {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findInPayloadByName(item, instanceName);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const names = [
+      record.name,
+      record.instanceName,
+      record.instance_name,
+      (record.instance as any)?.name,
+      (record.instance as any)?.instanceName,
+    ].map((item) => String(item || '').toLowerCase());
+    if (names.includes(instanceName.toLowerCase())) return record;
+    for (const nested of Object.values(record)) {
+      const found = findInPayloadByName(nested, instanceName);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function extractInstanceToken(value: any): string | null {
+  return value?.instance?.token ||
+    value?.token ||
+    value?.data?.token ||
+    value?.instance?.apikey ||
+    value?.apikey ||
+    value?.key ||
+    value?.instance?.key ||
+    null;
+}
+
+async function findExistingUazapiToken(baseUrl: string, adminHeaders: Record<string, string>, instanceName: string) {
+  const endpoints = ['/instance/all', '/instance/list', '/instance/fetchInstances'];
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(`${baseUrl}${endpoint}`, { method: 'GET', headers: adminHeaders });
+      const text = await res.text();
+      console.log(`[create-evolution-instance] lookup ${endpoint} response (${res.status}): ${text.substring(0, 300)}`);
+      if (!res.ok) continue;
+      const payload = JSON.parse(text);
+      const found = findInPayloadByName(payload, instanceName);
+      const token = extractInstanceToken(found);
+      if (token) return token;
+    } catch {}
+  }
+  return null;
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -177,7 +264,7 @@ Deno.serve(async (req) => {
     const validation = await validatePoolLimits(supabase, body);
     if (!validation.ok) {
       return new Response(JSON.stringify({ success: false, error: validation.error }), {
-        status: 400,
+        status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -205,7 +292,7 @@ async function handleMetaProvider(supabase: any, body: any) {
       success: false,
       error: 'Campos obrigatórios: user_id, friendly_name, phone_number_id, access_token',
     }), {
-      status: 400,
+      status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
@@ -225,7 +312,7 @@ async function handleMetaProvider(supabase: any, body: any) {
         error: `Meta API verification failed: ${verifyRes.status}`,
         details: errText,
       }), {
-        status: 400,
+        status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -313,45 +400,70 @@ async function handleEvolutionProvider(supabase: any, body: any) {
       success: false,
       error: 'Campos obrigatórios: instance_name, user_id',
     }), {
-      status: 400,
+      status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
   const baseUrl = api_url.replace(/\/$/, '');
   const adminHeaders = buildAdminHeaders(api_key);
+  const requestedInstanceName = String(instance_name);
+  const uazapiInstanceName = normalizeUazapiInstanceName(requestedInstanceName, seller_member_id);
 
-  console.log(`[create-evolution-instance] Creating instance: ${instance_name} at ${baseUrl}`);
+  console.log(`[create-evolution-instance] Creating Uazapi instance: ${uazapiInstanceName} at ${baseUrl}`);
 
   const createAttempts = [
     {
+      label: 'uazapi-instance-init-name',
+      url: `${baseUrl}/instance/init`,
+      payload: {
+        name: uazapiInstanceName,
+        systemName: 'LogosIA',
+        qrcode: true,
+      },
+      headers: adminHeaders,
+    },
+    {
+      label: 'uazapi-instance-init-instanceName',
+      url: `${baseUrl}/instance/init`,
+      payload: {
+        instanceName: uazapiInstanceName,
+        systemName: 'LogosIA',
+        qrcode: true,
+      },
+      headers: adminHeaders,
+    },
+    {
       label: 'url-name',
-      url: `${baseUrl}/instance/create/${encodeURIComponent(instance_name)}`,
+      url: `${baseUrl}/instance/create/${encodeURIComponent(uazapiInstanceName)}`,
       payload: {
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
         groupsIgnore: true,
       },
+      headers: adminHeaders,
     },
     {
       label: 'body-instanceName',
       url: `${baseUrl}/instance/create`,
       payload: {
-        instanceName: instance_name,
+        instanceName: uazapiInstanceName,
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
         groupsIgnore: true,
       },
+      headers: adminHeaders,
     },
     {
       label: 'body-name',
       url: `${baseUrl}/instance/create`,
       payload: {
-        name: instance_name,
+        name: uazapiInstanceName,
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
         groupsIgnore: true,
       },
+      headers: adminHeaders,
     },
   ];
 
@@ -364,7 +476,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     console.log(`[create-evolution-instance] Create attempt (${attempt.label}): ${attempt.url}`);
     const createRes = await fetch(attempt.url, {
       method: 'POST',
-      headers: adminHeaders,
+      headers: attempt.headers,
       body: JSON.stringify(attempt.payload),
     });
 
@@ -375,7 +487,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     createData = {};
     try { createData = JSON.parse(createText); } catch {}
 
-    if (createRes.ok || createStatus === 200 || createStatus === 201 || createStatus === 409) {
+    if (createRes.ok || createStatus === 200 || createStatus === 201 || isAlreadyExistsResponse(createStatus, createText)) {
       successfulAttempt = attempt.label;
       break;
     }
@@ -388,32 +500,32 @@ async function handleEvolutionProvider(supabase: any, body: any) {
       details: createText,
       attempted_format: createAttempts.map((a) => a.label),
     }), {
-      status: 400,
+      status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
   let qrCode: string | null =
     extractQrCodeCandidate(createData);
-  const instanceToken =
-    createData?.instance?.token ||
-    createData?.token ||
-    createData?.data?.token ||
-    null;
+  let instanceToken = extractInstanceToken(createData);
+  if (!instanceToken && isAlreadyExistsResponse(createStatus, createText)) {
+    instanceToken = await findExistingUazapiToken(baseUrl, adminHeaders, uazapiInstanceName);
+  }
 
   if (!qrCode) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     const qrAttempts = [
       {
         label: 'get-connect-by-name',
-        url: `${baseUrl}/instance/connect/${encodeURIComponent(instance_name)}`,
+        url: `${baseUrl}/instance/connect/${encodeURIComponent(uazapiInstanceName)}`,
         method: 'GET',
+        headers: adminHeaders,
       },
       {
         label: 'post-connect-body-instanceName',
         url: `${baseUrl}/instance/connect`,
         method: 'POST',
-        body: { instanceName: instance_name },
+        body: { instanceName: uazapiInstanceName },
         headers: adminHeaders,
       },
       ...(instanceToken ? [{
@@ -427,12 +539,12 @@ async function handleEvolutionProvider(supabase: any, body: any) {
         label: 'post-connect-instance-token-name',
         url: `${baseUrl}/instance/connect`,
         method: 'POST',
-        body: { instanceName: instance_name },
+        body: { instanceName: uazapiInstanceName },
         headers: buildInstanceHeaders(instanceToken, api_key),
       }] : []),
       ...(instanceToken ? [{
         label: 'get-connect-instance-token-by-name',
-        url: `${baseUrl}/instance/connect/${encodeURIComponent(instance_name)}`,
+        url: `${baseUrl}/instance/connect/${encodeURIComponent(uazapiInstanceName)}`,
         method: 'GET',
         headers: buildInstanceHeaders(instanceToken, api_key),
       },
@@ -474,7 +586,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
 
     if (!webhookRes.ok) {
       await webhookRes.text().catch(() => '');
-      const webhookPayload = buildWebhookPayload(webhookUrl, instance_name);
+      const webhookPayload = buildWebhookPayload(webhookUrl, uazapiInstanceName);
       webhookRes = await fetch(`${baseUrl}/webhook/instance`, {
         method: 'POST',
         headers: adminHeaders,
@@ -483,13 +595,13 @@ async function handleEvolutionProvider(supabase: any, body: any) {
           url: webhookUrl,
           events: ["messages", "messages_update", "connection", "qrcode"],
           excludeMessages: ["wasSentByApi"],
-          instanceName: instance_name,
+          instanceName: uazapiInstanceName,
         }),
       });
 
       if (!webhookRes.ok) {
         await webhookRes.text().catch(() => '');
-        webhookRes = await fetch(`${baseUrl}/webhook/set/${instance_name}`, {
+        webhookRes = await fetch(`${baseUrl}/webhook/set/${uazapiInstanceName}`, {
           method: 'POST',
           headers: adminHeaders,
           body: JSON.stringify({
@@ -500,7 +612,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     }
 
     console.log(`[create-evolution-instance] Webhook response: ${webhookRes.status}`);
-    console.log(`[create-evolution-instance] Webhook set for ${instance_name}`);
+    console.log(`[create-evolution-instance] Webhook set for ${uazapiInstanceName}`);
   } catch (webhookErr) {
     console.warn('[create-evolution-instance] Failed to set webhook:', webhookErr);
   }
@@ -508,7 +620,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   const insertPayload = {
     user_id,
     seller_member_id: seller_member_id || null,
-    instance_name,
+    instance_name: uazapiInstanceName,
     friendly_name: friendly_name || instance_name,
     api_url: baseUrl,
     api_key_encrypted: instanceToken || api_key,
@@ -530,7 +642,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
       user_id,
       api_url: baseUrl,
       api_key: instanceToken || api_key,
-      instance_name,
+      instance_name: uazapiInstanceName,
       is_active: false,
       phone_number: '',
     }, { onConflict: 'user_id' });
@@ -539,6 +651,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   return new Response(JSON.stringify({
     success: true,
     instance_id: insertedInstance?.id || null,
+    instance_name: uazapiInstanceName,
     qr_code: qrCode,
     provider: 'evolution',
     create_attempt: successfulAttempt,
