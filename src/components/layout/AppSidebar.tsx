@@ -406,7 +406,7 @@ export function AppSidebar() {
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
   const hasBrunoManualRelease = user?.id === BRUNO_LIRA_USER_ID;
   const showMarcos = hasBrunoManualRelease || userPlan === 'pro' || userPlan === 'enterprise';
-  const showJose = userPlan === 'pro' || userPlan === 'enterprise';
+  const showJose = hasBrunoManualRelease || userPlan === 'pro' || userPlan === 'enterprise';
   const showEnterprise = userPlan === 'enterprise';
 
   const handleLogout = async () => {

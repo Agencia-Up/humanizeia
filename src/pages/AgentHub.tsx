@@ -41,7 +41,11 @@ const TIER_ORDER = { basico: 0, pro: 1, enterprise: 2 };
 const BRUNO_LIRA_USER_ID = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
 
 function hasManualAgentRelease(userId: string | undefined, featureKey: keyof VisibleFeatures) {
-  return userId === BRUNO_LIRA_USER_ID && (featureKey === 'agent_pedro' || featureKey === 'agent_marcos');
+  return userId === BRUNO_LIRA_USER_ID && (
+    featureKey === 'agent_pedro' ||
+    featureKey === 'agent_marcos' ||
+    featureKey === 'agent_jose'
+  );
 }
 
 // ── Ações Rápidas — o que o usuário faz com mais frequência ──────────────────
