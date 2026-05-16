@@ -1057,6 +1057,24 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     return data || null;
   };
 
+  const resolveFirstMarcosStageId = async (effectiveUserId: string) => {
+    const cachedStageId = manualStages.find(s => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s.id))?.id;
+    if (cachedStageId) return cachedStageId;
+
+    const { data, error } = await (supabase as any)
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('user_id', effectiveUserId)
+      .order('position', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.id) {
+      throw new Error('Nenhuma etapa do CRM do Marcos foi encontrada para esta conta.');
+    }
+    return data.id as string;
+  };
+
   const loadLeadDetail = async (lead: CrmLead) => {
     setSelectedLead(lead);
     const [notesRes, schedRes, transfersRes] = await Promise.all([
@@ -1557,7 +1575,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         : userId;
 
       if (isMarcosCrm) {
-        const firstStageId = manualStages[0]?.id || null;
+        const firstStageId = await resolveFirstMarcosStageId(effectiveUserId);
         const currentSeller = await resolveCurrentSellerForMarcos();
         const sellerCustomFields = currentSeller ? {
           seller_member_id: currentSeller.id,
@@ -1670,7 +1688,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         : userId;
 
       if (isMarcosCrm) {
-        const firstStageId = manualStages[0]?.id || null;
+        const firstStageId = await resolveFirstMarcosStageId(effectiveUserId);
         const currentSeller = await resolveCurrentSellerForMarcos();
         const sellerCustomFields = currentSeller ? {
           seller_member_id: currentSeller.id,
