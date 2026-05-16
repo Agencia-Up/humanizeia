@@ -74,6 +74,28 @@ async function resolveEffectiveUserId(supabase: any, userId: string) {
   return memberData?.user_id || userId;
 }
 
+async function canAccessLeadOwner(supabase: any, userId: string, effectiveUserId: string, ownerId: string) {
+  if (!ownerId) return false;
+  if (ownerId === userId || ownerId === effectiveUserId) return true;
+
+  const { data: profileData } = await supabase
+    .from("profiles")
+    .select("role, manager_id")
+    .eq("id", userId)
+    .maybeSingle();
+  if (profileData?.role === "seller" && profileData?.manager_id === ownerId) return true;
+
+  const { data: memberData } = await supabase
+    .from("ai_team_members")
+    .select("id")
+    .eq("auth_user_id", userId)
+    .eq("user_id", ownerId)
+    .limit(1)
+    .maybeSingle();
+
+  return !!memberData?.id;
+}
+
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
 async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member: any) {
   try {
@@ -177,12 +199,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 1. Fetch lead details
+    // 1. Fetch lead details. Primeiro busca por ID; depois valida o acesso.
+    // Isso evita falso "Lead not found" quando o usuário logado é vendedor
+    // ou quando o lead pertence ao master mas o effectiveUserId foi resolvido diferente.
     const { data: lead, error: leadErr } = await supabase
       .from("ai_crm_leads")
       .select("*, agent:wa_ai_agents(*)")
       .eq("id", leadId)
-      .eq("user_id", effectiveUserId)
       .single();
 
     if (leadErr || !lead) {
@@ -192,12 +215,21 @@ Deno.serve(async (req) => {
       });
     }
 
+    const ownerUserId = lead.user_id || effectiveUserId;
+    const canAccess = await canAccessLeadOwner(supabase, userId, effectiveUserId, ownerUserId);
+    if (!canAccess) {
+      return new Response(JSON.stringify({ error: "Sem permissao para transferir este lead" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // 2. Fetch member details
     const { data: member, error: memberErr } = await supabase
       .from("ai_team_members")
       .select("*")
       .eq("id", memberId)
-      .eq("user_id", effectiveUserId)
+      .eq("user_id", ownerUserId)
       .single();
 
     if (memberErr || !member) {
@@ -247,7 +279,7 @@ Deno.serve(async (req) => {
       const { data: fallbackInstances } = await supabase
         .from("wa_instances")
         .select("*")
-        .eq("user_id", effectiveUserId)
+        .eq("user_id", ownerUserId)
         .eq("is_active", true)
         .eq("status", "connected")
         .limit(1);
@@ -324,7 +356,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
 
     // 8. Record transfer
     await supabase.from("ai_lead_transfers").insert({
-      user_id: effectiveUserId,
+      user_id: ownerUserId,
       lead_id: lead.id,
       from_member_id: lead.assigned_to_id,
       to_member_id: member.id,
@@ -341,7 +373,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
     }).eq("id", member.id);
 
     // 10. Sync lead to Marcos contact list (non-blocking)
-    syncLeadToMarcos(supabase, effectiveUserId, lead, member);
+    syncLeadToMarcos(supabase, ownerUserId, lead, member);
 
     return new Response(JSON.stringify({ success: true, leadId: lead.id, memberId: member.id }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
