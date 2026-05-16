@@ -711,11 +711,20 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       toast.warning('Nenhum vendedor ativo na fila para transferir este lead.');
       return;
     }
+    const lead = leads.find((l: any) => l.id === leadId);
     setTransferringLeadId(leadId);
     
     try {
       const { error } = await supabase.functions.invoke('manual-transfer', {
-        body: { leadId, memberId: nextSeller.id, notes }
+        body: {
+          leadId,
+          memberId: nextSeller.id,
+          notes,
+          remoteJid: lead?.remote_jid || null,
+          agentId: lead?.agent_id || null,
+          leadName: lead?.lead_name || null,
+          ownerUserId: lead?.user_id || effectiveUserId || null,
+        }
       });
       if (error) {
         let message = error.message || 'Nao foi possivel transferir este lead.';
@@ -740,7 +749,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     } finally {
       setTransferringLeadId(null);
     }
-  }, [nextSeller, user, fetchLiveData]);
+  }, [nextSeller, user, leads, effectiveUserId, fetchLiveData]);
 
   // Atualizar manualmente com feedback visual
   const handleRefresh = useCallback(async () => {

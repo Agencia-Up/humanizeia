@@ -190,7 +190,7 @@ Deno.serve(async (req) => {
     // em ai_team_members, mesmo quando o profile antigo nao esta completo.
     const effectiveUserId = await resolveEffectiveUserId(supabase, userId);
 
-    const { leadId, memberId, notes } = await req.json();
+    const { leadId, memberId, notes, remoteJid, agentId, leadName, ownerUserId: bodyOwnerUserId } = await req.json();
 
     if (!leadId || !memberId) {
       return new Response(JSON.stringify({ error: "leadId and memberId are required" }), {
@@ -202,20 +202,55 @@ Deno.serve(async (req) => {
     // 1. Fetch lead details. Primeiro busca por ID; depois valida o acesso.
     // Isso evita falso "Lead not found" quando o usuário logado é vendedor
     // ou quando o lead pertence ao master mas o effectiveUserId foi resolvido diferente.
-    const { data: lead, error: leadErr } = await supabase
+    let { data: lead, error: leadErr } = await supabase
       .from("ai_crm_leads")
       .select("*, agent:wa_ai_agents(*)")
       .eq("id", leadId)
-      .single();
+      .maybeSingle();
+
+    if (!lead && remoteJid) {
+      let leadQuery = supabase
+        .from("ai_crm_leads")
+        .select("*, agent:wa_ai_agents(*)")
+        .eq("remote_jid", remoteJid)
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .limit(1);
+      if (agentId) leadQuery = leadQuery.eq("agent_id", agentId);
+      if (bodyOwnerUserId) leadQuery = leadQuery.eq("user_id", bodyOwnerUserId);
+
+      const fallback = await leadQuery.maybeSingle();
+      lead = fallback.data;
+      leadErr = fallback.error;
+      if (lead) {
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback por remote_jid=${remoteJid}, lead=${lead.id}`);
+      }
+    }
+
+    if (!lead && leadName && bodyOwnerUserId) {
+      const fallback = await supabase
+        .from("ai_crm_leads")
+        .select("*, agent:wa_ai_agents(*)")
+        .eq("user_id", bodyOwnerUserId)
+        .eq("lead_name", leadName)
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      lead = fallback.data;
+      leadErr = fallback.error;
+      if (lead) {
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback por lead_name=${leadName}, lead=${lead.id}`);
+      }
+    }
 
     if (leadErr || !lead) {
-      return new Response(JSON.stringify({ error: "Lead not found" }), {
+      console.error("[manual-transfer] Lead not found", { leadId, remoteJid, agentId, leadName, bodyOwnerUserId, leadErr });
+      return new Response(JSON.stringify({ error: "Lead not found", details: { leadId, remoteJid, agentId, leadName } }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const ownerUserId = lead.user_id || effectiveUserId;
+    const ownerUserId = lead.user_id || bodyOwnerUserId || effectiveUserId;
     const canAccess = await canAccessLeadOwner(supabase, userId, effectiveUserId, ownerUserId);
     if (!canAccess) {
       return new Response(JSON.stringify({ error: "Sem permissao para transferir este lead" }), {
