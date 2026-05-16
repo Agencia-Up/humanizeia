@@ -708,17 +708,30 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const attendedNow    = filteredLeads.filter(l => l.status === 'transferido').length;
 
   const handleManualTransfer = useCallback(async (leadId: string, notes: string) => {
-    if (!nextSeller || !user) return;
+    // Sem vendedor ativo ou usuário deslogado: avisa em vez de silenciar
+    if (!nextSeller) {
+      toast.error('Nenhum vendedor ativo na fila — configure pelo menos 1 vendedor ativo');
+      return;
+    }
+    if (!user) {
+      toast.error('Sessão expirada — refaça login');
+      return;
+    }
     setTransferringLeadId(leadId);
-    
+
     try {
       const { error } = await supabase.functions.invoke('manual-transfer', {
         body: { leadId, memberId: nextSeller.id, notes }
       });
       if (error) throw error;
+      toast.success(`Lead transferido para ${nextSeller.name}`);
       fetchLiveData();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Transfer error:', e);
+      // Antes este catch só logava no console. Agora mostra toast com erro real
+      // pra usuário ver o que falhou (edge function down, RLS, payload inválido, etc.)
+      const msg = e?.message || e?.error?.message || 'Erro desconhecido ao transferir lead';
+      toast.error(`Erro ao transferir: ${msg}`);
     } finally {
       setTransferringLeadId(null);
     }
