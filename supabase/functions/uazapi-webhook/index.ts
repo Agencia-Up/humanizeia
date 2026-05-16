@@ -358,11 +358,57 @@ Se nada de novo, retorne {}.`;
   return { delta: {}, eco: false, objecoes: [] };
 }
 
+// Camada 2 do Bug #2 (re-apresentação): detector de auto-apresentação
+// expandido pra cobrir 7 padrões variantes. A regex one-liner antiga falhava
+// em "Consultor da BNDV", "Sou Carvalho" (sem artigo), "Sou consultor da loja".
+function isAgentSelfIntroduction(text: string): boolean {
+  if (!text) return false;
+  const patterns = [
+    /\bsou (o|a)\s+\w+/i,                                  // "Sou o Carvalho", "Sou a Maria"
+    /\bsou (carvalho|consultor|representante|atendente|gerente|vendedor)\b/i, // "Sou Carvalho", "Sou consultor"
+    /\beu sou\s+\w+/i,                                     // "Eu sou Carvalho"
+    /\bme chamo\s+\w+/i,                                   // "Me chamo Carvalho"
+    /\baqui (é|fala)\s+(o\s+|a\s+)?\w+/i,                  // "Aqui é o Carvalho", "Aqui fala Carvalho"
+    /\bconsultor (d[aoe]|do|da)\s+\w+/i,                   // "Consultor da BNDV", "Consultor do showroom"
+    /\b(meu nome|chamo-me)\s+(é\s+)?\w+/i,                 // "Meu nome é Carvalho", "Chamo-me Carvalho"
+  ];
+  return patterns.some((p) => p.test(text));
+}
+
+// Camada 3 do Bug #2: guard programático. Remove auto-apresentação da resposta
+// se o agente JÁ se apresentou antes (state.atendimento.consultor_apresentado=true).
+// Defesa contra o LLM ignorar a regra do system prompt esporadicamente.
+// Estratégia: split em frases mantendo pontuação, descarta as que contêm padrão
+// de apresentação, reconstrói. Se a resposta era SÓ apresentação, retorna fallback.
+function stripIntroIfAlreadyPresented(text: string, state: any): string {
+  if (!text || !state?.atendimento?.consultor_apresentado) return text;
+  if (!isAgentSelfIntroduction(text)) return text;
+
+  const sentences = text.split(/([.!?]+\s*)/).filter(Boolean);
+  const kept: string[] = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
+    if (isAgentSelfIntroduction(s)) {
+      // pula essa frase + o separador de pontuação subsequente (se houver)
+      if (i + 1 < sentences.length && /^[.!?]+\s*$/.test(sentences[i + 1])) i++;
+      continue;
+    }
+    kept.push(s);
+  }
+  const result = kept.join('').trim();
+  if (result.length < 10) {
+    console.warn(`[Pedro-Guard] Resposta era SÓ apresentação ("${text.slice(0, 80)}..."), substituída por fallback`);
+    return 'Pode mandar 😊';
+  }
+  console.warn(`[Pedro-Guard] Removida re-apresentação | original: "${text.slice(0, 100)}" → final: "${result.slice(0, 100)}"`);
+  return result;
+}
+
 function applyAgentSelfFlags(state: any, agentReply: string): any {
   // Heurísticas pós-resposta do agente: detecta auto-apresentação, envio de ficha, etc.
   const txt = (agentReply || '').toLowerCase();
   const updates: any = {};
-  if (/sou (o|a)\s+\w+|eu sou\s+\w+|me chamo\s+\w+|aqui é\s+(o|a)\s+\w+/i.test(agentReply) && !state?.atendimento?.consultor_apresentado) {
+  if (isAgentSelfIntroduction(agentReply) && !state?.atendimento?.consultor_apresentado) {
     updates.atendimento = { ...(updates.atendimento || {}), consultor_apresentado: true };
   }
   // Envio de ficha completa (heurística: 3+ campos típicos juntos)
@@ -1456,8 +1502,22 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         }
       }
 
-      // 7. Merge + UPSERT
-      const newState = deepMerge(currentState, safeDelta);
+      // 7a. Camada 1 do Bug #2 (race): re-fetch state fresco do banco antes
+      // do merge. Defesa contra webhook concorrente (turno N+1) sobrescrever
+      // flag setada por turno anterior (N). Sem isso, consultor_apresentado=true
+      // pode ser apagado e Pedro re-apresenta no próximo turno.
+      const { data: freshStateRow } = await supabase
+        .from('pedro_conversation_state')
+        .select('state')
+        .eq('lead_id', leadIdForState)
+        .eq('agent_id', agent.id)
+        .maybeSingle();
+      const baseStateForMerge = (freshStateRow?.state && Object.keys(freshStateRow.state).length > 0)
+        ? freshStateRow.state
+        : currentState;
+
+      // 7b. Merge + UPSERT
+      const newState = deepMerge(baseStateForMerge, safeDelta);
       const score = calcQualificationScore(newState);
       conversationState = newState;
 
@@ -2249,7 +2309,19 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         .eq('remote_jid', remoteJid)
         .maybeSingle();
       if (leadForFlags?.id) {
-        const updatedState = deepMerge(conversationState || {}, selfFlags);
+        // Camada 1 do Bug #2 (race): re-fetch state fresco antes do upsert
+        // pra preservar flags setadas por turno anterior em paralelo.
+        const { data: freshStateForFlags } = await supabase
+          .from('pedro_conversation_state')
+          .select('state')
+          .eq('lead_id', leadForFlags.id)
+          .eq('agent_id', agent.id)
+          .maybeSingle();
+        const baseStateForFlags = (freshStateForFlags?.state && Object.keys(freshStateForFlags.state).length > 0)
+          ? freshStateForFlags.state
+          : (conversationState || {});
+
+        const updatedState = deepMerge(baseStateForFlags, selfFlags);
         await supabase.from('pedro_conversation_state').upsert({
           lead_id: leadForFlags.id,
           agent_id: agent.id,
@@ -2273,7 +2345,13 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     last_interaction_at: agentReplyTs,
   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
-  // Salvar resposta do AGENTE IA no wa_inbox (para aparecer no Inbox do Marcos)
+  // Camada 3 do Bug #2: strip auto-apresentação se o agente já se apresentou
+  // antes (consultor_apresentado=true no state). Defesa contra LLM ignorar a
+  // regra do system prompt esporadicamente. Se a resposta inteira era só
+  // apresentação, retorna fallback "Pode mandar 😊".
+  const finalText = stripIntroIfAlreadyPresented(aiResponse, conversationState);
+
+  // Salvar resposta do AGENTE IA no wa_inbox (texto que REALMENTE foi enviado)
   await supabase.from('wa_inbox').insert({
     user_id: waInstance.user_id,
     instance_id: waInstance.id,
@@ -2281,7 +2359,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     contact_name: pushName || null,
     direction: 'outgoing',
     message_type: 'text',
-    content: aiResponse,
+    content: finalText,
     is_read: true,
     ai_category: 'agent',
   }).then(({ error }: any) => {
@@ -2293,7 +2371,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     await fetch(`${baseUrl}/send/text`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: JSON.stringify({ number: phoneNumber, text: aiResponse })
+      body: JSON.stringify({ number: phoneNumber, text: finalText })
     })
   } catch (e) {
     console.error('[Webhook] Erro ao enviar mensagem:', e)
