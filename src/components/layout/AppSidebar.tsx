@@ -52,6 +52,8 @@ import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useSubscription } from '@/hooks/useSubscription';
 
+const BRUNO_LIRA_USER_ID = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
+
 // ── Agentes (sem Pedro e Marcos — têm navegação própria expandível) ───────────
 const agentItems = [
   { title: 'Salomão', subtitle: 'Orquestrador', url: '/salomao',         icon: Sparkles,  emoji: '👑' },
@@ -402,7 +404,8 @@ export function AppSidebar() {
   const { isAdmin } = useIsAdmin();
   const { subscription } = useSubscription();
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
-  const showMarcos = userPlan === 'pro' || userPlan === 'enterprise';
+  const hasBrunoManualRelease = user?.id === BRUNO_LIRA_USER_ID;
+  const showMarcos = hasBrunoManualRelease || userPlan === 'pro' || userPlan === 'enterprise';
   const showJose = userPlan === 'pro' || userPlan === 'enterprise';
   const showEnterprise = userPlan === 'enterprise';
 

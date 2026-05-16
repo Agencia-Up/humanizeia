@@ -38,6 +38,11 @@ const allAgentsList: Array<{
 ];
 
 const TIER_ORDER = { basico: 0, pro: 1, enterprise: 2 };
+const BRUNO_LIRA_USER_ID = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
+
+function hasManualAgentRelease(userId: string | undefined, featureKey: keyof VisibleFeatures) {
+  return userId === BRUNO_LIRA_USER_ID && (featureKey === 'agent_pedro' || featureKey === 'agent_marcos');
+}
 
 // ── Ações Rápidas — o que o usuário faz com mais frequência ──────────────────
 const quickActions = [
@@ -122,8 +127,14 @@ export default function AgentHub() {
     : allAgentsList;
 
   // Separar agentes desbloqueados vs travados (após filtragem por seller)
-  const unlockedAgents = agentsAfterSellerFilter.filter(a => userTierLevel >= TIER_ORDER[a.tier]);
-  const lockedAgents = agentsAfterSellerFilter.filter(a => userTierLevel < TIER_ORDER[a.tier]);
+  const hasAgentAccess = (agent: typeof allAgentsList[number]) => {
+    if (hasManualAgentRelease(user?.id, agent.featureKey)) return true;
+    if (isSeller && visibleFeatures[agent.featureKey]) return true;
+    return userTierLevel >= TIER_ORDER[agent.tier];
+  };
+
+  const unlockedAgents = agentsAfterSellerFilter.filter(hasAgentAccess);
+  const lockedAgents = agentsAfterSellerFilter.filter(a => !hasAgentAccess(a));
 
   // Badge label para cada tier
   const tierBadge = (tier: string) => tier === 'pro' ? 'Pro' : 'Pro Max';
@@ -155,6 +166,7 @@ export default function AgentHub() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {quickActions.filter(a => {
               const actionTier = QUICK_ACTION_TIERS[a.url] || 'basico';
+              if (a.url === '/marcos' && (hasManualAgentRelease(user?.id, 'agent_marcos') || (isSeller && visibleFeatures.agent_marcos))) return true;
               return userTierLevel >= TIER_ORDER[actionTier];
             }).map((action, i) => (
               <motion.button
