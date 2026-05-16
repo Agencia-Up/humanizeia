@@ -445,13 +445,25 @@ Deno.serve(async (req) => {
           }
 
           // Buscar TODOS os vendedores (inclusive o atual, para poder notifica-lo)
-          const { data: teamMembers } = await supabase
+          let { data: teamMembers } = await supabase
             .from('ai_team_members')
             .select('*')
             .eq('user_id', lead.user_id)
             .eq('is_active', true)
+            .eq('agent_id', agentId)
             .order('last_lead_received_at', { ascending: true, nullsFirst: true })
             .limit(50);
+
+          if (!teamMembers || teamMembers.length === 0) {
+            const { data: fallbackTeamMembers } = await supabase
+              .from('ai_team_members')
+              .select('*')
+              .eq('user_id', lead.user_id)
+              .eq('is_active', true)
+              .order('last_lead_received_at', { ascending: true, nullsFirst: true })
+              .limit(50);
+            teamMembers = fallbackTeamMembers;
+          }
 
           // ── Notifica o vendedor que PERDEU o lead ──────────────────────
           const expiredSeller = (teamMembers || []).find((m: any) => m.id === currentSellerId);
@@ -643,13 +655,25 @@ Deno.serve(async (req) => {
 
         console.log(`[Cron] Lead ${phoneNumber} inativo ha 10 min. Status -> qualificado. Buscando vendedor...`);
 
-        const { data: teamMembers } = await supabase
+        let { data: teamMembers } = await supabase
           .from('ai_team_members')
           .select('*')
           .eq('user_id', lead.user_id)
           .eq('is_active', true)
+          .eq('agent_id', agentId)
           .order('last_lead_received_at', { ascending: true, nullsFirst: true })
           .limit(50);
+
+        if (!teamMembers || teamMembers.length === 0) {
+          const { data: fallbackTeamMembers } = await supabase
+            .from('ai_team_members')
+            .select('*')
+            .eq('user_id', lead.user_id)
+            .eq('is_active', true)
+            .order('last_lead_received_at', { ascending: true, nullsFirst: true })
+            .limit(50);
+          teamMembers = fallbackTeamMembers;
+        }
 
         let selectedSellerId = null;
         let sellerName = 'Especialista';

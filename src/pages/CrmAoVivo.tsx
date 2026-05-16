@@ -308,13 +308,16 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           .eq('user_id', effectiveUserId).order('created_at', { ascending: false }).limit(500),
         (supabase as any).from('ai_team_members').select('*').eq('user_id', effectiveUserId)
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
-        (supabase as any).from('wa_ai_agents').select('id, name').eq('user_id', effectiveUserId),
+        (supabase as any).from('wa_ai_agents').select('id, name, is_active').eq('user_id', effectiveUserId),
       ]);
 
       if ((leadsRes as any)?.error) console.error('[CrmAoVivo] ERRO ao buscar leads:', (leadsRes as any).error);
       const rawLeads = leadsRes.data || [];
-      const teamArr = membersRes.data || [];
       const agentsArr = agentsRes.data || [];
+      const activeAgentIds = new Set(agentsArr.filter((a: any) => a.is_active !== false).map((a: any) => a.id));
+      const teamArr = (membersRes.data || []).filter((member: any) =>
+        !member.agent_id || activeAgentIds.has(member.agent_id)
+      );
 
       // Hidrata member + agent via lookup map (evita N+1 e JOIN PostgREST quebrado)
       const teamById = new Map(teamArr.map((t: any) => [t.id, { id: t.id, name: t.name, whatsapp_number: t.whatsapp_number }]));

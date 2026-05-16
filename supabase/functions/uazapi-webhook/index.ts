@@ -460,6 +460,26 @@ function formatStateForPrompt(state: any): string {
   return lines.join('\n');
 }
 
+function sellerPhoneKey(seller: any): string {
+  const digits = String(seller?.whatsapp_number || '').replace(/\D/g, '');
+  if (!digits) return '';
+  return digits.startsWith('55') && (digits.length === 12 || digits.length === 13)
+    ? digits.slice(2)
+    : digits;
+}
+
+function uniqueSellersByPhone(sellers: any[] = []): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const seller of sellers || []) {
+    const key = sellerPhoneKey(seller) || String(seller?.id || '');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(seller);
+  }
+  return result;
+}
+
 function calcQualificationScore(state: any): number {
   let s = 0;
   if (state?.lead?.nome) s += 10;
@@ -935,29 +955,31 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // ter MÚLTIPLOS registros em ai_team_members (um por agente). Sem .limit(1),
   // o .maybeSingle() FALHA quando bate em >1 row e a confirmação do "Ok" fica
   // quebrada — o cron acaba repassando o lead pra outro vendedor.
-  let { data: senderSeller } = await supabase
+  let { data: senderSellers } = await supabase
     .from('ai_team_members')
-    .select('id, name')
+    .select('id, name, whatsapp_number, agent_id, auth_user_id')
     .eq('agent_id', agent.id)
     .eq('is_active', true)
     .ilike('whatsapp_number', `%${senderDigits}`)
     .order('auth_user_id', { ascending: false, nullsFirst: false }) // prefere o registro com login
-    .limit(1)
-    .maybeSingle();
+    .limit(20);
 
   // 2. Fallback: busca vendedor por user_id (vendedores podem não ter agent_id)
-  if (!senderSeller) {
-    const { data: fallbackSeller } = await supabase
-      .from('ai_team_members')
-      .select('id, name')
-      .eq('user_id', agent.user_id)
-      .eq('is_active', true)
-      .ilike('whatsapp_number', `%${senderDigits}`)
-      .order('auth_user_id', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle();
-    senderSeller = fallbackSeller;
-  }
+  const { data: fallbackSellers } = await supabase
+    .from('ai_team_members')
+    .select('id, name, whatsapp_number, agent_id, auth_user_id')
+    .eq('user_id', agent.user_id)
+    .eq('is_active', true)
+    .ilike('whatsapp_number', `%${senderDigits}`)
+    .order('auth_user_id', { ascending: false, nullsFirst: false })
+    .limit(50);
+
+  const sellerById = new Map<string, any>();
+  for (const seller of (senderSellers || [])) sellerById.set(seller.id, seller);
+  for (const seller of (fallbackSellers || [])) sellerById.set(seller.id, seller);
+  senderSellers = [...sellerById.values()];
+  const senderSeller = senderSellers[0] || null;
+  const senderSellerIds = senderSellers.map((seller: any) => seller.id).filter(Boolean);
 
   if (senderSeller) {
     console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} (id=${senderSeller.id}, jid=${remoteJid}) — verificando transfer pendente`);
@@ -966,8 +988,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     // onde confirmation_timeout_at já passou mas vendedor está respondendo.
     const { data: pendingTransfer } = await supabase
       .from('ai_lead_transfers')
-      .select('id, lead_id, transfer_status, is_confirmed, created_at')
-      .eq('to_member_id', senderSeller.id)
+      .select('id, lead_id, to_member_id, transfer_status, is_confirmed, created_at')
+      .in('to_member_id', senderSellerIds)
       .eq('transfer_status', 'pending')
       .not('lead_id', 'is', null)
       .order('created_at', { ascending: false })
@@ -996,7 +1018,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
       await supabase.from('ai_team_members').update({
         last_lead_received_at: now,
-      }).eq('id', senderSeller.id);
+      }).eq('id', pendingTransfer.to_member_id || senderSeller.id);
 
       // Atualiza status do lead para 'em_atendimento' — CRÍTICO pra cron não repassar
       if (pendingTransfer.lead_id) {
@@ -1776,7 +1798,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 if (t.to_member_id && !lastMap.has(t.to_member_id))
                   lastMap.set(t.to_member_id, new Date(t.created_at).getTime());
               }
-              const activeSellers = sellers || [];
+              const activeSellers = uniqueSellersByPhone(sellers || []);
               const neverReceived = activeSellers.filter((s: any) => !lastMap.has(s.id));
               chosenSeller = neverReceived.length > 0
                 ? neverReceived[0]
@@ -1835,6 +1857,34 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
               // 6. Atualizar state com flags de transferência
               try {
+                if (agent.gerente_phone) {
+                  try {
+                    const transferredAt = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+                    let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
+                    if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
+
+                    const gerenteMsg =
+                      `RELATORIO DE LEAD - ${agent.name}\n\n` +
+                      `Horario: ${transferredAt}\n` +
+                      `Lead: ${conversationState?.lead?.nome_completo || conversationState?.lead?.nome || pushName || 'Lead'}\n` +
+                      `Telefone: wa.me/${phoneNumber}\n` +
+                      `Status: qualificado\n` +
+                      `${transferArgs.resumo_breve ? `Resumo: ${String(transferArgs.resumo_breve).substring(0, 300)}\n` : ''}` +
+                      `\nEnviado para: ${chosenSeller.name}\n` +
+                      `WhatsApp vendedor: ${chosenSeller.whatsapp_number || 'sem numero'}\n\n` +
+                      `_Gerado automaticamente pelo Pedro SDR_`;
+
+                    const gerenteRes = await fetch(`${baseUrl}/send/text`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'token': instKey },
+                      body: JSON.stringify({ number: gerenteNum, text: gerenteMsg }),
+                    });
+                    console.log(`[Transfer-Tool] WA gerente -> HTTP ${gerenteRes.status}`);
+                  } catch (gerenteErr) {
+                    console.error('[Transfer-Tool] Falha ao notificar gerente:', gerenteErr);
+                  }
+                }
+
                 const updatedState = deepMerge(conversationState || {}, {
                   atendimento: {
                     transferencia_solicitada: true,
@@ -2094,7 +2144,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   if (t.to_member_id && !lastMap.has(t.to_member_id))
                     lastMap.set(t.to_member_id, new Date(t.created_at).getTime());
                 }
-                const activeSellers = sellers || [];
+                const activeSellers = uniqueSellersByPhone(sellers || []);
                 const neverReceived = activeSellers.filter((s: any) => !lastMap.has(s.id));
                 const nextSeller = neverReceived.length > 0
                   ? neverReceived[0]

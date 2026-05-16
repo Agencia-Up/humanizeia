@@ -37,6 +37,26 @@ async function sendWAMessage(instance: any, phone: string, text: string) {
   console.error(`WA send FAILED all attempts to ${dest}`);
 }
 
+function sellerPhoneKey(seller: any): string {
+  const digits = String(seller?.whatsapp_number || "").replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.startsWith("55") && (digits.length === 12 || digits.length === 13)
+    ? digits.slice(2)
+    : digits;
+}
+
+function uniqueSellersByPhone(sellers: any[] = []): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const seller of sellers || []) {
+    const key = sellerPhoneKey(seller) || String(seller?.id || "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(seller);
+  }
+  return result;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -92,14 +112,30 @@ Deno.serve(async (req) => {
     console.log(`[BulkTransfer] ${unassigned.length} leads para distribuir`);
 
     // 2. Busca vendedores ativos, ordenados por round-robin (quem recebeu há mais tempo vem primeiro)
-    const { data: sellers, error: sellersErr } = await supabase
+    const leadAgentIds = [...new Set((unassigned || []).map((l: any) => l.agent_id).filter(Boolean))];
+    let sellersQuery = supabase
       .from("ai_team_members")
       .select("*")
       .eq("user_id", effectiveUserId)
       .eq("is_active", true)
       .order("last_lead_received_at", { ascending: true, nullsFirst: true });
+    if (leadAgentIds.length > 0) sellersQuery = sellersQuery.in("agent_id", leadAgentIds);
+
+    let { data: sellers, error: sellersErr } = await sellersQuery;
 
     if (sellersErr) throw sellersErr;
+    if (!sellers?.length) {
+      const fallback = await supabase
+        .from("ai_team_members")
+        .select("*")
+        .eq("user_id", effectiveUserId)
+        .eq("is_active", true)
+        .order("last_lead_received_at", { ascending: true, nullsFirst: true });
+      sellers = fallback.data;
+      sellersErr = fallback.error;
+      if (sellersErr) throw sellersErr;
+    }
+    sellers = uniqueSellersByPhone(sellers || []);
     if (!sellers?.length) {
       return new Response(JSON.stringify({ error: "Nenhum vendedor ativo encontrado." }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
