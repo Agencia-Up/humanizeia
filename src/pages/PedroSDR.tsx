@@ -2282,31 +2282,6 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
-          <Button
-            variant={addLeadOpen ? 'secondary' : 'outline'}
-            size="sm"
-            onClick={() => setAddLeadOpen(!addLeadOpen)}
-            className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
-          >
-            {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-            {addLeadOpen ? 'Fechar' : 'Adicionar Lead'}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => bulkFileRef.current?.click()}
-            className="h-7 px-2.5 text-xs gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
-          >
-            <FileSpreadsheet className="h-3.5 w-3.5" />
-            Importar Planilha
-          </Button>
-          <input
-            ref={bulkFileRef}
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            onChange={handleBulkFileChange}
-            className="hidden"
-          />
         </div>
       </div>
 

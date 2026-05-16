@@ -458,12 +458,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     return { synced, errors };
   }, [effectiveUserId, normalizePhone]);
 
-  // Dispara o sync sempre que novos leads 'transferido' aparecem
-  useEffect(() => {
-    if (loading) return;
-    const transferred = leads.filter(l => l.status === 'transferido');
-    if (transferred.length > 0) syncTransferredToMarcos(transferred);
-  }, [leads, loading, syncTransferredToMarcos]);
+  // CRM do Marcos isolado: leads do Pedro nao sincronizam automaticamente
+  // para o funil manual do Marcos.
 
   // ── Alerta de novo lead ───────────────────────────────────────────────────
   // Dispara alerta visual + campainha quando leads.length aumenta após o

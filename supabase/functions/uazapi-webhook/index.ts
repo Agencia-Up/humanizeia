@@ -2063,18 +2063,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   }
                 }
 
-                // Atualiza CRM do Marcos com novo resumo
-                try {
-                  const { data: crmExisting } = await supabase
-                    .from('crm_leads').select('id')
-                    .eq('user_id', agent.user_id).eq('phone', crmPhone).maybeSingle();
-                  const crmNotes = `Vendedor: ${returnSeller.name}\nAgente IA: ${agent.name}${args.resumo ? `\n\nRetorno — ${args.resumo}` : ''}`;
-                  if (crmExisting?.id) {
-                    await supabase.from('crm_leads').update({ notes: crmNotes }).eq('id', crmExisting.id);
-                  }
-                } catch (crmErr) {
-                  console.error('[Transfer] Erro ao atualizar CRM Marcos (retorno):', crmErr);
-                }
+                // CRM do Marcos e manual/isolado; retorno do Pedro nao atualiza crm_leads.
 
               } else {
                 // ── LEAD NOVO: round-robin normal ─────────────────────────
@@ -2180,41 +2169,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     }
                   }
 
-                  // Push CRM Marcos
-                  try {
-                    const { data: firstStage } = await supabase
-                      .from('crm_pipeline_stages').select('id')
-                      .eq('user_id', agent.user_id)
-                      .order('position', { ascending: true }).limit(1).maybeSingle();
-
-                    const { data: crmExisting } = await supabase
-                      .from('crm_leads').select('id')
-                      .eq('user_id', agent.user_id).eq('phone', crmPhone).maybeSingle();
-
-                    const crmNotes = `Vendedor: ${nextSeller.name}\nAgente IA: ${agent.name}${args.resumo ? `\n\nResumo: ${args.resumo}` : ''}`;
-                    const crmTags  = ['Pedro SDR', nextSeller.name];
-
-                    if (crmExisting?.id) {
-                      await supabase.from('crm_leads')
-                        .update({ notes: crmNotes, tags: crmTags }).eq('id', crmExisting.id);
-                    } else {
-                      const { data: maxPosRow } = await supabase
-                        .from('crm_leads').select('position')
-                        .eq('user_id', agent.user_id).eq('stage_id', firstStage?.id || null)
-                        .order('position', { ascending: false }).limit(1).maybeSingle();
-                      await supabase.from('crm_leads').insert({
-                        user_id: agent.user_id, stage_id: firstStage?.id || null,
-                        name: pushName, phone: crmPhone,
-                        source: `Pedro SDR — ${agent.name}`,
-                        notes: crmNotes, tags: crmTags,
-                        value: 0, currency: 'BRL', priority: 'medium',
-                        position: (maxPosRow?.position ?? -1) + 1,
-                      });
-                    }
-                    console.log(`[Transfer] Lead ${pushName} (${crmPhone}) → CRM Marcos (${nextSeller.name})`);
-                  } catch (crmErr) {
-                    console.error('[Transfer] Erro ao enviar lead ao CRM do Marcos:', crmErr);
-                  }
+                  // CRM do Marcos e manual/isolado; transferencia do Pedro nao cria lead em crm_leads.
                 } else {
                   console.warn(`[Transfer] ⚠️ Nenhum vendedor ativo. agent_id=${agent.id} user_id=${agent.user_id}`);
                 }
