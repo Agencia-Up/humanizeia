@@ -8,10 +8,21 @@ const corsHeaders = {
 
 /** Send a WhatsApp text message via UazAPI (3 fallback attempts) */
 async function sendWAMessage(instance: any, phone: string, text: string) {
+  if (!instance?.api_url) {
+    throw new Error("Instancia WhatsApp sem URL da API configurada");
+  }
+  if (!phone) {
+    throw new Error("Vendedor sem numero de WhatsApp configurado");
+  }
+
   let dest = phone.replace(/\D/g, "");
   if (dest.length === 10 || dest.length === 11) dest = `55${dest}`;
   const baseUrl = (instance.api_url as string).replace(/\/+$/, "");
   const instKey = instance.api_key_encrypted || instance.api_key || "";
+  if (!instKey) {
+    throw new Error("Instancia WhatsApp sem token configurado");
+  }
+
   const remoteJid = `${dest}@s.whatsapp.net`;
 
   const attempts = [
@@ -37,6 +48,30 @@ async function sendWAMessage(instance: any, phone: string, text: string) {
     }
   }
   console.error(`WA send FAILED all attempts to ${dest}`);
+  throw new Error(`Falha ao enviar WhatsApp para ${dest}`);
+}
+
+async function resolveEffectiveUserId(supabase: any, userId: string) {
+  const { data: profileData } = await supabase
+    .from("profiles")
+    .select("role, manager_id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profileData?.role === "seller" && profileData?.manager_id) {
+    return profileData.manager_id;
+  }
+
+  const { data: memberData } = await supabase
+    .from("ai_team_members")
+    .select("user_id")
+    .eq("auth_user_id", userId)
+    .order("is_active", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return memberData?.user_id || userId;
 }
 
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
@@ -129,15 +164,9 @@ Deno.serve(async (req) => {
     }
     const userId = userData.user.id;
 
-    // Seller detection: if user is a seller, use their manager's ID for data queries
-    const { data: profileData } = await supabase
-      .from("profiles")
-      .select("role, manager_id")
-      .eq("id", userId)
-      .single();
-
-    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
-    const effectiveUserId = isSeller ? profileData.manager_id : userId;
+    // Resolve o dono real dos dados. Alguns vendedores existem como login separado
+    // em ai_team_members, mesmo quando o profile antigo nao esta completo.
+    const effectiveUserId = await resolveEffectiveUserId(supabase, userId);
 
     const { leadId, memberId, notes } = await req.json();
 
@@ -178,6 +207,20 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (!member.is_active) {
+      return new Response(JSON.stringify({ error: "Vendedor inativo na fila" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!member.whatsapp_number) {
+      return new Response(JSON.stringify({ error: "Vendedor sem numero de WhatsApp configurado" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // 3. Fetch agent config (for gerente_phone + instance_ids)
     const { data: agentConfig } = await supabase
       .from("wa_ai_agents")
@@ -212,7 +255,11 @@ Deno.serve(async (req) => {
     }
 
     if (!instance) {
-      console.error("[manual-transfer] Nenhuma instância WhatsApp encontrada");
+      console.error("[manual-transfer] Nenhuma instancia WhatsApp encontrada");
+      return new Response(JSON.stringify({ error: "Nenhuma instancia WhatsApp conectada para enviar a transferencia" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const phone = lead.remote_jid.replace(/\D/g, "");
@@ -238,13 +285,11 @@ ${notes ? `\n💬 *Observação:* ${notes}\n\n━━━━━━━━━━━�
 ⚡ O cliente está aguardando seu contato!
 ⏰ *Responda em até 15 minutos para confirmar o recebimento.*`;
 
-    if (instance) {
-      await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
-    }
+    await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
 
     // 6. Send WhatsApp REPORT to MANAGER (gerente)
     const gerentePhone = agentConfig?.gerente_phone;
-    if (instance && gerentePhone) {
+    if (gerentePhone) {
       const gerenteMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*
 
 🕐 *Horário:* ${transferredAt}
@@ -263,7 +308,11 @@ ${notes ? `\n💬 *Observação:* ${notes}` : ""}
 ━━━━━━━━━━━━━━━━━━━━
 _Gerado automaticamente pelo Pedro SDR_`;
 
-      await sendWAMessage(instance, gerentePhone, gerenteMsg);
+      try {
+        await sendWAMessage(instance, gerentePhone, gerenteMsg);
+      } catch (err) {
+        console.warn("[manual-transfer] Falha ao enviar relatorio ao gerente (nao bloqueante):", err);
+      }
     }
 
     // 7. Update Lead
@@ -294,7 +343,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
     // 10. Sync lead to Marcos contact list (non-blocking)
     syncLeadToMarcos(supabase, effectiveUserId, lead, member);
 
-    return new Response(JSON.stringify({ success: true }), {
+    return new Response(JSON.stringify({ success: true, leadId: lead.id, memberId: member.id }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {

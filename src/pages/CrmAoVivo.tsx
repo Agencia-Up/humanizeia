@@ -704,17 +704,36 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const attendedNow    = filteredLeads.filter(l => l.status === 'transferido').length;
 
   const handleManualTransfer = useCallback(async (leadId: string, notes: string) => {
-    if (!nextSeller || !user) return;
+    if (!nextSeller || !user) {
+      toast.warning('Nenhum vendedor ativo na fila para transferir este lead.');
+      return;
+    }
     setTransferringLeadId(leadId);
     
     try {
       const { error } = await supabase.functions.invoke('manual-transfer', {
         body: { leadId, memberId: nextSeller.id, notes }
       });
-      if (error) throw error;
+      if (error) {
+        let message = error.message || 'Nao foi possivel transferir este lead.';
+        const context = (error as any).context;
+        if (context && typeof context.json === 'function') {
+          try {
+            const body = await context.json();
+            message = body?.error || message;
+          } catch {
+            // Mantem a mensagem padrao do Supabase.
+          }
+        }
+        throw new Error(message);
+      }
+      toast.success(`Lead transferido para ${nextSeller.name}.`);
       fetchLiveData();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Transfer error:', e);
+      toast.error('Erro ao transferir lead', {
+        description: e?.message || 'Verifique a instancia do WhatsApp e tente novamente.',
+      });
     } finally {
       setTransferringLeadId(null);
     }
