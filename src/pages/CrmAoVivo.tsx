@@ -322,9 +322,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       // Hidrata member + agent via lookup map (evita N+1 e JOIN PostgREST quebrado)
       const teamById = new Map(teamArr.map((t: any) => [t.id, { id: t.id, name: t.name, whatsapp_number: t.whatsapp_number }]));
       const agentsById = new Map(agentsArr.map((a: any) => [a.id, { name: a.name }]));
+      const transferredLeadIds = new Set((transfersRes.data || []).map((t: any) => t.lead_id).filter(Boolean));
       const leadsData = rawLeads.map((l: any) => ({
         ...l,
-        member: l.assigned_to_id ? (teamById.get(l.assigned_to_id) ?? null) : null,
+        member: l.assigned_to_id && (['transferido', 'em_atendimento'].includes(l.status) || transferredLeadIds.has(l.id))
+          ? (teamById.get(l.assigned_to_id) ?? null)
+          : null,
         agent: l.agent_id ? (agentsById.get(l.agent_id) ?? null) : null,
       }));
 

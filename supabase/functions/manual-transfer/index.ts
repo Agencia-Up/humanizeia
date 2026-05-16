@@ -6,6 +6,8 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const LEAD_SELECT = "*, agent:wa_ai_agents!ai_crm_leads_agent_id_fkey(*)";
+
 /** Send a WhatsApp text message via UazAPI (3 fallback attempts) */
 async function sendWAMessage(instance: any, phone: string, text: string) {
   if (!instance?.api_url) {
@@ -240,14 +242,14 @@ Deno.serve(async (req) => {
     const canonicalLeadId = extractUuid(leadId) || leadId;
     let { data: lead, error: leadErr } = await supabase
       .from("ai_crm_leads")
-      .select("*, agent:wa_ai_agents(*)")
+      .select(LEAD_SELECT)
       .eq("id", canonicalLeadId)
       .maybeSingle();
 
     if (!lead && remoteJid) {
       let leadQuery = supabase
         .from("ai_crm_leads")
-        .select("*, agent:wa_ai_agents(*)")
+        .select(LEAD_SELECT)
         .eq("remote_jid", remoteJid)
         .order("last_interaction_at", { ascending: false, nullsFirst: false })
         .limit(1);
@@ -265,7 +267,7 @@ Deno.serve(async (req) => {
     if (!lead && leadName && inferredOwnerUserId) {
       const fallback = await supabase
         .from("ai_crm_leads")
-        .select("*, agent:wa_ai_agents(*)")
+        .select(LEAD_SELECT)
         .eq("user_id", inferredOwnerUserId)
         .eq("lead_name", leadName)
         .order("last_interaction_at", { ascending: false, nullsFirst: false })
@@ -284,7 +286,7 @@ Deno.serve(async (req) => {
       const phoneTail = digitsOnly(leadId).slice(-8);
       let phoneQuery = supabase
         .from("ai_crm_leads")
-        .select("*, agent:wa_ai_agents(*)")
+        .select(LEAD_SELECT)
         .eq("user_id", inferredOwnerUserId)
         .ilike("remote_jid", `%${phoneTail}%`)
         .order("last_interaction_at", { ascending: false, nullsFirst: false })
@@ -302,7 +304,7 @@ Deno.serve(async (req) => {
     if (!lead && inferredOwnerUserId && maybeLeadIdLooksLikeName(leadId)) {
       let nameQuery = supabase
         .from("ai_crm_leads")
-        .select("*, agent:wa_ai_agents(*)")
+        .select(LEAD_SELECT)
         .eq("user_id", inferredOwnerUserId)
         .ilike("lead_name", `%${String(leadId).trim()}%`)
         .order("last_interaction_at", { ascending: false, nullsFirst: false })
@@ -324,7 +326,7 @@ Deno.serve(async (req) => {
     if (!lead && inferredOwnerUserId) {
       const fallback = await supabase
         .from("ai_crm_leads")
-        .select("*, agent:wa_ai_agents(*)")
+        .select(LEAD_SELECT)
         .eq("user_id", inferredOwnerUserId)
         .eq("assigned_to_id", memberCandidate.id)
         .in("status", ["novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado", "em_atendimento"])
