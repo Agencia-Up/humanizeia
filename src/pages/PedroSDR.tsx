@@ -1873,6 +1873,13 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   }
 
   // ── Lead Detail Panel ──────────────────────────────────────────────────────
+  const pipelineColumns = isMarcosCrm && manualStages.length > 0 ? manualStages : PIPELINE_COLUMNS;
+  const statusOptions = isMarcosCrm
+    ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' }))
+    : STATUS_CRM_OPTIONS;
+  const canManageLeadStatus = !isMarcosCrm || !isSeller;
+  const canReassignLeadSeller = !isSeller && teamMembers.length > 0;
+
   if (selectedLead) {
     return (
       <div className="p-4 lg:p-6 space-y-5">
@@ -1931,24 +1938,32 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-[10px] text-muted-foreground hidden sm:inline">Status:</span>
-            <Select
-              value={selectedLead.status_crm || 'novo'}
-              onValueChange={updateLeadStatus}
-              disabled={statusUpdating}
-            >
-              <SelectTrigger className="h-8 text-xs w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(isMarcosCrm ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' })) : STATUS_CRM_OPTIONS).map(opt => (
-                  <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                    <span className={opt.color}>{opt.label}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {!isSeller && teamMembers.length > 0 && (
+            {canManageLeadStatus ? (
+              <>
+                <span className="text-[10px] text-muted-foreground hidden sm:inline">Status:</span>
+                <Select
+                  value={selectedLead.status_crm || 'novo'}
+                  onValueChange={updateLeadStatus}
+                  disabled={statusUpdating}
+                >
+                  <SelectTrigger className="h-8 text-xs w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statusOptions.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                        <span className={opt.color}>{opt.label}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            ) : (
+              <Badge variant="outline" className="h-8 px-3 text-[10px] capitalize">
+                {statusOptions.find(opt => opt.value === selectedLead.status_crm)?.label || selectedLead.status_crm || 'Novo'}
+              </Badge>
+            )}
+            {canReassignLeadSeller && (
               <Select
                 value={selectedLead.assigned_to_id || 'unassigned'}
                 onValueChange={v => reassignLead(selectedLead.id, v === 'unassigned' ? null : v)}
@@ -1983,7 +1998,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             1) Transferências com notes rico (não começa com "via cron")
             2) ai_crm_leads.summary (resumo da IA durante qualificação)
             3) Fallback "via cron" — texto curto antigo. */}
-        {(() => {
+        {!isMarcosCrm && (() => {
           // Identifica transferências com texto rico (mais que 1 linha ou >100 chars)
           const richTransfers = transfers.filter(t =>
             t.notes && (t.notes.length > 100 || t.notes.includes('\n'))
@@ -2065,7 +2080,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           );
         })()}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className={`grid grid-cols-1 ${isMarcosCrm ? '' : 'lg:grid-cols-2'} gap-4`}>
           {/* ── Anotações ─────────────────────────────────────────────── */}
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
@@ -2131,6 +2146,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           </Card>
 
           {/* ── Follow-up ─────────────────────────────────────────────── */}
+          {!isMarcosCrm && (
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center justify-between">
@@ -2286,9 +2302,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               )}
             </CardContent>
           </Card>
+          )}
         </div>
 
         {/* ── Feedback Estruturado para Gerente ──────────────────────── */}
+        {!isMarcosCrm && (<>
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -2428,6 +2446,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         </Card>
 
         {/* ── Popup Historico de Feedbacks do Lead ──────────────────────── */}
+        </>)}
+
         <Dialog open={fbHistoryOpen} onOpenChange={setFbHistoryOpen}>
           <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
             <DialogHeader>
@@ -2467,7 +2487,6 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
   // ── Main Panel ─────────────────────────────────────────────────────────────
   const unreadFeedbacks = feedbacks.filter(f => !f.read_at);
-  const pipelineColumns = isMarcosCrm && manualStages.length > 0 ? manualStages : PIPELINE_COLUMNS;
 
   // Métricas
   // Filtro universal
