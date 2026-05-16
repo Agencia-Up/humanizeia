@@ -643,6 +643,7 @@ interface CrmLead {
   member?: { id: string; name: string } | null;
   agent?: { name: string } | null;
   created_at: string;
+  source?: string | null;
 }
 
 interface Note {
@@ -705,13 +706,17 @@ interface LeadMetrics {
   month: number;
 }
 
-export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
+type CrmMode = 'pedro' | 'marcos';
+
+export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | undefined; mode?: CrmMode }) {
   const { toast } = useToast();
+  const isMarcosCrm = mode === 'marcos';
   const [isSeller, setIsSeller] = useState(false);
   const [memberId, setMemberId] = useState<string | null>(null);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
+  const [manualStages, setManualStages] = useState<typeof PIPELINE_COLUMNS>([]);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [instances, setInstances] = useState<any[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -792,6 +797,79 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       const weekStart = new Date(todayStart);
       weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
       const monthStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
+
+      if (isMarcosCrm) {
+        const { data: stagesData } = await (supabase as any)
+          .from('crm_pipeline_stages')
+          .select('id, name, color, position')
+          .eq('user_id', effectiveUserId)
+          .order('position', { ascending: true });
+        const stages = (stagesData || []) as any[];
+        const fallbackStage = stages[0]?.id || 'novo';
+        const columns = stages.length > 0
+          ? stages.map((s: any, index: number) => ({
+              id: s.id,
+              title: s.name,
+              emoji: ['🔰', '🎯', '📋', '🤝', '✅'][index] || '📌',
+              border: 'border-slate-500/30',
+              bg: 'bg-slate-500/10',
+              dot: 'bg-slate-400',
+            }))
+          : PIPELINE_COLUMNS;
+        setManualStages(columns);
+
+        const leadCountQuery = (from?: Date) => {
+          let query = (supabase as any)
+            .from('crm_leads')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', effectiveUserId)
+            .not('source', 'like', 'Pedro SDR%');
+          if (from) query = query.gte('created_at', from.toISOString());
+          return query;
+        };
+
+        const [leadsRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
+          (supabase as any)
+            .from('crm_leads')
+            .select('id, name, phone, source, notes, stage_id, priority, created_at')
+            .eq('user_id', effectiveUserId)
+            .not('source', 'like', 'Pedro SDR%')
+            .order('created_at', { ascending: false })
+            .limit(500),
+          leadCountQuery(),
+          leadCountQuery(todayStart),
+          leadCountQuery(weekStart),
+          leadCountQuery(monthStart),
+        ]);
+
+        const mappedLeads: CrmLead[] = (leadsRes.data || []).map((lead: any) => ({
+          id: lead.id,
+          lead_name: lead.name || lead.phone || 'Lead',
+          remote_jid: `${lead.phone || ''}@s.whatsapp.net`,
+          status_crm: lead.stage_id || fallbackStage,
+          summary: lead.notes || null,
+          next_followup_at: null,
+          seller_notes_count: 0,
+          assigned_to_id: null,
+          member: null,
+          agent: null,
+          created_at: lead.created_at,
+          source: lead.source || 'manual',
+        }));
+
+        setLeads(mappedLeads);
+        setFeedbacks([]);
+        setInstances([]);
+        setTeamMembers([]);
+        setTransfers([]);
+        setLeadMetrics({
+          total: totalCountRes.count || 0,
+          today: todayCountRes.count || 0,
+          week: weekCountRes.count || 0,
+          month: monthCountRes.count || 0,
+        });
+        return;
+      }
 
       const leadCountQuery = (from?: Date) => {
         let query = (supabase as any)
@@ -1194,6 +1272,17 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     if (!selectedLead || !userId) return;
     setStatusUpdating(true);
     try {
+      if (isMarcosCrm) {
+        const { error } = await (supabase as any)
+          .from('crm_leads')
+          .update({ stage_id: newStatus })
+          .eq('id', selectedLead.id);
+        if (error) throw error;
+        setSelectedLead({ ...selectedLead, status_crm: newStatus });
+        setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, status_crm: newStatus } : l));
+        toast({ title: '✅ Status atualizado!' });
+        return;
+      }
       const { error } = await (supabase as any)
         .from('ai_crm_leads')
         .update({ status_crm: newStatus })
@@ -1394,6 +1483,48 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
 
+      if (isMarcosCrm) {
+        const firstStageId = manualStages[0]?.id || null;
+        const { data: maxPosRow } = await (supabase as any)
+          .from('crm_leads')
+          .select('position')
+          .eq('user_id', effectiveUserId)
+          .eq('stage_id', firstStageId)
+          .order('position', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        let nextPosition = (maxPosRow?.position ?? -1) + 1;
+        const batchSize = 50;
+        for (let i = 0; i < validLeads.length; i += batchSize) {
+          const batch = validLeads.slice(i, i + batchSize).map(l => ({
+            user_id: effectiveUserId,
+            stage_id: firstStageId,
+            name: l.name,
+            phone: l.phone,
+            source: l.origem || 'importacao',
+            notes: null,
+            tags: ['Marcos Manual', 'Importado'],
+            value: 0,
+            currency: 'BRL',
+            priority: 'medium',
+            position: nextPosition++,
+            custom_fields: { crm_owner: 'marcos', input_mode: 'import' },
+          }));
+          const { error } = await (supabase as any).from('crm_leads').insert(batch);
+          if (error) failed += batch.length;
+          else success += batch.length;
+          setBulkProgress(Math.min(100, Math.round(((i + batch.length) / validLeads.length) * 100)));
+        }
+        setBulkResult({ success, failed });
+        if (success > 0) await fetchData(true);
+        toast({
+          title: `✅ ${success} lead(s) importado(s)!`,
+          description: failed > 0 ? `${failed} falharam.` : undefined,
+          variant: failed > 0 && success === 0 ? 'destructive' : 'default',
+        });
+        return;
+      }
+
       // Resolve agent_id: team member > any member > first active agent
       const selectedMember = memberId ? teamMembers.find(m => m.id === memberId) : null;
       let agentId = selectedMember?.agent_id
@@ -1456,6 +1587,37 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
 
+      if (isMarcosCrm) {
+        const firstStageId = manualStages[0]?.id || null;
+        const { data: maxPosRow } = await (supabase as any)
+          .from('crm_leads')
+          .select('position')
+          .eq('user_id', effectiveUserId)
+          .eq('stage_id', firstStageId)
+          .order('position', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const { error } = await (supabase as any).from('crm_leads').insert({
+          user_id: effectiveUserId,
+          stage_id: firstStageId,
+          name: addLeadName.trim(),
+          phone: cleanPhone,
+          source: addLeadOrigem || 'manual',
+          notes: addLeadOrigem === 'outros' ? (addLeadOrigemOutros.trim() || null) : null,
+          tags: ['Marcos Manual'],
+          value: 0,
+          currency: 'BRL',
+          priority: 'medium',
+          position: (maxPosRow?.position ?? -1) + 1,
+          custom_fields: { crm_owner: 'marcos', input_mode: 'manual' },
+        });
+        if (error) throw error;
+        toast({ title: '✅ Lead adicionado ao CRM!' });
+        setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros(''); setAddLeadOpen(false);
+        await fetchData(true);
+        return;
+      }
+
       // Resolve agent_id: team member > any member > first active agent
       const selectedMember = memberId ? teamMembers.find(m => m.id === memberId) : null;
       let agentId = selectedMember?.agent_id
@@ -1512,6 +1674,26 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       const updateData: Record<string, string> = {};
       if (editName !== (selectedLead.lead_name || '')) updateData.lead_name = editName;
       if (newJid !== selectedLead.remote_jid) updateData.remote_jid = newJid;
+      if (isMarcosCrm) {
+        const crmUpdate: Record<string, string> = {};
+        if (editName !== (selectedLead.lead_name || '')) crmUpdate.name = editName;
+        if (newJid !== selectedLead.remote_jid) crmUpdate.phone = cleanPhone;
+        if (Object.keys(crmUpdate).length === 0) {
+          setEditingLead(false);
+          return;
+        }
+        const { error } = await (supabase as any)
+          .from('crm_leads')
+          .update(crmUpdate)
+          .eq('id', selectedLead.id);
+        if (error) throw error;
+        const updatedLead = { ...selectedLead, lead_name: editName, remote_jid: `${cleanPhone}@s.whatsapp.net` };
+        setSelectedLead(updatedLead);
+        setLeads(prev => prev.map(l => l.id === selectedLead.id ? updatedLead : l));
+        setEditingLead(false);
+        toast({ title: '✅ Lead atualizado!' });
+        return;
+      }
       if (Object.keys(updateData).length === 0) {
         setEditingLead(false);
         return;
@@ -1537,6 +1719,14 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     if (!confirm('Deseja excluir este lead permanentemente? Esta ação não pode ser desfeita.')) return;
     setDeletingLead(true);
     try {
+      if (isMarcosCrm) {
+        const { error } = await (supabase as any).from('crm_leads').delete().eq('id', leadId);
+        if (error) throw error;
+        toast({ title: '🗑️ Lead excluído!' });
+        setSelectedLead(null);
+        setLeads(prev => prev.filter(l => l.id !== leadId));
+        return;
+      }
       // Remove notas, followups e feedbacks associados primeiro
       await Promise.all([
         (supabase as any).from('pedro_crm_notes').delete().eq('lead_id', leadId),
@@ -1562,12 +1752,21 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     // Atualiza localmente de imediato (optimistic)
     setLeads(prev => prev.map(l => l.id === draggableId ? { ...l, status_crm: newStatus } : l));
     try {
+      if (isMarcosCrm) {
+        const { error } = await (supabase as any)
+          .from('crm_leads')
+          .update({ stage_id: newStatus })
+          .eq('id', draggableId);
+        if (error) throw error;
+        toast({ title: `✅ Lead movido para ${manualStages.find(c => c.id === newStatus)?.title || newStatus}` });
+        return;
+      }
       const { error } = await (supabase as any)
         .from('ai_crm_leads')
         .update({ status_crm: newStatus })
         .eq('id', draggableId);
       if (error) throw error;
-      toast({ title: `✅ Lead movido para ${PIPELINE_COLUMNS.find(c => c.id === newStatus)?.title || newStatus}` });
+      toast({ title: `✅ Lead movido para ${(isMarcosCrm ? manualStages : PIPELINE_COLUMNS).find(c => c.id === newStatus)?.title || newStatus}` });
     } catch (err: any) {
       toast({ title: 'Erro ao mover lead', description: err.message, variant: 'destructive' });
       await fetchData(true); // Revert on failure
@@ -1651,7 +1850,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {STATUS_CRM_OPTIONS.map(opt => (
+                {(isMarcosCrm ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' })) : STATUS_CRM_OPTIONS).map(opt => (
                   <SelectItem key={opt.value} value={opt.value} className="text-xs">
                     <span className={opt.color}>{opt.label}</span>
                   </SelectItem>
@@ -2177,11 +2376,12 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
   // ── Main Panel ─────────────────────────────────────────────────────────────
   const unreadFeedbacks = feedbacks.filter(f => !f.read_at);
+  const pipelineColumns = isMarcosCrm && manualStages.length > 0 ? manualStages : PIPELINE_COLUMNS;
 
   // Métricas
   // Filtro universal
   const filteredLeads = leads.filter(l => {
-    if (isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
+    if (!isMarcosCrm && isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
     if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
     if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
     if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
@@ -2257,16 +2457,18 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
               </SelectContent>
             </Select>
           )}
-          <Button
-            variant="outline" size="sm"
-            onClick={handleTriggerFollowups}
-            disabled={triggerLoading}
-            className="h-7 px-2.5 text-xs gap-1.5 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
-          >
-            {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-            Follow-ups
-          </Button>
-          {!isSeller && (
+          {!isMarcosCrm && (
+            <Button
+              variant="outline" size="sm"
+              onClick={handleTriggerFollowups}
+              disabled={triggerLoading}
+              className="h-7 px-2.5 text-xs gap-1.5 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
+            >
+              {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+              Follow-ups
+            </Button>
+          )}
+          {!isSeller && !isMarcosCrm && (
             <Button
               variant="outline"
               size="sm"
@@ -2282,6 +2484,35 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
+          {isMarcosCrm && (
+            <>
+              <Button
+                variant={addLeadOpen ? 'secondary' : 'outline'}
+                size="sm"
+                onClick={() => setAddLeadOpen(!addLeadOpen)}
+                className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+              >
+                {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                {addLeadOpen ? 'Fechar' : 'Adicionar Lead'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => bulkFileRef.current?.click()}
+                className="h-7 px-2.5 text-xs gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                Importar Planilha
+              </Button>
+              <input
+                ref={bulkFileRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleBulkFileChange}
+                className="hidden"
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -2350,7 +2581,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         <DragDropContext onDragEnd={handleDragEnd}>
           <div className="overflow-x-auto pb-2 -mx-4 px-4">
             <div className="flex gap-3 min-w-max">
-              {PIPELINE_COLUMNS.map(col => {
+              {pipelineColumns.map(col => {
                 const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo') === col.id);
                 return (
                   <div key={col.id} className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}>
@@ -2449,7 +2680,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         <div className="space-y-2">
           {view === 'leads' && filterStatus === 'all' && (
             <div className="flex gap-1 flex-wrap mb-2">
-              {STATUS_CRM_OPTIONS.map(opt => {
+              {(isMarcosCrm ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' })) : STATUS_CRM_OPTIONS).map(opt => {
                 const count = leads.filter(l => normalizeStatus(l.status_crm || 'novo') === opt.value).length;
                 if (!count) return null;
                 return (

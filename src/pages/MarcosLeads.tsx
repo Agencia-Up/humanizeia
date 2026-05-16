@@ -70,8 +70,9 @@ export default function MarcosLeads() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-foreground">Marcos</h1>
-              <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30 text-[10px]">
-                CRM Manual
+              <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-[10px]">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse mr-1.5 inline-block" />
+                Agente Online
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">Captação de Leads, Formulários & Disparo em Massa</p>
