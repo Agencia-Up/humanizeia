@@ -968,6 +968,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       .from('ai_lead_transfers')
       .select('id, lead_id, transfer_status, is_confirmed, created_at')
       .eq('to_member_id', senderSeller.id)
+      .eq('transfer_status', 'pending')
+      .not('lead_id', 'is', null)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -977,9 +979,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       console.log(`[Transfer] Nenhum transfer encontrado para vendedor ${senderSeller.name}`);
     }
     // Só confirma se ainda está pending E não confirmado
-    const shouldConfirm = pendingTransfer
-      && pendingTransfer.transfer_status === 'pending'
-      && !pendingTransfer.is_confirmed;
+    const shouldConfirm = pendingTransfer && !pendingTransfer.is_confirmed;
 
     if (shouldConfirm && pendingTransfer) {
       // Confirma o transfer
@@ -1059,6 +1059,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   await supabase.from('ai_crm_leads').update({
     instance_id: waInstance.id,
     last_user_reply_at: nowStr,
+    last_interaction_at: nowStr,
     followup_5min_sent: false,
   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
@@ -1678,9 +1679,26 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             aiResponse = bndvTextResponse;
             console.log(`[BNDV] Resposta de texto gerada (${aiResponse.length} chars)`);
           }
+        } else {
+          const errText = await bndvFollowupRes.text();
+          console.error(`[BNDV] Follow-up OpenAI erro ${bndvFollowupRes.status}: ${errText.slice(0, 500)}`);
+        }
+
+        if (!aiResponse) {
+          if (bndvResult.success && bndvResult.items.length > 0) {
+            const firstItems = bndvResult.items.slice(0, 3)
+              .map((v: any, idx: number) => `${idx + 1}. ${v.label || `${v.marca || ''} ${v.modelo || ''}`.trim()}${v.preco ? ` - R$ ${Number(v.preco).toLocaleString('pt-BR')}` : ''}`)
+              .join('\n');
+            aiResponse = `Encontrei algumas opções no estoque real:\n\n${firstItems}\n\nVou te mandar as fotos e detalhes para você avaliar.`;
+          } else {
+            aiResponse = `Consultei o estoque real agora e não encontrei uma opção exata com esses dados. Me fala se você aceita ver modelos parecidos ou uma faixa de valor próxima?`;
+          }
         }
       } catch (bndvErr) {
         console.error('[BNDV] Erro ao processar tool call:', bndvErr);
+        if (!aiResponse) {
+          aiResponse = `Estou com uma instabilidade ao consultar o estoque agora. Me confirma o modelo ou faixa de valor que eu verifico as opções mais próximas para você.`;
+        }
       }
     }
 
@@ -1881,6 +1899,16 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           const followupData = await followupRes.json();
           const finalText = followupData.choices?.[0]?.message?.content || '';
           if (finalText) aiResponse = finalText;
+        } else {
+          const errText = await followupRes.text();
+          console.error(`[Transfer-Tool] follow-up OpenAI erro ${followupRes.status}: ${errText.slice(0, 500)}`);
+          if (transferResult.success) {
+            aiResponse = `Pronto! Acabei de passar todos os seus dados para ${transferResult.vendedor_nome}. Ele vai te chamar aqui em instantes para dar continuidade.`;
+          } else if (transferResult.error === 'checklist_incompleto') {
+            aiResponse = `Antes de te passar para o consultor, preciso confirmar: ${transferResult.missing_fields?.join(', ')}.`;
+          } else {
+            aiResponse = `Um momento, vou acionar nosso consultor para te atender.`;
+          }
         }
       } catch (followupErr) {
         console.error('[Transfer-Tool] erro no follow-up OpenAI:', followupErr);
@@ -2220,15 +2248,25 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             const secondData = await secondRes.json();
             aiResponse = secondData.choices?.[0]?.message?.content || '';
             console.log(`[Webhook] Resposta final capturada: ${aiResponse}`);
+          } else {
+            const errText = await secondRes.text();
+            console.error(`[Webhook] Second OpenAI erro ${secondRes.status}: ${errText.slice(0, 500)}`);
+            aiResponse = `Claro! Me conta qual modelo ou tipo de carro você está procurando para eu te ajudar melhor.`;
           }
         }
       } catch (err) {
         console.error("[Webhook] Erro no Handoff/CRM", err)
+        if (!aiResponse) {
+          aiResponse = `Claro! Me conta qual modelo ou tipo de carro você está procurando para eu te ajudar melhor.`;
+        }
       }
     }
   }
 
-  if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders })
+  if (!aiResponse) {
+    console.warn('[Webhook] Sem resposta final da IA. Usando fallback seguro para nao deixar o lead sem retorno.');
+    aiResponse = 'Certo! Me conta um pouco mais sobre o que você procura para eu te ajudar melhor.';
+  }
 
   // Salvar no histórico
   await supabase.from('wa_chat_history').insert({
