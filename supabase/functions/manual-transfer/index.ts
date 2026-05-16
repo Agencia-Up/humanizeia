@@ -109,6 +109,11 @@ function maybeLeadIdLooksLikeName(value: any) {
   return text.length >= 3 && !/^[0-9a-f-]{20,}$/i.test(text);
 }
 
+function extractUuid(value: any) {
+  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return match?.[0] || null;
+}
+
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
 async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member: any) {
   try {
@@ -232,10 +237,11 @@ Deno.serve(async (req) => {
     // 1. Fetch lead details. Primeiro busca por ID; depois valida o acesso.
     // Isso evita falso "Lead not found" quando o usuário logado é vendedor
     // ou quando o lead pertence ao master mas o effectiveUserId foi resolvido diferente.
+    const canonicalLeadId = extractUuid(leadId) || leadId;
     let { data: lead, error: leadErr } = await supabase
       .from("ai_crm_leads")
       .select("*, agent:wa_ai_agents(*)")
-      .eq("id", leadId)
+      .eq("id", canonicalLeadId)
       .maybeSingle();
 
     if (!lead && remoteJid) {
