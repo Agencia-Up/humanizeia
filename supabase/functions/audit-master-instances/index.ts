@@ -130,15 +130,22 @@ Deno.serve(async (req) => {
     // Resolve master_id (vendedor → busca via ai_team_members)
     const { data: tmRows } = await supabaseService
       .from('ai_team_members')
-      .select('user_id')
+      .select('id, user_id')
       .eq('auth_user_id', user.id)
       .limit(1);
     const masterId = (tmRows && tmRows.length > 0) ? tmRows[0].user_id : user.id;
+    const sellerMemberIds = (tmRows || []).map((row: any) => row.id).filter(Boolean);
 
-    const { data: instances, error: instErr } = await supabaseService
+    let instanceQuery = supabaseService
       .from('wa_instances')
       .select('id, instance_name, friendly_name, api_url, api_key_encrypted, provider, status')
       .eq('user_id', masterId);
+
+    if (sellerMemberIds.length > 0 && masterId !== user.id) {
+      instanceQuery = instanceQuery.in('seller_member_id', sellerMemberIds);
+    }
+
+    const { data: instances, error: instErr } = await instanceQuery;
     if (instErr) throw new Error(instErr.message);
 
     const report: Array<{

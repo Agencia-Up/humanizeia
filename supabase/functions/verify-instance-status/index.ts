@@ -37,14 +37,23 @@ Deno.serve(async (req) => {
     const { instance_id } = await req.json();
 
     // Get instance from DB — instâncias são PER-USER, vendedor verifica as DELE
+    const { data: sellerRows } = await supabase
+      .from('ai_team_members')
+      .select('id, user_id')
+      .eq('auth_user_id', user.id)
+      .eq('is_active', true);
+    const sellerMemberIds = new Set((sellerRows || []).map((row: any) => row.id));
+
     const { data: instance, error: dbError } = await supabase
       .from('wa_instances')
-      .select('id, instance_name, provider, status, is_active, api_url, api_key_encrypted')
+      .select('id, user_id, seller_member_id, instance_name, provider, status, is_active, api_url, api_key_encrypted')
       .eq('id', instance_id)
-      .eq('user_id', user.id)
       .single();
 
-    if (dbError || !instance) {
+    const authorizedAsMaster = instance?.user_id === user.id;
+    const authorizedAsSeller = !!instance?.seller_member_id && sellerMemberIds.has(instance.seller_member_id);
+
+    if (dbError || !instance || (!authorizedAsMaster && !authorizedAsSeller)) {
       return new Response(JSON.stringify({ error: 'Instância não encontrada' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -82,23 +91,28 @@ Deno.serve(async (req) => {
     
     let realStatus = 'disconnected';
     let isConnected = false;
+    let stateData: any = {};
 
     try {
-      let stateRes = await fetch(
-        `${baseUrl}/instance/connectionState/${instance.instance_name}`,
-        { method: 'GET', headers }
-      );
+      let stateRes = await fetch(`${baseUrl}/instance/status`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!stateRes.ok || stateRes.status === 404) {
+        console.log(`[verify-instance] GET /instance/status failed (${stateRes.status}), trying connectionState`);
+        stateRes = await fetch(
+          `${baseUrl}/instance/connectionState/${instance.instance_name}`,
+          { method: 'GET', headers }
+        );
+      }
 
       // If connectionState fails, fallback to POST /instance/connect like in get-qrcode (Uazapi feature)
       if (!stateRes.ok || stateRes.status === 404) {
-        console.log(`[verify-instance] GET connectionState failed (${stateRes.status}), trying POST /instance/connect`);
+        console.log(`[verify-instance] connectionState failed (${stateRes.status}), trying POST /instance/connect`);
         stateRes = await fetch(`${baseUrl}/instance/connect`, {
           method: 'POST',
-          headers: {
-              'token': instKey,
-              'apikey': instKey,
-              'Content-Type': 'application/json'
-          },
+          headers,
           body: JSON.stringify({})
         });
       }
@@ -106,17 +120,15 @@ Deno.serve(async (req) => {
       const rawText = await stateRes.text();
       console.log(`[verify-instance] ${instance.instance_name} raw response from Uazapi:`, rawText.substring(0, 300));
       
-      let stateData: any = {};
       try {
         stateData = JSON.parse(rawText);
       } catch {}
 
-      if (stateRes.ok || stateData.state || stateData.status || stateData.connected) {
+      if (stateRes.ok || stateData.state || stateData.status || stateData.connected || stateData.instance) {
         const state = String(
-          stateData?.state || 
           stateData?.instance?.state || 
-          stateData?.status || 
           stateData?.instance?.status || 
+          stateData?.state ||
           ''
         ).toLowerCase();
         
@@ -130,7 +142,9 @@ Deno.serve(async (req) => {
                     stateData?.connected === true || 
                     stateData?.instance?.connected === true || 
                     stateData?.loggedIn === true || 
-                    stateData?.instance?.loggedIn === true;
+                    stateData?.instance?.loggedIn === true ||
+                    stateData?.status?.connected === true ||
+                    stateData?.status?.loggedIn === true;
 
         if (isConnected) {
           realStatus = state === 'connecting' ? 'connecting' : 'connected';
@@ -158,6 +172,7 @@ Deno.serve(async (req) => {
         stateData?.instance?.jid ||
         stateData?.owner ||
         stateData?.jid ||
+        stateData?.status?.jid ||
         stateData?.phoneNumber ||
         stateData?.user?.id ||
         stateData?.instance?.wuid ||

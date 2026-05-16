@@ -122,7 +122,11 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     setStep('qrcode');
     try {
       const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
-        body: { user_id: user!.id, instance_name: slug },
+        body: {
+          user_id: effectiveOwnerId || user!.id,
+          instance_name: slug,
+          seller_member_id: effectiveSellerMemberId,
+        },
       });
       if (error) throw error;
       if (data?.connected) {
@@ -195,7 +199,11 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     pollingRef.current = setInterval(async () => {
       try {
         const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
-          body: { user_id: user!.id, instance_name: slug },
+          body: {
+            user_id: effectiveOwnerId || user!.id,
+            instance_name: slug,
+            seller_member_id: effectiveSellerMemberId,
+          },
         });
         if (error) return;
         if (data?.connected) {
@@ -220,10 +228,11 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
           .from('wa_instances')
           .select('id')
           .eq('instance_name', activeSlug)
+          .eq('user_id', effectiveOwnerId || user.id)
           .maybeSingle();
         if (inst?.id) {
           await supabase.functions.invoke('sync-evolution-webhook', {
-            body: { instance_id: inst.id, user_id: user.id },
+            body: { instance_id: inst.id, user_id: effectiveOwnerId || user.id },
           });
           console.log('[EvolutionConnect] Webhook sincronizado para', activeSlug);
         }
@@ -237,7 +246,11 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     if (!activeSlug) return;
     try {
       const { data } = await supabase.functions.invoke('get-evolution-qrcode', {
-        body: { user_id: user!.id, instance_name: activeSlug },
+        body: {
+          user_id: effectiveOwnerId || user!.id,
+          instance_name: activeSlug,
+          seller_member_id: effectiveSellerMemberId,
+        },
       });
       if (data?.connected) {
         handleSuccess();
