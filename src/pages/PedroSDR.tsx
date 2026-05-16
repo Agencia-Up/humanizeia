@@ -821,7 +821,10 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       if (isSeller && memberIds.length > 0) {
         leadsQuery.in('assigned_to_id', memberIds);
       } else {
-        leadsQuery.limit(100);
+        // Master vê até 500 leads (margem segura). Antes era 100 e escondia
+        // leads das colunas Inativo/Qualificado/Negociação/etc quando o volume
+        // de "novo" passava de 100. Index em (user_id, created_at) garante perf.
+        leadsQuery.limit(500);
       }
       const agentsQuery = (supabase as any)
         .from('wa_ai_agents')
