@@ -96,6 +96,19 @@ async function canAccessLeadOwner(supabase: any, userId: string, effectiveUserId
   return !!memberData?.id;
 }
 
+function digitsOnly(value: any) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function maybeLeadIdLooksLikePhone(value: any) {
+  return digitsOnly(value).length >= 8;
+}
+
+function maybeLeadIdLooksLikeName(value: any) {
+  const text = String(value || "").trim();
+  return text.length >= 3 && !/^[0-9a-f-]{20,}$/i.test(text);
+}
+
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
 async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member: any) {
   try {
@@ -199,6 +212,23 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Busca o vendedor cedo para termos um dono confiavel mesmo quando o
+    // frontend antigo envia um leadId incorreto/incompleto.
+    const { data: memberCandidate, error: memberCandidateErr } = await supabase
+      .from("ai_team_members")
+      .select("*")
+      .eq("id", memberId)
+      .maybeSingle();
+
+    if (memberCandidateErr || !memberCandidate) {
+      return new Response(JSON.stringify({ error: "Member not found" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const inferredOwnerUserId = bodyOwnerUserId || memberCandidate.user_id || effectiveUserId;
+
     // 1. Fetch lead details. Primeiro busca por ID; depois valida o acesso.
     // Isso evita falso "Lead not found" quando o usuário logado é vendedor
     // ou quando o lead pertence ao master mas o effectiveUserId foi resolvido diferente.
@@ -216,7 +246,7 @@ Deno.serve(async (req) => {
         .order("last_interaction_at", { ascending: false, nullsFirst: false })
         .limit(1);
       if (agentId) leadQuery = leadQuery.eq("agent_id", agentId);
-      if (bodyOwnerUserId) leadQuery = leadQuery.eq("user_id", bodyOwnerUserId);
+      if (inferredOwnerUserId) leadQuery = leadQuery.eq("user_id", inferredOwnerUserId);
 
       const fallback = await leadQuery.maybeSingle();
       lead = fallback.data;
@@ -226,11 +256,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (!lead && leadName && bodyOwnerUserId) {
+    if (!lead && leadName && inferredOwnerUserId) {
       const fallback = await supabase
         .from("ai_crm_leads")
         .select("*, agent:wa_ai_agents(*)")
-        .eq("user_id", bodyOwnerUserId)
+        .eq("user_id", inferredOwnerUserId)
         .eq("lead_name", leadName)
         .order("last_interaction_at", { ascending: false, nullsFirst: false })
         .limit(1)
@@ -242,15 +272,89 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Compatibilidade com bundles antigos: se o botao antigo enviou telefone,
+    // remote_jid ou nome no campo leadId, tenta localizar dentro do mesmo dono.
+    if (!lead && inferredOwnerUserId && maybeLeadIdLooksLikePhone(leadId)) {
+      const phoneTail = digitsOnly(leadId).slice(-8);
+      let phoneQuery = supabase
+        .from("ai_crm_leads")
+        .select("*, agent:wa_ai_agents(*)")
+        .eq("user_id", inferredOwnerUserId)
+        .ilike("remote_jid", `%${phoneTail}%`)
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .limit(2);
+      if (agentId) phoneQuery = phoneQuery.eq("agent_id", agentId);
+
+      const fallback = await phoneQuery;
+      leadErr = fallback.error;
+      if (!leadErr && fallback.data?.length === 1) {
+        lead = fallback.data[0];
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback por telefone, lead=${lead.id}`);
+      }
+    }
+
+    if (!lead && inferredOwnerUserId && maybeLeadIdLooksLikeName(leadId)) {
+      let nameQuery = supabase
+        .from("ai_crm_leads")
+        .select("*, agent:wa_ai_agents(*)")
+        .eq("user_id", inferredOwnerUserId)
+        .ilike("lead_name", `%${String(leadId).trim()}%`)
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .limit(2);
+      if (agentId) nameQuery = nameQuery.eq("agent_id", agentId);
+
+      const fallback = await nameQuery;
+      leadErr = fallback.error;
+      if (!leadErr && fallback.data?.length === 1) {
+        lead = fallback.data[0];
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback por nome, lead=${lead.id}`);
+      }
+    }
+
+    // Ultimo recurso seguro para o caso atual do CRM ao vivo: se o payload antigo
+    // nao identifica o lead, mas existe exatamente um lead aberto atribuido ao
+    // vendedor selecionado, usa esse registro. Se houver mais de um, aborta para
+    // evitar transferir a pessoa errada.
+    if (!lead && inferredOwnerUserId) {
+      const fallback = await supabase
+        .from("ai_crm_leads")
+        .select("*, agent:wa_ai_agents(*)")
+        .eq("user_id", inferredOwnerUserId)
+        .eq("assigned_to_id", memberCandidate.id)
+        .in("status", ["novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado", "em_atendimento"])
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(2);
+
+      leadErr = fallback.error;
+      if (!leadErr && fallback.data?.length === 1) {
+        lead = fallback.data[0];
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback unico por vendedor=${memberCandidate.id}, lead=${lead.id}`);
+      } else if (!leadErr && (fallback.data?.length || 0) > 1) {
+        console.error("[manual-transfer] Lead ambiguo por vendedor", {
+          leadId,
+          memberId,
+          candidates: fallback.data.map((item: any) => item.id),
+        });
+        return new Response(JSON.stringify({
+          error: "Nao consegui identificar o lead exato. Atualize a pagina com Ctrl+F5 e tente novamente.",
+          details: { leadId, memberId, candidateCount: fallback.data.length },
+        }), {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     if (leadErr || !lead) {
-      console.error("[manual-transfer] Lead not found", { leadId, remoteJid, agentId, leadName, bodyOwnerUserId, leadErr });
-      return new Response(JSON.stringify({ error: "Lead not found", details: { leadId, remoteJid, agentId, leadName } }), {
+      console.error("[manual-transfer] Lead not found", { leadId, remoteJid, agentId, leadName, bodyOwnerUserId, inferredOwnerUserId, memberId, leadErr });
+      return new Response(JSON.stringify({ error: "Lead not found", details: { leadId, remoteJid, agentId, leadName, memberId } }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const ownerUserId = lead.user_id || bodyOwnerUserId || effectiveUserId;
+    const ownerUserId = lead.user_id || inferredOwnerUserId || effectiveUserId;
     const canAccess = await canAccessLeadOwner(supabase, userId, effectiveUserId, ownerUserId);
     if (!canAccess) {
       return new Response(JSON.stringify({ error: "Sem permissao para transferir este lead" }), {
@@ -259,15 +363,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 2. Fetch member details
-    const { data: member, error: memberErr } = await supabase
-      .from("ai_team_members")
-      .select("*")
-      .eq("id", memberId)
-      .eq("user_id", ownerUserId)
-      .single();
-
-    if (memberErr || !member) {
+    // 2. Validate member details
+    const member = memberCandidate;
+    if (member.user_id !== ownerUserId) {
       return new Response(JSON.stringify({ error: "Member not found" }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
