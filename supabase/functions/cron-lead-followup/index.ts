@@ -38,6 +38,10 @@ function createSupabaseClient(url: string, key: string) {
         _filters.push({ col, op: 'lte', val: String(val) });
         return builder;
       },
+      gt(col: string, val: any) {
+        _filters.push({ col, op: 'gt', val: String(val) });
+        return builder;
+      },
       is(col: string, val: any) {
         _filters.push({ col, op: 'is', val: String(val) });
         return builder;
@@ -348,7 +352,7 @@ Deno.serve(async (req) => {
       // Buscar transferencias pendentes onde o vendedor NAO confirmou em 10 minutos
       const { data: pendingTransfers } = await supabase
         .from('ai_lead_transfers')
-        .select('*, lead:ai_crm_leads(*, wa_ai_agents(id, name, instance_id, instance_ids))')
+        .select('*, lead:ai_crm_leads(*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids))')
         .eq('is_confirmed', false)
         .eq('transfer_status', 'pending')
         .lte('created_at', tenMinsAgo); // A notificacao foi criada ha mais de 10 minutos
@@ -596,7 +600,7 @@ Deno.serve(async (req) => {
     // ════════════════════════════════════════════════════════════════
     const { data: leads, error } = await supabase
       .from('ai_crm_leads')
-      .select('*, wa_ai_agents(id, name, instance_id, instance_ids)')
+      .select('*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids)')
       .in('status', ['novo', 'interessado'])
       .is('assigned_to_id', null)
       .not('last_agent_reply_at', 'is', null)

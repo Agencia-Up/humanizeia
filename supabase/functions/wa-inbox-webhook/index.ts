@@ -556,7 +556,14 @@ function parseStoredIntegrationCredentials(raw: string | null) {
 }
 
 function normalizeBndvText(value?: string | null) {
-  return String(value || "").toLowerCase().trim();
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/-/g, " ")
+    .replace(/[^\w\s.]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function bndvIncludes(haystack?: string | null, needle?: string | null) {
@@ -564,10 +571,8 @@ function bndvIncludes(haystack?: string | null, needle?: string | null) {
   return normalizeBndvText(haystack).includes(normalizeBndvText(needle));
 }
 
-function bndvMatchesQuery(vehicle: any, query?: string | null) {
-  if (!query || !String(query).trim()) return true;
-
-  const indexed = [
+function buildBndvVehicleText(vehicle: any) {
+  return normalizeBndvText([
     vehicle?.markName,
     vehicle?.modelName,
     vehicle?.versionName,
@@ -575,9 +580,53 @@ function bndvMatchesQuery(vehicle: any, query?: string | null) {
     vehicle?.fuelName,
     vehicle?.transmissionName,
     vehicle?.year?.toString?.(),
-  ].filter(Boolean).join(" ").toLowerCase();
+  ].filter(Boolean).join(" "));
+}
 
-  return indexed.includes(normalizeBndvText(query));
+function inferRequestedVehicleType(filters: any): "carro" | "moto" | "qualquer" {
+  const explicit = normalizeBndvText(filters?.tipo_veiculo || filters?.tipo || filters?.categoria);
+  if (["carro", "moto", "qualquer"].includes(explicit)) return explicit as "carro" | "moto" | "qualquer";
+  if (["automovel", "automoveis", "veiculo", "veiculos", "suv", "sedan", "hatch", "picape", "pickup", "caminhonete"].includes(explicit)) return "carro";
+  if (["motocicleta", "motocicletas", "scooter"].includes(explicit)) return "moto";
+
+  const searchText = normalizeBndvText([
+    filters?.query,
+    filters?.ad_context,
+    filters?.contexto_anuncio,
+    filters?.marca,
+    filters?.modelo,
+    filters?.versao,
+  ].filter(Boolean).join(" "));
+
+  if (/\b(moto|motos|motocicleta|motocicletas|scooter|biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|pop 100|pop 110|elite)\b/.test(searchText)) {
+    return "moto";
+  }
+
+  if (/\b(carro|carros|automovel|automoveis|veiculo|veiculos|suv|sedan|hatch|picape|pickup|caminhonete|camionete)\b/.test(searchText)) {
+    return "carro";
+  }
+
+  return "qualquer";
+}
+
+function isLikelyMotorcycle(vehicle: any) {
+  const indexed = buildBndvVehicleText(vehicle);
+  const motorcycleBrands = /\b(yamaha|kawasaki|shineray|harley|davidson|dafra|triumph|ducati|ktm|bajaj|haojue|royal enfield)\b/;
+  const motorcycleModels = /\b(biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|cb 300|cb300|cb 500|cb500|cbr|pop 100|pop 110|elite|scooter|crypton|mt 03|mt03)\b/;
+  return motorcycleModels.test(indexed) || motorcycleBrands.test(indexed);
+}
+
+function passesRequestedVehicleType(vehicle: any, requestedType: "carro" | "moto" | "qualquer") {
+  if (requestedType === "qualquer") return true;
+  const moto = isLikelyMotorcycle(vehicle);
+  if (requestedType === "moto") return moto;
+  return !moto;
+}
+
+function bndvMatchesQuery(vehicle: any, query?: string | null) {
+  if (!query || !String(query).trim()) return true;
+
+  return buildBndvVehicleText(vehicle).includes(normalizeBndvText(query));
 }
 
 async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
@@ -658,9 +707,11 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     preco_max,
     km_max,
     limite,
+    tipo_veiculo,
   } = filters || {};
 
   const items = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
+  const requestedVehicleType = inferRequestedVehicleType({ ...filters, tipo_veiculo });
   const filtered = items
     .filter((vehicle: any) => {
       const year = Number(vehicle?.year || 0);
@@ -668,6 +719,7 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
       const mileage = Number(vehicle?.km || 0);
 
       return (
+        passesRequestedVehicleType(vehicle, requestedVehicleType) &&
         bndvMatchesQuery(vehicle, query) &&
         bndvIncludes(vehicle?.markName, marca) &&
         bndvIncludes(vehicle?.modelName, modelo) &&
@@ -720,6 +772,7 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
   return {
     success: true,
     total: filtered.length,
+    tipo_veiculo_aplicado: requestedVehicleType,
     items: capped,
   };
 }
@@ -1461,6 +1514,9 @@ USE esta ferramenta sempre que o cliente perguntar sobre:
 IMPORTANTE:
 - Nunca invente estoque ou preco sem consultar a ferramenta.
 - Se nao encontrar veiculos, informe claramente e sugira alternativas do MESMO SEGMENTO.
+- Respeite o tipo pedido pelo cliente: se ele pedir "carro(s)", consulte com tipo_veiculo="carro" e NAO ofereca motos. Se ele pedir "moto(s)", consulte com tipo_veiculo="moto" e NAO ofereca carros.
+- Se o cliente pedir apenas uma faixa de preco para carros, use preco_max e tipo_veiculo="carro".
+- Se o cliente mencionar um modelo especifico, use marca/modelo/query e mantenha o tipo coerente com o pedido.
 
 FOTOS DE VEICULOS:
 Quando a consulta de estoque retornar veiculos, cada veiculo tera um campo "fotos" com URLs de imagens reais.
@@ -1600,6 +1656,11 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
               combustivel: { type: "string", description: "CombustÃ­vel desejado, ex: Flex, Diesel." },
               cambio: { type: "string", description: "Tipo de cÃ¢mbio, ex: AutomÃ¡tico, Manual." },
               cor: { type: "string", description: "Cor desejada, se o cliente pedir." },
+              tipo_veiculo: {
+                type: "string",
+                enum: ["carro", "moto", "qualquer"],
+                description: "Tipo de veiculo pedido pelo cliente. Use 'carro' para carro/carros/veiculo automotivo, 'moto' para moto/motocicleta/scooter, e 'qualquer' apenas se o cliente aceitar ambos."
+              },
               ano_min: { type: "number", description: "Ano mÃ­nimo desejado." },
               ano_max: { type: "number", description: "Ano mÃ¡ximo desejado." },
               preco_max: { type: "number", description: "PreÃ§o mÃ¡ximo desejado pelo cliente." },
