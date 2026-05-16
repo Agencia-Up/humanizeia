@@ -103,6 +103,7 @@ const marcosSubItems: { title: string; url: string; icon: any; featureKey: keyof
   { title: 'Contatos',        url: '/whatsapp/contacts', icon: Users,         featureKey: 'marcos_contatos' },
   { title: 'Disparo em Massa',url: '/whatsapp/broadcast',icon: Send,          featureKey: 'marcos_disparo' },
   { title: 'Inbox',           url: '/whatsapp/inbox',    icon: Inbox,         featureKey: 'marcos_inbox' },
+  { title: 'Instâncias',      url: '/whatsapp/instances',icon: Smartphone,    featureKey: 'marcos_instancias' },
   { title: 'Automações',      url: '/whatsapp/automations',icon: Zap,         featureKey: 'marcos_automacoes' },
 ];
 
