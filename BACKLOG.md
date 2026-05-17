@@ -75,8 +75,15 @@
   - Implementado: `_shared/qualification/bndvFallback.ts` (canônico, 14 testes)
     + inline + refatoração de `consultarEstoqueBndv` extraindo
     `applyBndvFiltering` e `buildBndvItem` como helpers reusáveis
-- [ ] **IT-2.4** — Tool `transferir_para_vendedor` V2 (motivo + score + briefing JSON)
+- [x] **IT-2.4** — Tool `transferir_para_vendedor` V2 enriquecida
   - Flag: `PEDRO_FF_HANDOFF_TOOL_V2`
+  - Schema da tool estendido com 3 campos OPCIONAIS (backward-compat):
+    `motivo_categoria` (enum), `urgencia` (enum), `proxima_acao_sugerida`
+  - V2 do briefing inclui: urgência (com emoji 🔴🟠🟡🟢), score+tier
+    (IT-2.2), motivo categórico, próxima ação sugerida (IT-2.1 BANT)
+  - V1 (`buildBriefingForSeller`) mantida intacta como fallback
+  - Implementado: `_shared/handoff/handoffBriefingV2.ts` (canônico, 18 testes)
+    + inline no `uazapi-webhook`
 
 ## Fase 3 — Memória
 

@@ -744,6 +744,97 @@ function getQualificationScore(state: any): number {
   return calcQualificationScore(state);
 }
 
+// ─── Handoff Briefing V2 (INLINED from _shared/handoff/handoffBriefingV2.ts)
+// IT-2.4: briefing enriquecido com motivo categorico, urgencia, score, BANT.
+// V1 (buildBriefingForSeller) mantida; V2 usada quando flag ON.
+// Fonte canônica + testes: supabase/functions/_shared/handoff/handoffBriefingV2.ts
+type HandoffMotivoCategoria = 'lead_qualificado' | 'pediu_humano' | 'objecao_complexa' | 'negociacao_preco' | 'fora_escopo' | 'erro_agente';
+type HandoffUrgencia = 'baixa' | 'media' | 'alta' | 'imediata';
+type HandoffTransferArgs = {
+  motivo: string;
+  resumo_breve?: string;
+  motivo_categoria?: HandoffMotivoCategoria;
+  urgencia?: HandoffUrgencia;
+  proxima_acao_sugerida?: string;
+};
+
+const HANDOFF_URGENCIA_EMOJI: Record<HandoffUrgencia, string> = {
+  imediata: '🔴',
+  alta: '🟠',
+  media: '🟡',
+  baixa: '🟢',
+};
+const HANDOFF_CATEGORIA_LABEL: Record<HandoffMotivoCategoria, string> = {
+  lead_qualificado: 'Lead qualificado (BNA completo)',
+  pediu_humano: 'Cliente pediu humano',
+  objecao_complexa: 'Objeção complexa',
+  negociacao_preco: 'Negociação de preço',
+  fora_escopo: 'Fora do escopo do agente',
+  erro_agente: 'Agente travado / erro',
+};
+
+function buildEnrichedBriefing(input: {
+  state: any;
+  leadName: string;
+  leadPhone: string;
+  agentName: string;
+  transferArgs: HandoffTransferArgs;
+  scoreInfo?: { score: number; tier: string };
+  bantNextSuggestedAsk?: string;
+}): string {
+  const { state, leadName, leadPhone, agentName, transferArgs, scoreInfo, bantNextSuggestedAsk } = input;
+  const s = state || {};
+  const lines: string[] = [];
+  const urgencia = transferArgs.urgencia ?? 'media';
+  const emoji = HANDOFF_URGENCIA_EMOJI[urgencia] || '🟡';
+  const displayName = s.lead?.nome_completo || s.lead?.nome || leadName || 'Lead';
+  lines.push(`${emoji} *LEAD QUALIFICADO — ${displayName}* (urgência: ${urgencia})`);
+  lines.push(`📱 Telefone: ${s.lead?.telefone || leadPhone}`);
+  if (s.lead?.cidade) lines.push(`🏙️ Cidade: ${s.lead.cidade}`);
+  if (scoreInfo) lines.push(`📊 Score: ${scoreInfo.score}/100 (${scoreInfo.tier})`);
+  lines.push('');
+  if (transferArgs.motivo_categoria) {
+    const catLabel = HANDOFF_CATEGORIA_LABEL[transferArgs.motivo_categoria] || transferArgs.motivo_categoria;
+    lines.push(`🎯 *Motivo:* ${catLabel}`);
+  }
+  if (transferArgs.motivo) lines.push(`💬 *Detalhe:* ${transferArgs.motivo}`);
+  if (transferArgs.resumo_breve && transferArgs.resumo_breve !== transferArgs.motivo) {
+    lines.push(`📝 *Resumo:* ${transferArgs.resumo_breve}`);
+  }
+  lines.push('');
+  if (s.interesse?.modelo_desejado) {
+    const conf = [s.interesse.configuracao, s.interesse.combustivel, s.interesse.cambio].filter(Boolean).join(', ');
+    lines.push(`🚗 *Interesse:* ${s.interesse.modelo_desejado}${conf ? ` (${conf})` : ''}`);
+  }
+  if (s.veiculo_apresentado?.ja_apresentado) {
+    const vp = s.veiculo_apresentado;
+    lines.push(`📋 *Veículo apresentado:* ${vp.modelo || ''} ${vp.ano || ''}${vp.preco ? ` — R$ ${vp.preco}` : ''}`);
+  }
+  if (s.negociacao?.forma_pagamento) lines.push(`💰 *Forma de pagamento:* ${s.negociacao.forma_pagamento}`);
+  if (s.negociacao?.valor_entrada) lines.push(`💵 *Entrada:* ${s.negociacao.valor_entrada}`);
+  if (s.negociacao?.tem_troca && s.negociacao?.carro_troca) {
+    const ct = s.negociacao.carro_troca;
+    const trocaParts = [ct.modelo, ct.ano, ct.configuracao, ct.cambio].filter(Boolean).join(' ');
+    lines.push(`🔄 *Troca:* ${trocaParts || 'sim'}${ct.status ? ` (${ct.status})` : ''}`);
+  }
+  if (s.atendimento?.pode_visitar_loja === false) {
+    lines.push(`📍 *Visita:* NÃO pode visitar — atendimento REMOTO`);
+  }
+  if (s.atendimento?.objecoes && s.atendimento.objecoes.length > 0) {
+    lines.push(`⚠️ *Objeções:* ${s.atendimento.objecoes.join(', ')}`);
+  }
+  if (s.lead?.acompanhante_decisao) lines.push(`👥 *Decisão envolve:* ${s.lead.acompanhante_decisao}`);
+  if (transferArgs.proxima_acao_sugerida || bantNextSuggestedAsk) {
+    lines.push('');
+    lines.push(`👉 *Próxima ação sugerida:* ${transferArgs.proxima_acao_sugerida || bantNextSuggestedAsk}`);
+  }
+  lines.push('');
+  lines.push(`📲 *Atender:* https://wa.me/${(s.lead?.telefone || leadPhone || '').replace(/\D/g, '')}`);
+  lines.push('');
+  lines.push(`_Briefing V2 gerado pelo Pedro SDR (${agentName})_`);
+  return lines.join('\n');
+}
+
 function buildBriefingForSeller(state: any, leadName: string, leadPhone: string, agentName: string): string {
   const lines: string[] = [];
   lines.push(`🆕 *LEAD QUALIFICADO — ${state?.lead?.nome_completo || state?.lead?.nome || leadName || 'Lead'}*`);
@@ -1676,6 +1767,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             resumo_breve: {
               type: "string",
               description: "1-2 frases resumindo o que o cliente quer e o que ainda falta. Será usado no briefing pro vendedor."
+            },
+            motivo_categoria: {
+              type: "string",
+              enum: ["lead_qualificado", "pediu_humano", "objecao_complexa", "negociacao_preco", "fora_escopo", "erro_agente"],
+              description: "Categoria do motivo (V2 — opcional mas recomendado): lead_qualificado=BNA completo / pediu_humano=cliente solicitou humano / objecao_complexa=requer negociação / negociacao_preco=desconto/condição / fora_escopo=assunto não-veicular / erro_agente=agente travado."
+            },
+            urgencia: {
+              type: "string",
+              enum: ["baixa", "media", "alta", "imediata"],
+              description: "Urgência da transferência (V2 — opcional). imediata=cliente vai fechar agora; alta=quente; media=padrão; baixa=pode esperar."
+            },
+            proxima_acao_sugerida: {
+              type: "string",
+              description: "1 linha com sugestão concreta do que o vendedor deve fazer primeiro (V2 — opcional). Ex: 'Ligar em 30min com proposta de R$ 95.000' ou 'Mandar foto da traseira do Strada antes de ligar'."
             }
           },
           required: ["motivo"]
@@ -2286,13 +2391,29 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 summary: transferArgs.resumo_breve || null,
               }).eq('id', leadRow.id);
 
-              // 5. Briefing estruturado pro vendedor
-              const briefing = buildBriefingForSeller(
-                conversationState,
-                pushName || conversationState?.lead?.nome || 'Lead',
-                phoneNumber,
-                agent.name || 'Pedro SDR',
-              );
+              // 5. Briefing estruturado pro vendedor (IT-2.4: V2 quando flag on)
+              let briefing: string;
+              if (isPedroFeatureEnabled('HANDOFF_TOOL_V2')) {
+                const scoreResult = calcLeadScoreV2(conversationState);
+                const bant = deriveBantFromState(conversationState);
+                briefing = buildEnrichedBriefing({
+                  state: conversationState,
+                  leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                  leadPhone: phoneNumber,
+                  agentName: agent.name || 'Pedro SDR',
+                  transferArgs: transferArgs as HandoffTransferArgs,
+                  scoreInfo: { score: scoreResult.score, tier: scoreResult.tier },
+                  bantNextSuggestedAsk: bant.nextSuggestedAsk,
+                });
+                console.log(`[Transfer-Tool] briefing V2 enriquecido (score=${scoreResult.score}/${scoreResult.tier})`);
+              } else {
+                briefing = buildBriefingForSeller(
+                  conversationState,
+                  pushName || conversationState?.lead?.nome || 'Lead',
+                  phoneNumber,
+                  agent.name || 'Pedro SDR',
+                );
+              }
 
               let sellerNum = String(chosenSeller.whatsapp_number || '').replace(/\D/g, '');
               if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;

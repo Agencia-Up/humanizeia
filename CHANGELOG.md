@@ -15,6 +15,33 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **IT-2.4 — Handoff Tool V2** (qualificação do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/handoff/handoffBriefingV2.ts`
+    com `buildEnrichedBriefing(input)` e types
+    `HandoffMotivoCategoria` / `HandoffUrgencia` / `HandoffTransferArgs`.
+  - **Schema da tool `transferir_para_vendedor` estendido** com 3 campos
+    OPCIONAIS (backward-compat — V1 continua funcionando):
+    - `motivo_categoria`: enum `lead_qualificado | pediu_humano |
+      objecao_complexa | negociacao_preco | fora_escopo | erro_agente`
+    - `urgencia`: enum `baixa | media | alta | imediata` (default `media`)
+    - `proxima_acao_sugerida`: string livre pra orientar o vendedor
+  - V2 do briefing inclui:
+    - Header com emoji de urgência (🔴 imediata / 🟠 alta / 🟡 media / 🟢 baixa)
+    - Score + tier (vindo do IT-2.2 `calcLeadScoreV2`)
+    - Motivo categórico com label legível
+    - Próxima ação sugerida (fallback pro `bantNextSuggestedAsk` do IT-2.1
+      quando o LLM não preenche)
+  - Cópia inline no `uazapi-webhook` (~95 linhas) + integração no bloco
+    de handoff: quando flag `PEDRO_FF_HANDOFF_TOOL_V2=true`, usa
+    `buildEnrichedBriefing`; senão usa `buildBriefingForSeller` V1.
+  - **V1 mantida intacta** (zero risco de regressão quando flag OFF).
+  - Suíte: 18 testes vitest cobrindo emoji por urgência, score, fallback
+    de bant, troca, objeções, link wa.me limpo, label V2 final.
+
+**Fase 2 completa.** 4 features (BANT, scoring, BNDV fallback, handoff V2),
+todas atrás de feature flag, todas com fallback bit-perfect pro
+comportamento atual quando OFF. Sem migration.
+
 - **IT-2.3 — BNDV fallback: oferecer similares quando 0 resultados**
   - Fonte canônica: `supabase/functions/_shared/qualification/bndvFallback.ts`
     com `relaxBndvFilters(filters)` (gera 1-5 tentativas progressivas) e
