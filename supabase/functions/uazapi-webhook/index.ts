@@ -839,6 +839,122 @@ function semanticMatch(needle: string, haystack: string): { matched: boolean; ex
   return { matched: false, exact: false };
 }
 
+// ─── BNDV Fallback Filters (INLINED from _shared/qualification/bndvFallback.ts)
+// IT-2.3: quando filtros originais retornam 0 itens, gera tentativas
+// progressivamente mais relaxadas. Mantém marca + modelo em TODAS as
+// tentativas. Fonte canônica + testes:
+// supabase/functions/_shared/qualification/bndvFallback.ts
+type BndvRelaxAttempt = { filters: any; description: string; level: number };
+
+function relaxBndvFilters(filters: any): BndvRelaxAttempt[] {
+  const hasRelaxable = !!filters?.cor || !!filters?.cambio || !!filters?.combustivel || !!filters?.versao || filters?.ano_min !== undefined || filters?.ano_max !== undefined;
+  if (!hasRelaxable) return [];
+  const base = { ...filters };
+  const attempts: BndvRelaxAttempt[] = [];
+  if (filters.cor) attempts.push({ filters: { ...base, cor: undefined }, description: 'removendo filtro de cor', level: 1 });
+  if (filters.cor || filters.cambio) attempts.push({ filters: { ...base, cor: undefined, cambio: undefined }, description: 'removendo cor e tipo de câmbio', level: 2 });
+  if (filters.cor || filters.cambio || filters.combustivel) attempts.push({ filters: { ...base, cor: undefined, cambio: undefined, combustivel: undefined }, description: 'removendo cor, câmbio e combustível', level: 3 });
+  if (filters.cor || filters.cambio || filters.combustivel || filters.versao) attempts.push({ filters: { ...base, cor: undefined, cambio: undefined, combustivel: undefined, versao: undefined }, description: 'removendo configurações específicas (versão, câmbio, etc.)', level: 4 });
+  attempts.push({ filters: { marca: filters.marca, modelo: filters.modelo, query: filters.query }, description: 'buscando qualquer versão da marca + modelo', level: 5 });
+
+  const seen = new Set<string>();
+  const deduped: BndvRelaxAttempt[] = [];
+  for (const a of attempts) {
+    const key = JSON.stringify({ marca: a.filters.marca, modelo: a.filters.modelo, versao: a.filters.versao, cambio: a.filters.cambio, combustivel: a.filters.combustivel, cor: a.filters.cor, ano_min: a.filters.ano_min, ano_max: a.filters.ano_max });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(a);
+  }
+  return deduped;
+}
+
+// Filtra a lista de veículos BNDV com base nos filtros — mesmo algoritmo
+// que rodava inline em consultarEstoqueBndv. Reusado pelo IT-2.3 fallback
+// pra rodar mais de uma passada sem refetch GraphQL.
+function applyBndvFiltering(vehicles: any[], filters: any, synonymsEnabled: boolean): any[] {
+  const STRING_FILTERS: Array<[string, string]> = [
+    ['marca', 'markName'],
+    ['modelo', 'modelName'],
+    ['versao', 'versionName'],
+    ['combustivel', 'fuelName'],
+    ['cambio', 'transmissionName'],
+    ['cor', 'color'],
+  ];
+  let result = vehicles.map((v: any) => {
+    let score = 0;
+    let kept = true;
+    for (const [filterKey, fieldKey] of STRING_FILTERS) {
+      const needle = filters[filterKey];
+      if (!needle) continue;
+      const haystack = v[fieldKey] || '';
+      if (synonymsEnabled) {
+        const r = semanticMatch(needle, haystack);
+        if (!r.matched) { kept = false; break; }
+        score += r.exact ? 2 : 1;
+      } else {
+        if (!bndvNormalize(haystack).includes(bndvNormalize(needle))) { kept = false; break; }
+        score += 2;
+      }
+    }
+    if (kept && filters.ano_min && (v.year || 0) < filters.ano_min) kept = false;
+    if (kept && filters.ano_max && (v.year || 9999) > filters.ano_max) kept = false;
+    if (kept && filters.preco_max && (v.saleValue || 0) > filters.preco_max) kept = false;
+    if (kept && filters.km_max && (v.km || 0) > filters.km_max) kept = false;
+    return { ...v, _filterScore: kept ? score : -1 };
+  }).filter((v: any) => v._filterScore >= 0)
+    .sort((a: any, b: any) => b._filterScore - a._filterScore);
+
+  if (filters.query) {
+    const queryTokens = bndvNormalize(filters.query).split(/\s+/).filter(Boolean);
+    result = result.map((v: any) => {
+      const text = bndvNormalize(`${v.markName} ${v.modelName} ${v.versionName} ${v.color} ${v.fuelName} ${v.transmissionName} ${v.year}`);
+      let queryScore = 0;
+      for (const token of queryTokens) {
+        if (text.includes(token)) queryScore++;
+      }
+      return { ...v, _score: (v._filterScore || 0) + queryScore };
+    }).filter((v: any) => (v._score || 0) > 0)
+      .sort((a: any, b: any) => b._score - a._score);
+  }
+  return result;
+}
+
+// Converte veículo BNDV cru em item formato result. Reusado pelo fallback.
+function buildBndvItem(v: any): any {
+  let principalImage = '';
+  const images: string[] = [];
+  if (v.pictureJs) {
+    try {
+      const pics = typeof v.pictureJs === 'string' ? JSON.parse(v.pictureJs) : v.pictureJs;
+      if (Array.isArray(pics)) {
+        for (const pic of pics) {
+          if (pic.Link) {
+            images.push(pic.Link);
+            if (pic.Principal === true || pic.Principal === 'true') principalImage = pic.Link;
+          }
+        }
+        if (!principalImage && images.length > 0) principalImage = images[0];
+      }
+    } catch {}
+  }
+  const preco = v.saleValue || 0;
+  const label = `${v.markName || ''} ${v.modelName || ''} ${v.versionName || ''} ${v.year || ''} - R$ ${preco.toLocaleString('pt-BR')}`.trim();
+  return {
+    marca: v.markName || '',
+    modelo: v.modelName || '',
+    versao: v.versionName || '',
+    ano: v.year || 0,
+    km: v.km || 0,
+    preco,
+    cor: v.color || '',
+    combustivel: v.fuelName || '',
+    cambio: v.transmissionName || '',
+    label,
+    principal_image: principalImage,
+    images,
+  };
+}
+
 // ─── BNDV Stock Search ──────────────────────────────────────────────────────
 async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
   try {
@@ -900,123 +1016,68 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     }
 
     const gqlData = await gqlRes.json();
-    let vehicles = gqlData?.data?.vehiclesBy || [];
-    console.log(`[BNDV] Total veículos retornados: ${vehicles.length}`);
+    const originalVehicles = gqlData?.data?.vehiclesBy || [];
+    console.log(`[BNDV] Total veículos retornados: ${originalVehicles.length}`);
 
-    // 3. Filter/rank results
-    // Lote 2 Fase 2: matching semântico com mapa de sinônimos (Roberta benchmark ERR_01/04).
+    // 3. Filter/rank results — usa helper applyBndvFiltering (extraído pra IT-2.3)
+    // Lote 2 Fase 2: matching semântico com mapa de sinônimos.
     // Feature flag pra rollback rápido sem redeploy: PEDRO_BNDV_SYNONYMS_ENABLED.
     const SYNONYMS_ENABLED = Deno.env.get('PEDRO_BNDV_SYNONYMS_ENABLED') !== 'false';
-    const normalize = bndvNormalize; // reusa helper compartilhado
 
-    // Score por veículo: cada filtro string que bate exato vale 2 pontos, sinonimico 1.
-    // Filtro que falha → veículo descartado. Itens ranqueados por score decrescente
-    // (preferência por matches exatos). Filtros numéricos são all-or-nothing.
-    const STRING_FILTERS: Array<[string, string]> = [
-      ['marca', 'markName'],
-      ['modelo', 'modelName'],
-      ['versao', 'versionName'],
-      ['combustivel', 'fuelName'],
-      ['cambio', 'transmissionName'],
-      ['cor', 'color'],
-    ];
+    let vehicles = applyBndvFiltering(originalVehicles, filters, SYNONYMS_ENABLED);
 
-    vehicles = vehicles.map((v: any) => {
-      let score = 0;
-      let kept = true;
-
-      // Filtros string (com ou sem sinônimos conforme flag)
-      for (const [filterKey, fieldKey] of STRING_FILTERS) {
-        const needle = filters[filterKey];
-        if (!needle) continue;
-        const haystack = v[fieldKey] || '';
-        if (SYNONYMS_ENABLED) {
-          const result = semanticMatch(needle, haystack);
-          if (!result.matched) { kept = false; break; }
-          score += result.exact ? 2 : 1;
-          if (!result.exact) {
-            console.log(`[BNDV] Match sinonimico: needle='${needle}' campo='${fieldKey}' haystack='${haystack.slice(0, 50)}'`);
-          }
-        } else {
-          // Comportamento legacy (literal apenas) — fallback se flag desligada
-          if (!normalize(haystack).includes(normalize(needle))) { kept = false; break; }
-          score += 2;
+    // ─── IT-2.3: fallback similares quando 0 itens (flag PEDRO_FF_BNDV_SIMILAR_VEHICLES) ─
+    // Resolve "Pedro nega estoque que existe" (benchmark Roberta).
+    // Se primeira busca falhou e flag on, tenta relaxar filtros progressivamente
+    // até achar algo. Marca itens como is_fallback_suggestion + descricao.
+    let fallbackInfo: { description: string; level: number; original_filters: any } | null = null;
+    if (vehicles.length === 0 && isPedroFeatureEnabled('BNDV_SIMILAR_VEHICLES')) {
+      const attempts = relaxBndvFilters(filters);
+      console.log(`[BNDV-FALLBACK] 0 itens com filtros originais — tentando ${attempts.length} relaxacoes`);
+      for (const attempt of attempts) {
+        const relaxed = applyBndvFiltering(originalVehicles, attempt.filters, SYNONYMS_ENABLED);
+        if (relaxed.length > 0) {
+          vehicles = relaxed;
+          fallbackInfo = {
+            description: attempt.description,
+            level: attempt.level,
+            original_filters: filters,
+          };
+          console.log(`[BNDV-FALLBACK] Encontrou ${relaxed.length} item(ns) no nivel ${attempt.level}: ${attempt.description}`);
+          break;
         }
       }
-
-      // Filtros numéricos (all-or-nothing, não somam score)
-      if (kept && filters.ano_min && (v.year || 0) < filters.ano_min) kept = false;
-      if (kept && filters.ano_max && (v.year || 9999) > filters.ano_max) kept = false;
-      if (kept && filters.preco_max && (v.saleValue || 0) > filters.preco_max) kept = false;
-      if (kept && filters.km_max && (v.km || 0) > filters.km_max) kept = false;
-
-      return { ...v, _filterScore: kept ? score : -1 };
-    }).filter((v: any) => v._filterScore >= 0)
-      .sort((a: any, b: any) => b._filterScore - a._filterScore);
-
-    // Free text query ranking — combina com _filterScore acima (não sobrescreve)
-    if (filters.query) {
-      const queryTokens = normalize(filters.query).split(/\s+/).filter(Boolean);
-      vehicles = vehicles.map((v: any) => {
-        const text = normalize(`${v.markName} ${v.modelName} ${v.versionName} ${v.color} ${v.fuelName} ${v.transmissionName} ${v.year}`);
-        let queryScore = 0;
-        for (const token of queryTokens) {
-          if (text.includes(token)) queryScore++;
-        }
-        return { ...v, _score: (v._filterScore || 0) + queryScore };
-      }).filter((v: any) => (v._score || 0) > 0)
-        .sort((a: any, b: any) => b._score - a._score);
+      if (!fallbackInfo) {
+        console.log(`[BNDV-FALLBACK] Nenhuma relaxacao encontrou itens`);
+      }
     }
 
-    console.log(`[BNDV] synonyms_enabled=${SYNONYMS_ENABLED} | filters_aplicados=${STRING_FILTERS.filter(([k]) => filters[k]).map(([k]) => k).join(',')} | resultados=${vehicles.length}`);
+    console.log(`[BNDV] synonyms_enabled=${SYNONYMS_ENABLED} | resultados=${vehicles.length}${fallbackInfo ? ' (fallback)' : ''}`);
 
-    // 4. Build result items with images
+    // 4. Build result items with images (helper buildBndvItem)
+    // Se foi fallback, marca cada item como is_fallback_suggestion pra LLM
+    // apresentar como "alternativa" (nao como o que o cliente pediu literal).
     const items = vehicles.slice(0, 20).map((v: any) => {
-      let principalImage = '';
-      const images: string[] = [];
-
-      if (v.pictureJs) {
-        try {
-          const pics = typeof v.pictureJs === 'string' ? JSON.parse(v.pictureJs) : v.pictureJs;
-          if (Array.isArray(pics)) {
-            for (const pic of pics) {
-              if (pic.Link) {
-                images.push(pic.Link);
-                if (pic.Principal === true || pic.Principal === 'true') {
-                  principalImage = pic.Link;
-                }
-              }
-            }
-            if (!principalImage && images.length > 0) {
-              principalImage = images[0];
-            }
-          }
-        } catch {
-          // pictureJs parse failed
-        }
+      const item = buildBndvItem(v);
+      if (fallbackInfo) {
+        item.is_fallback_suggestion = true;
+        item.fallback_description = fallbackInfo.description;
       }
-
-      const preco = v.saleValue || 0;
-      const label = `${v.markName || ''} ${v.modelName || ''} ${v.versionName || ''} ${v.year || ''} - R$ ${preco.toLocaleString('pt-BR')}`.trim();
-
-      return {
-        marca: v.markName || '',
-        modelo: v.modelName || '',
-        versao: v.versionName || '',
-        ano: v.year || 0,
-        km: v.km || 0,
-        preco,
-        cor: v.color || '',
-        combustivel: v.fuelName || '',
-        cambio: v.transmissionName || '',
-        label,
-        principal_image: principalImage,
-        images,
-      };
+      return item;
     });
 
     console.log(`[BNDV] Resultados filtrados: ${items.length}`);
-    return { success: true, total: items.length, items };
+    const result: any = {
+      success: true,
+      total: items.length,
+      items,
+      fallback: fallbackInfo, // null se nao foi fallback
+    };
+    if (fallbackInfo) {
+      // Instrucao clara pro LLM apresentar como ALTERNATIVA, nao como o pedido
+      result.agent_instruction = `IMPORTANTE: o cliente pediu algo que NAO existe no estoque exato. Estes itens sao ALTERNATIVAS SIMILARES (busca relaxada: ${fallbackInfo.description}). Apresente como "nao temos exatamente X, mas tenho Y similar" — NUNCA como o que foi pedido literalmente.`;
+    }
+    return result;
   } catch (err: any) {
     console.error('[BNDV] Erro na consulta:', err);
     return { success: false, total: 0, items: [], error: err.message };

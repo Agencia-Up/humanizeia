@@ -63,10 +63,18 @@
     penalidades + faltam coletar) no system prompt quando flag ON
   - Implementado: `_shared/qualification/leadScoring.ts` (canônico, 16 testes)
     + inline no `uazapi-webhook` (3 call sites do score migrados pro wrapper)
-- [ ] **IT-2.3** — Fallback BNDV: oferecer similares quando 0 resultados
+- [x] **IT-2.3** — Fallback BNDV: oferecer similares quando 0 resultados
   - Flag: `PEDRO_FF_BNDV_SIMILAR_VEHICLES`
-  - Causa raiz de "Pedro nega estoque" relatado pelo cliente
-  - Diff de referência: `DIAGNOSTICO.md` seção QW1
+  - Causa raiz de "Pedro nega estoque" relatado no benchmark Roberta
+  - Relaxação progressiva: cor → cor+câmbio → cor+câmbio+combustível →
+    cor+câmbio+combustível+versão → só marca+modelo (mantém marca/modelo SEMPRE)
+  - Reusa o mesmo array de veículos já buscado (1 fetch GraphQL, N filtragens)
+  - Items de fallback marcados com `is_fallback_suggestion=true` +
+    `fallback_description` + `agent_instruction` no result pra LLM apresentar
+    como ALTERNATIVA (não como o que foi pedido)
+  - Implementado: `_shared/qualification/bndvFallback.ts` (canônico, 14 testes)
+    + inline + refatoração de `consultarEstoqueBndv` extraindo
+    `applyBndvFiltering` e `buildBndvItem` como helpers reusáveis
 - [ ] **IT-2.4** — Tool `transferir_para_vendedor` V2 (motivo + score + briefing JSON)
   - Flag: `PEDRO_FF_HANDOFF_TOOL_V2`
 

@@ -15,6 +15,27 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **IT-2.3 — BNDV fallback: oferecer similares quando 0 resultados**
+  - Fonte canônica: `supabase/functions/_shared/qualification/bndvFallback.ts`
+    com `relaxBndvFilters(filters)` (gera 1-5 tentativas progressivas) e
+    `trySimilarVehiclesFallback(filters, searchFn)` (helper async).
+  - Cópia inline no `uazapi-webhook` (~30 linhas).
+  - **Refatoração de `consultarEstoqueBndv`**: extrai `applyBndvFiltering`
+    (filtro+rank reusável) e `buildBndvItem` (helper de transformação) como
+    funções inline antes da função principal. Comportamento original
+    100% preservado quando flag OFF.
+  - Atrás de flag `PEDRO_FF_BNDV_SIMILAR_VEHICLES` (default OFF).
+  - Quando ON e busca original retorna 0 itens: tenta relaxação
+    progressiva (cor → câmbio → combustível → versão → ano), preservando
+    SEMPRE marca+modelo. Usa o mesmo array GraphQL (1 fetch, N filtragens).
+  - Items de fallback marcados com `is_fallback_suggestion=true` +
+    `fallback_description` (ex: "removendo filtro de cor") +
+    `agent_instruction` no result pro LLM apresentar como ALTERNATIVA
+    (não como o que foi pedido literalmente).
+  - **Resolve causa raiz do bug "Pedro nega estoque"** do benchmark Roberta.
+  - Suíte: 14 testes vitest (relaxação, dedupe, preservação marca/modelo,
+    ordem de níveis, async helper).
+
 - **IT-2.2 — Lead scoring V2** (qualificação do Pedro SDR)
   - Fonte canônica: `supabase/functions/_shared/qualification/leadScoring.ts`
     com `calcLeadScoreV2(state)` (pure function), `getLeadTier(score)` e
