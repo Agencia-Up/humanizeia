@@ -15,18 +15,29 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
-- **Infra de feature flags** (`supabase/functions/_shared/config/features.ts`)
+- **PR-1 — Infra de feature flags** (`supabase/functions/_shared/config/features.ts`)
   — sistema central com 13 flags declaradas (Fase 1–4), leitura via
-  `Deno.env.get('PEDRO_FF_*')`, default `false` (fail-safe). PR-1.
-- **`BACKLOG.md`** — lista viva de melhorias planejadas, mapeadas pra cada
-  flag. PR-2.
-- **`CHANGELOG.md`** (este arquivo). PR-2.
+  `Deno.env.get('PEDRO_FF_*')`, default `false` (fail-safe).
+- **PR-2 — `BACKLOG.md` + `CHANGELOG.md`** no root.
+- **PR-3 — Smoke test do feature flag system** (`src/test/features.test.ts`).
+  8 testes cobrindo fail-safe, env var, variantes case-insensitive, helpers.
+- **PR-4 — Seed de 20 conversas sintéticas** (`scripts/seed-test-conversations.ts`).
+  Fixtures realistas pra eval/benchmark, cobrindo saudação, estoque (existe/zero),
+  fora de escopo, BANT, handoff, memória, objeção, verbosidade, sinônimos,
+  fechamento. + 12 testes de integridade (`src/test/seed-conversations.test.ts`).
 
-### Em progresso
+### Validado
 
-- PR-3: validação do runner de testes (vitest)
-- PR-4: seed de 20 conversas sintéticas
-- PR-5: execução da suite atual
+- **PR-5 — Suite vitest verde:** 21/21 testes passam em ~14s.
+  - `src/test/example.test.ts` (1 trivial pre-existente)
+  - `src/test/features.test.ts` (8 do PR-3)
+  - `src/test/seed-conversations.test.ts` (12 do PR-4)
+- **TypeScript compile clean** (`tsc --noEmit --skipLibCheck` sem erros).
+
+### Próximo
+
+- **Aguardando aprovação pra iniciar Fase 1** (IT-1.1 message splitting,
+  IT-1.2 typing simulation, IT-1.3 persona + few-shots).
 
 ---
 
