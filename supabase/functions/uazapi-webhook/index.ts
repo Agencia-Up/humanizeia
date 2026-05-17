@@ -744,6 +744,71 @@ function getQualificationScore(state: any): number {
   return calcQualificationScore(state);
 }
 
+// ─── History Summarizer (INLINED from _shared/memory/historySummarizer.ts) ─
+// IT-3.2: quando historico passa de KEEP_RAW msgs, sumariza as mais antigas
+// via Claude Haiku (rapido + barato). Preserva contexto de conversas longas
+// sem estourar tokens. Fonte canônica + testes:
+// supabase/functions/_shared/memory/historySummarizer.ts
+function splitForSummarization(history: any[], keepRecent = 10): { oldMessages: any[]; recentMessages: any[] } {
+  if (!Array.isArray(history) || history.length === 0) return { oldMessages: [], recentMessages: [] };
+  if (history.length <= keepRecent) return { oldMessages: [], recentMessages: [...history] };
+  const splitAt = history.length - keepRecent;
+  return { oldMessages: history.slice(0, splitAt), recentMessages: history.slice(splitAt) };
+}
+
+function buildSummarizationPrompt(messages: any[]): { systemPrompt: string; userMessage: string } {
+  const transcript = messages.map((m) => {
+    const role = m.role === 'user' ? 'Cliente' : 'Pedro';
+    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    return `${role}: ${content}`;
+  }).join('\n');
+  return {
+    systemPrompt: `Você é um sumarizador de conversas de SDR de concessionária automotiva no WhatsApp. Resuma a conversa abaixo em até 8 bullets CURTOS, em português, preservando APENAS:
+- Modelo de interesse mencionado (com configuração se houver)
+- Forma de pagamento discutida (à vista / financiado / troca)
+- Dados pessoais coletados (nome, telefone, cidade, acompanhante)
+- Veículos apresentados pelo Pedro (modelo + ano + preço)
+- Objeções declaradas pelo cliente
+- Pedidos pendentes (cliente esperando foto, preço, etc.)
+- Status final da conversa (transferido, fora do horário, esperando follow-up)
+
+NÃO incluir: saudações, agradecimentos, frases de transição, opiniões. Só fatos úteis pro próximo turno.`,
+    userMessage: `TRANSCRIÇÃO PARCIAL (${messages.length} mensagens mais antigas da conversa):\n\n${transcript}\n\nResuma em até 8 bullets, em português.`,
+  };
+}
+
+function formatSummaryAsSystemMessage(summary: string, oldCount: number): any {
+  return {
+    role: 'system',
+    content: `## RESUMO DAS ${oldCount} MENSAGENS ANTERIORES (turnos mais antigos da conversa)\n\n${summary}\n\n⚠️ Use este resumo como contexto. As mensagens mais recentes vêm logo a seguir cruas.`,
+  };
+}
+
+async function summarizeOldMessages(oldMessages: any[], apiKey: string, modelCandidates: string[] = ['claude-haiku-4-5-20251001', 'claude-haiku-4-5-20260101', 'claude-3-5-haiku-20241022']): Promise<string> {
+  if (!Array.isArray(oldMessages) || oldMessages.length === 0) return '';
+  if (!apiKey) return '';
+  const { systemPrompt, userMessage } = buildSummarizationPrompt(oldMessages);
+  for (const model of modelCandidates) {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model, max_tokens: 512, system: systemPrompt, messages: [{ role: 'user', content: userMessage }] }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        if (res.status === 404 || err.includes('model')) continue;
+        return '';
+      }
+      const data = await res.json();
+      return (data?.content?.[0]?.text || '').trim();
+    } catch {
+      continue;
+    }
+  }
+  return '';
+}
+
 // ─── Persistent Profile (INLINED from _shared/memory/persistentProfile.ts) ─
 // IT-3.1: agrega dados de conversas anteriores do mesmo cliente (cross-conversa).
 // Pure function — caller faz queries Supabase + ordena por last_interaction_at desc.
@@ -2204,10 +2269,43 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     });
   }
 
+  // IT-3.2: quando flag on, busca historico expandido (30 msgs) pra
+  // sumarizar as mais antigas via Claude Haiku. Senao, mantem 10 cruas
+  // (comportamento atual).
+  const historyLimit = isPedroFeatureEnabled('HIERARCHICAL_SUMMARIZATION') ? 30 : 10;
   const { data: history } = await supabase.from('wa_chat_history')
-    .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(10)
+    .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(historyLimit)
 
-  const chatHistory = (history || []).reverse().map((m: any) => ({ role: m.role, content: m.content }))
+  let chatHistory: any[] = (history || []).reverse().map((m: any) => ({ role: m.role, content: m.content }))
+
+  // IT-3.2: sumariza mensagens antigas quando historico > 10 e flag on.
+  // Falha silenciosa: se Anthropic der erro, mantem so as 10 ultimas
+  // (mesmo comportamento de antes da flag).
+  if (isPedroFeatureEnabled('HIERARCHICAL_SUMMARIZATION') && chatHistory.length > 10) {
+    try {
+      const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY') || '';
+      if (anthropicKey) {
+        const { oldMessages, recentMessages } = splitForSummarization(chatHistory, 10);
+        if (oldMessages.length > 0) {
+          console.log(`[HistorySumm] sumarizando ${oldMessages.length} msgs antigas (mantendo ${recentMessages.length} cruas)`);
+          const summary = await summarizeOldMessages(oldMessages, anthropicKey);
+          if (summary) {
+            chatHistory = [formatSummaryAsSystemMessage(summary, oldMessages.length), ...recentMessages];
+            console.log(`[HistorySumm] sumarizado com sucesso (${summary.length} chars)`);
+          } else {
+            chatHistory = recentMessages; // fallback: so as 10 recentes
+            console.warn(`[HistorySumm] sumarizacao retornou vazio - usando so msgs recentes`);
+          }
+        }
+      } else {
+        console.warn('[HistorySumm] ANTHROPIC_API_KEY ausente - mantendo historico cru');
+        chatHistory = chatHistory.slice(-10); // fallback: so as 10 ultimas
+      }
+    } catch (summErr) {
+      console.warn('[HistorySumm] erro (nao bloqueia):', summErr);
+      chatHistory = chatHistory.slice(-10);
+    }
+  }
 
   // RAG - Busca Base de Conhecimento
   let knowledgeContext = ''

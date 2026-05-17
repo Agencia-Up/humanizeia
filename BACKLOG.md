@@ -98,9 +98,15 @@
   - **Sem migration** — usa tabelas existentes
   - Implementado: `_shared/memory/persistentProfile.ts` (canônico, 16 testes)
     + inline no `uazapi-webhook` com query + try/catch defensivo
-- [ ] **IT-3.2** — Sumarização hierárquica de histórico longo
+- [x] **IT-3.2** — Sumarização hierárquica de histórico longo
   - Flag: `PEDRO_FF_HIERARCHICAL_SUMMARIZATION`
   - Resolve "Pedro esquece" em conversas >10 turnos
+  - Quando ON e histórico > 10: busca 30 msgs, separa em [old, recent],
+    sumariza old via Claude Haiku (cascade 3 modelos), injeta como
+    system message antes das 10 cruas
+  - Failsafe: erro/key vazio → mantém só as 10 últimas (comportamento atual)
+  - Implementado: `_shared/memory/historySummarizer.ts` (canônico, 18 testes)
+    + inline no `uazapi-webhook` na query do histórico
 - [ ] **IT-3.3** — Playbooks de objeção
   - Flag: `PEDRO_FF_OBJECTION_PLAYBOOKS`
   - Tabela `pedro_objection_playbooks` (objeção → resposta-padrão)

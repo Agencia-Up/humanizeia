@@ -15,6 +15,25 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **IT-3.2 — Sumarização hierárquica de histórico longo** (memória do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/memory/historySummarizer.ts`
+    com `splitForSummarization(history, keepRecent)`, `summarizeOldMessages(...)`,
+    `buildSummarizationPrompt(...)` e `formatSummaryAsSystemMessage(...)`.
+  - **Resolve "Pedro esquece" em conversas longas** do DIAGNOSTICO (histórico
+    truncado em 10 msgs sem sumarização).
+  - Cópia inline no `uazapi-webhook` (~75 linhas).
+  - Atrás de flag `PEDRO_FF_HIERARCHICAL_SUMMARIZATION` (default OFF).
+  - Quando ON: busca 30 msgs em vez de 10 → se >10, separa em [old, recent] →
+    sumariza old via Claude Haiku (cascade 3 modelos) → injeta como system
+    message antes das 10 cruas.
+  - Modelo: Claude Haiku (mesmo cascade do extractEntities, ~$0.0001/turno).
+  - **Failsafe robusto**: erro Anthropic / key ausente / response vazio →
+    mantém só as 10 últimas mensagens (igual comportamento atual). Agente
+    nunca trava por causa da sumarização.
+  - Suíte: 18 testes vitest (split em N+keepRecent, prompt formado, summary
+    como system message, cascade de modelos, fetch quebrado, key vazia,
+    fetchFn injetável — zero network).
+
 - **IT-3.1 — Perfil persistente cross-conversa** (memória do Pedro SDR)
   - Fonte canônica: `supabase/functions/_shared/memory/persistentProfile.ts`
     com `derivePersistentProfile(leadRecords, stateRecords)` (pure function)
