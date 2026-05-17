@@ -160,6 +160,33 @@ Deno.serve(async (req) => {
         });
       }
 
+      const { data: claimedCampaign, error: claimErr } = await serviceClient
+        .from("wa_campaigns")
+        .update({
+          status: "running",
+          started_at: campaign.started_at || new Date().toISOString(),
+        })
+        .eq("id", campaign_id)
+        .eq("user_id", effectiveUserId)
+        .eq("status", campaign.status)
+        .select("id")
+        .maybeSingle();
+
+      if (claimErr) {
+        console.error("Campaign claim error:", claimErr);
+        return new Response(JSON.stringify({ error: "Erro ao iniciar campanha." }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      if (!claimedCampaign) {
+        return new Response(
+          JSON.stringify({ success: true, enqueued: 0, total_contacts: existingPending.length, message: "Campanha ja estava em processamento." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       const ids = existingPending.map((r: any) => r.id);
       const baseTime = Date.now();
       let cursor = baseTime;
@@ -182,11 +209,6 @@ Deno.serve(async (req) => {
           });
         }
       }
-
-      await serviceClient
-        .from("wa_campaigns")
-        .update({ status: "running" })
-        .eq("id", campaign_id);
 
       return new Response(
         JSON.stringify({ success: true, enqueued: updates.length, total_contacts: updates.length }),
@@ -235,6 +257,33 @@ Deno.serve(async (req) => {
     }
 
     const contactArr = Array.from(uniqueContacts.values());
+
+    const { data: claimedCampaign, error: claimErr } = await serviceClient
+      .from("wa_campaigns")
+      .update({
+        status: "running",
+        started_at: campaign.started_at || new Date().toISOString(),
+      })
+      .eq("id", campaign_id)
+      .eq("user_id", effectiveUserId)
+      .eq("status", campaign.status)
+      .select("id")
+      .maybeSingle();
+
+    if (claimErr) {
+      console.error("Campaign claim error:", claimErr);
+      return new Response(JSON.stringify({ error: "Erro ao iniciar campanha." }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!claimedCampaign) {
+      return new Response(
+        JSON.stringify({ success: true, enqueued: 0, total_contacts: contactArr.length, message: "Campanha ja estava em processamento." }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Use scheduled_at from campaign as base time, fallback to now
     const baseTime = campaign.scheduled_at
@@ -347,7 +396,7 @@ Deno.serve(async (req) => {
       const batch = rowsToInsert.slice(i, i + batchSize);
       const { error: insertErr } = await serviceClient
         .from("wa_queue")
-        .insert(batch);
+        .upsert(batch, { onConflict: "campaign_id,contact_id", ignoreDuplicates: true });
 
       if (insertErr) {
         console.error("Queue insert error:", insertErr);

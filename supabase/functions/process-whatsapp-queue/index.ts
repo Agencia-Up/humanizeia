@@ -9,8 +9,6 @@ const corsHeaders = {
 // Process ONE item per invocation to avoid edge function timeout with humanized delays
 const BATCH_SIZE = 1;
 const MAX_RETRIES = 5;
-// Items stuck in "processing" for more than this time (ms) are considered stale
-const STALE_LOCK_MS = 90_000; // 90 seconds
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 const OUTBOUND_FETCH_TIMEOUT_MS = 10_000;
 const PRESENCE_FETCH_TIMEOUT_MS = 2_500;
@@ -94,27 +92,14 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // ===== RECOVER STALE LOCKS =====
-    // Reset items stuck in "processing" for too long (edge function timed out previously)
-    const staleThreshold = new Date(Date.now() - STALE_LOCK_MS).toISOString();
-    const { data: staleItems, error: staleErr } = await supabase
-      .from("wa_queue")
-      .update({ status: "pending" })
-      .eq("status", "processing")
-      .lt("scheduled_for", staleThreshold)
-      .select("id");
-
-    if (!staleErr && staleItems && staleItems.length > 0) {
-      console.log(`Recovered ${staleItems.length} stale processing items back to pending`);
-    }
-
-    const { data: queueItems, error: queueErr } = await supabase
-      .from("wa_queue")
-      .select("*")
-      .eq("status", "pending")
-      .lte("scheduled_for", new Date().toISOString())
-      .order("scheduled_for", { ascending: true })
-      .limit(BATCH_SIZE);
+    // ===== ATOMIC CLAIM =====
+    // Do not SELECT pending rows and lock them later. Cron can overlap, and a delayed
+    // worker would otherwise see the same row. The SQL function uses
+    // UPDATE ... FOR UPDATE SKIP LOCKED and returns rows already marked as processing.
+    const { data: queueItems, error: queueErr } = await supabase.rpc(
+      "claim_wa_queue_items",
+      { p_limit: BATCH_SIZE },
+    );
 
     if (queueErr) {
       console.error("Queue fetch error:", queueErr);
@@ -256,28 +241,6 @@ Deno.serve(async (req) => {
             processed++;
             continue;
           }
-        }
-
-        const { data: lockRow, error: lockErr } = await supabase
-          .from("wa_queue")
-          .update({
-            status: "processing",
-            // Reuse scheduled_for as lock timestamp for reliable stale-lock recovery
-            scheduled_for: new Date().toISOString(),
-          })
-          .eq("id", item.id)
-          .eq("status", "pending")
-          .select("id")
-          .maybeSingle();
-
-        if (lockErr) {
-          throw new Error(`Failed to lock queue item: ${lockErr.message}`);
-        }
-
-        // Another worker already took this item
-        if (!lockRow) {
-          skipReasons.push({ item_id: item.id, reason: "lock_lost_to_another_worker" });
-          continue;
         }
 
         const campaign = item.campaign_id ? campaignMap.get(item.campaign_id) : null;
