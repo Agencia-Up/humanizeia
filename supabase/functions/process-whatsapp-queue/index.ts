@@ -6,8 +6,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Process ONE item per invocation to avoid edge function timeout with humanized delays
-const BATCH_SIZE = 1;
+// Process a small fair batch per invocation. The SQL claim returns at most one
+// ready item per campaign, so one old overdue campaign cannot block newer ones.
+const BATCH_SIZE = 3;
 const MAX_RETRIES = 5;
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 const OUTBOUND_FETCH_TIMEOUT_MS = 10_000;
