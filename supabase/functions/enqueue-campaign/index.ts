@@ -77,8 +77,10 @@ Deno.serve(async (req) => {
       }
       const userId = userData.user.id;
 
-      // Detect seller: use ai_team_members (modelo novo) — vendedor é dono da campanha
-      // via seller_member_id, e wa_campaigns.user_id é SEMPRE o master.
+      // Detect seller. O save-campaign aceita o modelo de profiles (role=seller
+      // + manager_id), enquanto o disparo usa ai_team_members para isolar a
+      // instancia do vendedor. Precisamos aceitar os dois modelos, senão a
+      // campanha é criada no master mas o enqueue procura no user_id do vendedor.
       const { data: memberRow } = await serviceClient
         .from("ai_team_members")
         .select("id, user_id")
@@ -86,9 +88,20 @@ Deno.serve(async (req) => {
         .eq("is_active", true)
         .maybeSingle();
 
-      isSeller = !!memberRow?.user_id;
-      effectiveUserId = isSeller ? memberRow!.user_id : userId;
-      sellerMemberId = isSeller ? memberRow!.id : null;
+      const { data: profileRow } = await serviceClient
+        .from("profiles")
+        .select("role, manager_id")
+        .eq("id", userId)
+        .maybeSingle();
+
+      const profileManagerId =
+        profileRow?.role === "seller" && profileRow.manager_id
+          ? profileRow.manager_id
+          : null;
+
+      isSeller = !!memberRow?.user_id || !!profileManagerId;
+      effectiveUserId = memberRow?.user_id || profileManagerId || userId;
+      sellerMemberId = memberRow?.id || null;
       console.log(`[enqueue-campaign] USER invocation requester=${userId} isSeller=${isSeller} effectiveUser=${effectiveUserId} sellerMember=${sellerMemberId}`);
     }
 
@@ -108,7 +121,7 @@ Deno.serve(async (req) => {
     }
 
     // Se é vendedor: confirma que a campanha é DELE (seller_member_id bate)
-    if (isSeller && campaign.seller_member_id !== sellerMemberId) {
+    if (isSeller && sellerMemberId && campaign.seller_member_id !== sellerMemberId) {
       console.warn(`[enqueue-campaign] Vendedor ${sellerMemberId} tentou iniciar campanha ${campaign_id} (dono=${campaign.seller_member_id})`);
       return new Response(JSON.stringify({ error: "Você não tem permissão pra iniciar esta campanha" }), {
         status: 403,

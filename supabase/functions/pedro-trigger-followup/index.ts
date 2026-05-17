@@ -110,17 +110,10 @@ serve(async (req) => {
     const now    = new Date();
     const nowIso = now.toISOString();
 
-    // 1. Busca TODOS os agendamentos pendentes (com ou sem instance_id)
+    // 1. Reivindica atomicamente os agendamentos pendentes.
+    // Isso evita envio duplicado quando o cron e o botão manual rodam ao mesmo tempo.
     const { data: schedules, error: fetchErr } = await supabase
-      .from("pedro_followup_schedules")
-      .select(`
-        *,
-        lead:ai_crm_leads(id, remote_jid, agent_id, user_id)
-      `)
-      .eq("status", "pending")
-      .lte("scheduled_at", nowIso)
-      .order("scheduled_at", { ascending: true })
-      .limit(30);
+      .rpc("claim_pedro_followup_schedules", { p_limit: 30 });
 
     if (fetchErr) throw fetchErr;
 
@@ -134,7 +127,11 @@ serve(async (req) => {
 
     for (const schedule of schedules || []) {
       try {
-        const lead = (schedule as any).lead;
+        const { data: lead } = await supabase
+          .from("ai_crm_leads")
+          .select("id, remote_jid, agent_id, user_id")
+          .eq("id", schedule.lead_id)
+          .maybeSingle();
 
         if (!lead?.remote_jid) {
           await supabase.from("pedro_followup_schedules")
@@ -273,6 +270,9 @@ serve(async (req) => {
         processed++;
       } catch (err) {
         console.error(`[pedro-trigger-followup] Erro no agendamento ${(schedule as any).id}:`, err);
+        await supabase.from("pedro_followup_schedules")
+          .update({ status: "failed" })
+          .eq("id", (schedule as any).id);
         failed++;
       }
     }
@@ -284,21 +284,17 @@ serve(async (req) => {
 
     // Marcos: fila de follow-up somente envio. Nao conversa, nao chama IA.
     const { data: marcosSchedules, error: marcosFetchErr } = await supabase
-      .from("marcos_followup_schedules")
-      .select(`
-        *,
-        lead:crm_leads(id, name, phone, user_id, assigned_to)
-      `)
-      .eq("status", "pending")
-      .lte("scheduled_at", nowIso)
-      .order("scheduled_at", { ascending: true })
-      .limit(30);
+      .rpc("claim_marcos_followup_schedules", { p_limit: 30 });
 
     if (marcosFetchErr) throw marcosFetchErr;
 
     for (const schedule of marcosSchedules || []) {
       try {
-        const lead = (schedule as any).lead;
+        const { data: lead } = await supabase
+          .from("crm_leads")
+          .select("id, name, phone, user_id, assigned_to")
+          .eq("id", schedule.lead_id)
+          .maybeSingle();
         const digits = String(lead?.phone || "").replace(/\D/g, "");
 
         if (!lead?.id || !digits) {
@@ -419,6 +415,9 @@ serve(async (req) => {
         processed++;
       } catch (err) {
         console.error(`[marcos-followup] Erro no agendamento ${(schedule as any).id}:`, err);
+        await supabase.from("marcos_followup_schedules")
+          .update({ status: "failed" })
+          .eq("id", (schedule as any).id);
         failed++;
       }
     }
