@@ -223,10 +223,12 @@ export default function Auth() {
           {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </button>
         <div className="w-full max-w-md space-y-6">
-          <div className="flex flex-col items-center gap-2 text-center">
-            <LogosIALogo size="lg" />
-            <h1 className="text-2xl font-bold text-foreground">Recuperar Senha</h1>
-            <p className="text-sm text-muted-foreground">Enviaremos um link para redefinir sua senha</p>
+          <div className="flex flex-col items-center gap-3 text-center">
+            <LogosIALogo size="xl" variant={isDarkMode ? 'dark' : 'light'} />
+            <h1 className="text-2xl md:text-3xl font-extrabold text-foreground mt-1" style={{ fontFamily: 'var(--font-display)' }}>
+              Recuperar Senha
+            </h1>
+            <p className="text-sm text-muted-foreground max-w-xs">Enviaremos um link pra você redefinir sua senha em segundos.</p>
           </div>
 
           <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
@@ -289,6 +291,16 @@ export default function Auth() {
   // ─── TELA PRINCIPAL (LOGIN + CADASTRO) ───────────────────────────────────
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      {/* Botão voltar pra página de vendas (canto superior esquerdo) */}
+      <Link
+        to="/"
+        className="fixed top-4 left-4 inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors text-sm font-medium"
+        title="Voltar pra página de vendas"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        <span className="hidden sm:inline">Voltar pra página</span>
+      </Link>
+      {/* Toggle modo claro/escuro (canto superior direito) */}
       <button
         onClick={toggleDarkMode}
         className="fixed top-4 right-4 p-2 rounded-full bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
@@ -297,13 +309,12 @@ export default function Auth() {
         {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
       <div className="w-full max-w-md space-y-6">
-        {/* Logo */}
-        <div className="flex flex-col items-center gap-2 text-center">
-          <span className="logo-container p-2">
-            <img src="/logosia-logo.png" alt="LogosIA" className="h-16 w-16 rounded-lg object-contain" />
-          </span>
-          <h1 className="text-2xl font-bold text-foreground">LogosIA</h1>
-          <p className="text-sm text-muted-foreground">Plataforma inteligente de marketing e IA</p>
+        {/* Logo (Prompt redesign 16/05 — logo grande + tagline) */}
+        <div className="flex flex-col items-center gap-3 text-center mb-2">
+          <LogosIALogo size="xl" variant={isDarkMode ? 'dark' : 'light'} />
+          <p className="text-sm md:text-base text-muted-foreground max-w-xs">
+            Atendimento + CRM com IA pra quem vive de <span className="font-semibold" style={{ color: 'var(--brand-gold)' }}>WhatsApp</span>
+          </p>
         </div>
 
         <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
