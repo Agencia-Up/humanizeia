@@ -15,6 +15,24 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **IT-2.2 — Lead scoring V2** (qualificação do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/qualification/leadScoring.ts`
+    com `calcLeadScoreV2(state)` (pure function), `getLeadTier(score)` e
+    `formatLeadScoreBlock(result)`.
+  - 10 critérios explícitos (9 positivos + 1 penalidade) — cada um com
+    `key/label/weight/passed/reason` pra debug e analytics.
+  - Tiers: `cold` (0-19) / `warm` (20-49) / `hot` (50-79) / `qualified` (80+).
+  - **V1 mantida** (`calcQualificationScore` original intacto) +
+    wrapper `getQualificationScore(state)` que escolhe V1/V2 conforme flag.
+  - 3 call sites do score (linhas 1879, 2259, 2697) migrados pro wrapper —
+    quando flag OFF, escreve mesma coluna `qualificacao_score` com V1; flag
+    ON usa V2 (intervalo idêntico 0-100, compat com schema).
+  - Apenda bloco "## LEAD SCORE" no system prompt com breakdown completo
+    (pontos coletados + penalidades + faltam coletar) — orienta o LLM a
+    pedir os campos faltantes pra subir o tier.
+  - Suíte: 16 testes vitest (tiers, state vazio/null, BNA, acompanhante,
+    penalidade visita, clamp 0/100, breakdown integro, formatação).
+
 - **IT-2.1 — Schema BANT derivado do state** (qualificação do Pedro SDR)
   - Fonte canônica: `supabase/functions/_shared/qualification/bantSchema.ts`
     com `deriveBantFromState(state)` (pure function, deriva 4 dimensões dos

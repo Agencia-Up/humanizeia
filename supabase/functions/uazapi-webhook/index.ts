@@ -514,6 +514,15 @@ function formatStateForPrompt(state: any): string {
     }
   }
 
+  // IT-2.2: apenda bloco LEAD SCORE quando flag on. Inclui breakdown
+  // (criterios passados + penalidades + faltam) - LLM enxerga o que esta
+  // pesando no score atual e o que precisa coletar pra subir o tier.
+  if (isPedroFeatureEnabled('LEAD_SCORING')) {
+    const scoreResult = calcLeadScoreV2(state);
+    lines.push('');
+    lines.push(formatLeadScoreBlock(scoreResult));
+  }
+
   return lines.join('\n');
 }
 
@@ -647,6 +656,92 @@ function calcQualificationScore(state: any): number {
   if (state?.lead?.cidade || state?.lead?.conhece_loja !== null) s += 5;
   if (state?.atendimento?.modo_atendimento) s += 5;
   return Math.min(100, s);
+}
+
+// ─── Lead Scoring V2 (INLINED from _shared/qualification/leadScoring.ts) ───
+// IT-2.2: scoring com criterios explicitos, breakdown e tier categorico.
+// Mantém compat com V1 (mesmo intervalo 0-100). Quando flag on, substitui
+// V1 no UPSERT da coluna qualificacao_score.
+// Fonte canônica + testes: supabase/functions/_shared/qualification/leadScoring.ts
+type LeadTier = 'cold' | 'warm' | 'hot' | 'qualified';
+type ScoringCriterion = {
+  key: string;
+  label: string;
+  weight: number;
+  passed: boolean;
+  reason: string;
+};
+type LeadScoreResult = {
+  score: number;
+  tier: LeadTier;
+  breakdown: ScoringCriterion[];
+  rawPositive: number;
+  rawPenalties: number;
+};
+
+function getLeadTier(score: number): LeadTier {
+  if (score >= 80) return 'qualified';
+  if (score >= 50) return 'hot';
+  if (score >= 20) return 'warm';
+  return 'cold';
+}
+
+function calcLeadScoreV2(state: any): LeadScoreResult {
+  const s = state || {};
+  const breakdown: ScoringCriterion[] = [
+    { key: 'nome', label: 'Nome do cliente coletado', weight: 10, passed: !!s.lead?.nome, reason: s.lead?.nome ? `nome="${s.lead?.nome_completo || s.lead?.nome}"` : 'lead.nome ausente' },
+    { key: 'telefone', label: 'Telefone direto confirmado', weight: 20, passed: !!s.lead?.telefone, reason: s.lead?.telefone ? `telefone="${s.lead.telefone}"` : 'lead.telefone ausente' },
+    { key: 'modelo_desejado', label: 'Modelo de interesse declarado', weight: 15, passed: !!s.interesse?.modelo_desejado, reason: s.interesse?.modelo_desejado ? `modelo="${s.interesse.modelo_desejado}"` : 'interesse.modelo_desejado ausente' },
+    { key: 'forma_pagamento', label: 'Forma de pagamento definida (BANT Budget)', weight: 15, passed: !!s.negociacao?.forma_pagamento, reason: s.negociacao?.forma_pagamento ? `forma="${s.negociacao.forma_pagamento}"` : 'negociacao.forma_pagamento ausente' },
+    { key: 'tem_troca_definido', label: 'Cliente respondeu sobre troca (sim/nao)', weight: 10, passed: s.negociacao?.tem_troca !== null && s.negociacao?.tem_troca !== undefined, reason: s.negociacao?.tem_troca === true ? 'tem troca declarada' : s.negociacao?.tem_troca === false ? 'sem troca declarada' : 'tem_troca pendente' },
+    { key: 'veiculo_apresentado', label: 'Veiculo ja apresentado (engagement avancou)', weight: 10, passed: !!s.veiculo_apresentado?.ja_apresentado, reason: s.veiculo_apresentado?.ja_apresentado ? `${s.veiculo_apresentado?.modelo || 'veiculo'} apresentado` : 'ainda nao apresentou veiculo' },
+    { key: 'decide_sozinho', label: 'Decide sozinho (BANT Authority sole)', weight: 10, passed: !!s.lead?.nome && !(typeof s.lead?.acompanhante_decisao === 'string' && s.lead.acompanhante_decisao.trim().length > 0), reason: s.lead?.acompanhante_decisao ? `compartilhada com ${s.lead.acompanhante_decisao}` : s.lead?.nome ? 'sem acompanhante mencionado' : 'nome ausente — nao da pra inferir' },
+    { key: 'dados_auxiliares', label: 'Cidade ou conhecimento da loja', weight: 5, passed: !!s.lead?.cidade || (s.lead?.conhece_loja !== null && s.lead?.conhece_loja !== undefined), reason: s.lead?.cidade ? `cidade="${s.lead.cidade}"` : (s.lead?.conhece_loja !== null && s.lead?.conhece_loja !== undefined) ? 'conhece_loja respondido' : 'cidade/conhece_loja ausentes' },
+    { key: 'modo_atendimento', label: 'Modo de atendimento confirmado (remoto/presencial)', weight: 5, passed: !!s.atendimento?.modo_atendimento, reason: s.atendimento?.modo_atendimento ? `modo="${s.atendimento.modo_atendimento}"` : 'atendimento.modo_atendimento pendente' },
+    { key: 'objecao_visita_nao_resolvida', label: 'Penalidade: recusou visita mas modo remoto nao definido', weight: -15, passed: s.atendimento?.pode_visitar_loja === false && !s.atendimento?.modo_atendimento, reason: (s.atendimento?.pode_visitar_loja === false && !s.atendimento?.modo_atendimento) ? 'recusou visita E sem modo remoto = atendimento travado' : 'objecao visita nao aplicavel ou ja tratada' },
+  ];
+
+  let rawPositive = 0;
+  let rawPenalties = 0;
+  breakdown.forEach((c) => {
+    if (c.passed) {
+      if (c.weight > 0) rawPositive += c.weight;
+      else rawPenalties += c.weight;
+    }
+  });
+  const total = rawPositive + rawPenalties;
+  const score = Math.max(0, Math.min(100, total));
+  return { score, tier: getLeadTier(score), breakdown, rawPositive, rawPenalties };
+}
+
+function formatLeadScoreBlock(result: LeadScoreResult): string {
+  const lines: string[] = [];
+  lines.push('## LEAD SCORE');
+  lines.push(`- **Score**: ${result.score}/100 (tier: ${result.tier})`);
+  const passed = result.breakdown.filter((c) => c.passed && c.weight > 0);
+  const penalties = result.breakdown.filter((c) => c.passed && c.weight < 0);
+  const missing = result.breakdown.filter((c) => !c.passed && c.weight > 0);
+  if (passed.length > 0) {
+    lines.push('- Pontos coletados:');
+    passed.forEach((c) => lines.push(`  - ✅ ${c.label} (+${c.weight}): ${c.reason}`));
+  }
+  if (penalties.length > 0) {
+    lines.push('- Penalidades aplicadas:');
+    penalties.forEach((c) => lines.push(`  - ⚠️ ${c.label} (${c.weight}): ${c.reason}`));
+  }
+  if (missing.length > 0) {
+    lines.push('- Faltam coletar (pesos):');
+    missing.forEach((c) => lines.push(`  - ⏳ ${c.label} (+${c.weight}): ${c.reason}`));
+  }
+  return lines.join('\n');
+}
+
+// Wrapper: V1 (legacy) ou V2 se flag on. Garante compat com qualificacao_score numeric.
+function getQualificationScore(state: any): number {
+  if (isPedroFeatureEnabled('LEAD_SCORING')) {
+    return calcLeadScoreV2(state).score;
+  }
+  return calcQualificationScore(state);
 }
 
 function buildBriefingForSeller(state: any, leadName: string, leadPhone: string, agentName: string): string {
@@ -1790,7 +1885,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
       // 7b. Merge + UPSERT
       const newState = deepMerge(baseStateForMerge, safeDelta);
-      const score = calcQualificationScore(newState);
+      const score = getQualificationScore(newState); // IT-2.2: wrapper V1/V2
       conversationState = newState;
 
       await supabase.from('pedro_conversation_state').upsert({
@@ -2170,7 +2265,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   agent_id: agent.id,
                   user_id: agent.user_id,
                   state: updatedState,
-                  qualificacao_score: calcQualificationScore(updatedState),
+                  qualificacao_score: getQualificationScore(updatedState), // IT-2.2
                   last_extracted_at: new Date().toISOString(),
                 }, { onConflict: 'lead_id,agent_id' });
                 conversationState = updatedState;
@@ -2608,7 +2703,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           agent_id: agent.id,
           user_id: agent.user_id,
           state: updatedState,
-          qualificacao_score: calcQualificationScore(updatedState),
+          qualificacao_score: getQualificationScore(updatedState), // IT-2.2
           last_extracted_at: new Date().toISOString(),
         }, { onConflict: 'lead_id,agent_id' });
         console.log(`[PedroState] auto-flags aplicadas: ${Object.keys(selfFlags).join(',')}`);

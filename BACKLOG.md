@@ -53,9 +53,16 @@
   - Estágios: `cold` → `discovery` → `qualifying` → `qualified` → `ready_to_handoff`
   - Implementado: `_shared/qualification/bantSchema.ts` (canônico, 16 testes)
     + inline no `uazapi-webhook`
-- [ ] **IT-2.2** — Lead scoring 0–100 com critérios explícitos
+- [x] **IT-2.2** — Lead scoring V2 com critérios explícitos
   - Flag: `PEDRO_FF_LEAD_SCORING`
-  - Reusar / extender `calcQualificationScore()` existente (linha 448 webhook)
+  - `calcLeadScoreV2(state)` retorna `{score, tier, breakdown, raw...}`
+  - 10 critérios (9 positivos + 1 penalidade) com `key/label/weight/passed/reason`
+  - Tiers: `cold` (0-19) / `warm` (20-49) / `hot` (50-79) / `qualified` (80+)
+  - V1 mantida (compat); wrapper `getQualificationScore` escolhe V1/V2 pela flag
+  - Apenda bloco "## LEAD SCORE" com breakdown (pontos coletados +
+    penalidades + faltam coletar) no system prompt quando flag ON
+  - Implementado: `_shared/qualification/leadScoring.ts` (canônico, 16 testes)
+    + inline no `uazapi-webhook` (3 call sites do score migrados pro wrapper)
 - [ ] **IT-2.3** — Fallback BNDV: oferecer similares quando 0 resultados
   - Flag: `PEDRO_FF_BNDV_SIMILAR_VEHICLES`
   - Causa raiz de "Pedro nega estoque" relatado pelo cliente
