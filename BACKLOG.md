@@ -34,10 +34,13 @@
     aceitar — delay continua funcionando)
   - Implementado: `_shared/humanization/typingSimulator.ts` (canônico,
     12 testes) + inline no `uazapi-webhook`
-- [ ] **IT-1.3** — Persona + few-shots consolidados
+- [x] **IT-1.3** — Persona + few-shots consolidados
   - Flag: `PEDRO_FF_PERSONA_FEW_SHOTS`
-  - 5 few-shots inline cobrindo: saudação, qualificação, objeção, fechamento, despedida
-  - Substitui regras abstratas espalhadas
+  - 5 few-shots inline cobrindo: saudação, qualificação, objeção,
+    fechamento, despedida
+  - Apenda bloco no FINAL do system prompt (recency bias do GPT-4o)
+  - Implementado: `_shared/prompt/personaFewShots.ts` (canônico, 14 testes)
+    + inline no `uazapi-webhook`
 
 ## Fase 2 — Qualificação
 

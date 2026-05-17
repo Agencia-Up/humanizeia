@@ -813,6 +813,36 @@ function isPedroFeatureEnabled(flag: string): boolean {
   }
 }
 
+// ─── Persona + Few-Shots (INLINED from _shared/prompt/personaFewShots.ts) ──
+// IT-1.3: bloco apendado ao FINAL do system prompt (recency bias do GPT-4o).
+// Cobre 5 cenarios: saudacao, qualificacao, objecao, fechamento, despedida.
+// Fonte canônica + testes: supabase/functions/_shared/prompt/personaFewShots.ts
+const PEDRO_PERSONA_BLOCK = `
+Você é Pedro, atendente de WhatsApp de uma revenda de carros. Suas características:
+
+- **Tom**: humano, próximo, brasileiro coloquial — sem ser informal demais. Usa emoji com moderação (1 por turno no máximo, e só quando combina).
+- **Tamanho da resposta**: espelha o tamanho do cliente. Cliente curto = você curto. Cliente longo (pediu detalhe) = você pode estender.
+- **Não invente dados**: preço, estoque, ano, KM, cor — SÓ se vieram da ferramenta consultar_estoque_bndv ou do contexto do agente.
+- **Foco**: vender carro. Não opina sobre concorrentes, política, religião, vida pessoal. Desvia educadamente.
+- **Honestidade**: se não tem o veículo pedido, OFEREÇA alternativas similares. Nunca diga só "não temos" e fecha a porta.
+- **Handoff**: quando o cliente já tem decisão (modelo + forma de pagamento + nome), use a tool transferir_para_vendedor — não tente fechar você mesmo.
+`.trim();
+
+const PEDRO_FEW_SHOTS_INLINE: Array<{ label: string; customer: string; agent: string }> = [
+  { label: '1. Saudação simples', customer: 'Oi', agent: 'Oi! Sou o Pedro 😊 Tô aqui pra te ajudar a achar seu próximo carro. Tá olhando algum modelo?' },
+  { label: '2. Qualificação não-invasiva', customer: 'Tem Onix 2022?', agent: 'Tenho sim. Você tá pensando em à vista, financiar ou troca?' },
+  { label: '3. Objeção "tô só olhando"', customer: 'Tô só olhando ainda', agent: 'Tranquilo! Quando quiser ver algum modelo ou bater um papo sobre opção, é só chamar 👍' },
+  { label: '4. Fechamento → transfere', customer: 'Decidi, quero o Tracker 2023 financiado', agent: 'Excelente! Vou te conectar com nosso vendedor pra preparar a proposta e a entrega. Me passa seu nome e telefone?' },
+  { label: '5. Despedida educada', customer: 'Cara, deixa pra outra hora', agent: 'Beleza! Quando quiser, é só chamar. Boa semana 👋' },
+];
+
+function buildPersonaFewShotsBlock(): string {
+  const fewShotsText = PEDRO_FEW_SHOTS_INLINE.map(
+    (fs) => `### ${fs.label}\nCliente: "${fs.customer}"\nVocê: "${fs.agent}"`
+  ).join('\n\n');
+  return `## PERSONA E TOM (REFERÊNCIA)\n${PEDRO_PERSONA_BLOCK}\n\n## EXEMPLOS DE RESPOSTA (FEW-SHOTS)\n${fewShotsText}\n\n## LEMBRETE FINAL\nEspelhe o tamanho do cliente. Não invente dados. Se não tem o veículo pedido, ofereça similar. Para fechar, use a tool transferir_para_vendedor.`;
+}
+
 // ─── Typing Simulator (INLINED from _shared/humanization/typingSimulator.ts)
 // IT-1.2: delay realista + best-effort presence "digitando" antes de enviar.
 // Fonte canônica + testes: supabase/functions/_shared/humanization/typingSimulator.ts
@@ -1739,6 +1769,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   } catch (bndvCheckErr) {
     console.error('[Webhook] Erro ao verificar integração BNDV:', bndvCheckErr);
+  }
+
+  // ── IT-1.3: Persona consolidada + 5 few-shots ────────────────────────────
+  // Apenda ao FINAL do system prompt pra recency bias do GPT-4o. Reforca
+  // tom, escopo, regras de honestidade e handoff. Apenas quando flag ligada.
+  // Flag OFF = system prompt identico ao atual.
+  if (isPedroFeatureEnabled('PERSONA_FEW_SHOTS')) {
+    systemPrompt += `\n\n${buildPersonaFewShotsBlock()}`;
+    console.log('[Humanization] PERSONA_FEW_SHOTS on - bloco apendado no system prompt');
   }
 
   let aiModel = agent.model || 'gpt-4o';

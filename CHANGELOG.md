@@ -15,6 +15,21 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **IT-1.3 — Persona consolidada + 5 few-shots** (humanização do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/prompt/personaFewShots.ts`
+    com `PEDRO_PERSONA` (tom + escopo + regras), `PEDRO_FEW_SHOTS` (5
+    exemplos: saudação, qualificação, objeção, fechamento, despedida) e
+    `buildPersonaFewShotsBlock()`.
+  - Cópia inline no `uazapi-webhook` (~35 linhas).
+  - Atrás de flag `PEDRO_FF_PERSONA_FEW_SHOTS` (default OFF).
+  - Quando ON: apenda bloco completo ao FINAL do system prompt (depois
+    do bloco BNDV) — recency bias do GPT-4o reforça tom + regras.
+  - Suíte: 14 testes vitest validando persona, few-shots e formatação.
+
+**Fase 1 completa.** 3 features (message split, typing, persona+few-shots),
+todas atrás de feature flag, todas com fallback bit-perfect pro
+comportamento atual quando OFF.
+
 - **IT-1.2 — Typing simulation** (humanização do Pedro SDR)
   - Fonte canônica: `supabase/functions/_shared/humanization/typingSimulator.ts`
     com `calculateTypingDelayMs(text, opts)` (fórmula 18-28 cps com jitter,
