@@ -113,6 +113,8 @@ function Lazy({ children }: { children: React.ReactNode }) {
 
 // Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
+const Checkout = lazy(() => import("./pages/Checkout")); // Prompt 10 — checkout PRO
+const CheckoutSuccess = lazy(() => import("./pages/CheckoutSuccess")); // Prompt 12 — página de sucesso
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const SetSellerPassword = lazy(() => import("./pages/SetSellerPassword"));
 const AgentHub = lazy(() => import("./pages/AgentHub"));
@@ -205,6 +207,8 @@ const App = () => (
                 <Route path="/terms"         element={<Lazy><TermsOfService /></Lazy>} />
                 <Route path="/onboarding"    element={<Lazy><Onboarding /></Lazy>} />
                 <Route path="/"              element={<Lazy><LandingPage /></Lazy>} />
+                <Route path="/checkout"      element={<Lazy><Checkout /></Lazy>} />
+                <Route path="/checkout/sucesso" element={<Lazy><CheckoutSuccess /></Lazy>} />
                 <Route path="/f/:formId"     element={<Lazy><FormPublico /></Lazy>} />
 
                 {/* ── Protected routes ── each page has its own Suspense so the
