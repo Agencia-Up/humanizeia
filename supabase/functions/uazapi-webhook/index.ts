@@ -744,6 +744,105 @@ function getQualificationScore(state: any): number {
   return calcQualificationScore(state);
 }
 
+// ─── Persistent Profile (INLINED from _shared/memory/persistentProfile.ts) ─
+// IT-3.1: agrega dados de conversas anteriores do mesmo cliente (cross-conversa).
+// Pure function — caller faz queries Supabase + ordena por last_interaction_at desc.
+// Fonte canônica + testes: supabase/functions/_shared/memory/persistentProfile.ts
+type PersistentProfile = {
+  total_previous_conversations: number;
+  last_seen_at: string | null;
+  days_since_last_seen: number | null;
+  known_name: string | null;
+  known_city: string | null;
+  previously_asked_models: string[];
+  previously_shown_vehicles: Array<{ modelo: string; ano?: any; preco?: string }>;
+  known_payment_method: string | null;
+  known_decision_maker: string | null;
+  known_objections: string[];
+  has_been_transferred_before: boolean;
+};
+
+function _profileIsNonEmpty(v: any): boolean {
+  return v !== null && v !== undefined && (typeof v !== 'string' || v.trim().length > 0);
+}
+
+function derivePersistentProfile(leadRecords: any[], stateRecords: any[]): PersistentProfile | null {
+  if ((leadRecords?.length ?? 0) === 0 && (stateRecords?.length ?? 0) === 0) return null;
+  const leads = leadRecords || [];
+  const states = stateRecords || [];
+  const pickRecent = <T,>(records: any[], path: (r: any) => T): T | null => {
+    for (const r of records) { const v = path(r); if (_profileIsNonEmpty(v)) return v; }
+    return null;
+  };
+  let lastSeenAt: string | null = null;
+  for (const l of leads) {
+    if (l?.last_interaction_at && (!lastSeenAt || l.last_interaction_at > lastSeenAt)) lastSeenAt = l.last_interaction_at;
+  }
+  let daysSinceLastSeen: number | null = null;
+  if (lastSeenAt) daysSinceLastSeen = Math.floor((Date.now() - new Date(lastSeenAt).getTime()) / 86400000);
+  const knownName = pickRecent<string>(states, (r) => r?.state?.lead?.nome_completo) || pickRecent<string>(states, (r) => r?.state?.lead?.nome) || pickRecent<string>(leads, (l) => l?.lead_name) || pickRecent<string>(leads, (l) => l?.client_name) || null;
+  const knownCity = pickRecent<string>(states, (r) => r?.state?.lead?.cidade) || pickRecent<string>(leads, (l) => l?.client_city) || null;
+  const modelSet = new Set<string>();
+  for (const s of states) { const m = s?.state?.interesse?.modelo_desejado; if (_profileIsNonEmpty(m)) modelSet.add(m.trim()); }
+  for (const l of leads) { if (_profileIsNonEmpty(l?.vehicle_interest)) modelSet.add(l.vehicle_interest.trim()); }
+  const shownMap = new Map<string, { modelo: string; ano?: any; preco?: string }>();
+  for (const s of states) {
+    const vp = s?.state?.veiculo_apresentado;
+    if (vp?.ja_apresentado && vp?.modelo) {
+      const key = `${vp.modelo}|${vp.ano || ''}`;
+      if (!shownMap.has(key)) shownMap.set(key, { modelo: vp.modelo, ano: vp.ano, preco: vp.preco });
+    }
+  }
+  const knownPaymentMethod = pickRecent<string>(states, (r) => r?.state?.negociacao?.forma_pagamento) || pickRecent<string>(leads, (l) => l?.payment_method) || null;
+  const knownDecisionMaker = pickRecent<string>(states, (r) => r?.state?.lead?.acompanhante_decisao);
+  const objSet = new Set<string>();
+  for (const s of states) {
+    const objs = s?.state?.atendimento?.objecoes;
+    if (Array.isArray(objs)) objs.forEach((o: string) => _profileIsNonEmpty(o) && objSet.add(o));
+  }
+  const hasBeenTransferredBefore = leads.some((l) => l?.status === 'transferido' || l?.status_crm === 'qualificado');
+  return {
+    total_previous_conversations: leads.length,
+    last_seen_at: lastSeenAt,
+    days_since_last_seen: daysSinceLastSeen,
+    known_name: knownName,
+    known_city: knownCity,
+    previously_asked_models: Array.from(modelSet),
+    previously_shown_vehicles: Array.from(shownMap.values()),
+    known_payment_method: knownPaymentMethod,
+    known_decision_maker: knownDecisionMaker,
+    known_objections: Array.from(objSet),
+    has_been_transferred_before: hasBeenTransferredBefore,
+  };
+}
+
+function formatPersistentProfileBlock(profile: PersistentProfile): string {
+  const hasUsefulData = !!profile.known_name || !!profile.known_city || profile.previously_asked_models.length > 0 || profile.previously_shown_vehicles.length > 0 || !!profile.known_payment_method || !!profile.known_decision_maker || profile.known_objections.length > 0;
+  if (!hasUsefulData) return '';
+  const lines: string[] = [];
+  lines.push('## PERFIL CONHECIDO (conversas anteriores)');
+  if (profile.days_since_last_seen !== null) {
+    if (profile.days_since_last_seen === 0) lines.push(`- Última interação: hoje`);
+    else if (profile.days_since_last_seen === 1) lines.push(`- Última interação: ontem`);
+    else lines.push(`- Última interação: ${profile.days_since_last_seen} dias atrás`);
+  }
+  lines.push(`- Conversas anteriores: ${profile.total_previous_conversations}`);
+  if (profile.known_name) lines.push(`- Nome: ${profile.known_name}`);
+  if (profile.known_city) lines.push(`- Cidade: ${profile.known_city}`);
+  if (profile.known_payment_method) lines.push(`- Pagamento mencionado antes: ${profile.known_payment_method}`);
+  if (profile.known_decision_maker) lines.push(`- Decisão envolve: ${profile.known_decision_maker}`);
+  if (profile.previously_asked_models.length > 0) lines.push(`- Modelos já perguntados: ${profile.previously_asked_models.join(', ')}`);
+  if (profile.previously_shown_vehicles.length > 0) {
+    const shownStr = profile.previously_shown_vehicles.map((v) => `${v.modelo}${v.ano ? ` ${v.ano}` : ''}${v.preco ? ` (R$ ${v.preco})` : ''}`).join('; ');
+    lines.push(`- Veículos apresentados antes: ${shownStr}`);
+  }
+  if (profile.known_objections.length > 0) lines.push(`- Objeções históricas: ${profile.known_objections.join(', ')}`);
+  if (profile.has_been_transferred_before) lines.push(`- ⚠️ Já foi transferido pra vendedor anteriormente`);
+  lines.push('');
+  lines.push('⚠️ Use esses dados como CONTEXTO — não pergunte de novo o que já sabemos. Se cliente disser algo conflitante, prefira a info NOVA (pessoa pode ter mudado).');
+  return lines.join('\n');
+}
+
 // ─── Handoff Briefing V2 (INLINED from _shared/handoff/handoffBriefingV2.ts)
 // IT-2.4: briefing enriquecido com motivo categorico, urgencia, score, BANT.
 // V1 (buildBriefingForSeller) mantida; V2 usada quando flag ON.
@@ -2160,6 +2259,49 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   } catch (bndvCheckErr) {
     console.error('[Webhook] Erro ao verificar integração BNDV:', bndvCheckErr);
+  }
+
+  // ── IT-3.1: Perfil persistente cross-conversa ────────────────────────────
+  // Quando flag on, busca leads ANTERIORES do mesmo phone (cross-agent do
+  // mesmo user_id), agrega e apenda no system prompt. Cliente que volta
+  // depois de dias nao comeca do zero. Falha silenciosa se query der erro
+  // (defesa: agente continua respondendo, so sem contexto historico).
+  if (isPedroFeatureEnabled('PERSISTENT_PROFILES')) {
+    try {
+      // Busca leads anteriores com mesmo remote_jid OU client_phone normalizado.
+      // Limita a 10 leads mais recentes pra nao explodir o prompt.
+      const { data: priorLeads } = await supabase
+        .from('ai_crm_leads')
+        .select('id, lead_name, client_name, client_city, vehicle_interest, payment_method, status, status_crm, last_interaction_at')
+        .eq('user_id', agent.user_id)
+        .eq('remote_jid', remoteJid)
+        .order('last_interaction_at', { ascending: false })
+        .limit(10);
+      const priorLeadsArr = (priorLeads || []).filter((l: any) => l.id);
+
+      // Busca states desses leads (pode ser vazio se leads antigos nao tinham state)
+      let priorStates: any[] = [];
+      if (priorLeadsArr.length > 0) {
+        const leadIds = priorLeadsArr.map((l: any) => l.id);
+        const { data: states } = await supabase
+          .from('pedro_conversation_state')
+          .select('lead_id, state, last_extracted_at')
+          .in('lead_id', leadIds)
+          .order('last_extracted_at', { ascending: false });
+        priorStates = states || [];
+      }
+
+      const profile = derivePersistentProfile(priorLeadsArr, priorStates);
+      if (profile) {
+        const block = formatPersistentProfileBlock(profile);
+        if (block) {
+          systemPrompt += `\n\n${block}`;
+          console.log(`[PersistentProfile] apendado: ${profile.total_previous_conversations} conversa(s) anterior(es), ultima ${profile.days_since_last_seen}d atras`);
+        }
+      }
+    } catch (profileErr) {
+      console.warn('[PersistentProfile] erro (nao bloqueia):', profileErr);
+    }
   }
 
   // ── IT-1.3: Persona consolidada + 5 few-shots ────────────────────────────

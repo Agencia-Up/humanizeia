@@ -87,9 +87,17 @@
 
 ## Fase 3 — Memória
 
-- [ ] **IT-3.1** — Perfis persistentes cross-conversa (cliente já conhecido)
+- [x] **IT-3.1** — Perfis persistentes cross-conversa (cliente já conhecido)
   - Flag: `PEDRO_FF_PERSISTENT_PROFILES`
-  - Lookup por phone normalizado, traz histórico de outras conversas
+  - Lookup por `remote_jid` em `ai_crm_leads` (cross-agent do mesmo user_id,
+    limite 10 leads mais recentes) + `pedro_conversation_state` desses leads
+  - Agrega: nome, cidade, modelos perguntados, veículos apresentados,
+    forma de pagamento, acompanhante, objeções, foi transferido antes
+  - Bloco "## PERFIL CONHECIDO" apendado no system prompt + instrução
+    "use como contexto, prefira info nova se conflitar"
+  - **Sem migration** — usa tabelas existentes
+  - Implementado: `_shared/memory/persistentProfile.ts` (canônico, 16 testes)
+    + inline no `uazapi-webhook` com query + try/catch defensivo
 - [ ] **IT-3.2** — Sumarização hierárquica de histórico longo
   - Flag: `PEDRO_FF_HIERARCHICAL_SUMMARIZATION`
   - Resolve "Pedro esquece" em conversas >10 turnos

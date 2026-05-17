@@ -11,7 +11,33 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ---
 
-## [Em andamento — branch `feat/fase-2-qualificacao`]
+## [Em andamento — branch `feat/fase-3-memoria`]
+
+### Adicionado
+
+- **IT-3.1 — Perfil persistente cross-conversa** (memória do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/memory/persistentProfile.ts`
+    com `derivePersistentProfile(leadRecords, stateRecords)` (pure function)
+    e `formatPersistentProfileBlock(profile)`.
+  - Caller faz 2 queries Supabase:
+    1. `ai_crm_leads` por `remote_jid` (mesmo user_id, top 10 mais recentes)
+    2. `pedro_conversation_state` por esses lead_ids
+  - Agregação extrai: nome, cidade, modelos perguntados (union deduplicado),
+    veículos apresentados (dedupe por modelo+ano), forma de pagamento,
+    acompanhante de decisão, objeções históricas, has_been_transferred.
+  - Calcula `days_since_last_seen` em runtime (formato legível: "hoje" /
+    "ontem" / "N dias atrás").
+  - Cópia inline no `uazapi-webhook` (~110 linhas) + integração no
+    fluxo principal (entre BNDV e PERSONA_FEW_SHOTS).
+  - Atrás de flag `PEDRO_FF_PERSISTENT_PROFILES` (default OFF).
+  - **Sem migration** — usa tabelas existentes.
+  - try/catch defensivo: query que falhar não bloqueia agente.
+  - Suíte: 16 testes vitest (arrays vazios, dedup, days_since formato,
+    prioridade state > lead, has_been_transferred, formatação).
+
+---
+
+## [Concluído — branch `feat/fase-2-qualificacao`]
 
 ### Adicionado
 
