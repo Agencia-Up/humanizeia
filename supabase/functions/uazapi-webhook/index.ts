@@ -798,6 +798,79 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
   }
 }
 
+// ─── Pedro Feature Flags (INLINED from _shared/config/features.ts) ─────────
+// Lê env var PEDRO_FF_<FLAG> e aceita true/1/yes/on/enabled (case-insensitive).
+// Default fail-safe: false. NUNCA quebra (excecao -> false).
+// Fonte canônica + testes: supabase/functions/_shared/config/features.ts
+const PEDRO_FF_TRUE_VALUES = new Set(['true', '1', 'yes', 'on', 'enabled']);
+function isPedroFeatureEnabled(flag: string): boolean {
+  try {
+    const raw = Deno.env.get(`PEDRO_FF_${flag}`);
+    if (!raw) return false;
+    return PEDRO_FF_TRUE_VALUES.has(String(raw).trim().toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+// ─── Message Split (INLINED from _shared/humanization/messageSplit.ts) ─────
+// IT-1.1: divide resposta longa em ate N mensagens curtas pra parecer humano.
+// Fonte canônica + testes: supabase/functions/_shared/humanization/messageSplit.ts
+function splitMessageForHumanization(
+  text: string,
+  opts?: { maxParts?: number; minLength?: number }
+): string[] {
+  const maxParts = opts?.maxParts ?? 3;
+  const minLength = opts?.minLength ?? 200;
+
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) return [''];
+  if (trimmed.length <= minLength) return [trimmed];
+
+  const sentences = trimmed
+    .split(/(?<=[.!?])\s+|\n+/g)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  if (sentences.length <= 1) return [trimmed];
+
+  const targetParts = Math.min(maxParts, sentences.length);
+  const totalChars = sentences.reduce((sum, s) => sum + s.length, 0);
+  const targetCharsPerPart = totalChars / targetParts;
+
+  const parts: string[] = [];
+  let currentBuf: string[] = [];
+  let currentLen = 0;
+  let partsFilled = 0;
+
+  for (let i = 0; i < sentences.length; i++) {
+    const sentence = sentences[i];
+    const remaining = sentences.length - i;
+    const slotsLeft = targetParts - partsFilled;
+
+    currentBuf.push(sentence);
+    currentLen += sentence.length + 1;
+
+    const isLastSentence = i === sentences.length - 1;
+    const isLastPart = partsFilled === targetParts - 1;
+    const reachedTarget = currentLen >= targetCharsPerPart * 0.7;
+    const mustFlushToReserveSlot = remaining <= slotsLeft - 1;
+
+    if (
+      isLastSentence ||
+      (!isLastPart && (reachedTarget || mustFlushToReserveSlot))
+    ) {
+      parts.push(currentBuf.join(' ').trim());
+      currentBuf = [];
+      currentLen = 0;
+      partsFilled++;
+    }
+  }
+
+  const cleaned = parts.map((p) => p.trim()).filter((p) => p.length > 0);
+  return cleaned.length > 0 ? cleaned : [trimmed];
+}
+
 // ─── WhatsApp Image Sending ─────────────────────────────────────────────────
 async function sendVehicleImage(baseUrl: string, instKey: string, instanceName: string, phoneNumber: string, remoteJid: string, imageUrl: string, caption: string) {
   // UazAPI V6: POST /send/media com campo "file" (não "url" nem "media")
@@ -2351,30 +2424,55 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // apresentação, retorna fallback "Pode mandar 😊".
   const finalText = stripIntroIfAlreadyPresented(aiResponse, conversationState);
 
-  // Salvar resposta do AGENTE IA no wa_inbox (texto que REALMENTE foi enviado)
-  await supabase.from('wa_inbox').insert({
-    user_id: waInstance.user_id,
-    instance_id: waInstance.id,
-    phone: phoneNumber,
-    contact_name: pushName || null,
-    direction: 'outgoing',
-    message_type: 'text',
-    content: finalText,
-    is_read: true,
-    ai_category: 'agent',
-  }).then(({ error }: any) => {
-    if (error) console.error('[uazapi-webhook] wa_inbox outgoing insert error:', error.message);
-  });
+  // ─── IT-1.1: Message Splitting (humanizacao) ─────────────────────────────
+  // Quando PEDRO_FF_MESSAGE_SPLITTING=true, divide respostas longas em ate 3
+  // mensagens curtas pra parecer humano. Cada parte vira 1 registro no
+  // wa_inbox + 1 send/text separado, com pequeno delay entre elas pra
+  // garantir ordem de entrega no whatsapp.
+  // FALLBACK (flag off): comportamento atual identico - 1 send + 1 insert.
+  const splitEnabled = isPedroFeatureEnabled('MESSAGE_SPLITTING');
+  const messageParts = splitEnabled
+    ? splitMessageForHumanization(finalText)
+    : [finalText];
+  const INTER_MESSAGE_DELAY_MS = 600; // delay minimo entre partes consecutivas
 
-  // Enviar para o cliente final
-  try {
-    await fetch(`${baseUrl}/send/text`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: JSON.stringify({ number: phoneNumber, text: finalText })
-    })
-  } catch (e) {
-    console.error('[Webhook] Erro ao enviar mensagem:', e)
+  if (splitEnabled && messageParts.length > 1) {
+    console.log(`[Humanization] MESSAGE_SPLITTING on - dividindo em ${messageParts.length} partes`);
+  }
+
+  for (let i = 0; i < messageParts.length; i++) {
+    const partText = messageParts[i];
+
+    // Salvar cada parte no wa_inbox (registro outgoing por parte)
+    await supabase.from('wa_inbox').insert({
+      user_id: waInstance.user_id,
+      instance_id: waInstance.id,
+      phone: phoneNumber,
+      contact_name: pushName || null,
+      direction: 'outgoing',
+      message_type: 'text',
+      content: partText,
+      is_read: true,
+      ai_category: 'agent',
+    }).then(({ error }: any) => {
+      if (error) console.error('[uazapi-webhook] wa_inbox outgoing insert error:', error.message);
+    });
+
+    // Enviar para o cliente final
+    try {
+      await fetch(`${baseUrl}/send/text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'token': instKey },
+        body: JSON.stringify({ number: phoneNumber, text: partText })
+      })
+    } catch (e) {
+      console.error('[Webhook] Erro ao enviar mensagem (parte ' + (i + 1) + '):', e)
+    }
+
+    // Delay entre partes consecutivas (nao na ultima)
+    if (i < messageParts.length - 1) {
+      await new Promise((r) => setTimeout(r, INTER_MESSAGE_DELAY_MS));
+    }
   }
 
   // ── BNDV: Send vehicle images after text response ─────────────────────

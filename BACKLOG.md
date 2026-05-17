@@ -19,10 +19,12 @@
 
 ## Fase 1 — Humanização (próxima)
 
-- [ ] **IT-1.1** — Split de respostas longas em N mensagens curtas
+- [x] **IT-1.1** — Split de respostas longas em N mensagens curtas
   - Flag: `PEDRO_FF_MESSAGE_SPLITTING`
   - Heurística: quebrar em pontuação forte (`.`, `!`, `?`, `\n`)
   - Limite: 3 mensagens por turno, mín 1 frase cada
+  - Implementado: `_shared/humanization/messageSplit.ts` (canônico, 15 testes)
+    + inline no `uazapi-webhook` com fallback no comportamento atual
 - [ ] **IT-1.2** — Simulação de digitação (presence + delay)
   - Flag: `PEDRO_FF_TYPING_SIMULATION`
   - Delay proporcional ao tamanho da mensagem (50ms/char, clamp 800ms–4s)

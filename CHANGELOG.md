@@ -11,7 +11,27 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ---
 
-## [Em andamento — branch `chore/pre-requisitos-fase-1`]
+## [Em andamento — branch `feat/fase-1-humanizacao`]
+
+### Adicionado
+
+- **IT-1.1 — Message splitting** (humanização do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/humanization/messageSplit.ts`
+    com algoritmo de split em pontuação forte (`.!?\\s+` ou `\\n+`),
+    preserva números (`R$ 12.500,00`) e domínios (`site.com.br`), distribui
+    em até 3 partes balanceadas por chars.
+  - Cópia inline no `supabase/functions/uazapi-webhook/index.ts` (Edge
+    Functions Supabase não importam cross-function — código duplicado
+    intencionalmente, com comentário apontando pra fonte).
+  - Atrás de feature flag `PEDRO_FF_MESSAGE_SPLITTING` (default OFF =
+    comportamento atual idêntico).
+  - Quando ON: divide em N partes, envia 1 por vez via `/send/text` com
+    delay de 600ms entre cada (garante ordem no WhatsApp).
+  - Suíte: 15 testes vitest (edge cases incluídos).
+
+---
+
+## [Concluído — branch `chore/pre-requisitos-fase-1`]
 
 ### Adicionado
 
