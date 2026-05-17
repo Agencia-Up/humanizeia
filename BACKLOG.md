@@ -25,10 +25,15 @@
   - Limite: 3 mensagens por turno, mín 1 frase cada
   - Implementado: `_shared/humanization/messageSplit.ts` (canônico, 15 testes)
     + inline no `uazapi-webhook` com fallback no comportamento atual
-- [ ] **IT-1.2** — Simulação de digitação (presence + delay)
+- [x] **IT-1.2** — Simulação de digitação (presence + delay)
   - Flag: `PEDRO_FF_TYPING_SIMULATION`
-  - Delay proporcional ao tamanho da mensagem (50ms/char, clamp 800ms–4s)
-  - Usar API UazAPI `presence` antes do `send`
+  - Delay proporcional ao tamanho da mensagem (~18-28 cps com jitter,
+    clamp 800ms–4s)
+  - Presence "composing"/"paused" best-effort (tenta `/message/presence`
+    e `/chat/presence` em sequência; falha silenciosamente se nenhum
+    aceitar — delay continua funcionando)
+  - Implementado: `_shared/humanization/typingSimulator.ts` (canônico,
+    12 testes) + inline no `uazapi-webhook`
 - [ ] **IT-1.3** — Persona + few-shots consolidados
   - Flag: `PEDRO_FF_PERSONA_FEW_SHOTS`
   - 5 few-shots inline cobrindo: saudação, qualificação, objeção, fechamento, despedida

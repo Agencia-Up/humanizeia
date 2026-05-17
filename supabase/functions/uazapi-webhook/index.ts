@@ -813,6 +813,45 @@ function isPedroFeatureEnabled(flag: string): boolean {
   }
 }
 
+// ─── Typing Simulator (INLINED from _shared/humanization/typingSimulator.ts)
+// IT-1.2: delay realista + best-effort presence "digitando" antes de enviar.
+// Fonte canônica + testes: supabase/functions/_shared/humanization/typingSimulator.ts
+function calculateTypingDelayMs(
+  text: string,
+  opts?: { minMs?: number; maxMs?: number; baseCps?: number; jitterCps?: number; randomFn?: () => number }
+): number {
+  const minMs = opts?.minMs ?? 800;
+  const maxMs = opts?.maxMs ?? 4000;
+  const baseCps = opts?.baseCps ?? 18;
+  const jitterCps = opts?.jitterCps ?? 10;
+  const randomFn = opts?.randomFn ?? Math.random;
+  const len = (text ?? '').length;
+  if (len === 0) return minMs;
+  const cps = baseCps + randomFn() * jitterCps;
+  const raw = (len / cps) * 1000;
+  return Math.max(minMs, Math.min(raw, maxMs));
+}
+
+async function sendTypingPresence(
+  baseUrl: string,
+  instKey: string,
+  phoneNumber: string,
+  presence: 'composing' | 'paused' | 'available' = 'composing'
+): Promise<boolean> {
+  const headers = { 'Content-Type': 'application/json', token: instKey };
+  const body = JSON.stringify({ number: phoneNumber, presence });
+  const endpoints = [`${baseUrl}/message/presence`, `${baseUrl}/chat/presence`];
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { method: 'POST', headers, body });
+      if (res.ok) return true;
+    } catch {
+      // ignora
+    }
+  }
+  return false;
+}
+
 // ─── Message Split (INLINED from _shared/humanization/messageSplit.ts) ─────
 // IT-1.1: divide resposta longa em ate N mensagens curtas pra parecer humano.
 // Fonte canônica + testes: supabase/functions/_shared/humanization/messageSplit.ts
@@ -2424,24 +2463,37 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // apresentação, retorna fallback "Pode mandar 😊".
   const finalText = stripIntroIfAlreadyPresented(aiResponse, conversationState);
 
-  // ─── IT-1.1: Message Splitting (humanizacao) ─────────────────────────────
-  // Quando PEDRO_FF_MESSAGE_SPLITTING=true, divide respostas longas em ate 3
-  // mensagens curtas pra parecer humano. Cada parte vira 1 registro no
-  // wa_inbox + 1 send/text separado, com pequeno delay entre elas pra
-  // garantir ordem de entrega no whatsapp.
-  // FALLBACK (flag off): comportamento atual identico - 1 send + 1 insert.
+  // ─── IT-1.1 + IT-1.2: Message Splitting + Typing Simulation ──────────────
+  // IT-1.1 PEDRO_FF_MESSAGE_SPLITTING: divide resposta em ate 3 partes.
+  // IT-1.2 PEDRO_FF_TYPING_SIMULATION: antes de cada send, dispara presence
+  // "composing" + sleep proporcional ao tamanho (clamp 800ms-4s), depois
+  // envia, depois "paused" (best-effort - presence pode falhar silenciosamente).
+  // Combina: humano-like (digitando -> mensagem -> pausa -> digitando -> ...).
+  // FALLBACK total (ambas off): comportamento atual identico ao legado.
   const splitEnabled = isPedroFeatureEnabled('MESSAGE_SPLITTING');
+  const typingEnabled = isPedroFeatureEnabled('TYPING_SIMULATION');
   const messageParts = splitEnabled
     ? splitMessageForHumanization(finalText)
     : [finalText];
-  const INTER_MESSAGE_DELAY_MS = 600; // delay minimo entre partes consecutivas
+  const INTER_MESSAGE_DELAY_MS = 600; // pausa entre partes (alem do typing)
 
   if (splitEnabled && messageParts.length > 1) {
     console.log(`[Humanization] MESSAGE_SPLITTING on - dividindo em ${messageParts.length} partes`);
   }
+  if (typingEnabled) {
+    console.log(`[Humanization] TYPING_SIMULATION on - delays proporcionais`);
+  }
 
   for (let i = 0; i < messageParts.length; i++) {
     const partText = messageParts[i];
+
+    // IT-1.2: typing presence + delay ANTES do send
+    if (typingEnabled) {
+      // best-effort: nao bloqueia se presence endpoint nao existir
+      await sendTypingPresence(baseUrl, instKey, phoneNumber, 'composing');
+      const typingDelay = calculateTypingDelayMs(partText);
+      await new Promise((r) => setTimeout(r, typingDelay));
+    }
 
     // Salvar cada parte no wa_inbox (registro outgoing por parte)
     await supabase.from('wa_inbox').insert({
@@ -2467,6 +2519,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       })
     } catch (e) {
       console.error('[Webhook] Erro ao enviar mensagem (parte ' + (i + 1) + '):', e)
+    }
+
+    // IT-1.2: presence "paused" apos enviar (best-effort)
+    if (typingEnabled) {
+      await sendTypingPresence(baseUrl, instKey, phoneNumber, 'paused');
     }
 
     // Delay entre partes consecutivas (nao na ultima)

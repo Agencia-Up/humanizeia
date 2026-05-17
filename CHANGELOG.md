@@ -15,6 +15,19 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **IT-1.2 — Typing simulation** (humanização do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/humanization/typingSimulator.ts`
+    com `calculateTypingDelayMs(text, opts)` (fórmula 18-28 cps com jitter,
+    clamp 800ms–4s, `randomFn` injetável pra testes) +
+    `sendTypingPresence(baseUrl, instKey, phone, presence)` best-effort
+    (tenta 2 endpoints UazAPI: `/message/presence` e `/chat/presence`).
+  - Cópia inline no `uazapi-webhook` (~50 linhas).
+  - Atrás de flag `PEDRO_FF_TYPING_SIMULATION` (default OFF).
+  - Quando ON: antes de cada `send/text` dispara presence "composing" +
+    sleep proporcional; após envio dispara "paused". Combina com IT-1.1
+    (humano-like: digitando → mensagem → pausa → digitando → ...).
+  - Suíte: 12 testes vitest com `fetchFn` injetável (zero network).
+
 - **IT-1.1 — Message splitting** (humanização do Pedro SDR)
   - Fonte canônica: `supabase/functions/_shared/humanization/messageSplit.ts`
     com algoritmo de split em pontuação forte (`.!?\\s+` ou `\\n+`),
