@@ -44,9 +44,15 @@
 
 ## Fase 2 — Qualificação
 
-- [ ] **IT-2.1** — Schema BANT estruturado no state
+- [x] **IT-2.1** — Schema BANT (Budget/Authority/Need/Timeline)
   - Flag: `PEDRO_FF_BANT_QUALIFICATION`
-  - Campos: `budget`, `authority`, `need`, `timeline` (enum + texto livre)
+  - **Sem migration nova** — DERIVA BANT dos campos JÁ existentes do
+    `pedro_conversation_state` (negociacao, lead, interesse, etc.)
+  - Apenda bloco "## QUALIFICAÇÃO BANT" no system prompt mostrando status
+    de cada dimensão + estágio geral + próxima ação sugerida
+  - Estágios: `cold` → `discovery` → `qualifying` → `qualified` → `ready_to_handoff`
+  - Implementado: `_shared/qualification/bantSchema.ts` (canônico, 16 testes)
+    + inline no `uazapi-webhook`
 - [ ] **IT-2.2** — Lead scoring 0–100 com critérios explícitos
   - Flag: `PEDRO_FF_LEAD_SCORING`
   - Reusar / extender `calcQualificationScore()` existente (linha 448 webhook)

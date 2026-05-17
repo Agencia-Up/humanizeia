@@ -11,7 +11,30 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ---
 
-## [Em andamento — branch `feat/fase-1-humanizacao`]
+## [Em andamento — branch `feat/fase-2-qualificacao`]
+
+### Adicionado
+
+- **IT-2.1 — Schema BANT derivado do state** (qualificação do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/qualification/bantSchema.ts`
+    com `deriveBantFromState(state)` (pure function, deriva 4 dimensões dos
+    campos já existentes no JSONB) + `formatBantBlock(bant)` (markdown pro
+    system prompt).
+  - **Sem migration nova** — usa `pedro_conversation_state.state` atual:
+    Budget ← negociacao.forma_pagamento + valor_entrada;
+    Authority ← lead.acompanhante_decisao (vazio = sole);
+    Need ← interesse.modelo_desejado + veiculo_apresentado;
+    Timeline ← heurística combinada.
+  - Cópia inline no `uazapi-webhook` (~110 linhas) + integração no
+    `formatStateForPrompt` apendendo bloco quando flag ON.
+  - Atrás de flag `PEDRO_FF_BANT_QUALIFICATION` (default OFF).
+  - Quando ON: LLM enxerga estágio BANT do lead + próxima ação sugerida
+    (ex: "Perguntar forma de pagamento" / "Transferir pra vendedor").
+  - Suíte: 16 testes vitest cobrindo todos os estágios.
+
+---
+
+## [Concluído — branch `feat/fase-1-humanizacao`]
 
 ### Adicionado
 
