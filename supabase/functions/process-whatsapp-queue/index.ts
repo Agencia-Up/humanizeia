@@ -860,36 +860,39 @@ async function sendToUazAPI(
   const authHeaders = { "Content-Type": "application/json", token, apikey: token };
 
   if (mediaUrl && mediaType) {
-    // UazAPI V6: unified /send/media endpoint for all media types
-    const mediaResponse = await fetchWithTimeout(
-      `${apiUrl}/send/media`,
-      {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({ number, url: mediaUrl, type: mediaType, caption: text || "" }),
-      },
-      OUTBOUND_FETCH_TIMEOUT_MS
-    ).catch(() => null);
+    // UazAPI V6: /send/media works with the "file" field. Keep older body
+    // shapes as fallbacks because some self-hosted instances lag behind.
+    const caption = mediaType === "audio" ? "" : (text || "");
+    const mediaAttempts = [
+      { file: mediaUrl, type: mediaType, caption },
+      { file: mediaUrl, mediatype: mediaType, caption },
+      { url: mediaUrl, type: mediaType, caption },
+      { media: mediaUrl, mediatype: mediaType, caption },
+    ];
 
-    if (mediaResponse && mediaResponse.ok) {
-      const data = await mediaResponse.json().catch(() => ({}));
-      return { remoteMessageId: data?.messageId || data?.id || null };
-    }
+    let lastMediaError = "";
+    for (const body of mediaAttempts) {
+      const mediaResponse = await fetchWithTimeout(
+        `${apiUrl}/send/media`,
+        {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ number, ...body }),
+        },
+        OUTBOUND_FETCH_TIMEOUT_MS
+      ).catch((err) => {
+        lastMediaError = err instanceof Error ? err.message : String(err);
+        return null;
+      });
 
-    // Fallback attempt 2: alternate body shape
-    const mediaResponse2 = await fetchWithTimeout(
-      `${apiUrl}/send/media`,
-      {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({ number, media: mediaUrl, mediatype: mediaType, caption: text || "" }),
-      },
-      OUTBOUND_FETCH_TIMEOUT_MS
-    ).catch(() => null);
+      if (mediaResponse && mediaResponse.ok) {
+        const data = await mediaResponse.json().catch(() => ({}));
+        return { remoteMessageId: data?.messageId || data?.id || data?.key?.id || null };
+      }
 
-    if (mediaResponse2 && mediaResponse2.ok) {
-      const data = await mediaResponse2.json().catch(() => ({}));
-      return { remoteMessageId: data?.messageId || data?.id || null };
+      if (mediaResponse) {
+        lastMediaError = `${mediaResponse.status} - ${await mediaResponse.text().catch(() => "")}`;
+      }
     }
 
     // Fallback: send text with media URL appended
@@ -905,7 +908,7 @@ async function sendToUazAPI(
     );
     if (!fallbackResp.ok) {
       const errText = await fallbackResp.text();
-      throw new Error(`UazAPI error (media fallback): ${fallbackResp.status} - ${errText}`);
+      throw new Error(`UazAPI error (sendMedia: ${lastMediaError}; media fallback: ${fallbackResp.status} - ${errText})`);
     }
     const data = await fallbackResp.json().catch(() => ({}));
     return { remoteMessageId: data?.messageId || data?.id || null };

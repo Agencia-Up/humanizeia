@@ -68,18 +68,31 @@ async function sendUazapiMediaMessage(
   mediaType: string, // 'image' | 'audio' | 'video'
   caption?: string,
 ): Promise<boolean> {
+  const safeCaption = mediaType === "audio" ? "" : (caption || "");
   const attempts = [
     {
       url: `${baseUrl}/send/media`,
-      body: { number: phoneNumber, url: mediaUrl, type: mediaType, caption: caption || "" },
+      body: { number: phoneNumber, file: mediaUrl, type: mediaType, caption: safeCaption },
     },
     {
       url: `${baseUrl}/send/media`,
-      body: { number: phoneNumber, media: mediaUrl, mediatype: mediaType, caption: caption || "" },
+      body: { number: phoneNumber, file: mediaUrl, mediatype: mediaType, caption: safeCaption },
     },
     {
       url: `${baseUrl}/send/media`,
-      body: { remoteJid, url: mediaUrl, type: mediaType, caption: caption || "" },
+      body: { number: phoneNumber, url: mediaUrl, type: mediaType, caption: safeCaption },
+    },
+    {
+      url: `${baseUrl}/send/media`,
+      body: { number: phoneNumber, media: mediaUrl, mediatype: mediaType, caption: safeCaption },
+    },
+    {
+      url: `${baseUrl}/send/media`,
+      body: { remoteJid, file: mediaUrl, type: mediaType, caption: safeCaption },
+    },
+    {
+      url: `${baseUrl}/send/media`,
+      body: { remoteJid, url: mediaUrl, type: mediaType, caption: safeCaption },
     },
   ];
 
