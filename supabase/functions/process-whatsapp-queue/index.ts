@@ -190,8 +190,8 @@ Deno.serve(async (req) => {
         .from("wa_instances")
         .select("*")
         .eq("user_id", uid)
-        .eq("is_active", true)
         .eq("status", "connected")
+        .order("is_active", { ascending: false })
         .order("health_score", { ascending: false });
 
       if (instances && instances.length > 0) {
@@ -508,6 +508,8 @@ Deno.serve(async (req) => {
         await supabase
           .from("wa_instances")
           .update({
+            is_active: true,
+            status: "connected",
             messages_sent_today: nextTodaySent,
             last_message_at: new Date().toISOString(),
             last_used_at: new Date().toISOString(),
