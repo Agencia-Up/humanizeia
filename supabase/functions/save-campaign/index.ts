@@ -37,17 +37,41 @@ Deno.serve(async (req) => {
     }
     const userId = user.id;
 
-    // --- Get profile: org_id, role, manager_id ---
+    // --- Get profile/member: org_id, role, manager_id ---
+    // Vendedores existem em dois modelos no produto:
+    // 1. profiles.role='seller' + manager_id
+    // 2. ai_team_members.auth_user_id + user_id (master)
+    // O salvamento e o disparo precisam resolver o MESMO master/seller, senão
+    // a campanha é criada em um user_id e iniciada/buscada em outro.
     const { data: profile } = await supabase
       .from("profiles")
       .select("organization_id, role, manager_id")
       .eq("id", userId)
-      .single();
+      .maybeSingle();
     const orgId = profile?.organization_id || null;
 
-    // Seller uses manager's user_id so contacts/instances match
-    const isSeller = profile?.role === "seller" && !!profile?.manager_id;
-    const effectiveUserId = isSeller ? profile.manager_id : userId;
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const { data: memberRow } = await serviceClient
+      .from("ai_team_members")
+      .select("id, user_id")
+      .eq("auth_user_id", userId)
+      .order("is_active", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const profileManagerId =
+      profile?.role === "seller" && profile.manager_id
+        ? profile.manager_id
+        : null;
+
+    const isSeller = !!memberRow?.user_id || !!profileManagerId;
+    const effectiveUserId = memberRow?.user_id || profileManagerId || userId;
+    const resolvedSellerMemberId = memberRow?.id || null;
 
     // --- Parse body ---
     const body = await req.json();
@@ -240,7 +264,9 @@ Deno.serve(async (req) => {
       include_optout_buttons: include_optout_buttons === true,
       reply_auto_tag: reply_auto_tag?.trim() || null,
       reply_auto_message: reply_auto_message?.trim() || null,
-      seller_member_id: seller_member_id || null,
+      seller_member_id: isSeller
+        ? (resolvedSellerMemberId || seller_member_id || null)
+        : (seller_member_id || null),
     };
 
     // Determine status
@@ -252,13 +278,6 @@ Deno.serve(async (req) => {
         payload.status = "scheduled";
       }
     }
-
-    // --- Create or Update ---
-    // Use service role to ensure org_id is set correctly
-    const serviceClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     if (campaign_id) {
       // Update: verify ownership (seller sees master's campaigns via effectiveUserId)

@@ -42,3 +42,4 @@ Gemini_Generated_Image_*
 
 # Staging seed data (não commitado — é só pra teste local)
 tests/staging-seeds/
+.tmp-video/

@@ -85,7 +85,9 @@ Deno.serve(async (req) => {
         .from("ai_team_members")
         .select("id, user_id")
         .eq("auth_user_id", userId)
-        .eq("is_active", true)
+        .order("is_active", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       const { data: profileRow } = await serviceClient
