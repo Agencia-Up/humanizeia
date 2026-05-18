@@ -1098,19 +1098,30 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     setSelectedLead(lead);
 
     if (isMarcosCrm) {
-      const { data: schedData, error: schedErr } = await (supabase as any)
-        .from('marcos_followup_schedules')
-        .select('id, lead_id, scheduled_at, message_template, status, created_at, sent_at, media_url, media_type')
-        .eq('lead_id', lead.id)
-        .order('scheduled_at', { ascending: true });
+      const [notesRes, schedRes] = await Promise.all([
+        (supabase as any)
+          .from('marcos_crm_notes')
+          .select('id, lead_id, content, is_pinned, created_at, member:ai_team_members(name)')
+          .eq('lead_id', lead.id)
+          .order('is_pinned', { ascending: false })
+          .order('created_at', { ascending: false }),
+        (supabase as any)
+          .from('marcos_followup_schedules')
+          .select('id, lead_id, scheduled_at, message_template, status, created_at, sent_at, media_url, media_type')
+          .eq('lead_id', lead.id)
+          .order('scheduled_at', { ascending: true }),
+      ]);
 
-      if (schedErr) {
-        toast({ title: 'Erro ao carregar follow-ups', description: schedErr.message, variant: 'destructive' });
+      if (notesRes.error) {
+        toast({ title: 'Erro ao carregar anotacoes', description: notesRes.error.message, variant: 'destructive' });
+      }
+      if (schedRes.error) {
+        toast({ title: 'Erro ao carregar follow-ups', description: schedRes.error.message, variant: 'destructive' });
       }
 
-      setNotes([]);
+      setNotes(notesRes.data || []);
       setTransfers([]);
-      setSchedules(schedData || []);
+      setSchedules(schedRes.data || []);
       return;
     }
 
@@ -1142,10 +1153,16 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     if (!newNote.trim() || !selectedLead || !userId) return;
     setNoteLoading(true);
     try {
-      const { error } = await (supabase as any).from('pedro_crm_notes').insert({
+      const table = isMarcosCrm ? 'marcos_crm_notes' : 'pedro_crm_notes';
+      const currentSeller = isMarcosCrm ? await resolveCurrentSellerForMarcos() : null;
+      const effectiveUserId = isMarcosCrm && isSeller
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
+        : userId;
+
+      const { error } = await (supabase as any).from(table).insert({
         lead_id:   selectedLead.id,
-        user_id:   userId,
-        member_id: memberId,
+        user_id:   effectiveUserId,
+        member_id: currentSeller?.id || memberId,
         content:   newNote.trim(),
       });
       if (error) throw error;
@@ -1162,7 +1179,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const handleDeleteNote = async (noteId: string) => {
     if (!confirm('Apagar esta anotação? Esta ação não pode ser desfeita.')) return;
     try {
-      const { error } = await (supabase as any).from('pedro_crm_notes').delete().eq('id', noteId);
+      const table = isMarcosCrm ? 'marcos_crm_notes' : 'pedro_crm_notes';
+      const { error } = await (supabase as any).from(table).delete().eq('id', noteId);
       if (error) throw error;
       setNotes(prev => prev.filter(n => n.id !== noteId));
       toast({ title: 'Anotação apagada.' });
@@ -1173,7 +1191,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
   const toggleNotePin = async (noteId: string, currentPinned: boolean) => {
     try {
-      await (supabase as any).from('pedro_crm_notes').update({ is_pinned: !currentPinned }).eq('id', noteId);
+      const table = isMarcosCrm ? 'marcos_crm_notes' : 'pedro_crm_notes';
+      await (supabase as any).from(table).update({ is_pinned: !currentPinned }).eq('id', noteId);
       setNotes(prev => prev.map(n => n.id === noteId ? { ...n, is_pinned: !currentPinned } : n)
         .sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0)));
       toast({ title: !currentPinned ? '📌 Nota fixada!' : 'Nota desafixada' });
