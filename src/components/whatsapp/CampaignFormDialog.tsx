@@ -61,7 +61,7 @@ interface CampaignFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (data: CampaignFormData) => Promise<void>;
-  onGeneratePreview: (prompt: string) => Promise<void>;
+  onGeneratePreview: (prompt: string, variationLevel?: string) => Promise<void>;
   contactLists: ContactList[];
   instances: WaInstance[];
   saving: boolean;
@@ -180,6 +180,7 @@ export function CampaignFormDialog({
   };
 
   const handleSubmit = async () => {
+    if (isUploading || (mediaType && !mediaUrl)) return;
     await onSubmit({
       name,
       prompt_base: prompt,
@@ -308,7 +309,7 @@ export function CampaignFormDialog({
                   ))}
                 </div>
               </div>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onGeneratePreview(prompt)} disabled={aiLoading || !prompt.trim()}>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onGeneratePreview(prompt, variationLevel)} disabled={aiLoading || !prompt.trim()}>
                 {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
                 Pré-visualizar Variações
               </Button>
@@ -718,7 +719,7 @@ export function CampaignFormDialog({
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button onClick={handleSubmit} disabled={saving} className="gap-1.5">
+          <Button onClick={handleSubmit} disabled={saving || isUploading || !!(mediaType && !mediaUrl)} className="gap-1.5">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : isEditing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
             {isEditing ? 'Salvar Alterações' : 'Criar Campanha'}
           </Button>

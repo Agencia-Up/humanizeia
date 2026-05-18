@@ -1245,7 +1245,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   };
 
   const handleScheduleFollowup = async () => {
-    if (!fuMsg.trim() || !fuDate || !selectedLead || !userId) return;
+    if (!fuMsg.trim() || !fuDate || !selectedLead || !userId || fuUploading || (fuMediaFile && !fuMediaUrl)) return;
     if (isMarcosCrm && !fuInstance) {
       toast({
         title: 'Selecione uma instância',
@@ -2384,7 +2384,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               )}
               <Button
                 onClick={handleScheduleFollowup}
-                disabled={fuLoading || !fuMsg.trim() || !fuDate || (isMarcosCrm && !fuInstance)}
+                disabled={fuLoading || fuUploading || !fuMsg.trim() || !fuDate || !!(fuMediaFile && !fuMediaUrl) || (isMarcosCrm && !fuInstance)}
                 size="sm" className="w-full h-8 text-xs"
               >
                 {fuLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <CalendarClock className="h-3.5 w-3.5 mr-1.5" />}

@@ -64,6 +64,8 @@ interface Campaign {
   id: string;
   prompt_base: string | null;
   message_template: string;
+  media_url: string | null;
+  media_type: string | null;
   min_delay_seconds: number;
   max_delay_seconds: number;
   rotation_messages_per_instance: number;
@@ -125,7 +127,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons, seller_member_id")
+        .select("id, prompt_base, message_template, media_url, media_type, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons, seller_member_id")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -371,7 +373,7 @@ Deno.serve(async (req) => {
               // Fallback: add random suffix to template
               const suffixes = ["", " 😊", " 👋", "!", " 🙂", " ✨", ".", " 💡", " 🚀", " 📲"];
               const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-              finalMessage = (campaign.message_template || item.message) + suffix;
+              finalMessage = buildFallbackAIMessage(campaign.prompt_base, item.contact_name, item.contact_metadata, variationLevel, campaign.message_template || item.message);
               messageIsUnique = true;
             }
           }
@@ -442,6 +444,9 @@ Deno.serve(async (req) => {
           !item.contact_metadata?.last_message_at && // only for first-time contacts
           !isUazAPIInstance(instance);
 
+        const effectiveMediaUrl = item.media_url || campaign?.media_url || null;
+        const effectiveMediaType = item.media_type || campaign?.media_type || null;
+
         let sendResult: SendResult;
         if (shouldSendOptoutButtons && instance.provider === "evolution") {
           // Send message with interactive buttons via UazAPI
@@ -450,7 +455,7 @@ Deno.serve(async (req) => {
             { buttonId: "optout_stop", buttonText: { displayText: "❌ Não Quero Mais Receber" } },
           ]);
         } else {
-          sendResult = await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
+          sendResult = await sendMessageByProvider(instance, item.phone, finalMessage, effectiveMediaUrl, effectiveMediaType);
         }
         instanceFailures.set(instance.id, 0);
 
@@ -466,6 +471,8 @@ Deno.serve(async (req) => {
             status: "sent",
             sent_at: sentAt,
             message: finalMessage,
+            media_url: effectiveMediaUrl,
+            media_type: effectiveMediaType,
             instance_id: instance.id,
             message_hash: messageHash,
           })
@@ -490,9 +497,9 @@ Deno.serve(async (req) => {
           phone: item.phone.replace(/\D/g, ""),
           contact_name: item.contact_name || null,
           direction: "outgoing",
-          message_type: item.media_type || "text",
+          message_type: effectiveMediaType || "text",
           content: finalMessage,
-          media_url: item.media_url || null,
+          media_url: effectiveMediaUrl || null,
           remote_message_id: sendResult.remoteMessageId,
           is_read: true,
           created_at: sentAt,
@@ -895,23 +902,7 @@ async function sendToUazAPI(
       }
     }
 
-    // Fallback: send text with media URL appended
-    const fallbackText = text ? `${text}\n\n${mediaUrl}` : mediaUrl!;
-    const fallbackResp = await fetchWithTimeout(
-      `${apiUrl}/send/text`,
-      {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({ number, text: fallbackText }),
-      },
-      OUTBOUND_FETCH_TIMEOUT_MS
-    );
-    if (!fallbackResp.ok) {
-      const errText = await fallbackResp.text();
-      throw new Error(`UazAPI error (sendMedia: ${lastMediaError}; media fallback: ${fallbackResp.status} - ${errText})`);
-    }
-    const data = await fallbackResp.json().catch(() => ({}));
-    return { remoteMessageId: data?.messageId || data?.id || null };
+    throw new Error(`UazAPI error (sendMedia): ${lastMediaError}`);
   }
 
   // Plain text
@@ -1225,6 +1216,50 @@ async function sendEvolutionButtonMessage(
 }
 
 // ====================== MESSAGE POLYMORPHISM ======================
+
+function buildFallbackAIMessage(
+  promptBase: string,
+  contactName: string | null,
+  contactMetadata: any,
+  variationLevel: string,
+  messageTemplate: string | null,
+): string {
+  const base = (messageTemplate || promptBase || "").replace(/^\[IA\]\s*/i, "").trim();
+  const name = contactName?.trim();
+  const extras = contactMetadata && typeof contactMetadata === "object"
+    ? Object.entries(contactMetadata)
+        .filter(([_, value]) => value !== null && value !== undefined && value !== "")
+        .slice(0, 2)
+        .map(([key, value]) => `${key}: ${String(value)}`)
+        .join(", ")
+    : "";
+  const intro = name ? `${name}, ` : "";
+  const detail = extras ? ` Vi aqui tambem: ${extras}.` : "";
+
+  const conservative = [
+    `Oi, ${intro}${base}. Posso te passar mais detalhes por aqui?${detail}`,
+    `Ola, ${intro}passando para falar sobre: ${base}. Faz sentido para voce?${detail}`,
+    `${intro}${base}. Se quiser, eu te explico rapidinho por aqui.${detail}`,
+  ];
+  const moderate = [
+    `Oi, ${intro}tudo bem? Separei essa mensagem para voce: ${base}. Me responde por aqui se quiser seguir.${detail}`,
+    `${intro}pensei que isso poderia te interessar: ${base}. Quer que eu te mostre o proximo passo?${detail}`,
+    `Passando rapido, ${intro}${base}. Se fizer sentido, me chama aqui e eu te ajudo.${detail}`,
+  ];
+  const creative = [
+    `${intro}deixa eu te mostrar uma oportunidade: ${base}. Quer receber os detalhes agora?${detail}`,
+    `Oi! Tenho algo que pode encaixar bem para voce: ${base}. Me responde com "quero" que eu continuo.${detail}`,
+    `${intro}antes que passe batido: ${base}. Quer que eu te explique em uma mensagem curta?${detail}`,
+  ];
+
+  const pool = variationLevel === "low"
+    ? conservative
+    : variationLevel === "high"
+      ? creative
+      : moderate;
+  const selected = pool[Math.floor(Math.random() * pool.length)] || base;
+  return selected.slice(0, 500);
+}
 
 async function generateAIMessage(
   promptBase: string,

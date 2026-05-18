@@ -238,13 +238,6 @@ serve(async (req) => {
             schedule.media_url, schedule.media_type,
             schedule.message_template,
           );
-          // Se mídia falhar, tenta enviar só texto
-          if (!sent) {
-            sent = await sendUazapiTextMessage(
-              baseUrl, instKey, instName, phoneNumber, remoteJid,
-              schedule.message_template,
-            );
-          }
         } else {
           sent = await sendUazapiTextMessage(
             baseUrl, instKey, instName, phoneNumber, remoteJid,
@@ -396,9 +389,6 @@ serve(async (req) => {
             schedule.media_url, schedule.media_type,
             schedule.message_template,
           );
-          if (!sent) {
-            sent = await sendUazapiTextMessage(baseUrl, instKey, instName, digits, remoteJid, schedule.message_template);
-          }
         } else {
           sent = await sendUazapiTextMessage(baseUrl, instKey, instName, digits, remoteJid, schedule.message_template);
         }

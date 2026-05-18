@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
@@ -36,6 +36,14 @@ interface ContactList {
   contact_count: number;
   source: string;
   created_at: string;
+}
+
+interface ListContact {
+  id: string;
+  phone: string;
+  name: string | null;
+  metadata: Record<string, unknown> | null;
+  is_valid: boolean | null;
 }
 
 interface WAInstance {
@@ -72,13 +80,22 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [aiVariations, setAiVariations] = useState<string[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
   const [renamingListId, setRenamingListId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [editingList, setEditingList] = useState<ContactList | null>(null);
+  const [listEditorName, setListEditorName] = useState('');
+  const [listContacts, setListContacts] = useState<ListContact[]>([]);
+  const [originalContactIds, setOriginalContactIds] = useState<string[]>([]);
+  const [loadingListContacts, setLoadingListContacts] = useState(false);
+  const [savingListContacts, setSavingListContacts] = useState(false);
+  const [newContactName, setNewContactName] = useState('');
+  const [newContactPhone, setNewContactPhone] = useState('');
 
-  const claudeConfig = useMemo(() => ({ creativity: 0.8, variations: 3 }), []);
-  const { sendSingleMessage, isLoading: aiLoading } = useClaudeChat({
+  const legacyClaudeConfig = useMemo(() => ({ creativity: 0.8, variations: 3 }), []);
+  const { sendSingleMessage } = useClaudeChat({
     context: 'copywriter',
-    config: claudeConfig,
+    config: legacyClaudeConfig,
   });
 
   const fetchData = useCallback(async () => {
@@ -208,7 +225,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
     }
   };
 
-  const handleGeneratePreview = async (prompt: string) => {
+  const handleGeneratePreviewLegacy = async (prompt: string, variationLevel = 'medium') => {
     if (!prompt.trim()) {
       toast({ title: 'Escreva o prompt base antes de gerar prévia', variant: 'destructive' });
       return;
@@ -225,6 +242,40 @@ Não numere as variações. Não inclua explicações adicionais.`
       setPreviewOpen(true);
     } catch {
       toast({ title: 'Erro ao gerar variações', variant: 'destructive' });
+    }
+  };
+
+  const handleGeneratePreview = async (prompt: string, variationLevel = 'medium') => {
+    if (!prompt.trim()) {
+      toast({ title: 'Escreva o prompt base antes de gerar previa', variant: 'destructive' });
+      return;
+    }
+
+    setAiLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('preview-wa-variations', {
+        body: {
+          prompt: prompt.trim(),
+          variation_level: variationLevel,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const variations = Array.isArray(data?.variations)
+        ? data.variations.map((v: unknown) => String(v).trim()).filter(Boolean)
+        : [];
+
+      setAiVariations(variations);
+      setPreviewOpen(true);
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao gerar variacoes',
+        description: err?.message || 'Nao foi possivel gerar a previa agora.',
+        variant: 'destructive',
+      });
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -291,6 +342,205 @@ Não numere as variações. Não inclua explicações adicionais.`
       fetchData();
     } catch (err: any) {
       toast({ title: 'Erro ao renomear', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const normalizePhone = (raw: string): string => {
+    let digits = raw.replace(/\D/g, '');
+    if (digits.startsWith('0')) digits = '55' + digits.slice(1);
+    if (digits.length === 10 || digits.length === 11) digits = '55' + digits;
+    return digits;
+  };
+
+  const validatePhone = (phone: string): boolean => /^55\d{10,11}$/.test(phone);
+
+  const closeListEditor = () => {
+    setEditingList(null);
+    setListEditorName('');
+    setListContacts([]);
+    setOriginalContactIds([]);
+    setNewContactName('');
+    setNewContactPhone('');
+  };
+
+  const openListEditor = async (list: ContactList) => {
+    setEditingList(list);
+    setListEditorName(list.name);
+    setListContacts([]);
+    setOriginalContactIds([]);
+    setNewContactName('');
+    setNewContactPhone('');
+    setLoadingListContacts(true);
+    try {
+      const { data, error } = await (supabase as any)
+        .from('wa_contacts')
+        .select('id, phone, name, metadata, is_valid')
+        .eq('list_id', list.id)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      const contacts = (data || []) as ListContact[];
+      setListContacts(contacts);
+      setOriginalContactIds(contacts.map(c => c.id));
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao abrir lista',
+        description: err?.message || 'Nao foi possivel carregar os contatos.',
+        variant: 'destructive',
+      });
+      closeListEditor();
+    } finally {
+      setLoadingListContacts(false);
+    }
+  };
+
+  const updateListContact = (id: string, patch: Partial<ListContact>) => {
+    setListContacts(prev => prev.map(contact => (
+      contact.id === id ? { ...contact, ...patch } : contact
+    )));
+  };
+
+  const removeListContact = (id: string) => {
+    setListContacts(prev => prev.filter(contact => contact.id !== id));
+  };
+
+  const addListContact = () => {
+    const phone = normalizePhone(newContactPhone);
+    const name = newContactName.trim() || null;
+
+    if (!validatePhone(phone)) {
+      toast({ title: 'Telefone invalido', description: 'Use DDD + numero ou o formato 55...', variant: 'destructive' });
+      return;
+    }
+
+    if (listContacts.some(contact => normalizePhone(contact.phone) === phone)) {
+      toast({ title: 'Contato duplicado', description: 'Esse telefone ja esta na lista.', variant: 'destructive' });
+      return;
+    }
+
+    setListContacts(prev => [
+      ...prev,
+      {
+        id: `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        phone,
+        name,
+        metadata: null,
+        is_valid: true,
+      },
+    ]);
+    setNewContactName('');
+    setNewContactPhone('');
+  };
+
+  const saveListEditor = async () => {
+    if (!editingList || !effectiveUserId) return;
+    const name = listEditorName.trim();
+    if (!name) {
+      toast({ title: 'Nome da lista obrigatorio', variant: 'destructive' });
+      return;
+    }
+
+    const normalizedContacts = listContacts
+      .map(contact => ({
+        ...contact,
+        phone: normalizePhone(contact.phone),
+        name: contact.name?.trim() || null,
+      }))
+      .filter(contact => contact.phone);
+
+    const seen = new Set<string>();
+    for (const contact of normalizedContacts) {
+      if (!validatePhone(contact.phone)) {
+        toast({
+          title: 'Telefone invalido',
+          description: `Corrija o telefone ${contact.phone || '(vazio)'} antes de salvar.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+      if (seen.has(contact.phone)) {
+        toast({
+          title: 'Contato duplicado',
+          description: `O telefone ${contact.phone} aparece mais de uma vez.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+      seen.add(contact.phone);
+    }
+
+    setSavingListContacts(true);
+    try {
+      const currentExistingIds = normalizedContacts
+        .filter(contact => !contact.id.startsWith('new-'))
+        .map(contact => contact.id);
+      const idsToDelete = originalContactIds.filter(id => !currentExistingIds.includes(id));
+
+      if (idsToDelete.length > 0) {
+        const { error } = await (supabase as any)
+          .from('wa_contacts')
+          .delete()
+          .in('id', idsToDelete);
+        if (error) throw error;
+      }
+
+      const existingRows = normalizedContacts
+        .filter(contact => !contact.id.startsWith('new-'))
+        .map(contact => ({
+          id: contact.id,
+          user_id: effectiveUserId,
+          list_id: editingList.id,
+          phone: contact.phone,
+          name: contact.name,
+          is_valid: true,
+          metadata: contact.metadata || null,
+        }));
+
+      if (existingRows.length > 0) {
+        const { error } = await (supabase as any)
+          .from('wa_contacts')
+          .upsert(existingRows, { onConflict: 'id' });
+        if (error) throw error;
+      }
+
+      const newRows = normalizedContacts
+        .filter(contact => contact.id.startsWith('new-'))
+        .map(contact => ({
+          user_id: effectiveUserId,
+          list_id: editingList.id,
+          phone: contact.phone,
+          name: contact.name,
+          source: 'manual',
+          is_valid: true,
+          metadata: contact.metadata || null,
+        }));
+
+      if (newRows.length > 0) {
+        const { error } = await (supabase as any)
+          .from('wa_contacts')
+          .insert(newRows);
+        if (error) throw error;
+      }
+
+      const { error: listErr } = await (supabase as any)
+        .from('wa_contact_lists')
+        .update({
+          name,
+          contact_count: normalizedContacts.length,
+        })
+        .eq('id', editingList.id);
+      if (listErr) throw listErr;
+
+      toast({ title: 'Lista atualizada', description: `${normalizedContacts.length} contato(s) salvos.` });
+      closeListEditor();
+      fetchData();
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao salvar lista',
+        description: err?.message || 'Nao foi possivel salvar os contatos.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingListContacts(false);
     }
   };
 
@@ -505,7 +755,7 @@ Não numere as variações. Não inclua explicações adicionais.`
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-primary"
-                          onClick={() => { setRenamingListId(list.id); setRenameValue(list.name); }}
+                          onClick={() => openListEditor(list)}
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -568,12 +818,119 @@ Não numere as variações. Não inclua explicações adicionais.`
         </DialogContent>
       </Dialog>
 
+      {/* Contact List Editor */}
+      <Dialog open={!!editingList} onOpenChange={(open) => { if (!open) closeListEditor(); }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <List className="h-5 w-5 text-primary" />
+              Editar lista de contatos
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 overflow-hidden flex-1 min-h-0">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Nome da lista</label>
+              <Input
+                value={listEditorName}
+                onChange={(e) => setListEditorName(e.target.value)}
+                placeholder="Nome da lista"
+                maxLength={100}
+              />
+            </div>
+
+            <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold">Adicionar contato</p>
+                <Badge variant="secondary">{listContacts.length} contato(s)</Badge>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
+                <Input
+                  value={newContactName}
+                  onChange={(e) => setNewContactName(e.target.value)}
+                  placeholder="Nome"
+                />
+                <Input
+                  value={newContactPhone}
+                  onChange={(e) => setNewContactPhone(e.target.value)}
+                  placeholder="Telefone WhatsApp"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') addListContact();
+                  }}
+                />
+                <Button onClick={addListContact} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Adicionar
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border/60 overflow-hidden">
+              <div className="grid grid-cols-[1fr_1fr_44px] gap-2 px-3 py-2 bg-muted/30 text-xs font-semibold text-muted-foreground">
+                <span>Nome</span>
+                <span>Telefone</span>
+                <span />
+              </div>
+              <div className="max-h-[42vh] overflow-y-auto p-2 space-y-2">
+                {loadingListContacts ? (
+                  <div className="flex items-center justify-center py-10 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                    Carregando contatos...
+                  </div>
+                ) : listContacts.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-muted-foreground">
+                    Nenhum contato nesta lista ainda.
+                  </div>
+                ) : (
+                  listContacts.map((contact) => (
+                    <div key={contact.id} className="grid grid-cols-[1fr_1fr_44px] gap-2">
+                      <Input
+                        value={contact.name || ''}
+                        onChange={(e) => updateListContact(contact.id, { name: e.target.value })}
+                        placeholder="Sem nome"
+                        className="h-9"
+                      />
+                      <Input
+                        value={contact.phone}
+                        onChange={(e) => updateListContact(contact.id, { phone: e.target.value })}
+                        placeholder="5599999999999"
+                        className="h-9"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeListContact(contact.id)}
+                        title="Remover contato"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeListEditor} disabled={savingListContacts}>
+              Cancelar
+            </Button>
+            <Button onClick={saveListEditor} disabled={savingListContacts || loadingListContacts}>
+              {savingListContacts ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}
+              Salvar lista
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* CSV Upload Dialog */}
       {user && (
         <CSVUploadDialog
           open={showUpload}
           onOpenChange={setShowUpload}
           userId={effectiveUserId || ''}
+          sellerMemberId={(isSeller && seller?.id) ? seller.id : null}
           onUploadComplete={fetchData}
         />
       )}
