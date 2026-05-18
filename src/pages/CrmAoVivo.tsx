@@ -879,8 +879,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         .seller-active { animation: active-pulse 2s ease-in-out infinite; }
         .alert-badge { animation: slide-in .3s ease-out; }
         .tv-scroll {
-          scrollbar-width: thin;
-          scrollbar-color: rgba(128,222,234,.65) rgba(15,23,42,.72);
+          scrollbar-width: auto;
+          scrollbar-color: rgba(103,232,249,.95) rgba(15,23,42,.9);
         }
         .tv-scroll::-webkit-scrollbar {
           width: 10px;
@@ -899,7 +899,29 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           background: rgba(128,222,234,.72);
         }
         .tv-scroll-y {
-          overflow-y: scroll !important;
+          overflow-y: auto !important;
+          padding-right: 8px !important;
+        }
+        .tv-scroll-y::-webkit-scrollbar {
+          width: 14px !important;
+        }
+        .tv-scroll-y::-webkit-scrollbar-button {
+          width: 0 !important;
+          height: 0 !important;
+          display: none !important;
+          background: transparent !important;
+        }
+        .tv-scroll-y::-webkit-scrollbar-track {
+          background: rgba(3,7,18,.86) !important;
+          border: 1px solid rgba(148,163,184,.22);
+          border-radius: 999px;
+        }
+        .tv-scroll-y::-webkit-scrollbar-thumb {
+          min-height: 52px;
+          background: linear-gradient(180deg, rgba(103,232,249,.95), rgba(59,130,246,.92)) !important;
+          border: 3px solid rgba(3,7,18,.88) !important;
+          border-radius: 999px;
+          box-shadow: 0 0 10px rgba(34,211,238,.32);
         }
       `}</style>
 
@@ -1055,7 +1077,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
                     <div
                       className="tv-scroll tv-scroll-y"
-                      style={{ minHeight: 0, padding: 9, paddingRight: 6, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'scroll', overflowX: 'hidden', scrollbarGutter: 'stable both-edges' }}
+                      style={{ minHeight: 0, padding: 9, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', overflowX: 'hidden', scrollbarGutter: 'stable' }}
                     >
                       {colLeads.length === 0 ? (
                         <div style={{ height: '100%', minHeight: 86, borderRadius: 10, border: '1px dashed rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.025)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#55627A', fontSize: 12, fontWeight: 650 }}>
