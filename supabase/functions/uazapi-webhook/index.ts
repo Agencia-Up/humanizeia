@@ -756,6 +756,45 @@ function getQualificationScore(state: any): number {
   return calcQualificationScore(state);
 }
 
+// ─── Structured Log (INLINED from _shared/observability/structuredLog.ts) ─
+// IT-4.3: logs JSON estruturados com trace_id por turno. Cada chamada vira
+// 1 linha JSON parseável - permite agregar por trace_id, calcular latencia
+// p50/p95, taxa de cortesia/guardrail, etc. Fonte canônica + testes:
+// supabase/functions/_shared/observability/structuredLog.ts
+type SlogLevel = 'debug' | 'info' | 'warn' | 'error';
+type SlogFields = Record<string, any> & { trace_id?: string };
+
+function newTraceId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) {
+      return (crypto as any).randomUUID().replace(/-/g, '').slice(0, 8);
+    }
+  } catch {}
+  return Math.random().toString(16).slice(2, 10).padStart(8, '0');
+}
+
+function slog(level: SlogLevel, event: string, fields: SlogFields = {}): void {
+  const record = { ts: new Date().toISOString(), level, event, ...fields };
+  let json: string;
+  try {
+    json = JSON.stringify(record);
+  } catch {
+    json = JSON.stringify({ ts: record.ts, level, event, _serialization_error: true });
+  }
+  switch (level) {
+    case 'error': console.error(json); break;
+    case 'warn': console.warn(json); break;
+    case 'debug': console.debug(json); break;
+    default: console.log(json);
+  }
+}
+
+function makeTurnLogger(traceId: string, baseFields: SlogFields = {}): (level: SlogLevel, event: string, fields?: SlogFields) => void {
+  return (level, event, fields = {}) => {
+    slog(level, event, { trace_id: traceId, ...baseFields, ...fields });
+  };
+}
+
 // ─── Guardrails de Saída (INLINED from _shared/reliability/guardrails.ts) ──
 // IT-4.2: filtra resposta do LLM antes de enviar. Bloqueia: preco sem
 // veiculo, promessa indevida (frete/garantia/entrega), invencao de specs,
@@ -1786,6 +1825,12 @@ Deno.serve(async (req) => {
 async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any) {
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 
+  // IT-4.3: trace_id por turno + timer pra latencia
+  const traceId = newTraceId();
+  const turnStartMs = Date.now();
+  const sLogEnabled = isPedroFeatureEnabled('STRUCTURED_LOGGING');
+  if (sLogEnabled) slog('info', 'turn_start', { trace_id: traceId, instance_name: instanceName, remote_jid: remoteJid, text_length: (userText || '').length });
+
   const { data: waInstance } = await supabase.from('wa_instances').select('*').eq('instance_name', instanceName).maybeSingle()
   if (!waInstance) {
     console.log(`[Webhook] Instance not found: ${instanceName}`);
@@ -2637,6 +2682,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         }).then(({ error }: any) => {
           if (error) console.error('[LLM-Retry] courtesy insert error:', error.message);
         });
+        if (sLogEnabled) {
+          slog('warn', 'courtesy_sent', { trace_id: traceId, openai_status: openaiRes.status, attempts: openaiAttempts, latency_ms: Date.now() - turnStartMs });
+        }
         console.log('[LLM-Retry] enviou cortesia ao cliente');
         return new Response(JSON.stringify({ ok: true, courtesy_sent: true }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200
@@ -3355,7 +3403,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     const guardrailResult = applyGuardrails(finalText, conversationState);
     if (guardrailResult.blocked) {
       const ruleList = guardrailResult.violations.map((v) => v.rule).join(',');
-      console.warn(`[Guardrails] BLOQUEADO (${ruleList}). Original: "${finalText.slice(0, 100)}". Violacoes:`, JSON.stringify(guardrailResult.violations));
+      if (sLogEnabled) {
+        slog('warn', 'guardrail_block', { trace_id: traceId, rules: guardrailResult.violations.map((v) => v.rule), original_excerpt: finalText.slice(0, 100), violations: guardrailResult.violations });
+      } else {
+        console.warn(`[Guardrails] BLOQUEADO (${ruleList}). Original: "${finalText.slice(0, 100)}". Violacoes:`, JSON.stringify(guardrailResult.violations));
+      }
       finalText = guardrailResult.safeFallback;
     }
   }
@@ -3461,5 +3513,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   }
 
-  return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
+  // IT-4.3: turn_end com latencia total — permite calcular p50/p95 de duracao
+  if (sLogEnabled) {
+    slog('info', 'turn_end', {
+      trace_id: traceId,
+      latency_ms: Date.now() - turnStartMs,
+      parts_sent: messageParts.length,
+      split_enabled: splitEnabled,
+      typing_enabled: typingEnabled,
+    });
+  }
+  return new Response(JSON.stringify({ success: true, trace_id: traceId }), { headers: corsHeaders, status: 200 })
 }

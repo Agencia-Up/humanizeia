@@ -15,6 +15,33 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **IT-4.3 — Logs estruturados JSON com `trace_id`** (observabilidade do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/observability/structuredLog.ts`
+    com `newTraceId()`, `slog(level, event, fields)`, `makeTurnLogger()`.
+  - **Resolve RISCO ALTO #2 do DIAGNOSTICO**: "Sem observabilidade de
+    custo/qualidade. Pilotando às cegas."
+  - `trace_id` curto (8 chars hex) gerado por turno — permite agregar por
+    conversa em dashboards futuros (Datadog/Logflare/Logtail).
+  - JSON 1-linha por evento: `{ ts, level, event, trace_id, ...fields }`.
+  - Output via `console[level]` (Supabase Edge captura automaticamente).
+  - **Eventos no webhook**:
+    - `turn_start` — entrada do processMessage (instance_name, remote_jid)
+    - `guardrail_block` — quando guardrail substitui resposta
+    - `courtesy_sent` — quando IT-4.1 envia cortesia após retry
+    - `turn_end` — latency_ms total + parts_sent + flags ativas
+  - Response JSON do webhook agora inclui `trace_id` (debug + correlação).
+  - Cópia inline no `uazapi-webhook` (~45 linhas) + 4 pontos de integração.
+  - Atrás de flag `PEDRO_FF_STRUCTURED_LOGGING` (default OFF = logs atuais
+    em texto livre permanecem).
+  - Suíte: 12 testes vitest (newTraceId hex/único, slog JSON válido com
+    levels, circular ref fallback, console nativo quando consoleFn não passado,
+    makeTurnLogger prefixa trace_id + baseFields, fields override base).
+
+**Fase 4 completa.** 3 features (IT-4.1 retry+cortesia, IT-4.2 guardrails,
+IT-4.3 logs estruturados), todas atrás de feature flag, todas com
+fallback bit-perfect quando OFF. **PLANO COMPLETO — todas as 4 fases
++ 5 pré-requisitos entregues.**
+
 - **IT-4.2 — Guardrails de saída** (confiabilidade do Pedro SDR)
   - Fonte canônica: `supabase/functions/_shared/reliability/guardrails.ts`
     com `applyGuardrails(text, state, opts)` e `SAFE_FALLBACK`.
