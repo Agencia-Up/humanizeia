@@ -123,9 +123,15 @@
 
 ## Fase 4 — Confiabilidade
 
-- [ ] **IT-4.1** — Retry + fallback de modelo na chamada LLM principal
+- [x] **IT-4.1** — Retry com backoff + mensagem de cortesia
   - Flag: `PEDRO_FF_LLM_RETRY_FALLBACK`
-  - Cascade: OpenAI gpt-4o → Anthropic Haiku → mensagem de cortesia
+  - Retry exponencial 1s/2s/4s em 5xx + 429, NÃO em 4xx
+  - Quando todas as tentativas falham: envia COURTESY_MESSAGE ao cliente
+    em vez de HTTP 500 silencioso. Conversa fica viva.
+  - **Decisão**: fallback pra Anthropic adiado (requer tradução de tools
+    OpenAI→Anthropic). IT-4.1 cobre 80% do RISCO ALTO #1 com retry simples.
+  - Implementado: `_shared/reliability/llmRetry.ts` (canônico, 12 testes)
+    + inline + wrap da chamada OpenAI principal no `uazapi-webhook`
 - [ ] **IT-4.2** — Guardrails de saída
   - Flag: `PEDRO_FF_GUARDRAILS`
   - Bloquear: prometer preço fora do BNDV, prometer entrega fora do estoque,

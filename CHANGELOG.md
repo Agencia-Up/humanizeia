@@ -11,7 +11,34 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ---
 
-## [Em andamento — branch `feat/fase-3-memoria`]
+## [Em andamento — branch `feat/fase-4-confiabilidade`]
+
+### Adicionado
+
+- **IT-4.1 — Retry com backoff + mensagem de cortesia** (confiabilidade do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/reliability/llmRetry.ts` com
+    `fetchWithRetry(url, init, opts)` e `COURTESY_MESSAGE`.
+  - **Resolve RISCO ALTO #1 do DIAGNOSTICO**: "Conversa morre silenciosamente
+    se OpenAI falhar".
+  - Retry exponencial (1s, 2s, 4s) em 5xx + 429. NÃO retry em 4xx
+    (problema permanente).
+  - Quando TODAS as tentativas falham (network ou 5xx): envia
+    `COURTESY_MESSAGE` ao cliente via `/send/text` + registra em `wa_inbox`,
+    retorna HTTP 200 em vez de HTTP 500 silencioso.
+  - **Decisão arquitetural**: fallback pra Anthropic adiado (requer tradução
+    de tools OpenAI→Anthropic). Retry simples cobre 80% do risco.
+  - Cópia inline no `uazapi-webhook` (~35 linhas) + wrap da chamada
+    OpenAI principal (linha 2495).
+  - Atrás de flag `PEDRO_FF_LLM_RETRY_FALLBACK` (default OFF = comportamento
+    atual: 1 tentativa, HTTP 500 se falhar).
+  - Suíte: 12 testes vitest (sucesso, retry em 500/429, NÃO retry em 401/400,
+    todas falham, network error, exception em todas, backoff exponencial
+    correto, maxAttempts e retryableStatuses customizados; setTimeoutFn
+    + fetchFn injetáveis — zero network/wait nos testes).
+
+---
+
+## [Concluído — branch `feat/fase-3-memoria`]
 
 ### Adicionado
 

@@ -756,6 +756,43 @@ function getQualificationScore(state: any): number {
   return calcQualificationScore(state);
 }
 
+// ─── LLM Retry + Cortesia (INLINED from _shared/reliability/llmRetry.ts) ──
+// IT-4.1: retry com backoff exponencial em 5xx/429. Mensagem de cortesia ao
+// cliente quando todas as tentativas falham (em vez de HTTP 500 silencioso).
+// Fonte canônica + testes: supabase/functions/_shared/reliability/llmRetry.ts
+const COURTESY_MESSAGE = 'Pera ai, tive uma instabilidade aqui. Pode me mandar de novo daqui uns 2 minutinhos? 🙏';
+const DEFAULT_RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
+
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  opts?: { maxAttempts?: number; baseDelayMs?: number; retryableStatuses?: number[] }
+): Promise<{ res: Response; attempts: number }> {
+  const maxAttempts = opts?.maxAttempts ?? 3;
+  const baseDelayMs = opts?.baseDelayMs ?? 1000;
+  const retryableStatuses = opts?.retryableStatuses ?? DEFAULT_RETRYABLE_STATUSES;
+  let lastError: any = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) {
+      const delay = baseDelayMs * Math.pow(2, attempt - 1);
+      await new Promise<void>((resolve) => setTimeout(() => resolve(), delay));
+    }
+    try {
+      const res = await fetch(url, init);
+      if (res.ok || !retryableStatuses.includes(res.status)) {
+        return { res, attempts: attempt + 1 };
+      }
+      if (attempt === maxAttempts - 1) {
+        return { res, attempts: attempt + 1 };
+      }
+    } catch (err) {
+      lastError = err;
+      if (attempt === maxAttempts - 1) throw err;
+    }
+  }
+  throw lastError || new Error('fetchWithRetry: unexpected end');
+}
+
 // ─── Objection Playbooks (INLINED from _shared/memory/objectionPlaybooks.ts)
 // IT-3.3: 8 playbooks hardcoded (Opção B). Quando state.atendimento.objecoes
 // contem objecao conhecida e flag on, apenda playbook(s) no system prompt
@@ -2492,7 +2529,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.log(`[Webhook] 🖼️ Enviando imagem para análise com modelo: ${aiModel}`);
   }
 
-  const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+  // IT-4.1: chamada OpenAI com retry + cortesia quando flag on.
+  // Sem flag: comportamento atual (1 tentativa, HTTP 500 se falhar).
+  const llmRetryEnabled = isPedroFeatureEnabled('LLM_RETRY_FALLBACK');
+  const openaiInit: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
     body: JSON.stringify({
@@ -2502,11 +2542,59 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       tools: tools,
       tool_choice: "auto"
     })
-  })
+  };
+
+  let openaiRes: Response;
+  let openaiAttempts = 1;
+  if (llmRetryEnabled) {
+    try {
+      const r = await fetchWithRetry('https://api.openai.com/v1/chat/completions', openaiInit);
+      openaiRes = r.res;
+      openaiAttempts = r.attempts;
+      if (openaiAttempts > 1) console.log(`[LLM-Retry] OpenAI conseguiu na tentativa ${openaiAttempts}`);
+    } catch (netErr) {
+      console.error('[LLM-Retry] todas as tentativas falharam com network error:', netErr);
+      openaiRes = new Response('network error', { status: 599 });
+    }
+  } else {
+    openaiRes = await fetch('https://api.openai.com/v1/chat/completions', openaiInit);
+  }
 
   if (!openaiRes.ok) {
     const errText = await openaiRes.text();
-    console.error(`[Webhook] OpenAI Erro: ${openaiRes.status} - ${errText}`);
+    console.error(`[Webhook] OpenAI Erro: ${openaiRes.status} - ${errText} (attempts=${openaiAttempts})`);
+
+    // IT-4.1: em vez de HTTP 500 silencioso, envia cortesia ao cliente.
+    // Mantem conversa viva, cliente sabe que ouve algum problema.
+    if (llmRetryEnabled) {
+      try {
+        await fetch(`${baseUrl}/send/text`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'token': instKey },
+          body: JSON.stringify({ number: phoneNumber, text: COURTESY_MESSAGE })
+        });
+        await supabase.from('wa_inbox').insert({
+          user_id: waInstance.user_id,
+          instance_id: waInstance.id,
+          phone: phoneNumber,
+          contact_name: pushName || null,
+          direction: 'outgoing',
+          message_type: 'text',
+          content: COURTESY_MESSAGE,
+          is_read: true,
+          ai_category: 'agent',
+        }).then(({ error }: any) => {
+          if (error) console.error('[LLM-Retry] courtesy insert error:', error.message);
+        });
+        console.log('[LLM-Retry] enviou cortesia ao cliente');
+        return new Response(JSON.stringify({ ok: true, courtesy_sent: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200
+        });
+      } catch (courtesyErr) {
+        console.error('[LLM-Retry] falha ao enviar cortesia:', courtesyErr);
+      }
+    }
+
     return new Response('OpenAI erro', { status: 500 });
   }
   const openaiData = await openaiRes.json()
