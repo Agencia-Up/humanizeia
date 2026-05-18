@@ -1580,8 +1580,9 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
     const crmToolInstruction = `
 
 FERRAMENTA DE CRM - COLETA DE DADOS E QUALIFICACAO:
-Voce tem acesso a ferramenta "atualizar_etapa_crm" para salvar dados do cliente e atualizar o status do lead.
+Voce tem acesso a ferramenta "atualizar_etapa_crm" para salvar dados do cliente e atualizar o status interno do lead.
 Esta ferramenta agora aceita CAMPOS ESTRUTURADOS alem do status e resumo.
+IMPORTANTE: esta ferramenta NAO move a coluna visual do CRM Pedro. A coluna permanece em "Novo" ate vendedor ou gerente mover manualmente.
 
 REGRA CRITICA - COLETA DE DADOS DO CLIENTE:
 Voce DEVE coletar dados do cliente ao longo da conversa e salvar usando a ferramenta.
@@ -1655,13 +1656,12 @@ QUANDO TRANSFERIR (qualquer status de transferencia):
 - "pouco_qualificado": preencha resumo detalhado, temperatura "morno" ou "frio". Informe ao cliente que um consultor vai entrar em contato ou pode ajudar quando ele quiser.
 - "qualificado": certifique-se de que coletou nome_cliente, cidade, veiculo_interesse, forma_pagamento. Preencha resumo com TUDO. Temperatura "quente". Informe que um consultor especialista vai continuar o atendimento.
 
-REGRAS ATUAIS DO CRM PEDRO - TRANSFERENCIA E QUALIFICACAO:
-- Use somente estas 3 etapas finais quando for transferir para vendedor: "inativo", "pouco_qualificado" e "qualificado".
-- "inativo": somente quando o cliente parou de responder e a regra automatica de 10 minutos assumiu. Nao use em conversa ativa.
-- "pouco_qualificado": cliente conversou, fez pergunta ou pediu informacao, mas nao mostrou forte intencao de compra, nao avancou para visita, pagamento ou negociacao.
-- "qualificado": cliente demonstrou forte intencao de compra: quer comprar, financiar, trocar, visitar, reservar, passar dados, negociar valores ou falar com consultor.
-- Nao use mais "medio_qualificado". Se a conversa parecer morna, classifique como "pouco_qualificado".
-- Ao classificar como "pouco_qualificado" ou "qualificado", transfira para vendedor com resumo completo. O lead deve ficar aguardando o vendedor responder "Ok"; o vendedor so e atribuido no CRM depois desse Ok.
+REGRAS ATUAIS DO CRM PEDRO - TRANSFERENCIA:
+- O agente NAO move coluna do Kanban/CRM. Todo lead novo deve permanecer visualmente em "Novo".
+- Use "interessado", "pouco_qualificado" ou "qualificado" apenas como status interno da automacao e para decidir se deve transferir para vendedor.
+- Quando transferir para vendedor, envie resumo completo e mantenha o lead aguardando confirmacao. O campo do vendedor fica "Aguardando" ate o vendedor responder "Ok".
+- Quando o vendedor responder "Ok", ele e atribuido ao lead, mas o lead continua na coluna "Novo". So vendedor ou gerente move o lead para Lead Inativo, Pouco Qualif., Qualificado ou qualquer outra etapa.
+- A regra automatica de 10 minutos tambem nao move a coluna do CRM; ela apenas transfere o lead para a fila de vendedores.
 - Nunca responda vendedores cadastrados como se fossem leads. Se um vendedor responder "Ok", isso e confirmacao de atendimento, nao novo lead.
 
 FERRAMENTA DE ESTOQUE BNDV:
@@ -1724,14 +1724,14 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
         type: "function",
         function: {
           name: "atualizar_etapa_crm",
-          description: "Atualiza o status do lead no CRM, salva dados estruturados do cliente e registra um resumo. Use SEMPRE que coletar qualquer informacao nova do cliente (nome, cidade, veiculo, pagamento, etc). Pode chamar multiplas vezes na mesma conversa conforme coletar mais dados.",
+          description: "Salva status interno, dados estruturados do cliente e resumo sem mover a coluna do Kanban/CRM. Use SEMPRE que coletar qualquer informacao nova. A coluna visual do CRM Pedro fica em Novo ate vendedor ou gerente mover manualmente.",
           parameters: {
             type: "object",
             properties: {
               status: {
                 type: "string",
                 enum: ["novo", "interessado", "inativo", "pouco_qualificado", "qualificado"],
-                description: "Status do lead: novo/interessado durante a conversa, inativo apenas pela regra automatica de 10 minutos, pouco_qualificado para lead morno/frio, qualificado para lead quente."
+                description: "Status interno da automacao. Nao move a coluna do CRM Pedro."
               },
               resumo: {
                 type: "string",
@@ -2077,7 +2077,6 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
             // Build structured update data from all available fields
             const updateData: any = {
               status: args.status,
-              status_crm: args.status,
               summary: args.resumo,
               last_interaction_at: new Date().toISOString(),
             };
@@ -2540,7 +2539,7 @@ async function transferLeadToSeller(
 
     // 3. Build structured seller notification with all collected client data
     const ld = leadRecord || {} as any;
-    const crmStage = normalizePedroCrmStage(ld.status_crm || ld.status, "qualificado");
+    const crmStage = normalizePedroCrmStage(ld.status, "qualificado");
     const clientName = ld.client_name || pushName || "Nao informado";
     const clientCity = ld.client_city || "Nao informada";
     const vehicleInterest = ld.vehicle_interest || "Nao informado";
@@ -2683,7 +2682,6 @@ O cliente esta esperando!`;
       // Update lead with transfer info
       await supabase.from("ai_crm_leads").update({
         status: "transferido",
-        status_crm: crmStage,
         assigned_to_id: null,
         last_interaction_at: new Date().toISOString(),
       }).eq("id", leadRecord.id);

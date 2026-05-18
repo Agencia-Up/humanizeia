@@ -1303,11 +1303,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "atualizar_etapa_crm",
-        description: "Atualiza o Kanban/CRM conforme a evolução da conversa. Chame esta função secretamente para categorizar o lead. Valores válidos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando não quer comprar). OBS IMPORTANTE: Ao chamar esta função para status 'interessado' ou 'encerrado', VOCÊ DEVE TAMBÉM gerar uma mensagem normal para o cliente. Só encerre a conversa se for status 'qualificado'.",
+        description: "Salva dados e resumo interno do lead sem mover a coluna do Kanban/CRM. Use para registrar evolucao da conversa e, quando fizer sentido, disparar transferencia para vendedor. O funil visual do CRM Pedro permanece em 'novo' ate vendedor ou gerente mover manualmente.",
         parameters: {
           type: "object",
           properties: {
-            status: { type: "string", enum: ["novo", "interessado", "inativo", "pouco_qualificado", "qualificado"], description: "Etapa atual do cliente no CRM Pedro." },
+            status: { type: "string", enum: ["novo", "interessado", "inativo", "pouco_qualificado", "qualificado"], description: "Status interno da automacao. Nao move a coluna do CRM Pedro." },
             resumo: { type: "string", description: "O que o cliente deseja e as informações que você coletou dele até o momento. Seja breve." }
           },
           required: ["status", "resumo"]
@@ -1702,13 +1702,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     systemPrompt += `\n\n${stateBlock}`;
   }
 
-  systemPrompt += `\n\nREGRAS ATUAIS DO CRM PEDRO - TRANSFERENCIA E QUALIFICACAO:
-- Use somente estas 3 etapas finais quando for transferir para vendedor: "inativo", "pouco_qualificado" e "qualificado".
-- "inativo": somente quando o cliente parou de responder e a regra automatica de 10 minutos assumiu. Nao use em conversa ativa.
-- "pouco_qualificado": cliente conversou, fez pergunta ou pediu informacao, mas nao mostrou forte intencao de compra, nao avancou para visita, pagamento ou negociacao.
-- "qualificado": cliente demonstrou forte intencao de compra: quer comprar, financiar, trocar, visitar, reservar, passar dados, negociar valores ou falar com consultor.
-- Nao use mais "medio_qualificado". Se a conversa parecer morna, classifique como "pouco_qualificado".
-- Ao classificar como "pouco_qualificado" ou "qualificado", transfira para vendedor com resumo completo. O lead deve ficar aguardando o vendedor responder "Ok"; o vendedor so e atribuido no CRM depois desse Ok.
+  systemPrompt += `\n\nREGRAS ATUAIS DO CRM PEDRO - TRANSFERENCIA:
+- O agente NAO move coluna do Kanban/CRM. Todo lead novo deve permanecer visualmente em "Novo".
+- Use "interessado", "pouco_qualificado" ou "qualificado" apenas como status interno da automacao e para decidir se deve transferir para vendedor.
+- Quando transferir para vendedor, envie resumo completo e mantenha o lead aguardando confirmacao. O campo do vendedor fica "Aguardando" ate o vendedor responder "Ok".
+- Quando o vendedor responder "Ok", ele e atribuido ao lead, mas o lead continua na coluna "Novo". So vendedor ou gerente move o lead para Lead Inativo, Pouco Qualif., Qualificado ou qualquer outra etapa.
+- A regra automatica de 10 minutos tambem nao move a coluna do CRM; ela apenas transfere o lead para a fila de vendedores.
 - Nunca responda vendedores cadastrados como se fossem leads. Se um vendedor responder "Ok", isso e confirmacao de atendimento, nao novo lead.`;
 
   // ── BNDV: Check if user has BNDV integration and append system prompt instruction ──
@@ -1883,7 +1882,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         // 2. Buscar lead row
           const { data: leadRow } = await supabase
             .from('ai_crm_leads')
-            .select('id, assigned_to_id, status, status_crm')
+            .select('id, assigned_to_id, status')
             .eq('agent_id', agent.id)
             .eq('remote_jid', remoteJid)
             .maybeSingle();
@@ -1892,7 +1891,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             transferResult = { success: false, error: 'lead_not_found' };
           } else {
             const crmStage = normalizePedroCrmStage(
-              transferArgs.classificacao || leadRow.status_crm || leadRow.status,
+              transferArgs.classificacao || leadRow.status,
               'qualificado',
             );
             const { data: existingPending } = await supabase
@@ -1975,7 +1974,6 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
               await supabase.from('ai_crm_leads').update({
                 status: 'transferido',
-                status_crm: crmStage,
                 assigned_to_id: null,
                 summary: transferArgs.resumo_breve || null,
               }).eq('id', leadRow.id);
@@ -2019,7 +2017,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                       `Horario: ${transferredAt}\n` +
                       `Lead: ${conversationState?.lead?.nome_completo || conversationState?.lead?.nome || pushName || 'Lead'}\n` +
                       `Telefone: wa.me/${phoneNumber}\n` +
-                      `Status: ${crmStage}\n` +
+                      `Classificacao IA: ${crmStage}\n` +
                       `${transferArgs.resumo_breve ? `Resumo: ${String(transferArgs.resumo_breve).substring(0, 300)}\n` : ''}` +
                       `\nEnviado para: ${chosenSeller.name}\n` +
                       `WhatsApp vendedor: ${chosenSeller.whatsapp_number || 'sem numero'}\n\n` +
@@ -2130,9 +2128,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       try {
         const args = JSON.parse(toolCall.function.arguments);
 
-        // 1. Atualizar banco de dados CRM (arrastar cartão para a coluna correta)
-        // Mantém status_crm sincronizado com status, exceto se já estiver
-        // explicitamente definido pelo vendedor (negociacao, fechado, etc.)
+        // 1. Salvar status interno e resumo sem mover a coluna do CRM.
+        // Nao sincroniza com status_crm: coluna visual do CRM e manual.
         const statusCrmMap: Record<string, string> = {
           novo: 'novo',
           interessado: 'interessado',
@@ -2146,12 +2143,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         const nextCrmStatus = statusCrmMap[rawStatus] || normalizePedroCrmStage(rawStatus, 'pouco_qualificado');
         await supabase.from('ai_crm_leads').update({
           status: nextCrmStatus,
-          status_crm: nextCrmStatus,
           summary: args.resumo,
           last_interaction_at: new Date().toISOString()
         }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
-        console.log(`[CRM] Lead ${phoneNumber} movido para: ${nextCrmStatus}`);
+        console.log(`[CRM] Lead ${phoneNumber} status interno: ${nextCrmStatus}; status_crm preservado.`);
 
         // 2. Alertar vendedor SE status indicar transferencia
         if (isPedroTransferStage(nextCrmStatus)) {
@@ -2220,7 +2216,6 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
                 await supabase.from('ai_crm_leads').update({
                   status: 'transferido',
-                  status_crm: nextCrmStatus,
                   assigned_to_id: null,
                 }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
@@ -2323,7 +2318,6 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
                   await supabase.from('ai_crm_leads').update({
                     status: 'transferido',
-                    status_crm: nextCrmStatus,
                     assigned_to_id: null,
                   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
@@ -2358,7 +2352,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                         `🕐 *Horário:* ${transferredAt}\n\n` +
                         `👤 *Lead:* ${pushName}\n` +
                         `📱 *Telefone:* wa.me/${phoneNumber}\n` +
-                        `📊 *Status:* ${nextCrmStatus}\n` +
+                        `📊 *Classificacao IA:* ${nextCrmStatus}\n` +
+                        `📌 *CRM:* permanece em Novo ate vendedor/gerente mover\n` +
                         `${args.resumo ? `\n📝 *Resumo:* ${args.resumo.substring(0, 300)}\n` : ''}` +
                         `\n━━━━━━━━━━━━━━━━━━━━\n\n` +
                         `🎯 *Enviado para:* ${nextSeller.name}\n` +

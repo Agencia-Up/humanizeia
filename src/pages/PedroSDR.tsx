@@ -635,6 +635,7 @@ interface CrmLead {
   id: string;
   lead_name: string;
   remote_jid: string;
+  status?: string | null;
   status_crm: string;
   summary?: string | null;
   next_followup_at: string | null;
@@ -874,6 +875,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           id: lead.id,
           lead_name: lead.name || lead.phone || 'Lead',
           remote_jid: `${lead.phone || ''}@s.whatsapp.net`,
+          status: null,
           status_crm: lead.stage_id || fallbackStage,
           summary: lead.notes || null,
           next_followup_at: null,
@@ -937,7 +939,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       // ========================================================================
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -1952,6 +1954,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     }
   };
 
+  const sellerLabelForLead = (lead?: CrmLead | null) =>
+    lead?.member?.name ?? (lead?.status === 'transferido' ? 'Aguardando' : 'Sem vendedor');
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -2000,7 +2005,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                     <X className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}</p>
+                <p className="text-xs text-muted-foreground">{sellerLabelForLead(selectedLead)} · {fmtDate(selectedLead.created_at)}</p>
               </div>
             ) : (
               <div className="flex items-start gap-1.5">
@@ -2008,7 +2013,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                   <h2 className="text-base font-semibold text-foreground truncate">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
                   <p className="text-xs text-muted-foreground">
                     {(() => { const p = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || ''; return p.length >= 12 ? `📱 (${p.slice(2,4)}) ${p.slice(4,9)}-${p.slice(9)}` : p.length >= 10 ? `📱 (${p.slice(0,2)}) ${p.slice(2,7)}-${p.slice(7)}` : p ? `📱 ${p}` : ''; })()}
-                    {selectedLead.remote_jid && ' · '}{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}
+                    {selectedLead.remote_jid && ' · '}{sellerLabelForLead(selectedLead)} · {fmtDate(selectedLead.created_at)}
                   </p>
                   {/* Prompt 1.1: linha discreta de origem (badge bonita virá no Prompt 5.1) */}
                   {(selectedLead as any).origem && (
@@ -2858,7 +2863,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                     </div>
                                     {!isSeller && !lead.member && (
                                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 font-medium">
-                                        Sem vendedor
+                                        {sellerLabelForLead(lead)}
                                       </span>
                                     )}
                                   </div>
@@ -2919,7 +2924,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{lead.lead_name || lead.remote_jid}</p>
-                    <p className="text-[11px] text-muted-foreground">{lead.member?.name ?? 'Sem vendedor'} · {fmtDate(lead.created_at)}</p>
+                    <p className="text-[11px] text-muted-foreground">{sellerLabelForLead(lead)} · {fmtDate(lead.created_at)}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
