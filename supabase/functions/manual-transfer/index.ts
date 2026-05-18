@@ -116,6 +116,38 @@ function extractUuid(value: any) {
   return match?.[0] || null;
 }
 
+async function buildConversationBriefing(supabase: any, lead: any) {
+  const parts: string[] = [];
+  if (lead.summary) {
+    parts.push(`Resumo salvo no CRM:\n${String(lead.summary).substring(0, 800)}`);
+  }
+
+  const { data: history, error } = await supabase
+    .from("wa_chat_history")
+    .select("role, content, created_at")
+    .eq("agent_id", lead.agent_id)
+    .eq("remote_jid", lead.remote_jid)
+    .order("created_at", { ascending: false })
+    .limit(12);
+
+  if (!error && history?.length) {
+    const transcript = history
+      .reverse()
+      .map((msg: any) => {
+        const author = msg.role === "user" ? "Cliente" : "IA";
+        return `${author}: ${String(msg.content || "").substring(0, 300)}`;
+      })
+      .join("\n");
+    parts.push(`Ultimas mensagens:\n${transcript}`);
+  }
+
+  if (parts.length === 0) {
+    return "Sem resumo salvo ainda. Abrir o WhatsApp do lead para consultar o contexto completo antes de chamar.";
+  }
+
+  return parts.join("\n\n").substring(0, 1800);
+}
+
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
 async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member: any) {
   try {
@@ -439,6 +471,7 @@ Deno.serve(async (req) => {
     const pushName = lead.lead_name || "Não informado";
     const agentName = agentConfig?.name || lead.agent?.name || "Pedro";
     const transferredAt = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const conversationBriefing = await buildConversationBriefing(supabase, lead);
 
     // 5. Send WhatsApp to SELLER (mensagem completa com resumo da conversa)
     const sellerMsg = `🚨 *TRANSFERÊNCIA DE LEAD*
@@ -450,7 +483,8 @@ Deno.serve(async (req) => {
 📊 *Status:* ${lead.status || "qualificado"}
 
 ━━━━━━━━━━━━━━━━━━━━
-${lead.summary ? `\n📝 *Resumo da Conversa:*\n${lead.summary.substring(0, 500)}\n` : ""}
+📝 *Feedback da conversa:*
+${conversationBriefing}
 ━━━━━━━━━━━━━━━━━━━━
 ${notes ? `\n💬 *Observação:* ${notes}\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}
 👉 *Atender agora:* https://wa.me/${phone}
@@ -502,10 +536,10 @@ _Gerado automaticamente pelo Pedro SDR_`;
       from_member_id: lead.assigned_to_id,
       to_member_id: member.id,
       transfer_reason: "manual",
-      notes: notes,
-      is_confirmed: true,
-      transfer_status: 'confirmed',
-      confirmed_at: new Date().toISOString()
+      notes: notes || conversationBriefing,
+      is_confirmed: false,
+      transfer_status: "pending",
+      confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     });
 
     // 9. Update member stats

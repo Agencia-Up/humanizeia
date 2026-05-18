@@ -511,7 +511,8 @@ Deno.serve(async (req) => {
           // Atualizar lead com novo vendedor
           await supabase.from('ai_crm_leads').update({
             assigned_to_id: nextSeller.id,
-          }).eq('id', lead.id).eq('status', 'qualificado');
+            status: 'transferido',
+          }).eq('id', lead.id).in('status', ['qualificado', 'transferido']);
 
           // Atualizar timestamp do novo vendedor
           await supabase.from('ai_team_members').update({

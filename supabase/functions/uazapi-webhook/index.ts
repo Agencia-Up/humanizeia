@@ -1024,6 +1024,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       if (pendingTransfer.lead_id) {
         const { error: updLeadErr } = await supabase.from('ai_crm_leads').update({
           status: 'em_atendimento',
+          status_crm: 'em_atendimento',
           last_interaction_at: now,
         }).eq('id', pendingTransfer.lead_id);
         if (updLeadErr) {
