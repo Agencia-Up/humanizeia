@@ -898,6 +898,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         .tv-scroll::-webkit-scrollbar-thumb:hover {
           background: rgba(128,222,234,.72);
         }
+        .tv-scroll-y {
+          overflow-y: scroll !important;
+        }
       `}</style>
 
       {tvMode && (
@@ -1051,8 +1054,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                     </div>
 
                     <div
-                      className="tv-scroll"
-                      style={{ minHeight: 0, padding: 9, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', overflowX: 'hidden', scrollbarGutter: 'stable' }}
+                      className="tv-scroll tv-scroll-y"
+                      style={{ minHeight: 0, padding: 9, paddingRight: 6, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'scroll', overflowX: 'hidden', scrollbarGutter: 'stable both-edges' }}
                     >
                       {colLeads.length === 0 ? (
                         <div style={{ height: '100%', minHeight: 86, borderRadius: 10, border: '1px dashed rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.025)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#55627A', fontSize: 12, fontWeight: 650 }}>
