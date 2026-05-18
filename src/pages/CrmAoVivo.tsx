@@ -1057,12 +1057,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             </section>
           )}
 
-          <main style={{ minHeight: 0, overflow: 'hidden' }}>
-            <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))', gap: 10, minHeight: 0, overflow: 'hidden' }}>
+          <main style={{ minHeight: 0, height: '100%', maxHeight: '100%', overflow: 'hidden', display: 'grid' }}>
+            <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))', gap: 10, minHeight: 0, height: '100%', maxHeight: '100%', overflow: 'hidden', alignItems: 'stretch' }}>
               {LIVE_COLUMNS.map(col => {
                 const colLeads = leadsByColumn[col.id] || [];
                 return (
-                  <div key={col.id} style={{ minHeight: 0, borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', overflow: 'hidden' }}>
+                  <div key={col.id} style={{ minHeight: 0, height: '100%', maxHeight: '100%', borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 10px 8px', background: col.bg, borderBottom: `1px solid ${col.main}` }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
@@ -1077,7 +1077,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
                     <div
                       className="tv-scroll tv-scroll-y"
-                      style={{ minHeight: 0, padding: 9, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', overflowX: 'hidden', scrollbarGutter: 'stable' }}
+                      style={{ minHeight: 0, height: '100%', maxHeight: '100%', padding: 9, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain', scrollbarGutter: 'stable' }}
                     >
                       {colLeads.length === 0 ? (
                         <div style={{ height: '100%', minHeight: 86, borderRadius: 10, border: '1px dashed rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.025)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#55627A', fontSize: 12, fontWeight: 650 }}>
