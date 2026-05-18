@@ -1,0 +1,836 @@
+/**
+ * Checkout.tsx — Página de pagamento do plano PRO (Prompt 10 — landing redesign 16/05)
+ *
+ * Fluxo:
+ *   /checkout?plano=mensal     → R$ 497/mês
+ *   /checkout?plano=anual      → R$ 4.970/ano (economia 2 meses)
+ *
+ * 3 etapas:
+ *   1) Dados pessoais (nome, e-mail, CPF/CNPJ, telefone)
+ *   2) Método de pagamento (PIX / Cartão / Boleto)
+ *   3) Revisão + termos + botão "Pagar agora"
+ *
+ * IMPORTANTE:
+ *   - Dados de cartão NÃO são armazenados no banco. Vão direto pro gateway (Asaas — Prompt 11).
+ *   - Por ora, "Pagar agora" só mostra toast "Integração em breve" — o backend vem no Prompt 11.
+ *   - Validação inline de CPF/CNPJ/e-mail/telefone no front antes de enviar.
+ */
+
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
+import { LogosIALogo } from '@/components/brand/LogosIALogo';
+import { supabase } from '@/integrations/supabase/client';
+import { useAppStore } from '@/store/appStore';
+import { toast } from 'sonner';
+import {
+  ArrowLeft, ArrowRight, CheckCircle2, CreditCard, FileText,
+  Lock, QrCode, Shield, Sparkles, User,
+} from 'lucide-react';
+
+/* ── Tipos ─────────────────────────────────────────────────────────────── */
+type Step = 1 | 2 | 3;
+type Billing = 'mensal' | 'anual';
+type PaymentMethod = 'pix' | 'cartao' | 'boleto';
+type PersonType = 'pf' | 'pj';
+
+/* ── Validações inline (sem libs externas) ─────────────────────────────── */
+function isValidEmail(v: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+}
+function onlyDigits(v: string): string {
+  return (v || '').replace(/\D/g, '');
+}
+function isValidCPF(v: string): boolean {
+  const d = onlyDigits(v);
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += parseInt(d[i], 10) * (10 - i);
+  let chk = (sum * 10) % 11;
+  if (chk === 10) chk = 0;
+  if (chk !== parseInt(d[9], 10)) return false;
+  sum = 0;
+  for (let i = 0; i < 10; i++) sum += parseInt(d[i], 10) * (11 - i);
+  chk = (sum * 10) % 11;
+  if (chk === 10) chk = 0;
+  return chk === parseInt(d[10], 10);
+}
+function isValidCNPJ(v: string): boolean {
+  const d = onlyDigits(v);
+  if (d.length !== 14 || /^(\d)\1{13}$/.test(d)) return false;
+  const calc = (slice: string, weights: number[]) => {
+    const sum = weights.reduce((acc, w, i) => acc + parseInt(slice[i], 10) * w, 0);
+    const mod = sum % 11;
+    return mod < 2 ? 0 : 11 - mod;
+  };
+  const w1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  const w2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  return calc(d.slice(0, 12), w1) === parseInt(d[12], 10) && calc(d.slice(0, 13), w2) === parseInt(d[13], 10);
+}
+function isValidPhone(v: string): boolean {
+  const d = onlyDigits(v);
+  return d.length === 10 || d.length === 11;
+}
+function maskCPF(v: string): string {
+  const d = onlyDigits(v).slice(0, 11);
+  return d
+    .replace(/^(\d{3})(\d)/, '$1.$2')
+    .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1-$2');
+}
+function maskCNPJ(v: string): string {
+  const d = onlyDigits(v).slice(0, 14);
+  return d
+    .replace(/^(\d{2})(\d)/, '$1.$2')
+    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1/$2')
+    .replace(/(\d{4})(\d)/, '$1-$2');
+}
+function maskPhone(v: string): string {
+  const d = onlyDigits(v).slice(0, 11);
+  if (d.length <= 10) return d.replace(/^(\d{2})(\d{4})(\d)/, '($1) $2-$3');
+  return d.replace(/^(\d{2})(\d{5})(\d)/, '($1) $2-$3');
+}
+function maskCard(v: string): string {
+  return onlyDigits(v).slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 ');
+}
+function maskExpiry(v: string): string {
+  const d = onlyDigits(v).slice(0, 4);
+  return d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
+}
+
+/* ── Componente principal ──────────────────────────────────────────────── */
+export default function Checkout() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { isDarkMode } = useAppStore();
+  const planoParam = (searchParams.get('plano') || 'mensal') as Billing;
+  const billing: Billing = planoParam === 'anual' ? 'anual' : 'mensal';
+
+  const [step, setStep] = useState<Step>(1);
+
+  // Etapa 1
+  const [personType, setPersonType] = useState<PersonType>('pf');
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [docNumber, setDocNumber] = useState(''); // CPF ou CNPJ
+  const [phone, setPhone] = useState('');
+
+  // Etapa 2
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [cardName, setCardName] = useState('');
+
+  // Etapa 3
+  const [agreedTerms, setAgreedTerms] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Validações da etapa 1
+  const docValid = personType === 'pf' ? isValidCPF(docNumber) : isValidCNPJ(docNumber);
+  const step1Valid = fullName.trim().length >= 3 && isValidEmail(email) && docValid && isValidPhone(phone);
+
+  // Validações da etapa 2
+  const step2Valid = useMemo(() => {
+    if (paymentMethod === 'pix' || paymentMethod === 'boleto') return true;
+    const numD = onlyDigits(cardNumber);
+    return numD.length >= 13 && cardExpiry.length === 5 && cardCvv.length >= 3 && cardName.trim().length >= 3;
+  }, [paymentMethod, cardNumber, cardExpiry, cardCvv, cardName]);
+
+  const canGoToStep3 = step1Valid && step2Valid;
+  const canSubmit = canGoToStep3 && agreedTerms && !submitting;
+
+  // Valores do plano
+  const priceMonthlyDisplay = billing === 'anual' ? 'R$ 4.970/ano' : 'R$ 497/mês';
+  const priceEquivalent = billing === 'anual' ? 'R$ 414,17/mês equivalente' : 'cobrado mensalmente';
+  const totalToday = billing === 'anual' ? 'R$ 6.469,00' : 'R$ 1.996,00'; // setup + 1ª mensalidade
+
+  // Persiste billing no <title> pra clareza
+  useEffect(() => {
+    document.title = `Checkout PRO ${billing === 'anual' ? 'Anual' : 'Mensal'} · LOGOS|IA`;
+  }, [billing]);
+
+  // Submit final — chama edge function checkout-create-subscription (Prompt 11)
+  // Se a edge function não estiver deployada ainda, mostra mensagem amigável.
+  const handlePayment = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+
+    try {
+      const payload: any = {
+        plano: billing,
+        personType,
+        fullName: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        document: onlyDigits(docNumber),
+        phone: onlyDigits(phone),
+        paymentMethod,
+      };
+
+      // Dados do cartão (só se método cartão) — vão direto pra Asaas, não armazenados
+      if (paymentMethod === 'cartao') {
+        payload.cardData = {
+          number: cardNumber,
+          expiry: cardExpiry,
+          cvv: cardCvv,
+          holderName: cardName.trim(),
+        };
+      }
+
+      const { data, error } = await supabase.functions.invoke('checkout-create-subscription', {
+        body: payload,
+      });
+
+      if (error) {
+        // Edge function não deployada ainda OU erro de rede
+        const errMsg = (error as any)?.message || 'Erro desconhecido';
+        if (errMsg.includes('not found') || errMsg.includes('404')) {
+          toast.error('Pagamento ainda não disponível', {
+            description: 'A integração com Asaas está sendo finalizada. Tente novamente em alguns minutos ou entre em contato pelo WhatsApp.',
+            duration: 10000,
+          });
+        } else {
+          toast.error('Erro ao processar pagamento', {
+            description: errMsg,
+            duration: 8000,
+          });
+        }
+        setSubmitting(false);
+        return;
+      }
+
+      if (!data?.success) {
+        toast.error('Falha no checkout', {
+          description: data?.error || 'Erro desconhecido. Tente novamente.',
+          duration: 8000,
+        });
+        setSubmitting(false);
+        return;
+      }
+
+      // Sucesso! Redirecionar pra /checkout/sucesso passando os dados
+      // (Página de sucesso é o Prompt 12)
+      const pendingId = data.pendingId;
+      const setup = data.setupPayment;
+
+      // Guardar dados de pagamento em sessionStorage pra página de sucesso usar
+      sessionStorage.setItem('checkout_result', JSON.stringify({
+        pendingId,
+        method: paymentMethod,
+        plano: billing,
+        email,
+        pix: setup?.pix,
+        boleto: setup?.boleto,
+        creditCard: setup?.creditCard,
+        invoiceUrl: setup?.invoiceUrl,
+      }));
+
+      navigate('/checkout/sucesso', { replace: true });
+    } catch (err: any) {
+      console.error('[Checkout] erro inesperado:', err);
+      toast.error('Erro inesperado', {
+        description: err?.message || 'Tente novamente em instantes.',
+        duration: 8000,
+      });
+      setSubmitting(false);
+    }
+  };
+
+  const docMasked = personType === 'pf' ? maskCPF(docNumber) : maskCNPJ(docNumber);
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+
+      {/* ── HEADER simplificado ───────────────────────────────────── */}
+      <header
+        className="border-b sticky top-0 z-50 backdrop-blur-md"
+        style={{
+          borderColor: 'rgba(15, 38, 71, 0.10)',
+          background: 'rgba(255, 255, 255, 0.92)',
+        }}
+      >
+        <div className="px-4 md:px-6 py-3.5 max-w-6xl mx-auto flex items-center justify-between gap-4">
+          <Link to="/" className="flex items-center shrink-0 hover:opacity-80 transition-opacity">
+            <LogosIALogo size="sm" variant={isDarkMode ? 'dark' : 'light'} />
+          </Link>
+          <div
+            className="flex items-center gap-1.5 text-xs md:text-sm font-medium"
+            style={{ color: 'var(--brand-success)' }}
+          >
+            <Shield className="h-4 w-4" />
+            <span className="hidden sm:inline">Pagamento seguro · SSL</span>
+            <span className="sm:hidden">Seguro · SSL</span>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4 md:px-6 py-8 md:py-12">
+
+        {/* Voltar pra landing */}
+        <Link
+          to="/"
+          className="inline-flex items-center gap-1.5 text-sm mb-6 hover:opacity-80 transition-opacity"
+          style={{ color: 'var(--brand-navy)' }}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Voltar pro site
+        </Link>
+
+        {/* Grid 2 colunas: form + sidebar */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-8 lg:gap-10">
+
+          {/* ── COLUNA ESQUERDA — FORMULÁRIO ─────────────────────── */}
+          <div>
+
+            {/* Progress indicator */}
+            <div className="mb-8">
+              <div className="flex items-center justify-between mb-2">
+                {[1, 2, 3].map((s) => {
+                  const isComplete = step > s;
+                  const isCurrent = step === s;
+                  return (
+                    <div key={s} className="flex items-center flex-1 last:flex-initial">
+                      <div
+                        className="flex items-center justify-center w-9 h-9 rounded-full text-sm font-bold transition-all shrink-0"
+                        style={{
+                          background: isComplete ? 'var(--brand-success)' : isCurrent ? 'var(--brand-gold)' : 'rgba(15, 38, 71, 0.10)',
+                          color: isComplete || isCurrent ? (isComplete ? 'white' : 'var(--brand-navy)') : 'var(--brand-navy)',
+                          border: isCurrent ? `2px solid var(--brand-gold)` : 'none',
+                        }}
+                      >
+                        {isComplete ? <CheckCircle2 className="h-5 w-5" /> : s}
+                      </div>
+                      {s < 3 && (
+                        <div
+                          className="flex-1 h-0.5 mx-2"
+                          style={{ background: step > s ? 'var(--brand-success)' : 'rgba(15, 38, 71, 0.10)' }}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-between text-[11px] md:text-xs text-muted-foreground">
+                <span>Dados</span>
+                <span>Pagamento</span>
+                <span>Revisão</span>
+              </div>
+            </div>
+
+            {/* ── ETAPA 1 — DADOS PESSOAIS ─────────────────────── */}
+            {step === 1 && (
+              <div className="space-y-6 animate-fade-in">
+                <div>
+                  <h2
+                    className="text-2xl md:text-3xl font-extrabold mb-2"
+                    style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-navy)' }}
+                  >
+                    Quem está assinando?
+                  </h2>
+                  <p className="text-sm text-muted-foreground">Usamos esses dados pra emitir a nota fiscal e liberar o acesso.</p>
+                </div>
+
+                {/* Toggle PF/PJ */}
+                <div className="inline-flex p-1 rounded-full" style={{ background: 'rgba(15, 38, 71, 0.06)' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setPersonType('pf'); setDocNumber(''); }}
+                    className="px-5 py-1.5 rounded-full text-xs md:text-sm font-semibold transition-all"
+                    style={{
+                      background: personType === 'pf' ? 'var(--brand-navy)' : 'transparent',
+                      color: personType === 'pf' ? 'var(--brand-cream)' : 'var(--brand-navy)',
+                    }}
+                  >
+                    Pessoa Física
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setPersonType('pj'); setDocNumber(''); }}
+                    className="px-5 py-1.5 rounded-full text-xs md:text-sm font-semibold transition-all"
+                    style={{
+                      background: personType === 'pj' ? 'var(--brand-navy)' : 'transparent',
+                      color: personType === 'pj' ? 'var(--brand-cream)' : 'var(--brand-navy)',
+                    }}
+                  >
+                    Pessoa Jurídica
+                  </button>
+                </div>
+
+                {/* Formulário */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <Label htmlFor="fullName" className="text-xs font-semibold mb-1.5 block">
+                      {personType === 'pf' ? 'Nome completo *' : 'Razão social *'}
+                    </Label>
+                    <Input
+                      id="fullName"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      placeholder={personType === 'pf' ? 'João da Silva' : 'Empresa LTDA'}
+                      autoComplete={personType === 'pf' ? 'name' : 'organization'}
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="email" className="text-xs font-semibold mb-1.5 block">E-mail *</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="voce@empresa.com.br"
+                      autoComplete="email"
+                    />
+                    {email.length > 0 && !isValidEmail(email) && (
+                      <p className="text-[11px] mt-1" style={{ color: 'var(--brand-error)' }}>E-mail inválido</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <Label htmlFor="doc" className="text-xs font-semibold mb-1.5 block">
+                      {personType === 'pf' ? 'CPF *' : 'CNPJ *'}
+                    </Label>
+                    <Input
+                      id="doc"
+                      value={docMasked}
+                      onChange={(e) => setDocNumber(e.target.value)}
+                      placeholder={personType === 'pf' ? '000.000.000-00' : '00.000.000/0001-00'}
+                      inputMode="numeric"
+                    />
+                    {docNumber.length > 0 && !docValid && (
+                      <p className="text-[11px] mt-1" style={{ color: 'var(--brand-error)' }}>
+                        {personType === 'pf' ? 'CPF inválido' : 'CNPJ inválido'}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <Label htmlFor="phone" className="text-xs font-semibold mb-1.5 block">Telefone WhatsApp *</Label>
+                    <Input
+                      id="phone"
+                      value={maskPhone(phone)}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="(11) 99999-9999"
+                      inputMode="tel"
+                      autoComplete="tel"
+                    />
+                    {phone.length > 0 && !isValidPhone(phone) && (
+                      <p className="text-[11px] mt-1" style={{ color: 'var(--brand-error)' }}>Telefone inválido</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* CTA continuar */}
+                <Button
+                  onClick={() => setStep(2)}
+                  disabled={!step1Valid}
+                  size="lg"
+                  className="w-full text-base font-semibold gap-2"
+                  style={{
+                    background: step1Valid ? 'var(--brand-gold)' : 'rgba(15, 38, 71, 0.20)',
+                    color: step1Valid ? 'var(--brand-navy)' : 'var(--brand-cream)',
+                    cursor: step1Valid ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  Continuar <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+
+            {/* ── ETAPA 2 — PAGAMENTO ─────────────────────── */}
+            {step === 2 && (
+              <div className="space-y-6 animate-fade-in">
+                <div>
+                  <h2
+                    className="text-2xl md:text-3xl font-extrabold mb-2"
+                    style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-navy)' }}
+                  >
+                    Como você quer pagar?
+                  </h2>
+                  <p className="text-sm text-muted-foreground">PIX libera mais rápido. Cartão é recorrente automático.</p>
+                </div>
+
+                {/* Radio cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {([
+                    { id: 'pix', label: 'PIX', desc: 'Mais rápido', Icon: QrCode },
+                    { id: 'cartao', label: 'Cartão', desc: 'Recorrente', Icon: CreditCard },
+                    { id: 'boleto', label: 'Boleto', desc: '3 dias úteis', Icon: FileText },
+                  ] as const).map((opt) => {
+                    const selected = paymentMethod === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setPaymentMethod(opt.id)}
+                        className="rounded-2xl p-4 text-left transition-all hover:translate-y-[-2px]"
+                        style={{
+                          border: selected ? `2px solid var(--brand-gold)` : '1px solid rgba(15, 38, 71, 0.10)',
+                          background: selected ? 'rgba(212, 160, 23, 0.06)' : 'var(--brand-light)',
+                          boxShadow: selected ? 'var(--shadow-medium)' : 'var(--shadow-soft)',
+                        }}
+                      >
+                        <opt.Icon
+                          className="h-6 w-6 mb-2"
+                          style={{ color: selected ? 'var(--brand-gold)' : 'var(--brand-navy)' }}
+                        />
+                        <p className="font-bold text-sm" style={{ color: 'var(--brand-navy)' }}>{opt.label}</p>
+                        <p className="text-xs text-muted-foreground">{opt.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Detalhes por método */}
+                {paymentMethod === 'pix' && (
+                  <div
+                    className="rounded-xl p-5"
+                    style={{ background: 'rgba(22, 163, 74, 0.06)', border: '1px solid var(--brand-success)' }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <QrCode className="h-6 w-6 mt-0.5 shrink-0" style={{ color: 'var(--brand-success)' }} />
+                      <div>
+                        <p className="font-semibold text-sm" style={{ color: 'var(--brand-navy)' }}>
+                          PIX — pagamento instantâneo
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Ao confirmar, você verá o QR Code e o código copia-e-cola. Liberação automática em até 5 minutos após o pagamento.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {paymentMethod === 'boleto' && (
+                  <div
+                    className="rounded-xl p-5"
+                    style={{ background: 'rgba(15, 38, 71, 0.04)', border: '1px solid rgba(15, 38, 71, 0.15)' }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <FileText className="h-6 w-6 mt-0.5 shrink-0" style={{ color: 'var(--brand-navy)' }} />
+                      <div>
+                        <p className="font-semibold text-sm" style={{ color: 'var(--brand-navy)' }}>
+                          Boleto bancário
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Você receberá o boleto por e-mail e poderá pagar em qualquer banco. Compensação em até 3 dias úteis.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {paymentMethod === 'cartao' && (
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="cardNumber" className="text-xs font-semibold mb-1.5 block">Número do cartão *</Label>
+                      <Input
+                        id="cardNumber"
+                        value={maskCard(cardNumber)}
+                        onChange={(e) => setCardNumber(e.target.value)}
+                        placeholder="0000 0000 0000 0000"
+                        inputMode="numeric"
+                        autoComplete="cc-number"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label htmlFor="cardExpiry" className="text-xs font-semibold mb-1.5 block">Validade (MM/AA) *</Label>
+                        <Input
+                          id="cardExpiry"
+                          value={maskExpiry(cardExpiry)}
+                          onChange={(e) => setCardExpiry(e.target.value)}
+                          placeholder="12/28"
+                          inputMode="numeric"
+                          autoComplete="cc-exp"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="cardCvv" className="text-xs font-semibold mb-1.5 block">CVV *</Label>
+                        <Input
+                          id="cardCvv"
+                          value={onlyDigits(cardCvv).slice(0, 4)}
+                          onChange={(e) => setCardCvv(e.target.value)}
+                          placeholder="123"
+                          inputMode="numeric"
+                          autoComplete="cc-csc"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor="cardName" className="text-xs font-semibold mb-1.5 block">Nome impresso no cartão *</Label>
+                      <Input
+                        id="cardName"
+                        value={cardName}
+                        onChange={(e) => setCardName(e.target.value.toUpperCase())}
+                        placeholder="JOÃO DA SILVA"
+                        autoComplete="cc-name"
+                      />
+                    </div>
+                    <p className="text-[11px] flex items-center gap-1.5 text-muted-foreground">
+                      <Lock className="h-3 w-3" />
+                      Dados do cartão são enviados criptografados direto pro gateway. Não armazenamos.
+                    </p>
+                  </div>
+                )}
+
+                {/* Navegação */}
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setStep(1)}
+                    size="lg"
+                    className="gap-2"
+                    style={{ borderColor: 'var(--brand-navy)', color: 'var(--brand-navy)' }}
+                  >
+                    <ArrowLeft className="h-4 w-4" /> Voltar
+                  </Button>
+                  <Button
+                    onClick={() => setStep(3)}
+                    disabled={!step2Valid}
+                    size="lg"
+                    className="flex-1 text-base font-semibold gap-2"
+                    style={{
+                      background: step2Valid ? 'var(--brand-gold)' : 'rgba(15, 38, 71, 0.20)',
+                      color: step2Valid ? 'var(--brand-navy)' : 'var(--brand-cream)',
+                      cursor: step2Valid ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    Revisar pedido <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* ── ETAPA 3 — REVISÃO ─────────────────────── */}
+            {step === 3 && (
+              <div className="space-y-6 animate-fade-in">
+                <div>
+                  <h2
+                    className="text-2xl md:text-3xl font-extrabold mb-2"
+                    style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-navy)' }}
+                  >
+                    Conferir e confirmar
+                  </h2>
+                  <p className="text-sm text-muted-foreground">Confira os dados antes de pagar.</p>
+                </div>
+
+                {/* Resumo dados pessoais */}
+                <div
+                  className="rounded-xl p-5"
+                  style={{ background: 'var(--brand-light)', border: '1px solid rgba(15, 38, 71, 0.10)' }}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <User className="h-4 w-4" style={{ color: 'var(--brand-navy)' }} />
+                      <p className="font-bold text-sm" style={{ color: 'var(--brand-navy)' }}>Seus dados</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setStep(1)}
+                      className="text-xs underline hover:no-underline"
+                      style={{ color: 'var(--brand-navy)' }}
+                    >
+                      Editar
+                    </button>
+                  </div>
+                  <dl className="space-y-1.5 text-sm">
+                    <div className="flex justify-between gap-3"><dt className="text-muted-foreground">{personType === 'pf' ? 'Nome' : 'Razão social'}:</dt><dd className="text-right font-medium">{fullName}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-muted-foreground">E-mail:</dt><dd className="text-right font-medium truncate">{email}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-muted-foreground">{personType === 'pf' ? 'CPF' : 'CNPJ'}:</dt><dd className="text-right font-medium">{docMasked}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-muted-foreground">WhatsApp:</dt><dd className="text-right font-medium">{maskPhone(phone)}</dd></div>
+                  </dl>
+                </div>
+
+                {/* Resumo pagamento */}
+                <div
+                  className="rounded-xl p-5"
+                  style={{ background: 'var(--brand-light)', border: '1px solid rgba(15, 38, 71, 0.10)' }}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      {paymentMethod === 'pix' && <QrCode className="h-4 w-4" style={{ color: 'var(--brand-navy)' }} />}
+                      {paymentMethod === 'cartao' && <CreditCard className="h-4 w-4" style={{ color: 'var(--brand-navy)' }} />}
+                      {paymentMethod === 'boleto' && <FileText className="h-4 w-4" style={{ color: 'var(--brand-navy)' }} />}
+                      <p className="font-bold text-sm" style={{ color: 'var(--brand-navy)' }}>Método de pagamento</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setStep(2)}
+                      className="text-xs underline hover:no-underline"
+                      style={{ color: 'var(--brand-navy)' }}
+                    >
+                      Alterar
+                    </button>
+                  </div>
+                  <p className="text-sm font-medium">
+                    {paymentMethod === 'pix' && 'PIX — QR Code instantâneo'}
+                    {paymentMethod === 'cartao' && `Cartão final ${onlyDigits(cardNumber).slice(-4)} · ${cardName}`}
+                    {paymentMethod === 'boleto' && 'Boleto bancário — compensação em 3 dias úteis'}
+                  </p>
+                </div>
+
+                {/* Aceite termos */}
+                <div
+                  className="rounded-xl p-4 flex items-start gap-3"
+                  style={{ background: 'rgba(212, 160, 23, 0.05)', border: '1px solid rgba(212, 160, 23, 0.25)' }}
+                >
+                  <Checkbox
+                    id="terms"
+                    checked={agreedTerms}
+                    onCheckedChange={(v) => setAgreedTerms(v === true)}
+                    className="mt-0.5"
+                  />
+                  <label htmlFor="terms" className="text-xs leading-relaxed cursor-pointer">
+                    Li e aceito os{' '}
+                    <a href="/terms-of-service.html" target="_blank" rel="noopener noreferrer" className="underline font-medium" style={{ color: 'var(--brand-navy)' }}>
+                      Termos de Uso
+                    </a>{' '}
+                    e a{' '}
+                    <a href="/privacy-policy.html" target="_blank" rel="noopener noreferrer" className="underline font-medium" style={{ color: 'var(--brand-navy)' }}>
+                      Política de Privacidade
+                    </a>
+                    . Entendo que o plano PRO é cobrado de forma recorrente e posso cancelar a qualquer momento.
+                  </label>
+                </div>
+
+                {/* Navegação */}
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setStep(2)}
+                    size="lg"
+                    className="gap-2"
+                    style={{ borderColor: 'var(--brand-navy)', color: 'var(--brand-navy)' }}
+                  >
+                    <ArrowLeft className="h-4 w-4" /> Voltar
+                  </Button>
+                  <Button
+                    onClick={handlePayment}
+                    disabled={!canSubmit}
+                    size="lg"
+                    className="flex-1 text-base font-bold gap-2 py-6"
+                    style={{
+                      background: canSubmit ? 'var(--brand-gold)' : 'rgba(15, 38, 71, 0.20)',
+                      color: canSubmit ? 'var(--brand-navy)' : 'var(--brand-cream)',
+                      cursor: canSubmit ? 'pointer' : 'not-allowed',
+                      boxShadow: canSubmit ? 'var(--shadow-gold)' : 'none',
+                    }}
+                  >
+                    {submitting ? 'Processando...' : (
+                      <>
+                        <Lock className="h-5 w-5" />
+                        Pagar agora — {totalToday}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── COLUNA DIREITA — SIDEBAR DE RESUMO ──────────────── */}
+          <aside className="lg:sticky lg:top-24 lg:self-start">
+            <div
+              className="rounded-2xl p-6 md:p-7"
+              style={{
+                background: 'linear-gradient(135deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%)',
+                color: 'var(--brand-cream)',
+                boxShadow: 'var(--shadow-strong)',
+              }}
+            >
+              {/* Badge */}
+              <Badge
+                className="mb-4 border-0 px-3 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}
+              >
+                ★ Plano PRO
+              </Badge>
+
+              {/* Tipo de cobrança */}
+              <h3 className="text-2xl font-extrabold mb-1" style={{ fontFamily: 'var(--font-display)' }}>
+                PRO · {billing === 'anual' ? 'Anual' : 'Mensal'}
+              </h3>
+              <p className="text-xs opacity-75 mb-5">Cobrança {billing === 'anual' ? 'anual' : 'mensal'}, cancelamento livre</p>
+
+              {/* Valor */}
+              <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.15)' }}>
+                <p
+                  className="text-3xl md:text-4xl font-black"
+                  style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}
+                >
+                  {priceMonthlyDisplay}
+                </p>
+                <p className="text-xs opacity-75 mt-1">{priceEquivalent}</p>
+                {billing === 'anual' && (
+                  <p className="text-xs mt-1 font-semibold" style={{ color: 'var(--brand-gold)' }}>
+                    Economia: R$ 994 (2 meses grátis)
+                  </p>
+                )}
+              </div>
+
+              {/* Taxa de implementação */}
+              <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.15)' }}>
+                <div className="flex justify-between items-baseline mb-1">
+                  <span className="text-sm">Taxa de implementação</span>
+                  <span className="text-sm font-semibold">R$ 1.499</span>
+                </div>
+                <p className="text-[10px] opacity-65">Cobrada uma única vez no primeiro pagamento</p>
+              </div>
+
+              {/* Total hoje */}
+              <div className="mb-6">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-xs uppercase tracking-wider opacity-75">Total hoje</span>
+                  <span className="text-2xl font-extrabold" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}>
+                    {totalToday}
+                  </span>
+                </div>
+                <p className="text-[10px] opacity-65 mt-1">
+                  {billing === 'anual' ? '(R$ 1.499 setup + R$ 4.970 anual)' : '(R$ 1.499 setup + R$ 497 mensalidade)'}
+                </p>
+              </div>
+
+              {/* Lista de benefícios resumida */}
+              <ul className="space-y-2 text-xs">
+                {[
+                  'Pedro 24/7 no WhatsApp',
+                  'Marcos · CRM ao vivo + disparo',
+                  'Importação ilimitada',
+                  'Multi-vendedor',
+                  'Suporte humano via WhatsApp',
+                ].map((b) => (
+                  <li key={b} className="flex items-start gap-2">
+                    <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" style={{ color: 'var(--brand-gold)' }} />
+                    <span className="opacity-90">{b}</span>
+                  </li>
+                ))}
+              </ul>
+
+              {/* Selo de segurança */}
+              <div
+                className="mt-6 pt-5 flex items-center justify-center gap-2 text-[11px]"
+                style={{ borderTop: '1px solid rgba(250, 248, 242, 0.15)', color: 'rgba(250, 248, 242, 0.70)' }}
+              >
+                <Shield className="h-3.5 w-3.5" />
+                <span>Pagamento 100% seguro · SSL/TLS</span>
+              </div>
+            </div>
+
+            {/* Nota lateral */}
+            <p className="mt-5 text-xs text-muted-foreground text-center flex items-center justify-center gap-1.5">
+              <Sparkles className="h-3 w-3" style={{ color: 'var(--brand-gold)' }} />
+              Acesso liberado em até 5 minutos após confirmação
+            </p>
+          </aside>
+
+        </div>
+      </main>
+    </div>
+  );
+}

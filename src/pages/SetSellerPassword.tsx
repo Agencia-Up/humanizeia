@@ -8,10 +8,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useToast } from '@/hooks/use-toast';
 import { Lock, Loader2, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { LogosIALogo } from '@/components/brand/LogosIALogo';
+import { useAppStore } from '@/store/appStore';
 
 export default function SetSellerPassword() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { isDarkMode } = useAppStore();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -64,7 +66,7 @@ export default function SetSellerPassword() {
       <div className="w-full max-w-md space-y-6">
         {/* Logo + Titulo */}
         <div className="flex flex-col items-center gap-3 text-center">
-          <LogosIALogo size="md" showText />
+          <LogosIALogo size="xl" variant={isDarkMode ? 'dark' : 'light'} />
           <div className="mt-2">
             <h1 className="text-2xl font-bold text-foreground">Criar sua Senha</h1>
             <p className="text-sm text-muted-foreground mt-1">
