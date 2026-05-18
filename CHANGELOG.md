@@ -15,6 +15,30 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **IT-3.3 — Playbooks de objeção (Opção B: hardcoded)** (memória do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/memory/objectionPlaybooks.ts`
+    com `OBJECTION_PLAYBOOKS` (8 entradas), `getRelevantPlaybooks(stateObjections)`
+    e `formatObjectionPlaybooksBlock(playbooks)`.
+  - **Decisão arquitetural (user)**: Opção B (hardcoded no `_shared/`) escolhida
+    sobre migration + tabela. Cobre 80% dos casos reais com zero infra nova.
+    Se cada master quiser playbooks próprios futuramente, evolui pra IT-3.3.5.
+  - 8 playbooks cobrindo: `nao_pode_visitar`, `longe`, `esposo_decide`,
+    `esposa_decide`, `nao_quer_financiar`, `orcamento_baixo`, `so_olhando`,
+    `concorrente_mais_barato`. Keys batem com o que o `extractEntitiesWithClaude`
+    já produz no `state.atendimento.objecoes[]`.
+  - Cada playbook tem `agent_should` (estratégia) + `do_not` (anti-padrão) +
+    `example_response` (exemplo curto ≤200 chars).
+  - Cópia inline no `uazapi-webhook` (~50 linhas) + integração no
+    `formatStateForPrompt` apendando bloco quando flag ON e há match.
+  - Atrás de flag `PEDRO_FF_OBJECTION_PLAYBOOKS` (default OFF).
+  - Suíte: 19 testes vitest (cobertura mínima, schema, matching
+    case-insensitive, dedupe, formatação).
+
+**Fase 3 completa.** 3 features (IT-3.1 perfil persistente, IT-3.2
+sumarização hierárquica, IT-3.3 playbooks de objeção), todas atrás de
+feature flag, todas com fallback bit-perfect quando OFF. Zero migration
+em toda a fase.
+
 - **IT-3.2 — Sumarização hierárquica de histórico longo** (memória do Pedro SDR)
   - Fonte canônica: `supabase/functions/_shared/memory/historySummarizer.ts`
     com `splitForSummarization(history, keepRecent)`, `summarizeOldMessages(...)`,

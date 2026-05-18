@@ -107,9 +107,19 @@
   - Failsafe: erro/key vazio → mantém só as 10 últimas (comportamento atual)
   - Implementado: `_shared/memory/historySummarizer.ts` (canônico, 18 testes)
     + inline no `uazapi-webhook` na query do histórico
-- [ ] **IT-3.3** — Playbooks de objeção
+- [x] **IT-3.3** — Playbooks de tratamento de objeções (Opção B: hardcoded)
   - Flag: `PEDRO_FF_OBJECTION_PLAYBOOKS`
-  - Tabela `pedro_objection_playbooks` (objeção → resposta-padrão)
+  - **Sem migration** — 8 playbooks como constantes no `_shared/`
+    (Opção B decidida pelo user; migration fica pra IT-3.3.5 futuro
+    se cada master quiser playbooks próprios)
+  - Cobre: `nao_pode_visitar`, `longe`, `esposo_decide`, `esposa_decide`,
+    `nao_quer_financiar`, `orcamento_baixo`, `so_olhando`, `concorrente_mais_barato`
+  - Matching nas keys que o `extractEntitiesWithClaude` já produz
+    (`state.atendimento.objecoes[]`)
+  - Cada playbook tem: agent_should + do_not + example_response
+  - Bloco "## PLAYBOOKS DE OBJEÇÃO" apendado no system prompt
+  - Implementado: `_shared/memory/objectionPlaybooks.ts` (canônico, 19 testes)
+    + inline no `uazapi-webhook` no `formatStateForPrompt`
 
 ## Fase 4 — Confiabilidade
 
