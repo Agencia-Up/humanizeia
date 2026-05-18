@@ -98,9 +98,9 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
     config: legacyClaudeConfig,
   });
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (silent = false) => {
     if (!effectiveUserId) return;
-    setIsLoading(true);
+    if (!silent) setIsLoading(true);
     try {
       // Modelo: master vê TUDO (instâncias + listas + campanhas da conta).
       // Vendedor vê apenas o que tem seller_member_id = seller.id.
@@ -149,7 +149,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   }, [effectiveUserId, isSeller, seller?.id, toast]);
 
@@ -163,7 +163,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   const hasRunningCampaign = campaigns.some(c => c.status === 'running');
   useEffect(() => {
     if (!hasRunningCampaign) return;
-    const interval = setInterval(() => fetchDataRef.current(), 10000);
+    const interval = setInterval(() => fetchDataRef.current(true), 10000);
     return () => clearInterval(interval);
   }, [hasRunningCampaign]);
 

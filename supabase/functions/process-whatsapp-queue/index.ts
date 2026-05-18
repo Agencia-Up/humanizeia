@@ -862,6 +862,7 @@ async function sendToUazAPI(
 ): Promise<SendResult> {
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
+  const remoteJid = `${number}@s.whatsapp.net`;
   const token = instance.api_key_encrypted;
 
   const authHeaders = { "Content-Type": "application/json", token, apikey: token };
@@ -871,10 +872,12 @@ async function sendToUazAPI(
     // shapes as fallbacks because some self-hosted instances lag behind.
     const caption = mediaType === "audio" ? "" : (text || "");
     const mediaAttempts = [
-      { file: mediaUrl, type: mediaType, caption },
-      { file: mediaUrl, mediatype: mediaType, caption },
-      { url: mediaUrl, type: mediaType, caption },
-      { media: mediaUrl, mediatype: mediaType, caption },
+      { number, file: mediaUrl, type: mediaType, caption },
+      { number, file: mediaUrl, mediatype: mediaType, caption },
+      { number, url: mediaUrl, type: mediaType, caption },
+      { number, media: mediaUrl, mediatype: mediaType, caption },
+      { remoteJid, file: mediaUrl, type: mediaType, caption },
+      { remoteJid, url: mediaUrl, type: mediaType, caption },
     ];
 
     let lastMediaError = "";
@@ -884,7 +887,7 @@ async function sendToUazAPI(
         {
           method: "POST",
           headers: authHeaders,
-          body: JSON.stringify({ number, ...body }),
+          body: JSON.stringify(body),
         },
         OUTBOUND_FETCH_TIMEOUT_MS
       ).catch((err) => {
