@@ -15,7 +15,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preview:features": "vitest run --config vitest.preview.config.ts --reporter=verbose"
+    "preview:features": "vitest run --config vitest.preview.config.ts --reporter=verbose",
+    "chat:local": "npx tsx scripts/chat-local.ts"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
