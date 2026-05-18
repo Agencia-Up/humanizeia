@@ -14,8 +14,30 @@ function phoneMatchKeys(value: string | null | undefined): string[] {
   const digits = onlyDigits(value);
   const keys = new Set<string>();
   if (!digits) return [];
-  keys.add(digits);
-  if (digits.startsWith("55") && digits.length > 11) keys.add(digits.slice(2));
+
+  const addBrazilVariants = (raw: string) => {
+    if (!raw) return;
+    keys.add(raw);
+
+    const national = raw.startsWith("55") && raw.length > 11 ? raw.slice(2) : raw;
+    if (national !== raw) keys.add(national);
+
+    if (national.length === 10) {
+      // Some WhatsApp providers omit the mobile 9 after the DDD.
+      const withNinthDigit = `${national.slice(0, 2)}9${national.slice(2)}`;
+      keys.add(withNinthDigit);
+      keys.add(`55${national}`);
+      keys.add(`55${withNinthDigit}`);
+    } else if (national.length === 11 && national[2] === "9") {
+      const withoutNinthDigit = `${national.slice(0, 2)}${national.slice(3)}`;
+      keys.add(withoutNinthDigit);
+      keys.add(`55${national}`);
+      keys.add(`55${withoutNinthDigit}`);
+    }
+  };
+
+  addBrazilVariants(digits);
+  if (digits.startsWith("55") && digits.length > 11) addBrazilVariants(digits.slice(2));
   if (digits.length >= 11) keys.add(digits.slice(-11));
   if (digits.length >= 10) keys.add(digits.slice(-10));
   return [...keys].filter((key) => key.length >= 10);
