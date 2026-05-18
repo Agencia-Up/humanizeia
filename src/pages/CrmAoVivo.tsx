@@ -856,7 +856,6 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const dateLabel = dateFilter === 'custom'
     ? `${customStart || '?'} até ${customEnd || '?'}`
     : DATE_FILTERS.find(f => f.value === dateFilter)?.label || 'Hoje';
-  const tvLeadLimit = isPortrait ? 2 : 3;
 
   const cardStyle: React.CSSProperties = {
     borderRadius: 14,
@@ -879,6 +878,26 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         @keyframes active-pulse { 0%,100%{opacity:1}50%{opacity:.75} }
         .seller-active { animation: active-pulse 2s ease-in-out infinite; }
         .alert-badge { animation: slide-in .3s ease-out; }
+        .tv-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(128,222,234,.65) rgba(15,23,42,.72);
+        }
+        .tv-scroll::-webkit-scrollbar {
+          width: 10px;
+          height: 10px;
+        }
+        .tv-scroll::-webkit-scrollbar-track {
+          background: rgba(15,23,42,.72);
+          border-radius: 999px;
+        }
+        .tv-scroll::-webkit-scrollbar-thumb {
+          background: rgba(128,222,234,.48);
+          border: 2px solid rgba(15,23,42,.92);
+          border-radius: 999px;
+        }
+        .tv-scroll::-webkit-scrollbar-thumb:hover {
+          background: rgba(128,222,234,.72);
+        }
       `}</style>
 
       {tvMode && (
@@ -971,13 +990,16 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
               <div style={{ borderRadius: 14, border: '1px solid rgba(255,255,255,0.10)', background: '#101827', padding: '12px 14px', minWidth: 0, overflow: 'hidden' }}>
                 <h3 style={{ margin: '0 0 9px', color: '#F8FAFC', fontSize: 14, fontWeight: 900 }}>Fila de vendedores</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(Math.max(memberStats.slice(0, 4).length, 1), 4)}, minmax(0, 1fr))`, gap: 8 }}>
-                  {memberStats.slice(0, 4).length === 0 ? (
+                <div
+                  className="tv-scroll"
+                  style={{ display: 'flex', gap: 8, overflowX: 'auto', overflowY: 'hidden', paddingBottom: 3, scrollbarGutter: 'stable' }}
+                >
+                  {memberStats.length === 0 ? (
                     <div style={{ borderRadius: 10, border: '1px dashed rgba(255,255,255,0.12)', padding: 12, color: '#7C8AA5', fontSize: 12, textAlign: 'center' }}>Sem vendedores ativos</div>
-                  ) : memberStats.slice(0, 4).map((m, i) => {
+                  ) : memberStats.map((m, i) => {
                     const pal = SELLER_PALETTE[i % SELLER_PALETTE.length];
                     return (
-                      <div key={m.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 7, alignItems: 'center', borderRadius: 10, border: `1px solid ${pal.main}`, background: pal.bg, padding: '8px 10px', minWidth: 0 }}>
+                      <div key={m.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 7, alignItems: 'center', borderRadius: 10, border: `1px solid ${pal.main}`, background: pal.bg, padding: '8px 10px', minWidth: 148, maxWidth: 178 }}>
                         <div style={{ minWidth: 0 }}>
                           <p style={{ margin: 0, color: pal.light, fontSize: 12.5, fontWeight: 850, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>#{i + 1} {m.name}</p>
                           <p style={{ margin: '2px 0 0', color: '#7C8AA5', fontSize: 10 }}>{m.is_active ? 'Ativo' : 'Off'} · hoje {m.todayCount}</p>
@@ -991,11 +1013,14 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
               <div style={{ borderRadius: 14, border: `1px solid ${C.amber}`, background: C.amberBg, padding: '12px 14px', minWidth: 0, overflow: 'hidden' }}>
                 <h3 style={{ margin: '0 0 9px', color: C.amberL, fontSize: 14, fontWeight: 900 }}>Transferências recentes</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(Math.max(transfers.slice(0, 3).length, 1), 3)}, minmax(0, 1fr))`, gap: 8 }}>
-                  {transfers.slice(0, 3).length === 0 ? (
+                <div
+                  className="tv-scroll"
+                  style={{ display: 'flex', gap: 8, overflowX: 'auto', overflowY: 'hidden', paddingBottom: 3, scrollbarGutter: 'stable' }}
+                >
+                  {transfers.length === 0 ? (
                     <div style={{ borderRadius: 10, border: '1px dashed rgba(255,255,255,0.12)', padding: 12, color: '#7C8AA5', fontSize: 12, textAlign: 'center' }}>Aguardando movimentações</div>
-                  ) : transfers.slice(0, 3).map(t => (
-                    <div key={t.id} style={{ borderRadius: 10, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)', padding: '8px 10px', minWidth: 0 }}>
+                  ) : transfers.map(t => (
+                    <div key={t.id} style={{ borderRadius: 10, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)', padding: '8px 10px', minWidth: 210, maxWidth: 260 }}>
                       <p style={{ margin: 0, color: '#F8FAFC', fontSize: 12.5, fontWeight: 850, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.lead?.lead_name || 'Lead'}</p>
                       <p style={{ margin: '3px 0 0', color: C.amberL, fontSize: 11, fontWeight: 750, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {getTransferLabel(t)} para {t.member?.name || 'Vendedor'} · {new Date(t.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -1011,10 +1036,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))', gap: 10, minHeight: 0, overflow: 'hidden' }}>
               {LIVE_COLUMNS.map(col => {
                 const colLeads = leadsByColumn[col.id] || [];
-                const visible = colLeads.slice(0, tvLeadLimit);
-                const hidden = Math.max(0, colLeads.length - visible.length);
                 return (
-                  <div key={col.id} style={{ minHeight: 0, borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr) auto', overflow: 'hidden' }}>
+                  <div key={col.id} style={{ minHeight: 0, borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 10px 8px', background: col.bg, borderBottom: `1px solid ${col.main}` }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
@@ -1027,22 +1050,17 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                       </div>
                     </div>
 
-                    <div style={{ minHeight: 0, padding: 9, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'hidden' }}>
-                      {visible.length === 0 ? (
+                    <div
+                      className="tv-scroll"
+                      style={{ minHeight: 0, padding: 9, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', overflowX: 'hidden', scrollbarGutter: 'stable' }}
+                    >
+                      {colLeads.length === 0 ? (
                         <div style={{ height: '100%', minHeight: 86, borderRadius: 10, border: '1px dashed rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.025)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#55627A', fontSize: 12, fontWeight: 650 }}>
                           Sem leads
                         </div>
-                      ) : visible.map(lead => (
+                      ) : colLeads.map(lead => (
                         <TvLeadCard key={lead.id} lead={lead} col={col} />
                       ))}
-                    </div>
-
-                    <div style={{ minHeight: 30, padding: '0 9px 9px' }}>
-                      {hidden > 0 && (
-                        <div style={{ borderRadius: 8, background: 'rgba(255,255,255,0.05)', color: col.light, textAlign: 'center', padding: '6px 8px', fontSize: 11, fontWeight: 850 }}>
-                          +{hidden} lead(s) na coluna
-                        </div>
-                      )}
                     </div>
                   </div>
                 );
