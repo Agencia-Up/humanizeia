@@ -3,12 +3,17 @@ import { useAuth } from '@/hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { LogosIAIcon } from '@/components/brand/LogosIALogo';
+import { LogosIALogo, LogosIAIcon } from '@/components/brand/LogosIALogo';
 import {
   Sparkles, BarChart3, Zap, Shield, Bot, Target, Mail, TrendingUp,
   Users, Clock, CheckCircle2, XCircle, ArrowRight, Star, ChevronDown,
   MessageSquare, Globe, Layers, Award, Rocket, Brain, Instagram,
   LayoutDashboard, PenTool, Megaphone, Menu, X,
+  Smartphone, Cog, LineChart,
+  Filter, Tags, Timer, FileText, MapPin, Upload,
+  Send, ShieldCheck, List, RefreshCw, LayoutGrid, Kanban,
+  Palette, Crown, Lock,
+  Phone, Database, Plus,
 } from 'lucide-react';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, Radar,
@@ -35,6 +40,12 @@ const barData = [
 ];
 
 /* ── Planos ─────────────────────────────────────────────────────────── */
+/* DEPRECADO (Prompt 8 — landing redesign 16/05): array de 3 planos antigos
+   (Básico/Pro/Enterprise) substituído por plano único PRO com toggle
+   mensal/anual. Mantido COMENTADO em vez de deletado pra facilitar reverter
+   caso necessário. Nova fonte de verdade: estado React `billing` + card
+   único renderizado na seção <section id="planos">.
+
 const plans = [
   {
     id: 'basico',
@@ -128,6 +139,7 @@ const plans = [
     cta: 'Falar com Especialista',
   },
 ];
+*/
 
 /* ── Agentes ────────────────────────────────────────────────────────── */
 const agents = [
@@ -175,31 +187,39 @@ const agents = [
   },
 ];
 
-/* ── FAQ ────────────────────────────────────────────────────────────── */
+/* ── FAQ (Prompt 9 — redesign 16/05 — 8 perguntas estratégicas) ──────── */
 const faqs = [
   {
-    q: 'Preciso de conhecimento técnico para usar a Logos IA?',
-    a: 'Não. A plataforma foi desenvolvida para qualquer empreendedor ou profissional de marketing. A IA faz o trabalho pesado — você só configura os objetivos.',
+    q: 'Preciso trocar de número do WhatsApp?',
+    a: 'Não. Pedro e Marcos trabalham com o seu número atual — sem trocar de chip, sem perder histórico.',
   },
   {
-    q: 'O que é a Taxa de Implementação (Setup)?',
-    a: 'É o investimento único para configurar e personalizar a plataforma para o seu negócio. Inclui integração das suas contas de anúncios, configuração dos agentes e treinamento inicial.',
+    q: 'Pedro funciona 24 horas mesmo?',
+    a: 'Sim. Atendimento contínuo, todos os dias, sem pausa, sem fim de semana, sem feriado. O primeiro contato com o cliente sai em segundos.',
   },
   {
-    q: 'O que são os tokens e como funcionam as recargas?',
-    a: 'Tokens são a unidade de consumo da IA (geração de copies, e-mails, carrosséis etc). Cada plano inclui um volume mensal. Ao esgotar, você recarrega avulsamente — quanto maior o plano, menor o custo por token.',
+    q: 'Posso definir minhas próprias regras de qualificação?',
+    a: 'Sim. Você configura forma de pagamento (à vista, financiado, aluguel), valor de entrada, CPF, prazo desejado e qualquer outro critério que faça sentido pra sua operação.',
   },
   {
-    q: 'Posso conectar meu Instagram, Meta Ads e Google Ads?',
-    a: 'Sim. Basta clicar em "Conectar" dentro da plataforma e autorizar via OAuth — o processo leva menos de 2 minutos, sem API nem configuração técnica.',
+    q: 'E se eu quiser que o vendedor assuma a conversa antes da IA terminar?',
+    a: 'Pode. Qualquer vendedor pode entrar manualmente e assumir o lead a qualquer momento. Pedro detecta e para de responder automaticamente nessa conversa.',
   },
   {
-    q: 'Como funciona a mentoria da Comunidade Viver de IA?',
-    a: 'Nossos 9 agentes de IA são desenvolvidos e calibrados pela equipe da Logos IA, com base nas melhores práticas de marketing digital. No plano Enterprise, você tem suporte direto com nossa equipe de especialistas.',
+    q: 'Marcos pode bloquear meu número por enviar muita mensagem?',
+    a: 'Marcos foi feito justamente para evitar isso. Ele dispara segmentado por origem/funil/cidade, com intervalos seguros entre envios, e nunca envia duas vezes pro mesmo lead na mesma campanha.',
   },
   {
-    q: 'Existe contrato de fidelidade?',
-    a: 'Não. Os planos são mensais e você pode cancelar a qualquer momento. A taxa de implementação é cobrada uma única vez.',
+    q: 'Posso cancelar quando quiser?',
+    a: 'Sim. Sem multa, sem fidelidade. Você decide quando começar e quando parar.',
+  },
+  {
+    q: 'Quando os outros agentes ficam disponíveis?',
+    a: 'Estamos liberando aos poucos. Assinantes PRO recebem acesso antecipado e sem aumento de preço enquanto a conta estiver ativa.',
+  },
+  {
+    q: 'Como funciona o suporte?',
+    a: 'Direto no WhatsApp, com pessoas reais, em horário comercial. Sem chatbot enrolando, sem ticket abandonado.',
   },
 ];
 
@@ -231,6 +251,8 @@ export default function LandingPage() {
   const { isDarkMode, toggleDarkMode } = useAppStore();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // Prompt 8 — toggle Mensal/Anual do plano PRO
+  const [billing, setBilling] = useState<'mensal' | 'anual'>('mensal');
 
   if (!loading && user) return <Navigate to="/dashboard" replace />;
 
@@ -241,19 +263,17 @@ export default function LandingPage() {
       <header className="sticky top-0 z-50 border-b border-border/40 bg-background/95 backdrop-blur-md">
         <div className="px-4 md:px-6 py-3.5 flex items-center justify-between gap-4">
 
-          {/* Logo */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            <LogosIAIcon size={30} />
-            <span className="text-[15px] font-extrabold tracking-[0.18em] bg-gradient-to-r from-[#1A237E] via-[#5C6BC0] to-[#DAA520] bg-clip-text text-transparent select-none">
-              LOGOSIA
-            </span>
-          </div>
+          {/* Logo (Prompt redesign 16/05 — usa imagem real LOGOS|IA, sem span ao lado) */}
+          <Link to="/" className="flex items-center shrink-0 hover:opacity-90 transition-opacity">
+            <LogosIALogo size="sm" variant={isDarkMode ? 'dark' : 'light'} />
+          </Link>
 
           {/* Desktop Nav */}
           <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
-            <a href="#solucao" className="hover:text-foreground transition-colors">Solução</a>
-            <a href="#agentes" className="hover:text-foreground transition-colors">Agentes</a>
-            <a href="#performance" className="hover:text-foreground transition-colors">Performance</a>
+            <a href="#como-funciona" className="hover:text-foreground transition-colors">Como funciona</a>
+            <a href="#agente-pedro" className="hover:text-foreground transition-colors">Pedro</a>
+            <a href="#agente-marcos" className="hover:text-foreground transition-colors">Marcos</a>
+            <a href="#em-breve" className="hover:text-foreground transition-colors">Em breve</a>
             <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
             <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
           </nav>
@@ -303,9 +323,10 @@ export default function LandingPage() {
         {mobileMenuOpen && (
           <nav className="md:hidden border-t border-border/40 bg-background/98 px-4 py-3 space-y-0.5">
             {[
-              { href: '#solucao', label: 'Solução' },
-              { href: '#agentes', label: 'Agentes' },
-              { href: '#performance', label: 'Performance' },
+              { href: '#como-funciona', label: 'Como funciona' },
+              { href: '#agente-pedro', label: 'Pedro' },
+              { href: '#agente-marcos', label: 'Marcos' },
+              { href: '#em-breve', label: 'Em breve' },
               { href: '#planos', label: 'Planos' },
               { href: '#faq', label: 'FAQ' },
             ].map(item => (
@@ -330,68 +351,898 @@ export default function LandingPage() {
         )}
       </header>
 
-      {/* ── HERO ───────────────────────────────────────────────────── */}
-      <section className="relative px-4 md:px-6 py-14 md:py-24 flex flex-col items-center text-center overflow-hidden">
-        {/* Background gradient orbs */}
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-yellow-500/8 rounded-full blur-3xl pointer-events-none" />
+      {/* ── HERO (Prompt 3 — redesign 16/05) ─────────────────────────── */}
+      <section className="relative px-4 md:px-6 py-12 md:py-20 overflow-hidden">
+        {/* Background gradient orbs (azul-navy + dourado da marca) */}
+        <div
+          className="absolute top-10 -left-20 w-[28rem] h-[28rem] rounded-full blur-3xl pointer-events-none opacity-30"
+          style={{ background: 'var(--brand-navy)' }}
+        />
+        <div
+          className="absolute -bottom-20 -right-10 w-[24rem] h-[24rem] rounded-full blur-3xl pointer-events-none opacity-20"
+          style={{ background: 'var(--brand-gold)' }}
+        />
 
-        <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm text-primary font-medium mb-6">
-          <Award className="h-3.5 w-3.5" />
-          Mentorada pela Comunidade Viver de IA
-        </div>
+        <div className="relative max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-10 lg:gap-14 items-center animate-fade-in">
 
-        <h1 className="text-3xl sm:text-4xl md:text-6xl font-bold max-w-4xl leading-tight mb-6">
-          Transforme Seu Marketing: Sua{' '}
-          <span className="bg-gradient-to-r from-[#5C6BC0] to-[#DAA520] bg-clip-text text-transparent">
-            Agência de IA Autônoma
-          </span>
-          {' '}que Multiplica Seus Resultados 24/7
-        </h1>
-
-        <p className="text-base md:text-xl text-muted-foreground max-w-2xl mb-4 px-2 md:px-0">
-          Cansado de agências caras e ineficientes? A LogosIA é a revolução que você precisa: 9 Agentes de IA especializados trabalhando em perfeita sincronia para escalar seu negócio, reduzir custos e gerar resultados previsíveis, sem falhas humanas ou gestão de equipe.
-        </p>
-
-        <div className="flex flex-wrap justify-center items-center gap-x-5 gap-y-2 text-sm text-muted-foreground mb-10">
-          <span className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
-            Sem contrato de fidelidade
-          </span>
-          <span className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
-            Setup em menos de 24h
-          </span>
-          <span className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
-            Cancele quando quiser
-          </span>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full max-w-sm sm:max-w-none sm:justify-center mb-12 md:mb-16">
-          <Button asChild size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 px-8 text-base gap-2 w-full sm:w-auto">
-            <Link to="/auth?tab=signup">
-              Agendar Implementação VIP <ArrowRight className="h-4 w-4" />
-            </Link>
-          </Button>
-          <Button asChild size="lg" variant="outline" className="px-8 text-base w-full sm:w-auto">
-            <Link to="/auth">Ver o Dashboard</Link>
-          </Button>
-        </div>
-
-        {/* Métricas em destaque */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6 max-w-3xl w-full">
-          {[
-            { value: '9', label: 'Agentes de IA ativos' },
-            { value: '24/7', label: 'Operação ininterrupta' },
-            { value: '10×', label: 'Mais rápido que agência' },
-            { value: '3×', label: 'Mais barato que agências' },
-          ].map((m) => (
-            <div key={m.label} className="rounded-xl border border-border/50 bg-card/40 p-4 backdrop-blur-sm">
-              <p className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-[#5C6BC0] to-[#DAA520] bg-clip-text text-transparent">{m.value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{m.label}</p>
+          {/* Coluna esquerda — texto */}
+          <div className="text-center lg:text-left">
+            {/* Logo em destaque no Hero (Prompt redesign 16/05) */}
+            <div className="flex justify-center lg:justify-start mb-6">
+              <LogosIALogo size="xl" variant={isDarkMode ? 'dark' : 'light'} />
             </div>
-          ))}
+
+            {/* Badge */}
+            <div
+              className="inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-medium mb-6"
+              style={{
+                borderColor: 'var(--brand-gold)',
+                background: 'rgba(212, 160, 23, 0.10)',
+                color: 'var(--brand-gold)',
+              }}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Plataforma de Atendimento e Vendas com IA
+            </div>
+
+            {/* H1 */}
+            <h1
+              className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-extrabold leading-[1.1] mb-6"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              Seus vendedores cuidam do{' '}
+              <span style={{ color: 'var(--brand-gold)' }}>fechamento</span>.
+              <br className="hidden md:block" />
+              {' '}A IA cuida{' '}
+              <span className="bg-gradient-to-r from-[#0F2647] via-[#1A3A6B] to-[#D4A017] bg-clip-text text-transparent">
+                do resto
+              </span>.
+            </h1>
+
+            {/* Subtítulo */}
+            <p className="text-base md:text-lg lg:text-xl text-muted-foreground max-w-2xl mx-auto lg:mx-0 mb-8 leading-relaxed">
+              <strong className="text-foreground">Pedro</strong> atende, qualifica e classifica cada lead no WhatsApp em segundos.{' '}
+              <strong className="text-foreground">Marcos</strong> dispara campanhas inteligentes e mantém seu CRM organizado.
+              Você nunca mais perde um lead por demora — nem queima sua base com mensagem em massa.
+            </p>
+
+            {/* Microbenefícios */}
+            <div className="flex flex-wrap justify-center lg:justify-start items-center gap-x-5 gap-y-2 text-sm text-muted-foreground mb-8">
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4 shrink-0" style={{ color: 'var(--brand-success)' }} />
+                Sem fidelidade
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4 shrink-0" style={{ color: 'var(--brand-success)' }} />
+                Liberação em 5 min
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4 shrink-0" style={{ color: 'var(--brand-success)' }} />
+                Cancele quando quiser
+              </span>
+            </div>
+
+            {/* CTAs */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-3 w-full max-w-md mx-auto lg:mx-0">
+              <Button
+                asChild
+                size="lg"
+                className="px-8 text-base gap-2 font-semibold shadow-lg transition-all hover:translate-y-[-1px]"
+                style={{
+                  background: 'var(--brand-gold)',
+                  color: 'var(--brand-navy)',
+                  boxShadow: 'var(--shadow-gold)',
+                }}
+              >
+                {/* CTA primário — aponta para /auth?tab=signup por ora; vai virar /checkout no Prompt 10 */}
+                <Link to="/auth?tab=signup">
+                  Assinar PRO agora <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+              <Button
+                asChild
+                size="lg"
+                variant="outline"
+                className="px-8 text-base font-medium border-foreground/30 text-foreground hover:bg-foreground/5"
+              >
+                <a href="#como-funciona">Ver como funciona</a>
+              </Button>
+            </div>
+          </div>
+
+          {/* Coluna direita — mockup placeholder */}
+          <div className="relative">
+            <div
+              className="relative rounded-3xl border-2 p-6 md:p-8 backdrop-blur-sm"
+              style={{
+                borderColor: 'rgba(15, 38, 71, 0.15)',
+                background: 'linear-gradient(135deg, rgba(15,38,71,0.04), rgba(212,160,23,0.06))',
+                boxShadow: 'var(--shadow-medium)',
+              }}
+            >
+              {/* Fluxo: WhatsApp → IA → CRM */}
+              <div className="space-y-4">
+
+                {/* Card 1: WhatsApp lead chegando */}
+                <div className="rounded-xl bg-card border border-border/40 p-4 shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-10 w-10 rounded-full flex items-center justify-center shrink-0"
+                      style={{ background: 'rgba(22, 163, 74, 0.15)' }}
+                    >
+                      <MessageSquare className="h-5 w-5" style={{ color: 'var(--brand-success)' }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-muted-foreground">Lead novo no WhatsApp</p>
+                      <p className="text-sm font-medium truncate">"Oi, vi o anúncio do Onix"</p>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground shrink-0">agora</span>
+                  </div>
+                </div>
+
+                {/* Seta */}
+                <div className="flex justify-center">
+                  <div className="text-2xl opacity-40 text-foreground">↓</div>
+                </div>
+
+                {/* Card 2: Pedro IA respondendo */}
+                <div
+                  className="rounded-xl border p-4"
+                  style={{
+                    borderColor: 'var(--brand-gold)',
+                    background: 'rgba(212, 160, 23, 0.06)',
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-10 w-10 rounded-full flex items-center justify-center shrink-0"
+                      style={{ background: 'var(--brand-gold)' }}
+                    >
+                      <Bot className="h-5 w-5" style={{ color: 'var(--brand-navy)' }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs" style={{ color: 'var(--brand-gold)' }}>Pedro atendeu · 3s</p>
+                      <p className="text-sm font-medium truncate">Qualificado · troca: SIM · à vista</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Seta */}
+                <div className="flex justify-center">
+                  <div className="text-2xl opacity-40 text-foreground">↓</div>
+                </div>
+
+                {/* Card 3: CRM organizado */}
+                <div
+                  className="rounded-xl border p-4"
+                  style={{
+                    borderColor: 'var(--brand-navy)',
+                    background: 'rgba(15, 38, 71, 0.05)',
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-10 w-10 rounded-full flex items-center justify-center shrink-0"
+                      style={{ background: 'var(--brand-navy)' }}
+                    >
+                      <LayoutDashboard className="h-5 w-5" style={{ color: 'var(--brand-cream)' }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold" style={{ color: 'var(--brand-gold)' }}>Marcos · CRM</p>
+                      <p className="text-sm font-medium truncate">→ Vendedor João · briefing pronto</p>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Badge "ao vivo" */}
+              <div className="absolute -top-3 -right-3">
+                <Badge
+                  className="border-0 px-3 py-1 text-[10px] font-bold shadow-md"
+                  style={{
+                    background: 'var(--brand-success)',
+                    color: 'white',
+                  }}
+                >
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-white animate-pulse mr-1.5" />
+                  AO VIVO
+                </Badge>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Métricas em destaque (full-width, abaixo do grid 2-col) */}
+        <div className="relative max-w-4xl mx-auto mt-14 md:mt-20">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-5">
+            {[
+              { value: '2', label: 'Agentes ativos hoje' },
+              { value: '24/7', label: 'Pedro atende sem parar' },
+              { value: '+5', label: 'Agentes em breve' },
+              { value: '5min', label: 'Liberação após pagar' },
+            ].map((m) => (
+              <div
+                key={m.label}
+                className="rounded-xl border-2 p-4 md:p-5 transition-all hover:translate-y-[-2px] hover:shadow-lg bg-card border-foreground/15"
+                style={{ boxShadow: 'var(--shadow-medium)' }}
+              >
+                <p
+                  className="text-3xl md:text-4xl font-extrabold leading-none"
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    color: 'var(--brand-gold)',
+                    textShadow: '0 2px 12px rgba(212, 160, 23, 0.30)',
+                  }}
+                >
+                  {m.value}
+                </p>
+                <p className="text-xs md:text-sm font-medium text-foreground/80 mt-2">{m.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── COMO FUNCIONA (Prompt 4 — redesign 16/05) ────────────────── */}
+      <section id="como-funciona" className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden">
+        {/* Background sutil */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-[0.03]"
+          style={{
+            background: 'linear-gradient(135deg, var(--brand-navy) 0%, transparent 50%, var(--brand-gold) 100%)',
+          }}
+        />
+
+        <div className="relative max-w-6xl mx-auto">
+
+          {/* Header da seção */}
+          <div className="text-center mb-14 md:mb-20 animate-fade-in">
+            <Badge
+              variant="outline"
+              className="mb-4 px-4 py-1 text-xs font-semibold uppercase tracking-wider"
+              style={{
+                borderColor: 'var(--brand-gold)',
+                color: 'var(--brand-gold)',
+                background: 'rgba(212, 160, 23, 0.08)',
+              }}
+            >
+              Como funciona
+            </Badge>
+            <h2
+              className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight max-w-3xl mx-auto text-foreground"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              Em <span style={{ color: 'var(--brand-gold)' }}>3 passos</span>, sua operação muda de patamar.
+            </h2>
+          </div>
+
+          {/* 3 cards de passos */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
+            {[
+              {
+                num: '1',
+                title: 'Conecte seu WhatsApp',
+                desc: 'Em menos de 5 minutos seu número está ativo na plataforma, sem trocar de chip, sem perder histórico.',
+                Icon: Smartphone,
+                color: 'var(--brand-success)',
+                bg: 'rgba(22, 163, 74, 0.10)',
+              },
+              {
+                num: '2',
+                title: 'Ative Pedro e Marcos',
+                desc: 'Configure as regras de qualificação, importe sua base e deixe a IA assumir o trabalho repetitivo.',
+                Icon: Cog,
+                color: 'var(--brand-gold)',
+                bg: 'rgba(212, 160, 23, 0.10)',
+              },
+              {
+                num: '3',
+                title: 'Acompanhe e venda mais',
+                desc: 'Veja no CRM ao vivo quais leads estão quentes, qualificados e prontos pro fechamento.',
+                Icon: LineChart,
+                color: 'var(--brand-blue)',                 // azul claro da paleta (estava navy escuro = invisível em dark)
+                bg: 'rgba(59, 130, 196, 0.12)',
+              },
+            ].map((step, i) => (
+              <div
+                key={step.num}
+                className="relative rounded-2xl bg-card p-6 md:p-8 transition-all duration-200 hover:translate-y-[-4px] group"
+                style={{
+                  border: '1px solid rgba(15, 38, 71, 0.10)',
+                  boxShadow: 'var(--shadow-soft)',
+                  animation: `fadeIn 0.5s ease-out ${i * 0.15}s both`,
+                }}
+              >
+                {/* Número grande no fundo do card — usa a cor do passo + opacity maior pra ser visível */}
+                <div
+                  className="absolute top-3 right-5 text-7xl md:text-9xl font-black leading-none select-none pointer-events-none"
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    color: step.color,
+                    opacity: 0.22,
+                  }}
+                >
+                  {step.num}
+                </div>
+
+                {/* Ícone */}
+                <div
+                  className="relative w-14 h-14 rounded-2xl flex items-center justify-center mb-5 transition-transform group-hover:scale-110"
+                  style={{ background: step.bg }}
+                >
+                  <step.Icon className="h-7 w-7" style={{ color: step.color }} strokeWidth={2} />
+                </div>
+
+                {/* Label "Passo N" */}
+                <p
+                  className="text-xs font-bold uppercase tracking-widest mb-2"
+                  style={{ color: step.color }}
+                >
+                  Passo {step.num}
+                </p>
+
+                {/* Título */}
+                <h3
+                  className="text-xl md:text-2xl font-bold mb-3 leading-tight"
+                  style={{ fontFamily: 'var(--font-display)' }}
+                >
+                  {step.title}
+                </h3>
+
+                {/* Descrição */}
+                <p className="text-sm md:text-base text-muted-foreground leading-relaxed">
+                  {step.desc}
+                </p>
+
+                {/* Conectivo entre cards (linha horizontal pontilhada) — só desktop, exceto último */}
+                {i < 2 && (
+                  <div
+                    className="hidden md:block absolute top-1/2 -right-4 w-8 h-px pointer-events-none"
+                    style={{
+                      background: 'repeating-linear-gradient(90deg, var(--brand-navy) 0 4px, transparent 4px 8px)',
+                      opacity: 0.20,
+                    }}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── AGENTE PEDRO (Prompt 5 — redesign 16/05) ──────────────────── */}
+      <section
+        id="agente-pedro"
+        className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden"
+        style={{ background: 'rgba(15, 38, 71, 0.03)' }}
+      >
+        {/* Background orb sutil */}
+        <div
+          className="absolute top-20 right-10 w-96 h-96 rounded-full blur-3xl pointer-events-none opacity-10"
+          style={{ background: 'var(--brand-gold)' }}
+        />
+
+        <div className="relative max-w-6xl mx-auto">
+
+          {/* ── HEADER ────────────────────────────────────── */}
+          <div className="text-center mb-12 md:mb-14 animate-fade-in">
+            {/* Badge AGENTE ATIVO (verde) */}
+            <Badge
+              className="mb-5 border-0 px-4 py-1.5 text-xs font-bold uppercase tracking-wider"
+              style={{
+                background: 'var(--brand-success-bg)',
+                color: 'var(--brand-success)',
+              }}
+            >
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full mr-2 animate-pulse"
+                style={{ background: 'var(--brand-success)' }}
+              />
+              Agente Ativo
+            </Badge>
+
+            {/* H2 */}
+            <h2
+              className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-4 max-w-4xl mx-auto text-foreground"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              <span style={{ color: 'var(--brand-gold)' }}>Pedro</span> — O atendente que nunca dorme, nunca esquece, nunca deixa um lead esfriar.
+            </h2>
+
+            {/* Subtítulo */}
+            <p className="text-base md:text-xl text-muted-foreground max-w-2xl mx-auto">
+              Atendimento humano. Velocidade de máquina. Qualificação cirúrgica.
+            </p>
+          </div>
+
+          {/* ── BLOCO DE DOR ────────────────────────────────── */}
+          <div
+            className="relative max-w-4xl mx-auto mb-14 md:mb-16 rounded-2xl p-6 md:p-8"
+            style={{
+              background: 'rgba(220, 38, 38, 0.04)',
+              borderLeft: '4px solid var(--brand-gold)',
+            }}
+          >
+            <p className="text-base md:text-lg text-foreground/90 leading-relaxed mb-3">
+              Você já <strong>perdeu venda</strong> porque o lead mandou mensagem às 22h e ninguém respondeu?
+              Já passou um lead <em>"quente"</em> pro vendedor e descobriu que era curioso?
+              Já viu sua equipe gastar 80% do tempo respondendo perguntas básicas em vez de fechar negócio?
+            </p>
+            <p
+              className="text-lg md:text-xl font-bold mt-4"
+              style={{ color: 'var(--brand-gold)' }}
+            >
+              Pedro acaba com isso.
+            </p>
+          </div>
+
+          {/* ── GRID DE 9 FUNCIONALIDADES ──────────────────── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6 mb-14 md:mb-16">
+            {[
+              {
+                Icon: Clock,
+                title: 'Atende 24/7 no seu WhatsApp',
+                desc: 'Primeiro contato em segundos, todo dia, toda hora — sem fim de semana, sem feriado.',
+                isGold: true,
+              },
+              {
+                Icon: Filter,
+                title: 'Qualifica com regras suas',
+                desc: 'Forma de pagamento, entrada, CPF, prazo, e qualquer critério que você definir.',
+                isGold: false,
+              },
+              {
+                Icon: Tags,
+                title: 'Classifica automaticamente',
+                desc: 'Cada lead vai pro CRM marcado como Qualificado, Pouco qualificado ou Ausente — sem ninguém olhar.',
+                isGold: true,
+              },
+              {
+                Icon: Timer,
+                title: 'Sabe a hora certa de transferir',
+                desc: 'Se o lead não responde, espera 5min, manda reengajamento, espera mais 5min, e só então passa pro vendedor.',
+                isGold: false,
+              },
+              {
+                Icon: FileText,
+                title: 'Entrega o lead com briefing pronto',
+                desc: 'Quando transfere, o vendedor já recebe um resumo: o que o lead respondeu, o que ficou faltando, e a última coisa que disse.',
+                isGold: true,
+              },
+              {
+                Icon: Brain,
+                title: 'Não se reapresenta',
+                desc: 'Pedro lembra cada conversa. Cliente não recebe "oi, sou o Pedro" duas vezes. Atendimento contínuo.',
+                isGold: false,
+              },
+              {
+                Icon: MapPin,
+                title: 'Captura a origem certa',
+                desc: 'Porta da loja, Marketplace do Facebook, OLX, Mercado Livre, Instagram do vendedor — você sabe de onde veio cada lead.',
+                isGold: true,
+              },
+              {
+                Icon: Globe,
+                title: 'Identifica cidade e região',
+                desc: 'Etiqueta colorida no lead, visível pro vendedor de cara.',
+                isGold: false,
+              },
+              {
+                Icon: Upload,
+                title: 'Aceita lead manual e por planilha',
+                desc: 'Importação rápida, sem retrabalho, sem duplicar.',
+                isGold: true,
+              },
+            ].map((feat, i) => {
+              const accentColor = feat.isGold ? 'var(--brand-gold)' : 'var(--brand-navy)';
+              const accentBg = feat.isGold ? 'rgba(212, 160, 23, 0.10)' : 'rgba(15, 38, 71, 0.08)';
+              return (
+                <div
+                  key={feat.title}
+                  className="group rounded-2xl bg-card p-5 md:p-6 transition-all duration-200 hover:translate-y-[-3px]"
+                  style={{
+                    border: '1px solid rgba(15, 38, 71, 0.10)',
+                    boxShadow: 'var(--shadow-soft)',
+                    animation: `fadeIn 0.5s ease-out ${i * 0.05}s both`,
+                  }}
+                >
+                  {/* Ícone */}
+                  <div
+                    className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110"
+                    style={{ background: accentBg }}
+                  >
+                    <feat.Icon className="h-5 w-5" style={{ color: accentColor }} strokeWidth={2} />
+                  </div>
+
+                  {/* Título */}
+                  <h3
+                    className="text-base md:text-lg font-bold mb-2 leading-tight"
+                    style={{ fontFamily: 'var(--font-display)' }}
+                  >
+                    {feat.title}
+                  </h3>
+
+                  {/* Descrição */}
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {feat.desc}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── BLOCO RESULTADO PROMETIDO ─────────────────── */}
+          <div
+            className="relative max-w-4xl mx-auto rounded-3xl p-8 md:p-10 text-center overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%)',
+              boxShadow: 'var(--shadow-strong)',
+            }}
+          >
+            {/* Glow dourado de fundo */}
+            <div
+              className="absolute -top-20 -right-20 w-64 h-64 rounded-full blur-3xl pointer-events-none opacity-30"
+              style={{ background: 'var(--brand-gold)' }}
+            />
+            <p
+              className="relative text-lg md:text-2xl font-bold leading-snug"
+              style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}
+            >
+              Enquanto seus concorrentes ainda estão lendo a mensagem do cliente,{' '}
+              <span style={{ color: 'var(--brand-gold)' }}>
+                o seu lead já foi atendido, qualificado e está no CRM
+              </span>
+              {' '}— pronto pro vendedor fechar.
+            </p>
+          </div>
+
+          {/* ── PARA QUEM É ───────────────────────────────── */}
+          <p className="text-center text-sm text-muted-foreground mt-8 max-w-2xl mx-auto">
+            <strong className="text-foreground">Para quem é:</strong>{' '}
+            Lojas físicas, concessionárias, imobiliárias, e qualquer operação que recebe lead por WhatsApp e precisa qualificar antes de transferir.
+          </p>
+
+        </div>
+      </section>
+
+      {/* ── AGENTE MARCOS (Prompt 6 — redesign 16/05) ─────────────────── */}
+      <section
+        id="agente-marcos"
+        className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden"
+        style={{ background: 'rgba(212, 160, 23, 0.03)' }}
+      >
+        {/* Background orb sutil (navy, lado oposto do Pedro) */}
+        <div
+          className="absolute top-20 left-10 w-96 h-96 rounded-full blur-3xl pointer-events-none opacity-10"
+          style={{ background: 'var(--brand-navy)' }}
+        />
+
+        <div className="relative max-w-6xl mx-auto">
+
+          {/* ── HEADER ────────────────────────────────────── */}
+          <div className="text-center mb-12 md:mb-14 animate-fade-in">
+            <Badge
+              className="mb-5 border-0 px-4 py-1.5 text-xs font-bold uppercase tracking-wider"
+              style={{
+                background: 'var(--brand-success-bg)',
+                color: 'var(--brand-success)',
+              }}
+            >
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full mr-2 animate-pulse"
+                style={{ background: 'var(--brand-success)' }}
+              />
+              Agente Ativo
+            </Badge>
+
+            <h2
+              className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-4 max-w-4xl mx-auto text-foreground"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              Marcos — Disparo em massa que <span style={{ color: 'var(--brand-gold)' }}>não queima base</span>. CRM que conversa com o WhatsApp.
+            </h2>
+
+            <p className="text-base md:text-xl text-muted-foreground max-w-2xl mx-auto">
+              Acabe com listas duplicadas, envios duplicados e CRM esquecido. Marcos centraliza disparo, segmentação e funil em um lugar só.
+            </p>
+          </div>
+
+          {/* ── BLOCO DE DOR ────────────────────────────────── */}
+          <div
+            className="relative max-w-4xl mx-auto mb-14 md:mb-16 rounded-2xl p-6 md:p-8"
+            style={{
+              background: 'rgba(220, 38, 38, 0.04)',
+              borderLeft: '4px solid var(--brand-navy)',
+            }}
+          >
+            <p className="text-base md:text-lg text-foreground/90 leading-relaxed mb-3">
+              Você já mandou disparo em massa e <strong>bloquearam seu número</strong>?
+              Já mandou a mesma promoção pro mesmo lead 3 vezes?
+              Já viu sua base de contatos espalhada em planilha, no celular do vendedor e numa ferramenta que ninguém abre?
+            </p>
+            <p
+              className="text-lg md:text-xl font-bold mt-4"
+              style={{ color: 'var(--brand-navy)' }}
+            >
+              Marcos resolve isso de uma vez.
+            </p>
+          </div>
+
+          {/* ── GRID DE 8 FUNCIONALIDADES (4x2 desktop) ─────────────── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 md:gap-6 mb-14 md:mb-16">
+            {[
+              {
+                Icon: Send,
+                title: 'Disparo em massa inteligente',
+                desc: 'Segmenta por coluna, origem, status do funil, cidade. Manda só pra quem importa.',
+                isNavy: true,
+              },
+              {
+                Icon: ShieldCheck,
+                title: 'Não envia pra quem já recebeu',
+                desc: 'Se um lead já entrou na automação, Marcos não reenvia. Sua base não esquenta.',
+                isNavy: false,
+              },
+              {
+                Icon: List,
+                title: 'Listas com rastreabilidade total',
+                desc: 'Cada lista tem nome, data, origem e quantidade. Você sabe exatamente o que tem.',
+                isNavy: true,
+              },
+              {
+                Icon: RefreshCw,
+                title: 'Sincronização automática com Pedro',
+                desc: 'Lead que chega no Pedro aparece automaticamente nas listas do Marcos. Zero retrabalho.',
+                isNavy: false,
+              },
+              {
+                Icon: LayoutGrid,
+                title: 'CRM com visão dupla',
+                desc: 'Por origem (Porta, Marketplace) e por status do funil (Ausente, Qualificado, Negociação).',
+                isNavy: true,
+              },
+              {
+                Icon: Kanban,
+                title: 'CRM ao vivo (Kanban em tempo real)',
+                desc: 'Arraste o lead entre etapas. Toda a equipe vê o mesmo funil no mesmo instante.',
+                isNavy: false,
+              },
+              {
+                Icon: Upload,
+                title: 'Importação manual, planilha ou Pedro',
+                desc: 'Escolhe a origem, joga na lista e segue o jogo.',
+                isNavy: true,
+              },
+              {
+                Icon: Filter,
+                title: 'Filtros antes do disparo',
+                desc: 'Antes de enviar, escolhe o recorte exato. Não dispara cego.',
+                isNavy: false,
+              },
+            ].map((feat, i) => {
+              // Marcos: padrão inverso ao Pedro (navy primeiro)
+              const accentColor = feat.isNavy ? 'var(--brand-navy)' : 'var(--brand-gold)';
+              const accentBg = feat.isNavy ? 'rgba(15, 38, 71, 0.08)' : 'rgba(212, 160, 23, 0.10)';
+              return (
+                <div
+                  key={feat.title}
+                  className="group rounded-2xl bg-card p-5 md:p-6 transition-all duration-200 hover:translate-y-[-3px]"
+                  style={{
+                    border: '1px solid rgba(15, 38, 71, 0.10)',
+                    boxShadow: 'var(--shadow-soft)',
+                    animation: `fadeIn 0.5s ease-out ${i * 0.05}s both`,
+                  }}
+                >
+                  <div
+                    className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110"
+                    style={{ background: accentBg }}
+                  >
+                    <feat.Icon className="h-5 w-5" style={{ color: accentColor }} strokeWidth={2} />
+                  </div>
+
+                  <h3
+                    className="text-base font-bold mb-2 leading-tight"
+                    style={{ fontFamily: 'var(--font-display)' }}
+                  >
+                    {feat.title}
+                  </h3>
+
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {feat.desc}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── BLOCO RESULTADO PROMETIDO (inverso: fundo dourado) ─── */}
+          <div
+            className="relative max-w-4xl mx-auto rounded-3xl p-8 md:p-10 text-center overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 100%)',
+              boxShadow: 'var(--shadow-strong)',
+            }}
+          >
+            <div
+              className="absolute -top-20 -left-20 w-64 h-64 rounded-full blur-3xl pointer-events-none opacity-30"
+              style={{ background: 'var(--brand-navy)' }}
+            />
+            <p
+              className="relative text-lg md:text-2xl font-bold leading-snug"
+              style={{ color: 'var(--brand-navy)', fontFamily: 'var(--font-display)' }}
+            >
+              Você manda{' '}
+              <span style={{ color: 'var(--brand-cream)' }}>
+                a oferta certa pra pessoa certa
+              </span>
+              , no momento certo, sem queimar contato e sem inflar o número de "mortos" na sua base.
+            </p>
+          </div>
+
+          {/* ── PARA QUEM É ───────────────────────────────── */}
+          <p className="text-center text-sm text-muted-foreground mt-8 max-w-2xl mx-auto">
+            <strong className="text-foreground">Para quem é:</strong>{' '}
+            Empresas que fazem campanhas recorrentes (promoções, lançamentos, recall), gestores de tráfego que precisam reativar base, e times comerciais que querem ver o funil ao vivo.
+          </p>
+
+        </div>
+      </section>
+
+      {/* ── EM BREVE (Prompt 7 — redesign 16/05) ─────────────────────── */}
+      <section
+        id="em-breve"
+        className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden bg-background"
+      >
+        <div className="relative max-w-6xl mx-auto">
+
+          {/* ── HEADER ────────────────────────────────────── */}
+          <div className="text-center mb-12 md:mb-14 animate-fade-in">
+            <Badge
+              variant="outline"
+              className="mb-4 px-4 py-1 text-xs font-semibold uppercase tracking-wider border-foreground/30 text-foreground bg-foreground/5"
+            >
+              <Lock className="inline-block h-3 w-3 mr-1.5" />
+              Em desenvolvimento
+            </Badge>
+
+            <h2
+              className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-4 max-w-4xl mx-auto text-foreground"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              O ecossistema está{' '}
+              <span style={{ color: 'var(--brand-gold)' }}>crescendo</span>.
+              <br className="hidden md:block" />
+              {' '}Quem assinar agora entra antes.
+            </h2>
+
+            <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
+              Esses agentes estão em desenvolvimento. Quando lançarem,{' '}
+              <strong className="text-foreground">assinantes PRO terão acesso prioritário</strong>
+              {' '}— sem aumento de preço enquanto for assinante ativo.
+            </p>
+          </div>
+
+          {/* ── GRID 4x2 DESKTOP / 2x4 TABLET / 1 MOBILE ──────── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
+            {[
+              {
+                name: 'José',
+                desc: 'Gestão inteligente de tráfego pago no Meta e Google Ads',
+                Icon: Target,
+                color: '#E65100',
+                bg: 'rgba(230, 81, 0, 0.08)',
+              },
+              {
+                name: 'Paulo',
+                desc: 'Copywriter IA com termômetro de estilo e tom configurável',
+                Icon: PenTool,
+                color: '#7C3AED',
+                bg: 'rgba(124, 58, 237, 0.08)',
+              },
+              {
+                name: 'Maria',
+                desc: 'Design criativo com IA generativa — imagens e edição',
+                Icon: Palette,
+                color: '#EC4899',
+                bg: 'rgba(236, 72, 153, 0.08)',
+              },
+              {
+                name: 'Davi',
+                desc: 'Social media — calendário editorial e posts automáticos',
+                Icon: Instagram,
+                color: '#0EA5E9',
+                bg: 'rgba(14, 165, 233, 0.08)',
+              },
+              {
+                name: 'João',
+                desc: 'E-mail marketing — sequências de nutrição e campanhas',
+                Icon: Mail,
+                color: '#10B981',
+                bg: 'rgba(16, 185, 129, 0.08)',
+              },
+              {
+                name: 'Daniel',
+                desc: 'Estratégia de negócio + fluxograma visual de vendas',
+                Icon: Brain,
+                color: '#3B82F6',
+                bg: 'rgba(59, 130, 246, 0.08)',
+              },
+              {
+                name: 'Lucas',
+                desc: 'Funil de vendas visual com 6 templates prontos',
+                Icon: Layers,
+                color: '#F59E0B',
+                bg: 'rgba(245, 158, 11, 0.08)',
+              },
+              {
+                name: 'Salomão',
+                desc: 'Orquestrador central — distribui tarefas entre agentes',
+                Icon: Crown,
+                color: '#D4A017',
+                bg: 'rgba(212, 160, 23, 0.10)',
+              },
+            ].map((agent, i) => (
+              <div
+                key={agent.name}
+                className="relative rounded-2xl bg-card p-5 select-none border-foreground/10 border"
+                style={{
+                  boxShadow: 'var(--shadow-soft)',
+                  opacity: 0.62,
+                  cursor: 'not-allowed',
+                  animation: `fadeIn 0.5s ease-out ${i * 0.05}s both`,
+                  filter: 'grayscale(0.25)',
+                }}
+              >
+                {/* Badge EM BREVE dourado forte (visual de bloqueado) */}
+                <div className="absolute top-3 right-3">
+                  <span
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border"
+                    style={{
+                      background: 'var(--brand-gold)',
+                      color: 'var(--brand-navy)',
+                      borderColor: 'var(--brand-gold-hover)',
+                      boxShadow: '0 2px 8px rgba(212, 160, 23, 0.45), inset 0 -1px 0 rgba(0,0,0,0.15)',
+                    }}
+                  >
+                    <Lock className="h-2.5 w-2.5" strokeWidth={3} />
+                    Em breve
+                  </span>
+                </div>
+
+                {/* Ícone com leve blur/opacity */}
+                <div
+                  className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+                  style={{
+                    background: agent.bg,
+                    filter: 'saturate(0.65)',
+                  }}
+                >
+                  <agent.Icon className="h-6 w-6" style={{ color: agent.color, opacity: 0.80 }} strokeWidth={2} />
+                </div>
+
+                {/* Nome */}
+                <h3
+                  className="text-lg font-bold mb-2 leading-tight text-foreground"
+                  style={{ fontFamily: 'var(--font-display)' }}
+                >
+                  {agent.name}
+                </h3>
+
+                {/* Descrição */}
+                <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
+                  {agent.desc}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Disclaimer ───────────────────────────────── */}
+          <p className="text-center text-sm text-muted-foreground mt-10 max-w-2xl mx-auto">
+            <Sparkles className="inline-block h-3.5 w-3.5 mr-1.5" style={{ color: 'var(--brand-gold)' }} />
+            Quem é PRO entra primeiro nos lançamentos, sem aumento de preço enquanto for assinante ativo.
+          </p>
+
         </div>
       </section>
 
@@ -682,191 +1533,408 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── AGENTES ────────────────────────────────────────────────── */}
-      <section id="agentes" className="px-4 md:px-6 py-16 md:py-20 bg-card/30">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-12">
-            <Badge variant="outline" className="mb-4 border-primary/30 text-primary">Agentes Inteligentes</Badge>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Sua equipe completa de IA</h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto">6 agentes especializados trabalhando em conjunto como uma agência de marketing de elite — sem salário, sem férias, sem reuniões.</p>
+      {/*
+       * Seções antigas REMOVIDAS (16/05) — duplicavam conteúdo:
+       *   - "AGENTES — Sua equipe completa de IA" (6 agentes que NÃO estão ativos)
+       *     → substituída por seção "Em breve" (id="em-breve") com 8 agentes do sistema
+       *   - "COMPARATIVO DE PERFORMANCE — Logos IA vs Mercado" (radar/barra/tabela)
+       *     → removida por solicitação do usuário (não faz sentido vender Pedro+Marcos
+       *       comparando com agências completas)
+       *
+       * Arrays `agents`, `radarData`, `barData` no topo do arquivo agora estão
+       * sem uso — preservados pra rollback se necessário.
+       */}
+
+      {/* ── PLANO PRO (Redesign mockup 17/05 — navy + dourado, premium) ─── */}
+      <section
+        id="planos"
+        className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden"
+      >
+        {/* Background sutil pra destacar o card */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(212, 160, 23, 0.08) 0%, transparent 70%)',
+          }}
+        />
+
+        <div className="relative max-w-5xl mx-auto">
+
+          {/* ── HEADER ───────────────────────────────────── */}
+          <div className="text-center mb-10 md:mb-14 animate-fade-in">
+            <Badge
+              variant="outline"
+              className="mb-4 px-4 py-1 text-xs font-semibold uppercase tracking-wider"
+              style={{
+                borderColor: 'var(--brand-gold)',
+                color: 'var(--brand-gold)',
+                background: 'rgba(212, 160, 23, 0.08)',
+              }}
+            >
+              Plano único
+            </Badge>
+
+            <h2
+              className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-3 text-foreground"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              Um plano. <span style={{ color: 'var(--brand-gold)' }}>Tudo desbloqueado</span>. Sem pegadinha.
+            </h2>
+
+            <p className="text-base md:text-lg text-muted-foreground max-w-xl mx-auto">
+              Pedro e Marcos rodando 24/7. Cancele quando quiser.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {agents.map((a) => (
-              <div key={a.name} className="rounded-xl border border-border/50 bg-background/60 p-5 hover:border-primary/20 transition-colors group">
-                <div className={`inline-flex p-2.5 rounded-lg ${a.bg} mb-3 group-hover:scale-110 transition-transform`}>
-                  <a.icon className={`h-5 w-5 ${a.color}`} />
-                </div>
-                <h3 className="font-semibold mb-2">{a.name}</h3>
-                <p className="text-sm text-muted-foreground">{a.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+          {/* ── CARD PRO — USA A ARTE COMPLETA COMO IMAGEM ─────────── */}
+          <div className="relative max-w-2xl mx-auto">
 
-      {/* ── COMPARATIVO DE PERFORMANCE ─────────────────────────────── */}
-      <section id="performance" className="px-4 md:px-6 py-16 md:py-20">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-12">
-            <Badge variant="outline" className="mb-4 border-yellow-500/30 text-yellow-400">Análise Comparativa</Badge>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Logos IA vs. Mercado</h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto">9 agentes de IA especializados superam agências inteiras com dezenas de funcionários. Veja a comparação.</p>
-          </div>
+            {/* Glow externo dourado em volta */}
+            <div
+              className="absolute -inset-6 rounded-[2.5rem] blur-3xl opacity-30 pointer-events-none"
+              style={{ background: 'linear-gradient(135deg, var(--brand-gold) 0%, transparent 70%)' }}
+            />
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
-            {/* Radar Chart */}
-            <div className="rounded-xl border border-border/50 bg-card/50 p-6">
-              <h3 className="font-semibold mb-4 text-center text-sm text-muted-foreground uppercase tracking-wide">Análise Multidimensional</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <RadarChart data={radarData}>
-                  <PolarGrid stroke="#374151" />
-                  <PolarAngleAxis dataKey="metric" tick={{ fill: '#9CA3AF', fontSize: 11 }} />
-                  <Radar name="Logos IA" dataKey="logosIA" stroke="#5C6BC0" fill="#5C6BC0" fillOpacity={0.3} />
-                  <Radar name="G4 Educação" dataKey="g4" stroke="#DAA520" fill="#DAA520" fillOpacity={0.15} />
-                  <Radar name="Agência Comum" dataKey="agenciaComum" stroke="#6B7280" fill="#6B7280" fillOpacity={0.1} />
-                  <Legend wrapperStyle={{ fontSize: '12px', color: '#9CA3AF' }} />
-                </RadarChart>
-              </ResponsiveContainer>
-            </div>
+            {/* Wrapper relative pra posicionar o link clicável SOBRE o botão da imagem */}
+            <div className="relative rounded-[2rem] overflow-hidden" style={{
+              boxShadow: '0 32px 80px -16px rgba(15, 38, 71, 0.50), 0 0 80px rgba(212, 160, 23, 0.25)',
+            }}>
 
-            {/* Bar Chart */}
-            <div className="rounded-xl border border-border/50 bg-card/50 p-6">
-              <h3 className="font-semibold mb-4 text-center text-sm text-muted-foreground uppercase tracking-wide">Performance por Indicador (%)</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={barData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#9CA3AF', fontSize: 11 }} />
-                  <YAxis dataKey="name" type="category" tick={{ fill: '#9CA3AF', fontSize: 11 }} width={90} />
-                  <Tooltip
-                    contentStyle={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 8, color: '#F9FAFB' }}
-                    labelStyle={{ color: '#F9FAFB' }}
-                  />
-                  <Bar dataKey="velocidade" name="Velocidade" fill="#5C6BC0" radius={[0, 4, 4, 0]} />
-                  <Bar dataKey="custo" name="Custo/Result." fill="#DAA520" radius={[0, 4, 4, 0]} />
-                  <Bar dataKey="fechamento" name="Fechamento" fill="#10B981" radius={[0, 4, 4, 0]} />
-                  <Legend wrapperStyle={{ fontSize: '12px', color: '#9CA3AF' }} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+              {/* Arte completa do plano (logo + preços + features + botão) */}
+              <img
+                src="/plano-pro-oferta.png"
+                alt="Plano PRO — R$ 1.497 setup + R$ 497/mês — CRM, WhatsApp, IA, suporte prioritário"
+                className="block w-full h-auto select-none"
+                draggable={false}
+              />
 
-          {/* Tabela comparativa */}
-          <div className="overflow-x-auto rounded-xl border border-border/50">
-          <div className="min-w-[560px]">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-card border-b border-border/50">
-                  <th className="text-left px-5 py-3 text-muted-foreground font-medium">Característica</th>
-                  <th className="px-5 py-3 text-muted-foreground font-medium text-center">Agência Comum</th>
-                  <th className="px-5 py-3 text-muted-foreground font-medium text-center">G4 Educação</th>
-                  <th className="px-5 py-3 text-primary font-semibold text-center bg-primary/5">Logos IA</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  ['Custo mensal', 'R$ 5.000 – 10.000', 'Alto investimento', 'R$ 497 – 2.497'],
-                  ['Operação', 'Horário comercial', 'Alta performance', '24/7 ininterrupta'],
-                  ['Escalabilidade', 'Limitada por equipe', 'Grande investimento', 'Ilimitada, instantânea'],
-                  ['Consistência', 'Variável / erros humanos', 'Alta, mas humana', 'Perfeita (algoritmos)'],
-                  ['ROI mensurável', 'Difícil de aferir', 'Focado em educação', 'Claro e em tempo real'],
-                  ['Mentoria/Validação', 'Variável', 'Reconhecida', 'Comunidade Viver de IA'],
-                ].map(([feature, comum, g4, logos], i) => (
-                  <tr key={feature} className={`border-b border-border/30 ${i % 2 === 0 ? 'bg-background/30' : ''}`}>
-                    <td className="px-5 py-3 font-medium">{feature}</td>
-                    <td className="px-5 py-3 text-center text-muted-foreground">{comum}</td>
-                    <td className="px-5 py-3 text-center text-yellow-400/80">{g4}</td>
-                    <td className="px-5 py-3 text-center text-primary font-medium bg-primary/5">{logos}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          </div>
-          <p className="text-xs text-muted-foreground/60 text-center mt-3">* Dados baseados em benchmarks de mercado e estudos internos da Comunidade Viver de IA.</p>
-        </div>
-      </section>
-
-      {/* ── PLANOS ─────────────────────────────────────────────────── */}
-      <section id="planos" className="px-4 md:px-6 py-16 md:py-20 bg-card/30">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12">
-            <Badge variant="outline" className="mb-4 border-primary/30 text-primary">Planos Premium</Badge>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Escolha seu nível de performance</h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto">Todos os planos incluem taxa de implementação única — garantia de que você começa do jeito certo.</p>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
-            {plans.map((plan) => (
-              <div
-                key={plan.id}
-                className={`relative rounded-2xl border-2 ${plan.color} bg-background/80 p-6 flex flex-col ${plan.highlight ? 'shadow-[0_0_40px_rgba(92,107,192,0.2)]' : ''}`}
+              {/* Link clicável posicionado SOBRE o botão "QUERO COMEÇAR AGORA" da imagem
+                 (proporções calibradas pro mockup 862x1050 — área do botão dourado) */}
+              <Link
+                to="/checkout?plano=mensal"
+                className="absolute inset-x-[6%] bottom-[6%] top-[83%] rounded-2xl focus:outline-none focus:ring-4 focus:ring-yellow-400/50 hover:bg-white/5 transition-colors"
+                aria-label="Quero começar agora — assinar plano PRO"
+                title="Quero começar agora — assinar plano PRO"
               >
-                {plan.badge && (
-                  <div className={`absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-xs font-semibold ${plan.highlight ? 'bg-primary text-primary-foreground' : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'}`}>
-                    {plan.badge}
-                  </div>
-                )}
+                <span className="sr-only">Quero começar agora</span>
+              </Link>
+            </div>
 
-                <div className="mb-5">
-                  <p className="text-xs text-muted-foreground uppercase tracking-widest mb-1">{plan.subtitle}</p>
-                  <h3 className="text-2xl font-bold">{plan.name}</h3>
-                  <div className="mt-4 flex items-end gap-1">
-                    <span className="text-sm text-muted-foreground">R$</span>
-                    <span className="text-4xl font-bold">{plan.price.toLocaleString('pt-BR')}</span>
-                    <span className="text-muted-foreground text-sm pb-1">/mês</span>
-                  </div>
-                  <div className="mt-2 flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground">+ R$ {plan.setup} taxa de implementação (única vez)</span>
-                    <span className="text-xs text-muted-foreground">{plan.tokens} tokens/mês inclusos</span>
-                    <span className="text-xs text-primary/80">Recarga: {plan.tokenCost}</span>
+            {/* CTA explícito embaixo (fallback acessível + visível) */}
+            <div className="mt-6 text-center">
+              <Button
+                asChild
+                size="lg"
+                className="px-10 text-base md:text-lg font-extrabold gap-2 py-6 transition-all hover:translate-y-[-2px] uppercase tracking-wider"
+                style={{
+                  background: 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)',
+                  color: 'var(--brand-navy)',
+                  boxShadow: '0 12px 32px rgba(212, 160, 23, 0.50), inset 0 -3px 0 rgba(0,0,0,0.20)',
+                  border: '2px solid var(--brand-gold-hover)',
+                }}
+              >
+                <Link to="/checkout?plano=mensal">
+                  Quero começar agora <ArrowRight className="h-5 w-5" strokeWidth={3} />
+                </Link>
+              </Button>
+              <p className="text-xs text-muted-foreground mt-3 flex items-center justify-center gap-1.5">
+                <Lock className="h-3 w-3" />
+                Ambiente seguro · Liberação em 5 min · Cancele quando quiser
+              </p>
+            </div>
+
+            {/* Container antigo (escondido — preserva código pro caso de querer voltar) */}
+            <div className="hidden">
+              {/* Padrão circuito decorativo no canto inferior direito (sutil) */}
+              <div
+                className="absolute bottom-0 right-0 w-80 h-80 pointer-events-none opacity-[0.08]"
+                style={{
+                  backgroundImage: `
+                    radial-gradient(circle at 1px 1px, var(--brand-gold) 1px, transparent 0),
+                    linear-gradient(90deg, transparent 49%, var(--brand-gold) 49%, var(--brand-gold) 51%, transparent 51%)
+                  `,
+                  backgroundSize: '20px 20px, 40px 40px',
+                  backgroundPosition: '0 0, 0 0',
+                  maskImage: 'radial-gradient(circle at 100% 100%, black 0%, transparent 70%)',
+                  WebkitMaskImage: 'radial-gradient(circle at 100% 100%, black 0%, transparent 70%)',
+                }}
+              />
+
+              {/* Glow dourado no topo */}
+              <div
+                className="absolute -top-32 left-1/2 -translate-x-1/2 w-96 h-96 rounded-full blur-3xl pointer-events-none opacity-25"
+                style={{ background: 'var(--brand-gold)' }}
+              />
+
+              <div className="relative p-6 md:p-12">
+
+                {/* ── LOGO no topo ── */}
+                <div className="flex justify-center mb-4">
+                  <LogosIALogo size="lg" variant="dark" />
+                </div>
+
+                {/* ── BADGE "PLANO PRO" ── */}
+                <div className="flex justify-center mb-8 md:mb-10">
+                  <div
+                    className="inline-flex items-center gap-2 px-6 py-2 rounded-md border-2"
+                    style={{
+                      borderColor: 'var(--brand-gold)',
+                      background: 'rgba(212, 160, 23, 0.05)',
+                    }}
+                  >
+                    <span
+                      className="text-base md:text-lg font-bold uppercase tracking-[0.25em]"
+                      style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}
+                    >
+                      Plano
+                    </span>
+                    <span
+                      className="text-base md:text-lg font-extrabold uppercase tracking-[0.25em]"
+                      style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}
+                    >
+                      Pro
+                    </span>
                   </div>
                 </div>
 
-                <div className="flex-1 space-y-2.5 mb-6">
-                  {plan.features.map((f) => (
-                    <div key={f} className="flex items-start gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0 mt-0.5" />
-                      <span className="text-sm">{f}</span>
+                {/* ── 2 CARDS DE PREÇO (lado-a-lado com + no meio) ── */}
+                <div className="flex flex-col md:flex-row items-center justify-center gap-4 md:gap-6 mb-10 md:mb-14">
+
+                  {/* Card Implementação */}
+                  <div className="text-center flex-1 max-w-xs">
+                    <p
+                      className="text-xs md:text-sm font-semibold uppercase tracking-widest mb-3"
+                      style={{ color: 'var(--brand-cream)', opacity: 0.85 }}
+                    >
+                      Implementação
+                    </p>
+                    <div className="flex items-end justify-center gap-1 leading-none">
+                      <span
+                        className="text-2xl md:text-3xl font-bold pb-2"
+                        style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}
+                      >
+                        R$
+                      </span>
+                      <span
+                        className="text-5xl md:text-7xl font-black leading-none"
+                        style={{
+                          color: 'var(--brand-gold)',
+                          fontFamily: 'var(--font-display)',
+                          textShadow: '0 4px 24px rgba(212, 160, 23, 0.40)',
+                        }}
+                      >
+                        1.497
+                      </span>
                     </div>
-                  ))}
-                  {plan.missing.map((f) => (
-                    <div key={f} className="flex items-start gap-2 opacity-40">
-                      <XCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-                      <span className="text-sm line-through">{f}</span>
+                    <p
+                      className="text-xs md:text-sm font-semibold uppercase tracking-widest mt-3"
+                      style={{ color: 'var(--brand-cream)', opacity: 0.70 }}
+                    >
+                      Pagamento Único
+                    </p>
+                  </div>
+
+                  {/* Símbolo + (botão circular) */}
+                  <div
+                    className="w-12 h-12 md:w-14 md:h-14 rounded-full flex items-center justify-center shrink-0 my-2 md:my-0"
+                    style={{
+                      border: '2px solid var(--brand-gold)',
+                      background: 'rgba(212, 160, 23, 0.10)',
+                    }}
+                  >
+                    <Plus className="h-6 w-6 md:h-7 md:w-7" style={{ color: 'var(--brand-gold)' }} strokeWidth={3} />
+                  </div>
+
+                  {/* Card Mensalidade */}
+                  <div className="text-center flex-1 max-w-xs">
+                    <p
+                      className="text-xs md:text-sm font-semibold uppercase tracking-widest mb-3"
+                      style={{ color: 'var(--brand-cream)', opacity: 0.85 }}
+                    >
+                      Mensalidade
+                    </p>
+                    <div className="flex items-end justify-center gap-1 leading-none">
+                      <span
+                        className="text-2xl md:text-3xl font-bold pb-2"
+                        style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}
+                      >
+                        R$
+                      </span>
+                      <span
+                        className="text-5xl md:text-7xl font-black leading-none"
+                        style={{
+                          color: 'var(--brand-gold)',
+                          fontFamily: 'var(--font-display)',
+                          textShadow: '0 4px 24px rgba(212, 160, 23, 0.40)',
+                        }}
+                      >
+                        497
+                      </span>
+                    </div>
+                    <p
+                      className="text-xs md:text-sm font-semibold uppercase tracking-widest mt-3"
+                      style={{ color: 'var(--brand-cream)', opacity: 0.70 }}
+                    >
+                      Cobrado Mensalmente
+                    </p>
+                  </div>
+                </div>
+
+                {/* ── DIVISOR "RECURSOS INCLUSOS" ── */}
+                <div className="flex items-center gap-3 md:gap-4 mb-8 md:mb-10">
+                  <div className="flex-1 h-px" style={{ background: 'rgba(212, 160, 23, 0.30)' }} />
+                  <span
+                    className="text-xs md:text-sm font-bold uppercase tracking-[0.25em] shrink-0"
+                    style={{ color: 'var(--brand-cream)', opacity: 0.80 }}
+                  >
+                    Recursos Inclusos
+                  </span>
+                  <div className="flex-1 h-px" style={{ background: 'rgba(212, 160, 23, 0.30)' }} />
+                </div>
+
+                {/* ── GRID 8 FEATURES (2 colunas) ── */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 md:gap-x-10 gap-y-6 mb-10 md:mb-12">
+                  {[
+                    {
+                      Icon: Users,
+                      title: 'CRM Completo',
+                      desc: 'Organize, gerencie e escale seu relacionamento com leads.',
+                    },
+                    {
+                      Icon: Phone,
+                      title: 'Conexão de até 10 WhatsApp',
+                      desc: 'Gerencie múltiplos atendimentos em um só lugar.',
+                    },
+                    {
+                      Icon: Send,
+                      title: 'Disparo em massa',
+                      desc: 'Envie mensagens em massa com segmentação avançada.',
+                    },
+                    {
+                      Icon: Database,
+                      title: 'Tokens disponível 150 mil',
+                      desc: 'Mais inteligência, mais automações e mais resultados.',
+                    },
+                    {
+                      Icon: TrendingUp,
+                      title: 'Follow-up automático',
+                      desc: 'Automatize acompanhamentos e nunca mais perca vendas.',
+                    },
+                    {
+                      Icon: Brain,
+                      title: 'Inteligência artificial',
+                      desc: 'Atendimento inteligente, respostas automáticas e muito mais.',
+                    },
+                    {
+                      Icon: FileText,
+                      title: 'Exportação de planilhas',
+                      desc: 'Exporte seus dados e relatórios sempre que precisar.',
+                    },
+                    {
+                      Icon: ShieldCheck,
+                      title: 'Suporte prioritário',
+                      desc: 'Suporte dedicado para te ajudar sempre que precisar.',
+                    },
+                  ].map((feat) => (
+                    <div key={feat.title} className="flex items-start gap-3 md:gap-4">
+                      {/* Ícone em círculo dourado */}
+                      <div
+                        className="w-11 h-11 md:w-12 md:h-12 rounded-full flex items-center justify-center shrink-0"
+                        style={{
+                          border: '2px solid var(--brand-gold)',
+                          background: 'rgba(212, 160, 23, 0.08)',
+                        }}
+                      >
+                        <feat.Icon className="h-5 w-5 md:h-5.5 md:w-5.5" style={{ color: 'var(--brand-gold)' }} strokeWidth={2} />
+                      </div>
+                      {/* Texto */}
+                      <div className="flex-1 min-w-0 pt-0.5">
+                        <h4
+                          className="text-sm md:text-base font-bold uppercase tracking-wider mb-1 leading-tight"
+                          style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}
+                        >
+                          {feat.title}
+                        </h4>
+                        <p className="text-xs md:text-sm leading-relaxed" style={{ color: 'var(--brand-cream)', opacity: 0.85 }}>
+                          {feat.desc}
+                        </p>
+                      </div>
                     </div>
                   ))}
                 </div>
 
+                {/* ── 3 HIGHLIGHTS BOTTOM (Tokens / Conexões / Segurança) ── */}
+                <div
+                  className="rounded-2xl p-5 md:p-6 mb-8 md:mb-10"
+                  style={{
+                    border: '1px solid var(--brand-gold)',
+                    background: 'rgba(212, 160, 23, 0.05)',
+                  }}
+                >
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 md:gap-4">
+                    {[
+                      { Icon: Users, top: '150 MIL', bottom: 'TOKENS DISPONÍVEL' },
+                      { Icon: Phone, top: 'ATÉ 10', bottom: 'CONEXÕES DE WHATSAPP' },
+                      { Icon: ShieldCheck, top: 'SEGURANÇA', bottom: 'E DADOS PROTEGIDOS' },
+                    ].map((h, i) => (
+                      <div key={i} className="flex items-center gap-3 justify-center sm:justify-start">
+                        <div
+                          className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
+                          style={{
+                            border: '2px solid var(--brand-gold)',
+                            background: 'rgba(212, 160, 23, 0.10)',
+                          }}
+                        >
+                          <h.Icon className="h-5 w-5" style={{ color: 'var(--brand-gold)' }} strokeWidth={2.5} />
+                        </div>
+                        <div>
+                          <p
+                            className="text-base md:text-lg font-extrabold uppercase tracking-wide leading-none"
+                            style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}
+                          >
+                            {h.top}
+                          </p>
+                          <p
+                            className="text-[10px] md:text-xs font-semibold uppercase tracking-widest mt-1"
+                            style={{ color: 'var(--brand-cream)', opacity: 0.80 }}
+                          >
+                            {h.bottom}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ── CTA GIGANTE ── */}
                 <Button
                   asChild
-                  className={`w-full ${plan.highlight ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'variant-outline border border-border'}`}
-                  variant={plan.highlight ? 'default' : 'outline'}
+                  size="lg"
+                  className="w-full text-lg md:text-xl font-extrabold gap-3 py-7 md:py-8 transition-all hover:translate-y-[-2px] uppercase tracking-wider"
+                  style={{
+                    background: 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)',
+                    color: 'var(--brand-navy)',
+                    boxShadow: '0 12px 32px rgba(212, 160, 23, 0.50), inset 0 -3px 0 rgba(0,0,0,0.20)',
+                    border: '2px solid var(--brand-gold-hover)',
+                  }}
                 >
-                  <Link to="/auth?tab=signup">{plan.cta}</Link>
+                  <Link to="/auth?tab=signup&plano=mensal">
+                    Quero Começar Agora <ArrowRight className="h-6 w-6" strokeWidth={3} />
+                  </Link>
                 </Button>
-              </div>
-            ))}
-          </div>
 
-          {/* Serviços adicionais */}
-          <div className="mt-12 rounded-xl border border-border/50 bg-background/60 p-6">
-            <h3 className="font-semibold mb-5 text-center">Serviços Adicionais (Upsells)</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              {[
-                { icon: Users, title: 'Suporte Humanizado', desc: 'Atendimento direto com especialistas da equipe Logos IA via WhatsApp ou Zoom.', price: 'Sob consulta' },
-                { icon: Brain, title: 'Mentoria Individual', desc: 'Sessões 1:1 com especialistas da Comunidade Viver de IA para maximizar seus resultados.', price: 'Sob consulta' },
-                { icon: Globe, title: 'Implementação Custom', desc: 'Integrações com ERP, CRM legado e sistemas internos da sua empresa.', price: 'Sob consulta' },
-              ].map((s) => (
-                <div key={s.title} className="rounded-lg border border-border/40 bg-card/40 p-4">
-                  <s.icon className="h-5 w-5 text-primary mb-2" />
-                  <h4 className="font-medium mb-1">{s.title}</h4>
-                  <p className="text-xs text-muted-foreground mb-2">{s.desc}</p>
-                  <span className="text-xs text-primary">{s.price}</span>
-                </div>
-              ))}
+                {/* ── Microcopy de segurança ── */}
+                <p
+                  className="text-center text-xs md:text-sm font-medium mt-5 flex items-center justify-center gap-2"
+                  style={{ color: 'var(--brand-cream)', opacity: 0.70 }}
+                >
+                  <Lock className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />
+                  Ambiente seguro e 100% confiável
+                </p>
+              </div>
             </div>
           </div>
+
         </div>
       </section>
 
@@ -926,51 +1994,145 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── CTA FINAL ──────────────────────────────────────────────── */}
-      <section className="px-4 md:px-6 py-16 md:py-24 flex flex-col items-center text-center relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-yellow-500/5 pointer-events-none" />
-        <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm text-primary font-medium mb-6">
-          <Sparkles className="h-3.5 w-3.5" />
-          Comece hoje mesmo
-        </div>
-        <h2 className="text-2xl sm:text-3xl md:text-5xl font-bold max-w-3xl mb-6">
-          Pronto para ter uma{' '}
-          <span className="bg-gradient-to-r from-[#5C6BC0] to-[#DAA520] bg-clip-text text-transparent">
-            agência de IA
-          </span>{' '}
-          trabalhando por você?
-        </h2>
-        <p className="text-muted-foreground max-w-xl mb-10">
-          Junte-se a centenas de empreendedores e agências que já substituíram custos de agência por resultados de IA.
-        </p>
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full max-w-sm sm:max-w-none sm:justify-center">
-          <Button asChild size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 px-10 text-base gap-2 w-full sm:w-auto">
-            <Link to="/auth?tab=signup">
-              Agendar Implementação VIP <ArrowRight className="h-4 w-4" />
+      {/* ── CTA FINAL (Prompt 9 — redesign 16/05) ─────────────────────── */}
+      <section
+        className="relative px-4 md:px-6 py-20 md:py-28 overflow-hidden"
+        style={{
+          background: 'linear-gradient(135deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%)',
+        }}
+      >
+        {/* Glow gold de fundo */}
+        <div
+          className="absolute -top-20 left-1/2 -translate-x-1/2 w-[40rem] h-[40rem] rounded-full blur-3xl pointer-events-none opacity-20"
+          style={{ background: 'var(--brand-gold)' }}
+        />
+        <div
+          className="absolute -bottom-20 -left-20 w-96 h-96 rounded-full blur-3xl pointer-events-none opacity-15"
+          style={{ background: 'var(--brand-gold)' }}
+        />
+
+        <div className="relative max-w-4xl mx-auto text-center">
+          {/* Badge */}
+          <div
+            className="inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-medium mb-8"
+            style={{
+              borderColor: 'var(--brand-gold)',
+              background: 'rgba(212, 160, 23, 0.10)',
+              color: 'var(--brand-gold)',
+            }}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Comece hoje mesmo
+          </div>
+
+          {/* Título */}
+          <h2
+            className="text-3xl sm:text-4xl md:text-6xl font-extrabold leading-[1.1] mb-6"
+            style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
+          >
+            Pare de perder lead{' '}
+            <span style={{ color: 'var(--brand-gold)' }}>enquanto você dorme</span>.
+          </h2>
+
+          {/* Subtítulo */}
+          <p className="text-base md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>
+            <strong style={{ color: 'var(--brand-cream)' }}>Pedro e Marcos</strong> começam a trabalhar hoje.
+            Você só precisa decidir parar de fazer o que uma IA pode fazer melhor.
+          </p>
+
+          {/* CTA */}
+          <Button
+            asChild
+            size="lg"
+            className="px-10 text-base md:text-lg font-bold gap-2 py-6 transition-all hover:translate-y-[-2px]"
+            style={{
+              background: 'var(--brand-gold)',
+              color: 'var(--brand-navy)',
+              boxShadow: 'var(--shadow-gold)',
+            }}
+          >
+            <Link to={`/auth?tab=signup&plano=${billing}`}>
+              Assinar PRO agora <ArrowRight className="h-5 w-5" />
             </Link>
           </Button>
-          <Button asChild size="lg" variant="outline" className="px-8 text-base w-full sm:w-auto">
-            <a href="mailto:carvalho@scalpergx.com.br">Falar com especialista</a>
-          </Button>
+
+          {/* Microcopy */}
+          <p className="text-sm mt-5" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+            <CheckCircle2 className="inline-block h-3.5 w-3.5 mr-1.5" style={{ color: 'var(--brand-gold)' }} />
+            Liberação em até 5 minutos. Sem fidelidade.
+          </p>
         </div>
       </section>
 
-      {/* ── FOOTER ─────────────────────────────────────────────────── */}
-      <footer className="border-t border-border/40 px-4 md:px-6 py-8">
-        <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-5 text-center md:text-left">
-          <div className="flex flex-col sm:flex-row items-center gap-2">
-            <div className="flex items-center gap-2">
-              <LogosIAIcon size={26} />
-              <span className="text-sm font-bold tracking-wide">Logos IA</span>
+      {/* ── FOOTER (Prompt 9 — redesign 16/05) ─────────────────────────── */}
+      <footer
+        className="px-4 md:px-6 pt-12 pb-6"
+        style={{ background: 'var(--brand-navy-dark)', color: 'var(--brand-cream)' }}
+      >
+        <div className="max-w-6xl mx-auto">
+
+          {/* Grid 4 colunas */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-10 pb-10">
+
+            {/* Coluna 1 — Marca (Prompt redesign 16/05 — logo dark pra fundo navy) */}
+            <div className="col-span-2 md:col-span-1">
+              <div className="mb-3">
+                <LogosIALogo size="md" variant="dark" />
+              </div>
+              <p className="text-xs leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                Atendimento + CRM com IA pra quem vive de WhatsApp.
+              </p>
             </div>
-            <span className="text-xs text-muted-foreground sm:ml-1">· Mentorada pela Comunidade Viver de IA</span>
+
+            {/* Coluna 2 — Produto */}
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: 'var(--brand-gold)' }}>
+                Produto
+              </h4>
+              <ul className="space-y-2.5 text-sm">
+                <li><a href="#agente-pedro" className="opacity-80 hover:opacity-100 transition-opacity">Agente Pedro</a></li>
+                <li><a href="#agente-marcos" className="opacity-80 hover:opacity-100 transition-opacity">Agente Marcos</a></li>
+                <li><a href="#em-breve" className="opacity-80 hover:opacity-100 transition-opacity">Em breve</a></li>
+                <li><a href="#planos" className="opacity-80 hover:opacity-100 transition-opacity">Preço</a></li>
+              </ul>
+            </div>
+
+            {/* Coluna 3 — Empresa */}
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: 'var(--brand-gold)' }}>
+                Empresa
+              </h4>
+              <ul className="space-y-2.5 text-sm">
+                <li><a href="#como-funciona" className="opacity-80 hover:opacity-100 transition-opacity">Como funciona</a></li>
+                <li><a href="#faq" className="opacity-80 hover:opacity-100 transition-opacity">FAQ</a></li>
+                <li><a href="mailto:carvalho@scalpergx.com.br" className="opacity-80 hover:opacity-100 transition-opacity">Contato</a></li>
+                <li><Link to="/auth" className="opacity-80 hover:opacity-100 transition-opacity">Login</Link></li>
+              </ul>
+            </div>
+
+            {/* Coluna 4 — Legal */}
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: 'var(--brand-gold)' }}>
+                Legal
+              </h4>
+              <ul className="space-y-2.5 text-sm">
+                <li><a href="/privacy-policy.html" className="opacity-80 hover:opacity-100 transition-opacity">Privacidade</a></li>
+                <li><a href="/terms-of-service.html" className="opacity-80 hover:opacity-100 transition-opacity">Termos de Uso</a></li>
+                <li><span className="opacity-60 text-xs">LGPD: dados tratados conforme lei brasileira</span></li>
+              </ul>
+            </div>
+
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
-            <span>© {new Date().getFullYear()} LogosIA. Todos os direitos reservados.</span>
-            <a href="/privacy" className="hover:text-primary transition-colors">Privacidade</a>
-            <a href="/terms" className="hover:text-primary transition-colors">Termos</a>
-            <a href="mailto:carvalho@scalpergx.com.br" className="hover:text-primary transition-colors">Contato</a>
+
+          {/* Bottom bar */}
+          <div
+            className="pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
+            style={{ borderTop: '1px solid rgba(250, 248, 242, 0.10)', color: 'rgba(250, 248, 242, 0.55)' }}
+          >
+            <span>© {new Date().getFullYear()} LOGOS|IA. Todos os direitos reservados.</span>
+            <span>Feito no Brasil 🇧🇷</span>
           </div>
+
         </div>
       </footer>
     </div>
