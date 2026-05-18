@@ -15,6 +15,22 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **IT-4.2 — Guardrails de saída** (confiabilidade do Pedro SDR)
+  - Fonte canônica: `supabase/functions/_shared/reliability/guardrails.ts`
+    com `applyGuardrails(text, state, opts)` e `SAFE_FALLBACK`.
+  - 4 categorias de violação:
+    1. **preco_sem_veiculo** — `R$ X` / `X mil` quando `veiculo_apresentado=false`
+    2. **promessa_indevida** — entrega, frete grátis, garantia (decisão do vendedor)
+    3. **km/ano_inventado** — specs numéricos sem veículo apresentado
+    4. **politica / religiao / depreciacao_concorrente** — fora do escopo
+  - Cópia inline no `uazapi-webhook` (~60 linhas).
+  - Integração: logo após `stripIntroIfAlreadyPresented`, antes do envio.
+    Quando blocked: substitui `finalText` por `SAFE_FALLBACK`, log estruturado
+    da violação. Quando OK: passa sem alteração.
+  - Atrás de flag `PEDRO_FF_GUARDRAILS` (default OFF).
+  - Suíte: 21 testes vitest (texto vazio/null, cada regra positiva/negativa,
+    opts skip, múltiplas violações, ano com '?' não bloqueia, etc.).
+
 - **IT-4.1 — Retry com backoff + mensagem de cortesia** (confiabilidade do Pedro SDR)
   - Fonte canônica: `supabase/functions/_shared/reliability/llmRetry.ts` com
     `fetchWithRetry(url, init, opts)` e `COURTESY_MESSAGE`.

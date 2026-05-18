@@ -756,6 +756,57 @@ function getQualificationScore(state: any): number {
   return calcQualificationScore(state);
 }
 
+// ─── Guardrails de Saída (INLINED from _shared/reliability/guardrails.ts) ──
+// IT-4.2: filtra resposta do LLM antes de enviar. Bloqueia: preco sem
+// veiculo, promessa indevida (frete/garantia/entrega), invencao de specs,
+// saida de escopo (politica/religiao/depreciar concorrente).
+// Fonte canônica + testes: supabase/functions/_shared/reliability/guardrails.ts
+type GuardrailViolation = { rule: string; reason: string; matched_text: string };
+type GuardrailResult = { blocked: boolean; violations: GuardrailViolation[]; safeFallback: string };
+const SAFE_FALLBACK = 'Deixa eu confirmar essa info antes pra te passar certinho. Pode me dizer qual modelo te interessou?';
+const PRICE_PATTERN = /\b(r\$\s*[\d.,]+|\d+\s*mil\s*reais?|\d+\s*mil\b)/i;
+const DELIVERY_PROMISE_PATTERNS = [
+  /\bfa[çc]o\s+a?\s*entrega/i,
+  /\bentrego\s+(em|na)\b/i,
+  /\bfrete\s+(?:[eé]\s+)?(gr[áa]tis|gratuito|inclu[íi]do|por\s+nossa)/i,
+  /\bgarantia\s+de\s+\d+\s+(anos?|meses?)/i,
+  /\bdou\s+\d+\s+(anos?|meses?)\s+de\s+garantia/i,
+];
+const SPECIFIC_KM_PATTERN = /\b(\d{1,3}\.\d{3}|\d{4,6})\s*(km|quilômetros?)\b/i;
+const SPECIFIC_YEAR_PATTERN = /\b20[12]\d\b/;
+const OUT_OF_SCOPE_PATTERNS = [
+  { rule: 'politica', regex: /\b(lula|bolsonaro|pt|psl|stf|governo\s+atual)\b/i },
+  { rule: 'religiao', regex: /\bdeus\s+(te\s+)?aben[çc]o|\bigreja\b|\borar?\s+por\b/i },
+  { rule: 'depreciacao_concorrente', regex: /\beles\s+(s[ãa]o|cobram|enganam)|outra\s+loja\s+[ée]\s+(ruim|pior|mais\s+cara)/i },
+];
+
+function applyGuardrails(text: string, state: any, opts?: { skipPriceCheck?: boolean; skipDeliveryCheck?: boolean }): GuardrailResult {
+  if (!text || typeof text !== 'string') return { blocked: false, violations: [], safeFallback: SAFE_FALLBACK };
+  const violations: GuardrailViolation[] = [];
+  const apresentado = state?.veiculo_apresentado?.ja_apresentado;
+  if (!opts?.skipPriceCheck && !apresentado) {
+    const m = text.match(PRICE_PATTERN);
+    if (m) violations.push({ rule: 'preco_sem_veiculo', reason: 'Agente citou preço sem veículo apresentado.', matched_text: m[0] });
+  }
+  if (!opts?.skipDeliveryCheck) {
+    for (const p of DELIVERY_PROMISE_PATTERNS) {
+      const m = text.match(p);
+      if (m) { violations.push({ rule: 'promessa_indevida', reason: 'Promessa de entrega/frete/garantia (decisão do vendedor humano).', matched_text: m[0] }); break; }
+    }
+  }
+  if (!apresentado) {
+    const kmM = text.match(SPECIFIC_KM_PATTERN);
+    if (kmM) violations.push({ rule: 'km_inventado', reason: 'KM específico sem veículo apresentado.', matched_text: kmM[0] });
+    const yrM = text.match(SPECIFIC_YEAR_PATTERN);
+    if (yrM && !text.includes('?') && text.length > 50) violations.push({ rule: 'ano_inventado', reason: 'Ano afirmativo sem veículo apresentado.', matched_text: yrM[0] });
+  }
+  for (const { rule, regex } of OUT_OF_SCOPE_PATTERNS) {
+    const m = text.match(regex);
+    if (m) { violations.push({ rule, reason: 'Fora do escopo (vendas automotivas).', matched_text: m[0] }); break; }
+  }
+  return { blocked: violations.length > 0, violations, safeFallback: SAFE_FALLBACK };
+}
+
 // ─── LLM Retry + Cortesia (INLINED from _shared/reliability/llmRetry.ts) ──
 // IT-4.1: retry com backoff exponencial em 5xx/429. Mensagem de cortesia ao
 // cliente quando todas as tentativas falham (em vez de HTTP 500 silencioso).
@@ -3295,7 +3346,19 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // antes (consultor_apresentado=true no state). Defesa contra LLM ignorar a
   // regra do system prompt esporadicamente. Se a resposta inteira era só
   // apresentação, retorna fallback "Pode mandar 😊".
-  const finalText = stripIntroIfAlreadyPresented(aiResponse, conversationState);
+  let finalText = stripIntroIfAlreadyPresented(aiResponse, conversationState);
+
+  // IT-4.2: guardrails de saída. Substitui resposta por safeFallback quando
+  // detecta violacao (preco sem veiculo, promessa indevida, fora de escopo).
+  // Flag OFF: comportamento atual identico.
+  if (isPedroFeatureEnabled('GUARDRAILS')) {
+    const guardrailResult = applyGuardrails(finalText, conversationState);
+    if (guardrailResult.blocked) {
+      const ruleList = guardrailResult.violations.map((v) => v.rule).join(',');
+      console.warn(`[Guardrails] BLOQUEADO (${ruleList}). Original: "${finalText.slice(0, 100)}". Violacoes:`, JSON.stringify(guardrailResult.violations));
+      finalText = guardrailResult.safeFallback;
+    }
+  }
 
   // ─── IT-1.1 + IT-1.2: Message Splitting + Typing Simulation ──────────────
   // IT-1.1 PEDRO_FF_MESSAGE_SPLITTING: divide resposta em ate 3 partes.

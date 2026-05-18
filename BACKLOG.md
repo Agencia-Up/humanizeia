@@ -132,10 +132,14 @@
     OpenAI→Anthropic). IT-4.1 cobre 80% do RISCO ALTO #1 com retry simples.
   - Implementado: `_shared/reliability/llmRetry.ts` (canônico, 12 testes)
     + inline + wrap da chamada OpenAI principal no `uazapi-webhook`
-- [ ] **IT-4.2** — Guardrails de saída
+- [x] **IT-4.2** — Guardrails de saída
   - Flag: `PEDRO_FF_GUARDRAILS`
-  - Bloquear: prometer preço fora do BNDV, prometer entrega fora do estoque,
-    sair do escopo (assunto não-veículo)
+  - 4 categorias: preço sem veículo apresentado, promessa indevida
+    (frete/entrega/garantia), invenção de specs (KM/ano), fora do escopo
+    (política/religião/depreciar concorrente)
+  - Substitui resposta por `SAFE_FALLBACK` pedindo reconfirmação do modelo
+  - Implementado: `_shared/reliability/guardrails.ts` (canônico, 21 testes)
+    + inline + integrado no fluxo de envio do `uazapi-webhook`
 - [ ] **IT-4.3** — Logs estruturados JSON com `trace_id` por turno
   - Flag: `PEDRO_FF_STRUCTURED_LOGGING`
   - Captura: model, tokens, latência, custo, tools chamadas, output
