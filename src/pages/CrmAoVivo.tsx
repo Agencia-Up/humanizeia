@@ -891,7 +891,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           color: '#E2E8F0',
           padding: 'clamp(14px, 1.2vw, 22px)',
           display: 'grid',
-          gridTemplateRows: 'auto auto minmax(0, 1fr)',
+          gridTemplateRows: isSeller ? 'auto auto minmax(0, 1fr)' : 'auto auto auto minmax(0, 1fr)',
           gap: 12,
         }}>
           <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
@@ -949,7 +949,65 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             ))}
           </section>
 
-          <main style={{ display: 'grid', gridTemplateColumns: isPortrait ? '1fr' : 'minmax(0, 1fr) minmax(280px, 18vw)', gap: 12, minHeight: 0 }}>
+          {!isSeller && (
+            <section style={{
+              display: 'grid',
+              gridTemplateColumns: isPortrait ? '1fr' : 'minmax(210px, .72fr) minmax(0, 1.18fr) minmax(0, 1.45fr)',
+              gap: 10,
+              minHeight: 0,
+            }}>
+              <div style={{ borderRadius: 14, border: `1px solid ${C.cyan}`, background: C.cyanBg, padding: '12px 14px', minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.16em', color: C.cyanL, fontWeight: 850, opacity: .78 }}>Rodízio inteligente</p>
+                <div style={{ marginTop: 7, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <h2 style={{ margin: 0, color: C.cyanL, fontSize: 'clamp(18px, 1.25vw, 26px)', lineHeight: 1.05, fontWeight: 950, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {nextSeller?.name || 'Nenhum ativo'}
+                    </h2>
+                    <p style={{ margin: '4px 0 0', color: '#7C8AA5', fontSize: 12 }}>{nextSeller?.whatsapp_number || 'Sem número configurado'}</p>
+                  </div>
+                  <Sparkles style={{ width: 22, height: 22, color: C.cyanL, flexShrink: 0 }} />
+                </div>
+              </div>
+
+              <div style={{ borderRadius: 14, border: '1px solid rgba(255,255,255,0.10)', background: '#101827', padding: '12px 14px', minWidth: 0, overflow: 'hidden' }}>
+                <h3 style={{ margin: '0 0 9px', color: '#F8FAFC', fontSize: 14, fontWeight: 900 }}>Fila de vendedores</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(Math.max(memberStats.slice(0, 4).length, 1), 4)}, minmax(0, 1fr))`, gap: 8 }}>
+                  {memberStats.slice(0, 4).length === 0 ? (
+                    <div style={{ borderRadius: 10, border: '1px dashed rgba(255,255,255,0.12)', padding: 12, color: '#7C8AA5', fontSize: 12, textAlign: 'center' }}>Sem vendedores ativos</div>
+                  ) : memberStats.slice(0, 4).map((m, i) => {
+                    const pal = SELLER_PALETTE[i % SELLER_PALETTE.length];
+                    return (
+                      <div key={m.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 7, alignItems: 'center', borderRadius: 10, border: `1px solid ${pal.main}`, background: pal.bg, padding: '8px 10px', minWidth: 0 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <p style={{ margin: 0, color: pal.light, fontSize: 12.5, fontWeight: 850, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>#{i + 1} {m.name}</p>
+                          <p style={{ margin: '2px 0 0', color: '#7C8AA5', fontSize: 10 }}>{m.is_active ? 'Ativo' : 'Off'} · hoje {m.todayCount}</p>
+                        </div>
+                        <strong style={{ color: pal.light, fontSize: 20, lineHeight: 1 }}>{m.periodCount}</strong>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ borderRadius: 14, border: `1px solid ${C.amber}`, background: C.amberBg, padding: '12px 14px', minWidth: 0, overflow: 'hidden' }}>
+                <h3 style={{ margin: '0 0 9px', color: C.amberL, fontSize: 14, fontWeight: 900 }}>Transferências recentes</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(Math.max(transfers.slice(0, 3).length, 1), 3)}, minmax(0, 1fr))`, gap: 8 }}>
+                  {transfers.slice(0, 3).length === 0 ? (
+                    <div style={{ borderRadius: 10, border: '1px dashed rgba(255,255,255,0.12)', padding: 12, color: '#7C8AA5', fontSize: 12, textAlign: 'center' }}>Aguardando movimentações</div>
+                  ) : transfers.slice(0, 3).map(t => (
+                    <div key={t.id} style={{ borderRadius: 10, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)', padding: '8px 10px', minWidth: 0 }}>
+                      <p style={{ margin: 0, color: '#F8FAFC', fontSize: 12.5, fontWeight: 850, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.lead?.lead_name || 'Lead'}</p>
+                      <p style={{ margin: '3px 0 0', color: C.amberL, fontSize: 11, fontWeight: 750, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {getTransferLabel(t)} para {t.member?.name || 'Vendedor'} · {new Date(t.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
+          <main style={{ minHeight: 0, overflow: 'hidden' }}>
             <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))', gap: 10, minHeight: 0, overflow: 'hidden' }}>
               {LIVE_COLUMNS.map(col => {
                 const colLeads = leadsByColumn[col.id] || [];
@@ -990,52 +1048,6 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                 );
               })}
             </section>
-
-            {!isSeller && (
-              <aside style={{ minHeight: 0, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr) minmax(0, .9fr)', gap: 10, overflow: 'hidden' }}>
-                <section style={{ borderRadius: 14, border: `1px solid ${C.cyan}`, background: C.cyanBg, padding: 14 }}>
-                  <p style={{ margin: 0, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.16em', color: C.cyanL, fontWeight: 850, opacity: .78 }}>Rodízio inteligente</p>
-                  <h2 style={{ margin: '6px 0 0', color: C.cyanL, fontSize: 'clamp(18px, 1.4vw, 28px)', lineHeight: 1.05, fontWeight: 950 }}>
-                    {nextSeller?.name || 'Nenhum ativo'}
-                  </h2>
-                  <p style={{ margin: '6px 0 0', color: '#7C8AA5', fontSize: 12 }}>{nextSeller?.whatsapp_number || 'Sem número configurado'}</p>
-                </section>
-
-                <section style={{ minHeight: 0, borderRadius: 14, border: '1px solid rgba(255,255,255,0.10)', background: '#101827', padding: 12, overflow: 'hidden' }}>
-                  <h3 style={{ margin: '0 0 9px', color: '#F8FAFC', fontSize: 14, fontWeight: 900 }}>Fila de vendedores</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7, overflow: 'hidden' }}>
-                    {memberStats.slice(0, 6).map((m, i) => {
-                      const pal = SELLER_PALETTE[i % SELLER_PALETTE.length];
-                      return (
-                        <div key={m.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, alignItems: 'center', borderRadius: 10, border: `1px solid ${pal.main}`, background: pal.bg, padding: '8px 10px' }}>
-                          <div style={{ minWidth: 0 }}>
-                            <p style={{ margin: 0, color: pal.light, fontSize: 13, fontWeight: 850, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>#{i + 1} {m.name}</p>
-                            <p style={{ margin: '2px 0 0', color: '#7C8AA5', fontSize: 10 }}>{m.is_active ? 'Ativo' : 'Off'} · hoje {m.todayCount}</p>
-                          </div>
-                          <strong style={{ color: pal.light, fontSize: 22, lineHeight: 1 }}>{m.periodCount}</strong>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-
-                <section style={{ minHeight: 0, borderRadius: 14, border: `1px solid ${C.amber}`, background: C.amberBg, padding: 12, overflow: 'hidden' }}>
-                  <h3 style={{ margin: '0 0 9px', color: C.amberL, fontSize: 14, fontWeight: 900 }}>Transferências recentes</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7, overflow: 'hidden' }}>
-                    {transfers.slice(0, 5).length === 0 ? (
-                      <div style={{ borderRadius: 10, border: '1px dashed rgba(255,255,255,0.12)', padding: 14, color: '#7C8AA5', fontSize: 12, textAlign: 'center' }}>Aguardando movimentações</div>
-                    ) : transfers.slice(0, 5).map(t => (
-                      <div key={t.id} style={{ borderRadius: 10, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)', padding: '8px 10px' }}>
-                        <p style={{ margin: 0, color: '#F8FAFC', fontSize: 12.5, fontWeight: 850, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.lead?.lead_name || 'Lead'}</p>
-                        <p style={{ margin: '3px 0 0', color: C.amberL, fontSize: 11, fontWeight: 750, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {getTransferLabel(t)} para {t.member?.name || 'Vendedor'} · {new Date(t.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              </aside>
-            )}
           </main>
         </div>
       )}
