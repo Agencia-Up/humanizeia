@@ -6,6 +6,142 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function onlyDigits(value: string | null | undefined): string {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function phoneMatchKeys(value: string | null | undefined): string[] {
+  const digits = onlyDigits(value);
+  const keys = new Set<string>();
+  if (!digits) return [];
+  keys.add(digits);
+  if (digits.startsWith("55") && digits.length > 11) keys.add(digits.slice(2));
+  if (digits.length >= 11) keys.add(digits.slice(-11));
+  if (digits.length >= 10) keys.add(digits.slice(-10));
+  return [...keys].filter((key) => key.length >= 10);
+}
+
+function phonesMatch(left: string | null | undefined, right: string | null | undefined): boolean {
+  const leftKeys = phoneMatchKeys(left);
+  const rightKeys = new Set(phoneMatchKeys(right));
+  return leftKeys.some((key) => rightKeys.has(key));
+}
+
+async function getActiveAgentForInstance(supabase: any, instance: any) {
+  const { data: byInstanceIds } = await supabase
+    .from("wa_ai_agents")
+    .select("id, name, user_id")
+    .eq("user_id", instance.user_id)
+    .eq("is_active", true)
+    .contains("instance_ids", [instance.id])
+    .limit(1)
+    .maybeSingle();
+
+  if (byInstanceIds) return byInstanceIds;
+
+  const { data: byInstanceId } = await supabase
+    .from("wa_ai_agents")
+    .select("id, name, user_id")
+    .eq("user_id", instance.user_id)
+    .eq("is_active", true)
+    .eq("instance_id", instance.id)
+    .limit(1)
+    .maybeSingle();
+
+  return byInstanceId || null;
+}
+
+async function maybeHandleSellerTransferAck(
+  supabase: any,
+  instance: any,
+  instanceName: string,
+  phone: string,
+) {
+  const agent = await getActiveAgentForInstance(supabase, instance);
+  const ownerId = agent?.user_id || instance.user_id;
+
+  const { data: sellers } = await supabase
+    .from("ai_team_members")
+    .select("id, name, whatsapp_number, agent_id, auth_user_id")
+    .eq("user_id", ownerId)
+    .eq("is_active", true)
+    .limit(500);
+
+  const matches = (sellers || [])
+    .filter((seller: any) => phonesMatch(seller.whatsapp_number, phone))
+    .sort((a: any, b: any) => {
+      const aAgent = agent?.id && a.agent_id === agent.id ? 1 : 0;
+      const bAgent = agent?.id && b.agent_id === agent.id ? 1 : 0;
+      if (aAgent !== bAgent) return bAgent - aAgent;
+      return Number(Boolean(b.auth_user_id)) - Number(Boolean(a.auth_user_id));
+    });
+
+  if (matches.length === 0) return { isSeller: false };
+
+  const seller = matches[0];
+  const sellerIds = matches.map((row: any) => row.id).filter(Boolean);
+  console.log(`[wa-inbox-webhook] Seller message detected: ${seller.name} (${phone}). Blocking IA/lead creation.`);
+
+  const { data: pendingTransfer } = await supabase
+    .from("ai_lead_transfers")
+    .select("id, lead_id, to_member_id, transfer_status, is_confirmed, created_at")
+    .in("to_member_id", sellerIds)
+    .eq("transfer_status", "pending")
+    .eq("is_confirmed", false)
+    .not("lead_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!pendingTransfer) {
+    console.log(`[wa-inbox-webhook] Seller ${seller.name} has no pending transfer. Message ignored by IA.`);
+    return { isSeller: true, confirmed: false };
+  }
+
+  const now = new Date().toISOString();
+  await supabase
+    .from("ai_lead_transfers")
+    .update({ transfer_status: "confirmed", is_confirmed: true, confirmed_at: now })
+    .eq("id", pendingTransfer.id);
+
+  await supabase
+    .from("ai_team_members")
+    .update({ last_lead_received_at: now })
+    .eq("id", pendingTransfer.to_member_id || seller.id);
+
+  await supabase
+    .from("ai_crm_leads")
+    .update({
+      assigned_to_id: pendingTransfer.to_member_id || seller.id,
+      status: "em_atendimento",
+      status_crm: "em_atendimento",
+      last_interaction_at: now,
+    })
+    .eq("id", pendingTransfer.lead_id);
+
+  try {
+    const baseUrl = String(instance.api_url || "").replace(/\/$/, "");
+    const instKey = instance.api_key_encrypted || "";
+    let sellerPhone = onlyDigits(seller.whatsapp_number || phone);
+    if (sellerPhone.length === 10 || sellerPhone.length === 11) sellerPhone = `55${sellerPhone}`;
+    if (baseUrl && instKey && sellerPhone) {
+      await fetch(`${baseUrl}/send/text`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", token: instKey, apikey: instKey },
+        body: JSON.stringify({
+          number: sellerPhone,
+          text: "Atendimento confirmado. O lead foi movido para voce no CRM.",
+        }),
+      });
+    }
+  } catch (err) {
+    console.warn("[wa-inbox-webhook] Could not send seller confirmation:", err);
+  }
+
+  console.log(`[wa-inbox-webhook] Transfer ${pendingTransfer.id} confirmed by seller ${seller.name}`);
+  return { isSeller: true, confirmed: true, transferId: pendingTransfer.id };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -258,7 +394,7 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
 
   const { data: instance, error: instErr } = await supabase
     .from("wa_instances")
-    .select("id, user_id")
+    .select("*")
     .eq("instance_name", instanceName)
     .single();
 
@@ -401,6 +537,11 @@ async function processEvolutionIncomingMessage(
       .update(utmParams)
       .eq("id", contact.id);
     console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
+  }
+
+  const sellerAck = await maybeHandleSellerTransferAck(supabase, instance, instanceName, phone);
+  if (sellerAck.isSeller) {
+    return null;
   }
 
   const { data: inboxMsg, error: insertErr } = await supabase

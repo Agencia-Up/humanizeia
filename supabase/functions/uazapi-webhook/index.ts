@@ -480,6 +480,112 @@ function uniqueSellersByPhone(sellers: any[] = []): any[] {
   return result;
 }
 
+function digitsOnly(value: string | null | undefined): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function phoneMatchKeys(value: string | null | undefined): string[] {
+  const digits = digitsOnly(value);
+  const keys = new Set<string>();
+  if (!digits) return [];
+  keys.add(digits);
+  if (digits.startsWith('55') && digits.length > 11) keys.add(digits.slice(2));
+  if (digits.length >= 11) keys.add(digits.slice(-11));
+  if (digits.length >= 10) keys.add(digits.slice(-10));
+  return [...keys].filter((key) => key.length >= 10);
+}
+
+function phonesMatch(left: string | null | undefined, right: string | null | undefined): boolean {
+  const rightKeys = new Set(phoneMatchKeys(right));
+  return phoneMatchKeys(left).some((key) => rightKeys.has(key));
+}
+
+async function maybeHandleSellerAck(
+  supabase: any,
+  waInstance: any,
+  agent: any,
+  remoteJid: string,
+) {
+  const senderPhone = digitsOnly(remoteJid);
+  const { data: sellers } = await supabase
+    .from('ai_team_members')
+    .select('id, name, whatsapp_number, agent_id, auth_user_id')
+    .eq('user_id', agent.user_id)
+    .eq('is_active', true)
+    .limit(500);
+
+  const matches = (sellers || [])
+    .filter((seller: any) => phonesMatch(seller.whatsapp_number, senderPhone))
+    .sort((a: any, b: any) => {
+      const aAgent = a.agent_id === agent.id ? 1 : 0;
+      const bAgent = b.agent_id === agent.id ? 1 : 0;
+      if (aAgent !== bAgent) return bAgent - aAgent;
+      return Number(Boolean(b.auth_user_id)) - Number(Boolean(a.auth_user_id));
+    });
+
+  if (matches.length === 0) return { isSeller: false };
+
+  const seller = matches[0];
+  const sellerIds = matches.map((row: any) => row.id).filter(Boolean);
+  console.log(`[TransferGuard] Mensagem de vendedor detectada: ${seller.name} (${senderPhone}). IA bloqueada.`);
+
+  const { data: pendingTransfer } = await supabase
+    .from('ai_lead_transfers')
+    .select('id, lead_id, to_member_id, transfer_status, is_confirmed, created_at')
+    .in('to_member_id', sellerIds)
+    .eq('transfer_status', 'pending')
+    .eq('is_confirmed', false)
+    .not('lead_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!pendingTransfer) {
+    console.log(`[TransferGuard] Vendedor ${seller.name} sem transferencia pendente. Mensagem ignorada pela IA.`);
+    return { isSeller: true, confirmed: false };
+  }
+
+  const now = new Date().toISOString();
+  await supabase.from('ai_lead_transfers').update({
+    transfer_status: 'confirmed',
+    is_confirmed: true,
+    confirmed_at: now,
+  }).eq('id', pendingTransfer.id);
+
+  await supabase.from('ai_team_members').update({
+    last_lead_received_at: now,
+  }).eq('id', pendingTransfer.to_member_id || seller.id);
+
+  await supabase.from('ai_crm_leads').update({
+    assigned_to_id: pendingTransfer.to_member_id || seller.id,
+    status: 'em_atendimento',
+    status_crm: 'em_atendimento',
+    last_interaction_at: now,
+  }).eq('id', pendingTransfer.lead_id);
+
+  try {
+    const baseUrl = String(waInstance.api_url || '').replace(/\/$/, '');
+    const instKey = waInstance.api_key_encrypted || '';
+    let sellerPhone = digitsOnly(seller.whatsapp_number || senderPhone);
+    if (sellerPhone.length === 10 || sellerPhone.length === 11) sellerPhone = `55${sellerPhone}`;
+    if (baseUrl && instKey && sellerPhone) {
+      await fetch(`${baseUrl}/send/text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', token: instKey, apikey: instKey },
+        body: JSON.stringify({
+          number: sellerPhone,
+          text: 'Atendimento confirmado. O lead foi movido para voce no CRM.',
+        }),
+      });
+    }
+  } catch (err) {
+    console.warn('[TransferGuard] Falha ao enviar confirmacao ao vendedor:', err);
+  }
+
+  console.log(`[TransferGuard] Transfer ${pendingTransfer.id} confirmado por ${seller.name}`);
+  return { isSeller: true, confirmed: true, transferId: pendingTransfer.id };
+}
+
 function calcQualificationScore(state: any): number {
   let s = 0;
   if (state?.lead?.nome) s += 10;
@@ -944,6 +1050,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   }
 
   console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
+
+  const guardedSellerAck = await maybeHandleSellerAck(supabase, waInstance, agent, remoteJid);
+  if (guardedSellerAck.isSeller) {
+    return new Response(JSON.stringify({
+      ok: true,
+      seller_ack: true,
+      confirmed: guardedSellerAck.confirmed || false,
+    }), { headers: corsHeaders });
+  }
 
   // ── DETECÇÃO DE RESPOSTA DE VENDEDOR ────────────────────────────────
   // Se a mensagem vier do número de um vendedor, confirma o transfer pendente,
