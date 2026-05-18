@@ -240,6 +240,59 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransf
   );
 });
 
+const TvLeadCard = memo(({ lead, col }: any) => {
+  const phone = String(lead.remote_jid || '').replace('@s.whatsapp.net', '');
+
+  return (
+    <div style={{
+      borderRadius: 10,
+      border: '1px solid rgba(255,255,255,0.08)',
+      background: 'rgba(12,18,34,0.92)',
+      padding: 10,
+      minHeight: 102,
+      boxShadow: '0 10px 24px rgba(0,0,0,0.18)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <h3 style={{ fontSize: 13, lineHeight: 1.15, fontWeight: 850, color: '#F8FAFC', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {lead.lead_name || 'Lead sem nome'}
+          </h3>
+          <p style={{ marginTop: 3, fontSize: 10.5, color: '#7C8AA5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {phone}
+          </p>
+        </div>
+        <span style={{ flexShrink: 0, borderRadius: 6, border: `1px solid ${col.main}`, background: col.bg, color: col.light, padding: '3px 7px', fontSize: 10, fontWeight: 800 }}>
+          {formatRelative(lead.last_interaction_at)}
+        </span>
+      </div>
+
+      {lead.summary && (
+        <p style={{
+          marginTop: 7,
+          fontSize: 10.5,
+          lineHeight: 1.35,
+          color: '#A7B4CF',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        } as any}>
+          {lead.summary}
+        </p>
+      )}
+
+      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ minWidth: 0, color: '#7C8AA5', fontSize: 10.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {lead.agent?.name || 'Pedro'}
+        </span>
+        <span style={{ maxWidth: '58%', borderRadius: 6, background: 'rgba(37,99,235,0.18)', color: '#93C5FD', padding: '3px 7px', fontSize: 10.5, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {lead.member?.name || (lead.status === 'transferido' ? 'Aguardando' : 'Sem vendedor')}
+        </span>
+      </div>
+    </div>
+  );
+});
+
 /* ── COMPONENTE PRINCIPAL ──────────────────────────────── */
 export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
@@ -283,6 +336,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const [customStart, setCustomStart] = useState<string>('');
   const [customEnd, setCustomEnd] = useState<string>('');
   const [exportingMarcos, setExportingMarcos] = useState(false);
+  const [tvMode, setTvMode] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Controla quais leads já foram enviados ao Marcos CRM nesta sessão (evita duplicatas)
   const syncedToMarcosRef = useRef<Set<string>>(new Set());
@@ -770,10 +825,38 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     setMuted(m => !m);
   }, []);
 
-  const handleFullscreen = async () => {
-    if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
-    else await document.exitFullscreen?.();
-  };
+  const handleOpenTvMode = useCallback(async () => {
+    setTvMode(true);
+    try {
+      await (containerRef.current || document.documentElement).requestFullscreen?.();
+    } catch {
+      // Browsers may deny fullscreen; the fixed TV layer still opens.
+    }
+  }, []);
+
+  const handleCloseTvMode = useCallback(async () => {
+    setTvMode(false);
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen?.();
+      } catch {
+        // Ignore fullscreen exit errors; closing the overlay is enough.
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) setTvMode(false);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  const dateLabel = dateFilter === 'custom'
+    ? `${customStart || '?'} até ${customEnd || '?'}`
+    : DATE_FILTERS.find(f => f.value === dateFilter)?.label || 'Hoje';
+  const tvLeadLimit = isPortrait ? 2 : 3;
 
   const cardStyle: React.CSSProperties = {
     borderRadius: 14,
@@ -789,7 +872,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   );
 
   return (
-    <div style={{ minHeight: embedded ? '100%' : '100vh', height: embedded ? '100%' : undefined, overflowY: embedded ? 'auto' : undefined, background: '#0B0F1A', color: '#E2E8F0', fontFamily: "'Inter','Segoe UI',sans-serif" }}>
+    <div ref={containerRef} style={{ minHeight: embedded ? '100%' : '100vh', height: embedded ? '100%' : undefined, overflowY: embedded ? 'auto' : undefined, background: '#0B0F1A', color: '#E2E8F0', fontFamily: "'Inter','Segoe UI',sans-serif" }}>
       <style>{`
         @keyframes blink { 0%,100%{opacity:1}50%{opacity:.3} }
         @keyframes slide-in { from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none} }
@@ -797,6 +880,165 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         .seller-active { animation: active-pulse 2s ease-in-out infinite; }
         .alert-badge { animation: slide-in .3s ease-out; }
       `}</style>
+
+      {tvMode && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 9999,
+          overflow: 'hidden',
+          background: '#070B14',
+          color: '#E2E8F0',
+          padding: 'clamp(14px, 1.2vw, 22px)',
+          display: 'grid',
+          gridTemplateRows: 'auto auto minmax(0, 1fr)',
+          gap: 12,
+        }}>
+          <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 10, background: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: '#fff' }}>L</div>
+                <span style={{ fontSize: 13, fontWeight: 850, letterSpacing: '0.16em', textTransform: 'uppercase', color: C.cyanL }}>LogosIA</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 999, background: C.greenBg, border: `1px solid ${C.green}`, color: C.greenL, padding: '5px 10px', fontSize: 11, fontWeight: 850 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.green, animation: 'blink .9s step-end infinite' }} />
+                  Tempo real
+                </span>
+                {newLeadFlash && (
+                  <span className="alert-badge" style={{ borderRadius: 999, background: C.redBg, border: `1px solid ${C.red}`, color: C.redL, padding: '5px 10px', fontSize: 11, fontWeight: 900 }}>
+                    Novo lead
+                  </span>
+                )}
+              </div>
+              <h1 style={{ margin: 0, fontSize: 'clamp(24px, 2.1vw, 40px)', lineHeight: 1, fontWeight: 950, color: '#F8FAFC', letterSpacing: 0 }}>
+                CRM ao Vivo - Pedro
+              </h1>
+              <p style={{ margin: '6px 0 0', color: '#7C8AA5', fontSize: 'clamp(11px, .85vw, 14px)' }}>
+                Período: {dateLabel} · {filteredLeads.length} de {leads.length} leads · atualização {lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <Button size="sm" variant="outline" disabled={refreshing} onClick={handleRefresh} style={{ borderColor: 'rgba(255,255,255,0.16)', background: 'rgba(255,255,255,0.04)', color: '#CBD5E1' }}>
+                <RefreshCw className={`mr-1.5 h-3.5 w-3.5${refreshing ? ' animate-spin' : ''}`} /> Atualizar
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleMuteToggle} style={{ borderColor: muted ? 'rgba(255,255,255,0.16)' : C.amber, background: muted ? 'rgba(255,255,255,0.04)' : C.amberBg, color: muted ? '#94A3B8' : C.amberL }}>
+                {muted ? <VolumeX className="mr-1.5 h-3.5 w-3.5" /> : <Volume2 className="mr-1.5 h-3.5 w-3.5" />}
+                {muted ? 'Mudo' : 'Som ativo'}
+              </Button>
+              <Button size="sm" onClick={handleCloseTvMode} style={{ background: C.blue, color: '#fff', fontWeight: 850 }}>
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Sair
+              </Button>
+            </div>
+          </header>
+
+          <section style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
+            {[
+              { icon: <Users className="h-5 w-5" />, label: dateFilter === 'all' ? 'Leads no pipeline' : `Leads - ${dateLabel}`, value: filteredLeads.length, main: C.blue, light: C.blueL, bg: C.blueBg },
+              { icon: <Flame className="h-5 w-5" />, label: 'Qualificados', value: totalQualified, main: C.green, light: C.greenL, bg: C.greenBg },
+              { icon: <UserCheck className="h-5 w-5" />, label: 'Em atendimento', value: attendedNow, main: C.orange, light: C.orangeL, bg: C.orangeBg },
+              { icon: <Crown className="h-5 w-5" />, label: 'Vendedores online', value: activeMembers.length, main: C.purple, light: C.purpleL, bg: C.purpleBg },
+              { icon: <CalendarClock className="h-5 w-5" />, label: 'Atualização', value: lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--', main: C.cyan, light: C.cyanL, bg: C.cyanBg },
+            ].map(m => (
+              <div key={m.label} style={{ borderRadius: 14, border: '1px solid rgba(255,255,255,0.10)', borderLeft: `4px solid ${m.main}`, background: '#101827', padding: 'clamp(12px, 1vw, 16px)', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: m.main }}>
+                  {m.icon}
+                  <p style={{ margin: 0, fontSize: 'clamp(9px, .78vw, 12px)', fontWeight: 850, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#70809B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</p>
+                </div>
+                <p style={{ margin: '8px 0 0', fontSize: 'clamp(28px, 2.4vw, 46px)', lineHeight: .9, fontWeight: 950, color: m.light }}>{m.value}</p>
+              </div>
+            ))}
+          </section>
+
+          <main style={{ display: 'grid', gridTemplateColumns: isPortrait ? '1fr' : 'minmax(0, 1fr) minmax(280px, 18vw)', gap: 12, minHeight: 0 }}>
+            <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))', gap: 10, minHeight: 0, overflow: 'hidden' }}>
+              {LIVE_COLUMNS.map(col => {
+                const colLeads = leadsByColumn[col.id] || [];
+                const visible = colLeads.slice(0, tvLeadLimit);
+                const hidden = Math.max(0, colLeads.length - visible.length);
+                return (
+                  <div key={col.id} style={{ minHeight: 0, borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr) auto', overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 10px 8px', background: col.bg, borderBottom: `1px solid ${col.main}` }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: col.main, flexShrink: 0 }} />
+                          <h2 style={{ margin: 0, fontSize: 'clamp(10px, .82vw, 13px)', lineHeight: 1.1, fontWeight: 950, textTransform: 'uppercase', letterSpacing: '0.08em', color: col.light, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {col.title}
+                          </h2>
+                        </div>
+                        <strong style={{ color: col.light, fontSize: 'clamp(18px, 1.7vw, 30px)', lineHeight: .9 }}>{colLeads.length}</strong>
+                      </div>
+                    </div>
+
+                    <div style={{ minHeight: 0, padding: 9, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'hidden' }}>
+                      {visible.length === 0 ? (
+                        <div style={{ height: '100%', minHeight: 86, borderRadius: 10, border: '1px dashed rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.025)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#55627A', fontSize: 12, fontWeight: 650 }}>
+                          Sem leads
+                        </div>
+                      ) : visible.map(lead => (
+                        <TvLeadCard key={lead.id} lead={lead} col={col} />
+                      ))}
+                    </div>
+
+                    <div style={{ minHeight: 30, padding: '0 9px 9px' }}>
+                      {hidden > 0 && (
+                        <div style={{ borderRadius: 8, background: 'rgba(255,255,255,0.05)', color: col.light, textAlign: 'center', padding: '6px 8px', fontSize: 11, fontWeight: 850 }}>
+                          +{hidden} lead(s) na coluna
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
+
+            {!isSeller && (
+              <aside style={{ minHeight: 0, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr) minmax(0, .9fr)', gap: 10, overflow: 'hidden' }}>
+                <section style={{ borderRadius: 14, border: `1px solid ${C.cyan}`, background: C.cyanBg, padding: 14 }}>
+                  <p style={{ margin: 0, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.16em', color: C.cyanL, fontWeight: 850, opacity: .78 }}>Rodízio inteligente</p>
+                  <h2 style={{ margin: '6px 0 0', color: C.cyanL, fontSize: 'clamp(18px, 1.4vw, 28px)', lineHeight: 1.05, fontWeight: 950 }}>
+                    {nextSeller?.name || 'Nenhum ativo'}
+                  </h2>
+                  <p style={{ margin: '6px 0 0', color: '#7C8AA5', fontSize: 12 }}>{nextSeller?.whatsapp_number || 'Sem número configurado'}</p>
+                </section>
+
+                <section style={{ minHeight: 0, borderRadius: 14, border: '1px solid rgba(255,255,255,0.10)', background: '#101827', padding: 12, overflow: 'hidden' }}>
+                  <h3 style={{ margin: '0 0 9px', color: '#F8FAFC', fontSize: 14, fontWeight: 900 }}>Fila de vendedores</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7, overflow: 'hidden' }}>
+                    {memberStats.slice(0, 6).map((m, i) => {
+                      const pal = SELLER_PALETTE[i % SELLER_PALETTE.length];
+                      return (
+                        <div key={m.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, alignItems: 'center', borderRadius: 10, border: `1px solid ${pal.main}`, background: pal.bg, padding: '8px 10px' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <p style={{ margin: 0, color: pal.light, fontSize: 13, fontWeight: 850, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>#{i + 1} {m.name}</p>
+                            <p style={{ margin: '2px 0 0', color: '#7C8AA5', fontSize: 10 }}>{m.is_active ? 'Ativo' : 'Off'} · hoje {m.todayCount}</p>
+                          </div>
+                          <strong style={{ color: pal.light, fontSize: 22, lineHeight: 1 }}>{m.periodCount}</strong>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section style={{ minHeight: 0, borderRadius: 14, border: `1px solid ${C.amber}`, background: C.amberBg, padding: 12, overflow: 'hidden' }}>
+                  <h3 style={{ margin: '0 0 9px', color: C.amberL, fontSize: 14, fontWeight: 900 }}>Transferências recentes</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7, overflow: 'hidden' }}>
+                    {transfers.slice(0, 5).length === 0 ? (
+                      <div style={{ borderRadius: 10, border: '1px dashed rgba(255,255,255,0.12)', padding: 14, color: '#7C8AA5', fontSize: 12, textAlign: 'center' }}>Aguardando movimentações</div>
+                    ) : transfers.slice(0, 5).map(t => (
+                      <div key={t.id} style={{ borderRadius: 10, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)', padding: '8px 10px' }}>
+                        <p style={{ margin: 0, color: '#F8FAFC', fontSize: 12.5, fontWeight: 850, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.lead?.lead_name || 'Lead'}</p>
+                        <p style={{ margin: '3px 0 0', color: C.amberL, fontSize: 11, fontWeight: 750, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {getTransferLabel(t)} para {t.member?.name || 'Vendedor'} · {new Date(t.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </aside>
+            )}
+          </main>
+        </div>
+      )}
 
       {/* ── TOP BAR ─────────────────────────────────── */}
       {!embedded && (
@@ -845,7 +1087,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
               {muted ? <VolumeX className="mr-1.5 h-3.5 w-3.5" /> : <Volume2 className="mr-1.5 h-3.5 w-3.5" />}
               {muted ? 'Mudo' : 'Campainha'}
             </Button>
-            <Button size="sm" style={{ background: C.blue, color: '#fff', fontWeight: 700, fontSize: 13 }} onClick={handleFullscreen}>
+            <Button size="sm" style={{ background: C.blue, color: '#fff', fontWeight: 700, fontSize: 13 }} onClick={handleOpenTvMode}>
               <Expand className="mr-1.5 h-3.5 w-3.5" /> Tela cheia
             </Button>
           </div>
@@ -936,12 +1178,33 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           </span>
         )}
 
-        {/* Export to Marcos button — hidden for sellers (uses master-only crm_leads) */}
+        {/* TV and export actions */}
+        <button
+          onClick={handleOpenTvMode}
+          style={{
+            marginLeft: 'auto',
+            padding: '5px 14px',
+            borderRadius: 8,
+            fontSize: 12,
+            fontWeight: 800,
+            border: `1px solid ${C.blue}`,
+            cursor: 'pointer',
+            background: C.blueBg,
+            color: C.blueL,
+            transition: 'all 0.15s',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+          title="Abrir CRM ao Vivo em modo TV"
+        >
+          <Expand style={{ width: 14, height: 14 }} /> Tela cheia
+        </button>
+
         {!isSeller && <button
           onClick={handleExportToMarcos}
           disabled={exportingMarcos || filteredLeads.length === 0}
           style={{
-            marginLeft: 'auto',
             padding: '5px 14px',
             borderRadius: 8,
             fontSize: 12,
