@@ -1,3 +1,4 @@
+// Config dedicado pra rodar os previews de feature (não inclui na suite normal).
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
@@ -8,8 +9,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.{test,spec}.{ts,tsx}"],
-    exclude: ["src/preview/**", "node_modules/**"],
+    include: ["src/preview/**/*.{test,spec}.{ts,tsx}"],
   },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },

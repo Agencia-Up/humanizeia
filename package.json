@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "preview:features": "vitest run --config vitest.preview.config.ts --reporter=verbose"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
