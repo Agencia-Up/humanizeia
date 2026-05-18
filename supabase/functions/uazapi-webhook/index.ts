@@ -500,6 +500,18 @@ function phonesMatch(left: string | null | undefined, right: string | null | und
   return phoneMatchKeys(left).some((key) => rightKeys.has(key));
 }
 
+function normalizePedroCrmStage(status: string | null | undefined, fallback = 'qualificado'): string {
+  const raw = String(status || '').trim();
+  if (raw === 'medio_qualificado') return 'pouco_qualificado';
+  if (raw === 'encerrado') return 'pouco_qualificado';
+  if (raw === 'inativo' || raw === 'pouco_qualificado' || raw === 'qualificado') return raw;
+  return fallback;
+}
+
+function isPedroTransferStage(status: string | null | undefined): boolean {
+  return ['inativo', 'pouco_qualificado', 'qualificado'].includes(String(status || '').trim());
+}
+
 async function maybeHandleSellerAck(
   supabase: any,
   waInstance: any,
@@ -559,7 +571,6 @@ async function maybeHandleSellerAck(
   await supabase.from('ai_crm_leads').update({
     assigned_to_id: pendingTransfer.to_member_id || seller.id,
     status: 'em_atendimento',
-    status_crm: 'em_atendimento',
     last_interaction_at: now,
   }).eq('id', pendingTransfer.lead_id);
 
@@ -601,7 +612,7 @@ function calcQualificationScore(state: any): number {
 
 function buildBriefingForSeller(state: any, leadName: string, leadPhone: string, agentName: string): string {
   const lines: string[] = [];
-  lines.push(`🆕 *LEAD QUALIFICADO — ${state?.lead?.nome_completo || state?.lead?.nome || leadName || 'Lead'}*`);
+  lines.push(`🆕 *NOVO LEAD PARA ATENDIMENTO — ${state?.lead?.nome_completo || state?.lead?.nome || leadName || 'Lead'}*`);
   lines.push(`📱 Telefone: ${state?.lead?.telefone || leadPhone}`);
   if (state?.lead?.cidade) lines.push(`🏙️ Cidade: ${state.lead.cidade}`);
   lines.push('');
@@ -1138,8 +1149,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       // Atualiza status do lead para 'em_atendimento' — CRÍTICO pra cron não repassar
       if (pendingTransfer.lead_id) {
         const { error: updLeadErr } = await supabase.from('ai_crm_leads').update({
+          assigned_to_id: pendingTransfer.to_member_id || senderSeller.id,
           status: 'em_atendimento',
-          status_crm: 'em_atendimento',
           last_interaction_at: now,
         }).eq('id', pendingTransfer.lead_id);
         if (updLeadErr) {
@@ -1296,7 +1307,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         parameters: {
           type: "object",
           properties: {
-            status: { type: "string", enum: ["interessado", "qualificado", "encerrado"], description: "A etapa atual do cliente." },
+            status: { type: "string", enum: ["novo", "interessado", "inativo", "pouco_qualificado", "qualificado"], description: "Etapa atual do cliente no CRM Pedro." },
             resumo: { type: "string", description: "O que o cliente deseja e as informações que você coletou dele até o momento. Seja breve." }
           },
           required: ["status", "resumo"]
@@ -1330,7 +1341,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "transferir_para_vendedor",
-        description: "Transfere o lead para um vendedor humano com briefing estruturado. SÓ chame quando o ESTADO DA CONVERSA mostrar coletados: nome ✅, telefone ✅, modelo de interesse ✅, forma de pagamento ✅. Após chamar, AGUARDE o resultado antes de responder ao cliente. Se a tool retornar success=false, NÃO diga que transferiu — diga que vai chamar o consultor manualmente. Se retornar success=true, diga ao cliente o nome do vendedor que vai atendê-lo.",
+        description: "Transfere o lead para um vendedor humano com briefing estruturado. Chame quando o cliente precisar ir para atendimento humano, mesmo que nem todos os dados tenham sido coletados. A transferencia fica pendente ate o vendedor responder Ok; so depois disso o vendedor e atribuido no CRM.",
         parameters: {
           type: "object",
           properties: {
@@ -1691,6 +1702,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     systemPrompt += `\n\n${stateBlock}`;
   }
 
+  systemPrompt += `\n\nREGRAS ATUAIS DO CRM PEDRO - TRANSFERENCIA E QUALIFICACAO:
+- Use somente estas 3 etapas finais quando for transferir para vendedor: "inativo", "pouco_qualificado" e "qualificado".
+- "inativo": somente quando o cliente parou de responder e a regra automatica de 10 minutos assumiu. Nao use em conversa ativa.
+- "pouco_qualificado": cliente conversou, fez pergunta ou pediu informacao, mas nao mostrou forte intencao de compra, nao avancou para visita, pagamento ou negociacao.
+- "qualificado": cliente demonstrou forte intencao de compra: quer comprar, financiar, trocar, visitar, reservar, passar dados, negociar valores ou falar com consultor.
+- Nao use mais "medio_qualificado". Se a conversa parecer morna, classifique como "pouco_qualificado".
+- Ao classificar como "pouco_qualificado" ou "qualificado", transfira para vendedor com resumo completo. O lead deve ficar aguardando o vendedor responder "Ok"; o vendedor so e atribuido no CRM depois desse Ok.
+- Nunca responda vendedores cadastrados como se fossem leads. Se um vendedor responder "Ok", isso e confirmacao de atendimento, nao novo lead.`;
+
   // ── BNDV: Check if user has BNDV integration and append system prompt instruction ──
   let hasBndvIntegration = false;
   try {
@@ -1858,18 +1878,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         if (!st.negociacao?.forma_pagamento) missing.push('forma_de_pagamento');
 
         if (missing.length > 0) {
-          transferResult = {
-            success: false,
-            error: 'checklist_incompleto',
-            missing_fields: missing,
-            message: `Não posso transferir ainda — faltam: ${missing.join(', ')}. Pergunte ao cliente antes de tentar de novo.`,
-          };
-          console.warn(`[Transfer-Tool] BLOQUEADO — checklist incompleto: ${missing.join(',')}`);
-        } else {
-          // 2. Buscar lead row
+          console.warn(`[Transfer-Tool] Checklist parcial (${missing.join(',')}). Transferindo mesmo assim com o resumo disponivel.`);
+        }
+        // 2. Buscar lead row
           const { data: leadRow } = await supabase
             .from('ai_crm_leads')
-            .select('id, assigned_to_id')
+            .select('id, assigned_to_id, status, status_crm')
             .eq('agent_id', agent.id)
             .eq('remote_jid', remoteJid)
             .maybeSingle();
@@ -1877,6 +1891,27 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           if (!leadRow?.id) {
             transferResult = { success: false, error: 'lead_not_found' };
           } else {
+            const crmStage = normalizePedroCrmStage(
+              transferArgs.classificacao || leadRow.status_crm || leadRow.status,
+              'qualificado',
+            );
+            const { data: existingPending } = await supabase
+              .from('ai_lead_transfers')
+              .select('id')
+              .eq('lead_id', leadRow.id)
+              .eq('transfer_status', 'pending')
+              .eq('is_confirmed', false)
+              .maybeSingle();
+
+            if (existingPending) {
+              transferResult = {
+                success: true,
+                already_pending: true,
+                vendedor_nome: 'vendedor',
+                message: 'Este lead ja esta aguardando confirmacao de um vendedor.',
+              };
+              console.log(`[Transfer-Tool] Lead ${leadRow.id} ja tem transferencia pendente.`);
+            } else {
             // 3. Selecionar vendedor — preferência: assigned_to_id existente (lead retornou)
             let chosenSeller: any = null;
             if (leadRow.assigned_to_id) {
@@ -1931,7 +1966,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 user_id: agent.user_id,
                 lead_id: leadRow.id,
                 to_member_id: chosenSeller.id,
-                transfer_reason: leadRow.assigned_to_id === chosenSeller.id ? 'returning_lead' : 'qualified_handoff',
+                transfer_reason: leadRow.assigned_to_id === chosenSeller.id ? 'returning_lead' : `${crmStage}_handoff`,
                 notes: transferArgs.resumo_breve || transferArgs.motivo || `Qualificado pela tool transferir_para_vendedor`,
                 transfer_status: 'pending',
                 is_confirmed: false,
@@ -1940,8 +1975,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
               await supabase.from('ai_crm_leads').update({
                 status: 'transferido',
-                status_crm: 'qualificado',
-                assigned_to_id: chosenSeller.id,
+                status_crm: crmStage,
+                assigned_to_id: null,
                 summary: transferArgs.resumo_breve || null,
               }).eq('id', leadRow.id);
 
@@ -1984,7 +2019,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                       `Horario: ${transferredAt}\n` +
                       `Lead: ${conversationState?.lead?.nome_completo || conversationState?.lead?.nome || pushName || 'Lead'}\n` +
                       `Telefone: wa.me/${phoneNumber}\n` +
-                      `Status: qualificado\n` +
+                      `Status: ${crmStage}\n` +
                       `${transferArgs.resumo_breve ? `Resumo: ${String(transferArgs.resumo_breve).substring(0, 300)}\n` : ''}` +
                       `\nEnviado para: ${chosenSeller.name}\n` +
                       `WhatsApp vendedor: ${chosenSeller.whatsapp_number || 'sem numero'}\n\n` +
@@ -2099,22 +2134,27 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         // Mantém status_crm sincronizado com status, exceto se já estiver
         // explicitamente definido pelo vendedor (negociacao, fechado, etc.)
         const statusCrmMap: Record<string, string> = {
+          novo: 'novo',
           interessado: 'interessado',
           pouco_qualificado: 'pouco_qualificado',
-          medio_qualificado: 'medio_qualificado',
+          medio_qualificado: 'pouco_qualificado',
           qualificado: 'qualificado',
+          encerrado: 'pouco_qualificado',
+          inativo: 'inativo',
         };
+        const rawStatus = String(args.status || 'interessado').trim();
+        const nextCrmStatus = statusCrmMap[rawStatus] || normalizePedroCrmStage(rawStatus, 'pouco_qualificado');
         await supabase.from('ai_crm_leads').update({
-          status: args.status,
-          status_crm: statusCrmMap[args.status] || args.status,
+          status: nextCrmStatus,
+          status_crm: nextCrmStatus,
           summary: args.resumo,
           last_interaction_at: new Date().toISOString()
         }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
-        console.log(`[CRM] Lead ${phoneNumber} movido para: ${args.status}`);
+        console.log(`[CRM] Lead ${phoneNumber} movido para: ${nextCrmStatus}`);
 
         // 2. Alertar vendedor SE status indicar transferencia
-        if (args.status === 'qualificado' || args.status === 'medio_qualificado' || args.status === 'pouco_qualificado') {
+        if (isPedroTransferStage(nextCrmStatus)) {
           try {
             console.log(`[Transfer] Qualificado. agent.id=${agent.id} agent.user_id=${agent.user_id}`);
 
@@ -2180,7 +2220,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
                 await supabase.from('ai_crm_leads').update({
                   status: 'transferido',
-                  assigned_to_id: returnSeller.id,
+                  status_crm: nextCrmStatus,
+                  assigned_to_id: null,
                 }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
                 let sellerNum = returnSeller.whatsapp_number.replace(/\D/g, '');
@@ -2273,8 +2314,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     user_id: agent.user_id,
                     lead_id: leadRow?.id || null,
                     to_member_id: nextSeller.id,
-                    transfer_reason: 'round_robin',
-                    notes: `Qualificado por ${agent.name}`,
+                    transfer_reason: nextCrmStatus,
+                    notes: `${nextCrmStatus} por ${agent.name}`,
                     transfer_status: 'pending',
                     is_confirmed: false,
                     confirmation_timeout_at: timeoutAt,
@@ -2282,14 +2323,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
                   await supabase.from('ai_crm_leads').update({
                     status: 'transferido',
-                    assigned_to_id: nextSeller.id,
+                    status_crm: nextCrmStatus,
+                    assigned_to_id: null,
                   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
                   let sellerNum = nextSeller.whatsapp_number.replace(/\D/g, '');
                   if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
 
                   const sellerMsg =
-                    `🚨 *LEAD QUALIFICADO — VOCÊ É O PRÓXIMO DA FILA*\n\n` +
+                    `🚨 *NOVO LEAD PARA ATENDIMENTO — VOCÊ É O PRÓXIMO DA FILA*\n\n` +
                     `*Agente IA:* ${agent.name}\n` +
                     `*Nome:* ${pushName}\n` +
                     `*Contato:* ${phoneNumber}\n\n` +
@@ -2316,7 +2358,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                         `🕐 *Horário:* ${transferredAt}\n\n` +
                         `👤 *Lead:* ${pushName}\n` +
                         `📱 *Telefone:* wa.me/${phoneNumber}\n` +
-                        `📊 *Status:* qualificado\n` +
+                        `📊 *Status:* ${nextCrmStatus}\n` +
                         `${args.resumo ? `\n📝 *Resumo:* ${args.resumo.substring(0, 300)}\n` : ''}` +
                         `\n━━━━━━━━━━━━━━━━━━━━\n\n` +
                         `🎯 *Enviado para:* ${nextSeller.name}\n` +

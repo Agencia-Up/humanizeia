@@ -114,7 +114,6 @@ async function maybeHandleSellerTransferAck(
     .update({
       assigned_to_id: pendingTransfer.to_member_id || seller.id,
       status: "em_atendimento",
-      status_crm: "em_atendimento",
       last_interaction_at: now,
     })
     .eq("id", pendingTransfer.lead_id);
@@ -649,6 +648,18 @@ async function handleEvolutionDeliveryStatus(supabase: any, instanceName: string
 
 function normalizePhone(value: string | null | undefined): string {
   return (value || "").replace(/\D/g, "");
+}
+
+function normalizePedroCrmStage(status: string | null | undefined, fallback = "qualificado"): string {
+  const raw = String(status || "").trim();
+  if (raw === "medio_qualificado") return "pouco_qualificado";
+  if (raw === "encerrado") return "pouco_qualificado";
+  if (raw === "inativo" || raw === "pouco_qualificado" || raw === "qualificado") return raw;
+  return fallback;
+}
+
+function isPedroTransferStage(status: string | null | undefined): boolean {
+  return ["inativo", "pouco_qualificado", "qualificado"].includes(String(status || "").trim());
 }
 
 const EVOLUTION_INCOMING_EVENTS = new Set([
@@ -1592,7 +1603,7 @@ QUANDO CHAMAR A FERRAMENTA:
 - Cliente deu dados de financiamento (CPF, entrada, parcela) -> salve cada dado conforme coletar
 - Cliente pronto para comprar/visitar/falar com consultor -> status: "qualificado", etapa_funil: "fechamento"
 - Cliente sem interesse, nao respondeu, sumiu -> status: "pouco_qualificado" (transfere para vendedor)
-- Cliente disse "vou ver", "vou pensar", "tenho outras opcoes", parou de falar no meio -> status: "medio_qualificado" (transfere para vendedor)
+- Cliente disse "vou ver", "vou pensar", "tenho outras opcoes", parou de falar no meio -> status: "pouco_qualificado" (transfere para vendedor)
 - NUNCA use status "encerrado". NAO EXISTE esse status.
 
 REGRA CRITICA DE TRANSFERENCIA (PRIORIDADE MAXIMA):
@@ -1602,7 +1613,7 @@ TODA conversa que chega ao fim DEVE ser transferida para o vendedor. Existem 3 n
    Exemplos: mandou "oi" e sumiu, nao respondeu apos a IA perguntar, disse "nao tenho interesse".
    Temperatura: "frio". SEMPRE transfere para vendedor.
 
-2. "medio_qualificado" — Lead MORNO que conversou mas nao avancou para dados ou visita.
+2. "pouco_qualificado" — Lead MORNO/FRIO que conversou mas nao avancou para dados, visita, pagamento ou negociacao.
    Exemplos: "vou ver", "vou pensar", "volto depois", "tenho outras opcoes", "vou comparar", parou de responder no meio da conversa, fez perguntas mas nao quis avancar, despedida generica ("valeu", "obrigado", "tchau", "falou").
    Temperatura: "morno". SEMPRE transfere para vendedor.
 
@@ -1614,7 +1625,7 @@ A IA NUNCA encerra conversa sozinha. O vendedor SEMPRE recebe o lead, com o resu
 NAO espere coletar todos os dados antes de transferir. Transfira PRIMEIRO, o vendedor coleta o resto.
 
 CAMPOS DISPONIVEIS NA FERRAMENTA (todos opcionais exceto status e resumo):
-- status: "novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado"
+- status: "novo", "interessado", "inativo", "pouco_qualificado", "qualificado"
 - resumo: texto livre com resumo da conversa
 - nome_cliente: nome REAL do cliente (NAO o nome do WhatsApp)
 - cidade: cidade do cliente
@@ -1641,8 +1652,17 @@ Se o cliente se despedir sem dar dados, chame a ferramenta com status "pouco_qua
 
 QUANDO TRANSFERIR (qualquer status de transferencia):
 - "pouco_qualificado": preencha resumo com o que aconteceu, temperatura "frio". Informe ao cliente que um consultor pode ajudar quando ele quiser.
-- "medio_qualificado": preencha resumo detalhado, temperatura "morno". Informe ao cliente que um consultor vai entrar em contato.
+- "pouco_qualificado": preencha resumo detalhado, temperatura "morno" ou "frio". Informe ao cliente que um consultor vai entrar em contato ou pode ajudar quando ele quiser.
 - "qualificado": certifique-se de que coletou nome_cliente, cidade, veiculo_interesse, forma_pagamento. Preencha resumo com TUDO. Temperatura "quente". Informe que um consultor especialista vai continuar o atendimento.
+
+REGRAS ATUAIS DO CRM PEDRO - TRANSFERENCIA E QUALIFICACAO:
+- Use somente estas 3 etapas finais quando for transferir para vendedor: "inativo", "pouco_qualificado" e "qualificado".
+- "inativo": somente quando o cliente parou de responder e a regra automatica de 10 minutos assumiu. Nao use em conversa ativa.
+- "pouco_qualificado": cliente conversou, fez pergunta ou pediu informacao, mas nao mostrou forte intencao de compra, nao avancou para visita, pagamento ou negociacao.
+- "qualificado": cliente demonstrou forte intencao de compra: quer comprar, financiar, trocar, visitar, reservar, passar dados, negociar valores ou falar com consultor.
+- Nao use mais "medio_qualificado". Se a conversa parecer morna, classifique como "pouco_qualificado".
+- Ao classificar como "pouco_qualificado" ou "qualificado", transfira para vendedor com resumo completo. O lead deve ficar aguardando o vendedor responder "Ok"; o vendedor so e atribuido no CRM depois desse Ok.
+- Nunca responda vendedores cadastrados como se fossem leads. Se um vendedor responder "Ok", isso e confirmacao de atendimento, nao novo lead.
 
 FERRAMENTA DE ESTOQUE BNDV:
 Voce tambem tem acesso a ferramenta "consultar_estoque_bndv".
@@ -1710,8 +1730,8 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
             properties: {
               status: {
                 type: "string",
-                enum: ["novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado"],
-                description: "Status do lead: novo (primeiro contato), interessado (demonstrou interesse), pouco_qualificado (nao respondeu/sumiu/sem interesse — transfere), medio_qualificado (vou ver/vou pensar/despedida — transfere), qualificado (quer comprar/visitar/tem entrada — transfere)"
+                enum: ["novo", "interessado", "inativo", "pouco_qualificado", "qualificado"],
+                description: "Status do lead: novo/interessado durante a conversa, inativo apenas pela regra automatica de 10 minutos, pouco_qualificado para lead morno/frio, qualificado para lead quente."
               },
               resumo: {
                 type: "string",
@@ -2046,11 +2066,18 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
         try {
           if (toolCall.function?.name === "atualizar_etapa_crm") {
             const args = JSON.parse(toolCall.function.arguments);
+            const rawStatus = String(args.status || "interessado").trim();
+            const nextCrmStatus =
+              rawStatus === "novo" || rawStatus === "interessado"
+                ? rawStatus
+                : normalizePedroCrmStage(rawStatus, "pouco_qualificado");
+            args.status = nextCrmStatus;
             console.log(`[ai-agent-crm] Lead ${phone} -> status: ${args.status}, fields: ${Object.keys(args).join(",")}`);
 
             // Build structured update data from all available fields
             const updateData: any = {
               status: args.status,
+              status_crm: args.status,
               summary: args.resumo,
               last_interaction_at: new Date().toISOString(),
             };
@@ -2094,7 +2121,7 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
               });
             }
 
-            if (args.status === "qualificado" || args.status === "medio_qualificado" || args.status === "pouco_qualificado") {
+            if (isPedroTransferStage(args.status)) {
               await transferLeadToSeller(supabase, instance, agent, phone, pushName, args.resumo, historyMessages);
             }
 
@@ -2482,7 +2509,7 @@ async function transferLeadToSeller(
     // 1.5. Fetch full lead data with structured fields for the notification
     const { data: leadRecord } = await supabase
       .from("ai_crm_leads")
-      .select("id, status, assigned_to_id, client_name, client_city, vehicle_interest, payment_method, budget, trade_in_vehicle, down_payment, desired_installment, cpf, birth_date, funnel_stage, temperature, visit_scheduled, additional_notes")
+      .select("id, status, status_crm, assigned_to_id, client_name, client_city, vehicle_interest, payment_method, budget, trade_in_vehicle, down_payment, desired_installment, cpf, birth_date, funnel_stage, temperature, visit_scheduled, additional_notes")
       .eq("agent_id", agent.id)
       .eq("remote_jid", phone)
       .maybeSingle();
@@ -2493,12 +2520,27 @@ async function transferLeadToSeller(
        return;
     }
 
+    if (leadRecord) {
+      const { data: existingPending } = await supabase
+        .from("ai_lead_transfers")
+        .select("id")
+        .eq("lead_id", leadRecord.id)
+        .eq("transfer_status", "pending")
+        .eq("is_confirmed", false)
+        .maybeSingle();
+      if (existingPending) {
+        console.log(`[transfer] Lead ${phone} already has pending transfer ${existingPending.id}. Aborting duplicate broadcast.`);
+        return;
+      }
+    }
+
     // 2. Round-Robin: pick seller with oldest last_lead_received_at
     const selectedSeller = sellers[0]; // Already sorted by last_lead_received_at ASC (oldest first)
     console.log(`[transfer] Selected seller: ${selectedSeller.name} (${selectedSeller.whatsapp_number})`);
 
     // 3. Build structured seller notification with all collected client data
     const ld = leadRecord || {} as any;
+    const crmStage = normalizePedroCrmStage(ld.status_crm || ld.status, "qualificado");
     const clientName = ld.client_name || pushName || "Nao informado";
     const clientCity = ld.client_city || "Nao informada";
     const vehicleInterest = ld.vehicle_interest || "Nao informado";
@@ -2543,7 +2585,7 @@ async function transferLeadToSeller(
       .map((m) => `${m.role === "user" ? "Cliente" : "IA"}: ${m.content}`)
       .join("\n");
 
-    const sellerMsg = `*LEAD QUALIFICADO - ${tempLabel.toUpperCase()}*
+    const sellerMsg = `*NOVO LEAD PARA ATENDIMENTO - ${tempLabel.toUpperCase()}*
 
 *Nome:* ${clientName}
 *Contato:* ${phone}
@@ -2641,7 +2683,8 @@ O cliente esta esperando!`;
       // Update lead with transfer info
       await supabase.from("ai_crm_leads").update({
         status: "transferido",
-        assigned_to_id: selectedSeller.id,
+        status_crm: crmStage,
+        assigned_to_id: null,
         last_interaction_at: new Date().toISOString(),
       }).eq("id", leadRecord.id);
     }

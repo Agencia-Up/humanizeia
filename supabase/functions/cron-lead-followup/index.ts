@@ -510,7 +510,7 @@ Deno.serve(async (req) => {
 
           // Atualizar lead com novo vendedor
           await supabase.from('ai_crm_leads').update({
-            assigned_to_id: nextSeller.id,
+            assigned_to_id: null,
             status: 'transferido',
           }).eq('id', lead.id).in('status', ['qualificado', 'transferido']);
 
@@ -646,7 +646,8 @@ Deno.serve(async (req) => {
         const { data: updatedRows, error: updateError } = await supabase
           .from('ai_crm_leads')
           .update({
-            status: 'qualificado',
+            status: 'transferido',
+            status_crm: 'inativo',
             last_interaction_at: now.toISOString()
           })
           .in('status', ['novo', 'interessado'])
@@ -658,7 +659,7 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        console.log(`[Cron] Lead ${phoneNumber} inativo ha 10 min. Status -> qualificado. Buscando vendedor...`);
+        console.log(`[Cron] Lead ${phoneNumber} inativo ha 10 min. Status CRM -> inativo. Buscando vendedor...`);
 
         let { data: teamMembers } = await supabase
           .from('ai_team_members')
@@ -744,8 +745,9 @@ Deno.serve(async (req) => {
           } catch (e) { /* silencioso */ }
 
           await supabase.from('ai_crm_leads').update({
-            status: 'qualificado',
-            assigned_to_id: seller.id,
+            status: 'transferido',
+            status_crm: 'inativo',
+            assigned_to_id: null,
             followup_5min_sent: true,
             last_interaction_at: now.toISOString(),
             summary: aiGeneratedSummary, // ← grava o resumo rico no lead
@@ -769,7 +771,7 @@ Deno.serve(async (req) => {
           if (seller.whatsapp_number) {
             const cleanSellerNum = seller.whatsapp_number.replace(/\D/g, '');
 
-            const notificationMsg = `*NOVO LEAD QUALIFICADO (Inatividade)*\n\n*Cliente:* ${lead.lead_name || 'Desconhecido'}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+            const notificationMsg = `*NOVO LEAD INATIVO (Sem resposta 10min)*\n\n*Cliente:* ${lead.lead_name || 'Desconhecido'}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
 
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }
