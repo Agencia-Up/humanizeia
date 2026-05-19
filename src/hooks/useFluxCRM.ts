@@ -51,6 +51,16 @@ const DEFAULT_STAGES = [
   { name: 'Porta', color: '#14b8a6', position: 6 },
 ];
 
+const deduplicateStagesByName = (stages: PipelineStage[]) => {
+  const seen = new Set<string>();
+  return stages.filter((stage) => {
+    const key = stage.name.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 export function useFluxCRM() {
   const { user } = useAuth();
   const { isSeller, seller, loading: sellerLoading } = useSellerProfile(user?.id);
@@ -91,7 +101,7 @@ export function useFluxCRM() {
 
         stagesData = (fresh || []) as unknown as PipelineStage[];
       }
-      return stagesData;
+      return deduplicateStagesByName(stagesData);
     },
     enabled: !!effectiveUserId,
   });
