@@ -83,6 +83,8 @@ const promptExamples = [
   'Divulgue nosso evento presencial do próximo sábado com tom entusiasmado.',
 ];
 
+const MIN_SCHEDULE_WINDOW_MS = 10 * 60 * 1000;
+
 export function CampaignFormDialog({
   open, onOpenChange, onSubmit, onGeneratePreview,
   contactLists, instances, saving, aiLoading, editingCampaign,
@@ -111,6 +113,7 @@ export function CampaignFormDialog({
   const [replyAutoTag, setReplyAutoTag] = useState('');
   const [replyAutoMessage, setReplyAutoMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [scheduleError, setScheduleError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isEditing = !!editingCampaign;
@@ -169,6 +172,7 @@ export function CampaignFormDialog({
     setIncludeOptoutButtons(false);
     setReplyAutoTag('');
     setReplyAutoMessage('');
+    setScheduleError('');
   };
 
   const buildTimestamp = (date: Date | undefined, time: string): string | null => {
@@ -181,6 +185,22 @@ export function CampaignFormDialog({
 
   const handleSubmit = async () => {
     if (isUploading || (mediaType && !mediaUrl)) return;
+    const startTimestamp = buildTimestamp(startDate, startTime);
+    const endTimestamp = buildTimestamp(endDate, endTime);
+    const nextScheduleError =
+      endTimestamp && !startTimestamp
+        ? 'Para definir o fim da campanha, escolha tambem a data de inicio.'
+        : startTimestamp && endTimestamp && new Date(endTimestamp).getTime() - new Date(startTimestamp).getTime() < MIN_SCHEDULE_WINDOW_MS
+          ? 'O agendamento precisa ter pelo menos 10 minutos entre inicio e fim.'
+          : '';
+
+    if (nextScheduleError) {
+      setScheduleError(nextScheduleError);
+      return;
+    }
+
+    setScheduleError('');
+
     await onSubmit({
       name,
       prompt_base: prompt,
@@ -189,8 +209,8 @@ export function CampaignFormDialog({
       regras_delay: { min: delayMin, max: delayMax },
       regras_rodizio: { mensagens_por_instancia: rotationMsgs, pausa_entre_instancias: rotationPause },
       regras_aquecimento: { enabled: warmupEnabled, initial_messages: warmupInitial },
-      start_time: buildTimestamp(startDate, startTime),
-      end_time: buildTimestamp(endDate, endTime),
+      start_time: startTimestamp,
+      end_time: endTimestamp,
       instance_id: instanceId === 'auto' ? null : instanceId,
       media_url: mediaUrl,
       media_type: mediaType,
@@ -479,10 +499,10 @@ export function CampaignFormDialog({
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={startDate} onSelect={setStartDate} disabled={d => { const today = new Date(); today.setHours(0,0,0,0); return d < today; }} initialFocus className={cn("p-3 pointer-events-auto")} />
+                      <Calendar mode="single" selected={startDate} onSelect={(date) => { setStartDate(date); setScheduleError(''); }} disabled={d => { const today = new Date(); today.setHours(0,0,0,0); return d < today; }} initialFocus className={cn("p-3 pointer-events-auto")} />
                     </PopoverContent>
                   </Popover>
-                  <Input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-28" />
+                  <Input type="time" value={startTime} onChange={e => { setStartTime(e.target.value); setScheduleError(''); }} className="w-28" />
                   {startDate && (
                     <Button variant="ghost" size="icon" onClick={() => setStartDate(undefined)} title="Remover data início">
                       <X className="h-4 w-4" />
@@ -503,10 +523,10 @@ export function CampaignFormDialog({
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={endDate} onSelect={setEndDate} disabled={d => { const today = new Date(); today.setHours(0,0,0,0); return d < today; }} initialFocus className={cn("p-3 pointer-events-auto")} />
+                      <Calendar mode="single" selected={endDate} onSelect={(date) => { setEndDate(date); setScheduleError(''); }} disabled={d => { const today = new Date(); today.setHours(0,0,0,0); return d < today; }} initialFocus className={cn("p-3 pointer-events-auto")} />
                     </PopoverContent>
                   </Popover>
-                  <Input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-28" />
+                  <Input type="time" value={endTime} onChange={e => { setEndTime(e.target.value); setScheduleError(''); }} className="w-28" />
                   {endDate && (
                     <Button variant="ghost" size="icon" onClick={() => setEndDate(undefined)} title="Remover data fim">
                       <X className="h-4 w-4" />
@@ -514,6 +534,9 @@ export function CampaignFormDialog({
                   )}
                 </div>
               </div>
+              {scheduleError && (
+                <p className="text-xs font-medium text-destructive">{scheduleError}</p>
+              )}
             </div>
 
             <Separator />

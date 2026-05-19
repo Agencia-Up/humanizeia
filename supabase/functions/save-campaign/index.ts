@@ -192,8 +192,17 @@ Deno.serve(async (req) => {
     if (end_time && isNaN(Date.parse(end_time))) {
       errors.push("end_time inválido.");
     }
-    if (start_time && end_time && new Date(start_time) >= new Date(end_time)) {
-      errors.push("end_time deve ser posterior a start_time.");
+    if (end_time && !start_time) {
+      errors.push("Para definir um fim de campanha, informe tambem a data de inicio.");
+    }
+    if (start_time && end_time) {
+      const startMs = new Date(start_time).getTime();
+      const endMs = new Date(end_time).getTime();
+      if (startMs >= endMs) {
+        errors.push("end_time deve ser posterior a start_time.");
+      } else if (endMs - startMs < 10 * 60 * 1000) {
+        errors.push("O agendamento precisa ter pelo menos 10 minutos entre o inicio e o fim.");
+      }
     }
 
     // Validate media

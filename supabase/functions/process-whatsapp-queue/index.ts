@@ -14,6 +14,8 @@ const CIRCUIT_BREAKER_THRESHOLD = 5;
 const OUTBOUND_FETCH_TIMEOUT_MS = 10_000;
 const PRESENCE_FETCH_TIMEOUT_MS = 2_500;
 const AI_FETCH_TIMEOUT_MS = 12_000;
+const SCHEDULED_CAMPAIGN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const SCHEDULED_CAMPAIGN_AUTO_START_LIMIT = 20;
 
 // ===== ANTI-BAN: Default safety limits =====
 const DEFAULT_DAILY_LIMIT_NEW_INSTANCE = 10; // New numbers (<3 days): max 10 msgs/day
@@ -84,6 +86,80 @@ interface SendResult {
   remoteMessageId: string | null;
 }
 
+async function autoStartDueScheduledCampaigns(supabase: any) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const lookbackIso = new Date(now.getTime() - SCHEDULED_CAMPAIGN_LOOKBACK_MS).toISOString();
+
+  const { error: expireError } = await supabase
+    .from("wa_campaigns")
+    .update({ status: "paused", updated_at: nowIso })
+    .eq("status", "scheduled")
+    .not("end_time", "is", null)
+    .lt("end_time", nowIso);
+
+  if (expireError) {
+    console.warn("[scheduled-campaigns] Failed to pause expired schedules:", expireError);
+  }
+
+  const { data: dueCampaigns, error } = await supabase
+    .from("wa_campaigns")
+    .select("id, scheduled_at, end_time")
+    .eq("status", "scheduled")
+    .not("scheduled_at", "is", null)
+    .lte("scheduled_at", nowIso)
+    .gte("scheduled_at", lookbackIso)
+    .order("scheduled_at", { ascending: true })
+    .limit(SCHEDULED_CAMPAIGN_AUTO_START_LIMIT);
+
+  if (error) {
+    console.warn("[scheduled-campaigns] Failed to fetch due campaigns:", error);
+    return 0;
+  }
+
+  const campaigns = (dueCampaigns || []).filter((campaign: any) => {
+    if (!campaign.end_time) return true;
+    return new Date(campaign.end_time).getTime() >= now.getTime();
+  });
+
+  if (campaigns.length === 0) return 0;
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    console.warn("[scheduled-campaigns] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    return 0;
+  }
+
+  let started = 0;
+  for (const campaign of campaigns) {
+    try {
+      const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/enqueue-campaign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({ campaign_id: campaign.id, __cron: true }),
+      }, OUTBOUND_FETCH_TIMEOUT_MS);
+
+      if (response.ok) {
+        started++;
+      } else {
+        const body = await response.text().catch(() => "");
+        console.warn(`[scheduled-campaigns] Enqueue failed for ${campaign.id}: ${response.status} ${body}`);
+      }
+    } catch (err) {
+      console.warn(`[scheduled-campaigns] Enqueue exception for ${campaign.id}:`, err);
+    }
+  }
+
+  if (started > 0) {
+    console.log(`[scheduled-campaigns] Auto-started ${started} scheduled campaign(s)`);
+  }
+  return started;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -94,6 +170,8 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    await autoStartDueScheduledCampaigns(supabase);
 
     // ===== ATOMIC CLAIM =====
     // Do not SELECT pending rows and lock them later. Cron can overlap, and a delayed
