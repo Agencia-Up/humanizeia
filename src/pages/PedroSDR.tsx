@@ -575,6 +575,7 @@ const STATUS_CRM_OPTIONS = [
   { value: 'inativo',            label: 'Lead Inativo',      color: 'text-gray-400'    },
   { value: 'pouco_qualificado',  label: 'Pouco Qualificado', color: 'text-orange-400'  },
   { value: 'qualificado',        label: 'Qualificado',       color: 'text-emerald-400' },
+  { value: 'carro_nao_disponivel', label: 'Carro não disponível', color: 'text-rose-400' },
   { value: 'em_atendimento',     label: 'Agendamento',       color: 'text-cyan-400'    },
   { value: 'negociacao',         label: 'Negociação',        color: 'text-purple-400'  },
   { value: 'fechado',            label: 'Fechado',           color: 'text-green-400'   },
@@ -624,6 +625,7 @@ const PIPELINE_COLUMNS = [
   { id: 'inativo',            title: 'Lead Inativo',       emoji: '😴', border: 'border-gray-500/30',    bg: 'bg-gray-500/10',    dot: 'bg-gray-400'    },
   { id: 'pouco_qualificado',  title: 'Pouco Qualif.',      emoji: '🧊', border: 'border-orange-500/30',  bg: 'bg-orange-500/10',  dot: 'bg-orange-400'  },
   { id: 'qualificado',        title: 'Qualificado',        emoji: '🎯', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', dot: 'bg-emerald-400' },
+  { id: 'carro_nao_disponivel', title: 'Carro não disponível', emoji: '🚫', border: 'border-rose-500/30', bg: 'bg-rose-500/10', dot: 'bg-rose-400' },
   // Estágios manuais (não tocados pela auto-classificação):
   { id: 'em_atendimento',     title: 'Agendamento',        emoji: '📅', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
   { id: 'negociacao',         title: 'Negociação',         emoji: '🤝', border: 'border-purple-500/30',  bg: 'bg-purple-500/10',  dot: 'bg-purple-400'  },

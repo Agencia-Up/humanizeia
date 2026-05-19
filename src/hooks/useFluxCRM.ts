@@ -47,6 +47,8 @@ const DEFAULT_STAGES = [
   { name: 'Proposta', color: '#3b82f6', position: 2 },
   { name: 'Negociação', color: '#8b5cf6', position: 3 },
   { name: 'Fechado', color: '#10b981', position: 4 },
+  { name: 'Carro não disponível', color: '#f43f5e', position: 5 },
+  { name: 'Porta', color: '#14b8a6', position: 6 },
 ];
 
 export function useFluxCRM() {

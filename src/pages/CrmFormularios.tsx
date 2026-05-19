@@ -391,6 +391,8 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
           { user_id: effectiveUserId, name: 'Proposta',    color: '#3b82f6', position: 2, is_default: false },
           { user_id: effectiveUserId, name: 'Negociação',  color: '#8b5cf6', position: 3, is_default: false },
           { user_id: effectiveUserId, name: 'Fechado',     color: '#10b981', position: 4, is_default: false },
+          { user_id: effectiveUserId, name: 'Carro não disponível', color: '#f43f5e', position: 5, is_default: false },
+          { user_id: effectiveUserId, name: 'Porta',       color: '#14b8a6', position: 6, is_default: false },
         ];
         await supabase.from('crm_pipeline_stages' as any).insert(defaults);
         const { data: newStage } = await (supabase as any)
