@@ -611,6 +611,33 @@ function normalizeStatus(status: string): string {
   return STATUS_DISPLAY_MAP[status] || status;
 }
 
+const MARCOS_STAGE_STYLE_BY_NAME: Record<string, { emoji: string; border: string; bg: string; dot: string }> = {
+  'novo lead': { emoji: '🔰', border: 'border-indigo-500/30', bg: 'bg-indigo-500/10', dot: 'bg-indigo-400' },
+  qualificado: { emoji: '🎯', border: 'border-amber-500/30', bg: 'bg-amber-500/10', dot: 'bg-amber-400' },
+  proposta: { emoji: '📋', border: 'border-blue-500/30', bg: 'bg-blue-500/10', dot: 'bg-blue-400' },
+  negociacao: { emoji: '🤝', border: 'border-purple-500/30', bg: 'bg-purple-500/10', dot: 'bg-purple-400' },
+  fechado: { emoji: '✅', border: 'border-green-500/30', bg: 'bg-green-500/10', dot: 'bg-green-400' },
+  'carro nao disponivel': { emoji: '🚫', border: 'border-rose-500/30', bg: 'bg-rose-500/10', dot: 'bg-rose-400' },
+  porta: { emoji: '🚪', border: 'border-teal-500/30', bg: 'bg-teal-500/10', dot: 'bg-teal-400' },
+};
+
+function normalizeStageName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function getMarcosStageStyle(name: string, index: number) {
+  return MARCOS_STAGE_STYLE_BY_NAME[normalizeStageName(name)] || {
+    emoji: ['🔰', '🎯', '📋', '🤝', '✅'][index] || '📌',
+    border: 'border-slate-500/30',
+    bg: 'bg-slate-500/10',
+    dot: 'bg-slate-400',
+  };
+}
+
 function fmtDate(iso: string) {
   return new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
@@ -814,14 +841,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         const stages = (stagesData || []) as any[];
         const fallbackStage = stages[0]?.id || 'novo';
         const columns = stages.length > 0
-          ? stages.map((s: any, index: number) => ({
-              id: s.id,
-              title: s.name,
-              emoji: ['🔰', '🎯', '📋', '🤝', '✅'][index] || '📌',
-              border: 'border-slate-500/30',
-              bg: 'bg-slate-500/10',
-              dot: 'bg-slate-400',
-            }))
+          ? stages.map((s: any, index: number) => {
+              const stageStyle = getMarcosStageStyle(s.name, index);
+              return {
+                id: s.id,
+                title: s.name,
+                ...stageStyle,
+              };
+            })
           : PIPELINE_COLUMNS;
         setManualStages(columns);
 
