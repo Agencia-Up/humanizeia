@@ -573,8 +573,6 @@ const FEEDBACK_REASONS: { category: string; emoji: string; options: string[] }[]
 const STATUS_CRM_OPTIONS = [
   { value: 'novo',               label: 'Novo',              color: 'text-blue-400'    },
   { value: 'inativo',            label: 'Lead Inativo',      color: 'text-gray-400'    },
-  { value: 'pouco_qualificado',  label: 'Pouco Qualificado', color: 'text-orange-400'  },
-  { value: 'qualificado',        label: 'Qualificado',       color: 'text-emerald-400' },
   { value: 'carro_nao_disponivel', label: 'Carro não disponível', color: 'text-rose-400' },
   { value: 'em_atendimento',     label: 'Agendamento',       color: 'text-cyan-400'    },
   { value: 'negociacao',         label: 'Negociação',        color: 'text-purple-400'  },
@@ -598,13 +596,12 @@ function leadOrigemLabel(v: string | null | undefined): string | null {
   return LEAD_ORIGEM_OPTIONS.find(o => o.value === v)?.short || v;
 }
 
-// Mapeia status legacy → exibe no kanban (compat retroativa)
-// 'interessado' (antigo) → 'novo'
-// 'medio_qualificado' (antigo, removido na nova lógica de 3 níveis) → 'pouco_qualificado'
-// 'encerrado' (antigo) → 'perdido'
+// Mapeia status legacy no kanban. Etapas antigas de qualificacao do Pedro voltam para Novo na tela.
 const STATUS_DISPLAY_MAP: Record<string, string> = {
   interessado: 'novo',
-  medio_qualificado: 'pouco_qualificado',
+  medio_qualificado: 'novo',
+  pouco_qualificado: 'novo',
+  qualificado: 'novo',
   encerrado: 'perdido',
 };
 function normalizeStatus(status: string): string {
@@ -648,17 +645,33 @@ function fmtDate(iso: string) {
 
 const PIPELINE_COLUMNS = [
   { id: 'novo',               title: 'Novo',               emoji: '🔰', border: 'border-slate-500/30',   bg: 'bg-slate-500/10',   dot: 'bg-slate-400'   },
-  // 3 níveis SDR (auto-classificados pelo agente IA — edge function auto-classify-leads):
   { id: 'inativo',            title: 'Lead Inativo',       emoji: '😴', border: 'border-gray-500/30',    bg: 'bg-gray-500/10',    dot: 'bg-gray-400'    },
-  { id: 'pouco_qualificado',  title: 'Pouco Qualif.',      emoji: '🧊', border: 'border-orange-500/30',  bg: 'bg-orange-500/10',  dot: 'bg-orange-400'  },
-  { id: 'qualificado',        title: 'Qualificado',        emoji: '🎯', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', dot: 'bg-emerald-400' },
   { id: 'carro_nao_disponivel', title: 'Carro não disponível', emoji: '🚫', border: 'border-rose-500/30', bg: 'bg-rose-500/10', dot: 'bg-rose-400' },
-  // Estágios manuais (não tocados pela auto-classificação):
   { id: 'em_atendimento',     title: 'Agendamento',        emoji: '📅', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
   { id: 'negociacao',         title: 'Negociação',         emoji: '🤝', border: 'border-purple-500/30',  bg: 'bg-purple-500/10',  dot: 'bg-purple-400'  },
   { id: 'fechado',            title: 'Fechado',            emoji: '✅', border: 'border-green-500/30',   bg: 'bg-green-500/10',   dot: 'bg-green-400'   },
   { id: 'perdido',            title: 'Perdido',            emoji: '❌', border: 'border-red-500/30',     bg: 'bg-red-500/10',     dot: 'bg-red-400'     },
 ];
+
+type PipelineColumn = typeof PIPELINE_COLUMNS[number];
+
+function reorderItems<T>(items: T[], from: number, to: number) {
+  const next = [...items];
+  const [moved] = next.splice(from, 1);
+  if (!moved) return items;
+  next.splice(to, 0, moved);
+  return next;
+}
+
+function applyColumnOrder<T extends { id: string }>(columns: T[], order: string[]) {
+  if (!order.length) return columns;
+  const byId = new Map(columns.map(column => [column.id, column]));
+  const ordered = order
+    .map(id => byId.get(id))
+    .filter((column): column is T => Boolean(column));
+  const missing = columns.filter(column => !order.includes(column.id));
+  return [...ordered, ...missing];
+}
 
 interface CrmLead {
   id: string;
@@ -751,6 +764,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
   const [manualStages, setManualStages] = useState<typeof PIPELINE_COLUMNS>([]);
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [instances, setInstances] = useState<any[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -791,6 +805,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [fuMediaUrl, setFuMediaUrl]       = useState('');
   const [fuUploading, setFuUploading]     = useState(false);
   const fuFileRef = useRef<HTMLInputElement>(null);
+  const draggedColumnIdRef = useRef<string | null>(null);
   const [funnelOpen, setFunnelOpen]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
@@ -816,6 +831,37 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       }
     })();
   }, [userId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadColumnPreference = async () => {
+      if (!userId) {
+        setColumnOrder([]);
+        return;
+      }
+
+      const { data, error } = await (supabase as any)
+        .from('crm_column_preferences')
+        .select('column_order')
+        .eq('auth_user_id', userId)
+        .eq('crm_mode', mode)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (error) {
+        console.warn('Erro ao carregar preferência de colunas', error);
+        setColumnOrder([]);
+        return;
+      }
+      setColumnOrder(Array.isArray(data?.column_order) ? data.column_order : []);
+    };
+
+    loadColumnPreference();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, mode]);
 
   const fetchData = async (silent = false) => {
     if (!userId) return;
@@ -1974,9 +2020,58 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     }
   };
 
+  const saveColumnOrder = async (nextOrder: string[]) => {
+    if (!userId) return;
+    const { error } = await (supabase as any)
+      .from('crm_column_preferences')
+      .upsert({
+        auth_user_id: userId,
+        crm_mode: mode,
+        column_order: nextOrder,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'auth_user_id,crm_mode' });
+    if (error) throw error;
+  };
+
+  const handleColumnReorder = async (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    const from = pipelineColumns.findIndex(column => column.id === draggedId);
+    const to = pipelineColumns.findIndex(column => column.id === targetId);
+    if (from < 0 || to < 0 || from === to) return;
+
+    const previousOrder = columnOrder;
+    const nextOrder = reorderItems(pipelineColumns, from, to).map(column => column.id);
+    setColumnOrder(nextOrder);
+    try {
+      await saveColumnOrder(nextOrder);
+      toast({ title: '✅ Ordem das colunas salva!' });
+    } catch (err: any) {
+      setColumnOrder(previousOrder);
+      toast({ title: 'Erro ao salvar ordem', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const handleDragEnd = async (result: DropResult) => {
-    const { draggableId, destination, source } = result;
-    if (!destination || destination.droppableId === source.droppableId) return;
+    const { draggableId, destination, source, type } = result;
+    if (!destination) return;
+
+    if (type === 'COLUMN') {
+      if (destination.index === source.index) return;
+      const previousOrder = columnOrder;
+      const nextColumns = reorderItems(pipelineColumns, source.index, destination.index);
+      const nextOrder = nextColumns.map(column => column.id);
+      setColumnOrder(nextOrder);
+      try {
+        await saveColumnOrder(nextOrder);
+        toast({ title: '✅ Ordem das colunas salva!' });
+      } catch (err: any) {
+        setColumnOrder(previousOrder);
+        toast({ title: 'Erro ao salvar ordem', description: err.message, variant: 'destructive' });
+      }
+      return;
+    }
+
+    if (destination.droppableId === source.droppableId) return;
     const newStatus = destination.droppableId;
     // Atualiza localmente de imediato (optimistic)
     setLeads(prev => prev.map(l => l.id === draggableId ? { ...l, status_crm: newStatus } : l));
@@ -2014,7 +2109,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   }
 
   // ── Lead Detail Panel ──────────────────────────────────────────────────────
-  const pipelineColumns = isMarcosCrm && manualStages.length > 0 ? manualStages : PIPELINE_COLUMNS;
+  const basePipelineColumns: PipelineColumn[] = isMarcosCrm && manualStages.length > 0 ? manualStages : PIPELINE_COLUMNS;
+  const pipelineColumns = applyColumnOrder(basePipelineColumns, columnOrder);
   const statusOptions = isMarcosCrm
     ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' }))
     : STATUS_CRM_OPTIONS;
@@ -2840,10 +2936,31 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               {pipelineColumns.map(col => {
                 const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo') === col.id);
                 return (
-                  <div key={col.id} className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}>
+                  <div
+                    key={col.id}
+                    onDragOver={event => event.preventDefault()}
+                    onDrop={() => {
+                      const draggedId = draggedColumnIdRef.current;
+                      draggedColumnIdRef.current = null;
+                      if (draggedId) handleColumnReorder(draggedId, col.id);
+                    }}
+                    className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}
+                  >
                     {/* Column header */}
-                    <div className={`px-3 py-2.5 rounded-t-xl ${col.bg} flex items-center justify-between`}>
+                    <div
+                      draggable
+                      onDragStart={event => {
+                        draggedColumnIdRef.current = col.id;
+                        event.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragEnd={() => {
+                        draggedColumnIdRef.current = null;
+                      }}
+                      className={`px-3 py-2.5 rounded-t-xl ${col.bg} flex items-center justify-between cursor-grab active:cursor-grabbing`}
+                      title="Arraste para reorganizar esta coluna"
+                    >
                       <div className="flex items-center gap-2">
+                        <GripVertical className="h-3.5 w-3.5 text-muted-foreground/60" />
                         <span className="text-sm">{col.emoji}</span>
                         <span className="text-xs font-semibold text-foreground">{col.title}</span>
                       </div>
