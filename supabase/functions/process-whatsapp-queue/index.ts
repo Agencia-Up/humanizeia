@@ -871,13 +871,16 @@ async function sendToUazAPI(
     // UazAPI V6: /send/media works with the "file" field. Keep older body
     // shapes as fallbacks because some self-hosted instances lag behind.
     const caption = mediaType === "audio" ? "" : (text || "");
+    const mediaTextFields = caption
+      ? { text: caption, caption }
+      : {};
     const mediaAttempts = [
-      { number, file: mediaUrl, type: mediaType, caption },
-      { number, file: mediaUrl, mediatype: mediaType, caption },
-      { number, url: mediaUrl, type: mediaType, caption },
-      { number, media: mediaUrl, mediatype: mediaType, caption },
-      { remoteJid, file: mediaUrl, type: mediaType, caption },
-      { remoteJid, url: mediaUrl, type: mediaType, caption },
+      { number, file: mediaUrl, type: mediaType, ...mediaTextFields },
+      { number, file: mediaUrl, mediatype: mediaType, ...mediaTextFields },
+      { number, url: mediaUrl, type: mediaType, ...mediaTextFields },
+      { number, media: mediaUrl, mediatype: mediaType, ...mediaTextFields },
+      { remoteJid, file: mediaUrl, type: mediaType, ...mediaTextFields },
+      { remoteJid, url: mediaUrl, type: mediaType, ...mediaTextFields },
     ];
 
     let lastMediaError = "";
