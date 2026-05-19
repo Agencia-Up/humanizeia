@@ -1226,36 +1226,28 @@ async function sendEvolutionButtonMessage(
 function buildFallbackAIMessage(
   promptBase: string,
   contactName: string | null,
-  contactMetadata: any,
+  _contactMetadata: any,
   variationLevel: string,
   messageTemplate: string | null,
 ): string {
   const base = (messageTemplate || promptBase || "").replace(/^\[IA\]\s*/i, "").trim();
   const name = contactName?.trim();
-  const extras = contactMetadata && typeof contactMetadata === "object"
-    ? Object.entries(contactMetadata)
-        .filter(([_, value]) => value !== null && value !== undefined && value !== "")
-        .slice(0, 2)
-        .map(([key, value]) => `${key}: ${String(value)}`)
-        .join(", ")
-    : "";
   const intro = name ? `${name}, ` : "";
-  const detail = extras ? ` Vi aqui tambem: ${extras}.` : "";
 
   const conservative = [
-    `Oi, ${intro}${base}. Posso te passar mais detalhes por aqui?${detail}`,
-    `Ola, ${intro}passando para falar sobre: ${base}. Faz sentido para voce?${detail}`,
-    `${intro}${base}. Se quiser, eu te explico rapidinho por aqui.${detail}`,
+    `Oi, ${intro}${base}. Posso te passar mais detalhes por aqui?`,
+    `Ola, ${intro}passando para falar sobre: ${base}. Faz sentido para voce?`,
+    `${intro}${base}. Se quiser, eu te explico rapidinho por aqui.`,
   ];
   const moderate = [
-    `Oi, ${intro}tudo bem? Separei essa mensagem para voce: ${base}. Me responde por aqui se quiser seguir.${detail}`,
-    `${intro}pensei que isso poderia te interessar: ${base}. Quer que eu te mostre o proximo passo?${detail}`,
-    `Passando rapido, ${intro}${base}. Se fizer sentido, me chama aqui e eu te ajudo.${detail}`,
+    `Oi, ${intro}tudo bem? Separei essa mensagem para voce: ${base}. Me responde por aqui se quiser seguir.`,
+    `${intro}pensei que isso poderia te interessar: ${base}. Quer que eu te mostre o proximo passo?`,
+    `Passando rapido, ${intro}${base}. Se fizer sentido, me chama aqui e eu te ajudo.`,
   ];
   const creative = [
-    `${intro}deixa eu te mostrar uma oportunidade: ${base}. Quer receber os detalhes agora?${detail}`,
-    `Oi! Tenho algo que pode encaixar bem para voce: ${base}. Me responde com "quero" que eu continuo.${detail}`,
-    `${intro}antes que passe batido: ${base}. Quer que eu te explique em uma mensagem curta?${detail}`,
+    `${intro}deixa eu te mostrar uma oportunidade: ${base}. Quer receber os detalhes agora?`,
+    `Oi! Tenho algo que pode encaixar bem para voce: ${base}. Me responde com "quero" que eu continuo.`,
+    `${intro}antes que passe batido: ${base}. Quer que eu te explique em uma mensagem curta?`,
   ];
 
   const pool = variationLevel === "low"
@@ -1271,7 +1263,7 @@ async function generateAIMessage(
   promptBase: string,
   phone: string,
   contactName: string | null,
-  contactMetadata: any,
+  _contactMetadata: any,
   variationLevel: string,
   messageTemplate: string | null,
   supabaseClient?: any,
@@ -1282,13 +1274,6 @@ async function generateAIMessage(
 
   let personalizationContext = "";
   if (contactName) personalizationContext += `\nNome do lead: ${contactName}`;
-  if (contactMetadata && typeof contactMetadata === "object") {
-    const extras = Object.entries(contactMetadata)
-      .filter(([_, v]) => v !== null && v !== undefined && v !== "")
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(", ");
-    if (extras) personalizationContext += `\nDados extras do lead: ${extras}`;
-  }
 
   let conversationHistory = "";
   if (supabaseClient && userId && phone) {
@@ -1373,7 +1358,7 @@ REGRAS OBRIGATÓRIAS:
 - A mensagem deve soar 100% natural, como enviada por uma pessoa real digitando no celular
 - NÃO use saudações genéricas repetitivas
 - NÃO inclua o número de telefone
-- Se dados do lead forem fornecidos, USE-OS naturalmente
+- Use apenas o nome do lead quando ele for fornecido. Nao cite campos de planilha como cargo, empresa, origem, tag, metadata ou dados extras
 - Se houver histórico de conversa, CONSIDERE o contexto
 - MÁXIMO de 500 caracteres
 - NÃO use formatação de markdown (sem **, sem ##, sem *)
