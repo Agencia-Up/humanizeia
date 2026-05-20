@@ -240,8 +240,10 @@ Deno.serve(async (req) => {
 
     // --- Build payload ---
     const safeName = name.trim().slice(0, 200);
-    const safeTemplate = message_template?.trim() || `[IA] ${(prompt_base || "").trim().slice(0, 100)}`;
     const safePrompt = prompt_base?.trim() || null;
+    // message_template is the fixed/manual message only. For AI campaigns, keep it empty
+    // so the queue processor generates a fresh variation per contact from prompt_base.
+    const safeTemplate = message_template?.trim() || "";
     const safeListas = Array.isArray(listas_alvo) ? listas_alvo : [];
     const safeDelay = regras_delay || { min: 35, max: 89 };
     const safeRodizio = regras_rodizio || { mensagens_por_instancia: 10, pausa_entre_instancias: 300 };

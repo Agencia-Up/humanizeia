@@ -421,6 +421,7 @@ Deno.serve(async (req) => {
         const variationLevel = campaign?.variation_level || "medium";
 
         if (campaign?.prompt_base) {
+          const fixedTemplate = normalizeFixedTemplate(campaign.message_template);
           let genAttempts = 0;
           const maxGenAttempts = 3;
           let messageIsUnique = false;
@@ -433,7 +434,7 @@ Deno.serve(async (req) => {
                 item.contact_name,
                 item.contact_metadata,
                 variationLevel,
-                campaign.message_template,
+                fixedTemplate,
                 supabase,
                 item.user_id
               );
@@ -448,10 +449,7 @@ Deno.serve(async (req) => {
               }
             } catch (aiErr) {
               console.error("AI generation failed, using template with variation:", aiErr);
-              // Fallback: add random suffix to template
-              const suffixes = ["", " 😊", " 👋", "!", " 🙂", " ✨", ".", " 💡", " 🚀", " 📲"];
-              const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-              finalMessage = buildFallbackAIMessage(campaign.prompt_base, item.contact_name, item.contact_metadata, variationLevel, campaign.message_template || item.message);
+              finalMessage = buildFallbackAIMessage(campaign.prompt_base, item.contact_name, item.contact_metadata, variationLevel, fixedTemplate || normalizeFixedTemplate(item.message));
               messageIsUnique = true;
             }
           }
@@ -1300,6 +1298,12 @@ async function sendEvolutionButtonMessage(
 }
 
 // ====================== MESSAGE POLYMORPHISM ======================
+
+function normalizeFixedTemplate(template?: string | null): string | null {
+  const trimmed = (template || "").trim();
+  if (!trimmed || /^\[IA\]\s*/i.test(trimmed)) return null;
+  return trimmed;
+}
 
 function buildFallbackAIMessage(
   promptBase: string,

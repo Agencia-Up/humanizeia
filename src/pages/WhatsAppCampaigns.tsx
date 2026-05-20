@@ -61,6 +61,8 @@ interface WaInstance {
   status: string;
 }
 
+const isGeneratedAITemplate = (value?: string | null) => /^\[IA\]\s*/i.test((value || '').trim());
+
 const statusMap: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   draft: { label: 'Rascunho', variant: 'secondary' },
   scheduled: { label: 'Agendada', variant: 'outline' },
@@ -160,11 +162,17 @@ export default function WhatsAppCampaigns() {
 
     setSaving(true);
     try {
+      const trimmedPrompt = data.prompt_base.trim();
+      const trimmedTemplate = data.message_template.trim();
+      const normalizedTemplate = trimmedPrompt && isGeneratedAITemplate(trimmedTemplate)
+        ? ''
+        : trimmedTemplate;
+
       const payload = {
         campaign_id: editingCampaign?.id || null,
         name: data.name.trim(),
-        message_template: data.message_template.trim(),
-        prompt_base: data.prompt_base.trim() || null,
+        message_template: normalizedTemplate,
+        prompt_base: trimmedPrompt || null,
         listas_alvo: data.listas_alvo,
         regras_delay: data.regras_delay,
         regras_rodizio: data.regras_rodizio,
@@ -225,11 +233,16 @@ Não numere as variações. Não inclua explicações adicionais.`
   };
 
   const handleEdit = (c: Campaign) => {
+    const promptBase = c.prompt_base || '';
+    const messageTemplate = promptBase && isGeneratedAITemplate(c.message_template)
+      ? ''
+      : c.message_template || '';
+
     setEditingCampaign({
       id: c.id,
       name: c.name,
-      prompt_base: c.prompt_base || '',
-      message_template: c.message_template,
+      prompt_base: promptBase,
+      message_template: messageTemplate,
       listas_alvo: c.listas_alvo || c.list_ids || [],
       regras_delay: c.regras_delay || { min: c.min_delay_seconds, max: c.max_delay_seconds },
       regras_rodizio: c.regras_rodizio || { mensagens_por_instancia: c.rotation_messages_per_instance, pausa_entre_instancias: 300 },

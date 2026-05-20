@@ -56,6 +56,8 @@ interface WAInstance {
   status: string;
 }
 
+const isGeneratedAITemplate = (value?: string | null) => /^\[IA\]\s*/i.test((value || '').trim());
+
 export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { isSeller, seller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
@@ -181,11 +183,17 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
 
     setSaving(true);
     try {
+      const trimmedPrompt = data.prompt_base.trim();
+      const trimmedTemplate = data.message_template.trim();
+      const normalizedTemplate = trimmedPrompt && isGeneratedAITemplate(trimmedTemplate)
+        ? ''
+        : trimmedTemplate;
+
       const payload = {
         campaign_id: editingCampaign?.id || null,
         name: data.name.trim(),
-        message_template: data.message_template.trim(),
-        prompt_base: data.prompt_base.trim() || null,
+        message_template: normalizedTemplate,
+        prompt_base: trimmedPrompt || null,
         listas_alvo: data.listas_alvo,
         regras_delay: data.regras_delay,
         regras_rodizio: data.regras_rodizio,
@@ -280,11 +288,16 @@ Não numere as variações. Não inclua explicações adicionais.`
   };
 
   const handleEdit = (campaign: any) => {
+    const promptBase = campaign.prompt_base || '';
+    const messageTemplate = promptBase && isGeneratedAITemplate(campaign.message_template)
+      ? ''
+      : campaign.message_template || '';
+
     setEditingCampaign({
       id: campaign.id,
       name: campaign.name,
-      prompt_base: campaign.prompt_base || '',
-      message_template: campaign.message_template,
+      prompt_base: promptBase,
+      message_template: messageTemplate,
       listas_alvo: campaign.listas_alvo || campaign.list_ids || [],
       regras_delay: campaign.regras_delay || { min: campaign.min_delay_seconds, max: campaign.max_delay_seconds },
       regras_rodizio: campaign.regras_rodizio || { mensagens_por_instancia: campaign.rotation_messages_per_instance, pausa_entre_instancias: 300 },

@@ -85,6 +85,8 @@ const promptExamples = [
 
 const MIN_SCHEDULE_WINDOW_MS = 10 * 60 * 1000;
 
+const isGeneratedAITemplate = (value?: string | null) => /^\[IA\]\s*/i.test((value || '').trim());
+
 export function CampaignFormDialog({
   open, onOpenChange, onSubmit, onGeneratePreview,
   contactLists, instances, saving, aiLoading, editingCampaign,
@@ -122,7 +124,11 @@ export function CampaignFormDialog({
     if (open && editingCampaign) {
       setName(editingCampaign.name);
       setPrompt(editingCampaign.prompt_base || '');
-      setTemplate(editingCampaign.message_template || '');
+      setTemplate(
+        editingCampaign.prompt_base && isGeneratedAITemplate(editingCampaign.message_template)
+          ? ''
+          : editingCampaign.message_template || ''
+      );
       setSelectedLists(editingCampaign.listas_alvo || []);
       setDelayMin(editingCampaign.regras_delay?.min ?? 35);
       setDelayMax(editingCampaign.regras_delay?.max ?? 89);
@@ -305,7 +311,10 @@ export function CampaignFormDialog({
                 id="prompt-base"
                 placeholder="Descreva a intenção da mensagem para a IA gerar variações personalizadas..."
                 value={prompt}
-                onChange={e => setPrompt(e.target.value)}
+                onChange={e => {
+                  setPrompt(e.target.value);
+                  if (isGeneratedAITemplate(template)) setTemplate('');
+                }}
                 rows={4}
                 maxLength={2000}
               />
