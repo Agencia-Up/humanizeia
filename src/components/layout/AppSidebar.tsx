@@ -1,5 +1,6 @@
 import {
   LayoutDashboard,
+  BarChart3,
   Brain,
   PenTool,
   Palette,
@@ -98,6 +99,7 @@ const allSellerAgentItems: { title: string; url: string; icon: any; featureKey: 
 
 // ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
 const marcosSubItems: { title: string; url: string; icon: any; featureKey: keyof VisibleFeatures }[] = [
+  { title: 'Performance',     url: '/marcos?tab=performance', icon: BarChart3,     featureKey: 'marcos_crm' },
   { title: 'CRM',             url: '/crm',               icon: Kanban,        featureKey: 'marcos_crm' },
   { title: 'Formulários',     url: '/crm/formularios',   icon: ClipboardList, featureKey: 'marcos_formularios' },
   { title: 'Contatos',        url: '/whatsapp/contacts', icon: Users,         featureKey: 'marcos_contatos' },
