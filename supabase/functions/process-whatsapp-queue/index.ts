@@ -903,8 +903,8 @@ async function selectSmartInstance(
 
 // ====================== PROVIDER ABSTRACTION ======================
 
-/** UazAPI (logos-ia.uazapi.com) uses a completely different endpoint format than UazAPI.
- *  Detect it by the api_url so we can route accordingly. */
+// UazAPI (logos-ia.uazapi.com) can expose either the V6 send endpoints
+// or the legacy Evolution-compatible message endpoints with the instance name.
 function isUazAPIInstance(instance: Instance): boolean {
   return instance.api_url.includes("uazapi");
 }
@@ -938,7 +938,7 @@ async function sendToUazAPI(
 ): Promise<SendResult> {
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
-  const remoteJid = `${number}@s.whatsapp.net`;
+  const remoteJid = number + "@s.whatsapp.net";
   const token = instance.api_key_encrypted;
 
   const authHeaders = { "Content-Type": "application/json", token, apikey: token };
@@ -987,28 +987,46 @@ async function sendToUazAPI(
     throw new Error(`UazAPI error (sendMedia): ${lastMediaError}`);
   }
 
-  // Plain text
-  const response = await fetchWithTimeout(
-    `${apiUrl}/send/text`,
+  const textAttempts = [
+    { label: "send-text-number", url: `${apiUrl}/send/text`, body: { number, text } },
+    { label: "send-text-remotejid", url: `${apiUrl}/send/text`, body: { remoteJid, text } },
     {
-      method: "POST",
-      headers: authHeaders,
-      body: JSON.stringify({ number, text }),
+      label: "message-sendText",
+      url: `${apiUrl}/message/sendText/${encodeURIComponent(instance.instance_name)}`,
+      body: { number, text },
     },
-    OUTBOUND_FETCH_TIMEOUT_MS
-  );
+  ];
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`UazAPI error (sendText): ${response.status} - ${errText}`);
+  const textErrors: string[] = [];
+  for (const attempt of textAttempts) {
+    const response = await fetchWithTimeout(
+      attempt.url,
+      {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify(attempt.body),
+      },
+      OUTBOUND_FETCH_TIMEOUT_MS
+    ).catch((err) => {
+      textErrors.push(`${attempt.label}: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
+
+    if (response && response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const remoteMessageId = data?.messageId || data?.id || data?.key?.id || null;
+      if (remoteMessageId) {
+        console.log(`[UazAPI] Message sent successfully via ${attempt.label}: ${remoteMessageId}`);
+      }
+      return { remoteMessageId };
+    }
+
+    if (response) {
+      textErrors.push(`${attempt.label}: ${response.status} - ${await response.text().catch(() => "")}`);
+    }
   }
 
-  const data = await response.json().catch(() => ({}));
-  const remoteMessageId = data?.messageId || data?.id || null;
-  if (remoteMessageId) {
-    console.log(`[UazAPI] Message sent successfully: ${remoteMessageId}`);
-  }
-  return { remoteMessageId };
+  throw new Error(`UazAPI error (sendText): ${textErrors.join(" | ")}`);
 }
 
 async function sendToMetaAPI(
