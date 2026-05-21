@@ -763,6 +763,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [isSeller, setIsSeller] = useState(false);
   const [memberId, setMemberId] = useState<string | null>(null);
   const [memberIds, setMemberIds] = useState<string[]>([]);
+  // Fase 6.4 hotfix: effectiveUserId no escopo do componente (era local em fns,
+  // causava ReferenceError no JSX do DynamicSelect e quebrava a pagina toda)
+  const [effectiveUserIdState, setEffectiveUserIdState] = useState<string | null>(null);
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
   const [manualStages, setManualStages] = useState<typeof PIPELINE_COLUMNS>([]);
@@ -873,6 +876,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const effectiveUserId = isSeller
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
+      // Fase 6.4 hotfix: expõe pro escopo do componente pra DynamicSelect usar
+      if (effectiveUserId && effectiveUserId !== effectiveUserIdState) {
+        setEffectiveUserIdState(effectiveUserId);
+      }
 
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
@@ -2580,7 +2587,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               <p className="text-xs font-medium text-muted-foreground">1. Cliente veio de qual cidade?</p>
               <DynamicSelect
                 entity="city"
-                userId={(effectiveUserId as any) || userId}
+                userId={effectiveUserIdState || userId}
                 value={null /* fbCity é por nome, não id — usamos onChange pra setar */}
                 onChange={(_id, row) => {
                   setFbCity(row?.name || '');
@@ -2901,7 +2908,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               {/* Fase 6.4: select dinâmico — vendedor pode adicionar nova origem direto */}
               <DynamicSelect
                 entity="lead_source"
-                userId={(effectiveUserId as any) || userId}
+                userId={effectiveUserIdState || userId}
                 value={addLeadSourceId}
                 onChange={(id, row) => {
                   setAddLeadSourceId(id);
