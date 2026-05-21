@@ -158,6 +158,8 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const [lists, setLists] = useState<ContactList[]>([]);
   const [contacts, setContacts] = useState<WAContact[]>([]);
   const [selectedList, setSelectedList] = useState<ContactList | null>(null);
+  const [listSelectionMode, setListSelectionMode] = useState(false);
+  const [selectedListIds, setSelectedListIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
@@ -426,16 +428,54 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     } finally { setIsSaving(false); }
   };
 
-  const deleteList = async () => {
-    if (!editingList) return;
+  const selectedListsForDeletion = useMemo(
+    () => lists.filter(list => selectedListIds.includes(list.id)),
+    [lists, selectedListIds]
+  );
+
+  const beginListDeleteSelection = (list: ContactList) => {
+    setEditingList(null);
+    setListSelectionMode(true);
+    setSelectedListIds([list.id]);
+  };
+
+  const cancelListSelection = () => {
+    setListSelectionMode(false);
+    setSelectedListIds([]);
+    setShowDeleteList(false);
+  };
+
+  const toggleListSelection = (listId: string) => {
+    setSelectedListIds(prev =>
+      prev.includes(listId) ? prev.filter(id => id !== listId) : [...prev, listId]
+    );
+  };
+
+  const toggleAllListsSelection = () => {
+    setSelectedListIds(prev => prev.length === lists.length ? [] : lists.map(list => list.id));
+  };
+
+  const deleteSelectedLists = async () => {
+    if (selectedListIds.length === 0) return;
     setIsSaving(true);
     try {
-      await supabase.from('wa_contacts').delete().eq('list_id', editingList.id);
-      const { error } = await supabase.from('wa_contact_lists').delete().eq('id', editingList.id);
-      if (error) throw error;
-      toast({ title: 'Lista excluída' });
-      setShowDeleteList(false); setEditingList(null);
-      if (selectedList?.id === editingList.id) setSelectedList(null);
+      const chunks = Array.from({ length: Math.ceil(selectedListIds.length / 100) }, (_, index) =>
+        selectedListIds.slice(index * 100, index * 100 + 100)
+      );
+
+      for (const chunk of chunks) {
+        const { error: contactsError } = await supabase.from('wa_contacts').delete().in('list_id', chunk);
+        if (contactsError) throw contactsError;
+
+        const { error: listsError } = await supabase.from('wa_contact_lists').delete().in('id', chunk);
+        if (listsError) throw listsError;
+      }
+
+      toast({
+        title: selectedListIds.length === 1 ? 'Lista excluida' : `${selectedListIds.length} listas excluidas`,
+      });
+      if (selectedList && selectedListIds.includes(selectedList.id)) setSelectedList(null);
+      cancelListSelection();
       fetchLists();
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
@@ -689,7 +729,10 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const openEditDialog = (list: ContactList) => {
     setEditingList(list); setFormListName(list.name); setFormListDesc(list.description || ''); setShowEditList(true);
   };
-  const openDeleteDialog = (list: ContactList) => { setEditingList(list); setShowDeleteList(true); };
+  const openDeleteDialog = () => {
+    if (selectedListIds.length === 0) return;
+    setShowDeleteList(true);
+  };
 
   const filteredContacts = contacts.filter(c =>
     !search || c.phone?.includes(search) || c.name?.toLowerCase().includes(search.toLowerCase()) || c.group_name?.toLowerCase().includes(search.toLowerCase())
@@ -780,6 +823,44 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
               </div>
             </div>
 
+            {!selectedList && listSelectionMode && (
+              <Card className="border-amber-500/40 bg-amber-500/10">
+                <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/20 text-amber-300">
+                      <Trash2 className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-amber-100">
+                        {selectedListIds.length} lista(s) selecionada(s)
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Marque outras listas abaixo ou confirme a exclusao em massa.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={toggleAllListsSelection}>
+                      <CheckCheck className="h-4 w-4 mr-1.5" />
+                      {selectedListIds.length === lists.length ? 'Limpar selecao' : 'Selecionar todas'}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={cancelListSelection}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={openDeleteDialog}
+                      disabled={selectedListIds.length === 0 || isSaving}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1.5" />
+                      Excluir selecionadas
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {!selectedList ? (
               isLoading ? (
                 <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
@@ -799,11 +880,27 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                   {lists.map(list => {
                     const src = sourceLabels[list.source] || sourceLabels.manual;
                     const SrcIcon = src.icon;
+                    const isListSelected = selectedListIds.includes(list.id);
+                    const openOrToggleList = () => {
+                      if (listSelectionMode) toggleListSelection(list.id);
+                      else setSelectedList(list);
+                    };
                     return (
-                      <Card key={list.id} className="group hover:border-primary/50 transition-all cursor-pointer">
+                      <Card
+                        key={list.id}
+                        className={`group hover:border-primary/50 transition-all cursor-pointer ${isListSelected ? 'border-amber-400 bg-amber-500/10 ring-1 ring-amber-400/40' : ''}`}
+                      >
                         <CardContent className="p-4">
                           <div className="flex items-start justify-between">
-                            <div className="flex items-center gap-3 flex-1 min-w-0" onClick={() => setSelectedList(list)}>
+                            <div className="flex items-center gap-3 flex-1 min-w-0" onClick={openOrToggleList}>
+                              {listSelectionMode && (
+                                <Checkbox
+                                  checked={isListSelected}
+                                  onCheckedChange={() => toggleListSelection(list.id)}
+                                  onClick={(event) => event.stopPropagation()}
+                                  className="shrink-0 border-amber-300 data-[state=checked]:bg-amber-400 data-[state=checked]:text-black"
+                                />
+                              )}
                               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 shrink-0">
                                 <FolderOpen className="h-5 w-5 text-primary" />
                               </div>
@@ -822,15 +919,15 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                                 <DropdownMenuItem onClick={() => setSelectedList(list)}><Eye className="h-4 w-4 mr-2" /> Ver Contatos</DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => exportListDirect(list)} className="text-emerald-400 focus:text-emerald-300"><Download className="h-4 w-4 mr-2" /> Exportar CSV</DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openEditDialog(list)}><Edit className="h-4 w-4 mr-2" /> Editar</DropdownMenuItem>
-                                <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(list)}><Trash2 className="h-4 w-4 mr-2" /> Excluir</DropdownMenuItem>
+                                <DropdownMenuItem className="text-destructive" onClick={() => beginListDeleteSelection(list)}><Trash2 className="h-4 w-4 mr-2" /> Excluir</DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
-                          <div className="flex items-center justify-between mt-3" onClick={() => setSelectedList(list)}>
+                          <div className="flex items-center justify-between mt-3" onClick={openOrToggleList}>
                             <Badge variant="outline" className="text-xs gap-1"><SrcIcon className="h-3 w-3" />{src.label}</Badge>
                             <Badge variant="secondary" className="gap-1"><Users className="h-3 w-3" />{list.contact_count}</Badge>
                           </div>
-                          <p className="text-[11px] text-muted-foreground mt-2" onClick={() => setSelectedList(list)}>
+                          <p className="text-[11px] text-muted-foreground mt-2" onClick={openOrToggleList}>
                             Criada em {format(new Date(list.created_at), "dd/MM/yyyy", { locale: ptBR })}
                           </p>
                         </CardContent>
@@ -1299,10 +1396,26 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       {/* Delete List */}
       <Dialog open={showDeleteList} onOpenChange={setShowDeleteList}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Excluir Lista</DialogTitle><DialogDescription>Tem certeza que deseja excluir "{editingList?.name}"? {editingList?.contact_count || 0} contatos serão removidos.</DialogDescription></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Excluir lista(s)</DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja excluir {selectedListIds.length} lista(s)? {' '}
+              {selectedListsForDeletion.reduce((sum, list) => sum + (list.contact_count || 0), 0)} contatos serao removidos.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedListsForDeletion.length > 0 && (
+            <div className="max-h-52 space-y-2 overflow-y-auto rounded-lg border bg-muted/20 p-2">
+              {selectedListsForDeletion.map(list => (
+                <div key={list.id} className="flex items-center justify-between gap-3 rounded-md bg-background/70 px-3 py-2 text-sm">
+                  <span className="truncate font-medium">{list.name}</span>
+                  <Badge variant="secondary" className="shrink-0">{list.contact_count || 0} contatos</Badge>
+                </div>
+              ))}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDeleteList(false)}>Cancelar</Button>
-            <Button variant="destructive" onClick={deleteList} disabled={isSaving}>{isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}Excluir</Button>
+            <Button variant="destructive" onClick={deleteSelectedLists} disabled={isSaving || selectedListIds.length === 0}>{isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}Excluir</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
