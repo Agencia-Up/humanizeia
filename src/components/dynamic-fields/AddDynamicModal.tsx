@@ -117,7 +117,8 @@ export function AddDynamicModal({ open, onOpenChange, entity, userId, onCreated 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      {/* Fase 6.4b: fullscreen no mobile (h-screen + max-w-none < sm), modal no desktop */}
+      <DialogContent className="max-w-md w-full sm:max-w-md max-sm:h-screen max-sm:max-h-screen max-sm:rounded-none max-sm:flex max-sm:flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-amber-400" />

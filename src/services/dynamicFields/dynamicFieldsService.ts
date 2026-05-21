@@ -350,6 +350,44 @@ export async function archive(
 }
 
 /**
+ * Edita o nome e marca como aprovado em uma só ação.
+ * Recalcula normalized_name. Se já existir outro registro com mesmo
+ * normalized_name no mesmo user, joga erro (caller pode oferecer "merge").
+ */
+export async function editAndApprove(
+  entity: DynamicEntity,
+  id: string,
+  newName: string,
+  approvedBy: string
+): Promise<DynamicRow> {
+  const display = (await import("./normalize")).toDisplayName(newName);
+  const normalized = (await import("./normalize")).normalizeForDedup(newName);
+  if (!normalized || normalized.length < 2) {
+    throw new Error("Nome inválido");
+  }
+  const { data, error } = await supabase
+    .from(TABLE_BY_ENTITY[entity] as any)
+    .update({
+      name: display,
+      normalized_name: normalized,
+      status: "active",
+      approved_by: approvedBy,
+      approved_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) {
+    if ((error as any).code === "23505") {
+      throw new Error("Já existe outra entrada com esse nome. Use 'Mesclar' em vez disso.");
+    }
+    throw error;
+  }
+  return data as DynamicRow;
+}
+
+/**
  * Mescla: move todos os leads que apontam pro `fromId` pra `intoId` e
  * arquiva o `fromId`. Aplicável a city_id e source_id em ai_crm_leads/crm_leads.
  */
@@ -373,4 +411,189 @@ export async function merge(
   }
   // Arquiva o fromId
   await archive(entity, fromId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fase 6.5b — Settings (toggle auto_approve por user)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DynamicFieldSettings {
+  user_id: string;
+  cities_auto_approve: boolean;
+  lead_sources_auto_approve: boolean;
+  notify_on_pending: boolean;
+}
+
+export async function getSettings(userId: string): Promise<DynamicFieldSettings> {
+  // RPC garante row default se não existir
+  const { data, error } = await supabase.rpc("ensure_dynamic_field_settings", {
+    p_user_id: userId,
+  } as any);
+  if (error) throw error;
+  return data as DynamicFieldSettings;
+}
+
+export async function updateSettings(
+  userId: string,
+  patch: Partial<Omit<DynamicFieldSettings, "user_id">>
+): Promise<void> {
+  const { error } = await supabase
+    .from("dynamic_field_settings" as any)
+    .upsert({ user_id: userId, ...patch, updated_at: new Date().toISOString() });
+  if (error) throw error;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fase 6.5c — Histórico (últimos 50 itens decididos)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AuditLogRow {
+  id: string;
+  user_id: string;
+  entity_type: "city" | "lead_source";
+  entity_id: string;
+  action: string;
+  performed_by: string | null;
+  payload: any;
+  created_at: string;
+}
+
+export async function listAuditHistory(
+  userId: string,
+  entity?: DynamicEntity,
+  limit = 50
+): Promise<AuditLogRow[]> {
+  let q = supabase
+    .from("dynamic_fields_audit_log" as any)
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (entity) q = q.eq("entity_type", entity);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data || []) as AuditLogRow[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fase 6.6 — Analytics
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AnalyticsTopCreator {
+  performed_by: string;
+  performed_by_name: string;
+  count: number;
+}
+
+export interface AnalyticsResult {
+  total_active: number;
+  total_pending: number;
+  total_archived: number;
+  total_rejected: number;
+  created_last_30d: number;
+  approval_auto_rate: number; // 0..1
+  rejection_rate: number; // 0..1
+  top_used: Array<{ id: string; name: string; usage_count: number }>;
+  top_creators: AnalyticsTopCreator[];
+}
+
+export async function fetchAnalytics(
+  entity: DynamicEntity,
+  userId: string
+): Promise<AnalyticsResult> {
+  const table = TABLE_BY_ENTITY[entity];
+
+  // 1) Counts por status
+  const { data: rows, error: rowsErr } = await supabase
+    .from(table as any)
+    .select("id, name, status, usage_count, created_at, created_by, is_system_default")
+    .eq("user_id", userId);
+  if (rowsErr) throw rowsErr;
+  const all = (rows || []) as any[];
+
+  const totalActive = all.filter((r) => r.status === "active").length;
+  const totalPending = all.filter((r) => r.status === "pending_review").length;
+  const totalArchived = all.filter((r) => r.status === "archived").length;
+  const totalRejected = all.filter((r) => r.status === "rejected").length;
+
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const createdLast30d = all.filter(
+    (r) => !r.is_system_default && new Date(r.created_at).getTime() >= cutoff
+  ).length;
+
+  const topUsed = [...all]
+    .sort((a, b) => (b.usage_count || 0) - (a.usage_count || 0))
+    .slice(0, 5)
+    .map((r) => ({ id: r.id, name: r.name, usage_count: r.usage_count || 0 }));
+
+  // 2) Audit log pra calcular taxa de aprovação automática vs manual
+  const { data: audits } = await supabase
+    .from("dynamic_fields_audit_log" as any)
+    .select("action, performed_by, payload")
+    .eq("user_id", userId)
+    .eq("entity_type", entity)
+    .gte("created_at", new Date(cutoff).toISOString());
+  const auditArr = (audits || []) as any[];
+
+  const created = auditArr.filter((a) => a.action === "created").length;
+  const approvedFromPending = auditArr.filter(
+    (a) => a.action === "approved" && a.payload?.old_status === "pending_review"
+  ).length;
+  const rejected = auditArr.filter((a) => a.action === "rejected").length;
+
+  // Aprovação automática: criadas com status=active (não passaram por pending)
+  // Aproximação: assume que (created total - approvedFromPending) foram autos
+  const autoApproved = Math.max(0, created - approvedFromPending - rejected);
+  const totalDecisions = autoApproved + approvedFromPending + rejected;
+  const approvalAutoRate = totalDecisions > 0 ? autoApproved / totalDecisions : 0;
+  const rejectionRate = totalDecisions > 0 ? rejected / totalDecisions : 0;
+
+  // 3) Top creators (vendedores que mais sugerem)
+  const counts = new Map<string, number>();
+  auditArr
+    .filter((a) => a.action === "created" && a.performed_by)
+    .forEach((a) => {
+      counts.set(a.performed_by, (counts.get(a.performed_by) || 0) + 1);
+    });
+  const creatorIds = Array.from(counts.keys());
+  let nameById = new Map<string, string>();
+  if (creatorIds.length > 0) {
+    const { data: profs } = await supabase
+      .from("profiles" as any)
+      .select("id, full_name")
+      .in("id", creatorIds);
+    (profs || []).forEach((p: any) => nameById.set(p.id, p.full_name || "Usuário"));
+  }
+  const topCreators: AnalyticsTopCreator[] = Array.from(counts.entries())
+    .map(([id, n]) => ({
+      performed_by: id,
+      performed_by_name: nameById.get(id) || "Usuário",
+      count: n,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  return {
+    total_active: totalActive,
+    total_pending: totalPending,
+    total_archived: totalArchived,
+    total_rejected: totalRejected,
+    created_last_30d: createdLast30d,
+    approval_auto_rate: approvalAutoRate,
+    rejection_rate: rejectionRate,
+    top_used: topUsed,
+    top_creators: topCreators,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fase 6.5f — Badge: contagem de pendentes (cidades + origens combinadas)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function countPending(userId: string): Promise<number> {
+  const { data, error } = await supabase.rpc("count_pending_dynamic_fields", {
+    p_user_id: userId,
+  } as any);
+  if (error) return 0;
+  return (data as number) || 0;
 }

@@ -31,6 +31,8 @@ import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
 import { useAuth } from '@/hooks/useAuth';
+// Fase 6.5f: badge contador de pendentes em "Campos Dinâmicos"
+import { useDynamicFieldsBadge } from '@/hooks/useDynamicFieldsBadge';
 import { NavLink } from '@/components/NavLink';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -405,6 +407,8 @@ export function AppSidebar() {
   const collapsed = state === 'collapsed';
   const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const { isAdmin } = useIsAdmin();
+  // Fase 6.5f: badge contador de pendentes (só master vê — vendedor não tem acesso à tela)
+  const dynamicFieldsPendingCount = useDynamicFieldsBadge(!isSeller ? user?.id : null);
   const { subscription } = useSubscription();
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
   const hasBrunoManualRelease = user?.id === BRUNO_LIRA_USER_ID;
@@ -521,9 +525,14 @@ export function AppSidebar() {
 
             {/* ── Sistema ── */}
             <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
-              {systemItems.map(item => (
-                <NavItem key={item.url} item={item} collapsed={collapsed} />
-              ))}
+              {systemItems.map(item => {
+                // Fase 6.5f: badge dinâmico com contador de pendentes pra "Campos Dinâmicos"
+                const isDynamicFields = item.url === '/configuracoes/campos-dinamicos';
+                const itemWithBadge = isDynamicFields
+                  ? { ...item, badge: dynamicFieldsPendingCount }
+                  : item;
+                return <NavItem key={item.url} item={itemWithBadge} collapsed={collapsed} />;
+              })}
             </NavGroup>
           </>
         )}
