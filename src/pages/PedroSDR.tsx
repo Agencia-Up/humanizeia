@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useRef, lazy, Suspense, useCallback, type
 import { useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+// Fase 6.4 — Campos dinâmicos (cidades + origens cadastráveis pelo vendedor)
+import { DynamicSelect } from '@/components/dynamic-fields/DynamicSelect';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -1132,17 +1134,14 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       toast({ title: 'Selecione a cidade do cliente', variant: 'destructive' });
       return;
     }
-    if (fbCity === 'Outros' && !fbCityCustom.trim()) {
-      toast({ title: 'Digite a cidade do cliente', variant: 'destructive' });
-      return;
-    }
+    // Fase 6.4: removida validação de "Outros" — cidade nova é cadastrada via modal
     if (!fbReason) {
       toast({ title: 'Selecione o motivo da não-compra', variant: 'destructive' });
       return;
     }
     setFbLoading(true);
     try {
-      const finalCity = fbCity === 'Outros' ? fbCityCustom.trim() : fbCity;
+      const finalCity = fbCity; // Fase 6.4: nome direto do DynamicSelect
       // Monta content legível para compatibilidade
       const contentLines = [
         `Cidade: ${finalCity}`,
@@ -1302,8 +1301,11 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [addLeadOpen, setAddLeadOpen]   = useState(false);
   const [addLeadName, setAddLeadName]   = useState('');
   const [addLeadPhone, setAddLeadPhone] = useState('');
-  const [addLeadOrigem, setAddLeadOrigem] = useState<string>(''); // '' = origem NULL no banco
+  const [addLeadOrigem, setAddLeadOrigem] = useState<string>(''); // '' = origem NULL no banco (LEGACY — mantém compat)
   const [addLeadOrigemOutros, setAddLeadOrigemOutros] = useState<string>('');
+  // Fase 6.4: novo source_id (uuid) — referência a lead_sources
+  const [addLeadSourceId, setAddLeadSourceId] = useState<string | null>(null);
+  const [addLeadSourceName, setAddLeadSourceName] = useState<string>('');
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
   const [editingLead, setEditingLead] = useState(false);
@@ -1483,13 +1485,17 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         status_crm:  'novo',
         status:      'novo',
         assigned_to_id: memberId || null,
-        // Prompt 1.1: origem opcional. Vazio → NULL no banco.
-        origem:        addLeadOrigem || null,
-        origem_outros: addLeadOrigem === 'outros' ? (addLeadOrigemOutros.trim() || null) : null,
+        // Fase 6.4: source_id (nova FK pra lead_sources) + origem legacy mantida
+        source_id:     addLeadSourceId || null,
+        origem:        addLeadSourceName || addLeadOrigem || null,
+        origem_outros: null,
       });
       if (error) throw error;
       toast({ title: '✅ Lead adicionado ao CRM!' });
-      setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros(''); setAddLeadOpen(false);
+      setAddLeadName(''); setAddLeadPhone('');
+      setAddLeadOrigem(''); setAddLeadOrigemOutros('');
+      setAddLeadSourceId(null); setAddLeadSourceName('');
+      setAddLeadOpen(false);
       await fetchData(true);
     } catch (err: any) {
       toast({ title: 'Erro ao adicionar lead', description: err.message, variant: 'destructive' });
@@ -2019,27 +2025,24 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           </CardHeader>
           <CardContent className="space-y-4">
 
-            {/* Pergunta 1: Cidade */}
+            {/* Pergunta 1: Cidade — Fase 6.4 dinâmico (cadastrar nova pelo modal) */}
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">1. Cliente veio de qual cidade?</p>
-              <Select value={fbCity} onValueChange={v => { setFbCity(v); if (v !== 'Outros') setFbCityCustom(''); }}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Selecione a cidade..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {FEEDBACK_CITIES.map(c => (
-                    <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
-                  ))}
-                  <SelectItem value="Outros" className="text-xs font-medium text-orange-400">Outros...</SelectItem>
-                </SelectContent>
-              </Select>
-              {fbCity === 'Outros' && (
-                <Input
-                  value={fbCityCustom}
-                  onChange={e => setFbCityCustom(e.target.value)}
-                  placeholder="Digite a cidade..."
-                  className="h-8 text-xs"
-                />
+              <DynamicSelect
+                entity="city"
+                userId={(effectiveUserId as any) || userId}
+                value={null /* fbCity é por nome, não id — usamos onChange pra setar */}
+                onChange={(_id, row) => {
+                  setFbCity(row?.name || '');
+                }}
+                placeholder="Selecione a cidade..."
+                triggerClassName="h-8 text-xs"
+                filter={(r) => r.status === 'active'}
+              />
+              {fbCity && (
+                <p className="text-[10px] text-muted-foreground">
+                  Selecionada: <span className="font-medium text-foreground">{fbCity}</span>
+                </p>
               )}
             </div>
 
@@ -2335,19 +2338,23 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                 className="h-8 text-xs"
               />
             </div>
-            <div className="flex-1 min-w-[160px] space-y-1">
+            <div className="flex-1 min-w-[180px] space-y-1">
               <label className="text-[10px] text-muted-foreground font-medium">Origem (opcional)</label>
-              <Select value={addLeadOrigem || 'none'} onValueChange={(v) => setAddLeadOrigem(v === 'none' ? '' : v)}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Origem do lead" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">— Sem origem —</SelectItem>
-                  {LEAD_ORIGEM_OPTIONS.map(o => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Fase 6.4: select dinâmico — vendedor pode adicionar nova origem direto */}
+              <DynamicSelect
+                entity="lead_source"
+                userId={(effectiveUserId as any) || userId}
+                value={addLeadSourceId}
+                onChange={(id, row) => {
+                  setAddLeadSourceId(id);
+                  setAddLeadSourceName(row?.name || '');
+                  // Mantém compat com coluna `origem` legacy via normalized_name
+                  setAddLeadOrigem(row?.normalized_name || '');
+                }}
+                placeholder="Origem do lead"
+                triggerClassName="h-8 text-xs"
+                filter={(r) => r.status === 'active'}
+              />
             </div>
             <Button
               onClick={handleAddLeadManual}
@@ -2359,17 +2366,8 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
               Salvar
             </Button>
           </div>
-          {addLeadOrigem === 'outros' && (
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground font-medium">Especificar origem (opcional)</label>
-              <Input
-                value={addLeadOrigemOutros}
-                onChange={e => setAddLeadOrigemOutros(e.target.value)}
-                placeholder="Ex: TikTok, indicação, panfleto..."
-                className="h-8 text-xs"
-              />
-            </div>
-          )}
+          {/* Fase 6.4: removido o input "Especificar origem" — vendedor agora cadastra
+              origem nova direto pelo botão "+ Adicionar novo(a)" no select acima */}
         </div>
       )}
 
