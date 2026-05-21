@@ -79,7 +79,12 @@ Ao assumir este projeto:
 
 ## 7. DOMÍNIOS ATIVOS
 - **Produção:** `https://logosiabrasil.com`
-- **Backup:** `https://logos-ia-github.pqaykh.easypanel.host`
+- **Backup prod:** `https://logos-ia-github.pqaykh.easypanel.host`
+- **Staging (LogosIA-baseTeste):** `https://logos-ia-logosia-baseteste.pqaykh.easypanel.host`
+  - Supabase: `ezoltigtqgbmftmiwjxh`
+  - Branch git: `staging`
+  - Login padrão dos usuários clonados: senha `LogosIA@Teste2026!`
+  - Conta de teste master: `flavig953@gmail.com` (Flaviane Gomes — Icom Motors)
 
 ---
 *Este documento é a "medula espinhal" do projeto. Mantenha-o sempre atualizado para o próximo agente.*
