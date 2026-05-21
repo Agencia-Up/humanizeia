@@ -690,6 +690,15 @@ interface CrmLead {
   created_at: string;
   source?: string | null;
   custom_fields?: Record<string, any> | null;
+  // Fase 6 enrich + filtro inativos
+  client_city?: string | null;
+  vehicle_interest?: string | null;
+  visit_scheduled?: string | null;
+  origem?: string | null;
+  source_id?: string | null;
+  source_label?: string | null; // resolvido via lead_sources
+  last_user_reply_at?: string | null;
+  last_interaction_at?: string | null;
 }
 
 interface Note {
@@ -785,6 +794,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [filterStatus, setFilterStatus]   = useState<string>('all');
   const [filterSeller, setFilterSeller]   = useState<string>('all');
   const [searchTerm,   setSearchTerm]     = useState('');
+  // Fase 6: filtro de leads inativos (> 7 dias sem resposta) + disparo em massa
+  const [filterInativos, setFilterInativos] = useState(false);
 
   // form states
   const [newNote, setNewNote]             = useState('');
@@ -1023,7 +1034,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       // ========================================================================
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled, origem, source_id, last_user_reply_at, last_interaction_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -1126,6 +1137,26 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           qualifiedCount: leadsData.filter(l => l.assigned_to_id && allIds.includes(l.assigned_to_id) && l.status_crm === 'qualificado').length,
         };
       });
+
+      // Fase 6 enrich: resolve source_id → name (via lead_sources)
+      const uniqueSourceIds = Array.from(new Set(leadsData.map((l: any) => l.source_id).filter(Boolean))) as string[];
+      if (uniqueSourceIds.length > 0) {
+        const { data: sources } = await (supabase as any)
+          .from('lead_sources')
+          .select('id, name, icon, category')
+          .in('id', uniqueSourceIds);
+        const byId = new Map<string, any>((sources || []).map((s: any) => [s.id, s]));
+        leadsData.forEach((l: any) => {
+          if (l.source_id && byId.has(l.source_id)) {
+            const s = byId.get(l.source_id);
+            l.source_label = s.icon ? `${s.icon} ${s.name}` : s.name;
+          } else if (l.origem) {
+            l.source_label = l.origem;
+          }
+        });
+      } else {
+        leadsData.forEach((l: any) => { if (l.origem) l.source_label = l.origem; });
+      }
 
       setLeads(leadsData);
       setLeadMetrics({
@@ -2745,17 +2776,55 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
   // Métricas
   // Filtro universal
+  // Fase 6: inativo = sem resposta do cliente há > 7 dias (ou nunca respondeu há > 7 dias)
+  const INATIVO_DIAS = 7;
+  const inativoCutoff = Date.now() - INATIVO_DIAS * 24 * 60 * 60 * 1000;
+  const isLeadInativo = (l: CrmLead): boolean => {
+    const lastReply = l.last_user_reply_at ? new Date(l.last_user_reply_at).getTime() : 0;
+    const created = new Date(l.created_at).getTime();
+    const referenceTime = lastReply || created;
+    return referenceTime < inativoCutoff
+      && l.status_crm !== 'qualificado'
+      && l.status_crm !== 'transferido';
+  };
+  const inativosCount = leads.filter(isLeadInativo).length;
+
   const filteredLeads = leads.filter(l => {
     if (isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
     if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
     if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
     if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
+    if (filterInativos && !isLeadInativo(l)) return false;
     if (searchTerm) {
       const t = searchTerm.toLowerCase();
       if (!(l.lead_name || '').toLowerCase().includes(t) && !(l.remote_jid || '').toLowerCase().includes(t)) return false;
     }
     return true;
   });
+
+  // Disparar campanha pros inativos: salva lista no sessionStorage e navega pra broadcast
+  const handleDispararCampanhaInativos = () => {
+    const inativos = leads.filter(isLeadInativo);
+    if (inativos.length === 0) {
+      toast({ title: 'Nenhum lead inativo encontrado', variant: 'destructive' });
+      return;
+    }
+    const phones = inativos
+      .map(l => l.remote_jid?.replace(/@.*/, '').replace(/\D/g, ''))
+      .filter(Boolean) as string[];
+    sessionStorage.setItem('pedro_campaign_phones', JSON.stringify({
+      phones,
+      label: `Reengajamento — ${inativos.length} leads inativos (>${INATIVO_DIAS}d)`,
+      source: 'pedro_inativos',
+      created_at: new Date().toISOString(),
+    }));
+    toast({
+      title: `📢 ${inativos.length} contato(s) pré-carregado(s)`,
+      description: 'Indo para o disparo em massa...',
+    });
+    // Vai pra tela de broadcast (Marcos)
+    setTimeout(() => { window.location.href = '/whatsapp/broadcast'; }, 800);
+  };
 
   return (
     <div className="p-4 lg:p-6 space-y-4">
@@ -2832,6 +2901,41 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
               Follow-ups
             </Button>
+          )}
+          {/* Fase 6: filtro Inativos + disparo em massa */}
+          {!isMarcosCrm && (view === 'pipeline' || view === 'leads') && (
+            <>
+              <Button
+                variant={filterInativos ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setFilterInativos(!filterInativos)}
+                className={`h-7 px-2.5 text-xs gap-1.5 ${
+                  filterInativos
+                    ? 'bg-orange-600 hover:bg-orange-700 text-white border-orange-500'
+                    : 'border-orange-500/30 text-orange-400 hover:bg-orange-500/10'
+                }`}
+                title={`Filtra leads sem resposta há ${INATIVO_DIAS}+ dias`}
+              >
+                <Clock className="h-3.5 w-3.5" />
+                Inativos
+                {inativosCount > 0 && (
+                  <span className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                    filterInativos ? 'bg-white/20' : 'bg-orange-500 text-white'
+                  }`}>{inativosCount}</span>
+                )}
+              </Button>
+              {filterInativos && inativosCount > 0 && !isSeller && (
+                <Button
+                  size="sm"
+                  onClick={handleDispararCampanhaInativos}
+                  className="h-7 px-2.5 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  title="Pré-carrega os inativos no disparo em massa do WhatsApp"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  Disparar campanha
+                </Button>
+              )}
+            </>
           )}
           {!isSeller && !isMarcosCrm && (
             <Button
@@ -3016,6 +3120,41 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                       <p className="text-[10px] text-muted-foreground">{lead.remote_jid?.replace(/@.*/, '')}</p>
                                     </button>
                                   </div>
+                                  {/* Fase 6: badges enriched (cidade + carro + origem + visita) */}
+                                  {(lead.client_city || lead.vehicle_interest || lead.source_label || lead.visit_scheduled) && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {lead.client_city && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-medium truncate max-w-[100px]" title={`Cidade: ${lead.client_city}`}>
+                                          📍 {lead.client_city}
+                                        </span>
+                                      )}
+                                      {lead.vehicle_interest && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 font-medium truncate max-w-[120px]" title={`Carro: ${lead.vehicle_interest}`}>
+                                          🚗 {lead.vehicle_interest}
+                                        </span>
+                                      )}
+                                      {lead.source_label && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-300 font-medium truncate max-w-[100px]" title={`Origem: ${lead.source_label}`}>
+                                          {lead.source_label}
+                                        </span>
+                                      )}
+                                      {lead.visit_scheduled && (() => {
+                                        // Detecta se a data parseada é hoje pra colorir laranja
+                                        const today = new Date().toLocaleDateString('pt-BR');
+                                        const isToday = String(lead.visit_scheduled).includes(today)
+                                          || String(lead.visit_scheduled).slice(0, 10) === new Date().toISOString().slice(0, 10);
+                                        return (
+                                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium truncate max-w-[110px] ${
+                                            isToday
+                                              ? 'bg-orange-500/20 text-orange-300 ring-1 ring-orange-500/40 animate-pulse'
+                                              : 'bg-emerald-500/10 text-emerald-400'
+                                          }`} title={`Visita: ${lead.visit_scheduled}`}>
+                                            📅 {String(lead.visit_scheduled).slice(0, 20)}
+                                          </span>
+                                        );
+                                      })()}
+                                    </div>
+                                  )}
                                   {lead.summary && (
                                     <button onClick={() => loadLeadDetail(lead)} className="w-full text-left">
                                       <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2">{lead.summary}</p>

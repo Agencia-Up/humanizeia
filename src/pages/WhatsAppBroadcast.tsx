@@ -91,6 +91,23 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   const [savingListContacts, setSavingListContacts] = useState(false);
   const [newContactName, setNewContactName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
+  // Fase 6: detecta lista pré-carregada do Pedro CRM (filtro Inativos → Disparar campanha)
+  const [prefilledFromPedro, setPrefilledFromPedro] = useState<{
+    phones: string[];
+    label: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const raw = sessionStorage.getItem('pedro_campaign_phones');
+    if (!raw) return;
+    try {
+      const data = JSON.parse(raw);
+      if (Array.isArray(data?.phones) && data.phones.length > 0) {
+        setPrefilledFromPedro({ phones: data.phones, label: data.label || 'Lista do CRM' });
+      }
+    } catch {}
+    sessionStorage.removeItem('pedro_campaign_phones');
+  }, []);
 
   const legacyClaudeConfig = useMemo(() => ({ creativity: 0.8, variations: 3 }), []);
   const { sendSingleMessage } = useClaudeChat({
@@ -546,6 +563,46 @@ Não numere as variações. Não inclua explicações adicionais.`
 
   const mainContent = (
     <div className={embedded ? 'space-y-6 p-4 md:p-6' : 'space-y-6'}>
+        {/* Fase 6: banner quando vem do Pedro CRM (filtro Inativos → Disparar campanha) */}
+        {prefilledFromPedro && (
+          <div className="rounded-lg border-2 border-orange-500/40 bg-gradient-to-r from-orange-500/10 to-amber-500/10 p-4 flex items-start gap-3">
+            <div className="text-2xl">📢</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-orange-300">{prefilledFromPedro.label}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {prefilledFromPedro.phones.length} contato(s) vieram do CRM do Pedro.
+                Use o botão <strong>"Importar contatos"</strong> e cole esses números na nova lista:
+              </p>
+              <details className="mt-2">
+                <summary className="text-[11px] cursor-pointer text-orange-400 hover:text-orange-300">
+                  Ver / copiar telefones ({prefilledFromPedro.phones.length})
+                </summary>
+                <textarea
+                  readOnly
+                  value={prefilledFromPedro.phones.join('\n')}
+                  className="mt-2 w-full h-32 text-[11px] font-mono bg-background/50 border border-border/40 rounded p-2"
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(prefilledFromPedro.phones.join('\n'));
+                    toast({ title: '✅ Telefones copiados pra área de transferência' });
+                  }}
+                  className="text-[11px] mt-1 text-orange-400 hover:text-orange-300 underline"
+                >
+                  Copiar todos
+                </button>
+              </details>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPrefilledFromPedro(null)}
+              className="text-muted-foreground hover:text-foreground text-lg leading-none"
+            >×</button>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
