@@ -72,6 +72,8 @@ serve(async (req) => {
         { user_id: form.user_id, name: "Proposta",     color: "#3b82f6", position: 2, is_default: false },
         { user_id: form.user_id, name: "Negociação",   color: "#8b5cf6", position: 3, is_default: false },
         { user_id: form.user_id, name: "Fechado",      color: "#10b981", position: 4, is_default: false },
+        { user_id: form.user_id, name: "Carro não disponível", color: "#f43f5e", position: 5, is_default: false },
+        { user_id: form.user_id, name: "Porta",        color: "#14b8a6", position: 6, is_default: false },
       ];
       await supabase.from("crm_pipeline_stages").insert(defaultStages);
       const { data: newStage } = await supabase

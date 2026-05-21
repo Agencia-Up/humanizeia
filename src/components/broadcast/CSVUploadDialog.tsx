@@ -13,6 +13,7 @@ interface CSVUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   userId: string;
+  sellerMemberId?: string | null;
   onUploadComplete: () => void;
 }
 
@@ -24,7 +25,7 @@ interface ParsedContact {
   error?: string;
 }
 
-export function CSVUploadDialog({ open, onOpenChange, userId, onUploadComplete }: CSVUploadDialogProps) {
+export function CSVUploadDialog({ open, onOpenChange, userId, sellerMemberId = null, onUploadComplete }: CSVUploadDialogProps) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [listName, setListName] = useState('');
@@ -127,13 +128,14 @@ export function CSVUploadDialog({ open, onOpenChange, userId, onUploadComplete }
 
     try {
       // 1. Create list
-      const { data: list, error: listErr } = await supabase
+      const { data: list, error: listErr } = await (supabase as any)
         .from('wa_contact_lists')
         .insert({
           user_id: userId,
           name: listName.trim(),
           source: 'csv_upload',
           contact_count: validContacts.length,
+          seller_member_id: sellerMemberId,
         })
         .select('id')
         .single();

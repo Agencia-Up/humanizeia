@@ -657,6 +657,165 @@ function formatBantBlock(bant: BantStatus): string {
   return lines.join('\n');
 }
 
+function sellerPhoneKey(seller: any): string {
+  const digits = String(seller?.whatsapp_number || '').replace(/\D/g, '');
+  if (!digits) return '';
+  return digits.startsWith('55') && (digits.length === 12 || digits.length === 13)
+    ? digits.slice(2)
+    : digits;
+}
+
+function uniqueSellersByPhone(sellers: any[] = []): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const seller of sellers || []) {
+    const key = sellerPhoneKey(seller) || String(seller?.id || '');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(seller);
+  }
+  return result;
+}
+
+function digitsOnly(value: string | null | undefined): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function phoneMatchKeys(value: string | null | undefined): string[] {
+  const digits = digitsOnly(value);
+  const keys = new Set<string>();
+  if (!digits) return [];
+
+  const addBrazilVariants = (raw: string) => {
+    if (!raw) return;
+    keys.add(raw);
+
+    const national = raw.startsWith('55') && raw.length > 11 ? raw.slice(2) : raw;
+    if (national !== raw) keys.add(national);
+
+    if (national.length === 10) {
+      // Some WhatsApp providers omit the mobile 9 after the DDD.
+      const withNinthDigit = `${national.slice(0, 2)}9${national.slice(2)}`;
+      keys.add(withNinthDigit);
+      keys.add(`55${national}`);
+      keys.add(`55${withNinthDigit}`);
+    } else if (national.length === 11 && national[2] === '9') {
+      const withoutNinthDigit = `${national.slice(0, 2)}${national.slice(3)}`;
+      keys.add(withoutNinthDigit);
+      keys.add(`55${national}`);
+      keys.add(`55${withoutNinthDigit}`);
+    }
+  };
+
+  addBrazilVariants(digits);
+  if (digits.startsWith('55') && digits.length > 11) addBrazilVariants(digits.slice(2));
+  if (digits.length >= 11) keys.add(digits.slice(-11));
+  if (digits.length >= 10) keys.add(digits.slice(-10));
+  return [...keys].filter((key) => key.length >= 10);
+}
+
+function phonesMatch(left: string | null | undefined, right: string | null | undefined): boolean {
+  const rightKeys = new Set(phoneMatchKeys(right));
+  return phoneMatchKeys(left).some((key) => rightKeys.has(key));
+}
+
+function normalizePedroCrmStage(status: string | null | undefined, fallback = 'qualificado'): string {
+  const raw = String(status || '').trim();
+  if (raw === 'medio_qualificado') return 'pouco_qualificado';
+  if (raw === 'encerrado') return 'pouco_qualificado';
+  if (raw === 'inativo' || raw === 'pouco_qualificado' || raw === 'qualificado') return raw;
+  return fallback;
+}
+
+function isPedroTransferStage(status: string | null | undefined): boolean {
+  return ['inativo', 'pouco_qualificado', 'qualificado'].includes(String(status || '').trim());
+}
+
+async function maybeHandleSellerAck(
+  supabase: any,
+  waInstance: any,
+  agent: any,
+  remoteJid: string,
+) {
+  const senderPhone = digitsOnly(remoteJid);
+  const { data: sellers } = await supabase
+    .from('ai_team_members')
+    .select('id, name, whatsapp_number, agent_id, auth_user_id')
+    .eq('user_id', agent.user_id)
+    .eq('is_active', true)
+    .limit(500);
+
+  const matches = (sellers || [])
+    .filter((seller: any) => phonesMatch(seller.whatsapp_number, senderPhone))
+    .sort((a: any, b: any) => {
+      const aAgent = a.agent_id === agent.id ? 1 : 0;
+      const bAgent = b.agent_id === agent.id ? 1 : 0;
+      if (aAgent !== bAgent) return bAgent - aAgent;
+      return Number(Boolean(b.auth_user_id)) - Number(Boolean(a.auth_user_id));
+    });
+
+  if (matches.length === 0) return { isSeller: false };
+
+  const seller = matches[0];
+  const sellerIds = matches.map((row: any) => row.id).filter(Boolean);
+  console.log(`[TransferGuard] Mensagem de vendedor detectada: ${seller.name} (${senderPhone}). IA bloqueada.`);
+
+  const { data: pendingTransfer } = await supabase
+    .from('ai_lead_transfers')
+    .select('id, lead_id, to_member_id, transfer_status, is_confirmed, created_at')
+    .in('to_member_id', sellerIds)
+    .eq('transfer_status', 'pending')
+    .eq('is_confirmed', false)
+    .not('lead_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!pendingTransfer) {
+    console.log(`[TransferGuard] Vendedor ${seller.name} sem transferencia pendente. Mensagem ignorada pela IA.`);
+    return { isSeller: true, confirmed: false };
+  }
+
+  const now = new Date().toISOString();
+  await supabase.from('ai_lead_transfers').update({
+    transfer_status: 'confirmed',
+    is_confirmed: true,
+    confirmed_at: now,
+  }).eq('id', pendingTransfer.id);
+
+  await supabase.from('ai_team_members').update({
+    last_lead_received_at: now,
+  }).eq('id', pendingTransfer.to_member_id || seller.id);
+
+  await supabase.from('ai_crm_leads').update({
+    assigned_to_id: pendingTransfer.to_member_id || seller.id,
+    status: 'em_atendimento',
+    last_interaction_at: now,
+  }).eq('id', pendingTransfer.lead_id);
+
+  try {
+    const baseUrl = String(waInstance.api_url || '').replace(/\/$/, '');
+    const instKey = waInstance.api_key_encrypted || '';
+    let sellerPhone = digitsOnly(seller.whatsapp_number || senderPhone);
+    if (sellerPhone.length === 10 || sellerPhone.length === 11) sellerPhone = `55${sellerPhone}`;
+    if (baseUrl && instKey && sellerPhone) {
+      await fetch(`${baseUrl}/send/text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', token: instKey, apikey: instKey },
+        body: JSON.stringify({
+          number: sellerPhone,
+          text: 'Atendimento confirmado. O lead foi movido para voce no CRM.',
+        }),
+      });
+    }
+  } catch (err) {
+    console.warn('[TransferGuard] Falha ao enviar confirmacao ao vendedor:', err);
+  }
+
+  console.log(`[TransferGuard] Transfer ${pendingTransfer.id} confirmado por ${seller.name}`);
+  return { isSeller: true, confirmed: true, transferId: pendingTransfer.id };
+}
+
 function calcQualificationScore(state: any): number {
   let s = 0;
   if (state?.lead?.nome) s += 10;
@@ -1188,7 +1347,7 @@ function buildEnrichedBriefing(input: {
 
 function buildBriefingForSeller(state: any, leadName: string, leadPhone: string, agentName: string): string {
   const lines: string[] = [];
-  lines.push(`🆕 *LEAD QUALIFICADO — ${state?.lead?.nome_completo || state?.lead?.nome || leadName || 'Lead'}*`);
+  lines.push(`🆕 *NOVO LEAD PARA ATENDIMENTO — ${state?.lead?.nome_completo || state?.lead?.nome || leadName || 'Lead'}*`);
   lines.push(`📱 Telefone: ${state?.lead?.telefone || leadPhone}`);
   if (state?.lead?.cidade) lines.push(`🏙️ Cidade: ${state.lead.cidade}`);
   lines.push('');
@@ -1847,6 +2006,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
 
+  const guardedSellerAck = await maybeHandleSellerAck(supabase, waInstance, agent, remoteJid);
+  if (guardedSellerAck.isSeller) {
+    return new Response(JSON.stringify({
+      ok: true,
+      seller_ack: true,
+      confirmed: guardedSellerAck.confirmed || false,
+    }), { headers: corsHeaders });
+  }
+
   // ── DETECÇÃO DE RESPOSTA DE VENDEDOR ────────────────────────────────
   // Se a mensagem vier do número de um vendedor, confirma o transfer pendente,
   // envia mensagem de confirmação e retorna sem deixar o Pedro responder.
@@ -1857,29 +2025,31 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // ter MÚLTIPLOS registros em ai_team_members (um por agente). Sem .limit(1),
   // o .maybeSingle() FALHA quando bate em >1 row e a confirmação do "Ok" fica
   // quebrada — o cron acaba repassando o lead pra outro vendedor.
-  let { data: senderSeller } = await supabase
+  let { data: senderSellers } = await supabase
     .from('ai_team_members')
-    .select('id, name')
+    .select('id, name, whatsapp_number, agent_id, auth_user_id')
     .eq('agent_id', agent.id)
     .eq('is_active', true)
     .ilike('whatsapp_number', `%${senderDigits}`)
     .order('auth_user_id', { ascending: false, nullsFirst: false }) // prefere o registro com login
-    .limit(1)
-    .maybeSingle();
+    .limit(20);
 
   // 2. Fallback: busca vendedor por user_id (vendedores podem não ter agent_id)
-  if (!senderSeller) {
-    const { data: fallbackSeller } = await supabase
-      .from('ai_team_members')
-      .select('id, name')
-      .eq('user_id', agent.user_id)
-      .eq('is_active', true)
-      .ilike('whatsapp_number', `%${senderDigits}`)
-      .order('auth_user_id', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle();
-    senderSeller = fallbackSeller;
-  }
+  const { data: fallbackSellers } = await supabase
+    .from('ai_team_members')
+    .select('id, name, whatsapp_number, agent_id, auth_user_id')
+    .eq('user_id', agent.user_id)
+    .eq('is_active', true)
+    .ilike('whatsapp_number', `%${senderDigits}`)
+    .order('auth_user_id', { ascending: false, nullsFirst: false })
+    .limit(50);
+
+  const sellerById = new Map<string, any>();
+  for (const seller of (senderSellers || [])) sellerById.set(seller.id, seller);
+  for (const seller of (fallbackSellers || [])) sellerById.set(seller.id, seller);
+  senderSellers = [...sellerById.values()];
+  const senderSeller = senderSellers[0] || null;
+  const senderSellerIds = senderSellers.map((seller: any) => seller.id).filter(Boolean);
 
   if (senderSeller) {
     console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} (id=${senderSeller.id}, jid=${remoteJid}) — verificando transfer pendente`);
@@ -1888,8 +2058,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     // onde confirmation_timeout_at já passou mas vendedor está respondendo.
     const { data: pendingTransfer } = await supabase
       .from('ai_lead_transfers')
-      .select('id, lead_id, transfer_status, is_confirmed, created_at')
-      .eq('to_member_id', senderSeller.id)
+      .select('id, lead_id, to_member_id, transfer_status, is_confirmed, created_at')
+      .in('to_member_id', senderSellerIds)
+      .eq('transfer_status', 'pending')
+      .not('lead_id', 'is', null)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -1899,9 +2071,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       console.log(`[Transfer] Nenhum transfer encontrado para vendedor ${senderSeller.name}`);
     }
     // Só confirma se ainda está pending E não confirmado
-    const shouldConfirm = pendingTransfer
-      && pendingTransfer.transfer_status === 'pending'
-      && !pendingTransfer.is_confirmed;
+    const shouldConfirm = pendingTransfer && !pendingTransfer.is_confirmed;
 
     if (shouldConfirm && pendingTransfer) {
       // Confirma o transfer
@@ -1918,11 +2088,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
       await supabase.from('ai_team_members').update({
         last_lead_received_at: now,
-      }).eq('id', senderSeller.id);
+      }).eq('id', pendingTransfer.to_member_id || senderSeller.id);
 
       // Atualiza status do lead para 'em_atendimento' — CRÍTICO pra cron não repassar
       if (pendingTransfer.lead_id) {
         const { error: updLeadErr } = await supabase.from('ai_crm_leads').update({
+          assigned_to_id: pendingTransfer.to_member_id || senderSeller.id,
           status: 'em_atendimento',
           last_interaction_at: now,
         }).eq('id', pendingTransfer.lead_id);
@@ -1981,6 +2152,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   await supabase.from('ai_crm_leads').update({
     instance_id: waInstance.id,
     last_user_reply_at: nowStr,
+    last_interaction_at: nowStr,
     followup_5min_sent: false,
   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
@@ -2075,11 +2247,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "atualizar_etapa_crm",
-        description: "Atualiza o Kanban/CRM conforme a evolução da conversa. Chame esta função secretamente para categorizar o lead. Valores válidos de status: 'interessado' (quando tem interesse inicial), 'qualificado' (quando pediu para comprar ou quer falar com humano) e 'encerrado' (quando não quer comprar). OBS IMPORTANTE: Ao chamar esta função para status 'interessado' ou 'encerrado', VOCÊ DEVE TAMBÉM gerar uma mensagem normal para o cliente. Só encerre a conversa se for status 'qualificado'.",
+        description: "Salva dados e resumo interno do lead sem mover a coluna do Kanban/CRM. Use para registrar evolucao da conversa e, quando fizer sentido, disparar transferencia para vendedor. O funil visual do CRM Pedro permanece em 'novo' ate vendedor ou gerente mover manualmente.",
         parameters: {
           type: "object",
           properties: {
-            status: { type: "string", enum: ["interessado", "qualificado", "encerrado"], description: "A etapa atual do cliente." },
+            status: { type: "string", enum: ["novo", "interessado", "inativo", "pouco_qualificado", "qualificado"], description: "Status interno da automacao. Nao move a coluna do CRM Pedro." },
             resumo: { type: "string", description: "O que o cliente deseja e as informações que você coletou dele até o momento. Seja breve." }
           },
           required: ["status", "resumo"]
@@ -2113,7 +2285,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       type: "function",
       function: {
         name: "transferir_para_vendedor",
-        description: "Transfere o lead para um vendedor humano com briefing estruturado. SÓ chame quando o ESTADO DA CONVERSA mostrar coletados: nome ✅, telefone ✅, modelo de interesse ✅, forma de pagamento ✅. Após chamar, AGUARDE o resultado antes de responder ao cliente. Se a tool retornar success=false, NÃO diga que transferiu — diga que vai chamar o consultor manualmente. Se retornar success=true, diga ao cliente o nome do vendedor que vai atendê-lo.",
+        description: "Transfere o lead para um vendedor humano com briefing estruturado. Chame quando o cliente precisar ir para atendimento humano, mesmo que nem todos os dados tenham sido coletados. A transferencia fica pendente ate o vendedor responder Ok; so depois disso o vendedor e atribuido no CRM.",
         parameters: {
           type: "object",
           properties: {
@@ -2535,6 +2707,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     systemPrompt += `\n\n${stateBlock}`;
   }
 
+  systemPrompt += `\n\nREGRAS ATUAIS DO CRM PEDRO - TRANSFERENCIA:
+- O agente NAO move coluna do Kanban/CRM. Todo lead novo deve permanecer visualmente em "Novo".
+- Use "interessado", "pouco_qualificado" ou "qualificado" apenas como status interno da automacao e para decidir se deve transferir para vendedor.
+- Quando transferir para vendedor, envie resumo completo e mantenha o lead aguardando confirmacao. O campo do vendedor fica "Aguardando" ate o vendedor responder "Ok".
+- Quando o vendedor responder "Ok", ele e atribuido ao lead, mas o lead continua na coluna "Novo". So vendedor ou gerente move o lead para Lead Inativo, Pouco Qualif., Qualificado ou qualquer outra etapa.
+- A regra automatica de 10 minutos tambem nao move a coluna do CRM; ela apenas transfere o lead para a fila de vendedores.
+- Nunca responda vendedores cadastrados como se fossem leads. Se um vendedor responder "Ok", isso e confirmacao de atendimento, nao novo lead.`;
+
   // ── BNDV: Check if user has BNDV integration and append system prompt instruction ──
   let hasBndvIntegration = false;
   try {
@@ -2767,9 +2947,26 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             aiResponse = bndvTextResponse;
             console.log(`[BNDV] Resposta de texto gerada (${aiResponse.length} chars)`);
           }
+        } else {
+          const errText = await bndvFollowupRes.text();
+          console.error(`[BNDV] Follow-up OpenAI erro ${bndvFollowupRes.status}: ${errText.slice(0, 500)}`);
+        }
+
+        if (!aiResponse) {
+          if (bndvResult.success && bndvResult.items.length > 0) {
+            const firstItems = bndvResult.items.slice(0, 3)
+              .map((v: any, idx: number) => `${idx + 1}. ${v.label || `${v.marca || ''} ${v.modelo || ''}`.trim()}${v.preco ? ` - R$ ${Number(v.preco).toLocaleString('pt-BR')}` : ''}`)
+              .join('\n');
+            aiResponse = `Encontrei algumas opções no estoque real:\n\n${firstItems}\n\nVou te mandar as fotos e detalhes para você avaliar.`;
+          } else {
+            aiResponse = `Consultei o estoque real agora e não encontrei uma opção exata com esses dados. Me fala se você aceita ver modelos parecidos ou uma faixa de valor próxima?`;
+          }
         }
       } catch (bndvErr) {
         console.error('[BNDV] Erro ao processar tool call:', bndvErr);
+        if (!aiResponse) {
+          aiResponse = `Estou com uma instabilidade ao consultar o estoque agora. Me confirma o modelo ou faixa de valor que eu verifico as opções mais próximas para você.`;
+        }
       }
     }
 
@@ -2791,18 +2988,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         if (!st.negociacao?.forma_pagamento) missing.push('forma_de_pagamento');
 
         if (missing.length > 0) {
-          transferResult = {
-            success: false,
-            error: 'checklist_incompleto',
-            missing_fields: missing,
-            message: `Não posso transferir ainda — faltam: ${missing.join(', ')}. Pergunte ao cliente antes de tentar de novo.`,
-          };
-          console.warn(`[Transfer-Tool] BLOQUEADO — checklist incompleto: ${missing.join(',')}`);
-        } else {
-          // 2. Buscar lead row
+          console.warn(`[Transfer-Tool] Checklist parcial (${missing.join(',')}). Transferindo mesmo assim com o resumo disponivel.`);
+        }
+        // 2. Buscar lead row
           const { data: leadRow } = await supabase
             .from('ai_crm_leads')
-            .select('id, assigned_to_id')
+            .select('id, assigned_to_id, status')
             .eq('agent_id', agent.id)
             .eq('remote_jid', remoteJid)
             .maybeSingle();
@@ -2810,6 +3001,27 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           if (!leadRow?.id) {
             transferResult = { success: false, error: 'lead_not_found' };
           } else {
+            const crmStage = normalizePedroCrmStage(
+              transferArgs.classificacao || leadRow.status,
+              'qualificado',
+            );
+            const { data: existingPending } = await supabase
+              .from('ai_lead_transfers')
+              .select('id')
+              .eq('lead_id', leadRow.id)
+              .eq('transfer_status', 'pending')
+              .eq('is_confirmed', false)
+              .maybeSingle();
+
+            if (existingPending) {
+              transferResult = {
+                success: true,
+                already_pending: true,
+                vendedor_nome: 'vendedor',
+                message: 'Este lead ja esta aguardando confirmacao de um vendedor.',
+              };
+              console.log(`[Transfer-Tool] Lead ${leadRow.id} ja tem transferencia pendente.`);
+            } else {
             // 3. Selecionar vendedor — preferência: assigned_to_id existente (lead retornou)
             let chosenSeller: any = null;
             if (leadRow.assigned_to_id) {
@@ -2847,7 +3059,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 if (t.to_member_id && !lastMap.has(t.to_member_id))
                   lastMap.set(t.to_member_id, new Date(t.created_at).getTime());
               }
-              const activeSellers = sellers || [];
+              const activeSellers = uniqueSellersByPhone(sellers || []);
               const neverReceived = activeSellers.filter((s: any) => !lastMap.has(s.id));
               chosenSeller = neverReceived.length > 0
                 ? neverReceived[0]
@@ -2864,7 +3076,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 user_id: agent.user_id,
                 lead_id: leadRow.id,
                 to_member_id: chosenSeller.id,
-                transfer_reason: leadRow.assigned_to_id === chosenSeller.id ? 'returning_lead' : 'qualified_handoff',
+                transfer_reason: leadRow.assigned_to_id === chosenSeller.id ? 'returning_lead' : `${crmStage}_handoff`,
                 notes: transferArgs.resumo_breve || transferArgs.motivo || `Qualificado pela tool transferir_para_vendedor`,
                 transfer_status: 'pending',
                 is_confirmed: false,
@@ -2873,8 +3085,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
               await supabase.from('ai_crm_leads').update({
                 status: 'transferido',
-                status_crm: 'qualificado',
-                assigned_to_id: chosenSeller.id,
+                assigned_to_id: null,
                 summary: transferArgs.resumo_breve || null,
               }).eq('id', leadRow.id);
 
@@ -2922,6 +3133,34 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
               // 6. Atualizar state com flags de transferência
               try {
+                if (agent.gerente_phone) {
+                  try {
+                    const transferredAt = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+                    let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
+                    if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
+
+                    const gerenteMsg =
+                      `RELATORIO DE LEAD - ${agent.name}\n\n` +
+                      `Horario: ${transferredAt}\n` +
+                      `Lead: ${conversationState?.lead?.nome_completo || conversationState?.lead?.nome || pushName || 'Lead'}\n` +
+                      `Telefone: wa.me/${phoneNumber}\n` +
+                      `Classificacao IA: ${crmStage}\n` +
+                      `${transferArgs.resumo_breve ? `Resumo: ${String(transferArgs.resumo_breve).substring(0, 300)}\n` : ''}` +
+                      `\nEnviado para: ${chosenSeller.name}\n` +
+                      `WhatsApp vendedor: ${chosenSeller.whatsapp_number || 'sem numero'}\n\n` +
+                      `_Gerado automaticamente pelo Pedro SDR_`;
+
+                    const gerenteRes = await fetch(`${baseUrl}/send/text`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'token': instKey },
+                      body: JSON.stringify({ number: gerenteNum, text: gerenteMsg }),
+                    });
+                    console.log(`[Transfer-Tool] WA gerente -> HTTP ${gerenteRes.status}`);
+                  } catch (gerenteErr) {
+                    console.error('[Transfer-Tool] Falha ao notificar gerente:', gerenteErr);
+                  }
+                }
+
                 const updatedState = deepMerge(conversationState || {}, {
                   atendimento: {
                     transferencia_solicitada: true,
@@ -2986,6 +3225,16 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           const followupData = await followupRes.json();
           const finalText = followupData.choices?.[0]?.message?.content || '';
           if (finalText) aiResponse = finalText;
+        } else {
+          const errText = await followupRes.text();
+          console.error(`[Transfer-Tool] follow-up OpenAI erro ${followupRes.status}: ${errText.slice(0, 500)}`);
+          if (transferResult.success) {
+            aiResponse = `Pronto! Acabei de passar todos os seus dados para ${transferResult.vendedor_nome}. Ele vai te chamar aqui em instantes para dar continuidade.`;
+          } else if (transferResult.error === 'checklist_incompleto') {
+            aiResponse = `Antes de te passar para o consultor, preciso confirmar: ${transferResult.missing_fields?.join(', ')}.`;
+          } else {
+            aiResponse = `Um momento, vou acionar nosso consultor para te atender.`;
+          }
         }
       } catch (followupErr) {
         console.error('[Transfer-Tool] erro no follow-up OpenAI:', followupErr);
@@ -3006,26 +3255,29 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       try {
         const args = JSON.parse(toolCall.function.arguments);
 
-        // 1. Atualizar banco de dados CRM (arrastar cartão para a coluna correta)
-        // Mantém status_crm sincronizado com status, exceto se já estiver
-        // explicitamente definido pelo vendedor (negociacao, fechado, etc.)
+        // 1. Salvar status interno e resumo sem mover a coluna do CRM.
+        // Nao sincroniza com status_crm: coluna visual do CRM e manual.
         const statusCrmMap: Record<string, string> = {
+          novo: 'novo',
           interessado: 'interessado',
           pouco_qualificado: 'pouco_qualificado',
-          medio_qualificado: 'medio_qualificado',
+          medio_qualificado: 'pouco_qualificado',
           qualificado: 'qualificado',
+          encerrado: 'pouco_qualificado',
+          inativo: 'inativo',
         };
+        const rawStatus = String(args.status || 'interessado').trim();
+        const nextCrmStatus = statusCrmMap[rawStatus] || normalizePedroCrmStage(rawStatus, 'pouco_qualificado');
         await supabase.from('ai_crm_leads').update({
-          status: args.status,
-          status_crm: statusCrmMap[args.status] || args.status,
+          status: nextCrmStatus,
           summary: args.resumo,
           last_interaction_at: new Date().toISOString()
         }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
-        console.log(`[CRM] Lead ${phoneNumber} movido para: ${args.status}`);
+        console.log(`[CRM] Lead ${phoneNumber} status interno: ${nextCrmStatus}; status_crm preservado.`);
 
         // 2. Alertar vendedor SE status indicar transferencia
-        if (args.status === 'qualificado' || args.status === 'medio_qualificado' || args.status === 'pouco_qualificado') {
+        if (isPedroTransferStage(nextCrmStatus)) {
           try {
             console.log(`[Transfer] Qualificado. agent.id=${agent.id} agent.user_id=${agent.user_id}`);
 
@@ -3091,7 +3343,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
                 await supabase.from('ai_crm_leads').update({
                   status: 'transferido',
-                  assigned_to_id: returnSeller.id,
+                  assigned_to_id: null,
                 }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
                 let sellerNum = returnSeller.whatsapp_number.replace(/\D/g, '');
@@ -3140,18 +3392,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   }
                 }
 
-                // Atualiza CRM do Marcos com novo resumo
-                try {
-                  const { data: crmExisting } = await supabase
-                    .from('crm_leads').select('id')
-                    .eq('user_id', agent.user_id).eq('phone', crmPhone).maybeSingle();
-                  const crmNotes = `Vendedor: ${returnSeller.name}\nAgente IA: ${agent.name}${args.resumo ? `\n\nRetorno — ${args.resumo}` : ''}`;
-                  if (crmExisting?.id) {
-                    await supabase.from('crm_leads').update({ notes: crmNotes }).eq('id', crmExisting.id);
-                  }
-                } catch (crmErr) {
-                  console.error('[Transfer] Erro ao atualizar CRM Marcos (retorno):', crmErr);
-                }
+                // CRM do Marcos e manual/isolado; retorno do Pedro nao atualiza crm_leads.
 
               } else {
                 // ── LEAD NOVO: round-robin normal ─────────────────────────
@@ -3182,7 +3423,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   if (t.to_member_id && !lastMap.has(t.to_member_id))
                     lastMap.set(t.to_member_id, new Date(t.created_at).getTime());
                 }
-                const activeSellers = sellers || [];
+                const activeSellers = uniqueSellersByPhone(sellers || []);
                 const neverReceived = activeSellers.filter((s: any) => !lastMap.has(s.id));
                 const nextSeller = neverReceived.length > 0
                   ? neverReceived[0]
@@ -3195,8 +3436,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     user_id: agent.user_id,
                     lead_id: leadRow?.id || null,
                     to_member_id: nextSeller.id,
-                    transfer_reason: 'round_robin',
-                    notes: `Qualificado por ${agent.name}`,
+                    transfer_reason: nextCrmStatus,
+                    notes: `${nextCrmStatus} por ${agent.name}`,
                     transfer_status: 'pending',
                     is_confirmed: false,
                     confirmation_timeout_at: timeoutAt,
@@ -3204,14 +3445,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
                   await supabase.from('ai_crm_leads').update({
                     status: 'transferido',
-                    assigned_to_id: nextSeller.id,
+                    assigned_to_id: null,
                   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
                   let sellerNum = nextSeller.whatsapp_number.replace(/\D/g, '');
                   if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
 
                   const sellerMsg =
-                    `🚨 *LEAD QUALIFICADO — VOCÊ É O PRÓXIMO DA FILA*\n\n` +
+                    `🚨 *NOVO LEAD PARA ATENDIMENTO — VOCÊ É O PRÓXIMO DA FILA*\n\n` +
                     `*Agente IA:* ${agent.name}\n` +
                     `*Nome:* ${pushName}\n` +
                     `*Contato:* ${phoneNumber}\n\n` +
@@ -3238,7 +3479,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                         `🕐 *Horário:* ${transferredAt}\n\n` +
                         `👤 *Lead:* ${pushName}\n` +
                         `📱 *Telefone:* wa.me/${phoneNumber}\n` +
-                        `📊 *Status:* qualificado\n` +
+                        `📊 *Classificacao IA:* ${nextCrmStatus}\n` +
+                        `📌 *CRM:* permanece em Novo ate vendedor/gerente mover\n` +
                         `${args.resumo ? `\n📝 *Resumo:* ${args.resumo.substring(0, 300)}\n` : ''}` +
                         `\n━━━━━━━━━━━━━━━━━━━━\n\n` +
                         `🎯 *Enviado para:* ${nextSeller.name}\n` +
@@ -3257,41 +3499,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     }
                   }
 
-                  // Push CRM Marcos
-                  try {
-                    const { data: firstStage } = await supabase
-                      .from('crm_pipeline_stages').select('id')
-                      .eq('user_id', agent.user_id)
-                      .order('position', { ascending: true }).limit(1).maybeSingle();
-
-                    const { data: crmExisting } = await supabase
-                      .from('crm_leads').select('id')
-                      .eq('user_id', agent.user_id).eq('phone', crmPhone).maybeSingle();
-
-                    const crmNotes = `Vendedor: ${nextSeller.name}\nAgente IA: ${agent.name}${args.resumo ? `\n\nResumo: ${args.resumo}` : ''}`;
-                    const crmTags  = ['Pedro SDR', nextSeller.name];
-
-                    if (crmExisting?.id) {
-                      await supabase.from('crm_leads')
-                        .update({ notes: crmNotes, tags: crmTags }).eq('id', crmExisting.id);
-                    } else {
-                      const { data: maxPosRow } = await supabase
-                        .from('crm_leads').select('position')
-                        .eq('user_id', agent.user_id).eq('stage_id', firstStage?.id || null)
-                        .order('position', { ascending: false }).limit(1).maybeSingle();
-                      await supabase.from('crm_leads').insert({
-                        user_id: agent.user_id, stage_id: firstStage?.id || null,
-                        name: pushName, phone: crmPhone,
-                        source: `Pedro SDR — ${agent.name}`,
-                        notes: crmNotes, tags: crmTags,
-                        value: 0, currency: 'BRL', priority: 'medium',
-                        position: (maxPosRow?.position ?? -1) + 1,
-                      });
-                    }
-                    console.log(`[Transfer] Lead ${pushName} (${crmPhone}) → CRM Marcos (${nextSeller.name})`);
-                  } catch (crmErr) {
-                    console.error('[Transfer] Erro ao enviar lead ao CRM do Marcos:', crmErr);
-                  }
+                  // CRM do Marcos e manual/isolado; transferencia do Pedro nao cria lead em crm_leads.
                 } else {
                   console.warn(`[Transfer] ⚠️ Nenhum vendedor ativo. agent_id=${agent.id} user_id=${agent.user_id}`);
                 }
@@ -3325,15 +3533,25 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             const secondData = await secondRes.json();
             aiResponse = secondData.choices?.[0]?.message?.content || '';
             console.log(`[Webhook] Resposta final capturada: ${aiResponse}`);
+          } else {
+            const errText = await secondRes.text();
+            console.error(`[Webhook] Second OpenAI erro ${secondRes.status}: ${errText.slice(0, 500)}`);
+            aiResponse = `Claro! Me conta qual modelo ou tipo de carro você está procurando para eu te ajudar melhor.`;
           }
         }
       } catch (err) {
         console.error("[Webhook] Erro no Handoff/CRM", err)
+        if (!aiResponse) {
+          aiResponse = `Claro! Me conta qual modelo ou tipo de carro você está procurando para eu te ajudar melhor.`;
+        }
       }
     }
   }
 
-  if (!aiResponse) return new Response('No AI Response', { headers: corsHeaders })
+  if (!aiResponse) {
+    console.warn('[Webhook] Sem resposta final da IA. Usando fallback seguro para nao deixar o lead sem retorno.');
+    aiResponse = 'Certo! Me conta um pouco mais sobre o que você procura para eu te ajudar melhor.';
+  }
 
   // Salvar no histórico
   await supabase.from('wa_chat_history').insert({

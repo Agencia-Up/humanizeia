@@ -6,6 +6,163 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function onlyDigits(value: string | null | undefined): string {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function phoneMatchKeys(value: string | null | undefined): string[] {
+  const digits = onlyDigits(value);
+  const keys = new Set<string>();
+  if (!digits) return [];
+
+  const addBrazilVariants = (raw: string) => {
+    if (!raw) return;
+    keys.add(raw);
+
+    const national = raw.startsWith("55") && raw.length > 11 ? raw.slice(2) : raw;
+    if (national !== raw) keys.add(national);
+
+    if (national.length === 10) {
+      // Some WhatsApp providers omit the mobile 9 after the DDD.
+      const withNinthDigit = `${national.slice(0, 2)}9${national.slice(2)}`;
+      keys.add(withNinthDigit);
+      keys.add(`55${national}`);
+      keys.add(`55${withNinthDigit}`);
+    } else if (national.length === 11 && national[2] === "9") {
+      const withoutNinthDigit = `${national.slice(0, 2)}${national.slice(3)}`;
+      keys.add(withoutNinthDigit);
+      keys.add(`55${national}`);
+      keys.add(`55${withoutNinthDigit}`);
+    }
+  };
+
+  addBrazilVariants(digits);
+  if (digits.startsWith("55") && digits.length > 11) addBrazilVariants(digits.slice(2));
+  if (digits.length >= 11) keys.add(digits.slice(-11));
+  if (digits.length >= 10) keys.add(digits.slice(-10));
+  return [...keys].filter((key) => key.length >= 10);
+}
+
+function phonesMatch(left: string | null | undefined, right: string | null | undefined): boolean {
+  const leftKeys = phoneMatchKeys(left);
+  const rightKeys = new Set(phoneMatchKeys(right));
+  return leftKeys.some((key) => rightKeys.has(key));
+}
+
+async function getActiveAgentForInstance(supabase: any, instance: any) {
+  const { data: byInstanceIds } = await supabase
+    .from("wa_ai_agents")
+    .select("id, name, user_id")
+    .eq("user_id", instance.user_id)
+    .eq("is_active", true)
+    .contains("instance_ids", [instance.id])
+    .limit(1)
+    .maybeSingle();
+
+  if (byInstanceIds) return byInstanceIds;
+
+  const { data: byInstanceId } = await supabase
+    .from("wa_ai_agents")
+    .select("id, name, user_id")
+    .eq("user_id", instance.user_id)
+    .eq("is_active", true)
+    .eq("instance_id", instance.id)
+    .limit(1)
+    .maybeSingle();
+
+  return byInstanceId || null;
+}
+
+async function maybeHandleSellerTransferAck(
+  supabase: any,
+  instance: any,
+  instanceName: string,
+  phone: string,
+) {
+  const agent = await getActiveAgentForInstance(supabase, instance);
+  const ownerId = agent?.user_id || instance.user_id;
+
+  const { data: sellers } = await supabase
+    .from("ai_team_members")
+    .select("id, name, whatsapp_number, agent_id, auth_user_id")
+    .eq("user_id", ownerId)
+    .eq("is_active", true)
+    .limit(500);
+
+  const matches = (sellers || [])
+    .filter((seller: any) => phonesMatch(seller.whatsapp_number, phone))
+    .sort((a: any, b: any) => {
+      const aAgent = agent?.id && a.agent_id === agent.id ? 1 : 0;
+      const bAgent = agent?.id && b.agent_id === agent.id ? 1 : 0;
+      if (aAgent !== bAgent) return bAgent - aAgent;
+      return Number(Boolean(b.auth_user_id)) - Number(Boolean(a.auth_user_id));
+    });
+
+  if (matches.length === 0) return { isSeller: false };
+
+  const seller = matches[0];
+  const sellerIds = matches.map((row: any) => row.id).filter(Boolean);
+  console.log(`[wa-inbox-webhook] Seller message detected: ${seller.name} (${phone}). Blocking IA/lead creation.`);
+
+  const { data: pendingTransfer } = await supabase
+    .from("ai_lead_transfers")
+    .select("id, lead_id, to_member_id, transfer_status, is_confirmed, created_at")
+    .in("to_member_id", sellerIds)
+    .eq("transfer_status", "pending")
+    .eq("is_confirmed", false)
+    .not("lead_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!pendingTransfer) {
+    console.log(`[wa-inbox-webhook] Seller ${seller.name} has no pending transfer. Message ignored by IA.`);
+    return { isSeller: true, confirmed: false };
+  }
+
+  const now = new Date().toISOString();
+  await supabase
+    .from("ai_lead_transfers")
+    .update({ transfer_status: "confirmed", is_confirmed: true, confirmed_at: now })
+    .eq("id", pendingTransfer.id);
+
+  await supabase
+    .from("ai_team_members")
+    .update({ last_lead_received_at: now })
+    .eq("id", pendingTransfer.to_member_id || seller.id);
+
+  await supabase
+    .from("ai_crm_leads")
+    .update({
+      assigned_to_id: pendingTransfer.to_member_id || seller.id,
+      status: "em_atendimento",
+      last_interaction_at: now,
+    })
+    .eq("id", pendingTransfer.lead_id);
+
+  try {
+    const baseUrl = String(instance.api_url || "").replace(/\/$/, "");
+    const instKey = instance.api_key_encrypted || "";
+    let sellerPhone = onlyDigits(seller.whatsapp_number || phone);
+    if (sellerPhone.length === 10 || sellerPhone.length === 11) sellerPhone = `55${sellerPhone}`;
+    if (baseUrl && instKey && sellerPhone) {
+      await fetch(`${baseUrl}/send/text`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", token: instKey, apikey: instKey },
+        body: JSON.stringify({
+          number: sellerPhone,
+          text: "Atendimento confirmado. O lead foi movido para voce no CRM.",
+        }),
+      });
+    }
+  } catch (err) {
+    console.warn("[wa-inbox-webhook] Could not send seller confirmation:", err);
+  }
+
+  console.log(`[wa-inbox-webhook] Transfer ${pendingTransfer.id} confirmed by seller ${seller.name}`);
+  return { isSeller: true, confirmed: true, transferId: pendingTransfer.id };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -258,7 +415,7 @@ async function handleEvolutionWebhook(supabase: any, body: any) {
 
   const { data: instance, error: instErr } = await supabase
     .from("wa_instances")
-    .select("id, user_id")
+    .select("*")
     .eq("instance_name", instanceName)
     .single();
 
@@ -403,6 +560,11 @@ async function processEvolutionIncomingMessage(
     console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
   }
 
+  const sellerAck = await maybeHandleSellerTransferAck(supabase, instance, instanceName, phone);
+  if (sellerAck.isSeller) {
+    return null;
+  }
+
   const { data: inboxMsg, error: insertErr } = await supabase
     .from("wa_inbox")
     .insert({
@@ -510,6 +672,18 @@ function normalizePhone(value: string | null | undefined): string {
   return (value || "").replace(/\D/g, "");
 }
 
+function normalizePedroCrmStage(status: string | null | undefined, fallback = "qualificado"): string {
+  const raw = String(status || "").trim();
+  if (raw === "medio_qualificado") return "pouco_qualificado";
+  if (raw === "encerrado") return "pouco_qualificado";
+  if (raw === "inativo" || raw === "pouco_qualificado" || raw === "qualificado") return raw;
+  return fallback;
+}
+
+function isPedroTransferStage(status: string | null | undefined): boolean {
+  return ["inativo", "pouco_qualificado", "qualificado"].includes(String(status || "").trim());
+}
+
 const EVOLUTION_INCOMING_EVENTS = new Set([
   "messages.upsert",
   "messages.set",
@@ -556,7 +730,14 @@ function parseStoredIntegrationCredentials(raw: string | null) {
 }
 
 function normalizeBndvText(value?: string | null) {
-  return String(value || "").toLowerCase().trim();
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/-/g, " ")
+    .replace(/[^\w\s.]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function bndvIncludes(haystack?: string | null, needle?: string | null) {
@@ -564,10 +745,8 @@ function bndvIncludes(haystack?: string | null, needle?: string | null) {
   return normalizeBndvText(haystack).includes(normalizeBndvText(needle));
 }
 
-function bndvMatchesQuery(vehicle: any, query?: string | null) {
-  if (!query || !String(query).trim()) return true;
-
-  const indexed = [
+function buildBndvVehicleText(vehicle: any) {
+  return normalizeBndvText([
     vehicle?.markName,
     vehicle?.modelName,
     vehicle?.versionName,
@@ -575,9 +754,53 @@ function bndvMatchesQuery(vehicle: any, query?: string | null) {
     vehicle?.fuelName,
     vehicle?.transmissionName,
     vehicle?.year?.toString?.(),
-  ].filter(Boolean).join(" ").toLowerCase();
+  ].filter(Boolean).join(" "));
+}
 
-  return indexed.includes(normalizeBndvText(query));
+function inferRequestedVehicleType(filters: any): "carro" | "moto" | "qualquer" {
+  const explicit = normalizeBndvText(filters?.tipo_veiculo || filters?.tipo || filters?.categoria);
+  if (["carro", "moto", "qualquer"].includes(explicit)) return explicit as "carro" | "moto" | "qualquer";
+  if (["automovel", "automoveis", "veiculo", "veiculos", "suv", "sedan", "hatch", "picape", "pickup", "caminhonete"].includes(explicit)) return "carro";
+  if (["motocicleta", "motocicletas", "scooter"].includes(explicit)) return "moto";
+
+  const searchText = normalizeBndvText([
+    filters?.query,
+    filters?.ad_context,
+    filters?.contexto_anuncio,
+    filters?.marca,
+    filters?.modelo,
+    filters?.versao,
+  ].filter(Boolean).join(" "));
+
+  if (/\b(moto|motos|motocicleta|motocicletas|scooter|biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|pop 100|pop 110|elite)\b/.test(searchText)) {
+    return "moto";
+  }
+
+  if (/\b(carro|carros|automovel|automoveis|veiculo|veiculos|suv|sedan|hatch|picape|pickup|caminhonete|camionete)\b/.test(searchText)) {
+    return "carro";
+  }
+
+  return "qualquer";
+}
+
+function isLikelyMotorcycle(vehicle: any) {
+  const indexed = buildBndvVehicleText(vehicle);
+  const motorcycleBrands = /\b(yamaha|kawasaki|shineray|harley|davidson|dafra|triumph|ducati|ktm|bajaj|haojue|royal enfield)\b/;
+  const motorcycleModels = /\b(biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|cb 300|cb300|cb 500|cb500|cbr|pop 100|pop 110|elite|scooter|crypton|mt 03|mt03)\b/;
+  return motorcycleModels.test(indexed) || motorcycleBrands.test(indexed);
+}
+
+function passesRequestedVehicleType(vehicle: any, requestedType: "carro" | "moto" | "qualquer") {
+  if (requestedType === "qualquer") return true;
+  const moto = isLikelyMotorcycle(vehicle);
+  if (requestedType === "moto") return moto;
+  return !moto;
+}
+
+function bndvMatchesQuery(vehicle: any, query?: string | null) {
+  if (!query || !String(query).trim()) return true;
+
+  return buildBndvVehicleText(vehicle).includes(normalizeBndvText(query));
 }
 
 async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
@@ -658,9 +881,11 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     preco_max,
     km_max,
     limite,
+    tipo_veiculo,
   } = filters || {};
 
   const items = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
+  const requestedVehicleType = inferRequestedVehicleType({ ...filters, tipo_veiculo });
   const filtered = items
     .filter((vehicle: any) => {
       const year = Number(vehicle?.year || 0);
@@ -668,6 +893,7 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
       const mileage = Number(vehicle?.km || 0);
 
       return (
+        passesRequestedVehicleType(vehicle, requestedVehicleType) &&
         bndvMatchesQuery(vehicle, query) &&
         bndvIncludes(vehicle?.markName, marca) &&
         bndvIncludes(vehicle?.modelName, modelo) &&
@@ -720,6 +946,7 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
   return {
     success: true,
     total: filtered.length,
+    tipo_veiculo_aplicado: requestedVehicleType,
     items: capped,
   };
 }
@@ -1375,8 +1602,9 @@ Gere uma resposta DIFERENTE de todas as anteriores em estrutura, abertura e voca
     const crmToolInstruction = `
 
 FERRAMENTA DE CRM - COLETA DE DADOS E QUALIFICACAO:
-Voce tem acesso a ferramenta "atualizar_etapa_crm" para salvar dados do cliente e atualizar o status do lead.
+Voce tem acesso a ferramenta "atualizar_etapa_crm" para salvar dados do cliente e atualizar o status interno do lead.
 Esta ferramenta agora aceita CAMPOS ESTRUTURADOS alem do status e resumo.
+IMPORTANTE: esta ferramenta NAO move a coluna visual do CRM Pedro. A coluna permanece em "Novo" ate vendedor ou gerente mover manualmente.
 
 REGRA CRITICA - COLETA DE DADOS DO CLIENTE:
 Voce DEVE coletar dados do cliente ao longo da conversa e salvar usando a ferramenta.
@@ -1398,7 +1626,7 @@ QUANDO CHAMAR A FERRAMENTA:
 - Cliente deu dados de financiamento (CPF, entrada, parcela) -> salve cada dado conforme coletar
 - Cliente pronto para comprar/visitar/falar com consultor -> status: "qualificado", etapa_funil: "fechamento"
 - Cliente sem interesse, nao respondeu, sumiu -> status: "pouco_qualificado" (transfere para vendedor)
-- Cliente disse "vou ver", "vou pensar", "tenho outras opcoes", parou de falar no meio -> status: "medio_qualificado" (transfere para vendedor)
+- Cliente disse "vou ver", "vou pensar", "tenho outras opcoes", parou de falar no meio -> status: "pouco_qualificado" (transfere para vendedor)
 - NUNCA use status "encerrado". NAO EXISTE esse status.
 
 REGRA CRITICA DE TRANSFERENCIA (PRIORIDADE MAXIMA):
@@ -1408,7 +1636,7 @@ TODA conversa que chega ao fim DEVE ser transferida para o vendedor. Existem 3 n
    Exemplos: mandou "oi" e sumiu, nao respondeu apos a IA perguntar, disse "nao tenho interesse".
    Temperatura: "frio". SEMPRE transfere para vendedor.
 
-2. "medio_qualificado" — Lead MORNO que conversou mas nao avancou para dados ou visita.
+2. "pouco_qualificado" — Lead MORNO/FRIO que conversou mas nao avancou para dados, visita, pagamento ou negociacao.
    Exemplos: "vou ver", "vou pensar", "volto depois", "tenho outras opcoes", "vou comparar", parou de responder no meio da conversa, fez perguntas mas nao quis avancar, despedida generica ("valeu", "obrigado", "tchau", "falou").
    Temperatura: "morno". SEMPRE transfere para vendedor.
 
@@ -1420,7 +1648,7 @@ A IA NUNCA encerra conversa sozinha. O vendedor SEMPRE recebe o lead, com o resu
 NAO espere coletar todos os dados antes de transferir. Transfira PRIMEIRO, o vendedor coleta o resto.
 
 CAMPOS DISPONIVEIS NA FERRAMENTA (todos opcionais exceto status e resumo):
-- status: "novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado"
+- status: "novo", "interessado", "inativo", "pouco_qualificado", "qualificado"
 - resumo: texto livre com resumo da conversa
 - nome_cliente: nome REAL do cliente (NAO o nome do WhatsApp)
 - cidade: cidade do cliente
@@ -1447,8 +1675,16 @@ Se o cliente se despedir sem dar dados, chame a ferramenta com status "pouco_qua
 
 QUANDO TRANSFERIR (qualquer status de transferencia):
 - "pouco_qualificado": preencha resumo com o que aconteceu, temperatura "frio". Informe ao cliente que um consultor pode ajudar quando ele quiser.
-- "medio_qualificado": preencha resumo detalhado, temperatura "morno". Informe ao cliente que um consultor vai entrar em contato.
+- "pouco_qualificado": preencha resumo detalhado, temperatura "morno" ou "frio". Informe ao cliente que um consultor vai entrar em contato ou pode ajudar quando ele quiser.
 - "qualificado": certifique-se de que coletou nome_cliente, cidade, veiculo_interesse, forma_pagamento. Preencha resumo com TUDO. Temperatura "quente". Informe que um consultor especialista vai continuar o atendimento.
+
+REGRAS ATUAIS DO CRM PEDRO - TRANSFERENCIA:
+- O agente NAO move coluna do Kanban/CRM. Todo lead novo deve permanecer visualmente em "Novo".
+- Use "interessado", "pouco_qualificado" ou "qualificado" apenas como status interno da automacao e para decidir se deve transferir para vendedor.
+- Quando transferir para vendedor, envie resumo completo e mantenha o lead aguardando confirmacao. O campo do vendedor fica "Aguardando" ate o vendedor responder "Ok".
+- Quando o vendedor responder "Ok", ele e atribuido ao lead, mas o lead continua na coluna "Novo". So vendedor ou gerente move o lead para Lead Inativo, Pouco Qualif., Qualificado ou qualquer outra etapa.
+- A regra automatica de 10 minutos tambem nao move a coluna do CRM; ela apenas transfere o lead para a fila de vendedores.
+- Nunca responda vendedores cadastrados como se fossem leads. Se um vendedor responder "Ok", isso e confirmacao de atendimento, nao novo lead.
 
 FERRAMENTA DE ESTOQUE BNDV:
 Voce tambem tem acesso a ferramenta "consultar_estoque_bndv".
@@ -1461,6 +1697,9 @@ USE esta ferramenta sempre que o cliente perguntar sobre:
 IMPORTANTE:
 - Nunca invente estoque ou preco sem consultar a ferramenta.
 - Se nao encontrar veiculos, informe claramente e sugira alternativas do MESMO SEGMENTO.
+- Respeite o tipo pedido pelo cliente: se ele pedir "carro(s)", consulte com tipo_veiculo="carro" e NAO ofereca motos. Se ele pedir "moto(s)", consulte com tipo_veiculo="moto" e NAO ofereca carros.
+- Se o cliente pedir apenas uma faixa de preco para carros, use preco_max e tipo_veiculo="carro".
+- Se o cliente mencionar um modelo especifico, use marca/modelo/query e mantenha o tipo coerente com o pedido.
 
 FOTOS DE VEICULOS:
 Quando a consulta de estoque retornar veiculos, cada veiculo tera um campo "fotos" com URLs de imagens reais.
@@ -1507,14 +1746,14 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
         type: "function",
         function: {
           name: "atualizar_etapa_crm",
-          description: "Atualiza o status do lead no CRM, salva dados estruturados do cliente e registra um resumo. Use SEMPRE que coletar qualquer informacao nova do cliente (nome, cidade, veiculo, pagamento, etc). Pode chamar multiplas vezes na mesma conversa conforme coletar mais dados.",
+          description: "Salva status interno, dados estruturados do cliente e resumo sem mover a coluna do Kanban/CRM. Use SEMPRE que coletar qualquer informacao nova. A coluna visual do CRM Pedro fica em Novo ate vendedor ou gerente mover manualmente.",
           parameters: {
             type: "object",
             properties: {
               status: {
                 type: "string",
-                enum: ["novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado"],
-                description: "Status do lead: novo (primeiro contato), interessado (demonstrou interesse), pouco_qualificado (nao respondeu/sumiu/sem interesse — transfere), medio_qualificado (vou ver/vou pensar/despedida — transfere), qualificado (quer comprar/visitar/tem entrada — transfere)"
+                enum: ["novo", "interessado", "inativo", "pouco_qualificado", "qualificado"],
+                description: "Status interno da automacao. Nao move a coluna do CRM Pedro."
               },
               resumo: {
                 type: "string",
@@ -1600,6 +1839,11 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
               combustivel: { type: "string", description: "CombustÃ­vel desejado, ex: Flex, Diesel." },
               cambio: { type: "string", description: "Tipo de cÃ¢mbio, ex: AutomÃ¡tico, Manual." },
               cor: { type: "string", description: "Cor desejada, se o cliente pedir." },
+              tipo_veiculo: {
+                type: "string",
+                enum: ["carro", "moto", "qualquer"],
+                description: "Tipo de veiculo pedido pelo cliente. Use 'carro' para carro/carros/veiculo automotivo, 'moto' para moto/motocicleta/scooter, e 'qualquer' apenas se o cliente aceitar ambos."
+              },
               ano_min: { type: "number", description: "Ano mÃ­nimo desejado." },
               ano_max: { type: "number", description: "Ano mÃ¡ximo desejado." },
               preco_max: { type: "number", description: "PreÃ§o mÃ¡ximo desejado pelo cliente." },
@@ -1844,6 +2088,12 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
         try {
           if (toolCall.function?.name === "atualizar_etapa_crm") {
             const args = JSON.parse(toolCall.function.arguments);
+            const rawStatus = String(args.status || "interessado").trim();
+            const nextCrmStatus =
+              rawStatus === "novo" || rawStatus === "interessado"
+                ? rawStatus
+                : normalizePedroCrmStage(rawStatus, "pouco_qualificado");
+            args.status = nextCrmStatus;
             console.log(`[ai-agent-crm] Lead ${phone} -> status: ${args.status}, fields: ${Object.keys(args).join(",")}`);
 
             // Build structured update data from all available fields
@@ -1892,7 +2142,7 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
               });
             }
 
-            if (args.status === "qualificado" || args.status === "medio_qualificado" || args.status === "pouco_qualificado") {
+            if (isPedroTransferStage(args.status)) {
               await transferLeadToSeller(supabase, instance, agent, phone, pushName, args.resumo, historyMessages);
             }
 
@@ -2280,7 +2530,7 @@ async function transferLeadToSeller(
     // 1.5. Fetch full lead data with structured fields for the notification
     const { data: leadRecord } = await supabase
       .from("ai_crm_leads")
-      .select("id, status, assigned_to_id, client_name, client_city, vehicle_interest, payment_method, budget, trade_in_vehicle, down_payment, desired_installment, cpf, birth_date, funnel_stage, temperature, visit_scheduled, additional_notes")
+      .select("id, status, status_crm, assigned_to_id, client_name, client_city, vehicle_interest, payment_method, budget, trade_in_vehicle, down_payment, desired_installment, cpf, birth_date, funnel_stage, temperature, visit_scheduled, additional_notes")
       .eq("agent_id", agent.id)
       .eq("remote_jid", phone)
       .maybeSingle();
@@ -2291,12 +2541,27 @@ async function transferLeadToSeller(
        return;
     }
 
+    if (leadRecord) {
+      const { data: existingPending } = await supabase
+        .from("ai_lead_transfers")
+        .select("id")
+        .eq("lead_id", leadRecord.id)
+        .eq("transfer_status", "pending")
+        .eq("is_confirmed", false)
+        .maybeSingle();
+      if (existingPending) {
+        console.log(`[transfer] Lead ${phone} already has pending transfer ${existingPending.id}. Aborting duplicate broadcast.`);
+        return;
+      }
+    }
+
     // 2. Round-Robin: pick seller with oldest last_lead_received_at
     const selectedSeller = sellers[0]; // Already sorted by last_lead_received_at ASC (oldest first)
     console.log(`[transfer] Selected seller: ${selectedSeller.name} (${selectedSeller.whatsapp_number})`);
 
     // 3. Build structured seller notification with all collected client data
     const ld = leadRecord || {} as any;
+    const crmStage = normalizePedroCrmStage(ld.status, "qualificado");
     const clientName = ld.client_name || pushName || "Nao informado";
     const clientCity = ld.client_city || "Nao informada";
     const vehicleInterest = ld.vehicle_interest || "Nao informado";
@@ -2341,7 +2606,7 @@ async function transferLeadToSeller(
       .map((m) => `${m.role === "user" ? "Cliente" : "IA"}: ${m.content}`)
       .join("\n");
 
-    const sellerMsg = `*LEAD QUALIFICADO - ${tempLabel.toUpperCase()}*
+    const sellerMsg = `*NOVO LEAD PARA ATENDIMENTO - ${tempLabel.toUpperCase()}*
 
 *Nome:* ${clientName}
 *Contato:* ${phone}
@@ -2439,7 +2704,7 @@ O cliente esta esperando!`;
       // Update lead with transfer info
       await supabase.from("ai_crm_leads").update({
         status: "transferido",
-        assigned_to_id: selectedSeller.id,
+        assigned_to_id: null,
         last_interaction_at: new Date().toISOString(),
       }).eq("id", leadRecord.id);
     }

@@ -6,12 +6,25 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const LEAD_SELECT = "*, agent:wa_ai_agents!ai_crm_leads_agent_id_fkey(*)";
+
 /** Send a WhatsApp text message via UazAPI (3 fallback attempts) */
 async function sendWAMessage(instance: any, phone: string, text: string) {
+  if (!instance?.api_url) {
+    throw new Error("Instancia WhatsApp sem URL da API configurada");
+  }
+  if (!phone) {
+    throw new Error("Vendedor sem numero de WhatsApp configurado");
+  }
+
   let dest = phone.replace(/\D/g, "");
   if (dest.length === 10 || dest.length === 11) dest = `55${dest}`;
   const baseUrl = (instance.api_url as string).replace(/\/+$/, "");
   const instKey = instance.api_key_encrypted || instance.api_key || "";
+  if (!instKey) {
+    throw new Error("Instancia WhatsApp sem token configurado");
+  }
+
   const remoteJid = `${dest}@s.whatsapp.net`;
 
   const attempts = [
@@ -37,6 +50,102 @@ async function sendWAMessage(instance: any, phone: string, text: string) {
     }
   }
   console.error(`WA send FAILED all attempts to ${dest}`);
+  throw new Error(`Falha ao enviar WhatsApp para ${dest}`);
+}
+
+async function resolveEffectiveUserId(supabase: any, userId: string) {
+  const { data: profileData } = await supabase
+    .from("profiles")
+    .select("role, manager_id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profileData?.role === "seller" && profileData?.manager_id) {
+    return profileData.manager_id;
+  }
+
+  const { data: memberData } = await supabase
+    .from("ai_team_members")
+    .select("user_id")
+    .eq("auth_user_id", userId)
+    .order("is_active", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return memberData?.user_id || userId;
+}
+
+async function canAccessLeadOwner(supabase: any, userId: string, effectiveUserId: string, ownerId: string) {
+  if (!ownerId) return false;
+  if (ownerId === userId || ownerId === effectiveUserId) return true;
+
+  const { data: profileData } = await supabase
+    .from("profiles")
+    .select("role, manager_id")
+    .eq("id", userId)
+    .maybeSingle();
+  if (profileData?.role === "seller" && profileData?.manager_id === ownerId) return true;
+
+  const { data: memberData } = await supabase
+    .from("ai_team_members")
+    .select("id")
+    .eq("auth_user_id", userId)
+    .eq("user_id", ownerId)
+    .limit(1)
+    .maybeSingle();
+
+  return !!memberData?.id;
+}
+
+function digitsOnly(value: any) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function maybeLeadIdLooksLikePhone(value: any) {
+  return digitsOnly(value).length >= 8;
+}
+
+function maybeLeadIdLooksLikeName(value: any) {
+  const text = String(value || "").trim();
+  return text.length >= 3 && !/^[0-9a-f-]{20,}$/i.test(text);
+}
+
+function extractUuid(value: any) {
+  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return match?.[0] || null;
+}
+
+async function buildConversationBriefing(supabase: any, lead: any) {
+  const parts: string[] = [];
+  if (lead.summary) {
+    parts.push(`Resumo salvo no CRM:\n${String(lead.summary).substring(0, 800)}`);
+  }
+
+  const { data: history, error } = await supabase
+    .from("wa_chat_history")
+    .select("role, content, created_at")
+    .eq("agent_id", lead.agent_id)
+    .eq("remote_jid", lead.remote_jid)
+    .order("created_at", { ascending: false })
+    .limit(12);
+
+  if (!error && history?.length) {
+    const transcript = history
+      .reverse()
+      .map((msg: any) => {
+        const author = msg.role === "user" ? "Cliente" : "IA";
+        return `${author}: ${String(msg.content || "").substring(0, 300)}`;
+      })
+      .join("\n");
+    parts.push(`Ultimas mensagens:\n${transcript}`);
+  }
+
+  if (parts.length === 0) {
+    return "Sem resumo salvo ainda. Abrir o WhatsApp do lead para consultar o contexto completo antes de chamar.";
+  }
+
+  return parts.join("\n\n").substring(0, 1800);
 }
 
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
@@ -129,17 +238,11 @@ Deno.serve(async (req) => {
     }
     const userId = userData.user.id;
 
-    // Seller detection: if user is a seller, use their manager's ID for data queries
-    const { data: profileData } = await supabase
-      .from("profiles")
-      .select("role, manager_id")
-      .eq("id", userId)
-      .single();
+    // Resolve o dono real dos dados. Alguns vendedores existem como login separado
+    // em ai_team_members, mesmo quando o profile antigo nao esta completo.
+    const effectiveUserId = await resolveEffectiveUserId(supabase, userId);
 
-    const isSeller = profileData?.role === "seller" && !!profileData?.manager_id;
-    const effectiveUserId = isSeller ? profileData.manager_id : userId;
-
-    const { leadId, memberId, notes } = await req.json();
+    const { leadId, memberId, notes, remoteJid, agentId, leadName, ownerUserId: bodyOwnerUserId } = await req.json();
 
     if (!leadId || !memberId) {
       return new Response(JSON.stringify({ error: "leadId and memberId are required" }), {
@@ -148,32 +251,177 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 1. Fetch lead details
-    const { data: lead, error: leadErr } = await supabase
-      .from("ai_crm_leads")
-      .select("*, agent:wa_ai_agents(*)")
-      .eq("id", leadId)
-      .eq("user_id", effectiveUserId)
-      .single();
+    // Busca o vendedor cedo para termos um dono confiavel mesmo quando o
+    // frontend antigo envia um leadId incorreto/incompleto.
+    const { data: memberCandidate, error: memberCandidateErr } = await supabase
+      .from("ai_team_members")
+      .select("*")
+      .eq("id", memberId)
+      .maybeSingle();
 
-    if (leadErr || !lead) {
-      return new Response(JSON.stringify({ error: "Lead not found" }), {
+    if (memberCandidateErr || !memberCandidate) {
+      return new Response(JSON.stringify({ error: "Member not found" }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // 2. Fetch member details
-    const { data: member, error: memberErr } = await supabase
-      .from("ai_team_members")
-      .select("*")
-      .eq("id", memberId)
-      .eq("user_id", effectiveUserId)
-      .single();
+    const inferredOwnerUserId = bodyOwnerUserId || memberCandidate.user_id || effectiveUserId;
 
-    if (memberErr || !member) {
+    // 1. Fetch lead details. Primeiro busca por ID; depois valida o acesso.
+    // Isso evita falso "Lead not found" quando o usuário logado é vendedor
+    // ou quando o lead pertence ao master mas o effectiveUserId foi resolvido diferente.
+    const canonicalLeadId = extractUuid(leadId) || leadId;
+    let { data: lead, error: leadErr } = await supabase
+      .from("ai_crm_leads")
+      .select(LEAD_SELECT)
+      .eq("id", canonicalLeadId)
+      .maybeSingle();
+
+    if (!lead && remoteJid) {
+      let leadQuery = supabase
+        .from("ai_crm_leads")
+        .select(LEAD_SELECT)
+        .eq("remote_jid", remoteJid)
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .limit(1);
+      if (agentId) leadQuery = leadQuery.eq("agent_id", agentId);
+      if (inferredOwnerUserId) leadQuery = leadQuery.eq("user_id", inferredOwnerUserId);
+
+      const fallback = await leadQuery.maybeSingle();
+      lead = fallback.data;
+      leadErr = fallback.error;
+      if (lead) {
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback por remote_jid=${remoteJid}, lead=${lead.id}`);
+      }
+    }
+
+    if (!lead && leadName && inferredOwnerUserId) {
+      const fallback = await supabase
+        .from("ai_crm_leads")
+        .select(LEAD_SELECT)
+        .eq("user_id", inferredOwnerUserId)
+        .eq("lead_name", leadName)
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      lead = fallback.data;
+      leadErr = fallback.error;
+      if (lead) {
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback por lead_name=${leadName}, lead=${lead.id}`);
+      }
+    }
+
+    // Compatibilidade com bundles antigos: se o botao antigo enviou telefone,
+    // remote_jid ou nome no campo leadId, tenta localizar dentro do mesmo dono.
+    if (!lead && inferredOwnerUserId && maybeLeadIdLooksLikePhone(leadId)) {
+      const phoneTail = digitsOnly(leadId).slice(-8);
+      let phoneQuery = supabase
+        .from("ai_crm_leads")
+        .select(LEAD_SELECT)
+        .eq("user_id", inferredOwnerUserId)
+        .ilike("remote_jid", `%${phoneTail}%`)
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .limit(2);
+      if (agentId) phoneQuery = phoneQuery.eq("agent_id", agentId);
+
+      const fallback = await phoneQuery;
+      leadErr = fallback.error;
+      if (!leadErr && fallback.data?.length === 1) {
+        lead = fallback.data[0];
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback por telefone, lead=${lead.id}`);
+      }
+    }
+
+    if (!lead && inferredOwnerUserId && maybeLeadIdLooksLikeName(leadId)) {
+      let nameQuery = supabase
+        .from("ai_crm_leads")
+        .select(LEAD_SELECT)
+        .eq("user_id", inferredOwnerUserId)
+        .ilike("lead_name", `%${String(leadId).trim()}%`)
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .limit(2);
+      if (agentId) nameQuery = nameQuery.eq("agent_id", agentId);
+
+      const fallback = await nameQuery;
+      leadErr = fallback.error;
+      if (!leadErr && fallback.data?.length === 1) {
+        lead = fallback.data[0];
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback por nome, lead=${lead.id}`);
+      }
+    }
+
+    // Ultimo recurso seguro para o caso atual do CRM ao vivo: se o payload antigo
+    // nao identifica o lead, mas existe exatamente um lead aberto atribuido ao
+    // vendedor selecionado, usa esse registro. Se houver mais de um, aborta para
+    // evitar transferir a pessoa errada.
+    if (!lead && inferredOwnerUserId) {
+      const fallback = await supabase
+        .from("ai_crm_leads")
+        .select(LEAD_SELECT)
+        .eq("user_id", inferredOwnerUserId)
+        .eq("assigned_to_id", memberCandidate.id)
+        .in("status", ["novo", "interessado", "pouco_qualificado", "medio_qualificado", "qualificado", "em_atendimento"])
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(2);
+
+      leadErr = fallback.error;
+      if (!leadErr && fallback.data?.length === 1) {
+        lead = fallback.data[0];
+        console.warn(`[manual-transfer] leadId ${leadId} nao encontrado; usando fallback unico por vendedor=${memberCandidate.id}, lead=${lead.id}`);
+      } else if (!leadErr && (fallback.data?.length || 0) > 1) {
+        console.error("[manual-transfer] Lead ambiguo por vendedor", {
+          leadId,
+          memberId,
+          candidates: fallback.data.map((item: any) => item.id),
+        });
+        return new Response(JSON.stringify({
+          error: "Nao consegui identificar o lead exato. Atualize a pagina com Ctrl+F5 e tente novamente.",
+          details: { leadId, memberId, candidateCount: fallback.data.length },
+        }), {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    if (leadErr || !lead) {
+      console.error("[manual-transfer] Lead not found", { leadId, remoteJid, agentId, leadName, bodyOwnerUserId, inferredOwnerUserId, memberId, leadErr });
+      return new Response(JSON.stringify({ error: "Lead not found", details: { leadId, remoteJid, agentId, leadName, memberId } }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const ownerUserId = lead.user_id || inferredOwnerUserId || effectiveUserId;
+    const canAccess = await canAccessLeadOwner(supabase, userId, effectiveUserId, ownerUserId);
+    if (!canAccess) {
+      return new Response(JSON.stringify({ error: "Sem permissao para transferir este lead" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // 2. Validate member details
+    const member = memberCandidate;
+    if (member.user_id !== ownerUserId) {
       return new Response(JSON.stringify({ error: "Member not found" }), {
         status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!member.is_active) {
+      return new Response(JSON.stringify({ error: "Vendedor inativo na fila" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!member.whatsapp_number) {
+      return new Response(JSON.stringify({ error: "Vendedor sem numero de WhatsApp configurado" }), {
+        status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -204,7 +452,7 @@ Deno.serve(async (req) => {
       const { data: fallbackInstances } = await supabase
         .from("wa_instances")
         .select("*")
-        .eq("user_id", effectiveUserId)
+        .eq("user_id", ownerUserId)
         .eq("is_active", true)
         .eq("status", "connected")
         .limit(1);
@@ -212,13 +460,18 @@ Deno.serve(async (req) => {
     }
 
     if (!instance) {
-      console.error("[manual-transfer] Nenhuma instância WhatsApp encontrada");
+      console.error("[manual-transfer] Nenhuma instancia WhatsApp encontrada");
+      return new Response(JSON.stringify({ error: "Nenhuma instancia WhatsApp conectada para enviar a transferencia" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const phone = lead.remote_jid.replace(/\D/g, "");
     const pushName = lead.lead_name || "Não informado";
     const agentName = agentConfig?.name || lead.agent?.name || "Pedro";
     const transferredAt = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const conversationBriefing = await buildConversationBriefing(supabase, lead);
 
     // 5. Send WhatsApp to SELLER (mensagem completa com resumo da conversa)
     const sellerMsg = `🚨 *TRANSFERÊNCIA DE LEAD*
@@ -230,7 +483,8 @@ Deno.serve(async (req) => {
 📊 *Status:* ${lead.status || "qualificado"}
 
 ━━━━━━━━━━━━━━━━━━━━
-${lead.summary ? `\n📝 *Resumo da Conversa:*\n${lead.summary.substring(0, 500)}\n` : ""}
+📝 *Feedback da conversa:*
+${conversationBriefing}
 ━━━━━━━━━━━━━━━━━━━━
 ${notes ? `\n💬 *Observação:* ${notes}\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}
 👉 *Atender agora:* https://wa.me/${phone}
@@ -238,13 +492,11 @@ ${notes ? `\n💬 *Observação:* ${notes}\n\n━━━━━━━━━━━�
 ⚡ O cliente está aguardando seu contato!
 ⏰ *Responda em até 15 minutos para confirmar o recebimento.*`;
 
-    if (instance) {
-      await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
-    }
+    await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
 
     // 6. Send WhatsApp REPORT to MANAGER (gerente)
     const gerentePhone = agentConfig?.gerente_phone;
-    if (instance && gerentePhone) {
+    if (gerentePhone) {
       const gerenteMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*
 
 🕐 *Horário:* ${transferredAt}
@@ -263,7 +515,11 @@ ${notes ? `\n💬 *Observação:* ${notes}` : ""}
 ━━━━━━━━━━━━━━━━━━━━
 _Gerado automaticamente pelo Pedro SDR_`;
 
-      await sendWAMessage(instance, gerentePhone, gerenteMsg);
+      try {
+        await sendWAMessage(instance, gerentePhone, gerenteMsg);
+      } catch (err) {
+        console.warn("[manual-transfer] Falha ao enviar relatorio ao gerente (nao bloqueante):", err);
+      }
     }
 
     // 7. Update Lead
@@ -275,15 +531,15 @@ _Gerado automaticamente pelo Pedro SDR_`;
 
     // 8. Record transfer
     await supabase.from("ai_lead_transfers").insert({
-      user_id: effectiveUserId,
+      user_id: ownerUserId,
       lead_id: lead.id,
       from_member_id: lead.assigned_to_id,
       to_member_id: member.id,
       transfer_reason: "manual",
-      notes: notes,
-      is_confirmed: true,
-      transfer_status: 'confirmed',
-      confirmed_at: new Date().toISOString()
+      notes: notes || conversationBriefing,
+      is_confirmed: false,
+      transfer_status: "pending",
+      confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     });
 
     // 9. Update member stats
@@ -292,9 +548,9 @@ _Gerado automaticamente pelo Pedro SDR_`;
     }).eq("id", member.id);
 
     // 10. Sync lead to Marcos contact list (non-blocking)
-    syncLeadToMarcos(supabase, effectiveUserId, lead, member);
+    syncLeadToMarcos(supabase, ownerUserId, lead, member);
 
-    return new Response(JSON.stringify({ success: true }), {
+    return new Response(JSON.stringify({ success: true, leadId: lead.id, memberId: member.id }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {

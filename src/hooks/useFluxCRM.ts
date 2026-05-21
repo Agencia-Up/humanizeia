@@ -47,7 +47,19 @@ const DEFAULT_STAGES = [
   { name: 'Proposta', color: '#3b82f6', position: 2 },
   { name: 'Negociação', color: '#8b5cf6', position: 3 },
   { name: 'Fechado', color: '#10b981', position: 4 },
+  { name: 'Carro não disponível', color: '#f43f5e', position: 5 },
+  { name: 'Porta', color: '#14b8a6', position: 6 },
 ];
+
+const deduplicateStagesByName = (stages: PipelineStage[]) => {
+  const seen = new Set<string>();
+  return stages.filter((stage) => {
+    const key = stage.name.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
 
 export function useFluxCRM() {
   const { user } = useAuth();
@@ -89,7 +101,7 @@ export function useFluxCRM() {
 
         stagesData = (fresh || []) as unknown as PipelineStage[];
       }
-      return stagesData;
+      return deduplicateStagesByName(stagesData);
     },
     enabled: !!effectiveUserId,
   });

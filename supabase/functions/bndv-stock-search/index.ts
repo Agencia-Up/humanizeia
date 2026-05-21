@@ -159,6 +159,40 @@ function buildIndexedText(vehicle: BndvVehicle) {
   return indexed;
 }
 
+function inferRequestedVehicleType(filters: any): 'carro' | 'moto' | 'qualquer' {
+  const explicit = normalizeText(filters?.tipo_veiculo || filters?.tipo || filters?.categoria);
+  if (['carro', 'moto', 'qualquer'].includes(explicit)) return explicit as 'carro' | 'moto' | 'qualquer';
+  if (/\b(motocicleta|motocicletas|scooter)\b/.test(explicit)) return 'moto';
+  if (/\b(automovel|automoveis|veiculo|veiculos|suv|sedan|hatch|picape|pickup|caminhonete|camionete)\b/.test(explicit)) return 'carro';
+
+  const searchText = normalizeText([
+    filters?.query,
+    filters?.ad_context,
+    filters?.contexto_anuncio,
+    filters?.marca,
+    filters?.modelo,
+    filters?.versao,
+  ].filter(Boolean).join(' '));
+
+  if (/\b(moto|motos|motocicleta|motocicletas|scooter|biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|pop 100|pop 110|elite)\b/.test(searchText)) return 'moto';
+  if (/\b(carro|carros|automovel|automoveis|veiculo|veiculos|suv|sedan|hatch|picape|pickup|caminhonete|camionete)\b/.test(searchText)) return 'carro';
+  return 'qualquer';
+}
+
+function isLikelyMotorcycle(vehicle: BndvVehicle) {
+  const indexed = buildIndexedText(vehicle);
+  const motorcycleBrands = /\b(yamaha|kawasaki|shineray|harley|davidson|dafra|triumph|ducati|ktm|bajaj|haojue|royal enfield)\b/;
+  const motorcycleModels = /\b(biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|cb 300|cb300|cb 500|cb500|cbr|pop 100|pop 110|elite|scooter|crypton|mt 03|mt03)\b/;
+  return motorcycleModels.test(indexed) || motorcycleBrands.test(indexed);
+}
+
+function passesRequestedVehicleType(vehicle: BndvVehicle, requestedType: 'carro' | 'moto' | 'qualquer') {
+  if (requestedType === 'qualquer') return true;
+  const moto = isLikelyMotorcycle(vehicle);
+  if (requestedType === 'moto') return moto;
+  return !moto;
+}
+
 function buildSearchText(filters: any) {
   return normalizeText([
     filters?.query,
@@ -247,16 +281,18 @@ function passesNumericFilters(vehicle: BndvVehicle, filters: any, relaxed = fals
 }
 
 function rankVehicles(vehicles: BndvVehicle[], filters: any) {
+  const requestedVehicleType = inferRequestedVehicleType(filters);
+  const typedVehicles = vehicles.filter((vehicle) => passesRequestedVehicleType(vehicle, requestedVehicleType));
   const hasSearch = !!buildSearchText(filters);
   if (!hasSearch) {
-    return [...vehicles]
+    return [...typedVehicles]
       .filter((vehicle) => passesNumericFilters(vehicle, filters))
       .map((vehicle) => ({ vehicle, score: 1, matchedTokens: [] as string[], relaxed: false }));
   }
 
   const hasAdSearch = !!String(filters?.ad_context || filters?.contexto_anuncio || '').trim();
   if (hasAdSearch) {
-    return vehicles
+    return typedVehicles
       .map((vehicle) => {
         const scored = scoreVehicle(vehicle, filters);
         const relaxed = !passesNumericFilters(vehicle, filters);
@@ -271,14 +307,14 @@ function rankVehicles(vehicles: BndvVehicle[], filters: any) {
       .sort((left, right) => right.score - left.score);
   }
 
-  const ranked = vehicles
+  const ranked = typedVehicles
     .map((vehicle) => ({ vehicle, ...scoreVehicle(vehicle, filters), relaxed: false }))
     .filter((item) => item.score > 0 && passesNumericFilters(item.vehicle, filters))
     .sort((left, right) => right.score - left.score);
 
   if (ranked.length > 0) return ranked;
 
-  return vehicles
+  return typedVehicles
     .map((vehicle) => ({ vehicle, ...scoreVehicle(vehicle, filters), relaxed: true }))
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score);

@@ -77,18 +77,33 @@ Deno.serve(async (req) => {
       }
       const userId = userData.user.id;
 
-      // Detect seller: use ai_team_members (modelo novo) — vendedor é dono da campanha
-      // via seller_member_id, e wa_campaigns.user_id é SEMPRE o master.
+      // Detect seller. O save-campaign aceita o modelo de profiles (role=seller
+      // + manager_id), enquanto o disparo usa ai_team_members para isolar a
+      // instancia do vendedor. Precisamos aceitar os dois modelos, senão a
+      // campanha é criada no master mas o enqueue procura no user_id do vendedor.
       const { data: memberRow } = await serviceClient
         .from("ai_team_members")
         .select("id, user_id")
         .eq("auth_user_id", userId)
-        .eq("is_active", true)
+        .order("is_active", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
-      isSeller = !!memberRow?.user_id;
-      effectiveUserId = isSeller ? memberRow!.user_id : userId;
-      sellerMemberId = isSeller ? memberRow!.id : null;
+      const { data: profileRow } = await serviceClient
+        .from("profiles")
+        .select("role, manager_id")
+        .eq("id", userId)
+        .maybeSingle();
+
+      const profileManagerId =
+        profileRow?.role === "seller" && profileRow.manager_id
+          ? profileRow.manager_id
+          : null;
+
+      isSeller = !!memberRow?.user_id || !!profileManagerId;
+      effectiveUserId = memberRow?.user_id || profileManagerId || userId;
+      sellerMemberId = memberRow?.id || null;
       console.log(`[enqueue-campaign] USER invocation requester=${userId} isSeller=${isSeller} effectiveUser=${effectiveUserId} sellerMember=${sellerMemberId}`);
     }
 
@@ -108,7 +123,7 @@ Deno.serve(async (req) => {
     }
 
     // Se é vendedor: confirma que a campanha é DELE (seller_member_id bate)
-    if (isSeller && campaign.seller_member_id !== sellerMemberId) {
+    if (isSeller && sellerMemberId && campaign.seller_member_id !== sellerMemberId) {
       console.warn(`[enqueue-campaign] Vendedor ${sellerMemberId} tentou iniciar campanha ${campaign_id} (dono=${campaign.seller_member_id})`);
       return new Response(JSON.stringify({ error: "Você não tem permissão pra iniciar esta campanha" }), {
         status: 403,
@@ -160,6 +175,33 @@ Deno.serve(async (req) => {
         });
       }
 
+      const { data: claimedCampaign, error: claimErr } = await serviceClient
+        .from("wa_campaigns")
+        .update({
+          status: "running",
+          started_at: campaign.started_at || new Date().toISOString(),
+        })
+        .eq("id", campaign_id)
+        .eq("user_id", effectiveUserId)
+        .eq("status", campaign.status)
+        .select("id")
+        .maybeSingle();
+
+      if (claimErr) {
+        console.error("Campaign claim error:", claimErr);
+        return new Response(JSON.stringify({ error: "Erro ao iniciar campanha." }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      if (!claimedCampaign) {
+        return new Response(
+          JSON.stringify({ success: true, enqueued: 0, total_contacts: existingPending.length, message: "Campanha ja estava em processamento." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       const ids = existingPending.map((r: any) => r.id);
       const baseTime = Date.now();
       let cursor = baseTime;
@@ -182,11 +224,6 @@ Deno.serve(async (req) => {
           });
         }
       }
-
-      await serviceClient
-        .from("wa_campaigns")
-        .update({ status: "running" })
-        .eq("id", campaign_id);
 
       return new Response(
         JSON.stringify({ success: true, enqueued: updates.length, total_contacts: updates.length }),
@@ -235,6 +272,33 @@ Deno.serve(async (req) => {
     }
 
     const contactArr = Array.from(uniqueContacts.values());
+
+    const { data: claimedCampaign, error: claimErr } = await serviceClient
+      .from("wa_campaigns")
+      .update({
+        status: "running",
+        started_at: campaign.started_at || new Date().toISOString(),
+      })
+      .eq("id", campaign_id)
+      .eq("user_id", effectiveUserId)
+      .eq("status", campaign.status)
+      .select("id")
+      .maybeSingle();
+
+    if (claimErr) {
+      console.error("Campaign claim error:", claimErr);
+      return new Response(JSON.stringify({ error: "Erro ao iniciar campanha." }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!claimedCampaign) {
+      return new Response(
+        JSON.stringify({ success: true, enqueued: 0, total_contacts: contactArr.length, message: "Campanha ja estava em processamento." }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Use scheduled_at from campaign as base time, fallback to now
     const baseTime = campaign.scheduled_at
@@ -347,7 +411,7 @@ Deno.serve(async (req) => {
       const batch = rowsToInsert.slice(i, i + batchSize);
       const { error: insertErr } = await serviceClient
         .from("wa_queue")
-        .insert(batch);
+        .upsert(batch, { onConflict: "campaign_id,contact_id", ignoreDuplicates: true });
 
       if (insertErr) {
         console.error("Queue insert error:", insertErr);

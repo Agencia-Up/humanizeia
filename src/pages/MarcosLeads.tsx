@@ -1,5 +1,5 @@
-import { useState, lazy, Suspense, useMemo } from 'react';
-import { Navigate } from 'react-router-dom';
+import { useState, lazy, Suspense, useMemo, useEffect } from 'react';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +35,8 @@ const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKe
 export default function MarcosLeads() {
   const { user } = useAuth();
   const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
 
   // Filtra tabs por permissão (master vê tudo, seller vê só o que master liberou)
   const tabs = useMemo(() => {
@@ -42,7 +44,39 @@ export default function MarcosLeads() {
     return ALL_TABS.filter(t => visibleFeatures[t.featureKey]);
   }, [isSeller, visibleFeatures]);
 
-  const [activeTab, setActiveTab] = useState(() => isSeller ? (tabs[0]?.id || 'crm') : 'crm');
+  const [activeTab, setActiveTab] = useState(() => tabParam || 'crm');
+
+  const handleTabChange = (newTab: string) => {
+    setActiveTab(newTab);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', newTab);
+      return next;
+    }, { replace: true });
+  };
+
+  useEffect(() => {
+    if (sellerLoading || tabs.length === 0) return;
+
+    const tabExists = (id: string | null | undefined) => !!id && tabs.some(t => t.id === id);
+    const nextTab = tabExists(tabParam)
+      ? tabParam!
+      : tabExists(activeTab)
+        ? activeTab
+        : (tabs[0]?.id || 'crm');
+
+    if (activeTab !== nextTab) {
+      setActiveTab(nextTab);
+    }
+
+    if (tabParam !== nextTab) {
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', nextTab);
+        return next;
+      }, { replace: true });
+    }
+  }, [sellerLoading, tabs, tabParam, activeTab, setSearchParams]);
 
   // Se vendedor não tem permissão para Marcos OU nenhuma sub-feature, bloqueia acesso
   if (!sellerLoading && isSeller && (!visibleFeatures.agent_marcos || tabs.length === 0)) {
@@ -80,7 +114,7 @@ export default function MarcosLeads() {
         </div>
 
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
           <div className="px-6 border-b border-border/40">
             <TabsList className="bg-transparent h-auto p-0 gap-1">
               {tabs.map(tab => (

@@ -575,8 +575,7 @@ const FEEDBACK_REASONS: { category: string; emoji: string; options: string[] }[]
 const STATUS_CRM_OPTIONS = [
   { value: 'novo',               label: 'Novo',              color: 'text-blue-400'    },
   { value: 'inativo',            label: 'Lead Inativo',      color: 'text-gray-400'    },
-  { value: 'pouco_qualificado',  label: 'Pouco Qualificado', color: 'text-orange-400'  },
-  { value: 'qualificado',        label: 'Qualificado',       color: 'text-emerald-400' },
+  { value: 'carro_nao_disponivel', label: 'Carro não disponível', color: 'text-rose-400' },
   { value: 'em_atendimento',     label: 'Agendamento',       color: 'text-cyan-400'    },
   { value: 'negociacao',         label: 'Negociação',        color: 'text-purple-400'  },
   { value: 'fechado',            label: 'Fechado',           color: 'text-green-400'   },
@@ -599,17 +598,43 @@ function leadOrigemLabel(v: string | null | undefined): string | null {
   return LEAD_ORIGEM_OPTIONS.find(o => o.value === v)?.short || v;
 }
 
-// Mapeia status legacy → exibe no kanban (compat retroativa)
-// 'interessado' (antigo) → 'novo'
-// 'medio_qualificado' (antigo, removido na nova lógica de 3 níveis) → 'pouco_qualificado'
-// 'encerrado' (antigo) → 'perdido'
+// Mapeia status legacy no kanban. Etapas antigas de qualificacao do Pedro voltam para Novo na tela.
 const STATUS_DISPLAY_MAP: Record<string, string> = {
   interessado: 'novo',
-  medio_qualificado: 'pouco_qualificado',
+  medio_qualificado: 'novo',
+  pouco_qualificado: 'novo',
+  qualificado: 'novo',
   encerrado: 'perdido',
 };
 function normalizeStatus(status: string): string {
   return STATUS_DISPLAY_MAP[status] || status;
+}
+
+const MARCOS_STAGE_STYLE_BY_NAME: Record<string, { emoji: string; border: string; bg: string; dot: string }> = {
+  'novo lead': { emoji: '🔰', border: 'border-indigo-500/30', bg: 'bg-indigo-500/10', dot: 'bg-indigo-400' },
+  qualificado: { emoji: '🎯', border: 'border-amber-500/30', bg: 'bg-amber-500/10', dot: 'bg-amber-400' },
+  proposta: { emoji: '📋', border: 'border-blue-500/30', bg: 'bg-blue-500/10', dot: 'bg-blue-400' },
+  negociacao: { emoji: '🤝', border: 'border-purple-500/30', bg: 'bg-purple-500/10', dot: 'bg-purple-400' },
+  fechado: { emoji: '✅', border: 'border-green-500/30', bg: 'bg-green-500/10', dot: 'bg-green-400' },
+  'carro nao disponivel': { emoji: '🚫', border: 'border-rose-500/30', bg: 'bg-rose-500/10', dot: 'bg-rose-400' },
+  porta: { emoji: '🚪', border: 'border-teal-500/30', bg: 'bg-teal-500/10', dot: 'bg-teal-400' },
+};
+
+function normalizeStageName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function getMarcosStageStyle(name: string, index: number) {
+  return MARCOS_STAGE_STYLE_BY_NAME[normalizeStageName(name)] || {
+    emoji: ['🔰', '🎯', '📋', '🤝', '✅'][index] || '📌',
+    border: 'border-slate-500/30',
+    bg: 'bg-slate-500/10',
+    dot: 'bg-slate-400',
+  };
 }
 
 function fmtDate(iso: string) {
@@ -622,21 +647,39 @@ function fmtDate(iso: string) {
 
 const PIPELINE_COLUMNS = [
   { id: 'novo',               title: 'Novo',               emoji: '🔰', border: 'border-slate-500/30',   bg: 'bg-slate-500/10',   dot: 'bg-slate-400'   },
-  // 3 níveis SDR (auto-classificados pelo agente IA — edge function auto-classify-leads):
   { id: 'inativo',            title: 'Lead Inativo',       emoji: '😴', border: 'border-gray-500/30',    bg: 'bg-gray-500/10',    dot: 'bg-gray-400'    },
-  { id: 'pouco_qualificado',  title: 'Pouco Qualif.',      emoji: '🧊', border: 'border-orange-500/30',  bg: 'bg-orange-500/10',  dot: 'bg-orange-400'  },
-  { id: 'qualificado',        title: 'Qualificado',        emoji: '🎯', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', dot: 'bg-emerald-400' },
-  // Estágios manuais (não tocados pela auto-classificação):
+  { id: 'carro_nao_disponivel', title: 'Carro não disponível', emoji: '🚫', border: 'border-rose-500/30', bg: 'bg-rose-500/10', dot: 'bg-rose-400' },
   { id: 'em_atendimento',     title: 'Agendamento',        emoji: '📅', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
   { id: 'negociacao',         title: 'Negociação',         emoji: '🤝', border: 'border-purple-500/30',  bg: 'bg-purple-500/10',  dot: 'bg-purple-400'  },
   { id: 'fechado',            title: 'Fechado',            emoji: '✅', border: 'border-green-500/30',   bg: 'bg-green-500/10',   dot: 'bg-green-400'   },
   { id: 'perdido',            title: 'Perdido',            emoji: '❌', border: 'border-red-500/30',     bg: 'bg-red-500/10',     dot: 'bg-red-400'     },
 ];
 
+type PipelineColumn = typeof PIPELINE_COLUMNS[number];
+
+function reorderItems<T>(items: T[], from: number, to: number) {
+  const next = [...items];
+  const [moved] = next.splice(from, 1);
+  if (!moved) return items;
+  next.splice(to, 0, moved);
+  return next;
+}
+
+function applyColumnOrder<T extends { id: string }>(columns: T[], order: string[]) {
+  if (!order.length) return columns;
+  const byId = new Map(columns.map(column => [column.id, column]));
+  const ordered = order
+    .map(id => byId.get(id))
+    .filter((column): column is T => Boolean(column));
+  const missing = columns.filter(column => !order.includes(column.id));
+  return [...ordered, ...missing];
+}
+
 interface CrmLead {
   id: string;
   lead_name: string;
   remote_jid: string;
+  status?: string | null;
   status_crm: string;
   summary?: string | null;
   next_followup_at: string | null;
@@ -645,6 +688,8 @@ interface CrmLead {
   member?: { id: string; name: string } | null;
   agent?: { name: string } | null;
   created_at: string;
+  source?: string | null;
+  custom_fields?: Record<string, any> | null;
 }
 
 interface Note {
@@ -687,6 +732,9 @@ interface FollowupSchedule {
   message_template: string;
   status: string;
   created_at: string;
+  sent_at?: string | null;
+  media_url?: string | null;
+  media_type?: string | null;
 }
 
 interface TeamMember {
@@ -707,13 +755,18 @@ interface LeadMetrics {
   month: number;
 }
 
-export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
+type CrmMode = 'pedro' | 'marcos';
+
+export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | undefined; mode?: CrmMode }) {
   const { toast } = useToast();
+  const isMarcosCrm = mode === 'marcos';
   const [isSeller, setIsSeller] = useState(false);
   const [memberId, setMemberId] = useState<string | null>(null);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
+  const [manualStages, setManualStages] = useState<typeof PIPELINE_COLUMNS>([]);
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [instances, setInstances] = useState<any[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -754,6 +807,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const [fuMediaUrl, setFuMediaUrl]       = useState('');
   const [fuUploading, setFuUploading]     = useState(false);
   const fuFileRef = useRef<HTMLInputElement>(null);
+  const draggedColumnIdRef = useRef<string | null>(null);
   const [funnelOpen, setFunnelOpen]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
@@ -780,6 +834,37 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     })();
   }, [userId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadColumnPreference = async () => {
+      if (!userId) {
+        setColumnOrder([]);
+        return;
+      }
+
+      const { data, error } = await (supabase as any)
+        .from('crm_column_preferences')
+        .select('column_order')
+        .eq('auth_user_id', userId)
+        .eq('crm_mode', mode)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (error) {
+        console.warn('Erro ao carregar preferência de colunas', error);
+        setColumnOrder([]);
+        return;
+      }
+      setColumnOrder(Array.isArray(data?.column_order) ? data.column_order : []);
+    };
+
+    loadColumnPreference();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, mode]);
+
   const fetchData = async (silent = false) => {
     if (!userId) return;
     if (!silent) setLoading(true);
@@ -794,6 +879,120 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       const weekStart = new Date(todayStart);
       weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
       const monthStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
+
+      if (isMarcosCrm) {
+        const { data: stagesData } = await (supabase as any)
+          .from('crm_pipeline_stages')
+          .select('id, name, color, position')
+          .eq('user_id', effectiveUserId)
+          .order('position', { ascending: true });
+        const stages = (stagesData || []) as any[];
+        const fallbackStage = stages[0]?.id || 'novo';
+        const columns = stages.length > 0
+          ? stages.map((s: any, index: number) => {
+              const stageStyle = getMarcosStageStyle(s.name, index);
+              return {
+                id: s.id,
+                title: s.name,
+                ...stageStyle,
+              };
+            })
+          : PIPELINE_COLUMNS;
+        setManualStages(columns);
+
+        const leadCountQuery = (from?: Date) => {
+          let query = (supabase as any)
+            .from('crm_leads')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', effectiveUserId)
+            .not('source', 'like', 'Pedro SDR%');
+          if (isSeller && memberIds.length > 0) query = query.in('assigned_to', memberIds);
+          if (from) query = query.gte('created_at', from.toISOString());
+          return query;
+        };
+
+        let marcosLeadsQuery = (supabase as any)
+          .from('crm_leads')
+          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at')
+          .eq('user_id', effectiveUserId)
+          .not('source', 'like', 'Pedro SDR%')
+          .order('created_at', { ascending: false })
+          .limit(500);
+        if (isSeller && memberIds.length > 0) {
+          marcosLeadsQuery = marcosLeadsQuery.in('assigned_to', memberIds);
+        }
+
+        let marcosInstancesQuery = (supabase as any)
+          .from('wa_instances')
+          .select('id, friendly_name, phone_number, instance_name, status, is_active, seller_member_id')
+          .eq('user_id', effectiveUserId)
+          .eq('is_active', true);
+        if (isSeller && memberIds.length > 0) {
+          marcosInstancesQuery = marcosInstancesQuery.in('seller_member_id', memberIds);
+        }
+
+        const [leadsRes, teamRes, instRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
+          marcosLeadsQuery,
+          (supabase as any)
+            .from('ai_team_members')
+            .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
+            .eq('user_id', effectiveUserId)
+            .order('is_active', { ascending: false })
+            .order('name', { ascending: true }),
+          marcosInstancesQuery,
+          leadCountQuery(),
+          leadCountQuery(todayStart),
+          leadCountQuery(weekStart),
+          leadCountQuery(monthStart),
+        ]);
+
+        const teamData: TeamMember[] = teamRes.data || [];
+        const teamById = new Map(teamData.map((t: any) => [t.id, { id: t.id, name: t.name }]));
+        const mappedLeads: CrmLead[] = (leadsRes.data || []).map((lead: any) => ({
+          id: lead.id,
+          lead_name: lead.name || lead.phone || 'Lead',
+          remote_jid: `${lead.phone || ''}@s.whatsapp.net`,
+          status: null,
+          status_crm: lead.stage_id || fallbackStage,
+          summary: lead.notes || null,
+          next_followup_at: null,
+          seller_notes_count: 0,
+          assigned_to_id: lead.assigned_to || lead.custom_fields?.seller_member_id || lead.custom_fields?.migrated_from_assigned_to_id || null,
+          member: (() => {
+            const sellerId = lead.assigned_to || lead.custom_fields?.seller_member_id || lead.custom_fields?.migrated_from_assigned_to_id || null;
+            return sellerId
+              ? (teamById.get(sellerId) ?? (lead.custom_fields?.seller_name ? { id: sellerId, name: lead.custom_fields.seller_name } : null))
+              : null;
+          })(),
+          agent: null,
+          created_at: lead.created_at,
+          source: lead.source || 'manual',
+          custom_fields: lead.custom_fields || null,
+        }));
+
+        const enrichedTeam = teamData.map(m => ({
+          ...m,
+          leadsCount: mappedLeads.filter(l => l.assigned_to_id === m.id).length,
+          qualifiedCount: mappedLeads.filter(l => l.assigned_to_id === m.id && l.status_crm === 'qualificado').length,
+        }));
+
+        setLeads(mappedLeads);
+        setFeedbacks([]);
+        const connectedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected' || i.is_active);
+        setInstances(connectedInstances);
+        if (connectedInstances.length > 0 && !fuInstance) {
+          setFuInstance(connectedInstances[0].id);
+        }
+        setTeamMembers(enrichedTeam);
+        setTransfers([]);
+        setLeadMetrics({
+          total: totalCountRes.count || 0,
+          today: todayCountRes.count || 0,
+          week: weekCountRes.count || 0,
+          month: monthCountRes.count || 0,
+        });
+        return;
+      }
 
       const leadCountQuery = (from?: Date) => {
         let query = (supabase as any)
@@ -817,7 +1016,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       // ========================================================================
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -944,8 +1143,68 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
   useEffect(() => { fetchData(); }, [userId, isSeller, memberIds.length]);
 
+  const resolveCurrentSellerForMarcos = async () => {
+    if (!isMarcosCrm || !isSeller || !memberId) return null;
+    const cached = teamMembers.find(m => m.id === memberId);
+    if (cached) return cached;
+
+    const { data } = await (supabase as any)
+      .from('ai_team_members')
+      .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
+      .eq('id', memberId)
+      .maybeSingle();
+    return data || null;
+  };
+
+  const resolveFirstMarcosStageId = async (effectiveUserId: string) => {
+    const cachedStageId = manualStages.find(s => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s.id))?.id;
+    if (cachedStageId) return cachedStageId;
+
+    const { data, error } = await (supabase as any)
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('user_id', effectiveUserId)
+      .order('position', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.id) {
+      throw new Error('Nenhuma etapa do CRM do Marcos foi encontrada para esta conta.');
+    }
+    return data.id as string;
+  };
+
   const loadLeadDetail = async (lead: CrmLead) => {
     setSelectedLead(lead);
+
+    if (isMarcosCrm) {
+      const [notesRes, schedRes] = await Promise.all([
+        (supabase as any)
+          .from('marcos_crm_notes')
+          .select('id, lead_id, content, is_pinned, created_at, member:ai_team_members(name)')
+          .eq('lead_id', lead.id)
+          .order('is_pinned', { ascending: false })
+          .order('created_at', { ascending: false }),
+        (supabase as any)
+          .from('marcos_followup_schedules')
+          .select('id, lead_id, scheduled_at, message_template, status, created_at, sent_at, media_url, media_type')
+          .eq('lead_id', lead.id)
+          .order('scheduled_at', { ascending: true }),
+      ]);
+
+      if (notesRes.error) {
+        toast({ title: 'Erro ao carregar anotacoes', description: notesRes.error.message, variant: 'destructive' });
+      }
+      if (schedRes.error) {
+        toast({ title: 'Erro ao carregar follow-ups', description: schedRes.error.message, variant: 'destructive' });
+      }
+
+      setNotes(notesRes.data || []);
+      setTransfers([]);
+      setSchedules(schedRes.data || []);
+      return;
+    }
+
     const [notesRes, schedRes, transfersRes] = await Promise.all([
       (supabase as any)
         .from('pedro_crm_notes')
@@ -974,10 +1233,16 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     if (!newNote.trim() || !selectedLead || !userId) return;
     setNoteLoading(true);
     try {
-      const { error } = await (supabase as any).from('pedro_crm_notes').insert({
+      const table = isMarcosCrm ? 'marcos_crm_notes' : 'pedro_crm_notes';
+      const currentSeller = isMarcosCrm ? await resolveCurrentSellerForMarcos() : null;
+      const effectiveUserId = isMarcosCrm && isSeller
+        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
+        : userId;
+
+      const { error } = await (supabase as any).from(table).insert({
         lead_id:   selectedLead.id,
-        user_id:   userId,
-        member_id: memberId,
+        user_id:   effectiveUserId,
+        member_id: currentSeller?.id || memberId,
         content:   newNote.trim(),
       });
       if (error) throw error;
@@ -994,7 +1259,8 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const handleDeleteNote = async (noteId: string) => {
     if (!confirm('Apagar esta anotação? Esta ação não pode ser desfeita.')) return;
     try {
-      const { error } = await (supabase as any).from('pedro_crm_notes').delete().eq('id', noteId);
+      const table = isMarcosCrm ? 'marcos_crm_notes' : 'pedro_crm_notes';
+      const { error } = await (supabase as any).from(table).delete().eq('id', noteId);
       if (error) throw error;
       setNotes(prev => prev.filter(n => n.id !== noteId));
       toast({ title: 'Anotação apagada.' });
@@ -1005,7 +1271,8 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
 
   const toggleNotePin = async (noteId: string, currentPinned: boolean) => {
     try {
-      await (supabase as any).from('pedro_crm_notes').update({ is_pinned: !currentPinned }).eq('id', noteId);
+      const table = isMarcosCrm ? 'marcos_crm_notes' : 'pedro_crm_notes';
+      await (supabase as any).from(table).update({ is_pinned: !currentPinned }).eq('id', noteId);
       setNotes(prev => prev.map(n => n.id === noteId ? { ...n, is_pinned: !currentPinned } : n)
         .sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0)));
       toast({ title: !currentPinned ? '📌 Nota fixada!' : 'Nota desafixada' });
@@ -1058,10 +1325,44 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   };
 
   const handleScheduleFollowup = async () => {
-    if (!fuMsg.trim() || !fuDate || !selectedLead || !userId) return;
+    if (!fuMsg.trim() || !fuDate || !selectedLead || !userId || fuUploading || (fuMediaFile && !fuMediaUrl)) return;
+    if (isMarcosCrm && !fuInstance) {
+      toast({
+        title: 'Selecione uma instância',
+        description: 'Conecte ou selecione o WhatsApp que enviará este follow-up.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setFuLoading(true);
     try {
       const mediaType = fuMediaFile ? fuMediaFile.type.split('/')[0] : null; // 'image' | 'video' | 'audio'
+
+      if (isMarcosCrm) {
+        const effectiveUserId = isSeller
+          ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
+          : userId;
+        const currentSeller = await resolveCurrentSellerForMarcos();
+        const { error } = await (supabase as any).from('marcos_followup_schedules').insert({
+          lead_id:          selectedLead.id,
+          user_id:          effectiveUserId,
+          member_id:        currentSeller?.id || selectedLead.assigned_to_id || memberId,
+          scheduled_at:     new Date(fuDate).toISOString(),
+          message_template: fuMsg.trim(),
+          instance_id:      fuInstance,
+          status:           'pending',
+          media_url:        fuMediaUrl || null,
+          media_type:       mediaType,
+        });
+        if (error) throw error;
+        setFuMsg(''); setFuDate('');
+        setFuMediaFile(null); setFuMediaUrl('');
+        toast({ title: 'Follow-up do Marcos agendado!' });
+        await loadLeadDetail(selectedLead);
+        return;
+      }
+
       const { error } = await (supabase as any).from('pedro_followup_schedules').insert({
         lead_id:          selectedLead.id,
         user_id:          userId,
@@ -1098,8 +1399,9 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     if (!confirm('Cancelar este follow-up agendado? Ele NÃO será enviado pro lead.')) return;
     setCancellingFollowupId(id);
     try {
+      const followupTable = isMarcosCrm ? 'marcos_followup_schedules' : 'pedro_followup_schedules';
       const { error } = await (supabase as any)
-        .from('pedro_followup_schedules')
+        .from(followupTable)
         .update({ status: 'cancelled' })
         .eq('id', id)
         .eq('status', 'pending'); // só cancela se ainda estiver pending (atômico)
@@ -1107,7 +1409,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       // Remove da lista local imediatamente (otimista)
       setSchedules(prev => prev.filter(s => s.id !== id));
       // Se era o próximo follow-up do lead, limpa o next_followup_at
-      if (selectedLead?.id) {
+      if (!isMarcosCrm && selectedLead?.id) {
         const remainingPending = schedules.filter(s => s.status === 'pending' && s.id !== id);
         const nextScheduledAt = remainingPending.length > 0
           ? remainingPending.reduce((min, s) =>
@@ -1196,6 +1498,17 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     if (!selectedLead || !userId) return;
     setStatusUpdating(true);
     try {
+      if (isMarcosCrm) {
+        const { error } = await (supabase as any)
+          .from('crm_leads')
+          .update({ stage_id: newStatus })
+          .eq('id', selectedLead.id);
+        if (error) throw error;
+        setSelectedLead({ ...selectedLead, status_crm: newStatus });
+        setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, status_crm: newStatus } : l));
+        toast({ title: '✅ Status atualizado!' });
+        return;
+      }
       const { error } = await (supabase as any)
         .from('ai_crm_leads')
         .update({ status_crm: newStatus })
@@ -1214,6 +1527,39 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   const reassignLead = async (leadId: string, newMemberId: string | null) => {
     setReassigning(leadId);
     try {
+      if (isMarcosCrm) {
+        const lead = leads.find(l => l.id === leadId) || selectedLead;
+        const newMember = newMemberId ? teamMembers.find(m => m.id === newMemberId) ?? null : null;
+        const nextCustomFields = {
+          ...(lead?.custom_fields || {}),
+          seller_member_id: newMemberId,
+          seller_name: newMember?.name || null,
+          seller_assigned_at: new Date().toISOString(),
+          seller_assigned_by_auth_user_id: userId || null,
+        };
+        const { error } = await (supabase as any)
+          .from('crm_leads')
+          .update({ assigned_to: newMemberId, custom_fields: nextCustomFields })
+          .eq('id', leadId);
+        if (error) throw error;
+        setLeads(prev => prev.map(l => l.id === leadId ? {
+          ...l,
+          assigned_to_id: newMemberId,
+          member: newMember ? { id: newMember.id, name: newMember.name } : null,
+          custom_fields: nextCustomFields,
+        } : l));
+        if (selectedLead?.id === leadId) {
+          setSelectedLead({
+            ...selectedLead,
+            assigned_to_id: newMemberId,
+            member: newMember ? { id: newMember.id, name: newMember.name } : null,
+            custom_fields: nextCustomFields,
+          });
+        }
+        toast({ title: '✅ Lead reatribuído!' });
+        return;
+      }
+
       const { error } = await (supabase as any)
         .from('ai_crm_leads')
         .update({ assigned_to_id: newMemberId })
@@ -1399,6 +1745,57 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
 
+      if (isMarcosCrm) {
+        const firstStageId = await resolveFirstMarcosStageId(effectiveUserId);
+        const currentSeller = await resolveCurrentSellerForMarcos();
+        const sellerCustomFields = currentSeller ? {
+          seller_member_id: currentSeller.id,
+          seller_name: currentSeller.name,
+          created_by_auth_user_id: userId,
+        } : {
+          created_by_auth_user_id: userId,
+        };
+        const { data: maxPosRow } = await (supabase as any)
+          .from('crm_leads')
+          .select('position')
+          .eq('user_id', effectiveUserId)
+          .eq('stage_id', firstStageId)
+          .order('position', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        let nextPosition = (maxPosRow?.position ?? -1) + 1;
+        const batchSize = 50;
+        for (let i = 0; i < validLeads.length; i += batchSize) {
+          const batch = validLeads.slice(i, i + batchSize).map(l => ({
+            user_id: effectiveUserId,
+            stage_id: firstStageId,
+            name: l.name,
+            phone: l.phone,
+            source: l.origem || 'importacao',
+            notes: null,
+            tags: ['Marcos Manual', 'Importado'],
+            value: 0,
+            currency: 'BRL',
+            priority: 'medium',
+            position: nextPosition++,
+            assigned_to: currentSeller?.id || null,
+            custom_fields: { crm_owner: 'marcos', input_mode: 'import', ...sellerCustomFields },
+          }));
+          const { error } = await (supabase as any).from('crm_leads').insert(batch);
+          if (error) failed += batch.length;
+          else success += batch.length;
+          setBulkProgress(Math.min(100, Math.round(((i + batch.length) / validLeads.length) * 100)));
+        }
+        setBulkResult({ success, failed });
+        if (success > 0) await fetchData(true);
+        toast({
+          title: `✅ ${success} lead(s) importado(s)!`,
+          description: failed > 0 ? `${failed} falharam.` : undefined,
+          variant: failed > 0 && success === 0 ? 'destructive' : 'default',
+        });
+        return;
+      }
+
       // Resolve agent_id: team member > any member > first active agent
       const selectedMember = memberId ? teamMembers.find(m => m.id === memberId) : null;
       let agentId = selectedMember?.agent_id
@@ -1461,6 +1858,46 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
 
+      if (isMarcosCrm) {
+        const firstStageId = await resolveFirstMarcosStageId(effectiveUserId);
+        const currentSeller = await resolveCurrentSellerForMarcos();
+        const sellerCustomFields = currentSeller ? {
+          seller_member_id: currentSeller.id,
+          seller_name: currentSeller.name,
+          created_by_auth_user_id: userId,
+        } : {
+          created_by_auth_user_id: userId,
+        };
+        const { data: maxPosRow } = await (supabase as any)
+          .from('crm_leads')
+          .select('position')
+          .eq('user_id', effectiveUserId)
+          .eq('stage_id', firstStageId)
+          .order('position', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const { error } = await (supabase as any).from('crm_leads').insert({
+          user_id: effectiveUserId,
+          stage_id: firstStageId,
+          name: addLeadName.trim(),
+          phone: cleanPhone,
+          source: addLeadOrigem || 'manual',
+          notes: addLeadOrigem === 'outros' ? (addLeadOrigemOutros.trim() || null) : null,
+          tags: ['Marcos Manual'],
+          value: 0,
+          currency: 'BRL',
+          priority: 'medium',
+          position: (maxPosRow?.position ?? -1) + 1,
+          assigned_to: currentSeller?.id || null,
+          custom_fields: { crm_owner: 'marcos', input_mode: 'manual', ...sellerCustomFields },
+        });
+        if (error) throw error;
+        toast({ title: '✅ Lead adicionado ao CRM!' });
+        setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros(''); setAddLeadOpen(false);
+        await fetchData(true);
+        return;
+      }
+
       // Resolve agent_id: team member > any member > first active agent
       const selectedMember = memberId ? teamMembers.find(m => m.id === memberId) : null;
       let agentId = selectedMember?.agent_id
@@ -1521,6 +1958,26 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
       const updateData: Record<string, string> = {};
       if (editName !== (selectedLead.lead_name || '')) updateData.lead_name = editName;
       if (newJid !== selectedLead.remote_jid) updateData.remote_jid = newJid;
+      if (isMarcosCrm) {
+        const crmUpdate: Record<string, string> = {};
+        if (editName !== (selectedLead.lead_name || '')) crmUpdate.name = editName;
+        if (newJid !== selectedLead.remote_jid) crmUpdate.phone = cleanPhone;
+        if (Object.keys(crmUpdate).length === 0) {
+          setEditingLead(false);
+          return;
+        }
+        const { error } = await (supabase as any)
+          .from('crm_leads')
+          .update(crmUpdate)
+          .eq('id', selectedLead.id);
+        if (error) throw error;
+        const updatedLead = { ...selectedLead, lead_name: editName, remote_jid: `${cleanPhone}@s.whatsapp.net` };
+        setSelectedLead(updatedLead);
+        setLeads(prev => prev.map(l => l.id === selectedLead.id ? updatedLead : l));
+        setEditingLead(false);
+        toast({ title: '✅ Lead atualizado!' });
+        return;
+      }
       if (Object.keys(updateData).length === 0) {
         setEditingLead(false);
         return;
@@ -1546,6 +2003,14 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     if (!confirm('Deseja excluir este lead permanentemente? Esta ação não pode ser desfeita.')) return;
     setDeletingLead(true);
     try {
+      if (isMarcosCrm) {
+        const { error } = await (supabase as any).from('crm_leads').delete().eq('id', leadId);
+        if (error) throw error;
+        toast({ title: '🗑️ Lead excluído!' });
+        setSelectedLead(null);
+        setLeads(prev => prev.filter(l => l.id !== leadId));
+        return;
+      }
       // Remove notas, followups e feedbacks associados primeiro
       await Promise.all([
         (supabase as any).from('pedro_crm_notes').delete().eq('lead_id', leadId),
@@ -1564,24 +2029,85 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
     }
   };
 
+  const saveColumnOrder = async (nextOrder: string[]) => {
+    if (!userId) return;
+    const { error } = await (supabase as any)
+      .from('crm_column_preferences')
+      .upsert({
+        auth_user_id: userId,
+        crm_mode: mode,
+        column_order: nextOrder,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'auth_user_id,crm_mode' });
+    if (error) throw error;
+  };
+
+  const handleColumnReorder = async (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    const from = pipelineColumns.findIndex(column => column.id === draggedId);
+    const to = pipelineColumns.findIndex(column => column.id === targetId);
+    if (from < 0 || to < 0 || from === to) return;
+
+    const previousOrder = columnOrder;
+    const nextOrder = reorderItems(pipelineColumns, from, to).map(column => column.id);
+    setColumnOrder(nextOrder);
+    try {
+      await saveColumnOrder(nextOrder);
+      toast({ title: '✅ Ordem das colunas salva!' });
+    } catch (err: any) {
+      setColumnOrder(previousOrder);
+      toast({ title: 'Erro ao salvar ordem', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const handleDragEnd = async (result: DropResult) => {
-    const { draggableId, destination, source } = result;
-    if (!destination || destination.droppableId === source.droppableId) return;
+    const { draggableId, destination, source, type } = result;
+    if (!destination) return;
+
+    if (type === 'COLUMN') {
+      if (destination.index === source.index) return;
+      const previousOrder = columnOrder;
+      const nextColumns = reorderItems(pipelineColumns, source.index, destination.index);
+      const nextOrder = nextColumns.map(column => column.id);
+      setColumnOrder(nextOrder);
+      try {
+        await saveColumnOrder(nextOrder);
+        toast({ title: '✅ Ordem das colunas salva!' });
+      } catch (err: any) {
+        setColumnOrder(previousOrder);
+        toast({ title: 'Erro ao salvar ordem', description: err.message, variant: 'destructive' });
+      }
+      return;
+    }
+
+    if (destination.droppableId === source.droppableId) return;
     const newStatus = destination.droppableId;
     // Atualiza localmente de imediato (optimistic)
     setLeads(prev => prev.map(l => l.id === draggableId ? { ...l, status_crm: newStatus } : l));
     try {
+      if (isMarcosCrm) {
+        const { error } = await (supabase as any)
+          .from('crm_leads')
+          .update({ stage_id: newStatus })
+          .eq('id', draggableId);
+        if (error) throw error;
+        toast({ title: `✅ Lead movido para ${manualStages.find(c => c.id === newStatus)?.title || newStatus}` });
+        return;
+      }
       const { error } = await (supabase as any)
         .from('ai_crm_leads')
         .update({ status_crm: newStatus })
         .eq('id', draggableId);
       if (error) throw error;
-      toast({ title: `✅ Lead movido para ${PIPELINE_COLUMNS.find(c => c.id === newStatus)?.title || newStatus}` });
+      toast({ title: `✅ Lead movido para ${(isMarcosCrm ? manualStages : PIPELINE_COLUMNS).find(c => c.id === newStatus)?.title || newStatus}` });
     } catch (err: any) {
       toast({ title: 'Erro ao mover lead', description: err.message, variant: 'destructive' });
       await fetchData(true); // Revert on failure
     }
   };
+
+  const sellerLabelForLead = (lead?: CrmLead | null) =>
+    lead?.member?.name ?? (lead?.status === 'transferido' ? 'Aguardando' : 'Sem vendedor');
 
   if (loading) {
     return (
@@ -1592,6 +2118,14 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
   }
 
   // ── Lead Detail Panel ──────────────────────────────────────────────────────
+  const basePipelineColumns: PipelineColumn[] = isMarcosCrm && manualStages.length > 0 ? manualStages : PIPELINE_COLUMNS;
+  const pipelineColumns = applyColumnOrder(basePipelineColumns, columnOrder);
+  const statusOptions = isMarcosCrm
+    ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' }))
+    : STATUS_CRM_OPTIONS;
+  const canManageLeadStatus = !isMarcosCrm || !isSeller;
+  const canReassignLeadSeller = !isSeller && teamMembers.length > 0;
+
   if (selectedLead) {
     return (
       <div className="p-4 lg:p-6 space-y-5">
@@ -1624,7 +2158,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                     <X className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}</p>
+                <p className="text-xs text-muted-foreground">{sellerLabelForLead(selectedLead)} · {fmtDate(selectedLead.created_at)}</p>
               </div>
             ) : (
               <div className="flex items-start gap-1.5">
@@ -1632,7 +2166,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                   <h2 className="text-base font-semibold text-foreground truncate">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
                   <p className="text-xs text-muted-foreground">
                     {(() => { const p = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || ''; return p.length >= 12 ? `📱 (${p.slice(2,4)}) ${p.slice(4,9)}-${p.slice(9)}` : p.length >= 10 ? `📱 (${p.slice(0,2)}) ${p.slice(2,7)}-${p.slice(7)}` : p ? `📱 ${p}` : ''; })()}
-                    {selectedLead.remote_jid && ' · '}{selectedLead.member?.name ?? 'Sem vendedor'} · {fmtDate(selectedLead.created_at)}
+                    {selectedLead.remote_jid && ' · '}{sellerLabelForLead(selectedLead)} · {fmtDate(selectedLead.created_at)}
                   </p>
                   {/* Prompt 1.1: linha discreta de origem (badge bonita virá no Prompt 5.1) */}
                   {(selectedLead as any).origem && (
@@ -1650,24 +2184,32 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-[10px] text-muted-foreground hidden sm:inline">Status:</span>
-            <Select
-              value={selectedLead.status_crm || 'novo'}
-              onValueChange={updateLeadStatus}
-              disabled={statusUpdating}
-            >
-              <SelectTrigger className="h-8 text-xs w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUS_CRM_OPTIONS.map(opt => (
-                  <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                    <span className={opt.color}>{opt.label}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {!isSeller && teamMembers.length > 0 && (
+            {canManageLeadStatus ? (
+              <>
+                <span className="text-[10px] text-muted-foreground hidden sm:inline">Status:</span>
+                <Select
+                  value={selectedLead.status_crm || 'novo'}
+                  onValueChange={updateLeadStatus}
+                  disabled={statusUpdating}
+                >
+                  <SelectTrigger className="h-8 text-xs w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statusOptions.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                        <span className={opt.color}>{opt.label}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            ) : (
+              <Badge variant="outline" className="h-8 px-3 text-[10px] capitalize">
+                {statusOptions.find(opt => opt.value === selectedLead.status_crm)?.label || selectedLead.status_crm || 'Novo'}
+              </Badge>
+            )}
+            {canReassignLeadSeller && (
               <Select
                 value={selectedLead.assigned_to_id || 'unassigned'}
                 onValueChange={v => reassignLead(selectedLead.id, v === 'unassigned' ? null : v)}
@@ -1702,7 +2244,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
             1) Transferências com notes rico (não começa com "via cron")
             2) ai_crm_leads.summary (resumo da IA durante qualificação)
             3) Fallback "via cron" — texto curto antigo. */}
-        {(() => {
+        {!isMarcosCrm && (() => {
           // Identifica transferências com texto rico (mais que 1 linha ou >100 chars)
           const richTransfers = transfers.filter(t =>
             t.notes && (t.notes.length > 100 || t.notes.includes('\n'))
@@ -1784,7 +2326,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           );
         })()}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className={`grid grid-cols-1 ${isMarcosCrm ? '' : 'lg:grid-cols-2'} gap-4`}>
           {/* ── Anotações ─────────────────────────────────────────────── */}
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
@@ -1856,19 +2398,21 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                 <span className="flex items-center gap-2">
                   <CalendarClock className="h-4 w-4 text-cyan-400" /> Agendar Follow-up
                 </span>
-                <Button
-                  variant="outline" size="sm"
-                  onClick={() => setFunnelOpen(!funnelOpen)}
-                  className="h-7 text-[10px] gap-1 border-primary/30 text-primary hover:bg-primary/10"
-                >
-                  <Zap className="h-3 w-3" />
-                  {funnelOpen ? 'Fechar Funil' : 'Funil Automático'}
-                </Button>
+                {!isMarcosCrm && (
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={() => setFunnelOpen(!funnelOpen)}
+                    className="h-7 text-[10px] gap-1 border-primary/30 text-primary hover:bg-primary/10"
+                  >
+                    <Zap className="h-3 w-3" />
+                    {funnelOpen ? 'Fechar Funil' : 'Funil Automático'}
+                  </Button>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {/* Funil automático */}
-              {funnelOpen && selectedLead && (
+              {!isMarcosCrm && funnelOpen && selectedLead && (
                 <FollowupFunnelBuilder
                   leadId={selectedLead.id}
                   userId={userId!}
@@ -1882,7 +2426,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
               <Textarea
                 value={fuMsg}
                 onChange={e => setFuMsg(e.target.value)}
-                placeholder="Mensagem a enviar ao lead..."
+                placeholder={isMarcosCrm ? 'Mensagem que o robo de follow-up enviara ao lead...' : 'Mensagem a enviar ao lead...'}
                 className="min-h-[60px] text-xs resize-none"
               />
 
@@ -1967,9 +2511,14 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                   </Select>
                 )}
               </div>
+              {isMarcosCrm && instances.length === 0 && (
+                <p className="text-[10px] text-amber-300">
+                  Conecte uma instancia na aba Instancias do Marcos para enviar follow-ups.
+                </p>
+              )}
               <Button
                 onClick={handleScheduleFollowup}
-                disabled={fuLoading || !fuMsg.trim() || !fuDate}
+                disabled={fuLoading || fuUploading || !fuMsg.trim() || !fuDate || !!(fuMediaFile && !fuMediaUrl) || (isMarcosCrm && !fuInstance)}
                 size="sm" className="w-full h-8 text-xs"
               >
                 {fuLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <CalendarClock className="h-3.5 w-3.5 mr-1.5" />}
@@ -2008,6 +2557,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         </div>
 
         {/* ── Feedback Estruturado para Gerente ──────────────────────── */}
+        {!isMarcosCrm && (<>
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -2144,6 +2694,8 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         </Card>
 
         {/* ── Popup Historico de Feedbacks do Lead ──────────────────────── */}
+        </>)}
+
         <Dialog open={fbHistoryOpen} onOpenChange={setFbHistoryOpen}>
           <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
             <DialogHeader>
@@ -2263,16 +2815,18 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
               </SelectContent>
             </Select>
           )}
-          <Button
-            variant="outline" size="sm"
-            onClick={handleTriggerFollowups}
-            disabled={triggerLoading}
-            className="h-7 px-2.5 text-xs gap-1.5 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
-          >
-            {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-            Follow-ups
-          </Button>
-          {!isSeller && (
+          {!isMarcosCrm && (
+            <Button
+              variant="outline" size="sm"
+              onClick={handleTriggerFollowups}
+              disabled={triggerLoading}
+              className="h-7 px-2.5 text-xs gap-1.5 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
+            >
+              {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+              Follow-ups
+            </Button>
+          )}
+          {!isSeller && !isMarcosCrm && (
             <Button
               variant="outline"
               size="sm"
@@ -2288,31 +2842,35 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
           <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
-          <Button
-            variant={addLeadOpen ? 'secondary' : 'outline'}
-            size="sm"
-            onClick={() => setAddLeadOpen(!addLeadOpen)}
-            className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
-          >
-            {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-            {addLeadOpen ? 'Fechar' : 'Adicionar Lead'}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => bulkFileRef.current?.click()}
-            className="h-7 px-2.5 text-xs gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
-          >
-            <FileSpreadsheet className="h-3.5 w-3.5" />
-            Importar Planilha
-          </Button>
-          <input
-            ref={bulkFileRef}
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            onChange={handleBulkFileChange}
-            className="hidden"
-          />
+          {isMarcosCrm && (
+            <>
+              <Button
+                variant={addLeadOpen ? 'secondary' : 'outline'}
+                size="sm"
+                onClick={() => setAddLeadOpen(!addLeadOpen)}
+                className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+              >
+                {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                {addLeadOpen ? 'Fechar' : 'Adicionar Lead'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => bulkFileRef.current?.click()}
+                className="h-7 px-2.5 text-xs gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                Importar Planilha
+              </Button>
+              <input
+                ref={bulkFileRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleBulkFileChange}
+                className="hidden"
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -2376,13 +2934,34 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         <DragDropContext onDragEnd={handleDragEnd}>
           <div className="overflow-x-auto pb-2 -mx-4 px-4">
             <div className="flex gap-3 min-w-max">
-              {PIPELINE_COLUMNS.map(col => {
+              {pipelineColumns.map(col => {
                 const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo') === col.id);
                 return (
-                  <div key={col.id} className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}>
+                  <div
+                    key={col.id}
+                    onDragOver={event => event.preventDefault()}
+                    onDrop={() => {
+                      const draggedId = draggedColumnIdRef.current;
+                      draggedColumnIdRef.current = null;
+                      if (draggedId) handleColumnReorder(draggedId, col.id);
+                    }}
+                    className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}
+                  >
                     {/* Column header */}
-                    <div className={`px-3 py-2.5 rounded-t-xl ${col.bg} flex items-center justify-between`}>
+                    <div
+                      draggable
+                      onDragStart={event => {
+                        draggedColumnIdRef.current = col.id;
+                        event.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragEnd={() => {
+                        draggedColumnIdRef.current = null;
+                      }}
+                      className={`px-3 py-2.5 rounded-t-xl ${col.bg} flex items-center justify-between cursor-grab active:cursor-grabbing`}
+                      title="Arraste para reorganizar esta coluna"
+                    >
                       <div className="flex items-center gap-2">
+                        <GripVertical className="h-3.5 w-3.5 text-muted-foreground/60" />
                         <span className="text-sm">{col.emoji}</span>
                         <span className="text-xs font-semibold text-foreground">{col.title}</span>
                       </div>
@@ -2450,7 +3029,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                                     </div>
                                     {!isSeller && !lead.member && (
                                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 font-medium">
-                                        Sem vendedor
+                                        {sellerLabelForLead(lead)}
                                       </span>
                                     )}
                                   </div>
@@ -2475,7 +3054,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
         <div className="space-y-2">
           {view === 'leads' && filterStatus === 'all' && (
             <div className="flex gap-1 flex-wrap mb-2">
-              {STATUS_CRM_OPTIONS.map(opt => {
+              {(isMarcosCrm ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' })) : STATUS_CRM_OPTIONS).map(opt => {
                 const count = leads.filter(l => normalizeStatus(l.status_crm || 'novo') === opt.value).length;
                 if (!count) return null;
                 return (
@@ -2511,7 +3090,7 @@ export function CrmAvancadoTab({ userId }: { userId: string | undefined }) {
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{lead.lead_name || lead.remote_jid}</p>
-                    <p className="text-[11px] text-muted-foreground">{lead.member?.name ?? 'Sem vendedor'} · {fmtDate(lead.created_at)}</p>
+                    <p className="text-[11px] text-muted-foreground">{sellerLabelForLead(lead)} · {fmtDate(lead.created_at)}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

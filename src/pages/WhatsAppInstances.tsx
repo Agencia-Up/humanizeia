@@ -197,8 +197,9 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
       if (error) throw error;
       const list = (data as unknown as WaInstance[]) || [];
       setInstances(list);
-      // Auto-verify all Evolution instances on first load
-      if (!skipVerify && list.length > 0) {
+      // Auto-verify all Evolution instances on first load.
+      // Sellers verify only on demand so we do not touch other instances from the master account.
+      if (!isSeller && !skipVerify && list.length > 0) {
         setTimeout(() => verifyAllInstances(list), 500);
       }
     } catch (err: any) {
@@ -356,6 +357,10 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
             )}
             <Button
               onClick={() => {
+                if (isSeller && instances.length > 0) {
+                  handleConnectInstance(instances[0]);
+                  return;
+                }
                 if (poolUsed >= maxInstances) {
                   toast({
                     title: `Limite de ${maxInstances} instâncias atingido`,

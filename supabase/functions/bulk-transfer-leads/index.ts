@@ -10,18 +10,51 @@ async function sendWAMessage(instance: any, phone: string, text: string) {
   if (dest.length === 10 || dest.length === 11) dest = `55${dest}`;
   const apiUrl = (instance.api_url as string).replace(/\/+$/, "");
   const apiKey = instance.api_key_encrypted as string;
-  try {
-    const res = await fetch(`${apiUrl}/message/sendText/${instance.instance_name}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: apiKey },
-      body: JSON.stringify({ number: dest, text }),
-    });
-    if (!res.ok) {
-      console.warn(`WA send failed to ${dest}: ${res.status}`);
+
+  const remoteJid = `${dest}@s.whatsapp.net`;
+  const attempts = [
+    { label: "send-text-number", url: `${apiUrl}/send/text`, body: { number: dest, text } },
+    { label: "send-text-remotejid", url: `${apiUrl}/send/text`, body: { remoteJid, text } },
+    { label: "message-sendText", url: `${apiUrl}/message/sendText/${instance.instance_name}`, body: { number: dest, text } },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const res = await fetch(attempt.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", token: apiKey, apikey: apiKey },
+        body: JSON.stringify(attempt.body),
+      });
+      if (res.ok) {
+        console.log(`WA send OK (${attempt.label}) to ${dest}`);
+        return;
+      }
+      console.warn(`WA send ${attempt.label} failed to ${dest}: ${res.status}`);
+    } catch (e) {
+      console.warn(`WA send ${attempt.label} exception to ${dest}:`, e);
     }
-  } catch (e) {
-    console.warn(`WA send exception to ${dest}:`, e);
   }
+  console.error(`WA send FAILED all attempts to ${dest}`);
+}
+
+function sellerPhoneKey(seller: any): string {
+  const digits = String(seller?.whatsapp_number || "").replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.startsWith("55") && (digits.length === 12 || digits.length === 13)
+    ? digits.slice(2)
+    : digits;
+}
+
+function uniqueSellersByPhone(sellers: any[] = []): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const seller of sellers || []) {
+    const key = sellerPhoneKey(seller) || String(seller?.id || "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(seller);
+  }
+  return result;
 }
 
 Deno.serve(async (req) => {
@@ -79,14 +112,30 @@ Deno.serve(async (req) => {
     console.log(`[BulkTransfer] ${unassigned.length} leads para distribuir`);
 
     // 2. Busca vendedores ativos, ordenados por round-robin (quem recebeu há mais tempo vem primeiro)
-    const { data: sellers, error: sellersErr } = await supabase
+    const leadAgentIds = [...new Set((unassigned || []).map((l: any) => l.agent_id).filter(Boolean))];
+    let sellersQuery = supabase
       .from("ai_team_members")
       .select("*")
       .eq("user_id", effectiveUserId)
       .eq("is_active", true)
       .order("last_lead_received_at", { ascending: true, nullsFirst: true });
+    if (leadAgentIds.length > 0) sellersQuery = sellersQuery.in("agent_id", leadAgentIds);
+
+    let { data: sellers, error: sellersErr } = await sellersQuery;
 
     if (sellersErr) throw sellersErr;
+    if (!sellers?.length) {
+      const fallback = await supabase
+        .from("ai_team_members")
+        .select("*")
+        .eq("user_id", effectiveUserId)
+        .eq("is_active", true)
+        .order("last_lead_received_at", { ascending: true, nullsFirst: true });
+      sellers = fallback.data;
+      sellersErr = fallback.error;
+      if (sellersErr) throw sellersErr;
+    }
+    sellers = uniqueSellersByPhone(sellers || []);
     if (!sellers?.length) {
       return new Response(JSON.stringify({ error: "Nenhum vendedor ativo encontrado." }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },

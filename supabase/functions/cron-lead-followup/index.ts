@@ -38,6 +38,10 @@ function createSupabaseClient(url: string, key: string) {
         _filters.push({ col, op: 'lte', val: String(val) });
         return builder;
       },
+      gt(col: string, val: any) {
+        _filters.push({ col, op: 'gt', val: String(val) });
+        return builder;
+      },
       is(col: string, val: any) {
         _filters.push({ col, op: 'is', val: String(val) });
         return builder;
@@ -348,7 +352,7 @@ Deno.serve(async (req) => {
       // Buscar transferencias pendentes onde o vendedor NAO confirmou em 10 minutos
       const { data: pendingTransfers } = await supabase
         .from('ai_lead_transfers')
-        .select('*, lead:ai_crm_leads(*, wa_ai_agents(id, name, instance_id, instance_ids))')
+        .select('*, lead:ai_crm_leads(*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids))')
         .eq('is_confirmed', false)
         .eq('transfer_status', 'pending')
         .lte('created_at', tenMinsAgo); // A notificacao foi criada ha mais de 10 minutos
@@ -445,13 +449,25 @@ Deno.serve(async (req) => {
           }
 
           // Buscar TODOS os vendedores (inclusive o atual, para poder notifica-lo)
-          const { data: teamMembers } = await supabase
+          let { data: teamMembers } = await supabase
             .from('ai_team_members')
             .select('*')
             .eq('user_id', lead.user_id)
             .eq('is_active', true)
+            .eq('agent_id', agentId)
             .order('last_lead_received_at', { ascending: true, nullsFirst: true })
             .limit(50);
+
+          if (!teamMembers || teamMembers.length === 0) {
+            const { data: fallbackTeamMembers } = await supabase
+              .from('ai_team_members')
+              .select('*')
+              .eq('user_id', lead.user_id)
+              .eq('is_active', true)
+              .order('last_lead_received_at', { ascending: true, nullsFirst: true })
+              .limit(50);
+            teamMembers = fallbackTeamMembers;
+          }
 
           // ── Notifica o vendedor que PERDEU o lead ──────────────────────
           const expiredSeller = (teamMembers || []).find((m: any) => m.id === currentSellerId);
@@ -494,8 +510,9 @@ Deno.serve(async (req) => {
 
           // Atualizar lead com novo vendedor
           await supabase.from('ai_crm_leads').update({
-            assigned_to_id: nextSeller.id,
-          }).eq('id', lead.id).eq('status', 'qualificado');
+            assigned_to_id: null,
+            status: 'transferido',
+          }).eq('id', lead.id).in('status', ['qualificado', 'transferido']);
 
           // Atualizar timestamp do novo vendedor
           await supabase.from('ai_team_members').update({
@@ -584,7 +601,7 @@ Deno.serve(async (req) => {
     // ════════════════════════════════════════════════════════════════
     const { data: leads, error } = await supabase
       .from('ai_crm_leads')
-      .select('*, wa_ai_agents(id, name, instance_id, instance_ids)')
+      .select('*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids)')
       .in('status', ['novo', 'interessado'])
       .is('assigned_to_id', null)
       .not('last_agent_reply_at', 'is', null)
@@ -629,7 +646,7 @@ Deno.serve(async (req) => {
         const { data: updatedRows, error: updateError } = await supabase
           .from('ai_crm_leads')
           .update({
-            status: 'qualificado',
+            status: 'transferido',
             last_interaction_at: now.toISOString()
           })
           .in('status', ['novo', 'interessado'])
@@ -641,15 +658,27 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        console.log(`[Cron] Lead ${phoneNumber} inativo ha 10 min. Status -> qualificado. Buscando vendedor...`);
+        console.log(`[Cron] Lead ${phoneNumber} inativo ha 10 min. Transferindo sem mover status_crm. Buscando vendedor...`);
 
-        const { data: teamMembers } = await supabase
+        let { data: teamMembers } = await supabase
           .from('ai_team_members')
           .select('*')
           .eq('user_id', lead.user_id)
           .eq('is_active', true)
+          .eq('agent_id', agentId)
           .order('last_lead_received_at', { ascending: true, nullsFirst: true })
           .limit(50);
+
+        if (!teamMembers || teamMembers.length === 0) {
+          const { data: fallbackTeamMembers } = await supabase
+            .from('ai_team_members')
+            .select('*')
+            .eq('user_id', lead.user_id)
+            .eq('is_active', true)
+            .order('last_lead_received_at', { ascending: true, nullsFirst: true })
+            .limit(50);
+          teamMembers = fallbackTeamMembers;
+        }
 
         let selectedSellerId = null;
         let sellerName = 'Especialista';
@@ -715,8 +744,8 @@ Deno.serve(async (req) => {
           } catch (e) { /* silencioso */ }
 
           await supabase.from('ai_crm_leads').update({
-            status: 'qualificado',
-            assigned_to_id: seller.id,
+            status: 'transferido',
+            assigned_to_id: null,
             followup_5min_sent: true,
             last_interaction_at: now.toISOString(),
             summary: aiGeneratedSummary, // ← grava o resumo rico no lead
@@ -740,7 +769,7 @@ Deno.serve(async (req) => {
           if (seller.whatsapp_number) {
             const cleanSellerNum = seller.whatsapp_number.replace(/\D/g, '');
 
-            const notificationMsg = `*NOVO LEAD QUALIFICADO (Inatividade)*\n\n*Cliente:* ${lead.lead_name || 'Desconhecido'}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+            const notificationMsg = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta 10min)*\n\n*Cliente:* ${lead.lead_name || 'Desconhecido'}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
 
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }

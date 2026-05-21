@@ -6,15 +6,16 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Process ONE item per invocation to avoid edge function timeout with humanized delays
-const BATCH_SIZE = 1;
+// Process a small fair batch per invocation. The SQL claim returns at most one
+// ready item per campaign, so one old overdue campaign cannot block newer ones.
+const BATCH_SIZE = 3;
 const MAX_RETRIES = 5;
-// Items stuck in "processing" for more than this time (ms) are considered stale
-const STALE_LOCK_MS = 90_000; // 90 seconds
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 const OUTBOUND_FETCH_TIMEOUT_MS = 10_000;
 const PRESENCE_FETCH_TIMEOUT_MS = 2_500;
 const AI_FETCH_TIMEOUT_MS = 12_000;
+const SCHEDULED_CAMPAIGN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const SCHEDULED_CAMPAIGN_AUTO_START_LIMIT = 20;
 
 // ===== ANTI-BAN: Default safety limits =====
 const DEFAULT_DAILY_LIMIT_NEW_INSTANCE = 10; // New numbers (<3 days): max 10 msgs/day
@@ -65,6 +66,8 @@ interface Campaign {
   id: string;
   prompt_base: string | null;
   message_template: string;
+  media_url: string | null;
+  media_type: string | null;
   min_delay_seconds: number;
   max_delay_seconds: number;
   rotation_messages_per_instance: number;
@@ -83,6 +86,80 @@ interface SendResult {
   remoteMessageId: string | null;
 }
 
+async function autoStartDueScheduledCampaigns(supabase: any) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const lookbackIso = new Date(now.getTime() - SCHEDULED_CAMPAIGN_LOOKBACK_MS).toISOString();
+
+  const { error: expireError } = await supabase
+    .from("wa_campaigns")
+    .update({ status: "paused", updated_at: nowIso })
+    .eq("status", "scheduled")
+    .not("end_time", "is", null)
+    .lt("end_time", nowIso);
+
+  if (expireError) {
+    console.warn("[scheduled-campaigns] Failed to pause expired schedules:", expireError);
+  }
+
+  const { data: dueCampaigns, error } = await supabase
+    .from("wa_campaigns")
+    .select("id, scheduled_at, end_time")
+    .eq("status", "scheduled")
+    .not("scheduled_at", "is", null)
+    .lte("scheduled_at", nowIso)
+    .gte("scheduled_at", lookbackIso)
+    .order("scheduled_at", { ascending: true })
+    .limit(SCHEDULED_CAMPAIGN_AUTO_START_LIMIT);
+
+  if (error) {
+    console.warn("[scheduled-campaigns] Failed to fetch due campaigns:", error);
+    return 0;
+  }
+
+  const campaigns = (dueCampaigns || []).filter((campaign: any) => {
+    if (!campaign.end_time) return true;
+    return new Date(campaign.end_time).getTime() >= now.getTime();
+  });
+
+  if (campaigns.length === 0) return 0;
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    console.warn("[scheduled-campaigns] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    return 0;
+  }
+
+  let started = 0;
+  for (const campaign of campaigns) {
+    try {
+      const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/enqueue-campaign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({ campaign_id: campaign.id, __cron: true }),
+      }, OUTBOUND_FETCH_TIMEOUT_MS);
+
+      if (response.ok) {
+        started++;
+      } else {
+        const body = await response.text().catch(() => "");
+        console.warn(`[scheduled-campaigns] Enqueue failed for ${campaign.id}: ${response.status} ${body}`);
+      }
+    } catch (err) {
+      console.warn(`[scheduled-campaigns] Enqueue exception for ${campaign.id}:`, err);
+    }
+  }
+
+  if (started > 0) {
+    console.log(`[scheduled-campaigns] Auto-started ${started} scheduled campaign(s)`);
+  }
+  return started;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -94,27 +171,16 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // ===== RECOVER STALE LOCKS =====
-    // Reset items stuck in "processing" for too long (edge function timed out previously)
-    const staleThreshold = new Date(Date.now() - STALE_LOCK_MS).toISOString();
-    const { data: staleItems, error: staleErr } = await supabase
-      .from("wa_queue")
-      .update({ status: "pending" })
-      .eq("status", "processing")
-      .lt("scheduled_for", staleThreshold)
-      .select("id");
+    await autoStartDueScheduledCampaigns(supabase);
 
-    if (!staleErr && staleItems && staleItems.length > 0) {
-      console.log(`Recovered ${staleItems.length} stale processing items back to pending`);
-    }
-
-    const { data: queueItems, error: queueErr } = await supabase
-      .from("wa_queue")
-      .select("*")
-      .eq("status", "pending")
-      .lte("scheduled_for", new Date().toISOString())
-      .order("scheduled_for", { ascending: true })
-      .limit(BATCH_SIZE);
+    // ===== ATOMIC CLAIM =====
+    // Do not SELECT pending rows and lock them later. Cron can overlap, and a delayed
+    // worker would otherwise see the same row. The SQL function uses
+    // UPDATE ... FOR UPDATE SKIP LOCKED and returns rows already marked as processing.
+    const { data: queueItems, error: queueErr } = await supabase.rpc(
+      "claim_wa_queue_items",
+      { p_limit: BATCH_SIZE },
+    );
 
     if (queueErr) {
       console.error("Queue fetch error:", queueErr);
@@ -139,7 +205,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons, seller_member_id")
+        .select("id, prompt_base, message_template, media_url, media_type, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons, seller_member_id")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -204,8 +270,8 @@ Deno.serve(async (req) => {
         .from("wa_instances")
         .select("*")
         .eq("user_id", uid)
-        .eq("is_active", true)
         .eq("status", "connected")
+        .order("is_active", { ascending: false })
         .order("health_score", { ascending: false });
 
       if (instances && instances.length > 0) {
@@ -256,28 +322,6 @@ Deno.serve(async (req) => {
             processed++;
             continue;
           }
-        }
-
-        const { data: lockRow, error: lockErr } = await supabase
-          .from("wa_queue")
-          .update({
-            status: "processing",
-            // Reuse scheduled_for as lock timestamp for reliable stale-lock recovery
-            scheduled_for: new Date().toISOString(),
-          })
-          .eq("id", item.id)
-          .eq("status", "pending")
-          .select("id")
-          .maybeSingle();
-
-        if (lockErr) {
-          throw new Error(`Failed to lock queue item: ${lockErr.message}`);
-        }
-
-        // Another worker already took this item
-        if (!lockRow) {
-          skipReasons.push({ item_id: item.id, reason: "lock_lost_to_another_worker" });
-          continue;
         }
 
         const campaign = item.campaign_id ? campaignMap.get(item.campaign_id) : null;
@@ -407,7 +451,7 @@ Deno.serve(async (req) => {
               // Fallback: add random suffix to template
               const suffixes = ["", " 😊", " 👋", "!", " 🙂", " ✨", ".", " 💡", " 🚀", " 📲"];
               const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-              finalMessage = (campaign.message_template || item.message) + suffix;
+              finalMessage = buildFallbackAIMessage(campaign.prompt_base, item.contact_name, item.contact_metadata, variationLevel, campaign.message_template || item.message);
               messageIsUnique = true;
             }
           }
@@ -478,6 +522,9 @@ Deno.serve(async (req) => {
           !item.contact_metadata?.last_message_at && // only for first-time contacts
           !isUazAPIInstance(instance);
 
+        const effectiveMediaUrl = item.media_url || campaign?.media_url || null;
+        const effectiveMediaType = item.media_type || campaign?.media_type || null;
+
         let sendResult: SendResult;
         if (shouldSendOptoutButtons && instance.provider === "evolution") {
           // Send message with interactive buttons via UazAPI
@@ -486,7 +533,7 @@ Deno.serve(async (req) => {
             { buttonId: "optout_stop", buttonText: { displayText: "❌ Não Quero Mais Receber" } },
           ]);
         } else {
-          sendResult = await sendMessageByProvider(instance, item.phone, finalMessage, item.media_url, item.media_type);
+          sendResult = await sendMessageByProvider(instance, item.phone, finalMessage, effectiveMediaUrl, effectiveMediaType);
         }
         instanceFailures.set(instance.id, 0);
 
@@ -502,6 +549,8 @@ Deno.serve(async (req) => {
             status: "sent",
             sent_at: sentAt,
             message: finalMessage,
+            media_url: effectiveMediaUrl,
+            media_type: effectiveMediaType,
             instance_id: instance.id,
             message_hash: messageHash,
           })
@@ -526,9 +575,9 @@ Deno.serve(async (req) => {
           phone: item.phone.replace(/\D/g, ""),
           contact_name: item.contact_name || null,
           direction: "outgoing",
-          message_type: item.media_type || "text",
+          message_type: effectiveMediaType || "text",
           content: finalMessage,
-          media_url: item.media_url || null,
+          media_url: effectiveMediaUrl || null,
           remote_message_id: sendResult.remoteMessageId,
           is_read: true,
           created_at: sentAt,
@@ -544,6 +593,8 @@ Deno.serve(async (req) => {
         await supabase
           .from("wa_instances")
           .update({
+            is_active: true,
+            status: "connected",
             messages_sent_today: nextTodaySent,
             last_message_at: new Date().toISOString(),
             last_used_at: new Date().toISOString(),
@@ -889,60 +940,53 @@ async function sendToUazAPI(
 ): Promise<SendResult> {
   const apiUrl = instance.api_url.replace(/\/+$/, "");
   const number = phone.replace(/\D/g, "");
+  const remoteJid = `${number}@s.whatsapp.net`;
   const token = instance.api_key_encrypted;
 
   const authHeaders = { "Content-Type": "application/json", token, apikey: token };
 
   if (mediaUrl && mediaType) {
-    // UazAPI V6: unified /send/media endpoint for all media types
-    const mediaResponse = await fetchWithTimeout(
-      `${apiUrl}/send/media`,
-      {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({ number, url: mediaUrl, type: mediaType, caption: text || "" }),
-      },
-      OUTBOUND_FETCH_TIMEOUT_MS
-    ).catch(() => null);
+    // UazAPI V6: /send/media works with the "file" field. Keep older body
+    // shapes as fallbacks because some self-hosted instances lag behind.
+    const caption = mediaType === "audio" ? "" : (text || "");
+    const mediaTextFields = caption
+      ? { text: caption, caption }
+      : {};
+    const mediaAttempts = [
+      { number, file: mediaUrl, type: mediaType, ...mediaTextFields },
+      { number, file: mediaUrl, mediatype: mediaType, ...mediaTextFields },
+      { number, url: mediaUrl, type: mediaType, ...mediaTextFields },
+      { number, media: mediaUrl, mediatype: mediaType, ...mediaTextFields },
+      { remoteJid, file: mediaUrl, type: mediaType, ...mediaTextFields },
+      { remoteJid, url: mediaUrl, type: mediaType, ...mediaTextFields },
+    ];
 
-    if (mediaResponse && mediaResponse.ok) {
-      const data = await mediaResponse.json().catch(() => ({}));
-      return { remoteMessageId: data?.messageId || data?.id || null };
+    let lastMediaError = "";
+    for (const body of mediaAttempts) {
+      const mediaResponse = await fetchWithTimeout(
+        `${apiUrl}/send/media`,
+        {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify(body),
+        },
+        OUTBOUND_FETCH_TIMEOUT_MS
+      ).catch((err) => {
+        lastMediaError = err instanceof Error ? err.message : String(err);
+        return null;
+      });
+
+      if (mediaResponse && mediaResponse.ok) {
+        const data = await mediaResponse.json().catch(() => ({}));
+        return { remoteMessageId: data?.messageId || data?.id || data?.key?.id || null };
+      }
+
+      if (mediaResponse) {
+        lastMediaError = `${mediaResponse.status} - ${await mediaResponse.text().catch(() => "")}`;
+      }
     }
 
-    // Fallback attempt 2: alternate body shape
-    const mediaResponse2 = await fetchWithTimeout(
-      `${apiUrl}/send/media`,
-      {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({ number, media: mediaUrl, mediatype: mediaType, caption: text || "" }),
-      },
-      OUTBOUND_FETCH_TIMEOUT_MS
-    ).catch(() => null);
-
-    if (mediaResponse2 && mediaResponse2.ok) {
-      const data = await mediaResponse2.json().catch(() => ({}));
-      return { remoteMessageId: data?.messageId || data?.id || null };
-    }
-
-    // Fallback: send text with media URL appended
-    const fallbackText = text ? `${text}\n\n${mediaUrl}` : mediaUrl!;
-    const fallbackResp = await fetchWithTimeout(
-      `${apiUrl}/send/text`,
-      {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({ number, text: fallbackText }),
-      },
-      OUTBOUND_FETCH_TIMEOUT_MS
-    );
-    if (!fallbackResp.ok) {
-      const errText = await fallbackResp.text();
-      throw new Error(`UazAPI error (media fallback): ${fallbackResp.status} - ${errText}`);
-    }
-    const data = await fallbackResp.json().catch(() => ({}));
-    return { remoteMessageId: data?.messageId || data?.id || null };
+    throw new Error(`UazAPI error (sendMedia): ${lastMediaError}`);
   }
 
   // Plain text
@@ -1257,11 +1301,47 @@ async function sendEvolutionButtonMessage(
 
 // ====================== MESSAGE POLYMORPHISM ======================
 
+function buildFallbackAIMessage(
+  promptBase: string,
+  contactName: string | null,
+  _contactMetadata: any,
+  variationLevel: string,
+  messageTemplate: string | null,
+): string {
+  const base = (messageTemplate || promptBase || "").replace(/^\[IA\]\s*/i, "").trim();
+  const name = contactName?.trim();
+  const intro = name ? `${name}, ` : "";
+
+  const conservative = [
+    `Oi, ${intro}${base}. Posso te passar mais detalhes por aqui?`,
+    `Ola, ${intro}passando para falar sobre: ${base}. Faz sentido para voce?`,
+    `${intro}${base}. Se quiser, eu te explico rapidinho por aqui.`,
+  ];
+  const moderate = [
+    `Oi, ${intro}tudo bem? Separei essa mensagem para voce: ${base}. Me responde por aqui se quiser seguir.`,
+    `${intro}pensei que isso poderia te interessar: ${base}. Quer que eu te mostre o proximo passo?`,
+    `Passando rapido, ${intro}${base}. Se fizer sentido, me chama aqui e eu te ajudo.`,
+  ];
+  const creative = [
+    `${intro}deixa eu te mostrar uma oportunidade: ${base}. Quer receber os detalhes agora?`,
+    `Oi! Tenho algo que pode encaixar bem para voce: ${base}. Me responde com "quero" que eu continuo.`,
+    `${intro}antes que passe batido: ${base}. Quer que eu te explique em uma mensagem curta?`,
+  ];
+
+  const pool = variationLevel === "low"
+    ? conservative
+    : variationLevel === "high"
+      ? creative
+      : moderate;
+  const selected = pool[Math.floor(Math.random() * pool.length)] || base;
+  return selected.slice(0, 500);
+}
+
 async function generateAIMessage(
   promptBase: string,
   phone: string,
   contactName: string | null,
-  contactMetadata: any,
+  _contactMetadata: any,
   variationLevel: string,
   messageTemplate: string | null,
   supabaseClient?: any,
@@ -1272,13 +1352,6 @@ async function generateAIMessage(
 
   let personalizationContext = "";
   if (contactName) personalizationContext += `\nNome do lead: ${contactName}`;
-  if (contactMetadata && typeof contactMetadata === "object") {
-    const extras = Object.entries(contactMetadata)
-      .filter(([_, v]) => v !== null && v !== undefined && v !== "")
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(", ");
-    if (extras) personalizationContext += `\nDados extras do lead: ${extras}`;
-  }
 
   let conversationHistory = "";
   if (supabaseClient && userId && phone) {
@@ -1363,7 +1436,7 @@ REGRAS OBRIGATÓRIAS:
 - A mensagem deve soar 100% natural, como enviada por uma pessoa real digitando no celular
 - NÃO use saudações genéricas repetitivas
 - NÃO inclua o número de telefone
-- Se dados do lead forem fornecidos, USE-OS naturalmente
+- Use apenas o nome do lead quando ele for fornecido. Nao cite campos de planilha como cargo, empresa, origem, tag, metadata ou dados extras
 - Se houver histórico de conversa, CONSIDERE o contexto
 - MÁXIMO de 500 caracteres
 - NÃO use formatação de markdown (sem **, sem ##, sem *)

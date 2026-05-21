@@ -11,7 +11,7 @@ export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
 
   return (
     <Wrapper>
-      <CrmAvancadoTab userId={user?.id} />
+      <CrmAvancadoTab userId={user?.id} mode="marcos" />
     </Wrapper>
   );
 }

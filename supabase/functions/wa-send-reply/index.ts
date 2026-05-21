@@ -95,10 +95,14 @@ Deno.serve(async (req) => {
 
     let sendResult;
     if (media_url && media_type) {
-      // UazAPI V6: endpoint unificado /send/media (os antigos /send/image etc retornam 405)
+      // UazAPI V6: /send/media with "file" is the confirmed format.
+      // Keep older body shapes as fallbacks for compatibility.
+      const caption = media_type === "audio" ? "" : (content || "");
       const mediaAttempts = [
-        { url: `${apiUrl}/send/media`, body: { number, url: media_url, type: media_type, caption: content || "" } },
-        { url: `${apiUrl}/send/media`, body: { number, media: media_url, mediatype: media_type, caption: content || "" } },
+        { url: `${apiUrl}/send/media`, body: { number, file: media_url, type: media_type, caption } },
+        { url: `${apiUrl}/send/media`, body: { number, file: media_url, mediatype: media_type, caption } },
+        { url: `${apiUrl}/send/media`, body: { number, url: media_url, type: media_type, caption } },
+        { url: `${apiUrl}/send/media`, body: { number, media: media_url, mediatype: media_type, caption } },
       ];
 
       let lastErr = "";

@@ -68,18 +68,31 @@ async function sendUazapiMediaMessage(
   mediaType: string, // 'image' | 'audio' | 'video'
   caption?: string,
 ): Promise<boolean> {
+  const safeCaption = mediaType === "audio" ? "" : (caption || "");
   const attempts = [
     {
       url: `${baseUrl}/send/media`,
-      body: { number: phoneNumber, url: mediaUrl, type: mediaType, caption: caption || "" },
+      body: { number: phoneNumber, file: mediaUrl, type: mediaType, caption: safeCaption },
     },
     {
       url: `${baseUrl}/send/media`,
-      body: { number: phoneNumber, media: mediaUrl, mediatype: mediaType, caption: caption || "" },
+      body: { number: phoneNumber, file: mediaUrl, mediatype: mediaType, caption: safeCaption },
     },
     {
       url: `${baseUrl}/send/media`,
-      body: { remoteJid, url: mediaUrl, type: mediaType, caption: caption || "" },
+      body: { number: phoneNumber, url: mediaUrl, type: mediaType, caption: safeCaption },
+    },
+    {
+      url: `${baseUrl}/send/media`,
+      body: { number: phoneNumber, media: mediaUrl, mediatype: mediaType, caption: safeCaption },
+    },
+    {
+      url: `${baseUrl}/send/media`,
+      body: { remoteJid, file: mediaUrl, type: mediaType, caption: safeCaption },
+    },
+    {
+      url: `${baseUrl}/send/media`,
+      body: { remoteJid, url: mediaUrl, type: mediaType, caption: safeCaption },
     },
   ];
 
@@ -110,35 +123,28 @@ serve(async (req) => {
     const now    = new Date();
     const nowIso = now.toISOString();
 
-    // 1. Busca TODOS os agendamentos pendentes (com ou sem instance_id)
+    // 1. Reivindica atomicamente os agendamentos pendentes.
+    // Isso evita envio duplicado quando o cron e o botão manual rodam ao mesmo tempo.
     const { data: schedules, error: fetchErr } = await supabase
-      .from("pedro_followup_schedules")
-      .select(`
-        *,
-        lead:ai_crm_leads(id, remote_jid, agent_id, user_id)
-      `)
-      .eq("status", "pending")
-      .lte("scheduled_at", nowIso)
-      .order("scheduled_at", { ascending: true })
-      .limit(30);
+      .rpc("claim_pedro_followup_schedules", { p_limit: 30 });
 
     if (fetchErr) throw fetchErr;
 
-    if (!schedules || schedules.length === 0) {
-      return new Response(JSON.stringify({ ok: true, processed: 0, failed: 0 }), {
-        headers: { ...cors, "Content-Type": "application/json" },
-      });
-    }
-
     let processed = 0;
     let failed    = 0;
+    const pedroProcessedStart = processed;
+    const pedroFailedStart = failed;
 
     // Cache de instâncias para evitar queries repetidas
     const instanceCache: Record<string, any> = {};
 
-    for (const schedule of schedules) {
+    for (const schedule of schedules || []) {
       try {
-        const lead = (schedule as any).lead;
+        const { data: lead } = await supabase
+          .from("ai_crm_leads")
+          .select("id, remote_jid, agent_id, user_id")
+          .eq("id", schedule.lead_id)
+          .maybeSingle();
 
         if (!lead?.remote_jid) {
           await supabase.from("pedro_followup_schedules")
@@ -232,13 +238,6 @@ serve(async (req) => {
             schedule.media_url, schedule.media_type,
             schedule.message_template,
           );
-          // Se mídia falhar, tenta enviar só texto
-          if (!sent) {
-            sent = await sendUazapiTextMessage(
-              baseUrl, instKey, instName, phoneNumber, remoteJid,
-              schedule.message_template,
-            );
-          }
         } else {
           sent = await sendUazapiTextMessage(
             baseUrl, instKey, instName, phoneNumber, remoteJid,
@@ -277,12 +276,160 @@ serve(async (req) => {
         processed++;
       } catch (err) {
         console.error(`[pedro-trigger-followup] Erro no agendamento ${(schedule as any).id}:`, err);
+        await supabase.from("pedro_followup_schedules")
+          .update({ status: "failed" })
+          .eq("id", (schedule as any).id);
         failed++;
       }
     }
 
+    const pedroProcessed = processed - pedroProcessedStart;
+    const pedroFailed = failed - pedroFailedStart;
+    const marcosProcessedStart = processed;
+    const marcosFailedStart = failed;
+
+    // Marcos: fila de follow-up somente envio. Nao conversa, nao chama IA.
+    const { data: marcosSchedules, error: marcosFetchErr } = await supabase
+      .rpc("claim_marcos_followup_schedules", { p_limit: 30 });
+
+    if (marcosFetchErr) throw marcosFetchErr;
+
+    for (const schedule of marcosSchedules || []) {
+      try {
+        const { data: lead } = await supabase
+          .from("crm_leads")
+          .select("id, name, phone, user_id, assigned_to")
+          .eq("id", schedule.lead_id)
+          .maybeSingle();
+        const digits = String(lead?.phone || "").replace(/\D/g, "");
+
+        if (!lead?.id || !digits) {
+          await supabase.from("marcos_followup_schedules")
+            .update({ status: "cancelled" })
+            .eq("id", schedule.id);
+          failed++;
+          continue;
+        }
+
+        let instance: any = null;
+        if (schedule.instance_id) {
+          if (instanceCache[schedule.instance_id]) {
+            instance = instanceCache[schedule.instance_id];
+          } else {
+            const { data: inst } = await supabase
+              .from("wa_instances")
+              .select("id, api_url, api_key_encrypted, instance_name")
+              .eq("id", schedule.instance_id)
+              .single();
+            instance = inst;
+            if (inst) instanceCache[schedule.instance_id] = inst;
+          }
+        }
+
+        const sellerMemberId = schedule.member_id || lead.assigned_to || null;
+        if (!instance && lead.user_id && sellerMemberId) {
+          const cacheKey = `marcos-seller:${lead.user_id}:${sellerMemberId}`;
+          if (instanceCache[cacheKey]) {
+            instance = instanceCache[cacheKey];
+          } else {
+            const { data: sellerInst } = await supabase
+              .from("wa_instances")
+              .select("id, api_url, api_key_encrypted, instance_name")
+              .eq("user_id", lead.user_id)
+              .eq("seller_member_id", sellerMemberId)
+              .eq("is_active", true)
+              .limit(1)
+              .maybeSingle();
+            if (sellerInst) {
+              instance = sellerInst;
+              instanceCache[cacheKey] = sellerInst;
+            }
+          }
+        }
+
+        if (!instance && lead.user_id) {
+          const cacheKey = `marcos-master:${lead.user_id}`;
+          if (instanceCache[cacheKey]) {
+            instance = instanceCache[cacheKey];
+          } else {
+            const { data: masterInst } = await supabase
+              .from("wa_instances")
+              .select("id, api_url, api_key_encrypted, instance_name")
+              .eq("user_id", lead.user_id)
+              .is("seller_member_id", null)
+              .eq("is_active", true)
+              .limit(1)
+              .maybeSingle();
+            if (masterInst) {
+              instance = masterInst;
+              instanceCache[cacheKey] = masterInst;
+            }
+          }
+        }
+
+        if (!instance?.api_url) {
+          console.error(`[marcos-followup] No instance found for schedule ${schedule.id}`);
+          await supabase.from("marcos_followup_schedules")
+            .update({ status: "failed" })
+            .eq("id", schedule.id);
+          failed++;
+          continue;
+        }
+
+        const baseUrl = instance.api_url.replace(/\/+$/, "");
+        const instKey = instance.api_key_encrypted || "";
+        const instName = instance.instance_name || "";
+        const remoteJid = `${digits}@s.whatsapp.net`;
+
+        const hasMedia = schedule.media_url && schedule.media_type;
+        let sent = false;
+        if (hasMedia) {
+          sent = await sendUazapiMediaMessage(
+            baseUrl, instKey, instName, digits, remoteJid,
+            schedule.media_url, schedule.media_type,
+            schedule.message_template,
+          );
+        } else {
+          sent = await sendUazapiTextMessage(baseUrl, instKey, instName, digits, remoteJid, schedule.message_template);
+        }
+
+        if (!sent) {
+          await supabase.from("marcos_followup_schedules")
+            .update({ status: "failed" })
+            .eq("id", schedule.id);
+          failed++;
+          continue;
+        }
+
+        await Promise.all([
+          supabase.from("marcos_followup_schedules")
+            .update({ status: "sent", sent_at: nowIso })
+            .eq("id", schedule.id),
+          supabase.from("wa_chat_history").insert({
+            user_id: schedule.user_id,
+            agent_id: null,
+            instance_id: instName,
+            remote_jid: remoteJid,
+            role: "assistant",
+            content: `[Follow-up Marcos] ${schedule.message_template}`,
+          }),
+        ]);
+
+        processed++;
+      } catch (err) {
+        console.error(`[marcos-followup] Erro no agendamento ${(schedule as any).id}:`, err);
+        await supabase.from("marcos_followup_schedules")
+          .update({ status: "failed" })
+          .eq("id", (schedule as any).id);
+        failed++;
+      }
+    }
+
+    const marcosProcessed = processed - marcosProcessedStart;
+    const marcosFailed = failed - marcosFailedStart;
+
     return new Response(
-      JSON.stringify({ ok: true, processed, failed }),
+      JSON.stringify({ ok: true, processed, failed, pedroProcessed, pedroFailed, marcosProcessed, marcosFailed }),
       { headers: { ...cors, "Content-Type": "application/json" } },
     );
   } catch (err: any) {
