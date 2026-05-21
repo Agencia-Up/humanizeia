@@ -163,6 +163,8 @@ const DaviSocialMedia = lazy(() => import('./pages/DaviSocialMedia'));
 const JoaoEmail = lazy(() => import('./pages/JoaoEmail'));
 const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
 const MeuPlano = lazy(() => import('./pages/MeuPlano'));
+// Fase 6.5 — Admin de campos dinâmicos (cidades + origens)
+const DynamicFieldsAdmin = lazy(() => import('./pages/DynamicFieldsAdmin'));
 const AgentFunnel = lazy(() => import('./pages/AgentFunnel'));
 const LucasFunil = lazy(() => import('./pages/LucasFunil'));
 const GeradorPrompt = lazy(() => import('./pages/GeradorPrompt'));
@@ -275,6 +277,8 @@ const App = () => (
                 <Route path="/joao"                  element={<ProtectedRoute><Lazy><JoaoEmail /></Lazy></ProtectedRoute>} />
                 <Route path="/daniel"                element={<ProtectedRoute><Lazy><DanielEstrategia /></Lazy></ProtectedRoute>} />
                 <Route path="/meu-plano"             element={<ProtectedRoute><Lazy><MeuPlano /></Lazy></ProtectedRoute>} />
+                {/* Fase 6.5 — admin de cidades + origens dinâmicas */}
+                <Route path="/configuracoes/campos-dinamicos" element={<ProtectedRoute><Lazy><DynamicFieldsAdmin /></Lazy></ProtectedRoute>} />
                 <Route path="/gerador-prompt"        element={<ProtectedRoute><AdminRoute><Lazy><GeradorPrompt /></Lazy></AdminRoute></ProtectedRoute>} />
                 <Route path="/jose"                  element={<ProtectedRoute><Lazy><JoseTrafego /></Lazy></ProtectedRoute>} />
                 <Route path="/performance"           element={<ProtectedRoute><Lazy><SupportDashboard /></Lazy></ProtectedRoute>} />

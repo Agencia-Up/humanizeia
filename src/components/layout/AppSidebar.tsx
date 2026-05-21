@@ -111,6 +111,8 @@ const systemItems = [
   { title: 'Integrações',      url: '/integrations',  icon: Plug },
   { title: 'Meu Perfil',       url: '/perfil',        icon: Users },
   { title: 'Configurações',    url: '/settings',      icon: Settings },
+  // Fase 6.5 — gerencia cidades + origens dinâmicas
+  { title: 'Campos Dinâmicos', url: '/configuracoes/campos-dinamicos', icon: Sparkles },
 ];
 
 // ── NavItem simples ────────────────────────────────────────────────────────────
