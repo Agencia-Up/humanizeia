@@ -93,6 +93,21 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   const [savingListContacts, setSavingListContacts] = useState(false);
   const [newContactName, setNewContactName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
+  // Fase 6 Feature C: lista vinda do CRM Pedro (sessionStorage)
+  const [prefilledPedro, setPrefilledPedro] = useState<{ phones: string[]; label: string } | null>(null);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('pedro_campaign_phones');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (Array.isArray(data?.phones) && data.phones.length > 0) {
+        setPrefilledPedro({ phones: data.phones, label: data.label || 'Lista do CRM' });
+      }
+      sessionStorage.removeItem('pedro_campaign_phones');
+    } catch {
+      // ignora — banner é opcional
+    }
+  }, []);
 
   const legacyClaudeConfig = useMemo(() => ({ creativity: 0.8, variations: 3 }), []);
   const { sendSingleMessage } = useClaudeChat({
@@ -559,6 +574,49 @@ Não numere as variações. Não inclua explicações adicionais.`
 
   const mainContent = (
     <div className={embedded ? 'space-y-6 p-4 md:p-6' : 'space-y-6'}>
+        {/* Fase 6 Feature C: banner quando vem do Pedro CRM */}
+        {prefilledPedro && (
+          <div className="rounded-lg border-2 border-orange-500/40 bg-orange-500/5 p-3 flex items-start gap-2">
+            <div className="text-xl">📢</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-orange-300">{prefilledPedro.label}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {prefilledPedro.phones.length} contato(s) vieram do CRM do Pedro. Crie uma lista nova e cole os números abaixo:
+              </p>
+              <details className="mt-2">
+                <summary className="text-[11px] cursor-pointer text-orange-400 hover:text-orange-300">
+                  Ver / copiar {prefilledPedro.phones.length} telefone(s)
+                </summary>
+                <textarea
+                  readOnly
+                  value={prefilledPedro.phones.join('\n')}
+                  className="mt-2 w-full h-24 text-[11px] font-mono bg-background/50 border border-border/40 rounded p-2"
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      navigator.clipboard.writeText(prefilledPedro.phones.join('\n'));
+                      toast({ title: '✅ Telefones copiados' });
+                    } catch {
+                      toast({ title: 'Selecione manualmente', variant: 'destructive' });
+                    }
+                  }}
+                  className="text-[11px] mt-1 text-orange-400 hover:text-orange-300 underline"
+                >
+                  Copiar todos
+                </button>
+              </details>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPrefilledPedro(null)}
+              className="text-muted-foreground hover:text-foreground text-lg leading-none"
+              title="Fechar banner"
+            >×</button>
+          </div>
+        )}
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>

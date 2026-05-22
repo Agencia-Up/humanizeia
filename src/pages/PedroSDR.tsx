@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useRef, lazy, Suspense, useCallback, type
 import { useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+// Fase 6.4 — Campos dinâmicos (cidades + origens cadastráveis pelo vendedor)
+import { DynamicSelect } from '@/components/dynamic-fields/DynamicSelect';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -688,6 +690,12 @@ interface CrmLead {
   created_at: string;
   source?: string | null;
   custom_fields?: Record<string, any> | null;
+  // Fase 6 — campos enriched (todos opcionais; só renderizam badge se vierem)
+  client_city?: string | null;
+  vehicle_interest?: string | null;
+  visit_scheduled?: string | null;
+  // Feature C: pro cálculo de inativo (>7 dias sem resposta)
+  last_user_reply_at?: string | null;
 }
 
 interface Note {
@@ -701,7 +709,8 @@ interface Note {
 
 interface Feedback {
   id: string;
-  lead_id: string;
+  lead_id: string | null;            // M5: Pedro popula isso, Marcos NULL
+  crm_lead_id?: string | null;       // M5: Marcos popula isso, Pedro NULL
   content: string;
   city?: string | null;
   reason?: string | null;
@@ -761,6 +770,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [isSeller, setIsSeller] = useState(false);
   const [memberId, setMemberId] = useState<string | null>(null);
   const [memberIds, setMemberIds] = useState<string[]>([]);
+  // Fase 6.4 hotfix: effectiveUserId no escopo do componente (era local em fns,
+  // causava ReferenceError no JSX do DynamicSelect e quebrava a pagina toda)
+  const [effectiveUserIdState, setEffectiveUserIdState] = useState<string | null>(null);
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
   const [manualStages, setManualStages] = useState<typeof PIPELINE_COLUMNS>([]);
@@ -780,6 +792,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [filterStatus, setFilterStatus]   = useState<string>('all');
   const [filterSeller, setFilterSeller]   = useState<string>('all');
   const [searchTerm,   setSearchTerm]     = useState('');
+  // Fase 6 Feature C: modo seleção pro disparo em massa (toggle + IDs marcados)
+  const [selectionMode, setSelectionMode]   = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
 
   // form states
   const [newNote, setNewNote]             = useState('');
@@ -871,6 +886,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const effectiveUserId = isSeller
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
+      // Fase 6.4 hotfix: expõe pro escopo do componente pra DynamicSelect usar
+      if (effectiveUserId && effectiveUserId !== effectiveUserIdState) {
+        setEffectiveUserIdState(effectiveUserId);
+      }
 
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
@@ -911,7 +930,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
         let marcosLeadsQuery = (supabase as any)
           .from('crm_leads')
-          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at')
+          // Feature M1: campos enriched (Marcos agora tem client_city, vehicle_interest, visit_scheduled)
+          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled')
           .eq('user_id', effectiveUserId)
           .not('source', 'like', 'Pedro SDR%')
           .order('created_at', { ascending: false })
@@ -966,6 +986,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           created_at: lead.created_at,
           source: lead.source || 'manual',
           custom_fields: lead.custom_fields || null,
+          // Feature M1: campos enriched do Marcos (mesma estrutura do Pedro)
+          client_city: lead.client_city || null,
+          vehicle_interest: lead.vehicle_interest || null,
+          visit_scheduled: lead.visit_scheduled || null,
         }));
 
         const enrichedTeam = teamData.map(m => ({
@@ -1014,13 +1038,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       // ========================================================================
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
+        // Fase 6: adiciona client_city, vehicle_interest, visit_scheduled (todos opcionais)
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled, last_user_reply_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
         leadsQuery.in('assigned_to_id', memberIds);
       } else {
-        leadsQuery.limit(100);
+        // Master vê até 500 leads (margem segura). Antes era 100 e escondia
+        // leads das colunas Inativo/Qualificado/Negociação/etc quando o volume
+        // de "novo" passava de 100. Index em (user_id, created_at) garante perf.
+        leadsQuery.limit(500);
       }
       const agentsQuery = (supabase as any)
         .from('wa_ai_agents')
@@ -1029,9 +1057,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       const [leadsRes, fbRes, instRes, teamRes, agentsRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
         leadsQuery,
+        // M5: feedbacks vêm de Pedro (lead_id → ai_crm_leads) E Marcos (crm_lead_id → crm_leads).
+        // Buscamos sem JOIN e hidratamos `lead.lead_name` em JS a partir de 2 lookups.
         (supabase as any)
           .from('pedro_manager_feedback')
-          .select('id, lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name), lead:ai_crm_leads(lead_name)')
+          .select('id, lead_id, crm_lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
           .eq('user_id', isSeller ? userId : effectiveUserId)
           .order('created_at', { ascending: false })
           .limit(50),
@@ -1122,7 +1152,27 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         week: weekCountRes.count ?? 0,
         month: monthCountRes.count ?? 0,
       });
-      setFeedbacks(fbRes.data || []);
+      // ── M5: hidrata lead.lead_name para feedbacks do Pedro (ai_crm_leads) E Marcos (crm_leads).
+      //    Substitui o JOIN PostgREST que só funcionava pra ai_crm_leads e deixava o lead "vazio" pros feedbacks do Marcos.
+      const rawFeedbacks: any[] = fbRes.data || [];
+      const pedroLeadIds  = Array.from(new Set(rawFeedbacks.filter(f => f.lead_id).map(f => f.lead_id))) as string[];
+      const marcosLeadIds = Array.from(new Set(rawFeedbacks.filter(f => f.crm_lead_id).map(f => f.crm_lead_id))) as string[];
+      const [pedroNames, marcosNames] = await Promise.all([
+        pedroLeadIds.length > 0
+          ? (supabase as any).from('ai_crm_leads').select('id, lead_name').in('id', pedroLeadIds)
+          : Promise.resolve({ data: [] }),
+        marcosLeadIds.length > 0
+          ? (supabase as any).from('crm_leads').select('id, name').in('id', marcosLeadIds)
+          : Promise.resolve({ data: [] }),
+      ]);
+      const nameMap = new Map<string, string>();
+      (pedroNames.data  || []).forEach((l: any) => nameMap.set(l.id, l.lead_name || 'Lead'));
+      (marcosNames.data || []).forEach((l: any) => nameMap.set(l.id, l.name      || 'Lead'));
+      const hydratedFeedbacks: Feedback[] = rawFeedbacks.map((f: any) => ({
+        ...f,
+        lead: { lead_name: nameMap.get(f.lead_id || f.crm_lead_id || '') ?? 'Lead' },
+      }));
+      setFeedbacks(hydratedFeedbacks);
       const connectedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected');
       setInstances(connectedInstances);
       // Auto-seleciona a primeira instância conectada
@@ -1431,17 +1481,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       toast({ title: 'Selecione a cidade do cliente', variant: 'destructive' });
       return;
     }
-    if (fbCity === 'Outros' && !fbCityCustom.trim()) {
-      toast({ title: 'Digite a cidade do cliente', variant: 'destructive' });
-      return;
-    }
+    // Fase 6.4: removida validação de "Outros" — cidade nova é cadastrada via modal
     if (!fbReason) {
       toast({ title: 'Selecione o motivo da não-compra', variant: 'destructive' });
       return;
     }
     setFbLoading(true);
     try {
-      const finalCity = fbCity === 'Outros' ? fbCityCustom.trim() : fbCity;
+      const finalCity = fbCity; // Fase 6.4: nome direto do DynamicSelect
       // Monta content legível para compatibilidade
       const contentLines = [
         `Cidade: ${finalCity}`,
@@ -1452,7 +1499,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       const res = await supabase.functions.invoke('pedro-process-feedback', {
         body: {
-          lead_id:      selectedLead.id,
+          // M5: Marcos manda crm_lead_id (aponta crm_leads); Pedro manda lead_id (aponta ai_crm_leads)
+          ...(isMarcosCrm
+            ? { crm_lead_id: selectedLead.id }
+            : { lead_id: selectedLead.id }),
           member_id:    memberId,
           content,
           priority:     fbPriority,
@@ -1476,10 +1526,12 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const loadLeadFeedbackHistory = async (leadId: string) => {
     setFbHistoryLoading(true);
     try {
+      // M5: Marcos filtra por crm_lead_id; Pedro por lead_id.
+      const filterCol = isMarcosCrm ? 'crm_lead_id' : 'lead_id';
       const { data } = await (supabase as any)
         .from('pedro_manager_feedback')
-        .select('id, lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
-        .eq('lead_id', leadId)
+        .select('id, lead_id, crm_lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
+        .eq(filterCol, leadId)
         .order('created_at', { ascending: false });
       setLeadFeedbacks(data || []);
     } catch { /* ignore */ }
@@ -1645,13 +1697,23 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [addLeadOpen, setAddLeadOpen]   = useState(false);
   const [addLeadName, setAddLeadName]   = useState('');
   const [addLeadPhone, setAddLeadPhone] = useState('');
-  const [addLeadOrigem, setAddLeadOrigem] = useState<string>(''); // '' = origem NULL no banco
+  const [addLeadOrigem, setAddLeadOrigem] = useState<string>(''); // '' = origem NULL no banco (LEGACY — mantém compat)
   const [addLeadOrigemOutros, setAddLeadOrigemOutros] = useState<string>('');
+  // Fase 6.4: novo source_id (uuid) — referência a lead_sources
+  const [addLeadSourceId, setAddLeadSourceId] = useState<string | null>(null);
+  const [addLeadSourceName, setAddLeadSourceName] = useState<string>('');
+  // Fase 6 Feature B: 3 campos extras (texto livre, sem hook novo)
+  const [addLeadCity, setAddLeadCity] = useState<string>('');
+  const [addLeadVehicle, setAddLeadVehicle] = useState<string>('');
+  const [addLeadVisit, setAddLeadVisit] = useState<string>('');
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
   const [editingLead, setEditingLead] = useState(false);
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  // Fase 6 Feature D: edit inline tambem permite cidade + carro
+  const [editCity, setEditCity] = useState('');
+  const [editVehicle, setEditVehicle] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
   // ── Bulk upload states ──
@@ -1885,10 +1947,16 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           position: (maxPosRow?.position ?? -1) + 1,
           assigned_to: currentSeller?.id || null,
           custom_fields: { crm_owner: 'marcos', input_mode: 'manual', ...sellerCustomFields },
+          // Feature M2: enriched fields no Marcos
+          client_city:      addLeadCity.trim() || null,
+          vehicle_interest: addLeadVehicle.trim() || null,
+          visit_scheduled:  addLeadVisit.trim() || null,
         });
         if (error) throw error;
         toast({ title: '✅ Lead adicionado ao CRM!' });
-        setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros(''); setAddLeadOpen(false);
+        setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros('');
+        setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit('');
+        setAddLeadOpen(false);
         await fetchData(true);
         return;
       }
@@ -1917,13 +1985,22 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         status_crm:  'novo',
         status:      'novo',
         assigned_to_id: memberId || null,
-        // Prompt 1.1: origem opcional. Vazio → NULL no banco.
-        origem:        addLeadOrigem || null,
-        origem_outros: addLeadOrigem === 'outros' ? (addLeadOrigemOutros.trim() || null) : null,
+        // Fase 6.4: source_id (nova FK pra lead_sources) + origem legacy mantida
+        source_id:     addLeadSourceId || null,
+        origem:        addLeadSourceName || addLeadOrigem || null,
+        origem_outros: null,
+        // Fase 6 Feature B: cidade/carro/visita (texto livre opcional)
+        client_city:      addLeadCity.trim() || null,
+        vehicle_interest: addLeadVehicle.trim() || null,
+        visit_scheduled:  addLeadVisit.trim() || null,
       });
       if (error) throw error;
       toast({ title: '✅ Lead adicionado ao CRM!' });
-      setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros(''); setAddLeadOpen(false);
+      setAddLeadName(''); setAddLeadPhone('');
+      setAddLeadOrigem(''); setAddLeadOrigemOutros('');
+      setAddLeadSourceId(null); setAddLeadSourceName('');
+      setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit('');
+      setAddLeadOpen(false);
       await fetchData(true);
     } catch (err: any) {
       toast({ title: 'Erro ao adicionar lead', description: err.message, variant: 'destructive' });
@@ -1937,6 +2014,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     const phone = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || '';
     setEditName(selectedLead.lead_name || '');
     setEditPhone(phone);
+    // Fase 6 Feature D: populates cidade + carro
+    setEditCity((selectedLead as any).client_city || '');
+    setEditVehicle((selectedLead as any).vehicle_interest || '');
     setEditingLead(true);
   };
 
@@ -1946,13 +2026,24 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     try {
       const cleanPhone = editPhone.replace(/\D/g, '');
       const newJid = cleanPhone ? `${cleanPhone}@s.whatsapp.net` : selectedLead.remote_jid;
-      const updateData: Record<string, string> = {};
+      const updateData: Record<string, string | null> = {};
       if (editName !== (selectedLead.lead_name || '')) updateData.lead_name = editName;
       if (newJid !== selectedLead.remote_jid) updateData.remote_jid = newJid;
+      // Feature M4: cidade + carro agora valem pros 2 CRMs (Marcos ja tem as cols)
+      const newCity = editCity.trim();
+      const oldCity = (selectedLead as any).client_city || '';
+      if (newCity !== oldCity) updateData.client_city = newCity || null;
+      const newVehicle = editVehicle.trim();
+      const oldVehicle = (selectedLead as any).vehicle_interest || '';
+      if (newVehicle !== oldVehicle) updateData.vehicle_interest = newVehicle || null;
+
       if (isMarcosCrm) {
-        const crmUpdate: Record<string, string> = {};
+        const crmUpdate: Record<string, string | null> = {};
         if (editName !== (selectedLead.lead_name || '')) crmUpdate.name = editName;
         if (newJid !== selectedLead.remote_jid) crmUpdate.phone = cleanPhone;
+        // Feature M4: Marcos tambem grava client_city + vehicle_interest
+        if (newCity !== oldCity) crmUpdate.client_city = newCity || null;
+        if (newVehicle !== oldVehicle) crmUpdate.vehicle_interest = newVehicle || null;
         if (Object.keys(crmUpdate).length === 0) {
           setEditingLead(false);
           return;
@@ -1962,9 +2053,15 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .update(crmUpdate)
           .eq('id', selectedLead.id);
         if (error) throw error;
-        const updatedLead = { ...selectedLead, lead_name: editName, remote_jid: `${cleanPhone}@s.whatsapp.net` };
-        setSelectedLead(updatedLead);
-        setLeads(prev => prev.map(l => l.id === selectedLead.id ? updatedLead : l));
+        const updatedLead = {
+          ...selectedLead,
+          lead_name: editName,
+          remote_jid: `${cleanPhone}@s.whatsapp.net`,
+          client_city: newCity || null,
+          vehicle_interest: newVehicle || null,
+        };
+        setSelectedLead(updatedLead as CrmLead);
+        setLeads(prev => prev.map(l => l.id === selectedLead.id ? (updatedLead as CrmLead) : l));
         setEditingLead(false);
         toast({ title: '✅ Lead atualizado!' });
         return;
@@ -2128,7 +2225,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           <div className="flex-1 min-w-0">
             {editingLead ? (
               <div className="flex flex-col gap-1.5">
-                <div className="flex items-center gap-1.5">
+                {/* Fase 6 Feature D: agora 4 inputs (nome + tel + cidade + carro). flex-wrap pra quebrar bem em mobile */}
+                <div className="flex flex-wrap items-center gap-1.5">
                   <Input
                     value={editName}
                     onChange={e => setEditName(e.target.value)}
@@ -2141,6 +2239,19 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                     onChange={e => setEditPhone(e.target.value.replace(/[^\d]/g, ''))}
                     placeholder="5511999999999"
                     className="h-8 text-sm max-w-[160px]"
+                  />
+                  {/* Feature M4: edit inline cidade+carro agora vale pros 2 CRMs */}
+                  <Input
+                    value={editCity}
+                    onChange={e => setEditCity(e.target.value)}
+                    placeholder="📍 Cidade"
+                    className="h-8 text-sm max-w-[160px]"
+                  />
+                  <Input
+                    value={editVehicle}
+                    onChange={e => setEditVehicle(e.target.value)}
+                    placeholder="🚗 Carro de interesse"
+                    className="h-8 text-sm max-w-[200px]"
                   />
                   <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
                     {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
@@ -2566,27 +2677,24 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           </CardHeader>
           <CardContent className="space-y-4">
 
-            {/* Pergunta 1: Cidade */}
+            {/* Pergunta 1: Cidade — Fase 6.4 dinâmico (cadastrar nova pelo modal) */}
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">1. Cliente veio de qual cidade?</p>
-              <Select value={fbCity} onValueChange={v => { setFbCity(v); if (v !== 'Outros') setFbCityCustom(''); }}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Selecione a cidade..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {FEEDBACK_CITIES.map(c => (
-                    <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
-                  ))}
-                  <SelectItem value="Outros" className="text-xs font-medium text-orange-400">Outros...</SelectItem>
-                </SelectContent>
-              </Select>
-              {fbCity === 'Outros' && (
-                <Input
-                  value={fbCityCustom}
-                  onChange={e => setFbCityCustom(e.target.value)}
-                  placeholder="Digite a cidade..."
-                  className="h-8 text-xs"
-                />
+              <DynamicSelect
+                entity="city"
+                userId={effectiveUserIdState || userId}
+                value={null /* fbCity é por nome, não id — usamos onChange pra setar */}
+                onChange={(_id, row) => {
+                  setFbCity(row?.name || '');
+                }}
+                placeholder="Selecione a cidade..."
+                triggerClassName="h-8 text-xs"
+                filter={(r) => r.status === 'active'}
+              />
+              {fbCity && (
+                <p className="text-[10px] text-muted-foreground">
+                  Selecionada: <span className="font-medium text-foreground">{fbCity}</span>
+                </p>
               )}
             </div>
 
@@ -2744,6 +2852,68 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     return true;
   });
 
+  // Fase 6 Feature C: cálculo de inativo + handlers de seleção/disparo
+  const INATIVO_DIAS = 7;
+  const inativoCutoffMs = Date.now() - INATIVO_DIAS * 24 * 60 * 60 * 1000;
+  const isLeadInativo = (l: CrmLead): boolean => {
+    const lastReply = l.last_user_reply_at ? new Date(l.last_user_reply_at).getTime() : 0;
+    const created = new Date(l.created_at).getTime();
+    const ref = lastReply || created;
+    return ref < inativoCutoffMs
+      && l.status_crm !== 'qualificado'
+      && l.status_crm !== 'transferido';
+  };
+  const inativosCount = leads.filter(isLeadInativo).length;
+  const enterSelectionMode = () => {
+    const pre = new Set(leads.filter(isLeadInativo).map(l => l.id));
+    setSelectedLeadIds(pre);
+    setSelectionMode(true);
+    toast({
+      title: '📋 Modo seleção ativo',
+      description: `${pre.size} inativo(s) pré-marcado(s). Marque/desmarque qualquer card.`,
+    });
+  };
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedLeadIds(new Set());
+  };
+  const toggleLeadSelection = (leadId: string) => {
+    setSelectedLeadIds(prev => {
+      const next = new Set(prev);
+      if (next.has(leadId)) next.delete(leadId); else next.add(leadId);
+      return next;
+    });
+  };
+  const selectAllVisible = () => {
+    setSelectedLeadIds(new Set(filteredLeads.map(l => l.id)));
+  };
+  const selectNone = () => setSelectedLeadIds(new Set());
+  const handleDispararCampanha = () => {
+    const selected = leads.filter(l => selectedLeadIds.has(l.id));
+    if (selected.length === 0) {
+      toast({ title: 'Nenhum lead selecionado', variant: 'destructive' });
+      return;
+    }
+    const phones = selected
+      .map(l => l.remote_jid?.replace(/@.*/, '').replace(/\D/g, ''))
+      .filter(Boolean) as string[];
+    try {
+      sessionStorage.setItem('pedro_campaign_phones', JSON.stringify({
+        phones,
+        label: `CRM Pedro — ${selected.length} lead(s) selecionado(s)`,
+        source: 'pedro_selecionados',
+        created_at: new Date().toISOString(),
+      }));
+    } catch {
+      // sessionStorage pode falhar em modo privacy — ignora, segue redirect
+    }
+    toast({
+      title: `📢 ${selected.length} contato(s) pré-carregado(s)`,
+      description: 'Indo pro disparo em massa...',
+    });
+    setTimeout(() => { window.location.href = '/whatsapp/broadcast'; }, 600);
+  };
+
   return (
     <div className="p-4 lg:p-6 space-y-4">
       {/* ── Métricas ────────────────────────────────────────────────── */}
@@ -2808,6 +2978,44 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 ))}
               </SelectContent>
             </Select>
+          )}
+          {/* Fase 6 Feature C + M3: modo seleção pro disparo em massa (Pedro E Marcos) */}
+          {(view === 'pipeline' || view === 'leads') && (
+            <>
+              {!selectionMode ? (
+                <Button
+                  variant="outline" size="sm"
+                  onClick={enterSelectionMode}
+                  className="h-7 px-2.5 text-xs gap-1.5 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                  title={`Entra em modo seleção — pré-marca leads sem resposta há ${INATIVO_DIAS}+ dias`}
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                  Selecionar p/ disparo
+                  {inativosCount > 0 && (
+                    <span className="ml-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-orange-500 text-white">{inativosCount}</span>
+                  )}
+                </Button>
+              ) : (
+                <div className="flex items-center gap-1 px-2 py-1 rounded bg-orange-500/10 border border-orange-500/30">
+                  <span className="text-[10px] text-orange-300 font-medium">Selec:</span>
+                  <span className="text-xs font-bold text-orange-300">{selectedLeadIds.size}</span>
+                  <button onClick={selectAllVisible} className="text-[10px] text-orange-400 hover:text-orange-300 underline ml-1" title="Marca todos visíveis">Todos</button>
+                  <button onClick={selectNone} className="text-[10px] text-orange-400 hover:text-orange-300 underline ml-1" title="Desmarca todos">Nenhum</button>
+                  <button onClick={exitSelectionMode} className="text-orange-400 hover:text-orange-300 ml-1" title="Sair"><X className="h-3 w-3" /></button>
+                </div>
+              )}
+              {selectionMode && selectedLeadIds.size > 0 && !isSeller && (
+                <Button
+                  size="sm"
+                  onClick={handleDispararCampanha}
+                  className="h-7 px-2.5 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  title="Pré-carrega os selecionados no disparo em massa"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  Disparar ({selectedLeadIds.size})
+                </Button>
+              )}
+            </>
           )}
           {!isMarcosCrm && (
             <Button
@@ -2890,19 +3098,23 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 className="h-8 text-xs"
               />
             </div>
-            <div className="flex-1 min-w-[160px] space-y-1">
+            <div className="flex-1 min-w-[180px] space-y-1">
               <label className="text-[10px] text-muted-foreground font-medium">Origem (opcional)</label>
-              <Select value={addLeadOrigem || 'none'} onValueChange={(v) => setAddLeadOrigem(v === 'none' ? '' : v)}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Origem do lead" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">— Sem origem —</SelectItem>
-                  {LEAD_ORIGEM_OPTIONS.map(o => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Fase 6.4: select dinâmico — vendedor pode adicionar nova origem direto */}
+              <DynamicSelect
+                entity="lead_source"
+                userId={effectiveUserIdState || userId}
+                value={addLeadSourceId}
+                onChange={(id, row) => {
+                  setAddLeadSourceId(id);
+                  setAddLeadSourceName(row?.name || '');
+                  // Mantém compat com coluna `origem` legacy via normalized_name
+                  setAddLeadOrigem(row?.normalized_name || '');
+                }}
+                placeholder="Origem do lead"
+                triggerClassName="h-8 text-xs"
+                filter={(r) => r.status === 'active'}
+              />
             </div>
             <Button
               onClick={handleAddLeadManual}
@@ -2914,17 +3126,39 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               Salvar
             </Button>
           </div>
-          {addLeadOrigem === 'outros' && (
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground font-medium">Especificar origem (opcional)</label>
+          {/* Fase 6.4: removido o input "Especificar origem" — vendedor agora cadastra
+              origem nova direto pelo botão "+ Adicionar novo(a)" no select acima */}
+
+          {/* Fase 6 Feature B: 3 campos extras (linha 2 do form, todos opcionais) */}
+          <div className="flex flex-wrap gap-2 items-end mt-2 pt-2 border-t border-border/30">
+            <div className="flex-1 min-w-[160px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">📍 Cidade (opcional)</label>
               <Input
-                value={addLeadOrigemOutros}
-                onChange={e => setAddLeadOrigemOutros(e.target.value)}
-                placeholder="Ex: TikTok, indicação, panfleto..."
+                value={addLeadCity}
+                onChange={e => setAddLeadCity(e.target.value)}
+                placeholder="Ex: Taubaté"
                 className="h-8 text-xs"
               />
             </div>
-          )}
+            <div className="flex-1 min-w-[180px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">🚗 Carro de interesse (opcional)</label>
+              <Input
+                value={addLeadVehicle}
+                onChange={e => setAddLeadVehicle(e.target.value)}
+                placeholder="Ex: Onix 2022, Tracker Premier"
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="flex-1 min-w-[160px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">📅 Data da visita (opcional)</label>
+              <Input
+                value={addLeadVisit}
+                onChange={e => setAddLeadVisit(e.target.value)}
+                placeholder="Ex: 22/05/2026 14h"
+                className="h-8 text-xs"
+              />
+            </div>
+          </div>
         </div>
       )}
 
@@ -2994,6 +3228,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                   }`}
                                 >
                                   <div className="flex items-start gap-2">
+                                    {/* Fase 6 Feature C: checkbox de seleção (só aparece em modo seleção) */}
+                                    {selectionMode && (
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedLeadIds.has(lead.id)}
+                                        onChange={() => toggleLeadSelection(lead.id)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="mt-1 h-3.5 w-3.5 rounded border-orange-500/50 accent-orange-500 cursor-pointer"
+                                        title="Marcar pra disparo"
+                                      />
+                                    )}
                                     <div
                                       {...dragProvided.dragHandleProps}
                                       className="mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground"
@@ -3008,6 +3253,26 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                       <p className="text-[10px] text-muted-foreground">{lead.remote_jid?.replace(/@.*/, '')}</p>
                                     </button>
                                   </div>
+                                  {/* Fase 6 badges enriched — só renderiza se algum tem valor */}
+                                  {(lead.client_city || lead.vehicle_interest || lead.visit_scheduled) && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {lead.client_city ? (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-medium truncate max-w-[100px]" title={`Cidade: ${lead.client_city}`}>
+                                          📍 {lead.client_city}
+                                        </span>
+                                      ) : null}
+                                      {lead.vehicle_interest ? (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 font-medium truncate max-w-[120px]" title={`Carro: ${lead.vehicle_interest}`}>
+                                          🚗 {lead.vehicle_interest}
+                                        </span>
+                                      ) : null}
+                                      {lead.visit_scheduled ? (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium truncate max-w-[110px]" title={`Visita: ${lead.visit_scheduled}`}>
+                                          📅 {String(lead.visit_scheduled).slice(0, 18)}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  )}
                                   {lead.summary && (
                                     <button onClick={() => loadLeadDetail(lead)} className="w-full text-left">
                                       <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2">{lead.summary}</p>

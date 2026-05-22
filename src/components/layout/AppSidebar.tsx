@@ -32,6 +32,8 @@ import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/appStore';
 import { useAuth } from '@/hooks/useAuth';
+// Fase 6.5f: badge contador de pendentes em "Campos Dinâmicos"
+import { useDynamicFieldsBadge } from '@/hooks/useDynamicFieldsBadge';
 import { NavLink } from '@/components/NavLink';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -116,6 +118,8 @@ const systemItems = [
   { title: 'Integrações',      url: '/integrations',  icon: Plug },
   { title: 'Meu Perfil',       url: '/perfil',        icon: Users },
   { title: 'Configurações',    url: '/settings',      icon: Settings },
+  // Fase 6.5 — gerencia cidades + origens dinâmicas
+  { title: 'Campos Dinâmicos', url: '/configuracoes/campos-dinamicos', icon: Sparkles },
 ];
 
 // ── NavItem simples ────────────────────────────────────────────────────────────
@@ -405,6 +409,8 @@ export function AppSidebar() {
   const collapsed = state === 'collapsed';
   const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const { isAdmin } = useIsAdmin();
+  // Fase 6.5f: badge contador de pendentes (só master vê — vendedor não tem acesso à tela)
+  const dynamicFieldsPendingCount = useDynamicFieldsBadge(!isSeller ? user?.id : null);
   const { subscription } = useSubscription();
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
   const hasBrunoManualRelease = user?.id === BRUNO_LIRA_USER_ID;
@@ -428,12 +434,12 @@ export function AppSidebar() {
               onClick={toggleSidebar}
               className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-accent/50 transition-colors"
             >
-              <LogosIAIcon size={28} />
+              <LogosIAIcon size={28} variant="dark" />
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
-            <LogosIALogo size="sm" showText />
+            <LogosIALogo size="sm" variant="dark" />
             <button
               onClick={toggleSidebar}
               className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-accent transition-colors"
@@ -521,9 +527,14 @@ export function AppSidebar() {
 
             {/* ── Sistema ── */}
             <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
-              {systemItems.map(item => (
-                <NavItem key={item.url} item={item} collapsed={collapsed} />
-              ))}
+              {systemItems.map(item => {
+                // Fase 6.5f: badge dinâmico com contador de pendentes pra "Campos Dinâmicos"
+                const isDynamicFields = item.url === '/configuracoes/campos-dinamicos';
+                const itemWithBadge = isDynamicFields
+                  ? { ...item, badge: dynamicFieldsPendingCount }
+                  : item;
+                return <NavItem key={item.url} item={itemWithBadge} collapsed={collapsed} />;
+              })}
             </NavGroup>
           </>
         )}

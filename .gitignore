@@ -37,6 +37,12 @@ logos-preview.html
 *.docx
 Gemini_Generated_Image_*
 
+# Source files de design (WhatsApp screenshots, removebg, etc.) — ficam só local
+WhatsApp Image *.jpeg
+WhatsApp Image *.jpg
+WhatsApp Image *.png
+WhatsApp_Image_*
+
 # Claude local settings
 .claude/settings.local.json
 

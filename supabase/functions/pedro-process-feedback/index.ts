@@ -57,7 +57,8 @@ serve(async (req) => {
 
     const body = await req.json();
     const {
-      lead_id,
+      lead_id,           // Pedro: aponta pra ai_crm_leads
+      crm_lead_id,       // Marcos (M5): aponta pra crm_leads — exclusivo com lead_id
       member_id,
       content,
       priority = "normal",
@@ -66,15 +67,25 @@ serve(async (req) => {
       observations = null,
     } = body;
 
-    if (!lead_id || !content) {
-      throw new Error("lead_id e content são obrigatórios");
+    if ((!lead_id && !crm_lead_id) || !content) {
+      throw new Error("lead_id (Pedro) OU crm_lead_id (Marcos) + content são obrigatórios");
+    }
+    if (lead_id && crm_lead_id) {
+      throw new Error("Forneça APENAS lead_id OU crm_lead_id, não ambos");
     }
 
-    // ── Busca dados do lead e do membro ──────────────────────────────────────
+    // ── Busca dados do lead (Pedro OU Marcos) e do membro ────────────────────
+    const leadTable = crm_lead_id ? "crm_leads" : "ai_crm_leads";
+    const leadIdToFetch = crm_lead_id || lead_id;
+    // Marcos: select diferente (name + phone em vez de lead_name + remote_jid)
+    const leadSelect = crm_lead_id
+      ? "id, name, phone, user_id"
+      : "id, lead_name, remote_jid, user_id";
+
     const [leadRes, memberRes] = await Promise.all([
-      supabase.from("ai_crm_leads" as any)
-        .select("id, lead_name, remote_jid, user_id")
-        .eq("id", lead_id)
+      supabase.from(leadTable as any)
+        .select(leadSelect)
+        .eq("id", leadIdToFetch)
         .single(),
       member_id
         ? supabase.from("ai_team_members" as any)
@@ -84,10 +95,14 @@ serve(async (req) => {
         : Promise.resolve({ data: null, error: null }),
     ]);
 
-    const lead   = leadRes.data   as any;
+    const leadRaw = leadRes.data as any;
     const member = memberRes.data as any;
+    if (!leadRaw) throw new Error("Lead não encontrado");
 
-    if (!lead) throw new Error("Lead não encontrado");
+    // Normaliza pra um shape comum (M5)
+    const lead = crm_lead_id
+      ? { id: leadRaw.id, lead_name: leadRaw.name, remote_jid: leadRaw.phone || '', user_id: leadRaw.user_id }
+      : leadRaw;
 
     // user_id do gerente = user_id do lead (sempre o dono)
     const gerenteUserId = lead.user_id;
@@ -108,7 +123,8 @@ serve(async (req) => {
     const { data: feedback, error: insertErr } = await supabase
       .from("pedro_manager_feedback" as any)
       .insert({
-        lead_id,
+        lead_id:      crm_lead_id ? null : lead_id,         // M5: XOR com crm_lead_id
+        crm_lead_id:  crm_lead_id || null,                  // M5
         user_id:      gerenteUserId,
         member_id:    member_id || null,
         content,

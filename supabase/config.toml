@@ -159,6 +159,12 @@ verify_jwt = false
 [functions.uazapi-webhook]
 verify_jwt = false
 
+[functions.checkout-create-subscription]
+verify_jwt = false
+
+[functions.checkout-asaas-webhook]
+verify_jwt = false
+
 [functions.verify-instance-status]
 verify_jwt = false
 
