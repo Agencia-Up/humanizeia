@@ -699,7 +699,8 @@ interface CrmLead {
   // Fase 6 — campos enriched (todos opcionais; só renderizam badge se vierem)
   client_city?: string | null;
   vehicle_interest?: string | null;
-  visit_scheduled?: string | null;
+  visit_scheduled?: string | null;             // texto livre / leitura humana (legacy)
+  visit_scheduled_at?: string | null;          // Item 2: timestamptz pra comparar com hoje (banner laranja)
   // Feature C: pro cálculo de inativo (>7 dias sem resposta)
   last_user_reply_at?: string | null;
 }
@@ -937,7 +938,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         let marcosLeadsQuery = (supabase as any)
           .from('crm_leads')
           // Feature M1: campos enriched (Marcos agora tem client_city, vehicle_interest, visit_scheduled)
-          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled')
+          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at')
           .eq('user_id', effectiveUserId)
           .not('source', 'like', 'Pedro SDR%')
           .order('created_at', { ascending: false })
@@ -996,6 +997,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           client_city: lead.client_city || null,
           vehicle_interest: lead.vehicle_interest || null,
           visit_scheduled: lead.visit_scheduled || null,
+          visit_scheduled_at: lead.visit_scheduled_at || null,
         }));
 
         const enrichedTeam = teamData.map(m => ({
@@ -1045,7 +1047,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
         // Fase 6: adiciona client_city, vehicle_interest, visit_scheduled (todos opcionais)
-        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled, last_user_reply_at')
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, last_user_reply_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -1734,6 +1736,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   // Fase 6 Feature D: edit inline tambem permite cidade + carro
   const [editCity, setEditCity] = useState('');
   const [editVehicle, setEditVehicle] = useState('');
+  const [editVisitAt, setEditVisitAt] = useState(''); // Item 2: datetime-local ISO (vazio = sem visita marcada)
   const [editSaving, setEditSaving] = useState(false);
 
   // ── Bulk upload states ──
@@ -1970,7 +1973,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           // Feature M2: enriched fields no Marcos
           client_city:      addLeadCity.trim() || null,
           vehicle_interest: addLeadVehicle.trim() || null,
-          visit_scheduled:  addLeadVisit.trim() || null,
+          // Item 2: addLeadVisit é datetime-local ISO ("2026-05-22T14:00"). Salva os 2:
+          //   visit_scheduled: leitura humana ("22/05/2026 14:00")
+          //   visit_scheduled_at: timestamp pra comparar com hoje (banner)
+          visit_scheduled:    addLeadVisit ? new Date(addLeadVisit).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null,
+          visit_scheduled_at: addLeadVisit ? new Date(addLeadVisit).toISOString() : null,
         });
         if (error) throw error;
         toast({ title: '✅ Lead adicionado ao CRM!' });
@@ -2009,10 +2016,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         source_id:     addLeadSourceId || null,
         origem:        addLeadSourceName || addLeadOrigem || null,
         origem_outros: null,
-        // Fase 6 Feature B: cidade/carro/visita (texto livre opcional)
-        client_city:      addLeadCity.trim() || null,
-        vehicle_interest: addLeadVehicle.trim() || null,
-        visit_scheduled:  addLeadVisit.trim() || null,
+        // Fase 6 Feature B + Item 2: cidade/carro/visita (visita agora salva texto + timestamp)
+        client_city:        addLeadCity.trim() || null,
+        vehicle_interest:   addLeadVehicle.trim() || null,
+        visit_scheduled:    addLeadVisit ? new Date(addLeadVisit).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null,
+        visit_scheduled_at: addLeadVisit ? new Date(addLeadVisit).toISOString() : null,
       });
       if (error) throw error;
       toast({ title: '✅ Lead adicionado ao CRM!' });
@@ -2037,6 +2045,15 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     // Fase 6 Feature D: populates cidade + carro
     setEditCity((selectedLead as any).client_city || '');
     setEditVehicle((selectedLead as any).vehicle_interest || '');
+    // Item 2: pre-popula com visit_scheduled_at convertido pra <input datetime-local> (YYYY-MM-DDTHH:MM, sem timezone)
+    const vsa = (selectedLead as any).visit_scheduled_at;
+    if (vsa) {
+      const d = new Date(vsa);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      setEditVisitAt(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+    } else {
+      setEditVisitAt('');
+    }
     setEditingLead(true);
   };
 
@@ -2057,6 +2074,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const oldVehicle = (selectedLead as any).vehicle_interest || '';
       if (newVehicle !== oldVehicle) updateData.vehicle_interest = newVehicle || null;
 
+      // Item 2: visita agendada. editVisitAt é ISO local (YYYY-MM-DDTHH:MM).
+      // Salva timestamp (visit_scheduled_at) + texto humano (visit_scheduled) coerentes.
+      const newVisitIso  = editVisitAt ? new Date(editVisitAt).toISOString() : null;
+      const newVisitText = editVisitAt ? new Date(editVisitAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+      const oldVisitIso  = (selectedLead as any).visit_scheduled_at || null;
+      const visitChanged = (newVisitIso || '') !== (oldVisitIso || '');
+      if (visitChanged) {
+        updateData.visit_scheduled    = newVisitText;
+        updateData.visit_scheduled_at = newVisitIso;
+      }
+
       if (isMarcosCrm) {
         const crmUpdate: Record<string, string | null> = {};
         if (editName !== (selectedLead.lead_name || '')) crmUpdate.name = editName;
@@ -2064,6 +2092,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         // Feature M4: Marcos tambem grava client_city + vehicle_interest
         if (newCity !== oldCity) crmUpdate.client_city = newCity || null;
         if (newVehicle !== oldVehicle) crmUpdate.vehicle_interest = newVehicle || null;
+        // Item 2: Marcos também grava visita
+        if (visitChanged) {
+          crmUpdate.visit_scheduled    = newVisitText;
+          crmUpdate.visit_scheduled_at = newVisitIso;
+        }
         if (Object.keys(crmUpdate).length === 0) {
           setEditingLead(false);
           return;
@@ -2079,6 +2112,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           remote_jid: `${cleanPhone}@s.whatsapp.net`,
           client_city: newCity || null,
           vehicle_interest: newVehicle || null,
+          visit_scheduled: newVisitText,
+          visit_scheduled_at: newVisitIso,
         };
         setSelectedLead(updatedLead as CrmLead);
         setLeads(prev => prev.map(l => l.id === selectedLead.id ? (updatedLead as CrmLead) : l));
@@ -2271,6 +2306,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                     value={editVehicle}
                     onChange={e => setEditVehicle(e.target.value)}
                     placeholder="🚗 Carro de interesse"
+                    className="h-8 text-sm max-w-[200px]"
+                  />
+                  {/* Item 2: datetime-local pra agendar visita */}
+                  <Input
+                    type="datetime-local"
+                    value={editVisitAt}
+                    onChange={e => setEditVisitAt(e.target.value)}
+                    title="📅 Data e hora da visita"
                     className="h-8 text-sm max-w-[200px]"
                   />
                   <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
@@ -3174,10 +3217,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             <div className="flex-1 min-w-[160px] space-y-1">
               <label className="text-[10px] text-muted-foreground font-medium">📅 Data da visita (opcional)</label>
               <Input
+                type="datetime-local"
                 value={addLeadVisit}
                 onChange={e => setAddLeadVisit(e.target.value)}
-                placeholder="Ex: 22/05/2026 14h"
                 className="h-8 text-xs"
+                title="Quando o cliente vem na loja"
               />
             </div>
           </div>
@@ -3275,6 +3319,25 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                       <p className="text-[10px] text-muted-foreground">{lead.remote_jid?.replace(/@.*/, '')}</p>
                                     </button>
                                   </div>
+                                  {/* Item 2: BANNER laranja FORTE quando visita é hoje */}
+                                  {(() => {
+                                    const vsa = (lead as any).visit_scheduled_at;
+                                    if (!vsa) return null;
+                                    const visitDate = new Date(vsa);
+                                    const today = new Date();
+                                    const isToday = visitDate.getFullYear() === today.getFullYear()
+                                                 && visitDate.getMonth() === today.getMonth()
+                                                 && visitDate.getDate() === today.getDate();
+                                    if (!isToday) return null;
+                                    const hhmm = `${String(visitDate.getHours()).padStart(2,'0')}:${String(visitDate.getMinutes()).padStart(2,'0')}`;
+                                    return (
+                                      <div className="px-2 py-1 rounded-md bg-orange-500/20 border border-orange-500/40 flex items-center gap-1.5 animate-pulse">
+                                        <span className="text-sm">📅</span>
+                                        <span className="text-[10px] font-bold text-orange-300 uppercase tracking-wide">Visita HOJE</span>
+                                        <span className="text-[10px] text-orange-300/80 ml-auto">{hhmm}</span>
+                                      </div>
+                                    );
+                                  })()}
                                   {/* Fase 6 badges enriched — só renderiza se algum tem valor */}
                                   {(lead.client_city || lead.vehicle_interest || lead.visit_scheduled) && (
                                     <div className="flex flex-wrap gap-1">
