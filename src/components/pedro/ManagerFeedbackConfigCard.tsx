@@ -154,6 +154,11 @@ export function ManagerFeedbackConfigCard() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Nota informativa: gerente_phone do Marcos reutiliza o configurado no agente Pedro */}
+        <div className="text-[10px] text-muted-foreground italic px-1">
+          Feedbacks do CRM do Marcos vão para o mesmo número do gerente já configurado nas configurações de cada agente Pedro (campo "Telefone do gerente").
+        </div>
+
         {/* Toggle modo */}
         <div className="flex items-start justify-between gap-3 p-3 rounded-md border border-border/40 bg-background/50">
           <div className="space-y-0.5">

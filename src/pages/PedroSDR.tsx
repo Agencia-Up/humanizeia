@@ -612,10 +612,16 @@ function normalizeStatus(status: string): string {
 
 const MARCOS_STAGE_STYLE_BY_NAME: Record<string, { emoji: string; border: string; bg: string; dot: string }> = {
   'novo lead': { emoji: '🔰', border: 'border-indigo-500/30', bg: 'bg-indigo-500/10', dot: 'bg-indigo-400' },
+  // 'qualificado' removido do default em 2026-05-22, mas preservado aqui pra retrocompat
+  // (users que customizaram pra manter Qualificado ainda renderiza com style amarelo).
   qualificado: { emoji: '🎯', border: 'border-amber-500/30', bg: 'bg-amber-500/10', dot: 'bg-amber-400' },
+  'marketing place': { emoji: '🛒', border: 'border-orange-500/30', bg: 'bg-orange-500/10', dot: 'bg-orange-400' },
+  agendamento: { emoji: '📅', border: 'border-cyan-500/30', bg: 'bg-cyan-500/10', dot: 'bg-cyan-400' },
   proposta: { emoji: '📋', border: 'border-blue-500/30', bg: 'bg-blue-500/10', dot: 'bg-blue-400' },
   negociacao: { emoji: '🤝', border: 'border-purple-500/30', bg: 'bg-purple-500/10', dot: 'bg-purple-400' },
   fechado: { emoji: '✅', border: 'border-green-500/30', bg: 'bg-green-500/10', dot: 'bg-green-400' },
+  perdido: { emoji: '❌', border: 'border-red-500/30', bg: 'bg-red-500/10', dot: 'bg-red-400' },
+  'lead inativo': { emoji: '😴', border: 'border-gray-500/30', bg: 'bg-gray-500/10', dot: 'bg-gray-400' },
   'carro nao disponivel': { emoji: '🚫', border: 'border-rose-500/30', bg: 'bg-rose-500/10', dot: 'bg-rose-400' },
   porta: { emoji: '🚪', border: 'border-teal-500/30', bg: 'bg-teal-500/10', dot: 'bg-teal-400' },
 };
@@ -2345,8 +2351,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             Mostra o que o Pedro escreveu sobre esse lead. Prioridade:
             1) Transferências com notes rico (não começa com "via cron")
             2) ai_crm_leads.summary (resumo da IA durante qualificação)
-            3) Fallback "via cron" — texto curto antigo. */}
-        {!isMarcosCrm && (() => {
+            3) Fallback "via cron" — texto curto antigo.
+            Renderiza pra ambos Pedro e Marcos — se Marcos não tem dados de IA,
+            o IIFE retorna null e a card não aparece (sem visual quebrado). */}
+        {(() => {
           // Identifica transferências com texto rico (mais que 1 linha ou >100 chars)
           const richTransfers = transfers.filter(t =>
             t.notes && (t.notes.length > 100 || t.notes.includes('\n'))
@@ -2428,7 +2436,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           );
         })()}
 
-        <div className={`grid grid-cols-1 ${isMarcosCrm ? '' : 'lg:grid-cols-2'} gap-4`}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* ── Anotações ─────────────────────────────────────────────── */}
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
@@ -2658,8 +2666,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           </Card>
         </div>
 
-        {/* ── Feedback Estruturado para Gerente ──────────────────────── */}
-        {!isMarcosCrm && (<>
+        {/* ── Feedback Estruturado para Gerente ────────────────────────
+            Renderiza pra Pedro E Marcos. handleSendFeedback + loadLeadFeedbackHistory
+            já tratam o XOR lead_id/crm_lead_id internamente. */}
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -2796,7 +2805,6 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         </Card>
 
         {/* ── Popup Historico de Feedbacks do Lead ──────────────────────── */}
-        </>)}
 
         <Dialog open={fbHistoryOpen} onOpenChange={setFbHistoryOpen}>
           <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
