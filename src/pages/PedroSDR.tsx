@@ -929,7 +929,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
         let marcosLeadsQuery = (supabase as any)
           .from('crm_leads')
-          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at')
+          // Feature M1: campos enriched (Marcos agora tem client_city, vehicle_interest, visit_scheduled)
+          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled')
           .eq('user_id', effectiveUserId)
           .not('source', 'like', 'Pedro SDR%')
           .order('created_at', { ascending: false })
@@ -984,6 +985,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           created_at: lead.created_at,
           source: lead.source || 'manual',
           custom_fields: lead.custom_fields || null,
+          // Feature M1: campos enriched do Marcos (mesma estrutura do Pedro)
+          client_city: lead.client_city || null,
+          vehicle_interest: lead.vehicle_interest || null,
+          visit_scheduled: lead.visit_scheduled || null,
         }));
 
         const enrichedTeam = teamData.map(m => ({
@@ -1914,10 +1919,16 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           position: (maxPosRow?.position ?? -1) + 1,
           assigned_to: currentSeller?.id || null,
           custom_fields: { crm_owner: 'marcos', input_mode: 'manual', ...sellerCustomFields },
+          // Feature M2: enriched fields no Marcos
+          client_city:      addLeadCity.trim() || null,
+          vehicle_interest: addLeadVehicle.trim() || null,
+          visit_scheduled:  addLeadVisit.trim() || null,
         });
         if (error) throw error;
         toast({ title: '✅ Lead adicionado ao CRM!' });
-        setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros(''); setAddLeadOpen(false);
+        setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros('');
+        setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit('');
+        setAddLeadOpen(false);
         await fetchData(true);
         return;
       }
@@ -1990,19 +2001,21 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const updateData: Record<string, string | null> = {};
       if (editName !== (selectedLead.lead_name || '')) updateData.lead_name = editName;
       if (newJid !== selectedLead.remote_jid) updateData.remote_jid = newJid;
-      // Fase 6 Feature D: cidade + carro (só pro Pedro CRM — Marcos não tem essas cols)
-      if (!isMarcosCrm) {
-        const newCity = editCity.trim();
-        const oldCity = (selectedLead as any).client_city || '';
-        if (newCity !== oldCity) updateData.client_city = newCity || null;
-        const newVehicle = editVehicle.trim();
-        const oldVehicle = (selectedLead as any).vehicle_interest || '';
-        if (newVehicle !== oldVehicle) updateData.vehicle_interest = newVehicle || null;
-      }
+      // Feature M4: cidade + carro agora valem pros 2 CRMs (Marcos ja tem as cols)
+      const newCity = editCity.trim();
+      const oldCity = (selectedLead as any).client_city || '';
+      if (newCity !== oldCity) updateData.client_city = newCity || null;
+      const newVehicle = editVehicle.trim();
+      const oldVehicle = (selectedLead as any).vehicle_interest || '';
+      if (newVehicle !== oldVehicle) updateData.vehicle_interest = newVehicle || null;
+
       if (isMarcosCrm) {
-        const crmUpdate: Record<string, string> = {};
+        const crmUpdate: Record<string, string | null> = {};
         if (editName !== (selectedLead.lead_name || '')) crmUpdate.name = editName;
         if (newJid !== selectedLead.remote_jid) crmUpdate.phone = cleanPhone;
+        // Feature M4: Marcos tambem grava client_city + vehicle_interest
+        if (newCity !== oldCity) crmUpdate.client_city = newCity || null;
+        if (newVehicle !== oldVehicle) crmUpdate.vehicle_interest = newVehicle || null;
         if (Object.keys(crmUpdate).length === 0) {
           setEditingLead(false);
           return;
@@ -2012,9 +2025,15 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .update(crmUpdate)
           .eq('id', selectedLead.id);
         if (error) throw error;
-        const updatedLead = { ...selectedLead, lead_name: editName, remote_jid: `${cleanPhone}@s.whatsapp.net` };
-        setSelectedLead(updatedLead);
-        setLeads(prev => prev.map(l => l.id === selectedLead.id ? updatedLead : l));
+        const updatedLead = {
+          ...selectedLead,
+          lead_name: editName,
+          remote_jid: `${cleanPhone}@s.whatsapp.net`,
+          client_city: newCity || null,
+          vehicle_interest: newVehicle || null,
+        };
+        setSelectedLead(updatedLead as CrmLead);
+        setLeads(prev => prev.map(l => l.id === selectedLead.id ? (updatedLead as CrmLead) : l));
         setEditingLead(false);
         toast({ title: '✅ Lead atualizado!' });
         return;
@@ -2193,22 +2212,19 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                     placeholder="5511999999999"
                     className="h-8 text-sm max-w-[160px]"
                   />
-                  {!isMarcosCrm && (
-                    <>
-                      <Input
-                        value={editCity}
-                        onChange={e => setEditCity(e.target.value)}
-                        placeholder="📍 Cidade"
-                        className="h-8 text-sm max-w-[160px]"
-                      />
-                      <Input
-                        value={editVehicle}
-                        onChange={e => setEditVehicle(e.target.value)}
-                        placeholder="🚗 Carro de interesse"
-                        className="h-8 text-sm max-w-[200px]"
-                      />
-                    </>
-                  )}
+                  {/* Feature M4: edit inline cidade+carro agora vale pros 2 CRMs */}
+                  <Input
+                    value={editCity}
+                    onChange={e => setEditCity(e.target.value)}
+                    placeholder="📍 Cidade"
+                    className="h-8 text-sm max-w-[160px]"
+                  />
+                  <Input
+                    value={editVehicle}
+                    onChange={e => setEditVehicle(e.target.value)}
+                    placeholder="🚗 Carro de interesse"
+                    className="h-8 text-sm max-w-[200px]"
+                  />
                   <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
                     {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                   </Button>
@@ -2935,8 +2951,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               </SelectContent>
             </Select>
           )}
-          {/* Fase 6 Feature C: modo seleção pro disparo em massa */}
-          {!isMarcosCrm && (view === 'pipeline' || view === 'leads') && (
+          {/* Fase 6 Feature C + M3: modo seleção pro disparo em massa (Pedro E Marcos) */}
+          {(view === 'pipeline' || view === 'leads') && (
             <>
               {!selectionMode ? (
                 <Button
