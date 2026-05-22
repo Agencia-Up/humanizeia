@@ -1117,11 +1117,25 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       // Substitui o JOIN PostgREST que falhava silenciosamente. Mais robusto.
       const teamById = new Map(teamData.map((t: any) => [t.id, { id: t.id, name: t.name }]));
       const agentsById = new Map(agentsData.map((a: any) => [a.id, { name: a.name }]));
-      const leadsData: CrmLead[] = rawLeads.map((l: any) => ({
+      const hydratedLeads: CrmLead[] = rawLeads.map((l: any) => ({
         ...l,
         member: l.assigned_to_id ? (teamById.get(l.assigned_to_id) ?? null) : null,
         agent: l.agent_id ? (agentsById.get(l.agent_id) ?? null) : null,
       }));
+      const leadsByPhone = new Map<string, CrmLead>();
+      for (const lead of hydratedLeads) {
+        const phoneKey = String(lead.remote_jid || lead.id || '').replace(/\D/g, '');
+        const existing = leadsByPhone.get(phoneKey);
+        if (!existing) {
+          leadsByPhone.set(phoneKey, lead);
+          continue;
+        }
+
+        const leadTime = new Date(lead.created_at || 0).getTime();
+        const existingTime = new Date(existing.created_at || 0).getTime();
+        if (leadTime > existingTime) leadsByPhone.set(phoneKey, lead);
+      }
+      const leadsData: CrmLead[] = Array.from(leadsByPhone.values());
 
       // Deduplica vendedores pelo whatsapp_number (mesmo vendedor pode estar em vários agentes)
       const deduped = new Map<string, TeamMember>();

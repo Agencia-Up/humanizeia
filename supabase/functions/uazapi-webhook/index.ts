@@ -816,6 +816,155 @@ async function maybeHandleSellerAck(
   return { isSeller: true, confirmed: true, transferId: pendingTransfer.id };
 }
 
+async function getPreviousSellerForPedroLead(
+  supabase: any,
+  agent: any,
+  remoteJid: string,
+  currentLeadId?: string | null,
+) {
+  const { data: samePhoneLeads } = await supabase
+    .from('ai_crm_leads')
+    .select('id, agent_id, assigned_to_id, status, created_at, last_interaction_at')
+    .eq('user_id', agent.user_id)
+    .eq('remote_jid', remoteJid)
+    .order('created_at', { ascending: false })
+    .limit(25);
+
+  const candidates = (samePhoneLeads || []).filter((lead: any) => lead?.id && lead.id !== currentLeadId);
+  const candidateIds = candidates.map((lead: any) => lead.id).filter(Boolean);
+
+  if (candidateIds.length > 0) {
+    const { data: confirmedTransfers } = await supabase
+      .from('ai_lead_transfers')
+      .select('lead_id, to_member_id, transfer_status, is_confirmed, created_at')
+      .in('lead_id', candidateIds)
+      .eq('transfer_status', 'confirmed')
+      .order('created_at', { ascending: false })
+      .limit(25);
+
+    const lastConfirmed = (confirmedTransfers || []).find((transfer: any) => transfer?.to_member_id);
+    if (lastConfirmed?.to_member_id) {
+      const { data: seller } = await supabase
+        .from('ai_team_members')
+        .select('*')
+        .eq('id', lastConfirmed.to_member_id)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (seller) {
+        console.log(`[Transfer] Historico do telefone encontrou vendedor confirmado: ${seller.name}`);
+        return seller;
+      }
+    }
+  }
+
+  const assignedLead = candidates
+    .filter((lead: any) => lead?.assigned_to_id)
+    .sort((a: any, b: any) =>
+      new Date(b.last_interaction_at || b.created_at || 0).getTime() -
+      new Date(a.last_interaction_at || a.created_at || 0).getTime()
+    )[0];
+
+  if (assignedLead?.assigned_to_id) {
+    const { data: seller } = await supabase
+      .from('ai_team_members')
+      .select('*')
+      .eq('id', assignedLead.assigned_to_id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (seller) {
+      console.log(`[Transfer] Historico do telefone encontrou vendedor atribuido: ${seller.name}`);
+      return seller;
+    }
+  }
+
+  return null;
+}
+
+async function ensurePedroLeadRecord(
+  supabase: any,
+  agent: any,
+  waInstance: any,
+  remoteJid: string,
+  pushName: string,
+  nowStr: string,
+) {
+  const { data: currentLead } = await supabase
+    .from('ai_crm_leads')
+    .select('id, assigned_to_id')
+    .eq('agent_id', agent.id)
+    .eq('remote_jid', remoteJid)
+    .maybeSingle();
+
+  const previousSeller = await getPreviousSellerForPedroLead(
+    supabase,
+    agent,
+    remoteJid,
+    currentLead?.id || null,
+  );
+
+  if (!currentLead?.id) {
+    const { data: reusableLead } = await supabase
+      .from('ai_crm_leads')
+      .select('id')
+      .eq('user_id', agent.user_id)
+      .eq('remote_jid', remoteJid)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (reusableLead?.id) {
+      const { error: reuseErr } = await supabase.from('ai_crm_leads').update({
+        agent_id: agent.id,
+        instance_id: waInstance.id,
+        lead_name: pushName,
+        assigned_to_id: previousSeller?.id || null,
+        status: previousSeller?.id ? 'em_atendimento' : 'novo',
+        last_user_reply_at: nowStr,
+        last_interaction_at: nowStr,
+        followup_5min_sent: false,
+      }).eq('id', reusableLead.id);
+
+      if (!reuseErr) {
+        console.log(`[CRM] Reaproveitando lead antigo ${reusableLead.id} para agent atual ${agent.id}`);
+        return { id: reusableLead.id, previousSeller };
+      }
+      console.warn('[CRM] Falha ao reaproveitar lead antigo; seguindo com upsert:', reuseErr);
+    }
+  }
+
+  await supabase.from('ai_crm_leads').upsert({
+    user_id: agent.user_id,
+    agent_id: agent.id,
+    instance_id: waInstance.id,
+    remote_jid: remoteJid,
+    lead_name: pushName,
+    message_count: 1,
+    origem: 'outros',
+    assigned_to_id: currentLead?.assigned_to_id || previousSeller?.id || null,
+    status: (currentLead?.assigned_to_id || previousSeller?.id) ? 'em_atendimento' : 'novo',
+    last_interaction_at: nowStr
+  }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
+
+  await supabase.from('ai_crm_leads').update({
+    instance_id: waInstance.id,
+    last_user_reply_at: nowStr,
+    last_interaction_at: nowStr,
+    followup_5min_sent: false,
+    ...(previousSeller?.id && previousSeller.id !== currentLead?.assigned_to_id
+      ? { assigned_to_id: previousSeller.id, status: 'em_atendimento' }
+      : {}),
+  }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
+
+  const { data: ensuredLead } = await supabase
+    .from('ai_crm_leads')
+    .select('id')
+    .eq('agent_id', agent.id)
+    .eq('remote_jid', remoteJid)
+    .maybeSingle();
+
+  return { id: ensuredLead?.id || currentLead?.id || null, previousSeller };
+}
+
 function calcQualificationScore(state: any): number {
   let s = 0;
   if (state?.lead?.nome) s += 10;
@@ -2135,16 +2284,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // O upsert tem ignoreDuplicates=true, então NÃO sobrescreve origem em leads
   // existentes (preserva valor manual do master/vendedor).
   const nowStr = new Date().toISOString();
-  await supabase.from('ai_crm_leads').upsert({
-    user_id: agent.user_id,
-    agent_id: agent.id,
-    instance_id: waInstance.id,
-    remote_jid: remoteJid,
-    lead_name: pushName,
-    message_count: 1,
-    origem: 'outros',
-    last_interaction_at: nowStr
-  }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
+  await ensurePedroLeadRecord(supabase, agent, waInstance, remoteJid, pushName, nowStr);
 
   // ── CRITICAL: Atualiza timestamps para as regras de 5min/10min (cron-lead-followup) ──
   // last_user_reply_at = quando o CLIENTE enviou a última mensagem
@@ -2993,7 +3133,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         // 2. Buscar lead row
           const { data: leadRow } = await supabase
             .from('ai_crm_leads')
-            .select('id, assigned_to_id, status')
+            .select('id, assigned_to_id, status, created_at')
             .eq('agent_id', agent.id)
             .eq('remote_jid', remoteJid)
             .maybeSingle();
@@ -3024,7 +3164,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             } else {
             // 3. Selecionar vendedor — preferência: assigned_to_id existente (lead retornou)
             let chosenSeller: any = null;
-            if (leadRow.assigned_to_id) {
+            const previousSeller = await getPreviousSellerForPedroLead(
+              supabase,
+              agent,
+              remoteJid,
+              leadRow.id,
+            );
+            if (previousSeller) {
+              chosenSeller = previousSeller;
+              console.log(`[Transfer-Tool] Reusando vendedor do historico do telefone: ${previousSeller.name}`);
+            }
+
+            if (!chosenSeller && leadRow.assigned_to_id) {
               const { data: prevSeller } = await supabase
                 .from('ai_team_members')
                 .select('*')
@@ -3076,7 +3227,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 user_id: agent.user_id,
                 lead_id: leadRow.id,
                 to_member_id: chosenSeller.id,
-                transfer_reason: leadRow.assigned_to_id === chosenSeller.id ? 'returning_lead' : `${crmStage}_handoff`,
+                transfer_reason: (previousSeller?.id === chosenSeller.id || leadRow.assigned_to_id === chosenSeller.id) ? 'returning_lead' : `${crmStage}_handoff`,
                 notes: transferArgs.resumo_breve || transferArgs.motivo || `Qualificado pela tool transferir_para_vendedor`,
                 transfer_status: 'pending',
                 is_confirmed: false,
@@ -3283,7 +3434,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
             // ── Busca lead e detecta se é retorno ─────────────────────────
             const { data: leadRow } = await supabase
-              .from('ai_crm_leads').select('id')
+              .from('ai_crm_leads').select('id, assigned_to_id')
               .eq('agent_id', agent.id).eq('remote_jid', remoteJid).maybeSingle();
 
             let skipTransfer = false;
@@ -3320,6 +3471,29 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     isReturnLead = true;
                     returnSeller = prevSeller;
                     console.log(`[Transfer] Lead retornou — reencaminhando para ${prevSeller.name}`);
+                  }
+                }
+              }
+              if (!skipTransfer) {
+                const previousSellerFromPhone = await getPreviousSellerForPedroLead(
+                  supabase,
+                  agent,
+                  remoteJid,
+                  leadRow.id,
+                );
+                if (previousSellerFromPhone?.id) {
+                  isReturnLead = true;
+                  returnSeller = previousSellerFromPhone;
+                  console.log(`[Transfer] Historico por telefone - reencaminhando para ${previousSellerFromPhone.name}`);
+                } else if (!returnSeller && leadRow.assigned_to_id) {
+                  const { data: currentSeller } = await supabase
+                    .from('ai_team_members').select('*')
+                    .eq('id', leadRow.assigned_to_id)
+                    .eq('is_active', true)
+                    .maybeSingle();
+                  if (currentSeller) {
+                    isReturnLead = true;
+                    returnSeller = currentSeller;
                   }
                 }
               }
