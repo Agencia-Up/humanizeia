@@ -1690,13 +1690,6 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   // Fase 6.4: novo source_id (uuid) — referência a lead_sources
   const [addLeadSourceId, setAddLeadSourceId] = useState<string | null>(null);
   const [addLeadSourceName, setAddLeadSourceName] = useState<string>('');
-  // Fase 6 enrich form: cidade (dynamic), carro (texto livre), visita (texto livre)
-  const [addLeadCityId, setAddLeadCityId] = useState<string | null>(null);
-  const [addLeadCityName, setAddLeadCityName] = useState<string>('');
-  const [addLeadVehicle, setAddLeadVehicle] = useState<string>('');
-  const [addLeadVisit, setAddLeadVisit] = useState<string>('');
-  // Fase 6: seleção individual de leads pro disparo em massa
-  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
   const [editingLead, setEditingLead] = useState(false);
@@ -1971,19 +1964,12 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         source_id:     addLeadSourceId || null,
         origem:        addLeadSourceName || addLeadOrigem || null,
         origem_outros: null,
-        // Fase 6 enrich: novos campos do formulário
-        city_id:          addLeadCityId || null,
-        client_city:      addLeadCityName || null,
-        vehicle_interest: addLeadVehicle.trim() || null,
-        visit_scheduled:  addLeadVisit.trim() || null,
       });
       if (error) throw error;
       toast({ title: '✅ Lead adicionado ao CRM!' });
       setAddLeadName(''); setAddLeadPhone('');
       setAddLeadOrigem(''); setAddLeadOrigemOutros('');
       setAddLeadSourceId(null); setAddLeadSourceName('');
-      setAddLeadCityId(null); setAddLeadCityName('');
-      setAddLeadVehicle(''); setAddLeadVisit('');
       setAddLeadOpen(false);
       await fetchData(true);
     } catch (err: any) {
@@ -2808,8 +2794,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
     if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
     if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
-    // Fase 6: filterInativos agora é MODO SELEÇÃO — NÃO restringe a lista
-    // (vendedor escolhe individualmente quais disparar via checkbox no card)
+    if (filterInativos && !isLeadInativo(l)) return false;
     if (searchTerm) {
       const t = searchTerm.toLowerCase();
       if (!(l.lead_name || '').toLowerCase().includes(t) && !(l.remote_jid || '').toLowerCase().includes(t)) return false;
@@ -2817,77 +2802,28 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     return true;
   });
 
-  // Quando entra em modo seleção, pré-marca os inativos
-  const enterSelectionMode = () => {
-    const preMarked = new Set(leads.filter(isLeadInativo).map(l => l.id));
-    setSelectedLeadIds(preMarked);
-    setFilterInativos(true);
-    toast({
-      title: `📋 Modo seleção ativo`,
-      description: `${preMarked.size} inativo(s) pré-marcado(s). Marque/desmarque qualquer card.`,
-    });
-  };
-  const exitSelectionMode = () => {
-    setFilterInativos(false);
-    setSelectedLeadIds(new Set());
-  };
-  const toggleLeadSelection = (leadId: string) => {
-    setSelectedLeadIds(prev => {
-      const next = new Set(prev);
-      if (next.has(leadId)) next.delete(leadId); else next.add(leadId);
-      return next;
-    });
-  };
-  const selectAllVisible = () => {
-    setSelectedLeadIds(new Set(filteredLeads.map(l => l.id)));
-  };
-  const selectNone = () => setSelectedLeadIds(new Set());
-
-  // Disparar campanha pros SELECIONADOS (não só inativos)
+  // Disparar campanha pros inativos: salva lista no sessionStorage e navega pra broadcast
   const handleDispararCampanhaInativos = () => {
-    const selected = leads.filter(l => selectedLeadIds.has(l.id));
-    if (selected.length === 0) {
-      toast({ title: 'Nenhum lead selecionado', variant: 'destructive' });
+    const inativos = leads.filter(isLeadInativo);
+    if (inativos.length === 0) {
+      toast({ title: 'Nenhum lead inativo encontrado', variant: 'destructive' });
       return;
     }
-    const phones = selected
+    const phones = inativos
       .map(l => l.remote_jid?.replace(/@.*/, '').replace(/\D/g, ''))
       .filter(Boolean) as string[];
     sessionStorage.setItem('pedro_campaign_phones', JSON.stringify({
       phones,
-      label: `Campanha CRM Pedro — ${selected.length} lead(s) selecionado(s)`,
-      source: 'pedro_selecionados',
+      label: `Reengajamento — ${inativos.length} leads inativos (>${INATIVO_DIAS}d)`,
+      source: 'pedro_inativos',
       created_at: new Date().toISOString(),
     }));
     toast({
-      title: `📢 ${selected.length} contato(s) pré-carregado(s)`,
+      title: `📢 ${inativos.length} contato(s) pré-carregado(s)`,
       description: 'Indo para o disparo em massa...',
     });
+    // Vai pra tela de broadcast (Marcos)
     setTimeout(() => { window.location.href = '/whatsapp/broadcast'; }, 800);
-  };
-
-  // Fase 6: testa edge function de notificação de visita agendada hoje
-  const [testNotifLoading, setTestNotifLoading] = useState(false);
-  const handleTestVisitNotification = async () => {
-    setTestNotifLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('notify-scheduled-visits', {
-        body: {},
-      });
-      if (error) throw error;
-      const r = data as any;
-      const msg = r?.notified > 0
-        ? `✅ ${r.notified} vendedor(es) notificado(s) sobre visita hoje!`
-        : `Checou ${r?.checked || 0} lead(s). Nenhum com visita HOJE pra notificar (skipped: ${r?.skipped_no_today || 0}).`;
-      toast({
-        title: r?.notified > 0 ? 'Notificação enviada!' : 'Sem visitas hoje',
-        description: msg,
-      });
-    } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
-    } finally {
-      setTestNotifLoading(false);
-    }
   };
 
   return (
@@ -2966,67 +2902,37 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               Follow-ups
             </Button>
           )}
-          {/* Fase 6: modo SELEÇÃO (pré-marca inativos, vendedor escolhe quais disparar) */}
+          {/* Fase 6: filtro Inativos + disparo em massa */}
           {!isMarcosCrm && (view === 'pipeline' || view === 'leads') && (
             <>
-              {!filterInativos ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={enterSelectionMode}
-                  className="h-7 px-2.5 text-xs gap-1.5 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
-                  title={`Entra em modo seleção — pré-marca leads sem resposta há ${INATIVO_DIAS}+ dias`}
-                >
-                  <Clock className="h-3.5 w-3.5" />
-                  Selecionar p/ disparo
-                  {inativosCount > 0 && (
-                    <span className="ml-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-orange-500 text-white">{inativosCount}</span>
-                  )}
-                </Button>
-              ) : (
-                <div className="flex items-center gap-1 px-2 py-1 rounded bg-orange-500/10 border border-orange-500/30">
-                  <span className="text-[10px] text-orange-300 font-medium">Seleção:</span>
-                  <span className="text-xs font-bold text-orange-300">{selectedLeadIds.size}</span>
-                  <button
-                    onClick={selectAllVisible}
-                    className="text-[10px] text-orange-400 hover:text-orange-300 underline ml-1"
-                    title="Marca todos visíveis"
-                  >Todos</button>
-                  <button
-                    onClick={selectNone}
-                    className="text-[10px] text-orange-400 hover:text-orange-300 underline ml-1"
-                    title="Desmarca todos"
-                  >Nenhum</button>
-                  <button
-                    onClick={exitSelectionMode}
-                    className="text-orange-400 hover:text-orange-300 ml-1"
-                    title="Sair do modo seleção"
-                  ><X className="h-3 w-3" /></button>
-                </div>
-              )}
-              {filterInativos && selectedLeadIds.size > 0 && !isSeller && (
+              <Button
+                variant={filterInativos ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setFilterInativos(!filterInativos)}
+                className={`h-7 px-2.5 text-xs gap-1.5 ${
+                  filterInativos
+                    ? 'bg-orange-600 hover:bg-orange-700 text-white border-orange-500'
+                    : 'border-orange-500/30 text-orange-400 hover:bg-orange-500/10'
+                }`}
+                title={`Filtra leads sem resposta há ${INATIVO_DIAS}+ dias`}
+              >
+                <Clock className="h-3.5 w-3.5" />
+                Inativos
+                {inativosCount > 0 && (
+                  <span className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                    filterInativos ? 'bg-white/20' : 'bg-orange-500 text-white'
+                  }`}>{inativosCount}</span>
+                )}
+              </Button>
+              {filterInativos && inativosCount > 0 && !isSeller && (
                 <Button
                   size="sm"
                   onClick={handleDispararCampanhaInativos}
                   className="h-7 px-2.5 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-                  title="Pré-carrega os selecionados no disparo em massa do WhatsApp"
+                  title="Pré-carrega os inativos no disparo em massa do WhatsApp"
                 >
                   <Send className="h-3.5 w-3.5" />
-                  Disparar ({selectedLeadIds.size})
-                </Button>
-              )}
-              {/* Botão teste de notificação de visita */}
-              {!isSeller && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleTestVisitNotification}
-                  disabled={testNotifLoading}
-                  className="h-7 px-2.5 text-xs gap-1.5 border-pink-500/30 text-pink-400 hover:bg-pink-500/10"
-                  title="Testa notificação WhatsApp pros vendedores de leads com visita marcada pra HOJE"
-                >
-                  {testNotifLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BellRing className="h-3.5 w-3.5" />}
-                  Testar visita hoje
+                  Disparar campanha
                 </Button>
               )}
             </>
@@ -3131,43 +3037,6 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           </div>
           {/* Fase 6.4: removido o input "Especificar origem" — vendedor agora cadastra
               origem nova direto pelo botão "+ Adicionar novo(a)" no select acima */}
-
-          {/* Fase 6 enrich: linha 2 do form (cidade + carro + visita) */}
-          <div className="flex flex-wrap gap-2 items-end mt-2 pt-2 border-t border-border/30">
-            <div className="flex-1 min-w-[180px] space-y-1">
-              <label className="text-[10px] text-muted-foreground font-medium">Cidade (opcional)</label>
-              <DynamicSelect
-                entity="city"
-                userId={effectiveUserIdState || userId}
-                value={addLeadCityId}
-                onChange={(id, row) => {
-                  setAddLeadCityId(id);
-                  setAddLeadCityName(row?.name || '');
-                }}
-                placeholder="Selecione a cidade"
-                triggerClassName="h-8 text-xs"
-                filter={(r) => r.status === 'active'}
-              />
-            </div>
-            <div className="flex-1 min-w-[180px] space-y-1">
-              <label className="text-[10px] text-muted-foreground font-medium">Carro de interesse (opcional)</label>
-              <Input
-                value={addLeadVehicle}
-                onChange={e => setAddLeadVehicle(e.target.value)}
-                placeholder="Ex: Onix 2022, Tracker Premier"
-                className="h-8 text-xs"
-              />
-            </div>
-            <div className="flex-1 min-w-[160px] space-y-1">
-              <label className="text-[10px] text-muted-foreground font-medium">Data da visita (opcional)</label>
-              <Input
-                value={addLeadVisit}
-                onChange={e => setAddLeadVisit(e.target.value)}
-                placeholder="Ex: 22/05/2026 14h"
-                className="h-8 text-xs"
-              />
-            </div>
-          </div>
         </div>
       )}
 
@@ -3237,17 +3106,6 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                   }`}
                                 >
                                   <div className="flex items-start gap-2">
-                                    {/* Fase 6: checkbox no modo seleção */}
-                                    {filterInativos && (
-                                      <input
-                                        type="checkbox"
-                                        checked={selectedLeadIds.has(lead.id)}
-                                        onChange={() => toggleLeadSelection(lead.id)}
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="mt-1 h-3.5 w-3.5 rounded border-orange-500/50 accent-orange-500 cursor-pointer"
-                                        title="Marcar pra disparo em massa"
-                                      />
-                                    )}
                                     <div
                                       {...dragProvided.dragHandleProps}
                                       className="mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground"
