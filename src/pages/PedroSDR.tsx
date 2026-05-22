@@ -694,6 +694,8 @@ interface CrmLead {
   client_city?: string | null;
   vehicle_interest?: string | null;
   visit_scheduled?: string | null;
+  // Feature C: pro cálculo de inativo (>7 dias sem resposta)
+  last_user_reply_at?: string | null;
 }
 
 interface Note {
@@ -789,6 +791,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [filterStatus, setFilterStatus]   = useState<string>('all');
   const [filterSeller, setFilterSeller]   = useState<string>('all');
   const [searchTerm,   setSearchTerm]     = useState('');
+  // Fase 6 Feature C: modo seleção pro disparo em massa (toggle + IDs marcados)
+  const [selectionMode, setSelectionMode]   = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
 
   // form states
   const [newNote, setNewNote]             = useState('');
@@ -1028,7 +1033,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
         // Fase 6: adiciona client_city, vehicle_interest, visit_scheduled (todos opcionais)
-        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled')
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled, last_user_reply_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -2771,6 +2776,68 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     return true;
   });
 
+  // Fase 6 Feature C: cálculo de inativo + handlers de seleção/disparo
+  const INATIVO_DIAS = 7;
+  const inativoCutoffMs = Date.now() - INATIVO_DIAS * 24 * 60 * 60 * 1000;
+  const isLeadInativo = (l: CrmLead): boolean => {
+    const lastReply = l.last_user_reply_at ? new Date(l.last_user_reply_at).getTime() : 0;
+    const created = new Date(l.created_at).getTime();
+    const ref = lastReply || created;
+    return ref < inativoCutoffMs
+      && l.status_crm !== 'qualificado'
+      && l.status_crm !== 'transferido';
+  };
+  const inativosCount = leads.filter(isLeadInativo).length;
+  const enterSelectionMode = () => {
+    const pre = new Set(leads.filter(isLeadInativo).map(l => l.id));
+    setSelectedLeadIds(pre);
+    setSelectionMode(true);
+    toast({
+      title: '📋 Modo seleção ativo',
+      description: `${pre.size} inativo(s) pré-marcado(s). Marque/desmarque qualquer card.`,
+    });
+  };
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedLeadIds(new Set());
+  };
+  const toggleLeadSelection = (leadId: string) => {
+    setSelectedLeadIds(prev => {
+      const next = new Set(prev);
+      if (next.has(leadId)) next.delete(leadId); else next.add(leadId);
+      return next;
+    });
+  };
+  const selectAllVisible = () => {
+    setSelectedLeadIds(new Set(filteredLeads.map(l => l.id)));
+  };
+  const selectNone = () => setSelectedLeadIds(new Set());
+  const handleDispararCampanha = () => {
+    const selected = leads.filter(l => selectedLeadIds.has(l.id));
+    if (selected.length === 0) {
+      toast({ title: 'Nenhum lead selecionado', variant: 'destructive' });
+      return;
+    }
+    const phones = selected
+      .map(l => l.remote_jid?.replace(/@.*/, '').replace(/\D/g, ''))
+      .filter(Boolean) as string[];
+    try {
+      sessionStorage.setItem('pedro_campaign_phones', JSON.stringify({
+        phones,
+        label: `CRM Pedro — ${selected.length} lead(s) selecionado(s)`,
+        source: 'pedro_selecionados',
+        created_at: new Date().toISOString(),
+      }));
+    } catch {
+      // sessionStorage pode falhar em modo privacy — ignora, segue redirect
+    }
+    toast({
+      title: `📢 ${selected.length} contato(s) pré-carregado(s)`,
+      description: 'Indo pro disparo em massa...',
+    });
+    setTimeout(() => { window.location.href = '/whatsapp/broadcast'; }, 600);
+  };
+
   return (
     <div className="p-4 lg:p-6 space-y-4">
       {/* ── Métricas ────────────────────────────────────────────────── */}
@@ -2835,6 +2902,44 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 ))}
               </SelectContent>
             </Select>
+          )}
+          {/* Fase 6 Feature C: modo seleção pro disparo em massa */}
+          {!isMarcosCrm && (view === 'pipeline' || view === 'leads') && (
+            <>
+              {!selectionMode ? (
+                <Button
+                  variant="outline" size="sm"
+                  onClick={enterSelectionMode}
+                  className="h-7 px-2.5 text-xs gap-1.5 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                  title={`Entra em modo seleção — pré-marca leads sem resposta há ${INATIVO_DIAS}+ dias`}
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                  Selecionar p/ disparo
+                  {inativosCount > 0 && (
+                    <span className="ml-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-orange-500 text-white">{inativosCount}</span>
+                  )}
+                </Button>
+              ) : (
+                <div className="flex items-center gap-1 px-2 py-1 rounded bg-orange-500/10 border border-orange-500/30">
+                  <span className="text-[10px] text-orange-300 font-medium">Selec:</span>
+                  <span className="text-xs font-bold text-orange-300">{selectedLeadIds.size}</span>
+                  <button onClick={selectAllVisible} className="text-[10px] text-orange-400 hover:text-orange-300 underline ml-1" title="Marca todos visíveis">Todos</button>
+                  <button onClick={selectNone} className="text-[10px] text-orange-400 hover:text-orange-300 underline ml-1" title="Desmarca todos">Nenhum</button>
+                  <button onClick={exitSelectionMode} className="text-orange-400 hover:text-orange-300 ml-1" title="Sair"><X className="h-3 w-3" /></button>
+                </div>
+              )}
+              {selectionMode && selectedLeadIds.size > 0 && !isSeller && (
+                <Button
+                  size="sm"
+                  onClick={handleDispararCampanha}
+                  className="h-7 px-2.5 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  title="Pré-carrega os selecionados no disparo em massa"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  Disparar ({selectedLeadIds.size})
+                </Button>
+              )}
+            </>
           )}
           {!isMarcosCrm && (
             <Button
@@ -3047,6 +3152,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                   }`}
                                 >
                                   <div className="flex items-start gap-2">
+                                    {/* Fase 6 Feature C: checkbox de seleção (só aparece em modo seleção) */}
+                                    {selectionMode && (
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedLeadIds.has(lead.id)}
+                                        onChange={() => toggleLeadSelection(lead.id)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="mt-1 h-3.5 w-3.5 rounded border-orange-500/50 accent-orange-500 cursor-pointer"
+                                        title="Marcar pra disparo"
+                                      />
+                                    )}
                                     <div
                                       {...dragProvided.dragHandleProps}
                                       className="mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground"
