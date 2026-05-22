@@ -1664,6 +1664,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   // Fase 6.4: novo source_id (uuid) — referência a lead_sources
   const [addLeadSourceId, setAddLeadSourceId] = useState<string | null>(null);
   const [addLeadSourceName, setAddLeadSourceName] = useState<string>('');
+  // Fase 6 Feature B: 3 campos extras (texto livre, sem hook novo)
+  const [addLeadCity, setAddLeadCity] = useState<string>('');
+  const [addLeadVehicle, setAddLeadVehicle] = useState<string>('');
+  const [addLeadVisit, setAddLeadVisit] = useState<string>('');
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
   const [editingLead, setEditingLead] = useState(false);
@@ -1938,12 +1942,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         source_id:     addLeadSourceId || null,
         origem:        addLeadSourceName || addLeadOrigem || null,
         origem_outros: null,
+        // Fase 6 Feature B: cidade/carro/visita (texto livre opcional)
+        client_city:      addLeadCity.trim() || null,
+        vehicle_interest: addLeadVehicle.trim() || null,
+        visit_scheduled:  addLeadVisit.trim() || null,
       });
       if (error) throw error;
       toast({ title: '✅ Lead adicionado ao CRM!' });
       setAddLeadName(''); setAddLeadPhone('');
       setAddLeadOrigem(''); setAddLeadOrigemOutros('');
       setAddLeadSourceId(null); setAddLeadSourceName('');
+      setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit('');
       setAddLeadOpen(false);
       await fetchData(true);
     } catch (err: any) {
@@ -2938,6 +2947,37 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           </div>
           {/* Fase 6.4: removido o input "Especificar origem" — vendedor agora cadastra
               origem nova direto pelo botão "+ Adicionar novo(a)" no select acima */}
+
+          {/* Fase 6 Feature B: 3 campos extras (linha 2 do form, todos opcionais) */}
+          <div className="flex flex-wrap gap-2 items-end mt-2 pt-2 border-t border-border/30">
+            <div className="flex-1 min-w-[160px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">📍 Cidade (opcional)</label>
+              <Input
+                value={addLeadCity}
+                onChange={e => setAddLeadCity(e.target.value)}
+                placeholder="Ex: Taubaté"
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="flex-1 min-w-[180px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">🚗 Carro de interesse (opcional)</label>
+              <Input
+                value={addLeadVehicle}
+                onChange={e => setAddLeadVehicle(e.target.value)}
+                placeholder="Ex: Onix 2022, Tracker Premier"
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="flex-1 min-w-[160px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">📅 Data da visita (opcional)</label>
+              <Input
+                value={addLeadVisit}
+                onChange={e => setAddLeadVisit(e.target.value)}
+                placeholder="Ex: 22/05/2026 14h"
+                className="h-8 text-xs"
+              />
+            </div>
+          </div>
         </div>
       )}
 
