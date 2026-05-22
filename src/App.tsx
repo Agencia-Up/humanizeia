@@ -113,6 +113,8 @@ function Lazy({ children }: { children: React.ReactNode }) {
 
 // Lazy load all pages — split the bundle so the initial load is fast
 const Auth = lazy(() => import("./pages/Auth"));
+const Checkout = lazy(() => import("./pages/Checkout")); // Prompt 10 — checkout PRO
+const CheckoutSuccess = lazy(() => import("./pages/CheckoutSuccess")); // Prompt 12 — página de sucesso
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const SetSellerPassword = lazy(() => import("./pages/SetSellerPassword"));
 const AgentHub = lazy(() => import("./pages/AgentHub"));
@@ -161,6 +163,8 @@ const DaviSocialMedia = lazy(() => import('./pages/DaviSocialMedia'));
 const JoaoEmail = lazy(() => import('./pages/JoaoEmail'));
 const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
 const MeuPlano = lazy(() => import('./pages/MeuPlano'));
+// Fase 6.5 — Admin de campos dinâmicos (cidades + origens)
+const DynamicFieldsAdmin = lazy(() => import('./pages/DynamicFieldsAdmin'));
 const AgentFunnel = lazy(() => import('./pages/AgentFunnel'));
 const LucasFunil = lazy(() => import('./pages/LucasFunil'));
 const GeradorPrompt = lazy(() => import('./pages/GeradorPrompt'));
@@ -205,6 +209,8 @@ const App = () => (
                 <Route path="/terms"         element={<Lazy><TermsOfService /></Lazy>} />
                 <Route path="/onboarding"    element={<Lazy><Onboarding /></Lazy>} />
                 <Route path="/"              element={<Lazy><LandingPage /></Lazy>} />
+                <Route path="/checkout"      element={<Lazy><Checkout /></Lazy>} />
+                <Route path="/checkout/sucesso" element={<Lazy><CheckoutSuccess /></Lazy>} />
                 <Route path="/f/:formId"     element={<Lazy><FormPublico /></Lazy>} />
 
                 {/* ── Protected routes ── each page has its own Suspense so the
@@ -271,6 +277,8 @@ const App = () => (
                 <Route path="/joao"                  element={<ProtectedRoute><Lazy><JoaoEmail /></Lazy></ProtectedRoute>} />
                 <Route path="/daniel"                element={<ProtectedRoute><Lazy><DanielEstrategia /></Lazy></ProtectedRoute>} />
                 <Route path="/meu-plano"             element={<ProtectedRoute><Lazy><MeuPlano /></Lazy></ProtectedRoute>} />
+                {/* Fase 6.5 — admin de cidades + origens dinâmicas */}
+                <Route path="/configuracoes/campos-dinamicos" element={<ProtectedRoute><Lazy><DynamicFieldsAdmin /></Lazy></ProtectedRoute>} />
                 <Route path="/gerador-prompt"        element={<ProtectedRoute><AdminRoute><Lazy><GeradorPrompt /></Lazy></AdminRoute></ProtectedRoute>} />
                 <Route path="/jose"                  element={<ProtectedRoute><Lazy><JoseTrafego /></Lazy></ProtectedRoute>} />
                 <Route path="/performance"           element={<ProtectedRoute><Lazy><SupportDashboard /></Lazy></ProtectedRoute>} />

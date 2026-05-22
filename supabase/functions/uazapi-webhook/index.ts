@@ -358,11 +358,57 @@ Se nada de novo, retorne {}.`;
   return { delta: {}, eco: false, objecoes: [] };
 }
 
+// Camada 2 do Bug #2 (re-apresentação): detector de auto-apresentação
+// expandido pra cobrir 7 padrões variantes. A regex one-liner antiga falhava
+// em "Consultor da BNDV", "Sou Carvalho" (sem artigo), "Sou consultor da loja".
+function isAgentSelfIntroduction(text: string): boolean {
+  if (!text) return false;
+  const patterns = [
+    /\bsou (o|a)\s+\w+/i,                                  // "Sou o Carvalho", "Sou a Maria"
+    /\bsou (carvalho|consultor|representante|atendente|gerente|vendedor)\b/i, // "Sou Carvalho", "Sou consultor"
+    /\beu sou\s+\w+/i,                                     // "Eu sou Carvalho"
+    /\bme chamo\s+\w+/i,                                   // "Me chamo Carvalho"
+    /\baqui (é|fala)\s+(o\s+|a\s+)?\w+/i,                  // "Aqui é o Carvalho", "Aqui fala Carvalho"
+    /\bconsultor (d[aoe]|do|da)\s+\w+/i,                   // "Consultor da BNDV", "Consultor do showroom"
+    /\b(meu nome|chamo-me)\s+(é\s+)?\w+/i,                 // "Meu nome é Carvalho", "Chamo-me Carvalho"
+  ];
+  return patterns.some((p) => p.test(text));
+}
+
+// Camada 3 do Bug #2: guard programático. Remove auto-apresentação da resposta
+// se o agente JÁ se apresentou antes (state.atendimento.consultor_apresentado=true).
+// Defesa contra o LLM ignorar a regra do system prompt esporadicamente.
+// Estratégia: split em frases mantendo pontuação, descarta as que contêm padrão
+// de apresentação, reconstrói. Se a resposta era SÓ apresentação, retorna fallback.
+function stripIntroIfAlreadyPresented(text: string, state: any): string {
+  if (!text || !state?.atendimento?.consultor_apresentado) return text;
+  if (!isAgentSelfIntroduction(text)) return text;
+
+  const sentences = text.split(/([.!?]+\s*)/).filter(Boolean);
+  const kept: string[] = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
+    if (isAgentSelfIntroduction(s)) {
+      // pula essa frase + o separador de pontuação subsequente (se houver)
+      if (i + 1 < sentences.length && /^[.!?]+\s*$/.test(sentences[i + 1])) i++;
+      continue;
+    }
+    kept.push(s);
+  }
+  const result = kept.join('').trim();
+  if (result.length < 10) {
+    console.warn(`[Pedro-Guard] Resposta era SÓ apresentação ("${text.slice(0, 80)}..."), substituída por fallback`);
+    return 'Pode mandar 😊';
+  }
+  console.warn(`[Pedro-Guard] Removida re-apresentação | original: "${text.slice(0, 100)}" → final: "${result.slice(0, 100)}"`);
+  return result;
+}
+
 function applyAgentSelfFlags(state: any, agentReply: string): any {
   // Heurísticas pós-resposta do agente: detecta auto-apresentação, envio de ficha, etc.
   const txt = (agentReply || '').toLowerCase();
   const updates: any = {};
-  if (/sou (o|a)\s+\w+|eu sou\s+\w+|me chamo\s+\w+|aqui é\s+(o|a)\s+\w+/i.test(agentReply) && !state?.atendimento?.consultor_apresentado) {
+  if (isAgentSelfIntroduction(agentReply) && !state?.atendimento?.consultor_apresentado) {
     updates.atendimento = { ...(updates.atendimento || {}), consultor_apresentado: true };
   }
   // Envio de ficha completa (heurística: 3+ campos típicos juntos)
@@ -457,6 +503,157 @@ function formatStateForPrompt(state: any): string {
     lines.push('⚠️ LEMBRETE FINAL: VEÍCULO JÁ APRESENTADO. ESPELHE O TAMANHO DA PERGUNTA. CLIENTE CURTO = VOCÊ CURTO. SEMPRE.');
   }
 
+  // IT-2.1: apenda bloco BANT quando flag on. Mostra ao LLM em que estagio
+  // de qualificacao o lead esta + sugere proxima acao. NAO altera state.
+  if (isPedroFeatureEnabled('BANT_QUALIFICATION')) {
+    const bant = deriveBantFromState(state);
+    const bantBlock = formatBantBlock(bant);
+    if (bantBlock) {
+      lines.push('');
+      lines.push(bantBlock);
+    }
+  }
+
+  // IT-2.2: apenda bloco LEAD SCORE quando flag on. Inclui breakdown
+  // (criterios passados + penalidades + faltam) - LLM enxerga o que esta
+  // pesando no score atual e o que precisa coletar pra subir o tier.
+  if (isPedroFeatureEnabled('LEAD_SCORING')) {
+    const scoreResult = calcLeadScoreV2(state);
+    lines.push('');
+    lines.push(formatLeadScoreBlock(scoreResult));
+  }
+
+  // IT-3.3: apenda playbook(s) de objecao quando flag on e state.atendimento
+  // .objecoes contem objecoes conhecidas (matching com 8 playbooks hardcoded).
+  // O LLM ganha estrategia explicita + anti-padrao + exemplo de resposta.
+  if (isPedroFeatureEnabled('OBJECTION_PLAYBOOKS')) {
+    const playbooks = getRelevantPlaybooks(state?.atendimento?.objecoes || []);
+    const playbooksBlock = formatObjectionPlaybooksBlock(playbooks);
+    if (playbooksBlock) {
+      lines.push('');
+      lines.push(playbooksBlock);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ─── BANT Schema (INLINED from _shared/qualification/bantSchema.ts) ────────
+// IT-2.1: deriva estagio Budget/Authority/Need/Timeline do state existente.
+// NAO adiciona campos no JSONB — apenas calcula status e formata bloco
+// pro system prompt. Fonte canônica + testes:
+// supabase/functions/_shared/qualification/bantSchema.ts
+type BantBudgetStatus = 'known' | 'unknown';
+type BantAuthorityStatus = 'sole' | 'shared' | 'unknown';
+type BantNeedStatus = 'specific' | 'exploring' | 'unknown';
+type BantTimelineStatus = 'ready_to_close' | 'evaluating' | 'discovery';
+type BantStatus = {
+  budget: { status: BantBudgetStatus; detail: string };
+  authority: { status: BantAuthorityStatus; detail: string };
+  need: { status: BantNeedStatus; detail: string };
+  timeline: { status: BantTimelineStatus; detail: string };
+  overallStage: 'cold' | 'discovery' | 'qualifying' | 'qualified' | 'ready_to_handoff';
+  nextSuggestedAsk: string;
+};
+
+function deriveBantFromState(state: any): BantStatus {
+  const s = state || {};
+  const formaPagamento = s.negociacao?.forma_pagamento;
+  const valorEntrada = s.negociacao?.valor_entrada;
+  const temTroca = s.negociacao?.tem_troca;
+  let budgetStatus: BantBudgetStatus = 'unknown';
+  let budgetDetail = 'forma de pagamento não informada';
+  if (formaPagamento) {
+    budgetStatus = 'known';
+    const parts = [`forma: ${formaPagamento}`];
+    if (valorEntrada) parts.push(`entrada: ${valorEntrada}`);
+    if (temTroca === true) parts.push('com troca');
+    budgetDetail = parts.join(', ');
+  } else if (temTroca === true) {
+    budgetStatus = 'known';
+    budgetDetail = 'troca declarada, forma pendente';
+  }
+
+  const acompanhante = s.lead?.acompanhante_decisao;
+  let authorityStatus: BantAuthorityStatus = 'unknown';
+  let authorityDetail = 'não sabemos se decide sozinho';
+  if (typeof acompanhante === 'string' && acompanhante.trim().length > 0) {
+    authorityStatus = 'shared';
+    authorityDetail = `precisa consultar ${acompanhante}`;
+  } else if (s.lead?.nome) {
+    authorityStatus = 'sole';
+    authorityDetail = 'decide sozinho (sem acompanhante mencionado)';
+  }
+
+  const modelo = s.interesse?.modelo_desejado;
+  const jaApresentado = !!s.veiculo_apresentado?.ja_apresentado;
+  let needStatus: BantNeedStatus = 'unknown';
+  let needDetail = 'modelo de interesse não definido';
+  if (modelo) {
+    needStatus = 'specific';
+    const conf = [s.interesse?.configuracao, s.interesse?.combustivel, s.interesse?.cambio, s.interesse?.ano_desejado].filter(Boolean).join(', ');
+    needDetail = jaApresentado ? `${modelo} já apresentado` : `${modelo}${conf ? ` (${conf})` : ''}`;
+  } else if (jaApresentado) {
+    needStatus = 'exploring';
+    needDetail = 'veículo apresentado mas modelo de interesse não setado';
+  }
+
+  let timelineStatus: BantTimelineStatus = 'discovery';
+  let timelineDetail = 'início da conversa, ainda explorando';
+  const budgetOk = budgetStatus === 'known';
+  const needOk = needStatus === 'specific' || jaApresentado;
+  const authorityOk = authorityStatus === 'sole';
+  if (budgetOk && needOk && authorityOk) {
+    timelineStatus = 'ready_to_close';
+    timelineDetail = 'BNA completo + decide sozinho';
+  } else if (needOk && (budgetOk || authorityOk)) {
+    timelineStatus = 'evaluating';
+    timelineDetail = 'tem clareza de necessidade, falta detalhe';
+  } else if (needOk || budgetOk) {
+    timelineStatus = 'evaluating';
+    timelineDetail = '1 dimensão clara, outras pendentes';
+  }
+
+  const knownCount = [budgetStatus === 'known', authorityStatus !== 'unknown', needStatus !== 'unknown'].filter(Boolean).length;
+  let overallStage: BantStatus['overallStage'] = 'cold';
+  if (timelineStatus === 'ready_to_close') overallStage = 'ready_to_handoff';
+  else if (knownCount === 3) overallStage = 'qualified';
+  else if (knownCount === 2) overallStage = 'qualifying';
+  else if (knownCount === 1) overallStage = 'discovery';
+
+  let nextSuggestedAsk = 'Perguntar qual modelo o cliente está procurando';
+  if (needStatus === 'unknown') {
+    nextSuggestedAsk = 'Perguntar qual modelo/tipo de carro o cliente quer';
+  } else if (budgetStatus === 'unknown') {
+    nextSuggestedAsk = 'Perguntar forma de pagamento (à vista, financiar, troca)';
+  } else if (authorityStatus === 'unknown') {
+    nextSuggestedAsk = 'Confirmar nome do cliente (ajuda a saber se decide sozinho)';
+  } else if (overallStage === 'ready_to_handoff') {
+    nextSuggestedAsk = 'Transferir pra vendedor humano via tool transferir_para_vendedor';
+  } else if (jaApresentado && !s.lead?.telefone) {
+    nextSuggestedAsk = 'Pedir telefone pra preparar o handoff';
+  }
+
+  return {
+    budget: { status: budgetStatus, detail: budgetDetail },
+    authority: { status: authorityStatus, detail: authorityDetail },
+    need: { status: needStatus, detail: needDetail },
+    timeline: { status: timelineStatus, detail: timelineDetail },
+    overallStage,
+    nextSuggestedAsk,
+  };
+}
+
+function formatBantBlock(bant: BantStatus): string {
+  if (bant.overallStage === 'cold') return '';
+  const lines: string[] = [];
+  lines.push('## QUALIFICAÇÃO BANT (status atual)');
+  lines.push(`- **Budget**: ${bant.budget.status} — ${bant.budget.detail}`);
+  lines.push(`- **Authority**: ${bant.authority.status} — ${bant.authority.detail}`);
+  lines.push(`- **Need**: ${bant.need.status} — ${bant.need.detail}`);
+  lines.push(`- **Timeline**: ${bant.timeline.status} — ${bant.timeline.detail}`);
+  lines.push(`- **Estágio geral**: ${bant.overallStage}`);
+  lines.push(`- **Próxima ação sugerida**: ${bant.nextSuggestedAsk}`);
   return lines.join('\n');
 }
 
@@ -632,6 +829,522 @@ function calcQualificationScore(state: any): number {
   return Math.min(100, s);
 }
 
+// ─── Lead Scoring V2 (INLINED from _shared/qualification/leadScoring.ts) ───
+// IT-2.2: scoring com criterios explicitos, breakdown e tier categorico.
+// Mantém compat com V1 (mesmo intervalo 0-100). Quando flag on, substitui
+// V1 no UPSERT da coluna qualificacao_score.
+// Fonte canônica + testes: supabase/functions/_shared/qualification/leadScoring.ts
+type LeadTier = 'cold' | 'warm' | 'hot' | 'qualified';
+type ScoringCriterion = {
+  key: string;
+  label: string;
+  weight: number;
+  passed: boolean;
+  reason: string;
+};
+type LeadScoreResult = {
+  score: number;
+  tier: LeadTier;
+  breakdown: ScoringCriterion[];
+  rawPositive: number;
+  rawPenalties: number;
+};
+
+function getLeadTier(score: number): LeadTier {
+  if (score >= 80) return 'qualified';
+  if (score >= 50) return 'hot';
+  if (score >= 20) return 'warm';
+  return 'cold';
+}
+
+function calcLeadScoreV2(state: any): LeadScoreResult {
+  const s = state || {};
+  const breakdown: ScoringCriterion[] = [
+    { key: 'nome', label: 'Nome do cliente coletado', weight: 10, passed: !!s.lead?.nome, reason: s.lead?.nome ? `nome="${s.lead?.nome_completo || s.lead?.nome}"` : 'lead.nome ausente' },
+    { key: 'telefone', label: 'Telefone direto confirmado', weight: 20, passed: !!s.lead?.telefone, reason: s.lead?.telefone ? `telefone="${s.lead.telefone}"` : 'lead.telefone ausente' },
+    { key: 'modelo_desejado', label: 'Modelo de interesse declarado', weight: 15, passed: !!s.interesse?.modelo_desejado, reason: s.interesse?.modelo_desejado ? `modelo="${s.interesse.modelo_desejado}"` : 'interesse.modelo_desejado ausente' },
+    { key: 'forma_pagamento', label: 'Forma de pagamento definida (BANT Budget)', weight: 15, passed: !!s.negociacao?.forma_pagamento, reason: s.negociacao?.forma_pagamento ? `forma="${s.negociacao.forma_pagamento}"` : 'negociacao.forma_pagamento ausente' },
+    { key: 'tem_troca_definido', label: 'Cliente respondeu sobre troca (sim/nao)', weight: 10, passed: s.negociacao?.tem_troca !== null && s.negociacao?.tem_troca !== undefined, reason: s.negociacao?.tem_troca === true ? 'tem troca declarada' : s.negociacao?.tem_troca === false ? 'sem troca declarada' : 'tem_troca pendente' },
+    { key: 'veiculo_apresentado', label: 'Veiculo ja apresentado (engagement avancou)', weight: 10, passed: !!s.veiculo_apresentado?.ja_apresentado, reason: s.veiculo_apresentado?.ja_apresentado ? `${s.veiculo_apresentado?.modelo || 'veiculo'} apresentado` : 'ainda nao apresentou veiculo' },
+    { key: 'decide_sozinho', label: 'Decide sozinho (BANT Authority sole)', weight: 10, passed: !!s.lead?.nome && !(typeof s.lead?.acompanhante_decisao === 'string' && s.lead.acompanhante_decisao.trim().length > 0), reason: s.lead?.acompanhante_decisao ? `compartilhada com ${s.lead.acompanhante_decisao}` : s.lead?.nome ? 'sem acompanhante mencionado' : 'nome ausente — nao da pra inferir' },
+    { key: 'dados_auxiliares', label: 'Cidade ou conhecimento da loja', weight: 5, passed: !!s.lead?.cidade || (s.lead?.conhece_loja !== null && s.lead?.conhece_loja !== undefined), reason: s.lead?.cidade ? `cidade="${s.lead.cidade}"` : (s.lead?.conhece_loja !== null && s.lead?.conhece_loja !== undefined) ? 'conhece_loja respondido' : 'cidade/conhece_loja ausentes' },
+    { key: 'modo_atendimento', label: 'Modo de atendimento confirmado (remoto/presencial)', weight: 5, passed: !!s.atendimento?.modo_atendimento, reason: s.atendimento?.modo_atendimento ? `modo="${s.atendimento.modo_atendimento}"` : 'atendimento.modo_atendimento pendente' },
+    { key: 'objecao_visita_nao_resolvida', label: 'Penalidade: recusou visita mas modo remoto nao definido', weight: -15, passed: s.atendimento?.pode_visitar_loja === false && !s.atendimento?.modo_atendimento, reason: (s.atendimento?.pode_visitar_loja === false && !s.atendimento?.modo_atendimento) ? 'recusou visita E sem modo remoto = atendimento travado' : 'objecao visita nao aplicavel ou ja tratada' },
+  ];
+
+  let rawPositive = 0;
+  let rawPenalties = 0;
+  breakdown.forEach((c) => {
+    if (c.passed) {
+      if (c.weight > 0) rawPositive += c.weight;
+      else rawPenalties += c.weight;
+    }
+  });
+  const total = rawPositive + rawPenalties;
+  const score = Math.max(0, Math.min(100, total));
+  return { score, tier: getLeadTier(score), breakdown, rawPositive, rawPenalties };
+}
+
+function formatLeadScoreBlock(result: LeadScoreResult): string {
+  const lines: string[] = [];
+  lines.push('## LEAD SCORE');
+  lines.push(`- **Score**: ${result.score}/100 (tier: ${result.tier})`);
+  const passed = result.breakdown.filter((c) => c.passed && c.weight > 0);
+  const penalties = result.breakdown.filter((c) => c.passed && c.weight < 0);
+  const missing = result.breakdown.filter((c) => !c.passed && c.weight > 0);
+  if (passed.length > 0) {
+    lines.push('- Pontos coletados:');
+    passed.forEach((c) => lines.push(`  - ✅ ${c.label} (+${c.weight}): ${c.reason}`));
+  }
+  if (penalties.length > 0) {
+    lines.push('- Penalidades aplicadas:');
+    penalties.forEach((c) => lines.push(`  - ⚠️ ${c.label} (${c.weight}): ${c.reason}`));
+  }
+  if (missing.length > 0) {
+    lines.push('- Faltam coletar (pesos):');
+    missing.forEach((c) => lines.push(`  - ⏳ ${c.label} (+${c.weight}): ${c.reason}`));
+  }
+  return lines.join('\n');
+}
+
+// Wrapper: V1 (legacy) ou V2 se flag on. Garante compat com qualificacao_score numeric.
+function getQualificationScore(state: any): number {
+  if (isPedroFeatureEnabled('LEAD_SCORING')) {
+    return calcLeadScoreV2(state).score;
+  }
+  return calcQualificationScore(state);
+}
+
+// ─── Structured Log (INLINED from _shared/observability/structuredLog.ts) ─
+// IT-4.3: logs JSON estruturados com trace_id por turno. Cada chamada vira
+// 1 linha JSON parseável - permite agregar por trace_id, calcular latencia
+// p50/p95, taxa de cortesia/guardrail, etc. Fonte canônica + testes:
+// supabase/functions/_shared/observability/structuredLog.ts
+type SlogLevel = 'debug' | 'info' | 'warn' | 'error';
+type SlogFields = Record<string, any> & { trace_id?: string };
+
+function newTraceId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) {
+      return (crypto as any).randomUUID().replace(/-/g, '').slice(0, 8);
+    }
+  } catch {}
+  return Math.random().toString(16).slice(2, 10).padStart(8, '0');
+}
+
+function slog(level: SlogLevel, event: string, fields: SlogFields = {}): void {
+  const record = { ts: new Date().toISOString(), level, event, ...fields };
+  let json: string;
+  try {
+    json = JSON.stringify(record);
+  } catch {
+    json = JSON.stringify({ ts: record.ts, level, event, _serialization_error: true });
+  }
+  switch (level) {
+    case 'error': console.error(json); break;
+    case 'warn': console.warn(json); break;
+    case 'debug': console.debug(json); break;
+    default: console.log(json);
+  }
+}
+
+function makeTurnLogger(traceId: string, baseFields: SlogFields = {}): (level: SlogLevel, event: string, fields?: SlogFields) => void {
+  return (level, event, fields = {}) => {
+    slog(level, event, { trace_id: traceId, ...baseFields, ...fields });
+  };
+}
+
+// ─── Guardrails de Saída (INLINED from _shared/reliability/guardrails.ts) ──
+// IT-4.2: filtra resposta do LLM antes de enviar. Bloqueia: preco sem
+// veiculo, promessa indevida (frete/garantia/entrega), invencao de specs,
+// saida de escopo (politica/religiao/depreciar concorrente).
+// Fonte canônica + testes: supabase/functions/_shared/reliability/guardrails.ts
+type GuardrailViolation = { rule: string; reason: string; matched_text: string };
+type GuardrailResult = { blocked: boolean; violations: GuardrailViolation[]; safeFallback: string };
+const SAFE_FALLBACK = 'Deixa eu confirmar essa info antes pra te passar certinho. Pode me dizer qual modelo te interessou?';
+const PRICE_PATTERN = /\b(r\$\s*[\d.,]+|\d+\s*mil\s*reais?|\d+\s*mil\b)/i;
+const DELIVERY_PROMISE_PATTERNS = [
+  /\bfa[çc]o\s+a?\s*entrega/i,
+  /\bentrego\s+(em|na)\b/i,
+  /\bfrete\s+(?:[eé]\s+)?(gr[áa]tis|gratuito|inclu[íi]do|por\s+nossa)/i,
+  /\bgarantia\s+de\s+\d+\s+(anos?|meses?)/i,
+  /\bdou\s+\d+\s+(anos?|meses?)\s+de\s+garantia/i,
+];
+const SPECIFIC_KM_PATTERN = /\b(\d{1,3}\.\d{3}|\d{4,6})\s*(km|quilômetros?)\b/i;
+const SPECIFIC_YEAR_PATTERN = /\b20[12]\d\b/;
+const OUT_OF_SCOPE_PATTERNS = [
+  { rule: 'politica', regex: /\b(lula|bolsonaro|pt|psl|stf|governo\s+atual)\b/i },
+  { rule: 'religiao', regex: /\bdeus\s+(te\s+)?aben[çc]o|\bigreja\b|\borar?\s+por\b/i },
+  { rule: 'depreciacao_concorrente', regex: /\beles\s+(s[ãa]o|cobram|enganam)|outra\s+loja\s+[ée]\s+(ruim|pior|mais\s+cara)/i },
+];
+
+function applyGuardrails(text: string, state: any, opts?: { skipPriceCheck?: boolean; skipDeliveryCheck?: boolean }): GuardrailResult {
+  if (!text || typeof text !== 'string') return { blocked: false, violations: [], safeFallback: SAFE_FALLBACK };
+  const violations: GuardrailViolation[] = [];
+  const apresentado = state?.veiculo_apresentado?.ja_apresentado;
+  if (!opts?.skipPriceCheck && !apresentado) {
+    const m = text.match(PRICE_PATTERN);
+    if (m) violations.push({ rule: 'preco_sem_veiculo', reason: 'Agente citou preço sem veículo apresentado.', matched_text: m[0] });
+  }
+  if (!opts?.skipDeliveryCheck) {
+    for (const p of DELIVERY_PROMISE_PATTERNS) {
+      const m = text.match(p);
+      if (m) { violations.push({ rule: 'promessa_indevida', reason: 'Promessa de entrega/frete/garantia (decisão do vendedor humano).', matched_text: m[0] }); break; }
+    }
+  }
+  if (!apresentado) {
+    const kmM = text.match(SPECIFIC_KM_PATTERN);
+    if (kmM) violations.push({ rule: 'km_inventado', reason: 'KM específico sem veículo apresentado.', matched_text: kmM[0] });
+    const yrM = text.match(SPECIFIC_YEAR_PATTERN);
+    if (yrM && !text.includes('?') && text.length > 50) violations.push({ rule: 'ano_inventado', reason: 'Ano afirmativo sem veículo apresentado.', matched_text: yrM[0] });
+  }
+  for (const { rule, regex } of OUT_OF_SCOPE_PATTERNS) {
+    const m = text.match(regex);
+    if (m) { violations.push({ rule, reason: 'Fora do escopo (vendas automotivas).', matched_text: m[0] }); break; }
+  }
+  return { blocked: violations.length > 0, violations, safeFallback: SAFE_FALLBACK };
+}
+
+// ─── LLM Retry + Cortesia (INLINED from _shared/reliability/llmRetry.ts) ──
+// IT-4.1: retry com backoff exponencial em 5xx/429. Mensagem de cortesia ao
+// cliente quando todas as tentativas falham (em vez de HTTP 500 silencioso).
+// Fonte canônica + testes: supabase/functions/_shared/reliability/llmRetry.ts
+const COURTESY_MESSAGE = 'Pera ai, tive uma instabilidade aqui. Pode me mandar de novo daqui uns 2 minutinhos? 🙏';
+const DEFAULT_RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
+
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  opts?: { maxAttempts?: number; baseDelayMs?: number; retryableStatuses?: number[] }
+): Promise<{ res: Response; attempts: number }> {
+  const maxAttempts = opts?.maxAttempts ?? 3;
+  const baseDelayMs = opts?.baseDelayMs ?? 1000;
+  const retryableStatuses = opts?.retryableStatuses ?? DEFAULT_RETRYABLE_STATUSES;
+  let lastError: any = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) {
+      const delay = baseDelayMs * Math.pow(2, attempt - 1);
+      await new Promise<void>((resolve) => setTimeout(() => resolve(), delay));
+    }
+    try {
+      const res = await fetch(url, init);
+      if (res.ok || !retryableStatuses.includes(res.status)) {
+        return { res, attempts: attempt + 1 };
+      }
+      if (attempt === maxAttempts - 1) {
+        return { res, attempts: attempt + 1 };
+      }
+    } catch (err) {
+      lastError = err;
+      if (attempt === maxAttempts - 1) throw err;
+    }
+  }
+  throw lastError || new Error('fetchWithRetry: unexpected end');
+}
+
+// ─── Objection Playbooks (INLINED from _shared/memory/objectionPlaybooks.ts)
+// IT-3.3: 8 playbooks hardcoded (Opção B). Quando state.atendimento.objecoes
+// contem objecao conhecida e flag on, apenda playbook(s) no system prompt
+// com estrategia + anti-padrao + exemplo. Fonte canônica + testes:
+// supabase/functions/_shared/memory/objectionPlaybooks.ts
+type ObjectionPlaybook = {
+  key: string;
+  label: string;
+  customer_signals: string[];
+  agent_should: string;
+  do_not: string;
+  example_response: string;
+};
+
+const OBJECTION_PLAYBOOKS_INLINE: ObjectionPlaybook[] = [
+  { key: 'nao_pode_visitar', label: 'Não pode visitar a loja', customer_signals: ['moro longe', 'não tenho como ir aí', 'fica longe pra mim', 'outra cidade/estado'], agent_should: 'Oferecer atendimento 100% remoto (foto, vídeo, condição via WhatsApp). NÃO insistir em visita.', do_not: "Repetir convite pra loja, sugerir test drive presencial, perguntar 'que horas pode passar?'", example_response: 'Tranquilo! Conseguimos te atender 100% remoto — foto, vídeo, condição e até fechamento por aqui. Você prefere ver detalhe do modelo que te interessou?' },
+  { key: 'longe', label: 'Cliente distante (variante de não_pode_visitar)', customer_signals: ['longe demais', 'muito longe', 'fora da cidade'], agent_should: "Mesma estratégia de 'nao_pode_visitar': oferecer fluxo remoto, mostrar que dá pra fechar à distância.", do_not: 'Insistir em visita, perguntar endereço de novo.', example_response: 'Sem problema, dá pra a gente resolver tudo por aqui. Posso te mandar foto e condição agora — qual modelo te interessa?' },
+  { key: 'esposo_decide', label: 'Esposo/companheiro decide (variante: esposa_decide / pai_decide)', customer_signals: ['preciso falar com meu marido', 'minha esposa que decide', 'vou conversar em casa'], agent_should: 'Respeitar — perguntar quando conseguem decidir juntos, oferecer mandar foto/preço pra ele(a) ver também. NÃO pressionar pra decidir agora.', do_not: "Tentar fechar sozinho, dizer 'mas o carro pode acabar', minimizar o acompanhante.", example_response: 'Claro, decisão importante mesmo. Quer que eu te mande material pra você mostrar pra ele(a)? Quando tiverem alinhados, é só me chamar.' },
+  { key: 'esposa_decide', label: 'Esposa decide (variante)', customer_signals: ['minha esposa que escolhe', 'vou ver com minha esposa'], agent_should: "Mesma estratégia de 'esposo_decide'. Manda material pra mostrar em casa.", do_not: 'Pressionar pra fechar sem ela, criar falsa urgência.', example_response: 'Beleza! Quer que eu te mande as fotos e o preço bonito pra você mostrar pra ela? Aí decidem juntos.' },
+  { key: 'nao_quer_financiar', label: 'Não quer financiamento (prefere à vista)', customer_signals: ['não quero financiar', 'só pago à vista', 'não gosto de juros'], agent_should: 'Confirmar à vista no estado, focar em valor de tabela e desconto pra pagamento à vista. NÃO oferecer simulação de financiamento.', do_not: "Insistir em simular financiamento, perguntar 'mas qual entrada?'", example_response: 'Show, à vista a gente consegue uma condição bem melhor. Vou ver o desconto pra esse modelo — tem outro modelo que tá te interessando junto?' },
+  { key: 'orcamento_baixo', label: 'Orçamento apertado / acha caro', customer_signals: ['tá caro', 'fora do meu orçamento', 'queria mais barato', 'não tenho tudo isso'], agent_should: 'Perguntar a faixa que cabe no orçamento e oferecer modelo similar mais barato (ou mesmo modelo em ano/versão anterior). Não desistir.', do_not: 'Concordar que tá caro e fechar conversa, ou inventar desconto sem o vendedor.', example_response: 'Entendo! Qual faixa cabe no seu bolso? Tenho opções similares em ano anterior ou versão mais simples que podem encaixar.' },
+  { key: 'so_olhando', label: 'Só olhando / sem urgência', customer_signals: ['tô só olhando', 'só dando uma olhada', 'sem pressa'], agent_should: 'NÃO pressionar. Deixar canal aberto, oferecer mandar atualizações quando aparecer modelo interessante.', do_not: "Insistir 'mas hoje tem condição especial', criar urgência falsa, perguntar várias vezes.", example_response: 'Tranquilo, quando quiser ver algo é só chamar 👍 Tem modelo específico que você tá de olho pra eu te avisar se aparecer?' },
+  { key: 'concorrente_mais_barato', label: 'Vi mais barato em outra loja', customer_signals: ['vi por X em outra loja', 'concorrente tá vendendo por menos', 'vocês cobrem o preço'], agent_should: 'NÃO depreciar o concorrente. Não prometer cobertura de preço (só o vendedor humano faz). Transferir pro vendedor pra avaliar condição.', do_not: 'Falar mal da outra loja, prometer cobrir preço sem confirmar, dar desconto inventado.', example_response: 'Entendi! Quem analisa cobertura de preço é nosso vendedor presencial. Vou te conectar com ele pra te passar nossa melhor condição.' },
+];
+
+function getRelevantPlaybooks(stateObjections: string[]): ObjectionPlaybook[] {
+  if (!Array.isArray(stateObjections) || stateObjections.length === 0) return [];
+  const normalized = new Set(stateObjections.filter((o) => typeof o === 'string' && o.trim().length > 0).map((o) => o.trim().toLowerCase()));
+  if (normalized.size === 0) return [];
+  return OBJECTION_PLAYBOOKS_INLINE.filter((pb) => normalized.has(pb.key.toLowerCase()));
+}
+
+function formatObjectionPlaybooksBlock(playbooks: ObjectionPlaybook[]): string {
+  if (!playbooks || playbooks.length === 0) return '';
+  const lines: string[] = [];
+  lines.push('## PLAYBOOKS DE OBJEÇÃO (cliente já levantou estas objeções)');
+  lines.push('');
+  for (const pb of playbooks) {
+    lines.push(`### ${pb.label}`);
+    lines.push(`- **Faça**: ${pb.agent_should}`);
+    lines.push(`- **NUNCA**: ${pb.do_not}`);
+    lines.push(`- **Exemplo de resposta**: "${pb.example_response}"`);
+    lines.push('');
+  }
+  lines.push('⚠️ Estes são padrões testados. Siga a estratégia indicada — não improvise nesses casos.');
+  return lines.join('\n');
+}
+
+// ─── History Summarizer (INLINED from _shared/memory/historySummarizer.ts) ─
+// IT-3.2: quando historico passa de KEEP_RAW msgs, sumariza as mais antigas
+// via Claude Haiku (rapido + barato). Preserva contexto de conversas longas
+// sem estourar tokens. Fonte canônica + testes:
+// supabase/functions/_shared/memory/historySummarizer.ts
+function splitForSummarization(history: any[], keepRecent = 10): { oldMessages: any[]; recentMessages: any[] } {
+  if (!Array.isArray(history) || history.length === 0) return { oldMessages: [], recentMessages: [] };
+  if (history.length <= keepRecent) return { oldMessages: [], recentMessages: [...history] };
+  const splitAt = history.length - keepRecent;
+  return { oldMessages: history.slice(0, splitAt), recentMessages: history.slice(splitAt) };
+}
+
+function buildSummarizationPrompt(messages: any[]): { systemPrompt: string; userMessage: string } {
+  const transcript = messages.map((m) => {
+    const role = m.role === 'user' ? 'Cliente' : 'Pedro';
+    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    return `${role}: ${content}`;
+  }).join('\n');
+  return {
+    systemPrompt: `Você é um sumarizador de conversas de SDR de concessionária automotiva no WhatsApp. Resuma a conversa abaixo em até 8 bullets CURTOS, em português, preservando APENAS:
+- Modelo de interesse mencionado (com configuração se houver)
+- Forma de pagamento discutida (à vista / financiado / troca)
+- Dados pessoais coletados (nome, telefone, cidade, acompanhante)
+- Veículos apresentados pelo Pedro (modelo + ano + preço)
+- Objeções declaradas pelo cliente
+- Pedidos pendentes (cliente esperando foto, preço, etc.)
+- Status final da conversa (transferido, fora do horário, esperando follow-up)
+
+NÃO incluir: saudações, agradecimentos, frases de transição, opiniões. Só fatos úteis pro próximo turno.`,
+    userMessage: `TRANSCRIÇÃO PARCIAL (${messages.length} mensagens mais antigas da conversa):\n\n${transcript}\n\nResuma em até 8 bullets, em português.`,
+  };
+}
+
+function formatSummaryAsSystemMessage(summary: string, oldCount: number): any {
+  return {
+    role: 'system',
+    content: `## RESUMO DAS ${oldCount} MENSAGENS ANTERIORES (turnos mais antigos da conversa)\n\n${summary}\n\n⚠️ Use este resumo como contexto. As mensagens mais recentes vêm logo a seguir cruas.`,
+  };
+}
+
+async function summarizeOldMessages(oldMessages: any[], apiKey: string, modelCandidates: string[] = ['claude-haiku-4-5-20251001', 'claude-haiku-4-5-20260101', 'claude-3-5-haiku-20241022']): Promise<string> {
+  if (!Array.isArray(oldMessages) || oldMessages.length === 0) return '';
+  if (!apiKey) return '';
+  const { systemPrompt, userMessage } = buildSummarizationPrompt(oldMessages);
+  for (const model of modelCandidates) {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model, max_tokens: 512, system: systemPrompt, messages: [{ role: 'user', content: userMessage }] }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        if (res.status === 404 || err.includes('model')) continue;
+        return '';
+      }
+      const data = await res.json();
+      return (data?.content?.[0]?.text || '').trim();
+    } catch {
+      continue;
+    }
+  }
+  return '';
+}
+
+// ─── Persistent Profile (INLINED from _shared/memory/persistentProfile.ts) ─
+// IT-3.1: agrega dados de conversas anteriores do mesmo cliente (cross-conversa).
+// Pure function — caller faz queries Supabase + ordena por last_interaction_at desc.
+// Fonte canônica + testes: supabase/functions/_shared/memory/persistentProfile.ts
+type PersistentProfile = {
+  total_previous_conversations: number;
+  last_seen_at: string | null;
+  days_since_last_seen: number | null;
+  known_name: string | null;
+  known_city: string | null;
+  previously_asked_models: string[];
+  previously_shown_vehicles: Array<{ modelo: string; ano?: any; preco?: string }>;
+  known_payment_method: string | null;
+  known_decision_maker: string | null;
+  known_objections: string[];
+  has_been_transferred_before: boolean;
+};
+
+function _profileIsNonEmpty(v: any): boolean {
+  return v !== null && v !== undefined && (typeof v !== 'string' || v.trim().length > 0);
+}
+
+function derivePersistentProfile(leadRecords: any[], stateRecords: any[]): PersistentProfile | null {
+  if ((leadRecords?.length ?? 0) === 0 && (stateRecords?.length ?? 0) === 0) return null;
+  const leads = leadRecords || [];
+  const states = stateRecords || [];
+  const pickRecent = <T,>(records: any[], path: (r: any) => T): T | null => {
+    for (const r of records) { const v = path(r); if (_profileIsNonEmpty(v)) return v; }
+    return null;
+  };
+  let lastSeenAt: string | null = null;
+  for (const l of leads) {
+    if (l?.last_interaction_at && (!lastSeenAt || l.last_interaction_at > lastSeenAt)) lastSeenAt = l.last_interaction_at;
+  }
+  let daysSinceLastSeen: number | null = null;
+  if (lastSeenAt) daysSinceLastSeen = Math.floor((Date.now() - new Date(lastSeenAt).getTime()) / 86400000);
+  const knownName = pickRecent<string>(states, (r) => r?.state?.lead?.nome_completo) || pickRecent<string>(states, (r) => r?.state?.lead?.nome) || pickRecent<string>(leads, (l) => l?.lead_name) || pickRecent<string>(leads, (l) => l?.client_name) || null;
+  const knownCity = pickRecent<string>(states, (r) => r?.state?.lead?.cidade) || pickRecent<string>(leads, (l) => l?.client_city) || null;
+  const modelSet = new Set<string>();
+  for (const s of states) { const m = s?.state?.interesse?.modelo_desejado; if (_profileIsNonEmpty(m)) modelSet.add(m.trim()); }
+  for (const l of leads) { if (_profileIsNonEmpty(l?.vehicle_interest)) modelSet.add(l.vehicle_interest.trim()); }
+  const shownMap = new Map<string, { modelo: string; ano?: any; preco?: string }>();
+  for (const s of states) {
+    const vp = s?.state?.veiculo_apresentado;
+    if (vp?.ja_apresentado && vp?.modelo) {
+      const key = `${vp.modelo}|${vp.ano || ''}`;
+      if (!shownMap.has(key)) shownMap.set(key, { modelo: vp.modelo, ano: vp.ano, preco: vp.preco });
+    }
+  }
+  const knownPaymentMethod = pickRecent<string>(states, (r) => r?.state?.negociacao?.forma_pagamento) || pickRecent<string>(leads, (l) => l?.payment_method) || null;
+  const knownDecisionMaker = pickRecent<string>(states, (r) => r?.state?.lead?.acompanhante_decisao);
+  const objSet = new Set<string>();
+  for (const s of states) {
+    const objs = s?.state?.atendimento?.objecoes;
+    if (Array.isArray(objs)) objs.forEach((o: string) => _profileIsNonEmpty(o) && objSet.add(o));
+  }
+  const hasBeenTransferredBefore = leads.some((l) => l?.status === 'transferido' || l?.status_crm === 'qualificado');
+  return {
+    total_previous_conversations: leads.length,
+    last_seen_at: lastSeenAt,
+    days_since_last_seen: daysSinceLastSeen,
+    known_name: knownName,
+    known_city: knownCity,
+    previously_asked_models: Array.from(modelSet),
+    previously_shown_vehicles: Array.from(shownMap.values()),
+    known_payment_method: knownPaymentMethod,
+    known_decision_maker: knownDecisionMaker,
+    known_objections: Array.from(objSet),
+    has_been_transferred_before: hasBeenTransferredBefore,
+  };
+}
+
+function formatPersistentProfileBlock(profile: PersistentProfile): string {
+  const hasUsefulData = !!profile.known_name || !!profile.known_city || profile.previously_asked_models.length > 0 || profile.previously_shown_vehicles.length > 0 || !!profile.known_payment_method || !!profile.known_decision_maker || profile.known_objections.length > 0;
+  if (!hasUsefulData) return '';
+  const lines: string[] = [];
+  lines.push('## PERFIL CONHECIDO (conversas anteriores)');
+  if (profile.days_since_last_seen !== null) {
+    if (profile.days_since_last_seen === 0) lines.push(`- Última interação: hoje`);
+    else if (profile.days_since_last_seen === 1) lines.push(`- Última interação: ontem`);
+    else lines.push(`- Última interação: ${profile.days_since_last_seen} dias atrás`);
+  }
+  lines.push(`- Conversas anteriores: ${profile.total_previous_conversations}`);
+  if (profile.known_name) lines.push(`- Nome: ${profile.known_name}`);
+  if (profile.known_city) lines.push(`- Cidade: ${profile.known_city}`);
+  if (profile.known_payment_method) lines.push(`- Pagamento mencionado antes: ${profile.known_payment_method}`);
+  if (profile.known_decision_maker) lines.push(`- Decisão envolve: ${profile.known_decision_maker}`);
+  if (profile.previously_asked_models.length > 0) lines.push(`- Modelos já perguntados: ${profile.previously_asked_models.join(', ')}`);
+  if (profile.previously_shown_vehicles.length > 0) {
+    const shownStr = profile.previously_shown_vehicles.map((v) => `${v.modelo}${v.ano ? ` ${v.ano}` : ''}${v.preco ? ` (R$ ${v.preco})` : ''}`).join('; ');
+    lines.push(`- Veículos apresentados antes: ${shownStr}`);
+  }
+  if (profile.known_objections.length > 0) lines.push(`- Objeções históricas: ${profile.known_objections.join(', ')}`);
+  if (profile.has_been_transferred_before) lines.push(`- ⚠️ Já foi transferido pra vendedor anteriormente`);
+  lines.push('');
+  lines.push('⚠️ Use esses dados como CONTEXTO — não pergunte de novo o que já sabemos. Se cliente disser algo conflitante, prefira a info NOVA (pessoa pode ter mudado).');
+  return lines.join('\n');
+}
+
+// ─── Handoff Briefing V2 (INLINED from _shared/handoff/handoffBriefingV2.ts)
+// IT-2.4: briefing enriquecido com motivo categorico, urgencia, score, BANT.
+// V1 (buildBriefingForSeller) mantida; V2 usada quando flag ON.
+// Fonte canônica + testes: supabase/functions/_shared/handoff/handoffBriefingV2.ts
+type HandoffMotivoCategoria = 'lead_qualificado' | 'pediu_humano' | 'objecao_complexa' | 'negociacao_preco' | 'fora_escopo' | 'erro_agente';
+type HandoffUrgencia = 'baixa' | 'media' | 'alta' | 'imediata';
+type HandoffTransferArgs = {
+  motivo: string;
+  resumo_breve?: string;
+  motivo_categoria?: HandoffMotivoCategoria;
+  urgencia?: HandoffUrgencia;
+  proxima_acao_sugerida?: string;
+};
+
+const HANDOFF_URGENCIA_EMOJI: Record<HandoffUrgencia, string> = {
+  imediata: '🔴',
+  alta: '🟠',
+  media: '🟡',
+  baixa: '🟢',
+};
+const HANDOFF_CATEGORIA_LABEL: Record<HandoffMotivoCategoria, string> = {
+  lead_qualificado: 'Lead qualificado (BNA completo)',
+  pediu_humano: 'Cliente pediu humano',
+  objecao_complexa: 'Objeção complexa',
+  negociacao_preco: 'Negociação de preço',
+  fora_escopo: 'Fora do escopo do agente',
+  erro_agente: 'Agente travado / erro',
+};
+
+function buildEnrichedBriefing(input: {
+  state: any;
+  leadName: string;
+  leadPhone: string;
+  agentName: string;
+  transferArgs: HandoffTransferArgs;
+  scoreInfo?: { score: number; tier: string };
+  bantNextSuggestedAsk?: string;
+}): string {
+  const { state, leadName, leadPhone, agentName, transferArgs, scoreInfo, bantNextSuggestedAsk } = input;
+  const s = state || {};
+  const lines: string[] = [];
+  const urgencia = transferArgs.urgencia ?? 'media';
+  const emoji = HANDOFF_URGENCIA_EMOJI[urgencia] || '🟡';
+  const displayName = s.lead?.nome_completo || s.lead?.nome || leadName || 'Lead';
+  lines.push(`${emoji} *LEAD QUALIFICADO — ${displayName}* (urgência: ${urgencia})`);
+  lines.push(`📱 Telefone: ${s.lead?.telefone || leadPhone}`);
+  if (s.lead?.cidade) lines.push(`🏙️ Cidade: ${s.lead.cidade}`);
+  if (scoreInfo) lines.push(`📊 Score: ${scoreInfo.score}/100 (${scoreInfo.tier})`);
+  lines.push('');
+  if (transferArgs.motivo_categoria) {
+    const catLabel = HANDOFF_CATEGORIA_LABEL[transferArgs.motivo_categoria] || transferArgs.motivo_categoria;
+    lines.push(`🎯 *Motivo:* ${catLabel}`);
+  }
+  if (transferArgs.motivo) lines.push(`💬 *Detalhe:* ${transferArgs.motivo}`);
+  if (transferArgs.resumo_breve && transferArgs.resumo_breve !== transferArgs.motivo) {
+    lines.push(`📝 *Resumo:* ${transferArgs.resumo_breve}`);
+  }
+  lines.push('');
+  if (s.interesse?.modelo_desejado) {
+    const conf = [s.interesse.configuracao, s.interesse.combustivel, s.interesse.cambio].filter(Boolean).join(', ');
+    lines.push(`🚗 *Interesse:* ${s.interesse.modelo_desejado}${conf ? ` (${conf})` : ''}`);
+  }
+  if (s.veiculo_apresentado?.ja_apresentado) {
+    const vp = s.veiculo_apresentado;
+    lines.push(`📋 *Veículo apresentado:* ${vp.modelo || ''} ${vp.ano || ''}${vp.preco ? ` — R$ ${vp.preco}` : ''}`);
+  }
+  if (s.negociacao?.forma_pagamento) lines.push(`💰 *Forma de pagamento:* ${s.negociacao.forma_pagamento}`);
+  if (s.negociacao?.valor_entrada) lines.push(`💵 *Entrada:* ${s.negociacao.valor_entrada}`);
+  if (s.negociacao?.tem_troca && s.negociacao?.carro_troca) {
+    const ct = s.negociacao.carro_troca;
+    const trocaParts = [ct.modelo, ct.ano, ct.configuracao, ct.cambio].filter(Boolean).join(' ');
+    lines.push(`🔄 *Troca:* ${trocaParts || 'sim'}${ct.status ? ` (${ct.status})` : ''}`);
+  }
+  if (s.atendimento?.pode_visitar_loja === false) {
+    lines.push(`📍 *Visita:* NÃO pode visitar — atendimento REMOTO`);
+  }
+  if (s.atendimento?.objecoes && s.atendimento.objecoes.length > 0) {
+    lines.push(`⚠️ *Objeções:* ${s.atendimento.objecoes.join(', ')}`);
+  }
+  if (s.lead?.acompanhante_decisao) lines.push(`👥 *Decisão envolve:* ${s.lead.acompanhante_decisao}`);
+  if (transferArgs.proxima_acao_sugerida || bantNextSuggestedAsk) {
+    lines.push('');
+    lines.push(`👉 *Próxima ação sugerida:* ${transferArgs.proxima_acao_sugerida || bantNextSuggestedAsk}`);
+  }
+  lines.push('');
+  lines.push(`📲 *Atender:* https://wa.me/${(s.lead?.telefone || leadPhone || '').replace(/\D/g, '')}`);
+  lines.push('');
+  lines.push(`_Briefing V2 gerado pelo Pedro SDR (${agentName})_`);
+  return lines.join('\n');
+}
+
 function buildBriefingForSeller(state: any, leadName: string, leadPhone: string, agentName: string): string {
   const lines: string[] = [];
   lines.push(`🆕 *NOVO LEAD PARA ATENDIMENTO — ${state?.lead?.nome_completo || state?.lead?.nome || leadName || 'Lead'}*`);
@@ -727,6 +1440,122 @@ function semanticMatch(needle: string, haystack: string): { matched: boolean; ex
   return { matched: false, exact: false };
 }
 
+// ─── BNDV Fallback Filters (INLINED from _shared/qualification/bndvFallback.ts)
+// IT-2.3: quando filtros originais retornam 0 itens, gera tentativas
+// progressivamente mais relaxadas. Mantém marca + modelo em TODAS as
+// tentativas. Fonte canônica + testes:
+// supabase/functions/_shared/qualification/bndvFallback.ts
+type BndvRelaxAttempt = { filters: any; description: string; level: number };
+
+function relaxBndvFilters(filters: any): BndvRelaxAttempt[] {
+  const hasRelaxable = !!filters?.cor || !!filters?.cambio || !!filters?.combustivel || !!filters?.versao || filters?.ano_min !== undefined || filters?.ano_max !== undefined;
+  if (!hasRelaxable) return [];
+  const base = { ...filters };
+  const attempts: BndvRelaxAttempt[] = [];
+  if (filters.cor) attempts.push({ filters: { ...base, cor: undefined }, description: 'removendo filtro de cor', level: 1 });
+  if (filters.cor || filters.cambio) attempts.push({ filters: { ...base, cor: undefined, cambio: undefined }, description: 'removendo cor e tipo de câmbio', level: 2 });
+  if (filters.cor || filters.cambio || filters.combustivel) attempts.push({ filters: { ...base, cor: undefined, cambio: undefined, combustivel: undefined }, description: 'removendo cor, câmbio e combustível', level: 3 });
+  if (filters.cor || filters.cambio || filters.combustivel || filters.versao) attempts.push({ filters: { ...base, cor: undefined, cambio: undefined, combustivel: undefined, versao: undefined }, description: 'removendo configurações específicas (versão, câmbio, etc.)', level: 4 });
+  attempts.push({ filters: { marca: filters.marca, modelo: filters.modelo, query: filters.query }, description: 'buscando qualquer versão da marca + modelo', level: 5 });
+
+  const seen = new Set<string>();
+  const deduped: BndvRelaxAttempt[] = [];
+  for (const a of attempts) {
+    const key = JSON.stringify({ marca: a.filters.marca, modelo: a.filters.modelo, versao: a.filters.versao, cambio: a.filters.cambio, combustivel: a.filters.combustivel, cor: a.filters.cor, ano_min: a.filters.ano_min, ano_max: a.filters.ano_max });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(a);
+  }
+  return deduped;
+}
+
+// Filtra a lista de veículos BNDV com base nos filtros — mesmo algoritmo
+// que rodava inline em consultarEstoqueBndv. Reusado pelo IT-2.3 fallback
+// pra rodar mais de uma passada sem refetch GraphQL.
+function applyBndvFiltering(vehicles: any[], filters: any, synonymsEnabled: boolean): any[] {
+  const STRING_FILTERS: Array<[string, string]> = [
+    ['marca', 'markName'],
+    ['modelo', 'modelName'],
+    ['versao', 'versionName'],
+    ['combustivel', 'fuelName'],
+    ['cambio', 'transmissionName'],
+    ['cor', 'color'],
+  ];
+  let result = vehicles.map((v: any) => {
+    let score = 0;
+    let kept = true;
+    for (const [filterKey, fieldKey] of STRING_FILTERS) {
+      const needle = filters[filterKey];
+      if (!needle) continue;
+      const haystack = v[fieldKey] || '';
+      if (synonymsEnabled) {
+        const r = semanticMatch(needle, haystack);
+        if (!r.matched) { kept = false; break; }
+        score += r.exact ? 2 : 1;
+      } else {
+        if (!bndvNormalize(haystack).includes(bndvNormalize(needle))) { kept = false; break; }
+        score += 2;
+      }
+    }
+    if (kept && filters.ano_min && (v.year || 0) < filters.ano_min) kept = false;
+    if (kept && filters.ano_max && (v.year || 9999) > filters.ano_max) kept = false;
+    if (kept && filters.preco_max && (v.saleValue || 0) > filters.preco_max) kept = false;
+    if (kept && filters.km_max && (v.km || 0) > filters.km_max) kept = false;
+    return { ...v, _filterScore: kept ? score : -1 };
+  }).filter((v: any) => v._filterScore >= 0)
+    .sort((a: any, b: any) => b._filterScore - a._filterScore);
+
+  if (filters.query) {
+    const queryTokens = bndvNormalize(filters.query).split(/\s+/).filter(Boolean);
+    result = result.map((v: any) => {
+      const text = bndvNormalize(`${v.markName} ${v.modelName} ${v.versionName} ${v.color} ${v.fuelName} ${v.transmissionName} ${v.year}`);
+      let queryScore = 0;
+      for (const token of queryTokens) {
+        if (text.includes(token)) queryScore++;
+      }
+      return { ...v, _score: (v._filterScore || 0) + queryScore };
+    }).filter((v: any) => (v._score || 0) > 0)
+      .sort((a: any, b: any) => b._score - a._score);
+  }
+  return result;
+}
+
+// Converte veículo BNDV cru em item formato result. Reusado pelo fallback.
+function buildBndvItem(v: any): any {
+  let principalImage = '';
+  const images: string[] = [];
+  if (v.pictureJs) {
+    try {
+      const pics = typeof v.pictureJs === 'string' ? JSON.parse(v.pictureJs) : v.pictureJs;
+      if (Array.isArray(pics)) {
+        for (const pic of pics) {
+          if (pic.Link) {
+            images.push(pic.Link);
+            if (pic.Principal === true || pic.Principal === 'true') principalImage = pic.Link;
+          }
+        }
+        if (!principalImage && images.length > 0) principalImage = images[0];
+      }
+    } catch {}
+  }
+  const preco = v.saleValue || 0;
+  const label = `${v.markName || ''} ${v.modelName || ''} ${v.versionName || ''} ${v.year || ''} - R$ ${preco.toLocaleString('pt-BR')}`.trim();
+  return {
+    marca: v.markName || '',
+    modelo: v.modelName || '',
+    versao: v.versionName || '',
+    ano: v.year || 0,
+    km: v.km || 0,
+    preco,
+    cor: v.color || '',
+    combustivel: v.fuelName || '',
+    cambio: v.transmissionName || '',
+    label,
+    principal_image: principalImage,
+    images,
+  };
+}
+
 // ─── BNDV Stock Search ──────────────────────────────────────────────────────
 async function consultarEstoqueBndv(supabase: any, userId: string, filters: any) {
   try {
@@ -788,127 +1617,214 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     }
 
     const gqlData = await gqlRes.json();
-    let vehicles = gqlData?.data?.vehiclesBy || [];
-    console.log(`[BNDV] Total veículos retornados: ${vehicles.length}`);
+    const originalVehicles = gqlData?.data?.vehiclesBy || [];
+    console.log(`[BNDV] Total veículos retornados: ${originalVehicles.length}`);
 
-    // 3. Filter/rank results
-    // Lote 2 Fase 2: matching semântico com mapa de sinônimos (Roberta benchmark ERR_01/04).
+    // 3. Filter/rank results — usa helper applyBndvFiltering (extraído pra IT-2.3)
+    // Lote 2 Fase 2: matching semântico com mapa de sinônimos.
     // Feature flag pra rollback rápido sem redeploy: PEDRO_BNDV_SYNONYMS_ENABLED.
     const SYNONYMS_ENABLED = Deno.env.get('PEDRO_BNDV_SYNONYMS_ENABLED') !== 'false';
-    const normalize = bndvNormalize; // reusa helper compartilhado
 
-    // Score por veículo: cada filtro string que bate exato vale 2 pontos, sinonimico 1.
-    // Filtro que falha → veículo descartado. Itens ranqueados por score decrescente
-    // (preferência por matches exatos). Filtros numéricos são all-or-nothing.
-    const STRING_FILTERS: Array<[string, string]> = [
-      ['marca', 'markName'],
-      ['modelo', 'modelName'],
-      ['versao', 'versionName'],
-      ['combustivel', 'fuelName'],
-      ['cambio', 'transmissionName'],
-      ['cor', 'color'],
-    ];
+    let vehicles = applyBndvFiltering(originalVehicles, filters, SYNONYMS_ENABLED);
 
-    vehicles = vehicles.map((v: any) => {
-      let score = 0;
-      let kept = true;
-
-      // Filtros string (com ou sem sinônimos conforme flag)
-      for (const [filterKey, fieldKey] of STRING_FILTERS) {
-        const needle = filters[filterKey];
-        if (!needle) continue;
-        const haystack = v[fieldKey] || '';
-        if (SYNONYMS_ENABLED) {
-          const result = semanticMatch(needle, haystack);
-          if (!result.matched) { kept = false; break; }
-          score += result.exact ? 2 : 1;
-          if (!result.exact) {
-            console.log(`[BNDV] Match sinonimico: needle='${needle}' campo='${fieldKey}' haystack='${haystack.slice(0, 50)}'`);
-          }
-        } else {
-          // Comportamento legacy (literal apenas) — fallback se flag desligada
-          if (!normalize(haystack).includes(normalize(needle))) { kept = false; break; }
-          score += 2;
+    // ─── IT-2.3: fallback similares quando 0 itens (flag PEDRO_FF_BNDV_SIMILAR_VEHICLES) ─
+    // Resolve "Pedro nega estoque que existe" (benchmark Roberta).
+    // Se primeira busca falhou e flag on, tenta relaxar filtros progressivamente
+    // até achar algo. Marca itens como is_fallback_suggestion + descricao.
+    let fallbackInfo: { description: string; level: number; original_filters: any } | null = null;
+    if (vehicles.length === 0 && isPedroFeatureEnabled('BNDV_SIMILAR_VEHICLES')) {
+      const attempts = relaxBndvFilters(filters);
+      console.log(`[BNDV-FALLBACK] 0 itens com filtros originais — tentando ${attempts.length} relaxacoes`);
+      for (const attempt of attempts) {
+        const relaxed = applyBndvFiltering(originalVehicles, attempt.filters, SYNONYMS_ENABLED);
+        if (relaxed.length > 0) {
+          vehicles = relaxed;
+          fallbackInfo = {
+            description: attempt.description,
+            level: attempt.level,
+            original_filters: filters,
+          };
+          console.log(`[BNDV-FALLBACK] Encontrou ${relaxed.length} item(ns) no nivel ${attempt.level}: ${attempt.description}`);
+          break;
         }
       }
-
-      // Filtros numéricos (all-or-nothing, não somam score)
-      if (kept && filters.ano_min && (v.year || 0) < filters.ano_min) kept = false;
-      if (kept && filters.ano_max && (v.year || 9999) > filters.ano_max) kept = false;
-      if (kept && filters.preco_max && (v.saleValue || 0) > filters.preco_max) kept = false;
-      if (kept && filters.km_max && (v.km || 0) > filters.km_max) kept = false;
-
-      return { ...v, _filterScore: kept ? score : -1 };
-    }).filter((v: any) => v._filterScore >= 0)
-      .sort((a: any, b: any) => b._filterScore - a._filterScore);
-
-    // Free text query ranking — combina com _filterScore acima (não sobrescreve)
-    if (filters.query) {
-      const queryTokens = normalize(filters.query).split(/\s+/).filter(Boolean);
-      vehicles = vehicles.map((v: any) => {
-        const text = normalize(`${v.markName} ${v.modelName} ${v.versionName} ${v.color} ${v.fuelName} ${v.transmissionName} ${v.year}`);
-        let queryScore = 0;
-        for (const token of queryTokens) {
-          if (text.includes(token)) queryScore++;
-        }
-        return { ...v, _score: (v._filterScore || 0) + queryScore };
-      }).filter((v: any) => (v._score || 0) > 0)
-        .sort((a: any, b: any) => b._score - a._score);
+      if (!fallbackInfo) {
+        console.log(`[BNDV-FALLBACK] Nenhuma relaxacao encontrou itens`);
+      }
     }
 
-    console.log(`[BNDV] synonyms_enabled=${SYNONYMS_ENABLED} | filters_aplicados=${STRING_FILTERS.filter(([k]) => filters[k]).map(([k]) => k).join(',')} | resultados=${vehicles.length}`);
+    console.log(`[BNDV] synonyms_enabled=${SYNONYMS_ENABLED} | resultados=${vehicles.length}${fallbackInfo ? ' (fallback)' : ''}`);
 
-    // 4. Build result items with images
+    // 4. Build result items with images (helper buildBndvItem)
+    // Se foi fallback, marca cada item como is_fallback_suggestion pra LLM
+    // apresentar como "alternativa" (nao como o que o cliente pediu literal).
     const items = vehicles.slice(0, 20).map((v: any) => {
-      let principalImage = '';
-      const images: string[] = [];
-
-      if (v.pictureJs) {
-        try {
-          const pics = typeof v.pictureJs === 'string' ? JSON.parse(v.pictureJs) : v.pictureJs;
-          if (Array.isArray(pics)) {
-            for (const pic of pics) {
-              if (pic.Link) {
-                images.push(pic.Link);
-                if (pic.Principal === true || pic.Principal === 'true') {
-                  principalImage = pic.Link;
-                }
-              }
-            }
-            if (!principalImage && images.length > 0) {
-              principalImage = images[0];
-            }
-          }
-        } catch {
-          // pictureJs parse failed
-        }
+      const item = buildBndvItem(v);
+      if (fallbackInfo) {
+        item.is_fallback_suggestion = true;
+        item.fallback_description = fallbackInfo.description;
       }
-
-      const preco = v.saleValue || 0;
-      const label = `${v.markName || ''} ${v.modelName || ''} ${v.versionName || ''} ${v.year || ''} - R$ ${preco.toLocaleString('pt-BR')}`.trim();
-
-      return {
-        marca: v.markName || '',
-        modelo: v.modelName || '',
-        versao: v.versionName || '',
-        ano: v.year || 0,
-        km: v.km || 0,
-        preco,
-        cor: v.color || '',
-        combustivel: v.fuelName || '',
-        cambio: v.transmissionName || '',
-        label,
-        principal_image: principalImage,
-        images,
-      };
+      return item;
     });
 
     console.log(`[BNDV] Resultados filtrados: ${items.length}`);
-    return { success: true, total: items.length, items };
+    const result: any = {
+      success: true,
+      total: items.length,
+      items,
+      fallback: fallbackInfo, // null se nao foi fallback
+    };
+    if (fallbackInfo) {
+      // Instrucao clara pro LLM apresentar como ALTERNATIVA, nao como o pedido
+      result.agent_instruction = `IMPORTANTE: o cliente pediu algo que NAO existe no estoque exato. Estes itens sao ALTERNATIVAS SIMILARES (busca relaxada: ${fallbackInfo.description}). Apresente como "nao temos exatamente X, mas tenho Y similar" — NUNCA como o que foi pedido literalmente.`;
+    }
+    return result;
   } catch (err: any) {
     console.error('[BNDV] Erro na consulta:', err);
     return { success: false, total: 0, items: [], error: err.message };
   }
+}
+
+// ─── Pedro Feature Flags (INLINED from _shared/config/features.ts) ─────────
+// Lê env var PEDRO_FF_<FLAG> e aceita true/1/yes/on/enabled (case-insensitive).
+// Default fail-safe: false. NUNCA quebra (excecao -> false).
+// Fonte canônica + testes: supabase/functions/_shared/config/features.ts
+const PEDRO_FF_TRUE_VALUES = new Set(['true', '1', 'yes', 'on', 'enabled']);
+function isPedroFeatureEnabled(flag: string): boolean {
+  try {
+    const raw = Deno.env.get(`PEDRO_FF_${flag}`);
+    if (!raw) return false;
+    return PEDRO_FF_TRUE_VALUES.has(String(raw).trim().toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+// ─── Persona + Few-Shots (INLINED from _shared/prompt/personaFewShots.ts) ──
+// IT-1.3: bloco apendado ao FINAL do system prompt (recency bias do GPT-4o).
+// Cobre 5 cenarios: saudacao, qualificacao, objecao, fechamento, despedida.
+// Fonte canônica + testes: supabase/functions/_shared/prompt/personaFewShots.ts
+const PEDRO_PERSONA_BLOCK = `
+Você é Pedro, atendente de WhatsApp de uma revenda de carros. Suas características:
+
+- **Tom**: humano, próximo, brasileiro coloquial — sem ser informal demais. Usa emoji com moderação (1 por turno no máximo, e só quando combina).
+- **Tamanho da resposta**: espelha o tamanho do cliente. Cliente curto = você curto. Cliente longo (pediu detalhe) = você pode estender.
+- **Não invente dados**: preço, estoque, ano, KM, cor — SÓ se vieram da ferramenta consultar_estoque_bndv ou do contexto do agente.
+- **Foco**: vender carro. Não opina sobre concorrentes, política, religião, vida pessoal. Desvia educadamente.
+- **Honestidade**: se não tem o veículo pedido, OFEREÇA alternativas similares. Nunca diga só "não temos" e fecha a porta.
+- **Handoff**: quando o cliente já tem decisão (modelo + forma de pagamento + nome), use a tool transferir_para_vendedor — não tente fechar você mesmo.
+`.trim();
+
+const PEDRO_FEW_SHOTS_INLINE: Array<{ label: string; customer: string; agent: string }> = [
+  { label: '1. Saudação simples', customer: 'Oi', agent: 'Oi! Sou o Pedro 😊 Tô aqui pra te ajudar a achar seu próximo carro. Tá olhando algum modelo?' },
+  { label: '2. Qualificação não-invasiva', customer: 'Tem Onix 2022?', agent: 'Tenho sim. Você tá pensando em à vista, financiar ou troca?' },
+  { label: '3. Objeção "tô só olhando"', customer: 'Tô só olhando ainda', agent: 'Tranquilo! Quando quiser ver algum modelo ou bater um papo sobre opção, é só chamar 👍' },
+  { label: '4. Fechamento → transfere', customer: 'Decidi, quero o Tracker 2023 financiado', agent: 'Excelente! Vou te conectar com nosso vendedor pra preparar a proposta e a entrega. Me passa seu nome e telefone?' },
+  { label: '5. Despedida educada', customer: 'Cara, deixa pra outra hora', agent: 'Beleza! Quando quiser, é só chamar. Boa semana 👋' },
+];
+
+function buildPersonaFewShotsBlock(): string {
+  const fewShotsText = PEDRO_FEW_SHOTS_INLINE.map(
+    (fs) => `### ${fs.label}\nCliente: "${fs.customer}"\nVocê: "${fs.agent}"`
+  ).join('\n\n');
+  return `## PERSONA E TOM (REFERÊNCIA)\n${PEDRO_PERSONA_BLOCK}\n\n## EXEMPLOS DE RESPOSTA (FEW-SHOTS)\n${fewShotsText}\n\n## LEMBRETE FINAL\nEspelhe o tamanho do cliente. Não invente dados. Se não tem o veículo pedido, ofereça similar. Para fechar, use a tool transferir_para_vendedor.`;
+}
+
+// ─── Typing Simulator (INLINED from _shared/humanization/typingSimulator.ts)
+// IT-1.2: delay realista + best-effort presence "digitando" antes de enviar.
+// Fonte canônica + testes: supabase/functions/_shared/humanization/typingSimulator.ts
+function calculateTypingDelayMs(
+  text: string,
+  opts?: { minMs?: number; maxMs?: number; baseCps?: number; jitterCps?: number; randomFn?: () => number }
+): number {
+  const minMs = opts?.minMs ?? 800;
+  const maxMs = opts?.maxMs ?? 4000;
+  const baseCps = opts?.baseCps ?? 18;
+  const jitterCps = opts?.jitterCps ?? 10;
+  const randomFn = opts?.randomFn ?? Math.random;
+  const len = (text ?? '').length;
+  if (len === 0) return minMs;
+  const cps = baseCps + randomFn() * jitterCps;
+  const raw = (len / cps) * 1000;
+  return Math.max(minMs, Math.min(raw, maxMs));
+}
+
+async function sendTypingPresence(
+  baseUrl: string,
+  instKey: string,
+  phoneNumber: string,
+  presence: 'composing' | 'paused' | 'available' = 'composing'
+): Promise<boolean> {
+  const headers = { 'Content-Type': 'application/json', token: instKey };
+  const body = JSON.stringify({ number: phoneNumber, presence });
+  const endpoints = [`${baseUrl}/message/presence`, `${baseUrl}/chat/presence`];
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { method: 'POST', headers, body });
+      if (res.ok) return true;
+    } catch {
+      // ignora
+    }
+  }
+  return false;
+}
+
+// ─── Message Split (INLINED from _shared/humanization/messageSplit.ts) ─────
+// IT-1.1: divide resposta longa em ate N mensagens curtas pra parecer humano.
+// Fonte canônica + testes: supabase/functions/_shared/humanization/messageSplit.ts
+function splitMessageForHumanization(
+  text: string,
+  opts?: { maxParts?: number; minLength?: number }
+): string[] {
+  const maxParts = opts?.maxParts ?? 3;
+  const minLength = opts?.minLength ?? 200;
+
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) return [''];
+  if (trimmed.length <= minLength) return [trimmed];
+
+  const sentences = trimmed
+    .split(/(?<=[.!?])\s+|\n+/g)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  if (sentences.length <= 1) return [trimmed];
+
+  const targetParts = Math.min(maxParts, sentences.length);
+  const totalChars = sentences.reduce((sum, s) => sum + s.length, 0);
+  const targetCharsPerPart = totalChars / targetParts;
+
+  const parts: string[] = [];
+  let currentBuf: string[] = [];
+  let currentLen = 0;
+  let partsFilled = 0;
+
+  for (let i = 0; i < sentences.length; i++) {
+    const sentence = sentences[i];
+    const remaining = sentences.length - i;
+    const slotsLeft = targetParts - partsFilled;
+
+    currentBuf.push(sentence);
+    currentLen += sentence.length + 1;
+
+    const isLastSentence = i === sentences.length - 1;
+    const isLastPart = partsFilled === targetParts - 1;
+    const reachedTarget = currentLen >= targetCharsPerPart * 0.7;
+    const mustFlushToReserveSlot = remaining <= slotsLeft - 1;
+
+    if (
+      isLastSentence ||
+      (!isLastPart && (reachedTarget || mustFlushToReserveSlot))
+    ) {
+      parts.push(currentBuf.join(' ').trim());
+      currentBuf = [];
+      currentLen = 0;
+      partsFilled++;
+    }
+  }
+
+  const cleaned = parts.map((p) => p.trim()).filter((p) => p.length > 0);
+  return cleaned.length > 0 ? cleaned : [trimmed];
 }
 
 // ─── WhatsApp Image Sending ─────────────────────────────────────────────────
@@ -1067,6 +1983,12 @@ Deno.serve(async (req) => {
 
 async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any) {
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
+
+  // IT-4.3: trace_id por turno + timer pra latencia
+  const traceId = newTraceId();
+  const turnStartMs = Date.now();
+  const sLogEnabled = isPedroFeatureEnabled('STRUCTURED_LOGGING');
+  if (sLogEnabled) slog('info', 'turn_start', { trace_id: traceId, instance_name: instanceName, remote_jid: remoteJid, text_length: (userText || '').length });
 
   const { data: waInstance } = await supabase.from('wa_instances').select('*').eq('instance_name', instanceName).maybeSingle()
   if (!waInstance) {
@@ -1374,6 +2296,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             resumo_breve: {
               type: "string",
               description: "1-2 frases resumindo o que o cliente quer e o que ainda falta. Será usado no briefing pro vendedor."
+            },
+            motivo_categoria: {
+              type: "string",
+              enum: ["lead_qualificado", "pediu_humano", "objecao_complexa", "negociacao_preco", "fora_escopo", "erro_agente"],
+              description: "Categoria do motivo (V2 — opcional mas recomendado): lead_qualificado=BNA completo / pediu_humano=cliente solicitou humano / objecao_complexa=requer negociação / negociacao_preco=desconto/condição / fora_escopo=assunto não-veicular / erro_agente=agente travado."
+            },
+            urgencia: {
+              type: "string",
+              enum: ["baixa", "media", "alta", "imediata"],
+              description: "Urgência da transferência (V2 — opcional). imediata=cliente vai fechar agora; alta=quente; media=padrão; baixa=pode esperar."
+            },
+            proxima_acao_sugerida: {
+              type: "string",
+              description: "1 linha com sugestão concreta do que o vendedor deve fazer primeiro (V2 — opcional). Ex: 'Ligar em 30min com proposta de R$ 95.000' ou 'Mandar foto da traseira do Strada antes de ligar'."
             }
           },
           required: ["motivo"]
@@ -1628,9 +2564,23 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         }
       }
 
-      // 7. Merge + UPSERT
-      const newState = deepMerge(currentState, safeDelta);
-      const score = calcQualificationScore(newState);
+      // 7a. Camada 1 do Bug #2 (race): re-fetch state fresco do banco antes
+      // do merge. Defesa contra webhook concorrente (turno N+1) sobrescrever
+      // flag setada por turno anterior (N). Sem isso, consultor_apresentado=true
+      // pode ser apagado e Pedro re-apresenta no próximo turno.
+      const { data: freshStateRow } = await supabase
+        .from('pedro_conversation_state')
+        .select('state')
+        .eq('lead_id', leadIdForState)
+        .eq('agent_id', agent.id)
+        .maybeSingle();
+      const baseStateForMerge = (freshStateRow?.state && Object.keys(freshStateRow.state).length > 0)
+        ? freshStateRow.state
+        : currentState;
+
+      // 7b. Merge + UPSERT
+      const newState = deepMerge(baseStateForMerge, safeDelta);
+      const score = getQualificationScore(newState); // IT-2.2: wrapper V1/V2
       conversationState = newState;
 
       await supabase.from('pedro_conversation_state').upsert({
@@ -1684,10 +2634,43 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     });
   }
 
+  // IT-3.2: quando flag on, busca historico expandido (30 msgs) pra
+  // sumarizar as mais antigas via Claude Haiku. Senao, mantem 10 cruas
+  // (comportamento atual).
+  const historyLimit = isPedroFeatureEnabled('HIERARCHICAL_SUMMARIZATION') ? 30 : 10;
   const { data: history } = await supabase.from('wa_chat_history')
-    .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(10)
+    .select('role, content').eq('instance_id', instanceName).eq('remote_jid', remoteJid).order('created_at', { ascending: false }).limit(historyLimit)
 
-  const chatHistory = (history || []).reverse().map((m: any) => ({ role: m.role, content: m.content }))
+  let chatHistory: any[] = (history || []).reverse().map((m: any) => ({ role: m.role, content: m.content }))
+
+  // IT-3.2: sumariza mensagens antigas quando historico > 10 e flag on.
+  // Falha silenciosa: se Anthropic der erro, mantem so as 10 ultimas
+  // (mesmo comportamento de antes da flag).
+  if (isPedroFeatureEnabled('HIERARCHICAL_SUMMARIZATION') && chatHistory.length > 10) {
+    try {
+      const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY') || '';
+      if (anthropicKey) {
+        const { oldMessages, recentMessages } = splitForSummarization(chatHistory, 10);
+        if (oldMessages.length > 0) {
+          console.log(`[HistorySumm] sumarizando ${oldMessages.length} msgs antigas (mantendo ${recentMessages.length} cruas)`);
+          const summary = await summarizeOldMessages(oldMessages, anthropicKey);
+          if (summary) {
+            chatHistory = [formatSummaryAsSystemMessage(summary, oldMessages.length), ...recentMessages];
+            console.log(`[HistorySumm] sumarizado com sucesso (${summary.length} chars)`);
+          } else {
+            chatHistory = recentMessages; // fallback: so as 10 recentes
+            console.warn(`[HistorySumm] sumarizacao retornou vazio - usando so msgs recentes`);
+          }
+        }
+      } else {
+        console.warn('[HistorySumm] ANTHROPIC_API_KEY ausente - mantendo historico cru');
+        chatHistory = chatHistory.slice(-10); // fallback: so as 10 ultimas
+      }
+    } catch (summErr) {
+      console.warn('[HistorySumm] erro (nao bloqueia):', summErr);
+      chatHistory = chatHistory.slice(-10);
+    }
+  }
 
   // RAG - Busca Base de Conhecimento
   let knowledgeContext = ''
@@ -1749,6 +2732,58 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.error('[Webhook] Erro ao verificar integração BNDV:', bndvCheckErr);
   }
 
+  // ── IT-3.1: Perfil persistente cross-conversa ────────────────────────────
+  // Quando flag on, busca leads ANTERIORES do mesmo phone (cross-agent do
+  // mesmo user_id), agrega e apenda no system prompt. Cliente que volta
+  // depois de dias nao comeca do zero. Falha silenciosa se query der erro
+  // (defesa: agente continua respondendo, so sem contexto historico).
+  if (isPedroFeatureEnabled('PERSISTENT_PROFILES')) {
+    try {
+      // Busca leads anteriores com mesmo remote_jid OU client_phone normalizado.
+      // Limita a 10 leads mais recentes pra nao explodir o prompt.
+      const { data: priorLeads } = await supabase
+        .from('ai_crm_leads')
+        .select('id, lead_name, client_name, client_city, vehicle_interest, payment_method, status, status_crm, last_interaction_at')
+        .eq('user_id', agent.user_id)
+        .eq('remote_jid', remoteJid)
+        .order('last_interaction_at', { ascending: false })
+        .limit(10);
+      const priorLeadsArr = (priorLeads || []).filter((l: any) => l.id);
+
+      // Busca states desses leads (pode ser vazio se leads antigos nao tinham state)
+      let priorStates: any[] = [];
+      if (priorLeadsArr.length > 0) {
+        const leadIds = priorLeadsArr.map((l: any) => l.id);
+        const { data: states } = await supabase
+          .from('pedro_conversation_state')
+          .select('lead_id, state, last_extracted_at')
+          .in('lead_id', leadIds)
+          .order('last_extracted_at', { ascending: false });
+        priorStates = states || [];
+      }
+
+      const profile = derivePersistentProfile(priorLeadsArr, priorStates);
+      if (profile) {
+        const block = formatPersistentProfileBlock(profile);
+        if (block) {
+          systemPrompt += `\n\n${block}`;
+          console.log(`[PersistentProfile] apendado: ${profile.total_previous_conversations} conversa(s) anterior(es), ultima ${profile.days_since_last_seen}d atras`);
+        }
+      }
+    } catch (profileErr) {
+      console.warn('[PersistentProfile] erro (nao bloqueia):', profileErr);
+    }
+  }
+
+  // ── IT-1.3: Persona consolidada + 5 few-shots ────────────────────────────
+  // Apenda ao FINAL do system prompt pra recency bias do GPT-4o. Reforca
+  // tom, escopo, regras de honestidade e handoff. Apenas quando flag ligada.
+  // Flag OFF = system prompt identico ao atual.
+  if (isPedroFeatureEnabled('PERSONA_FEW_SHOTS')) {
+    systemPrompt += `\n\n${buildPersonaFewShotsBlock()}`;
+    console.log('[Humanization] PERSONA_FEW_SHOTS on - bloco apendado no system prompt');
+  }
+
   let aiModel = agent.model || 'gpt-4o';
   // Fallbacks para evitar crashes na OpenAI caso o frontend envie modelos do Google/Anthropic
   if (aiModel.startsWith('openai/')) {
@@ -1770,7 +2805,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.log(`[Webhook] 🖼️ Enviando imagem para análise com modelo: ${aiModel}`);
   }
 
-  const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+  // IT-4.1: chamada OpenAI com retry + cortesia quando flag on.
+  // Sem flag: comportamento atual (1 tentativa, HTTP 500 se falhar).
+  const llmRetryEnabled = isPedroFeatureEnabled('LLM_RETRY_FALLBACK');
+  const openaiInit: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
     body: JSON.stringify({
@@ -1780,11 +2818,62 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       tools: tools,
       tool_choice: "auto"
     })
-  })
+  };
+
+  let openaiRes: Response;
+  let openaiAttempts = 1;
+  if (llmRetryEnabled) {
+    try {
+      const r = await fetchWithRetry('https://api.openai.com/v1/chat/completions', openaiInit);
+      openaiRes = r.res;
+      openaiAttempts = r.attempts;
+      if (openaiAttempts > 1) console.log(`[LLM-Retry] OpenAI conseguiu na tentativa ${openaiAttempts}`);
+    } catch (netErr) {
+      console.error('[LLM-Retry] todas as tentativas falharam com network error:', netErr);
+      openaiRes = new Response('network error', { status: 599 });
+    }
+  } else {
+    openaiRes = await fetch('https://api.openai.com/v1/chat/completions', openaiInit);
+  }
 
   if (!openaiRes.ok) {
     const errText = await openaiRes.text();
-    console.error(`[Webhook] OpenAI Erro: ${openaiRes.status} - ${errText}`);
+    console.error(`[Webhook] OpenAI Erro: ${openaiRes.status} - ${errText} (attempts=${openaiAttempts})`);
+
+    // IT-4.1: em vez de HTTP 500 silencioso, envia cortesia ao cliente.
+    // Mantem conversa viva, cliente sabe que ouve algum problema.
+    if (llmRetryEnabled) {
+      try {
+        await fetch(`${baseUrl}/send/text`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'token': instKey },
+          body: JSON.stringify({ number: phoneNumber, text: COURTESY_MESSAGE })
+        });
+        await supabase.from('wa_inbox').insert({
+          user_id: waInstance.user_id,
+          instance_id: waInstance.id,
+          phone: phoneNumber,
+          contact_name: pushName || null,
+          direction: 'outgoing',
+          message_type: 'text',
+          content: COURTESY_MESSAGE,
+          is_read: true,
+          ai_category: 'agent',
+        }).then(({ error }: any) => {
+          if (error) console.error('[LLM-Retry] courtesy insert error:', error.message);
+        });
+        if (sLogEnabled) {
+          slog('warn', 'courtesy_sent', { trace_id: traceId, openai_status: openaiRes.status, attempts: openaiAttempts, latency_ms: Date.now() - turnStartMs });
+        }
+        console.log('[LLM-Retry] enviou cortesia ao cliente');
+        return new Response(JSON.stringify({ ok: true, courtesy_sent: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200
+        });
+      } catch (courtesyErr) {
+        console.error('[LLM-Retry] falha ao enviar cortesia:', courtesyErr);
+      }
+    }
+
     return new Response('OpenAI erro', { status: 500 });
   }
   const openaiData = await openaiRes.json()
@@ -2000,13 +3089,29 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 summary: transferArgs.resumo_breve || null,
               }).eq('id', leadRow.id);
 
-              // 5. Briefing estruturado pro vendedor
-              const briefing = buildBriefingForSeller(
-                conversationState,
-                pushName || conversationState?.lead?.nome || 'Lead',
-                phoneNumber,
-                agent.name || 'Pedro SDR',
-              );
+              // 5. Briefing estruturado pro vendedor (IT-2.4: V2 quando flag on)
+              let briefing: string;
+              if (isPedroFeatureEnabled('HANDOFF_TOOL_V2')) {
+                const scoreResult = calcLeadScoreV2(conversationState);
+                const bant = deriveBantFromState(conversationState);
+                briefing = buildEnrichedBriefing({
+                  state: conversationState,
+                  leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                  leadPhone: phoneNumber,
+                  agentName: agent.name || 'Pedro SDR',
+                  transferArgs: transferArgs as HandoffTransferArgs,
+                  scoreInfo: { score: scoreResult.score, tier: scoreResult.tier },
+                  bantNextSuggestedAsk: bant.nextSuggestedAsk,
+                });
+                console.log(`[Transfer-Tool] briefing V2 enriquecido (score=${scoreResult.score}/${scoreResult.tier})`);
+              } else {
+                briefing = buildBriefingForSeller(
+                  conversationState,
+                  pushName || conversationState?.lead?.nome || 'Lead',
+                  phoneNumber,
+                  agent.name || 'Pedro SDR',
+                );
+              }
 
               let sellerNum = String(chosenSeller.whatsapp_number || '').replace(/\D/g, '');
               if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
@@ -2068,7 +3173,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   agent_id: agent.id,
                   user_id: agent.user_id,
                   state: updatedState,
-                  qualificacao_score: calcQualificationScore(updatedState),
+                  qualificacao_score: getQualificationScore(updatedState), // IT-2.2
                   last_extracted_at: new Date().toISOString(),
                 }, { onConflict: 'lead_id,agent_id' });
                 conversationState = updatedState;
@@ -2467,13 +3572,25 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         .eq('remote_jid', remoteJid)
         .maybeSingle();
       if (leadForFlags?.id) {
-        const updatedState = deepMerge(conversationState || {}, selfFlags);
+        // Camada 1 do Bug #2 (race): re-fetch state fresco antes do upsert
+        // pra preservar flags setadas por turno anterior em paralelo.
+        const { data: freshStateForFlags } = await supabase
+          .from('pedro_conversation_state')
+          .select('state')
+          .eq('lead_id', leadForFlags.id)
+          .eq('agent_id', agent.id)
+          .maybeSingle();
+        const baseStateForFlags = (freshStateForFlags?.state && Object.keys(freshStateForFlags.state).length > 0)
+          ? freshStateForFlags.state
+          : (conversationState || {});
+
+        const updatedState = deepMerge(baseStateForFlags, selfFlags);
         await supabase.from('pedro_conversation_state').upsert({
           lead_id: leadForFlags.id,
           agent_id: agent.id,
           user_id: agent.user_id,
           state: updatedState,
-          qualificacao_score: calcQualificationScore(updatedState),
+          qualificacao_score: getQualificationScore(updatedState), // IT-2.2
           last_extracted_at: new Date().toISOString(),
         }, { onConflict: 'lead_id,agent_id' });
         console.log(`[PedroState] auto-flags aplicadas: ${Object.keys(selfFlags).join(',')}`);
@@ -2491,30 +3608,95 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     last_interaction_at: agentReplyTs,
   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
-  // Salvar resposta do AGENTE IA no wa_inbox (para aparecer no Inbox do Marcos)
-  await supabase.from('wa_inbox').insert({
-    user_id: waInstance.user_id,
-    instance_id: waInstance.id,
-    phone: phoneNumber,
-    contact_name: pushName || null,
-    direction: 'outgoing',
-    message_type: 'text',
-    content: aiResponse,
-    is_read: true,
-    ai_category: 'agent',
-  }).then(({ error }: any) => {
-    if (error) console.error('[uazapi-webhook] wa_inbox outgoing insert error:', error.message);
-  });
+  // Camada 3 do Bug #2: strip auto-apresentação se o agente já se apresentou
+  // antes (consultor_apresentado=true no state). Defesa contra LLM ignorar a
+  // regra do system prompt esporadicamente. Se a resposta inteira era só
+  // apresentação, retorna fallback "Pode mandar 😊".
+  let finalText = stripIntroIfAlreadyPresented(aiResponse, conversationState);
 
-  // Enviar para o cliente final
-  try {
-    await fetch(`${baseUrl}/send/text`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'token': instKey },
-      body: JSON.stringify({ number: phoneNumber, text: aiResponse })
-    })
-  } catch (e) {
-    console.error('[Webhook] Erro ao enviar mensagem:', e)
+  // IT-4.2: guardrails de saída. Substitui resposta por safeFallback quando
+  // detecta violacao (preco sem veiculo, promessa indevida, fora de escopo).
+  // Flag OFF: comportamento atual identico.
+  if (isPedroFeatureEnabled('GUARDRAILS')) {
+    const guardrailResult = applyGuardrails(finalText, conversationState);
+    if (guardrailResult.blocked) {
+      const ruleList = guardrailResult.violations.map((v) => v.rule).join(',');
+      if (sLogEnabled) {
+        slog('warn', 'guardrail_block', { trace_id: traceId, rules: guardrailResult.violations.map((v) => v.rule), original_excerpt: finalText.slice(0, 100), violations: guardrailResult.violations });
+      } else {
+        console.warn(`[Guardrails] BLOQUEADO (${ruleList}). Original: "${finalText.slice(0, 100)}". Violacoes:`, JSON.stringify(guardrailResult.violations));
+      }
+      finalText = guardrailResult.safeFallback;
+    }
+  }
+
+  // ─── IT-1.1 + IT-1.2: Message Splitting + Typing Simulation ──────────────
+  // IT-1.1 PEDRO_FF_MESSAGE_SPLITTING: divide resposta em ate 3 partes.
+  // IT-1.2 PEDRO_FF_TYPING_SIMULATION: antes de cada send, dispara presence
+  // "composing" + sleep proporcional ao tamanho (clamp 800ms-4s), depois
+  // envia, depois "paused" (best-effort - presence pode falhar silenciosamente).
+  // Combina: humano-like (digitando -> mensagem -> pausa -> digitando -> ...).
+  // FALLBACK total (ambas off): comportamento atual identico ao legado.
+  const splitEnabled = isPedroFeatureEnabled('MESSAGE_SPLITTING');
+  const typingEnabled = isPedroFeatureEnabled('TYPING_SIMULATION');
+  const messageParts = splitEnabled
+    ? splitMessageForHumanization(finalText)
+    : [finalText];
+  const INTER_MESSAGE_DELAY_MS = 600; // pausa entre partes (alem do typing)
+
+  if (splitEnabled && messageParts.length > 1) {
+    console.log(`[Humanization] MESSAGE_SPLITTING on - dividindo em ${messageParts.length} partes`);
+  }
+  if (typingEnabled) {
+    console.log(`[Humanization] TYPING_SIMULATION on - delays proporcionais`);
+  }
+
+  for (let i = 0; i < messageParts.length; i++) {
+    const partText = messageParts[i];
+
+    // IT-1.2: typing presence + delay ANTES do send
+    if (typingEnabled) {
+      // best-effort: nao bloqueia se presence endpoint nao existir
+      await sendTypingPresence(baseUrl, instKey, phoneNumber, 'composing');
+      const typingDelay = calculateTypingDelayMs(partText);
+      await new Promise((r) => setTimeout(r, typingDelay));
+    }
+
+    // Salvar cada parte no wa_inbox (registro outgoing por parte)
+    await supabase.from('wa_inbox').insert({
+      user_id: waInstance.user_id,
+      instance_id: waInstance.id,
+      phone: phoneNumber,
+      contact_name: pushName || null,
+      direction: 'outgoing',
+      message_type: 'text',
+      content: partText,
+      is_read: true,
+      ai_category: 'agent',
+    }).then(({ error }: any) => {
+      if (error) console.error('[uazapi-webhook] wa_inbox outgoing insert error:', error.message);
+    });
+
+    // Enviar para o cliente final
+    try {
+      await fetch(`${baseUrl}/send/text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'token': instKey },
+        body: JSON.stringify({ number: phoneNumber, text: partText })
+      })
+    } catch (e) {
+      console.error('[Webhook] Erro ao enviar mensagem (parte ' + (i + 1) + '):', e)
+    }
+
+    // IT-1.2: presence "paused" apos enviar (best-effort)
+    if (typingEnabled) {
+      await sendTypingPresence(baseUrl, instKey, phoneNumber, 'paused');
+    }
+
+    // Delay entre partes consecutivas (nao na ultima)
+    if (i < messageParts.length - 1) {
+      await new Promise((r) => setTimeout(r, INTER_MESSAGE_DELAY_MS));
+    }
   }
 
   // ── BNDV: Send vehicle images after text response ─────────────────────
@@ -2549,5 +3731,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   }
 
-  return new Response(JSON.stringify({ success: true }), { headers: corsHeaders, status: 200 })
+  // IT-4.3: turn_end com latencia total — permite calcular p50/p95 de duracao
+  if (sLogEnabled) {
+    slog('info', 'turn_end', {
+      trace_id: traceId,
+      latency_ms: Date.now() - turnStartMs,
+      parts_sent: messageParts.length,
+      split_enabled: splitEnabled,
+      typing_enabled: typingEnabled,
+    });
+  }
+  return new Response(JSON.stringify({ success: true, trace_id: traceId }), { headers: corsHeaders, status: 200 })
 }
