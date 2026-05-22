@@ -2351,8 +2351,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             Mostra o que o Pedro escreveu sobre esse lead. Prioridade:
             1) Transferências com notes rico (não começa com "via cron")
             2) ai_crm_leads.summary (resumo da IA durante qualificação)
-            3) Fallback "via cron" — texto curto antigo. */}
-        {!isMarcosCrm && (() => {
+            3) Fallback "via cron" — texto curto antigo.
+            Renderiza pra ambos Pedro e Marcos — se Marcos não tem dados de IA,
+            o IIFE retorna null e a card não aparece (sem visual quebrado). */}
+        {(() => {
           // Identifica transferências com texto rico (mais que 1 linha ou >100 chars)
           const richTransfers = transfers.filter(t =>
             t.notes && (t.notes.length > 100 || t.notes.includes('\n'))
@@ -2434,7 +2436,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           );
         })()}
 
-        <div className={`grid grid-cols-1 ${isMarcosCrm ? '' : 'lg:grid-cols-2'} gap-4`}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* ── Anotações ─────────────────────────────────────────────── */}
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
@@ -2664,8 +2666,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           </Card>
         </div>
 
-        {/* ── Feedback Estruturado para Gerente ──────────────────────── */}
-        {!isMarcosCrm && (<>
+        {/* ── Feedback Estruturado para Gerente ────────────────────────
+            Renderiza pra Pedro E Marcos. handleSendFeedback + loadLeadFeedbackHistory
+            já tratam o XOR lead_id/crm_lead_id internamente. */}
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -2802,7 +2805,6 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         </Card>
 
         {/* ── Popup Historico de Feedbacks do Lead ──────────────────────── */}
-        </>)}
 
         <Dialog open={fbHistoryOpen} onOpenChange={setFbHistoryOpen}>
           <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">

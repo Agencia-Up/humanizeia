@@ -151,9 +151,9 @@ serve(async (req) => {
     // Usa a INSTÂNCIA DO VENDEDOR (número conectado na conta dele).
     // Fallback (só Pedro): instância do agente IA caso vendedor não tenha instância.
     //
-    // M5: gerentePhone tem 2 fontes:
-    //   • PEDRO  → wa_ai_agents.gerente_phone (per-agente, via member.agent_id)
-    //   • MARCOS → manager_feedback_config.gerente_phone_marcos (per-master, via gerenteUserId)
+    // M5: gerentePhone vem do mesmo lugar pra Pedro E Marcos — wa_ai_agents.gerente_phone:
+    //   • PEDRO  → busca via member.agent_id (per-agente direto)
+    //   • MARCOS → busca primeiro agente do master (gerenteUserId) que tenha gerente_phone configurado
     try {
       const agentId = member?.agent_id;
       const sellerAuthId = member?.auth_user_id;
@@ -163,15 +163,21 @@ serve(async (req) => {
       let agentForFallback: any = null;
 
       if (crm_lead_id) {
-        // Marcos: lê da config per-master
-        const { data: cfg } = await supabase
-          .from("manager_feedback_config" as any)
-          .select("gerente_phone_marcos")
+        // Marcos: pega qualquer agente do master com gerente_phone configurado
+        const { data: anyMasterAgent } = await supabase
+          .from("wa_ai_agents" as any)
+          .select("gerente_phone, instance_id, instance_ids")
           .eq("user_id", gerenteUserId)
+          .not("gerente_phone", "is", null)
+          .neq("gerente_phone", "")
+          .limit(1)
           .maybeSingle();
-        gerentePhone = (cfg as any)?.gerente_phone_marcos || null;
+        gerentePhone = (anyMasterAgent as any)?.gerente_phone || null;
+        agentForFallback = anyMasterAgent; // pra fallback de instância
         if (!gerentePhone) {
-          console.log("[pedro-process-feedback] Marcos: sem gerente_phone_marcos configurado em manager_feedback_config, pulando notificação");
+          console.log("[pedro-process-feedback] Marcos: nenhum agente Pedro do master tem gerente_phone configurado, pulando notificação");
+        } else {
+          console.log("[pedro-process-feedback] Marcos: reusando gerente_phone do agente Pedro do master");
         }
       } else if (agentId) {
         // Pedro: lê do agente IA (per-agente)
