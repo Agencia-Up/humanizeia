@@ -612,10 +612,16 @@ function normalizeStatus(status: string): string {
 
 const MARCOS_STAGE_STYLE_BY_NAME: Record<string, { emoji: string; border: string; bg: string; dot: string }> = {
   'novo lead': { emoji: '🔰', border: 'border-indigo-500/30', bg: 'bg-indigo-500/10', dot: 'bg-indigo-400' },
+  // 'qualificado' removido do default em 2026-05-22, mas preservado aqui pra retrocompat
+  // (users que customizaram pra manter Qualificado ainda renderiza com style amarelo).
   qualificado: { emoji: '🎯', border: 'border-amber-500/30', bg: 'bg-amber-500/10', dot: 'bg-amber-400' },
+  'marketing place': { emoji: '🛒', border: 'border-orange-500/30', bg: 'bg-orange-500/10', dot: 'bg-orange-400' },
+  agendamento: { emoji: '📅', border: 'border-cyan-500/30', bg: 'bg-cyan-500/10', dot: 'bg-cyan-400' },
   proposta: { emoji: '📋', border: 'border-blue-500/30', bg: 'bg-blue-500/10', dot: 'bg-blue-400' },
   negociacao: { emoji: '🤝', border: 'border-purple-500/30', bg: 'bg-purple-500/10', dot: 'bg-purple-400' },
   fechado: { emoji: '✅', border: 'border-green-500/30', bg: 'bg-green-500/10', dot: 'bg-green-400' },
+  perdido: { emoji: '❌', border: 'border-red-500/30', bg: 'bg-red-500/10', dot: 'bg-red-400' },
+  'lead inativo': { emoji: '😴', border: 'border-gray-500/30', bg: 'bg-gray-500/10', dot: 'bg-gray-400' },
   'carro nao disponivel': { emoji: '🚫', border: 'border-rose-500/30', bg: 'bg-rose-500/10', dot: 'bg-rose-400' },
   porta: { emoji: '🚪', border: 'border-teal-500/30', bg: 'bg-teal-500/10', dot: 'bg-teal-400' },
 };
