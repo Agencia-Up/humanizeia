@@ -709,7 +709,8 @@ interface Note {
 
 interface Feedback {
   id: string;
-  lead_id: string;
+  lead_id: string | null;            // M5: Pedro popula isso, Marcos NULL
+  crm_lead_id?: string | null;       // M5: Marcos popula isso, Pedro NULL
   content: string;
   city?: string | null;
   reason?: string | null;
@@ -1056,9 +1057,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       const [leadsRes, fbRes, instRes, teamRes, agentsRes, totalCountRes, todayCountRes, weekCountRes, monthCountRes] = await Promise.all([
         leadsQuery,
+        // M5: feedbacks vêm de Pedro (lead_id → ai_crm_leads) E Marcos (crm_lead_id → crm_leads).
+        // Buscamos sem JOIN e hidratamos `lead.lead_name` em JS a partir de 2 lookups.
         (supabase as any)
           .from('pedro_manager_feedback')
-          .select('id, lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name), lead:ai_crm_leads(lead_name)')
+          .select('id, lead_id, crm_lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
           .eq('user_id', isSeller ? userId : effectiveUserId)
           .order('created_at', { ascending: false })
           .limit(50),
@@ -1149,7 +1152,27 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         week: weekCountRes.count ?? 0,
         month: monthCountRes.count ?? 0,
       });
-      setFeedbacks(fbRes.data || []);
+      // ── M5: hidrata lead.lead_name para feedbacks do Pedro (ai_crm_leads) E Marcos (crm_leads).
+      //    Substitui o JOIN PostgREST que só funcionava pra ai_crm_leads e deixava o lead "vazio" pros feedbacks do Marcos.
+      const rawFeedbacks: any[] = fbRes.data || [];
+      const pedroLeadIds  = Array.from(new Set(rawFeedbacks.filter(f => f.lead_id).map(f => f.lead_id))) as string[];
+      const marcosLeadIds = Array.from(new Set(rawFeedbacks.filter(f => f.crm_lead_id).map(f => f.crm_lead_id))) as string[];
+      const [pedroNames, marcosNames] = await Promise.all([
+        pedroLeadIds.length > 0
+          ? (supabase as any).from('ai_crm_leads').select('id, lead_name').in('id', pedroLeadIds)
+          : Promise.resolve({ data: [] }),
+        marcosLeadIds.length > 0
+          ? (supabase as any).from('crm_leads').select('id, name').in('id', marcosLeadIds)
+          : Promise.resolve({ data: [] }),
+      ]);
+      const nameMap = new Map<string, string>();
+      (pedroNames.data  || []).forEach((l: any) => nameMap.set(l.id, l.lead_name || 'Lead'));
+      (marcosNames.data || []).forEach((l: any) => nameMap.set(l.id, l.name      || 'Lead'));
+      const hydratedFeedbacks: Feedback[] = rawFeedbacks.map((f: any) => ({
+        ...f,
+        lead: { lead_name: nameMap.get(f.lead_id || f.crm_lead_id || '') ?? 'Lead' },
+      }));
+      setFeedbacks(hydratedFeedbacks);
       const connectedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected');
       setInstances(connectedInstances);
       // Auto-seleciona a primeira instância conectada
@@ -1476,7 +1499,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       const res = await supabase.functions.invoke('pedro-process-feedback', {
         body: {
-          lead_id:      selectedLead.id,
+          // M5: Marcos manda crm_lead_id (aponta crm_leads); Pedro manda lead_id (aponta ai_crm_leads)
+          ...(isMarcosCrm
+            ? { crm_lead_id: selectedLead.id }
+            : { lead_id: selectedLead.id }),
           member_id:    memberId,
           content,
           priority:     fbPriority,
@@ -1500,10 +1526,12 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const loadLeadFeedbackHistory = async (leadId: string) => {
     setFbHistoryLoading(true);
     try {
+      // M5: Marcos filtra por crm_lead_id; Pedro por lead_id.
+      const filterCol = isMarcosCrm ? 'crm_lead_id' : 'lead_id';
       const { data } = await (supabase as any)
         .from('pedro_manager_feedback')
-        .select('id, lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
-        .eq('lead_id', leadId)
+        .select('id, lead_id, crm_lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
+        .eq(filterCol, leadId)
         .order('created_at', { ascending: false });
       setLeadFeedbacks(data || []);
     } catch { /* ignore */ }
