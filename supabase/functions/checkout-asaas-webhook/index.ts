@@ -37,7 +37,10 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const WEBHOOK_TOKEN = Deno.env.get('CHECKOUT_ASAAS_WEBHOOK_TOKEN') || '';
+const WEBHOOK_TOKEN =
+  Deno.env.get('CHECKOUT_ASAAS_WEBHOOK_TOKEN') ||
+  Deno.env.get('ASAAS_WEBHOOK_SECRET') ||
+  '';
 
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
