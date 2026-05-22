@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Loader2, Save, Bell, Clock, Zap } from 'lucide-react';
+import { Loader2, Save, Bell, Clock, Zap, Phone } from 'lucide-react';
 
 interface FeedbackConfig {
   mode: 'auto' | 'scheduled';
@@ -26,6 +26,8 @@ interface FeedbackConfig {
   delay_min_seconds: number;
   delay_max_seconds: number;
   last_flushed_at: string | null;
+  // M5: telefone do gerente que recebe feedbacks do CRM do Marcos (Pedro tem o seu próprio em wa_ai_agents per-agente).
+  gerente_phone_marcos: string;
 }
 
 const DEFAULT: FeedbackConfig = {
@@ -35,7 +37,20 @@ const DEFAULT: FeedbackConfig = {
   delay_min_seconds: 27,
   delay_max_seconds: 54,
   last_flushed_at: null,
+  gerente_phone_marcos: '',
 };
+
+// Formata pra exibição amigável: 5511999999999 → +55 11 99999-9999
+function formatPhoneDisplay(raw: string): string {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 12) return raw; // mostra como digitou se ainda incompleto
+  const cc = digits.slice(0, 2);
+  const ddd = digits.slice(2, 4);
+  const rest = digits.slice(4);
+  if (rest.length === 9) return `+${cc} ${ddd} ${rest.slice(0,5)}-${rest.slice(5)}`;
+  if (rest.length === 8) return `+${cc} ${ddd} ${rest.slice(0,4)}-${rest.slice(4)}`;
+  return `+${cc} ${ddd} ${rest}`;
+}
 
 function trimTime(s: string | null | undefined): string {
   if (!s) return '';
@@ -73,6 +88,7 @@ export function ManagerFeedbackConfigCard() {
             delay_min_seconds: c.delay_min_seconds ?? DEFAULT.delay_min_seconds,
             delay_max_seconds: c.delay_max_seconds ?? DEFAULT.delay_max_seconds,
             last_flushed_at: c.last_flushed_at || null,
+            gerente_phone_marcos: c.gerente_phone_marcos || '',
           });
         }
         // Conta feedbacks pendentes
@@ -95,6 +111,12 @@ export function ManagerFeedbackConfigCard() {
       toast({ title: 'Delays inválidos', description: 'Min > 0 e Max >= Min.', variant: 'destructive' });
       return;
     }
+    // M5: sanitiza telefone do Marcos (só dígitos) + valida tamanho mínimo se preenchido
+    const cleanGerentePhoneMarcos = cfg.gerente_phone_marcos.replace(/\D/g, '');
+    if (cleanGerentePhoneMarcos && cleanGerentePhoneMarcos.length < 10) {
+      toast({ title: 'Telefone inválido', description: 'O telefone do gerente do Marcos parece curto demais (mínimo 10 dígitos).', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
       const { error } = await (supabase as any)
@@ -106,6 +128,7 @@ export function ManagerFeedbackConfigCard() {
           schedule_time_end: cfg.schedule_time_end,
           delay_min_seconds: cfg.delay_min_seconds,
           delay_max_seconds: cfg.delay_max_seconds,
+          gerente_phone_marcos: cleanGerentePhoneMarcos || null,
         }, { onConflict: 'user_id' });
       if (error) throw error;
       toast({
@@ -154,6 +177,32 @@ export function ManagerFeedbackConfigCard() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* M5: Telefone do gerente — Marcos (Pedro tem o seu per-agente em wa_ai_agents) */}
+        <div className="p-3 rounded-md border border-purple-500/30 bg-purple-500/5 space-y-2">
+          <div className="flex items-center gap-2">
+            <Phone className="h-3.5 w-3.5 text-purple-400" />
+            <Label className="text-sm font-medium">Telefone do gerente (CRM do Marcos)</Label>
+          </div>
+          <Input
+            type="tel"
+            inputMode="numeric"
+            placeholder="Ex: 5511999999999 (com DDI + DDD)"
+            value={cfg.gerente_phone_marcos}
+            onChange={(e) => setCfg({ ...cfg, gerente_phone_marcos: e.target.value.replace(/\D/g, '') })}
+            className="h-8 text-xs"
+          />
+          {cfg.gerente_phone_marcos && cfg.gerente_phone_marcos.length >= 12 && (
+            <p className="text-[10px] text-green-400">
+              ✓ {formatPhoneDisplay(cfg.gerente_phone_marcos)}
+            </p>
+          )}
+          <p className="text-[10px] text-muted-foreground">
+            Feedbacks enviados a partir do CRM do Marcos serão entregues neste WhatsApp.
+            Use número internacional (com 55 + DDD).
+            Para o Pedro, configure separadamente nas configurações de cada agente IA.
+          </p>
+        </div>
+
         {/* Toggle modo */}
         <div className="flex items-start justify-between gap-3 p-3 rounded-md border border-border/40 bg-background/50">
           <div className="space-y-0.5">

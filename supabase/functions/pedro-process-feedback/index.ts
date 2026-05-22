@@ -148,27 +148,49 @@ serve(async (req) => {
     }
 
     // ── Notificação WhatsApp para o gerente (modo auto) ──────────────────────
-    // Usa a INSTÂNCIA DO VENDEDOR (número conectado na conta dele)
-    // Fallback: instância do agente IA caso vendedor não tenha instância
+    // Usa a INSTÂNCIA DO VENDEDOR (número conectado na conta dele).
+    // Fallback (só Pedro): instância do agente IA caso vendedor não tenha instância.
+    //
+    // M5: gerentePhone tem 2 fontes:
+    //   • PEDRO  → wa_ai_agents.gerente_phone (per-agente, via member.agent_id)
+    //   • MARCOS → manager_feedback_config.gerente_phone_marcos (per-master, via gerenteUserId)
     try {
       const agentId = member?.agent_id;
       const sellerAuthId = member?.auth_user_id;
 
-      if (agentId) {
-        // 1. Busca gerente_phone do agente
+      // 1. Resolve gerentePhone conforme fluxo
+      let gerentePhone: string | null = null;
+      let agentForFallback: any = null;
+
+      if (crm_lead_id) {
+        // Marcos: lê da config per-master
+        const { data: cfg } = await supabase
+          .from("manager_feedback_config" as any)
+          .select("gerente_phone_marcos")
+          .eq("user_id", gerenteUserId)
+          .maybeSingle();
+        gerentePhone = (cfg as any)?.gerente_phone_marcos || null;
+        if (!gerentePhone) {
+          console.log("[pedro-process-feedback] Marcos: sem gerente_phone_marcos configurado em manager_feedback_config, pulando notificação");
+        }
+      } else if (agentId) {
+        // Pedro: lê do agente IA (per-agente)
         const { data: agent } = await supabase
           .from("wa_ai_agents" as any)
           .select("gerente_phone, instance_id, instance_ids")
           .eq("id", agentId)
           .single();
-
-        const gerentePhone = (agent as any)?.gerente_phone;
+        agentForFallback = agent;
+        gerentePhone = (agent as any)?.gerente_phone || null;
         if (!gerentePhone) {
-          console.log("[pedro-process-feedback] Sem gerente_phone configurado, pulando notificação");
+          console.log("[pedro-process-feedback] Pedro: sem gerente_phone configurado no agente, pulando notificação");
         }
+      } else {
+        console.log("[pedro-process-feedback] Pedro: member sem agent_id, sem como resolver gerente_phone");
+      }
 
-        if (gerentePhone) {
-          // 2. Busca instância do VENDEDOR primeiro
+      if (gerentePhone) {
+          // 2. Busca instância do VENDEDOR primeiro (mesma lógica pra Pedro e Marcos)
           let instanceData: any = null;
 
           if (sellerAuthId) {
@@ -188,10 +210,10 @@ serve(async (req) => {
             }
           }
 
-          // 3. Fallback: instância do agente IA
-          if (!instanceData) {
-            const agentInstanceIds = (agent as any)?.instance_ids || [];
-            const agentInstanceId = agentInstanceIds[0] || (agent as any)?.instance_id;
+          // 3. Fallback: instância do agente IA (SÓ Pedro — Marcos não tem agente IA)
+          if (!instanceData && agentForFallback) {
+            const agentInstanceIds = (agentForFallback as any)?.instance_ids || [];
+            const agentInstanceId = agentInstanceIds[0] || (agentForFallback as any)?.instance_id;
             if (agentInstanceId) {
               const { data: agentInstance } = await supabase
                 .from("wa_instances" as any)
@@ -200,8 +222,25 @@ serve(async (req) => {
                 .single();
               if (agentInstance) {
                 instanceData = agentInstance;
-                console.log(`[pedro-process-feedback] Fallback: usando instância do agente: ${(agentInstance as any).instance_name}`);
+                console.log(`[pedro-process-feedback] Fallback Pedro: usando instância do agente: ${(agentInstance as any).instance_name}`);
               }
+            }
+          }
+
+          // 4. Fallback final (Marcos): se vendedor não tem instância, usa qualquer instância conectada do master
+          if (!instanceData && crm_lead_id) {
+            const { data: anyMasterInstance } = await supabase
+              .from("wa_instances" as any)
+              .select("api_url, api_key_encrypted, instance_name")
+              .eq("user_id", gerenteUserId)
+              .eq("is_active", true)
+              .eq("status", "connected")
+              .order("health_score", { ascending: false })
+              .limit(1)
+              .single();
+            if (anyMasterInstance) {
+              instanceData = anyMasterInstance;
+              console.log(`[pedro-process-feedback] Fallback Marcos: usando instância do master: ${(anyMasterInstance as any).instance_name}`);
             }
           }
 
@@ -274,7 +313,6 @@ serve(async (req) => {
           } else {
             console.log("[pedro-process-feedback] Nenhuma instância encontrada para envio");
           }
-        }
       }
     } catch (notifyErr) {
       console.warn("[pedro-process-feedback] Falha na notificação:", notifyErr);
