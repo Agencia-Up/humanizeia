@@ -1678,6 +1678,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [editingLead, setEditingLead] = useState(false);
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  // Fase 6 Feature D: edit inline tambem permite cidade + carro
+  const [editCity, setEditCity] = useState('');
+  const [editVehicle, setEditVehicle] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
   // ── Bulk upload states ──
@@ -1972,6 +1975,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     const phone = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || '';
     setEditName(selectedLead.lead_name || '');
     setEditPhone(phone);
+    // Fase 6 Feature D: populates cidade + carro
+    setEditCity((selectedLead as any).client_city || '');
+    setEditVehicle((selectedLead as any).vehicle_interest || '');
     setEditingLead(true);
   };
 
@@ -1981,9 +1987,18 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     try {
       const cleanPhone = editPhone.replace(/\D/g, '');
       const newJid = cleanPhone ? `${cleanPhone}@s.whatsapp.net` : selectedLead.remote_jid;
-      const updateData: Record<string, string> = {};
+      const updateData: Record<string, string | null> = {};
       if (editName !== (selectedLead.lead_name || '')) updateData.lead_name = editName;
       if (newJid !== selectedLead.remote_jid) updateData.remote_jid = newJid;
+      // Fase 6 Feature D: cidade + carro (só pro Pedro CRM — Marcos não tem essas cols)
+      if (!isMarcosCrm) {
+        const newCity = editCity.trim();
+        const oldCity = (selectedLead as any).client_city || '';
+        if (newCity !== oldCity) updateData.client_city = newCity || null;
+        const newVehicle = editVehicle.trim();
+        const oldVehicle = (selectedLead as any).vehicle_interest || '';
+        if (newVehicle !== oldVehicle) updateData.vehicle_interest = newVehicle || null;
+      }
       if (isMarcosCrm) {
         const crmUpdate: Record<string, string> = {};
         if (editName !== (selectedLead.lead_name || '')) crmUpdate.name = editName;
@@ -2163,7 +2178,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           <div className="flex-1 min-w-0">
             {editingLead ? (
               <div className="flex flex-col gap-1.5">
-                <div className="flex items-center gap-1.5">
+                {/* Fase 6 Feature D: agora 4 inputs (nome + tel + cidade + carro). flex-wrap pra quebrar bem em mobile */}
+                <div className="flex flex-wrap items-center gap-1.5">
                   <Input
                     value={editName}
                     onChange={e => setEditName(e.target.value)}
@@ -2177,6 +2193,22 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                     placeholder="5511999999999"
                     className="h-8 text-sm max-w-[160px]"
                   />
+                  {!isMarcosCrm && (
+                    <>
+                      <Input
+                        value={editCity}
+                        onChange={e => setEditCity(e.target.value)}
+                        placeholder="📍 Cidade"
+                        className="h-8 text-sm max-w-[160px]"
+                      />
+                      <Input
+                        value={editVehicle}
+                        onChange={e => setEditVehicle(e.target.value)}
+                        placeholder="🚗 Carro de interesse"
+                        className="h-8 text-sm max-w-[200px]"
+                      />
+                    </>
+                  )}
                   <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
                     {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                   </Button>
