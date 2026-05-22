@@ -690,6 +690,10 @@ interface CrmLead {
   created_at: string;
   source?: string | null;
   custom_fields?: Record<string, any> | null;
+  // Fase 6 — campos enriched (todos opcionais; só renderizam badge se vierem)
+  client_city?: string | null;
+  vehicle_interest?: string | null;
+  visit_scheduled?: string | null;
 }
 
 interface Note {
@@ -1023,7 +1027,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       // ========================================================================
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at')
+        // Fase 6: adiciona client_city, vehicle_interest, visit_scheduled (todos opcionais)
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -3016,6 +3021,26 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                       <p className="text-[10px] text-muted-foreground">{lead.remote_jid?.replace(/@.*/, '')}</p>
                                     </button>
                                   </div>
+                                  {/* Fase 6 badges enriched — só renderiza se algum tem valor */}
+                                  {(lead.client_city || lead.vehicle_interest || lead.visit_scheduled) && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {lead.client_city ? (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-medium truncate max-w-[100px]" title={`Cidade: ${lead.client_city}`}>
+                                          📍 {lead.client_city}
+                                        </span>
+                                      ) : null}
+                                      {lead.vehicle_interest ? (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 font-medium truncate max-w-[120px]" title={`Carro: ${lead.vehicle_interest}`}>
+                                          🚗 {lead.vehicle_interest}
+                                        </span>
+                                      ) : null}
+                                      {lead.visit_scheduled ? (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium truncate max-w-[110px]" title={`Visita: ${lead.visit_scheduled}`}>
+                                          📅 {String(lead.visit_scheduled).slice(0, 18)}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  )}
                                   {lead.summary && (
                                     <button onClick={() => loadLeadDetail(lead)} className="w-full text-left">
                                       <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2">{lead.summary}</p>
