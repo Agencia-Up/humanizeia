@@ -25,14 +25,14 @@ import {
 import {
   Save, ArrowLeft, Trash2, Loader2, Search, X,
   MessageSquare, Mail, Clock, GitBranch, Tag, Webhook,
-  Target, Play, Pause, Image, Mic, Video, FileText,
+  Target, Play, Pause, Image, Mic, Video, FileText, List,
 } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type AutoNodeType = 'trigger' | 'message' | 'email' | 'delay' | 'condition' | 'tag' | 'webhook';
+type AutoNodeType = 'trigger' | 'message' | 'email' | 'delay' | 'condition' | 'tag' | 'webhook' | 'add_to_list';
 
 interface AutoNodeData {
   nodeType: AutoNodeType;
@@ -100,6 +100,12 @@ const NODE_STYLES: Record<AutoNodeType, {
     borderColor: '#ec4899',
     bgGradient: 'linear-gradient(135deg, rgba(236,72,153,0.18), rgba(236,72,153,0.04))',
     iconColor: '#ec4899', Icon: Webhook,
+  },
+  add_to_list: {
+    emoji: '📋', label: 'Adicionar à lista', description: 'Adicionar contato a outra lista',
+    borderColor: '#f97316',
+    bgGradient: 'linear-gradient(135deg, rgba(249,115,22,0.18), rgba(249,115,22,0.04))',
+    iconColor: '#f97316', Icon: List,
   },
 };
 
@@ -267,6 +273,8 @@ function getConfigSummary(data: AutoNodeData): string {
       return c.tagName ? `🏷️ ${c.tagAction === 'remove' ? 'Remover' : 'Adicionar'}: ${c.tagName}` : '⚠️ Clique para definir';
     case 'webhook':
       return c.webhookUrl ? `🔗 ${c.webhookUrl.slice(0, 35)}...` : '⚠️ Clique para definir';
+    case 'add_to_list':
+      return c.targetListId ? `📋 Lista: ${c.targetListName || c.targetListId.slice(0, 8)}` : '⚠️ Clique para selecionar lista';
     default:
       return '';
   }
@@ -650,6 +658,33 @@ function NodeConfigDialog({
                     <SelectItem value="PUT">PUT</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+            </>
+          )}
+
+          {/* ─── ADD_TO_LIST CONFIG (Item 4) ─── */}
+          {data.nodeType === 'add_to_list' && (
+            <>
+              <div className="space-y-2">
+                <Label>Lista de destino</Label>
+                <Select
+                  value={config.targetListId || ''}
+                  onValueChange={v => updateConfig('targetListId', v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione a lista..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {lists.map(list => (
+                      <SelectItem key={list.id} value={list.id}>
+                        {list.name} ({list.contact_count})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-muted-foreground">
+                  Quando o fluxo passar neste nó, o contato será adicionado a essa lista (sem remover da lista atual).
+                </p>
               </div>
             </>
           )}
