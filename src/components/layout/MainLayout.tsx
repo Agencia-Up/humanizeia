@@ -14,7 +14,7 @@ interface MainLayoutProps {
 }
 
 // Rotas onde o botão voltar não deve aparecer (pontos de entrada)
-const NO_BACK_ROUTES = ['/dashboard', '/metrics'];
+const NO_BACK_ROUTES = ['/tela-inicial', '/dashboard', '/metrics'];
 
 export function MainLayout({ children }: MainLayoutProps) {
   const { sidebarOpen, setSidebarOpen } = useAppStore();
@@ -65,7 +65,7 @@ export function MainLayout({ children }: MainLayoutProps) {
                     if (canGoBack) {
                       navigate(-1);
                     } else {
-                      navigate('/dashboard');
+                      navigate('/tela-inicial');
                     }
                   }}
                   className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 px-2 rounded-lg transition-colors group"

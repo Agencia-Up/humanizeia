@@ -1,5 +1,6 @@
 import {
   LayoutDashboard,
+  Home,
   BarChart3,
   Brain,
   PenTool,
@@ -134,7 +135,7 @@ function NavItem({
       <SidebarMenuButton asChild tooltip={item.title}>
         <NavLink
           to={item.url}
-          end={item.url === '/dashboard'}
+          end={item.url === '/dashboard' || item.url === '/tela-inicial'}
           className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/60 hover:text-foreground"
           activeClassName="bg-primary/10 text-primary font-medium border-l-2 border-primary pl-[9px]"
         >
@@ -457,6 +458,7 @@ export function AppSidebar() {
           <>
             {visibleFeatures.sidebar_dashboard && (
               <NavGroup label="Painel" collapsed={collapsed}>
+                <NavItem collapsed={collapsed} item={{ title: 'Tela inicial', url: '/tela-inicial', icon: Home }} />
                 <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
               </NavGroup>
             )}
@@ -498,6 +500,7 @@ export function AppSidebar() {
           <>
             {/* ── Dashboard ── */}
             <NavGroup label="Painel" collapsed={collapsed}>
+              <NavItem collapsed={collapsed} item={{ title: 'Tela inicial', url: '/tela-inicial', icon: Home }} />
               <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
             </NavGroup>
 

@@ -40,7 +40,7 @@ export default function Auth() {
     const r = searchParams.get('redirect');
     // Aceita só paths internos (segurança contra open-redirect)
     if (r && r.startsWith('/') && !r.startsWith('//')) return r;
-    return '/dashboard';
+    return '/tela-inicial';
   })();
 
   // Login

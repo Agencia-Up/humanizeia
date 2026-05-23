@@ -254,7 +254,7 @@ export default function LandingPage() {
   // Prompt 8 — toggle Mensal/Anual do plano PRO
   const [billing, setBilling] = useState<'mensal' | 'anual'>('mensal');
 
-  if (!loading && user) return <Navigate to="/dashboard" replace />;
+  if (!loading && user) return <Navigate to="/tela-inicial" replace />;
 
   return (
     <div className="min-h-screen bg-background text-foreground overflow-x-hidden">

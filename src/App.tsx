@@ -118,6 +118,7 @@ const CheckoutSuccess = lazy(() => import("./pages/CheckoutSuccess")); // Prompt
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const SetSellerPassword = lazy(() => import("./pages/SetSellerPassword"));
 const AgentHub = lazy(() => import("./pages/AgentHub"));
+const CommercialDashboard = lazy(() => import("./pages/CommercialDashboard"));
 const MetricsDashboard = lazy(() => import("./pages/Dashboard"));
 const Tutorials = lazy(() => import("./pages/Tutorials"));
 const AICreativeStudio = lazy(() => import("./pages/AICreativeStudio"));
@@ -218,7 +219,8 @@ const App = () => (
                 <Route path="/niche-quiz"    element={<ProtectedRoute><Lazy><NicheQuiz /></Lazy></ProtectedRoute>} />
                 <Route path="/briefing/:nicho" element={<ProtectedRoute><Lazy><BriefingDetails /></Lazy></ProtectedRoute>} />
 
-                <Route path="/dashboard"          element={<ProtectedRoute><Lazy><AgentHub /></Lazy></ProtectedRoute>} />
+                <Route path="/tela-inicial"       element={<ProtectedRoute><Lazy><AgentHub /></Lazy></ProtectedRoute>} />
+                <Route path="/dashboard"          element={<ProtectedRoute><Lazy><CommercialDashboard /></Lazy></ProtectedRoute>} />
                 <Route path="/metrics"            element={<ProtectedRoute><Lazy><MetricsDashboard /></Lazy></ProtectedRoute>} />
                 <Route path="/connect-accounts"   element={<ProtectedRoute><Lazy><ConnectAccounts /></Lazy></ProtectedRoute>} />
                 {/* ── Agentes principais (master + sellers com permissao) ── */}

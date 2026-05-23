@@ -5,7 +5,7 @@ import { Loader2 } from 'lucide-react';
 
 /**
  * Protege rotas que apenas o admin (wandercarvalho31@gmail.com) pode acessar.
- * Redireciona para /dashboard se o usuario nao for admin.
+ * Redireciona para /tela-inicial se o usuario nao for admin.
  */
 export function AdminRoute({ children }: { children: ReactNode }) {
   const { isAdmin, loading } = useIsAdmin();
@@ -19,7 +19,7 @@ export function AdminRoute({ children }: { children: ReactNode }) {
   }
 
   if (!isAdmin) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/tela-inicial" replace />;
   }
 
   return <>{children}</>;
