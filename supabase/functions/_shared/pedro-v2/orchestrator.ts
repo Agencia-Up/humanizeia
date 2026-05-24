@@ -175,12 +175,14 @@ export async function processPedroV2Turn(
   const adContext = await resolvePedroAdContext(input.payload, text);
   const enrichedText = buildMessageWithAdContext(text, adContext);
   const adMemory = adContextToMemory(adContext);
+  const adNeedsVehicleConfirmation = adContext.has_ad_context && !adContext.vehicle_query;
   const enrichedIntent = adContext.has_ad_context
     ? routePedroIntent({ message: enrichedText, current_memory: currentMemory })
     : intent;
   const contextualIntent = adContext.has_ad_context
     ? {
         ...enrichedIntent,
+        intent: adNeedsVehicleConfirmation ? "vehicle_reference" : enrichedIntent.intent,
         extracted: {
           ...enrichedIntent.extracted,
           ...adMemory,
@@ -193,7 +195,11 @@ export async function processPedroV2Turn(
             ...(adMemory.referencia || {}),
           },
         },
-        reason: `ad_context:${adContext.source || "unknown"}`,
+        needs_stock_search: adNeedsVehicleConfirmation ? false : enrichedIntent.needs_stock_search,
+        needs_handoff: enrichedIntent.needs_handoff,
+        reason: adNeedsVehicleConfirmation
+          ? `ad_context_missing_vehicle:${adContext.source || "unknown"}`
+          : `ad_context:${adContext.source || "unknown"}`,
       }
     : intent;
   const nextMemory = !dryRun && lead?.id

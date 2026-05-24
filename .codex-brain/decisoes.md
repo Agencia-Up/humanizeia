@@ -45,6 +45,7 @@
 - Para usuarios na allowlist do Pedro v2, criacao/sincronizacao de instancia Uazapi deve configurar webhook para `pedro-webhook-v2`; usuarios fora da allowlist continuam em `uazapi-webhook`.
 - A sincronizacao de webhook deve checar allowlist por user id antes da consulta por email, para nao depender de lookup de Auth quando o usuario de teste ja esta identificado.
 - Pedro v2 nunca deve abandonar contexto de anuncio dizendo que nao acessa links externos. O orquestrador deve tratar cards/links do WhatsApp como contexto de negocio: extrair metadados, inferir veiculo quando possivel, buscar no BNDV e so pedir confirmacao quando o anuncio nao tiver contexto suficiente.
+- Pedro v2 nao pode consultar estoque usando apenas texto generico de anuncio/link. Se nao identificar marca/modelo/tipo com confianca, deve pedir modelo ou print antes de oferecer qualquer veiculo.
 
 ## Segredos
 

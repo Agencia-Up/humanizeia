@@ -67,6 +67,17 @@ export function generatePedroSalesReply(input: {
 }) {
   const intent = input.intent?.intent || "unknown";
   const name = leadName(input.memory);
+  const requested = input.memory?.interesse?.modelo_desejado || input.intent?.extracted?.interesse?.modelo_desejado;
+  const cameFromAd = Boolean(input.memory?.referencia?.origem_anuncio || input.intent?.extracted?.referencia?.origem_anuncio);
+
+  if (cameFromAd && !requested && input.intent?.reason?.startsWith("ad_context_missing_vehicle")) {
+    return {
+      ok: true,
+      text:
+        "Vi que voce veio por um anuncio da Icom, mas nao consegui identificar com seguranca qual veiculo aparece nele. Me manda o modelo ou um print do anuncio que eu confiro no estoque real pra voce, sem te passar carro errado.",
+      source: "ad_context_needs_vehicle_confirmation",
+    };
+  }
 
   if (hasUsefulStock(input.stock_result)) {
     return {
@@ -81,8 +92,6 @@ export function generatePedroSalesReply(input: {
   }
 
   if (input.stock_result && !hasUsefulStock(input.stock_result)) {
-    const requested = input.memory?.interesse?.modelo_desejado || input.intent?.extracted?.interesse?.modelo_desejado;
-    const cameFromAd = Boolean(input.memory?.referencia?.origem_anuncio || input.intent?.extracted?.referencia?.origem_anuncio);
     if (cameFromAd && !requested) {
       return {
         ok: true,

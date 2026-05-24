@@ -16,6 +16,7 @@
   - implementar envio de imagens de veiculos como midia real depois da resposta textual;
   - conectar transferencia automatica do v2 com briefing e confirmacao `ok`, preservando coluna `Novo`;
   - validar em WhatsApp real o novo resolvedor de anuncio/link depois que a instancia `agente-ia-hpic` foi apontada para `pedro-webhook-v2`, especialmente cards do Facebook/Instagram com imagem e links encurtados;
+  - estudar fonte confiavel de criativos/anuncios Meta para mapear post/link de anuncio ao veiculo anunciado quando a Uazapi entregar apenas link generico sem thumbnail/metadados;
   - testar em usuario liberado por `PEDRO_V2_ALLOWED_USER_EMAILS`/`PEDRO_V2_ALLOWED_USER_IDS` antes de qualquer rollout global;
   - validar idempotencia e logs com `PEDRO_V2_MUTATIONS_ENABLED` e `PEDRO_V2_SEND_ENABLED` ligados somente no teste controlado.
 - Apos novo teste real no WhatsApp do usuario liberado, conferir se `pedro_v2_turn_logs` recebeu eventos; se continuar vazio, investigar payload da Uazapi antes de alterar inteligencia do agente.

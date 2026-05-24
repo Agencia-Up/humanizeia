@@ -14,6 +14,7 @@ type PedroV2AdContext = {
 };
 
 const URL_RE = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi;
+const METADATA_TIMEOUT_MS = 2500;
 
 function asText(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -73,7 +74,10 @@ function findFirstBase64Image(value: unknown, depth = 0): string | null {
   if (typeof value === "string") {
     const text = value.trim();
     if (text.startsWith("data:image/")) return text;
-    if (/^https?:\/\/.+\.(png|jpe?g|webp)(\?.*)?$/i.test(text)) return text;
+    if (/^https?:\/\//i.test(text) && (
+      /\.(png|jpe?g|webp)(\?.*)?$/i.test(text) ||
+      /(?:fbcdn|scontent|image|thumbnail|media)/i.test(text)
+    )) return text;
     if (text.length > 500 && /^[A-Za-z0-9+/=\r\n]+$/.test(text)) {
       return `data:image/jpeg;base64,${text}`;
     }
@@ -115,6 +119,63 @@ function findFirstBase64Image(value: unknown, depth = 0): string | null {
   }
 
   return null;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, " ");
+}
+
+function pickMeta(html: string, names: string[]): string | null {
+  for (const name of names) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const patterns = [
+      new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+      new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+      new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${escaped}["'][^>]*>`, "i"),
+      new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${escaped}["'][^>]*>`, "i"),
+    ];
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      const text = asText(match?.[1] ? decodeHtmlEntities(match[1]) : null);
+      if (text) return text;
+    }
+  }
+  return null;
+}
+
+async function fetchAdPageMetadata(url?: string | null): Promise<{
+  title?: string | null;
+  description?: string | null;
+  image?: string | null;
+} | null> {
+  if (!url || !/^https?:\/\//i.test(url)) return null;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), METADATA_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; LogosIA-PedroV2/1.0)",
+        "Accept": "text/html,application/xhtml+xml",
+      },
+    });
+    if (!res.ok) return null;
+    const html = (await res.text()).slice(0, 250_000);
+    const title = pickMeta(html, ["og:title", "twitter:title"]) || asText(html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]);
+    const description = pickMeta(html, ["og:description", "twitter:description", "description"]);
+    const image = pickMeta(html, ["og:image", "og:image:url", "twitter:image"]);
+    return { title, description, image };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function extractTextualAdContext(payload: any, messageText: string): PedroV2AdContext {
@@ -260,8 +321,17 @@ async function inferVehicleFromImage(imageDataUrl: string): Promise<Pick<PedroV2
 
 export async function resolvePedroAdContext(payload: any, messageText: string): Promise<PedroV2AdContext> {
   const textual = extractTextualAdContext(payload, messageText);
-  const textInference = inferVehicleFromText(textual.raw_text || messageText);
-  const imageDataUrl = findFirstBase64Image(payload);
+  const pageMetadata = textual.has_ad_context && !inferVehicleFromText(textual.raw_text || messageText).vehicle_query
+    ? await fetchAdPageMetadata(textual.url)
+    : null;
+  const metadataText = compact([
+    pageMetadata?.title,
+    pageMetadata?.description,
+    textual.raw_text,
+    messageText,
+  ]);
+  const textInference = inferVehicleFromText(metadataText || textual.raw_text || messageText);
+  const imageDataUrl = findFirstBase64Image(payload) || findFirstBase64Image(pageMetadata?.image);
   const imageInference = imageDataUrl ? await inferVehicleFromImage(imageDataUrl) : null;
   const best = imageInference && Number(imageInference.confidence || 0) > Number(textInference.confidence || 0)
     ? imageInference
@@ -270,9 +340,11 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
   return {
     ...textual,
     has_ad_context: textual.has_ad_context || Boolean(best.vehicle_query),
+    title: pageMetadata?.title || textual.title || null,
+    description: pageMetadata?.description || textual.description || null,
     vehicle_query: best.vehicle_query || null,
     vehicle_type: best.vehicle_type || null,
-    summary: best.summary || textual.raw_text || null,
+    summary: best.summary || metadataText || textual.raw_text || null,
     confidence: Number(best.confidence || 0),
   };
 }

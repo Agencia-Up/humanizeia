@@ -71,6 +71,12 @@
   - webhook da instancia foi sincronizado para `pedro-webhook-v2`;
   - `sync-evolution-webhook` foi atualizado para respeitar allowlist por user id/email via helper compartilhado do Pedro v2 e nao reverter usuarios liberados para o webhook antigo;
   - function `sync-evolution-webhook` publicada em producao como V8.3.
+- Ajustada a seguranca da busca de estoque do Pedro v2 em anuncios:
+  - log real mostrou que a Uazapi entregou apenas titulo/descricao genericos do Facebook, sem o modelo do veiculo;
+  - o v2 deixou de consultar estoque quando o anuncio nao identifica um veiculo com confianca;
+  - adicionada tentativa curta de leitura de metadados/imagem do link antes de desistir;
+  - resposta de anuncio sem veiculo agora pede modelo ou print, evitando oferecer carro aleatorio;
+  - deploy realizado em `pedro-webhook-v2` e `pedro-sales-reply`.
 
 ## Historico funcional recente consolidado
 
