@@ -53,6 +53,12 @@
   - `pedro-seller-ack`;
   - `pedro-message-sender`.
 - Migration `20260524090000_pedro_v2_scaffold.sql` nao foi aplicada via `db push`, pois o Supabase exigiu `--include-all` para migrations antigas locais que nao constam no historico remoto. Nao usar `--include-all` sem auditoria; o log do v2 falha de forma nao bloqueante se a tabela ainda nao existir.
+- Corrigido o caminho seguro para teste controlado do Pedro v2:
+  - migration `20260524090000_pedro_v2_scaffold.sql` aplicada manualmente com `supabase db query --linked --file`, sem usar `--include-all`;
+  - `pedro_v2_turn_logs` criada em producao;
+  - `pedro-webhook-v2` passou a permitir ativacao por `PEDRO_V2_ALLOWED_USER_EMAILS` ou `PEDRO_V2_ALLOWED_USER_IDS`, mantendo o global desligado;
+  - `create-evolution-instance` e `sync-evolution-webhook` passaram a apontar usuarios liberados para `pedro-webhook-v2`, mantendo os demais em `uazapi-webhook`;
+  - secrets de producao configurados pelos nomes `PEDRO_V2_ENABLED`, `PEDRO_V2_ALLOWED_USER_EMAILS`, `PEDRO_V2_MUTATIONS_ENABLED` e `PEDRO_V2_SEND_ENABLED`, sem registrar valores no repo/cerebro.
 
 ## Historico funcional recente consolidado
 

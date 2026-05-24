@@ -6,6 +6,40 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+function listEnv(name: string): string[] {
+  return String(Deno.env.get(name) || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function includesNormalized(value: string | null | undefined, allowed: string[]): boolean {
+  if (!value) return false;
+  const normalizedValue = value.toLowerCase().trim();
+  return allowed.some((item) => item.toLowerCase().trim() === normalizedValue);
+}
+
+async function resolveWebhookFunction(supabase: any, userId: string | null | undefined) {
+  if (!userId) return "uazapi-webhook";
+
+  if (includesNormalized(userId, listEnv("PEDRO_V2_ALLOWED_USER_IDS"))) {
+    return "pedro-webhook-v2";
+  }
+
+  const allowedEmails = listEnv("PEDRO_V2_ALLOWED_USER_EMAILS");
+  if (allowedEmails.length === 0) return "uazapi-webhook";
+
+  const { data, error } = await supabase.auth.admin.getUserById(userId);
+  if (error) {
+    console.warn("[sync-webhook] Could not resolve user email for Pedro v2 gate:", error.message);
+    return "uazapi-webhook";
+  }
+
+  return includesNormalized(data?.user?.email, allowedEmails)
+    ? "pedro-webhook-v2"
+    : "uazapi-webhook";
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -30,7 +64,8 @@ serve(async (req) => {
     const instanceToken = inst.api_key_encrypted;
 
     const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
-    const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
+    const webhookFunction = await resolveWebhookFunction(supabase, inst.user_id);
+    const webhookUrl = `${supabaseUrl}/functions/v1/${webhookFunction}`;
 
     console.log(`[sync-webhook V8.2] Instância: ${inst.instance_name} | Webhook: ${webhookUrl}`);
 

@@ -1,24 +1,40 @@
 import {
   createServiceClient,
   corsHeaders,
-  isPedroV2Enabled,
+  isPedroV2EnabledForUser,
   isPedroV2MutationEnabled,
   jsonResponse,
   parseJson,
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator.ts";
 
+function agentUsesInstance(agent: any, instanceId: string): boolean {
+  return agent?.instance_id === instanceId ||
+    (Array.isArray(agent?.instance_ids) && agent.instance_ids.includes(instanceId)) ||
+    agent?.wa_instance_id === instanceId ||
+    agent?.whatsapp_instance_id === instanceId;
+}
+
+function agentLooksLikePedro(agent: any): boolean {
+  const haystack = [
+    agent?.name,
+    agent?.agent_name,
+    agent?.title,
+    agent?.description,
+    agent?.agent_type,
+    agent?.type,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return haystack.includes("pedro") ||
+    haystack.includes("carvalho") ||
+    haystack.includes("sdr") ||
+    haystack.includes("pre-venda") ||
+    haystack.includes("pré-venda");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
-
-  if (!isPedroV2Enabled()) {
-    return jsonResponse({
-      ok: false,
-      disabled: true,
-      message: "Pedro v2 is scaffolded but disabled. Set PEDRO_V2_ENABLED=true to test.",
-    }, 423);
-  }
 
   const supabase = createServiceClient();
   const payload = await parseJson(req);
@@ -43,12 +59,29 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, error: "active_instance_not_found" }, 404);
   }
 
-  const { data: agent, error: agentError } = await supabase
+  const gate = await isPedroV2EnabledForUser(supabase, waInstance.user_id);
+  if (!gate.enabled) {
+    return jsonResponse({
+      ok: false,
+      disabled: true,
+      reason: gate.reason,
+      message:
+        "Pedro v2 is disabled for this user. Use PEDRO_V2_ALLOWED_USER_EMAILS/IDS for controlled tests or PEDRO_V2_ENABLED for global rollout.",
+    }, 423);
+  }
+
+  const { data: agents, error: agentError } = await supabase
     .from("wa_ai_agents")
     .select("*")
     .eq("user_id", waInstance.user_id)
-    .eq("is_active", true)
-    .maybeSingle();
+    .eq("is_active", true);
+
+  const activeAgents = Array.isArray(agents) ? agents : [];
+  const agent =
+    activeAgents.find((item) => agentUsesInstance(item, waInstance.id)) ||
+    activeAgents.find(agentLooksLikePedro) ||
+    activeAgents[0] ||
+    null;
 
   if (agentError || !agent) {
     return jsonResponse({ ok: false, error: "active_agent_not_found" }, 404);
@@ -61,5 +94,5 @@ Deno.serve(async (req) => {
     dry_run: payload?.dry_run === false ? !isPedroV2MutationEnabled() : true,
   });
 
-  return jsonResponse(result, result.ok ? 200 : 400);
+  return jsonResponse({ ...result, gate: { reason: gate.reason } }, result.ok ? 200 : 400);
 });

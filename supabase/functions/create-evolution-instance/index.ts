@@ -82,6 +82,40 @@ function buildWebhookPayload(webhookUrl: string, instanceName?: string) {
   };
 }
 
+function listEnv(name: string): string[] {
+  return String(Deno.env.get(name) || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function includesNormalized(value: string | null | undefined, allowed: string[]): boolean {
+  if (!value) return false;
+  const normalizedValue = value.toLowerCase().trim();
+  return allowed.some((item) => item.toLowerCase().trim() === normalizedValue);
+}
+
+async function resolveWebhookFunction(supabase: any, userId: string | null | undefined) {
+  if (!userId) return 'uazapi-webhook';
+
+  if (includesNormalized(userId, listEnv('PEDRO_V2_ALLOWED_USER_IDS'))) {
+    return 'pedro-webhook-v2';
+  }
+
+  const allowedEmails = listEnv('PEDRO_V2_ALLOWED_USER_EMAILS');
+  if (allowedEmails.length === 0) return 'uazapi-webhook';
+
+  const { data, error } = await supabase.auth.admin.getUserById(userId);
+  if (error) {
+    console.warn('[create-evolution-instance] Could not resolve user email for Pedro v2 gate:', error.message);
+    return 'uazapi-webhook';
+  }
+
+  return includesNormalized(data?.user?.email, allowedEmails)
+    ? 'pedro-webhook-v2'
+    : 'uazapi-webhook';
+}
+
 function slugSuffix(value: string | null | undefined) {
   return String(value || '')
     .replace(/[^a-zA-Z0-9]/g, '')
@@ -571,7 +605,8 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const webhookUrl = `${supabaseUrl}/functions/v1/uazapi-webhook`;
+  const webhookFunction = await resolveWebhookFunction(supabase, user_id);
+  const webhookUrl = `${supabaseUrl}/functions/v1/${webhookFunction}`;
   try {
     let webhookRes = await fetch(`${baseUrl}/webhook`, {
       method: 'POST',

@@ -41,9 +41,10 @@
 - Staging/base teste usa projeto Supabase separado e diretorio separado; nunca misturar credenciais.
 - Mudancas grandes devem ser testadas em staging antes de producao quando possivel.
 - Alteracoes puramente visuais podem ir direto para producao se o usuario pedir explicitamente e o build passar.
+- Pedro v2 deve entrar primeiro por allowlist de usuario/email, nao por flag global. A flag `PEDRO_V2_ENABLED` fica reservada para rollout geral depois de validacao.
+- Para usuarios na allowlist do Pedro v2, criacao/sincronizacao de instancia Uazapi deve configurar webhook para `pedro-webhook-v2`; usuarios fora da allowlist continuam em `uazapi-webhook`.
 
 ## Segredos
 
 - Nunca registrar valores reais de tokens/API keys em arquivos do repo ou cerebro.
 - No cerebro, registrar apenas nomes de variaveis e locais esperados.
-
