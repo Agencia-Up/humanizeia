@@ -65,6 +65,12 @@
   - orquestrador v2 passou a extrair card/link de anuncio, URL, texto rico e thumbnail/imagem quando disponivel, enriquecendo memoria/intencao antes da busca BNDV;
   - Pedro v2 nao deve responder que "nao consegue acessar links externos"; deve usar metadados do anuncio e, se faltar contexto, perguntar pelo modelo ou print;
   - deploy realizado das Edge Functions `pedro-webhook-v2` e `pedro-sales-reply` em producao.
+- Corrigido roteamento real da instancia de teste do Pedro v2:
+  - confirmado que chamada direta ao `pedro-webhook-v2` para o usuario `douglasaloan@gmail.com` tratava anuncio/link corretamente;
+  - identificado que a instancia Uazapi `agente-ia-hpic` ainda apontava para `uazapi-webhook`, por isso o WhatsApp continuava caindo no Pedro v1;
+  - webhook da instancia foi sincronizado para `pedro-webhook-v2`;
+  - `sync-evolution-webhook` foi atualizado para respeitar allowlist por user id/email via helper compartilhado do Pedro v2 e nao reverter usuarios liberados para o webhook antigo;
+  - function `sync-evolution-webhook` publicada em producao como V8.3.
 
 ## Historico funcional recente consolidado
 

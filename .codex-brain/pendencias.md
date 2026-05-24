@@ -15,9 +15,10 @@
   - adicionar idempotencia forte no sender antes de habilitar envio real em producao;
   - implementar envio de imagens de veiculos como midia real depois da resposta textual;
   - conectar transferencia automatica do v2 com briefing e confirmacao `ok`, preservando coluna `Novo`;
-  - validar em WhatsApp real o novo resolvedor de anuncio/link, especialmente cards do Facebook/Instagram com imagem e links encurtados;
+  - validar em WhatsApp real o novo resolvedor de anuncio/link depois que a instancia `agente-ia-hpic` foi apontada para `pedro-webhook-v2`, especialmente cards do Facebook/Instagram com imagem e links encurtados;
   - testar em usuario liberado por `PEDRO_V2_ALLOWED_USER_EMAILS`/`PEDRO_V2_ALLOWED_USER_IDS` antes de qualquer rollout global;
   - validar idempotencia e logs com `PEDRO_V2_MUTATIONS_ENABLED` e `PEDRO_V2_SEND_ENABLED` ligados somente no teste controlado.
+- Apos novo teste real no WhatsApp do usuario liberado, conferir se `pedro_v2_turn_logs` recebeu eventos; se continuar vazio, investigar payload da Uazapi antes de alterar inteligencia do agente.
 - O historico de migrations continua desalinhado: a tabela `pedro_v2_turn_logs` foi aplicada com `db query --file`, mas `db push --include-all` segue proibido sem auditoria das migrations antigas.
 
 ## Media prioridade

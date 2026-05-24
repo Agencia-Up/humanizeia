@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isPedroV2EnabledForUser } from "../_shared/pedro-v2/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,24 +21,16 @@ function includesNormalized(value: string | null | undefined, allowed: string[])
 }
 
 async function resolveWebhookFunction(supabase: any, userId: string | null | undefined) {
-  if (!userId) return "uazapi-webhook";
+  if (!userId) return { functionName: "uazapi-webhook", reason: "missing_user_id" };
 
   if (includesNormalized(userId, listEnv("PEDRO_V2_ALLOWED_USER_IDS"))) {
-    return "pedro-webhook-v2";
+    return { functionName: "pedro-webhook-v2", reason: "user_id_allowlist_local" };
   }
 
-  const allowedEmails = listEnv("PEDRO_V2_ALLOWED_USER_EMAILS");
-  if (allowedEmails.length === 0) return "uazapi-webhook";
+  const gate = await isPedroV2EnabledForUser(supabase, userId);
+  if (gate.enabled) return { functionName: "pedro-webhook-v2", reason: gate.reason, email: gate.email || null };
 
-  const { data, error } = await supabase.auth.admin.getUserById(userId);
-  if (error) {
-    console.warn("[sync-webhook] Could not resolve user email for Pedro v2 gate:", error.message);
-    return "uazapi-webhook";
-  }
-
-  return includesNormalized(data?.user?.email, allowedEmails)
-    ? "pedro-webhook-v2"
-    : "uazapi-webhook";
+  return { functionName: "uazapi-webhook", reason: gate.reason, email: gate.email || null };
 }
 
 serve(async (req) => {
@@ -64,10 +57,11 @@ serve(async (req) => {
     const instanceToken = inst.api_key_encrypted;
 
     const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
-    const webhookFunction = await resolveWebhookFunction(supabase, inst.user_id);
+    const webhookDecision = await resolveWebhookFunction(supabase, inst.user_id);
+    const webhookFunction = webhookDecision.functionName;
     const webhookUrl = `${supabaseUrl}/functions/v1/${webhookFunction}`;
 
-    console.log(`[sync-webhook V8.2] Instância: ${inst.instance_name} | Webhook: ${webhookUrl}`);
+    console.log(`[sync-webhook V8.3] Instância: ${inst.instance_name} | Webhook: ${webhookUrl} | Reason: ${webhookDecision.reason}`);
 
     let response = await fetch(`${baseUrl}/webhook`, {
       method: "POST",
@@ -121,7 +115,8 @@ serve(async (req) => {
     return new Response(JSON.stringify({ 
       success: true, 
       message: "Webhook sincronizado com sucesso",
-      webhookUrl 
+      webhookUrl,
+      pedroV2Gate: webhookDecision,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
