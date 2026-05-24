@@ -40,6 +40,19 @@
   - `pedro-message-sender` passou a centralizar envio Uazapi de texto e midia, ainda protegido por `PEDRO_V2_SEND_ENABLED`;
   - `pedro-webhook-v2` passou a orquestrar intencao -> estoque -> resposta -> envio planejado/enviado, sem tocar no Pedro v1.
 - Build frontend validado com `npm.cmd run build`; avisos exibidos sao os ja conhecidos do projeto.
+- Commit `c2b1294` enviado para `origin/main` com o Pedro v2 paralelo e cerebro local.
+- Edge Functions do Pedro v2 publicadas no Supabase de producao:
+  - `pedro-webhook-v2`;
+  - `pedro-identify-contact`;
+  - `pedro-intent-router`;
+  - `pedro-lead-memory`;
+  - `pedro-transfer-router`;
+  - `pedro-stock-search`;
+  - `pedro-sales-reply`;
+  - `pedro-crm-sync`;
+  - `pedro-seller-ack`;
+  - `pedro-message-sender`.
+- Migration `20260524090000_pedro_v2_scaffold.sql` nao foi aplicada via `db push`, pois o Supabase exigiu `--include-all` para migrations antigas locais que nao constam no historico remoto. Nao usar `--include-all` sem auditoria; o log do v2 falha de forma nao bloqueante se a tabela ainda nao existir.
 
 ## Historico funcional recente consolidado
 

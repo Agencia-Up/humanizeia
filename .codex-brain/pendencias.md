@@ -3,6 +3,7 @@
 ## Alta prioridade
 
 - Validar seguranca de Edge Functions com `verify_jwt = false`: cada function precisa autenticar/autorizacao internamente quando manipula dados reais.
+- Resolver historico de migrations antes de aplicar novas migrations em producao. Em 2026-05-24, `supabase db push --linked` pediu `--include-all` por migrations antigas nao registradas no remoto; nao aplicar em massa sem auditoria.
 - Revisar RLS das tabelas criticas para garantir isolamento entre gerente, vendedor e usuario comum.
 - Garantir idempotencia das filas de WhatsApp, campanhas e follow-ups para evitar mensagens duplicadas.
 - Consolidar nomenclatura Uazapi/Evolution: o produto usa Uazapi, mas ainda ha nomes historicos `evolution` em functions/componentes.
@@ -15,6 +16,7 @@
   - implementar envio de imagens de veiculos como midia real depois da resposta textual;
   - conectar transferencia automatica do v2 com briefing e confirmacao `ok`, preservando coluna `Novo`;
   - ativar apenas em ambiente controlado com `PEDRO_V2_ENABLED`, `PEDRO_V2_MUTATIONS_ENABLED` e `PEDRO_V2_SEND_ENABLED`.
+  - aplicar ou criar alternativa segura para a tabela `pedro_v2_turn_logs` antes de testes longos com gravacao.
 
 ## Media prioridade
 
