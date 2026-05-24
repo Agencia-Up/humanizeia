@@ -77,6 +77,13 @@
   - adicionada tentativa curta de leitura de metadados/imagem do link antes de desistir;
   - resposta de anuncio sem veiculo agora pede modelo ou print, evitando oferecer carro aleatorio;
   - deploy realizado em `pedro-webhook-v2` e `pedro-sales-reply`.
+- Hotfix do Pedro v2 em producao para teste controlado do usuario Douglas:
+  - confirmado por chamada remota que `pedro-webhook-v2` esta publicado no Supabase com build `2026-05-24-humanized-ad-reply-v2`;
+  - adicionada humanizacao no envio do v2 com presenca de digitacao, atraso realista e divisao de mensagens longas;
+  - corrigido fallback de anuncio sem veiculo para se apresentar como Carvalho e pedir modelo/print, sem chutar modelo especifico;
+  - reforcada extracao de thumbnails/imagens em payloads Uazapi com arrays de bytes e objetos tipo Buffer;
+  - versionados os imports do orquestrador/reply/adContext/sender para evitar cache antigo de modulo compartilhado no Edge Runtime;
+  - validado por `dry_run` remoto que o Supabase responde sem oferecer carro aleatorio quando o card do Facebook nao traz o veiculo.
 
 ## Historico funcional recente consolidado
 

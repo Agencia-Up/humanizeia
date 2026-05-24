@@ -4,12 +4,12 @@ import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryF
 import { routePedroIntent } from "./intentRouter.ts";
 import { confirmSellerAck } from "./transferRouter.ts";
 import { remoteJidToPhone } from "./phone.ts";
-import { generatePedroSalesReply } from "./replyGenerator.ts";
+import { generatePedroSalesReply } from "./replyGenerator_20260524.ts";
 import { searchPedroStock } from "./stockSearch.ts";
-import { resolvePedroInstance, sendPedroText } from "./uazapiSender.ts";
+import { resolvePedroInstance, sendPedroText } from "./uazapiSender_20260524.ts";
 import { PedroV2TurnInput, PedroV2TurnResult } from "./types.ts";
 import { isPedroV2SendingEnabled } from "./server.ts";
-import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } from "./adContext.ts";
+import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } from "./adContext_20260524.ts";
 
 async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
   try {

@@ -6,7 +6,9 @@ import {
   jsonResponse,
   parseJson,
 } from "../_shared/pedro-v2/server.ts";
-import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator.ts";
+import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260524.ts";
+
+const PEDRO_V2_BUILD = "2026-05-24-humanized-ad-reply-v2";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||
@@ -109,5 +111,5 @@ Deno.serve(async (req) => {
     dry_run: payload?.dry_run === true || !isPedroV2MutationEnabled(),
   });
 
-  return jsonResponse({ ...result, gate: { reason: gate.reason } }, result.ok ? 200 : 400);
+  return jsonResponse({ ...result, build: PEDRO_V2_BUILD, gate: { reason: gate.reason } }, result.ok ? 200 : 400);
 });

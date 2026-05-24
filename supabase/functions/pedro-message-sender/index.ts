@@ -1,5 +1,5 @@
 import { authorizeToolRequest, corsHeaders, createServiceClient, isPedroV2SendingEnabled, jsonResponse, parseJson } from "../_shared/pedro-v2/server.ts";
-import { resolvePedroInstance, sendPedroMedia, sendPedroText } from "../_shared/pedro-v2/uazapiSender.ts";
+import { resolvePedroInstance, sendPedroMedia, sendPedroText } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
