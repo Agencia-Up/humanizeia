@@ -159,6 +159,36 @@ verify_jwt = false
 [functions.uazapi-webhook]
 verify_jwt = false
 
+[functions.pedro-webhook-v2]
+verify_jwt = false
+
+[functions.pedro-identify-contact]
+verify_jwt = false
+
+[functions.pedro-intent-router]
+verify_jwt = false
+
+[functions.pedro-lead-memory]
+verify_jwt = false
+
+[functions.pedro-transfer-router]
+verify_jwt = false
+
+[functions.pedro-stock-search]
+verify_jwt = false
+
+[functions.pedro-crm-sync]
+verify_jwt = false
+
+[functions.pedro-seller-ack]
+verify_jwt = false
+
+[functions.pedro-sales-reply]
+verify_jwt = false
+
+[functions.pedro-message-sender]
+verify_jwt = false
+
 [functions.checkout-create-subscription]
 verify_jwt = false
 

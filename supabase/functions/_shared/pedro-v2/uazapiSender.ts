@@ -1,0 +1,131 @@
+import { digitsOnly } from "./phone.ts";
+
+type PedroWaInstance = {
+  id?: string;
+  instance_name?: string | null;
+  api_url?: string | null;
+  api_key?: string | null;
+  api_key_encrypted?: string | null;
+};
+
+function normalizeBaseUrl(url?: string | null) {
+  return String(url || "").replace(/\/+$/, "");
+}
+
+function getInstanceToken(instance: PedroWaInstance) {
+  return instance.api_key_encrypted || instance.api_key || "";
+}
+
+export function normalizeDestination(value: string) {
+  const digits = digitsOnly(value);
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
+export async function resolvePedroInstance(supabase: any, input: {
+  user_id: string;
+  agent_id?: string | null;
+  instance_id?: string | null;
+}) {
+  if (input.instance_id) {
+    const { data } = await supabase
+      .from("wa_instances")
+      .select("*")
+      .eq("id", input.instance_id)
+      .maybeSingle();
+    if (data) return data;
+  }
+
+  if (input.agent_id) {
+    const { data: agent } = await supabase
+      .from("wa_ai_agents")
+      .select("instance_id, instance_ids")
+      .eq("id", input.agent_id)
+      .maybeSingle();
+
+    const instanceIds = [
+      agent?.instance_id,
+      ...(Array.isArray(agent?.instance_ids) ? agent.instance_ids : []),
+    ].filter(Boolean);
+
+    if (instanceIds.length > 0) {
+      const { data } = await supabase
+        .from("wa_instances")
+        .select("*")
+        .in("id", instanceIds)
+        .eq("user_id", input.user_id)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data) return data;
+    }
+  }
+
+  const { data } = await supabase
+    .from("wa_instances")
+    .select("*")
+    .eq("user_id", input.user_id)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data || null;
+}
+
+export async function sendPedroText(instance: PedroWaInstance, input: { to: string; text: string }) {
+  const baseUrl = normalizeBaseUrl(instance.api_url);
+  const token = getInstanceToken(instance);
+  const destination = normalizeDestination(input.to);
+  if (!baseUrl) throw new Error("Instancia WhatsApp sem URL configurada");
+  if (!token) throw new Error("Instancia WhatsApp sem token configurado");
+  if (!destination) throw new Error("Destino WhatsApp invalido");
+
+  const remoteJid = `${destination}@s.whatsapp.net`;
+  const attempts = [
+    { label: "send-text-number", url: `${baseUrl}/send/text`, body: { number: destination, text: input.text } },
+    { label: "send-text-remotejid", url: `${baseUrl}/send/text`, body: { remoteJid, text: input.text } },
+    { label: "message-sendText", url: `${baseUrl}/message/sendText/${instance.instance_name || ""}`, body: { number: destination, text: input.text } },
+  ];
+
+  let lastError = "";
+  for (const attempt of attempts) {
+    const res = await fetch(attempt.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", token, apikey: token },
+      body: JSON.stringify(attempt.body),
+    });
+    if (res.ok) return { ok: true, provider: "uazapi", attempt: attempt.label, status: res.status };
+    lastError = `${attempt.label}: HTTP ${res.status} ${await res.text().catch(() => "")}`;
+  }
+  return { ok: false, provider: "uazapi", error: lastError || "Falha ao enviar texto" };
+}
+
+export async function sendPedroMedia(instance: PedroWaInstance, input: {
+  to: string;
+  file: string;
+  type?: "image" | "audio" | "video" | "document";
+  caption?: string;
+}) {
+  const baseUrl = normalizeBaseUrl(instance.api_url);
+  const token = getInstanceToken(instance);
+  const destination = normalizeDestination(input.to);
+  if (!baseUrl) throw new Error("Instancia WhatsApp sem URL configurada");
+  if (!token) throw new Error("Instancia WhatsApp sem token configurado");
+  if (!destination) throw new Error("Destino WhatsApp invalido");
+
+  const res = await fetch(`${baseUrl}/send/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", token, apikey: token },
+    body: JSON.stringify({
+      number: destination,
+      file: input.file,
+      type: input.type || "image",
+      caption: input.caption || "",
+    }),
+  });
+  if (res.ok) return { ok: true, provider: "uazapi", attempt: "send-media", status: res.status };
+  return {
+    ok: false,
+    provider: "uazapi",
+    error: `send-media: HTTP ${res.status} ${await res.text().catch(() => "")}`,
+  };
+}

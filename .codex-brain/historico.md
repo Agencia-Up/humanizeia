@@ -1,0 +1,55 @@
+# Historico
+
+## 2026-05-23
+
+- Criado o cerebro local do projeto em `.codex-brain`.
+- Auditoria inicial documentou:
+  - stack React/Vite/Supabase;
+  - rotas principais;
+  - deploy Docker/Nginx/Easypanel;
+  - Edge Functions principais;
+  - separacao Pedro x Marcos;
+  - problemas conhecidos e proximos passos.
+- Criada e publicada antes deste cerebro a divisao:
+  - `/tela-inicial`: hub inicial existente;
+  - `/dashboard`: novo dashboard comercial comparativo Pedro x Marcos.
+- Build validado antes do push da mudanca de dashboard.
+- Criada auditoria tecnica do agente Pedro em `.codex-brain/analise-pedro-agente-2026-05-23.md`, sem alteracao de codigo, apontando falhas de orquestracao, memoria, busca BNDV, contexto de anuncio e plano de reformulacao por fases.
+- Protocolado o plano do Pedro v2 em `.codex-brain/plano-pedro-v2.md`: manter Pedro v1 em paralelo, criar orquestrador leve, separar tools/Edge Functions de identificacao, memoria, intencao, estoque, resposta, transferencia, `ok` do vendedor, CRM e envio.
+
+## 2026-05-24
+
+- Iniciada a implementacao paralela do Pedro v2, sem alterar o Pedro v1 (`uazapi-webhook`).
+- Criado scaffold de Edge Functions:
+  - `pedro-webhook-v2`;
+  - `pedro-identify-contact`;
+  - `pedro-intent-router`;
+  - `pedro-lead-memory`;
+  - `pedro-transfer-router`;
+  - `pedro-stock-search`;
+  - `pedro-sales-reply`;
+  - `pedro-crm-sync`;
+  - `pedro-seller-ack`;
+  - `pedro-message-sender`.
+- Criado modulo compartilhado `supabase/functions/_shared/pedro-v2` com identidade por telefone, memoria, roteamento de intencao, transferencia e orquestracao.
+- Criada migration `20260524090000_pedro_v2_scaffold.sql` para logs de turno do Pedro v2.
+- Pedro v2 foi mantido desligado e protegido por flags de ambiente para evitar escrita/envio acidental.
+- Evoluido o Pedro v2 em paralelo:
+  - `pedro-stock-search` passou a usar busca real BNDV por tool compartilhada, com normalizacao, tolerancia a erros de digitacao e separacao carro/moto;
+  - `pedro-sales-reply` passou a gerar resposta factual com base em memoria, intencao e resultado de estoque;
+  - `pedro-message-sender` passou a centralizar envio Uazapi de texto e midia, ainda protegido por `PEDRO_V2_SEND_ENABLED`;
+  - `pedro-webhook-v2` passou a orquestrar intencao -> estoque -> resposta -> envio planejado/enviado, sem tocar no Pedro v1.
+- Build frontend validado com `npm.cmd run build`; avisos exibidos sao os ja conhecidos do projeto.
+
+## Historico funcional recente consolidado
+
+- Pedro recebeu varias correcoes em regras de transferencia, vendedor `ok`, CRM ao vivo, colunas e isolamento do agente.
+- Marcos recebeu evolucoes em CRM manual, importacao/listas, campanhas, follow-up, instancias para vendedores, performance e exclusao em massa.
+- Foi criada base teste/staging em Supabase separado e servico separado no Easypanel para validar mudancas sem quebrar producao.
+- Foram corrigidos problemas recorrentes de:
+  - login com timeout Supabase;
+  - Uazapi/instancias;
+  - duplicidade em follow-up/campanhas;
+  - midia em disparo;
+  - vendedor virando lead;
+  - Pedro e Marcos misturando dados.
