@@ -9,6 +9,7 @@ import { searchPedroStock } from "./stockSearch.ts";
 import { resolvePedroInstance, sendPedroText } from "./uazapiSender.ts";
 import { PedroV2TurnInput, PedroV2TurnResult } from "./types.ts";
 import { isPedroV2SendingEnabled } from "./server.ts";
+import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } from "./adContext.ts";
 
 async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
   try {
@@ -19,7 +20,12 @@ async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
 }
 
 function pickRemoteJid(payload: any): string {
+  const message = pickIncomingMessage(payload);
   return (
+    message?.chatId ||
+    message?.chatid ||
+    message?.from ||
+    message?.key?.remoteJid ||
     payload?.remoteJid ||
     payload?.remote_jid ||
     payload?.chatId ||
@@ -31,21 +37,49 @@ function pickRemoteJid(payload: any): string {
   );
 }
 
+function pickIncomingMessage(payload: any): any {
+  if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
+  if (Array.isArray(payload?.data) && payload.data.length > 0) return payload.data[0];
+  return payload?.message || payload?.data || payload;
+}
+
 function pickText(payload: any): string {
+  const message = pickIncomingMessage(payload);
+  const content = message?.content || payload?.content || payload?.message?.content || payload?.data?.content || payload?.data?.message?.content;
+  const contentText = typeof content === "string" ? content : "";
   return (
+    message?.body ||
+    message?.text ||
+    message?.caption ||
+    message?.message?.conversation ||
+    message?.message?.extendedTextMessage?.text ||
     payload?.text ||
     payload?.body ||
+    payload?.caption ||
     payload?.message?.text ||
     payload?.message?.body ||
+    payload?.message?.caption ||
     payload?.data?.message?.conversation ||
     payload?.data?.message?.extendedTextMessage?.text ||
     payload?.data?.body ||
+    payload?.data?.text ||
+    payload?.data?.caption ||
+    contentText ||
     ""
   );
 }
 
 function pickPushName(payload: any): string {
-  return payload?.pushName || payload?.senderName || payload?.data?.pushName || payload?.data?.senderName || "Lead";
+  const message = pickIncomingMessage(payload);
+  return message?.senderName ||
+    message?.notifyName ||
+    message?.pushName ||
+    payload?.chat?.name ||
+    payload?.pushName ||
+    payload?.senderName ||
+    payload?.data?.pushName ||
+    payload?.data?.senderName ||
+    "Lead";
 }
 
 function buildStockFilters(intent: any, memory: any, text: string) {
@@ -138,13 +172,37 @@ export async function processPedroV2Turn(
     : {};
 
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
+  const adContext = await resolvePedroAdContext(input.payload, text);
+  const enrichedText = buildMessageWithAdContext(text, adContext);
+  const adMemory = adContextToMemory(adContext);
+  const enrichedIntent = adContext.has_ad_context
+    ? routePedroIntent({ message: enrichedText, current_memory: currentMemory })
+    : intent;
+  const contextualIntent = adContext.has_ad_context
+    ? {
+        ...enrichedIntent,
+        extracted: {
+          ...enrichedIntent.extracted,
+          ...adMemory,
+          interesse: {
+            ...(enrichedIntent.extracted?.interesse || {}),
+            ...(adMemory.interesse || {}),
+          },
+          referencia: {
+            ...(enrichedIntent.extracted?.referencia || {}),
+            ...(adMemory.referencia || {}),
+          },
+        },
+        reason: `ad_context:${adContext.source || "unknown"}`,
+      }
+    : intent;
   const nextMemory = !dryRun && lead?.id
     ? await updatePedroMemoryFromIntent(supabase, {
         lead_id: lead.id,
         agent_id: input.agent.id,
         user_id: input.agent.user_id,
         current: currentMemory,
-        intent,
+        intent: contextualIntent,
         lead_phone: remoteJidToPhone(remoteJid),
         lead_name: pushName,
       })
@@ -152,26 +210,27 @@ export async function processPedroV2Turn(
 
   log("info", "pedro_v2_turn_routed", {
     lead_id: lead?.id || null,
-    intent: intent.intent,
-    needs_stock_search: intent.needs_stock_search,
-    needs_handoff: intent.needs_handoff,
+    intent: contextualIntent.intent,
+    needs_stock_search: contextualIntent.needs_stock_search,
+    needs_handoff: contextualIntent.needs_handoff,
+    ad_context: adContext,
     memory_stage: nextMemory?.atendimento?.etapa,
   });
 
-  const stockResult = intent.needs_stock_search
+  const stockResult = contextualIntent.needs_stock_search
     ? await searchPedroStock(supabase, {
         user_id: input.agent.user_id,
-        query: buildStockFilters(intent, nextMemory, text).query,
-        filters: buildStockFilters(intent, nextMemory, text),
+        query: buildStockFilters(contextualIntent, nextMemory, enrichedText).query,
+        filters: buildStockFilters(contextualIntent, nextMemory, enrichedText),
         limit: 6,
       })
     : null;
 
   const reply = generatePedroSalesReply({
     memory: nextMemory,
-    intent,
+    intent: contextualIntent,
     stock_result: stockResult,
-    message: text,
+    message: enrichedText,
   });
 
   let sendResult: any = null;
@@ -196,18 +255,20 @@ export async function processPedroV2Turn(
       lead_id: lead?.id || null,
       remote_jid: remoteJid,
       correlation_id: correlationId,
-      intent: intent.intent,
-      next_action: intent.needs_stock_search ? "stock_search_required" : intent.needs_handoff ? "handoff_required" : "reply_generation_required",
+      intent: contextualIntent.intent,
+      next_action: contextualIntent.needs_stock_search ? "stock_search_required" : contextualIntent.needs_handoff ? "handoff_required" : "reply_generation_required",
       dry_run: dryRun,
       payload: {
         text,
+        enriched_text: enrichedText,
+        ad_context: adContext,
         identity_kind: identity.kind,
       },
       result: {
-        confidence: intent.confidence,
-        reason: intent.reason,
-        needs_stock_search: intent.needs_stock_search,
-        needs_handoff: intent.needs_handoff,
+        confidence: contextualIntent.confidence,
+        reason: contextualIntent.reason,
+        needs_stock_search: contextualIntent.needs_stock_search,
+        needs_handoff: contextualIntent.needs_handoff,
         stock_result_count: stockResult?.total || 0,
         reply_source: reply.source,
         send_result: sendResult,
@@ -221,7 +282,7 @@ export async function processPedroV2Turn(
     correlation_id: correlationId,
     identity,
     lead_id: lead?.id || null,
-    intent,
+    intent: contextualIntent,
     stock_result: stockResult,
     reply,
     send_result: sendResult,

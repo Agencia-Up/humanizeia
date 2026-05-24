@@ -59,6 +59,12 @@
   - `pedro-webhook-v2` passou a permitir ativacao por `PEDRO_V2_ALLOWED_USER_EMAILS` ou `PEDRO_V2_ALLOWED_USER_IDS`, mantendo o global desligado;
   - `create-evolution-instance` e `sync-evolution-webhook` passaram a apontar usuarios liberados para `pedro-webhook-v2`, mantendo os demais em `uazapi-webhook`;
   - secrets de producao configurados pelos nomes `PEDRO_V2_ENABLED`, `PEDRO_V2_ALLOWED_USER_EMAILS`, `PEDRO_V2_MUTATIONS_ENABLED` e `PEDRO_V2_SEND_ENABLED`, sem registrar valores no repo/cerebro.
+- Corrigido primeiro problema real do Pedro v2 no teste por WhatsApp: contexto de anuncio/link.
+  - criado resolvedor de contexto de anuncio em `supabase/functions/_shared/pedro-v2/adContext.ts`;
+  - `pedro-webhook-v2` passou a ignorar mensagens `fromMe` e a operar em modo real quando mutations estiverem habilitadas, deixando `dry_run` apenas para payload explicito ou flag desligada;
+  - orquestrador v2 passou a extrair card/link de anuncio, URL, texto rico e thumbnail/imagem quando disponivel, enriquecendo memoria/intencao antes da busca BNDV;
+  - Pedro v2 nao deve responder que "nao consegue acessar links externos"; deve usar metadados do anuncio e, se faltar contexto, perguntar pelo modelo ou print;
+  - deploy realizado das Edge Functions `pedro-webhook-v2` e `pedro-sales-reply` em producao.
 
 ## Historico funcional recente consolidado
 

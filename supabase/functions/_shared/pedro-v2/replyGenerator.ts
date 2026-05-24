@@ -82,6 +82,15 @@ export function generatePedroSalesReply(input: {
 
   if (input.stock_result && !hasUsefulStock(input.stock_result)) {
     const requested = input.memory?.interesse?.modelo_desejado || input.intent?.extracted?.interesse?.modelo_desejado;
+    const cameFromAd = Boolean(input.memory?.referencia?.origem_anuncio || input.intent?.extracted?.referencia?.origem_anuncio);
+    if (cameFromAd && !requested) {
+      return {
+        ok: true,
+        text:
+          `${name ? `${name}, ` : ""}vi que voce veio por um anuncio da Icom. Pra eu conferir certinho no estoque, me diz qual modelo apareceu pra voce ou me manda um print do anuncio?`,
+        source: "ad_context_needs_vehicle_confirmation",
+      };
+    }
     const base = requested
       ? `${name ? `${name}, ` : ""}verifiquei aqui e nao encontrei esse ${requested} disponivel no estoque agora.`
       : `${name ? `${name}, ` : ""}verifiquei aqui e nao encontrei uma opcao compativel no estoque agora.`;

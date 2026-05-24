@@ -43,6 +43,7 @@
 - Alteracoes puramente visuais podem ir direto para producao se o usuario pedir explicitamente e o build passar.
 - Pedro v2 deve entrar primeiro por allowlist de usuario/email, nao por flag global. A flag `PEDRO_V2_ENABLED` fica reservada para rollout geral depois de validacao.
 - Para usuarios na allowlist do Pedro v2, criacao/sincronizacao de instancia Uazapi deve configurar webhook para `pedro-webhook-v2`; usuarios fora da allowlist continuam em `uazapi-webhook`.
+- Pedro v2 nunca deve abandonar contexto de anuncio dizendo que nao acessa links externos. O orquestrador deve tratar cards/links do WhatsApp como contexto de negocio: extrair metadados, inferir veiculo quando possivel, buscar no BNDV e so pedir confirmacao quando o anuncio nao tiver contexto suficiente.
 
 ## Segredos
 

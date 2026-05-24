@@ -32,12 +32,27 @@ function agentLooksLikePedro(agent: any): boolean {
     haystack.includes("pré-venda");
 }
 
+function pickIncomingMessage(payload: any): any {
+  if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
+  if (Array.isArray(payload?.data) && payload.data.length > 0) return payload.data[0];
+  return payload?.message || payload?.data || payload;
+}
+
+function isOutgoingMessage(payload: any): boolean {
+  const message = pickIncomingMessage(payload);
+  return message?.fromMe === true || message?.key?.fromMe === true || payload?.fromMe === true;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
   const supabase = createServiceClient();
   const payload = await parseJson(req);
+  if (isOutgoingMessage(payload)) {
+    return jsonResponse({ ok: true, ignored: "from_me" });
+  }
+
   const instanceName =
     payload?.instanceName ||
     payload?.instance_name ||
@@ -91,7 +106,7 @@ Deno.serve(async (req) => {
     payload,
     agent,
     wa_instance: waInstance,
-    dry_run: payload?.dry_run === false ? !isPedroV2MutationEnabled() : true,
+    dry_run: payload?.dry_run === true || !isPedroV2MutationEnabled(),
   });
 
   return jsonResponse({ ...result, gate: { reason: gate.reason } }, result.ok ? 200 : 400);
