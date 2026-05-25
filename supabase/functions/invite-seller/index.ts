@@ -343,39 +343,98 @@ Deno.serve(async (req) => {
       console.log(`[invite-seller] User ${email} created: ${authUserId}`);
     }
 
-    // Step 2: Generate invite link (the ONLY token — no conflict)
-    let confirmUrl = redirectTo; // fallback
-    if (authUserId) {
+    // Step 2: Gera link de confirmação com tipo CORRETO baseado no estado do user.
+    // BUG ANTIGO (corrigido): tentava só 'invite'. Pra users já confirmados, generate_link
+    // falhava silenciosamente, confirmUrl ficava igual ao redirectTo (sem token), email saia
+    // com URL quebrada e vendedor caia em "Falha na confirmação — Link inválido ou expirado".
+    if (!authUserId) {
+      throw new Error('Falha ao identificar usuário criado/existente');
+    }
+
+    // Detecta se user já confirmou email
+    const { users: allUsers } = await authAdminListUsers(supabaseUrl, serviceKey, 1000);
+    const existingUserState = allUsers.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
+    const alreadyConfirmed = existingUserState?.email_confirmed_at != null;
+
+    // Tenta tipos em ordem de preferência:
+    //   • user NOVO (não confirmado) → invite → recovery → magiclink
+    //   • user JÁ CONFIRMADO         → recovery → magiclink → invite
+    // 'recovery' funciona pra criar senha pela 1ª vez também (SetSellerPassword.tsx só chama updateUser).
+    const linkTypesToTry: string[] = alreadyConfirmed
+      ? ['recovery', 'magiclink', 'invite']
+      : ['invite', 'recovery', 'magiclink'];
+
+    let actionLink: string | null = null;
+    let usedType: string | null = null;
+    let lastErr: any = null;
+
+    for (const linkType of linkTypesToTry) {
       const { data: linkData, error: linkErr } = await authAdminGenerateLink(
         supabaseUrl,
         serviceKey,
-        'invite',
+        linkType,
         email,
-        redirectTo
+        redirectTo,
       );
-      const actionLink = linkData?.action_link || null;
-      if (actionLink) {
-        confirmUrl = actionLink;
-        console.log(`[invite-seller] Invite link generated: ${actionLink.substring(0, 80)}...`);
-      } else {
-        console.error(`[invite-seller] generate_link did NOT return action_link. Error: ${linkErr?.message || 'none'}. Data keys: ${linkData ? Object.keys(linkData).join(',') : 'null'}`);
+      const candidateLink = linkData?.action_link || null;
+      // VALIDA que o link contém token real (PKCE code OU token_hash OU implicit flow hash)
+      const hasValidToken = !!candidateLink && (
+        candidateLink.includes('token_hash=') ||
+        candidateLink.includes('code=') ||
+        candidateLink.includes('#access_token=')
+      );
+      if (hasValidToken) {
+        actionLink = candidateLink;
+        usedType = linkType;
+        console.log(`[invite-seller] Link '${linkType}' gerado OK para ${email} (alreadyConfirmed=${alreadyConfirmed})`);
+        break;
       }
+      lastErr = linkErr;
+      console.warn(`[invite-seller] Tipo '${linkType}' não gerou link válido. err=${linkErr?.message || 'sem erro mas sem action_link'}, link=${candidateLink ? candidateLink.substring(0, 80) : 'null'}`);
     }
 
-    // Step 3: Send invite email via Resend (the ONLY email the seller receives)
+    if (!actionLink) {
+      const errMsg = `Não foi possível gerar link de confirmação para ${email}. Tentei: ${linkTypesToTry.join(', ')}. Verifique se '${redirectTo}' está na allowlist de Redirect URLs do Supabase Auth (Dashboard → Authentication → URL Configuration). Último erro: ${lastErr?.message || 'desconhecido'}`;
+      console.error(`[invite-seller] FATAL: ${errMsg}`);
+      return new Response(JSON.stringify({
+        error: errMsg,
+        debug: { authUserId, alreadyConfirmed, typesAttempted: linkTypesToTry, lastError: lastErr?.message },
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const confirmUrl = actionLink;
+
+    // Step 3: Send invite email via Resend (link JÁ validado acima — sem risco de URL quebrada)
+    const emailAction = (usedType === 'invite' ? 'invited' : 'linked');
     const emailSent = await sendInviteEmailViaResend(
       email,
       member.name,
       origin,
-      'invited',
+      emailAction,
       confirmUrl,
     );
 
-    console.log(`[invite-seller] Convite para ${email} — auth: OK | link: ${confirmUrl !== redirectTo ? 'OK' : 'FALLBACK'} | email: ${emailSent ? 'OK' : 'FALHOU'}`);
+    console.log(`[invite-seller] Convite para ${email} — auth: OK | type: ${usedType} | email: ${emailSent ? 'OK' : 'FALHOU'}`);
+
+    if (!emailSent) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: `Link gerado com sucesso mas falha ao enviar email via Resend. Você pode copiar e enviar manualmente este link: ${confirmUrl}`,
+        confirmUrl,
+        action: emailAction,
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     return new Response(JSON.stringify({
       success: true,
-      action: 'invited',
+      action: emailAction,
+      linkType: usedType,
       message: `Convite enviado para ${email}`,
       emailSent,
     }), {
