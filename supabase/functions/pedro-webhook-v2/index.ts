@@ -6,9 +6,9 @@ import {
   jsonResponse,
   parseJson,
 } from "../_shared/pedro-v2/server.ts";
-import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_sales.ts";
+import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_variety.ts";
 
-const PEDRO_V2_BUILD = "2026-05-25-sales-stock-photos-v1";
+const PEDRO_V2_BUILD = "2026-05-25-stock-format-photo-variety-v1";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||

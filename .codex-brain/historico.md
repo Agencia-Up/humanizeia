@@ -108,6 +108,14 @@
   - saudacao simples ficou menos transacional e mais alinhada ao prompt do consultor;
   - deploy realizado em producao da Edge Function `pedro-webhook-v2` com build `2026-05-25-sales-stock-photos-v1`;
   - validado por dry-run remoto: "Bom dia" responde com saudacao correta e "Voce tem onix?" retorna 5 opcoes do BNDV no formato antigo com imagens.
+- Hotfix do Pedro v2 para formatacao de estoque e variedade de fotos:
+  - criado orquestrador versionado `orchestrator_20260525_photo_variety.ts`;
+  - `pedro-webhook-v2` passou a apontar para o build `2026-05-25-stock-format-photo-variety-v1`;
+  - respostas de lista de estoque (`stock_fact_reply`) passaram a preservar quebras de linha, sem o humanizador juntar todos os itens em uma mensagem confusa;
+  - pedidos de fotos agora detectam alvo aproximado (`roda`, `painel`, `bancos/interior`, `porta-malas`, `traseira`, `lateral`, `frente`) e selecionam imagens diferentes do BNDV em vez de sempre enviar as primeiras;
+  - pedidos gerais de fotos tentam misturar fotos externas e internas usando a ordem das fotos do BNDV;
+  - deploy realizado em producao da Edge Function `pedro-webhook-v2`;
+  - validado por dry-run remoto na instancia `agente-ia-hpic`: busca por Renegade retornou 5 opcoes, status 200, build correto e quebras em branco entre os itens da lista.
 
 ## Historico funcional recente consolidado
 

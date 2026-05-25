@@ -21,6 +21,8 @@
   - apos o hotfix `2026-05-24-media-context-followup-v1`, repetir teste real no WhatsApp com link/card e com print do anuncio. Conferir em `pedro_v2_turn_logs` o bloco `media_context.diagnostics` para saber se a Uazapi entregou thumbnail embutida, id de mensagem para download ou apenas texto;
   - apos o hotfix `2026-05-25-greeting-ad-context-v1`, repetir teste real no WhatsApp com cumprimento simples, mensagem comum sem link e link real de anuncio para confirmar que apenas payloads de anuncio entram no fluxo de anuncio;
   - apos o hotfix `2026-05-25-sales-stock-photos-v1`, testar conversa real completa: cumprimento, busca por modelo, pedido "fotos do segundo" e retorno a partir de anuncio/print;
+  - apos o hotfix `2026-05-25-stock-format-photo-variety-v1`, testar no WhatsApp real: lista de estoque com quebras entre veiculos, pedido "fotos do segundo", "fotos do painel", "fotos da roda" e "fotos do interior";
+  - evoluir a selecao de fotos do Pedro v2 para classificacao por visao/cache de imagens do BNDV. O hotfix atual usa heuristica pela ordem das fotos; para precisao maxima, cada URL deve ser classificada como frente, lateral, traseira, roda, painel, bancos, porta-malas etc.;
   - revisar configuracao/sincronismo de estoque BNDV do perfil de teste `douglasaloan@gmail.com`: dry-run com print de Duster reconheceu o veiculo corretamente, mas a busca BNDV desse perfil/instancia retornou 0 Duster;
   - testar em usuario liberado por `PEDRO_V2_ALLOWED_USER_EMAILS`/`PEDRO_V2_ALLOWED_USER_IDS` antes de qualquer rollout global;
   - validar idempotencia e logs com `PEDRO_V2_MUTATIONS_ENABLED` e `PEDRO_V2_SEND_ENABLED` ligados somente no teste controlado.
