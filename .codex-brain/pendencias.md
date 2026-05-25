@@ -13,13 +13,14 @@
 - Evoluir Pedro v2 do paralelo para teste controlado:
   - criar corpus de testes com conversas reais problematicas;
   - adicionar idempotencia forte no sender antes de habilitar envio real em producao;
-  - implementar envio de imagens de veiculos como midia real depois da resposta textual;
+  - validar em WhatsApp real o envio de imagens de veiculos pelo Pedro v2 depois do hotfix `2026-05-25-sales-stock-photos-v1`;
   - conectar transferencia automatica do v2 com briefing e confirmacao `ok`, preservando coluna `Novo`;
   - validar em WhatsApp real o novo resolvedor de anuncio/link depois que a instancia `agente-ia-hpic` foi apontada para `pedro-webhook-v2`, especialmente cards do Facebook/Instagram com imagem e links encurtados;
   - estudar fonte confiavel de criativos/anuncios Meta para mapear post/link de anuncio ao veiculo anunciado quando a Uazapi entregar apenas link generico sem thumbnail/metadados;
   - apos o hotfix `2026-05-24-humanized-ad-reply-v2`, repetir teste real no WhatsApp e conferir se o payload da Uazapi agora traz thumbnail/imagem; se continuar vindo apenas texto generico do Facebook, Pedro v2 deve pedir modelo/print em vez de tentar adivinhar;
   - apos o hotfix `2026-05-24-media-context-followup-v1`, repetir teste real no WhatsApp com link/card e com print do anuncio. Conferir em `pedro_v2_turn_logs` o bloco `media_context.diagnostics` para saber se a Uazapi entregou thumbnail embutida, id de mensagem para download ou apenas texto;
   - apos o hotfix `2026-05-25-greeting-ad-context-v1`, repetir teste real no WhatsApp com cumprimento simples, mensagem comum sem link e link real de anuncio para confirmar que apenas payloads de anuncio entram no fluxo de anuncio;
+  - apos o hotfix `2026-05-25-sales-stock-photos-v1`, testar conversa real completa: cumprimento, busca por modelo, pedido "fotos do segundo" e retorno a partir de anuncio/print;
   - revisar configuracao/sincronismo de estoque BNDV do perfil de teste `douglasaloan@gmail.com`: dry-run com print de Duster reconheceu o veiculo corretamente, mas a busca BNDV desse perfil/instancia retornou 0 Duster;
   - testar em usuario liberado por `PEDRO_V2_ALLOWED_USER_EMAILS`/`PEDRO_V2_ALLOWED_USER_IDS` antes de qualquer rollout global;
   - validar idempotencia e logs com `PEDRO_V2_MUTATIONS_ENABLED` e `PEDRO_V2_SEND_ENABLED` ligados somente no teste controlado.

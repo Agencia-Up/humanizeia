@@ -4,6 +4,7 @@ export type PedroV2Intent =
   | "stock_lookup"
   | "price_question"
   | "vehicle_reference"
+  | "photo_request"
   | "financing"
   | "trade_in"
   | "location"

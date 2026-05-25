@@ -98,6 +98,16 @@
   - o orquestrador `orchestrator_20260524_media.ts` passou a usar os modulos versionados de 2026-05-25;
   - deploy realizado em producao da Edge Function `pedro-webhook-v2` com build `2026-05-25-greeting-ad-context-v1`;
   - validado por dry-run remoto: "Bom dia" respondeu com "Bom dia" e nao entrou como anuncio; texto comum de veiculo fez busca de estoque sem motivo de anuncio; link real do Facebook continuou caindo no fluxo de anuncio sem veiculo seguro.
+- Hotfix do Pedro v2 para apresentacao de estoque e fotos:
+  - criado orquestrador versionado `orchestrator_20260525_sales.ts`;
+  - criado roteador versionado `intentRouter_20260525_sales.ts` com intencao `photo_request`;
+  - criado `stockSearch_20260525_sales.ts` preservando ate 12 fotos do BNDV por veiculo em `fotos`;
+  - criado `replyGenerator_20260525_sales.ts` para voltar ao formato antigo de lista de estoque, com campos por linha e imagem em markdown;
+  - Pedro v2 passou a salvar os veiculos apresentados em `pedro_conversation_state.veiculos_apresentados`;
+  - pedidos como "fotos desse segundo" passam a usar o veiculo ja apresentado e enviar ate 5 imagens via Uazapi;
+  - saudacao simples ficou menos transacional e mais alinhada ao prompt do consultor;
+  - deploy realizado em producao da Edge Function `pedro-webhook-v2` com build `2026-05-25-sales-stock-photos-v1`;
+  - validado por dry-run remoto: "Bom dia" responde com saudacao correta e "Voce tem onix?" retorna 5 opcoes do BNDV no formato antigo com imagens.
 
 ## Historico funcional recente consolidado
 
