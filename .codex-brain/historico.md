@@ -116,6 +116,16 @@
   - pedidos gerais de fotos tentam misturar fotos externas e internas usando a ordem das fotos do BNDV;
   - deploy realizado em producao da Edge Function `pedro-webhook-v2`;
   - validado por dry-run remoto na instancia `agente-ia-hpic`: busca por Renegade retornou 5 opcoes, status 200, build correto e quebras em branco entre os itens da lista.
+- Hotfix do Pedro v2 para referencia de fotos do mesmo veiculo:
+  - criado orquestrador versionado `orchestrator_20260525_photo_flow.ts`;
+  - criados `replyGenerator_20260525_photo_flow.ts` e `stockSearch_20260525_photo_flow.ts` para evitar cache antigo no Edge Runtime;
+  - `pedro-webhook-v2` passou a apontar para o build `2026-05-25-photo-flow-v2`;
+  - pedidos de foto agora gravam `ultima_foto` e `referencia.ultimo_veiculo_*` em `pedro_conversation_state`, evitando que "foto do painel/interior" caia em outro carro depois de "fotos do 4";
+  - envio de fotos do Pedro v2 agora manda as imagens primeiro e so depois envia um comentario curto/variado, mais natural para WhatsApp;
+  - selecao geral de fotos passou a priorizar ordem aproximada `1, 4, 6, 7, 8` do BNDV; pedidos de painel/interior/bancos priorizam fotos mais internas/laterais tardias antes de voltar ao inicio da lista;
+  - nomes de veiculos foram higienizados para reduzir duplicacoes e nomes colados como `RENEGADE1.8`;
+  - deploy realizado em producao da Edge Function `pedro-webhook-v2`;
+  - validado por dry-run remoto: build `2026-05-25-photo-flow-v2`, busca por Renegade com status 200, 6 itens e quebras de linha preservadas.
 
 ## Historico funcional recente consolidado
 
