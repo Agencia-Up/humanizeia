@@ -8,7 +8,7 @@ import {
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260524_media.ts";
 
-const PEDRO_V2_BUILD = "2026-05-24-media-context-followup-v1";
+const PEDRO_V2_BUILD = "2026-05-25-greeting-ad-context-v1";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||

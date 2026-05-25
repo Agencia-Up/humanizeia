@@ -92,6 +92,13 @@
   - deploy realizado em producao da Edge Function `pedro-webhook-v2` com build `2026-05-24-media-context-followup-v1`;
   - validado por dry-run remoto com print real de Duster: o v2 identificou `Renault Duster Authentique 1.6 2020 Automático` e acionou busca de estoque. No perfil de teste/instancia `agente-ia-hpic`, a busca retornou 0 unidades desse modelo.
 
+- Hotfix do Pedro v2 para saudacao e deteccao de anuncio:
+  - criado `adContext_20260525.ts` para exigir contexto explicito de anuncio/link antes de marcar a conversa como vinda de anuncio;
+  - criado `replyGenerator_20260525.ts` com saudacao dinamica pelo horario de Sao Paulo e resposta simples para cumprimentos como "bom dia";
+  - o orquestrador `orchestrator_20260524_media.ts` passou a usar os modulos versionados de 2026-05-25;
+  - deploy realizado em producao da Edge Function `pedro-webhook-v2` com build `2026-05-25-greeting-ad-context-v1`;
+  - validado por dry-run remoto: "Bom dia" respondeu com "Bom dia" e nao entrou como anuncio; texto comum de veiculo fez busca de estoque sem motivo de anuncio; link real do Facebook continuou caindo no fluxo de anuncio sem veiculo seguro.
+
 ## Historico funcional recente consolidado
 
 - Pedro recebeu varias correcoes em regras de transferencia, vendedor `ok`, CRM ao vivo, colunas e isolamento do agente.
