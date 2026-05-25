@@ -46,6 +46,12 @@
 - A sincronizacao de webhook deve checar allowlist por user id antes da consulta por email, para nao depender de lookup de Auth quando o usuario de teste ja esta identificado.
 - Pedro v2 nunca deve abandonar contexto de anuncio dizendo que nao acessa links externos. O orquestrador deve tratar cards/links do WhatsApp como contexto de negocio: extrair metadados, inferir veiculo quando possivel, buscar no BNDV e so pedir confirmacao quando o anuncio nao tiver contexto suficiente.
 - Pedro v2 nao pode consultar estoque usando apenas texto generico de anuncio/link. Se nao identificar marca/modelo/tipo com confianca, deve pedir modelo ou print antes de oferecer qualquer veiculo.
+- Pedro v2 deve funcionar como orquestrador com tools, nao como fluxo fixo:
+  - a mensagem atual vence memoria antiga quando houver novo modelo/assunto;
+  - o resolvedor de veiculo decide se existe sinal confiavel de carro antes da busca;
+  - o planner decide a acao antes da resposta final;
+  - a resposta final usa o system prompt do portal e somente fatos retornados pelas tools;
+  - regras de transferencia, vendedor `ok` e CRM nao devem ser alteradas por ajustes de inteligencia conversacional.
 
 ## Segredos
 

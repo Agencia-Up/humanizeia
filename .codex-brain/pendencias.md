@@ -23,6 +23,12 @@
   - apos o hotfix `2026-05-25-sales-stock-photos-v1`, testar conversa real completa: cumprimento, busca por modelo, pedido "fotos do segundo" e retorno a partir de anuncio/print;
   - apos o hotfix `2026-05-25-stock-format-photo-variety-v1`, testar no WhatsApp real: lista de estoque com quebras entre veiculos, pedido "fotos do segundo", "fotos do painel", "fotos da roda" e "fotos do interior";
   - apos o hotfix `2026-05-25-photo-flow-v2`, testar no WhatsApp real a sequencia: buscar modelo, pedir "fotos do 4", depois pedir "foto do painel/interior" e confirmar que as fotos continuam do mesmo veiculo escolhido;
+  - apos o build `2026-05-25-brain-orchestrator-v1`, testar no WhatsApp real:
+    - cumprimento simples sem anuncio (`Bom dia`);
+    - busca por modelo com erro de digitacao (`oroqui`, `oroki`, `onis`);
+    - troca de assunto depois de fotos, garantindo que a mensagem atual vença a memoria antiga;
+    - link/card de anuncio com e sem thumbnail;
+    - pedido de foto especifica (`painel`, `interior`, `roda`) depois de escolher um veiculo;
   - evoluir a selecao de fotos do Pedro v2 para classificacao por visao/cache de imagens do BNDV. O hotfix atual usa heuristica pela ordem das fotos; para precisao maxima, cada URL deve ser classificada como frente, lateral, traseira, roda, painel, bancos, porta-malas etc.;
   - revisar configuracao/sincronismo de estoque BNDV do perfil de teste `douglasaloan@gmail.com`: dry-run com print de Duster reconheceu o veiculo corretamente, mas a busca BNDV desse perfil/instancia retornou 0 Duster;
   - testar em usuario liberado por `PEDRO_V2_ALLOWED_USER_EMAILS`/`PEDRO_V2_ALLOWED_USER_IDS` antes de qualquer rollout global;

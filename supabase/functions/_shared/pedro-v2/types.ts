@@ -95,6 +95,8 @@ export type PedroV2TurnResult = {
   identity?: PedroV2Identity;
   lead_id?: string | null;
   intent?: PedroV2IntentResult;
+  brain_plan?: any;
+  vehicle_resolution?: any;
   stock_result?: any;
   reply?: any;
   send_result?: any;

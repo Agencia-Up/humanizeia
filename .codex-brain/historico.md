@@ -127,6 +127,18 @@
   - deploy realizado em producao da Edge Function `pedro-webhook-v2`;
   - validado por dry-run remoto: build `2026-05-25-photo-flow-v2`, busca por Renegade com status 200, 6 itens e quebras de linha preservadas.
 
+## 2026-05-25
+
+- Evolucao do Pedro v2 para orquestrador real, preservando as regras de transferencia que ja estavam funcionando:
+  - criado `vehicleResolver_20260525_brain.ts` para resolver o veiculo da mensagem atual, anuncio, midia ou memoria, com prioridade para a mensagem atual;
+  - criado `pedroBrainPlanner_20260525.ts` para decidir a proxima acao antes da resposta final (`reply_only`, `stock_search`, `photo_request`, `handoff`, `clarify`);
+  - criado `pedroBrainReply_20260525.ts` para gerar a resposta final usando o system prompt do portal, fatos do estoque e horario real de Sao Paulo;
+  - `orchestrator_20260525_photo_flow.ts` passou a chamar resolvedor -> planner -> tool de estoque/foto -> resposta final, em vez de seguir um fluxo fixo por regex;
+  - corrigido risco de usar memoria antiga quando o lead muda de assunto/modelo, como no caso `oroqui` apos Renegade;
+  - cumprimento simples como `bom dia` nao deve mais entrar como anuncio sem payload real de anuncio/midia;
+  - deploy realizado em producao da Edge Function `pedro-webhook-v2` com build `2026-05-25-brain-orchestrator-v1`;
+  - build frontend validado com `npm.cmd run build`.
+
 ## Historico funcional recente consolidado
 
 - Pedro recebeu varias correcoes em regras de transferencia, vendedor `ok`, CRM ao vivo, colunas e isolamento do agente.

@@ -4,13 +4,15 @@ import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryF
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck } from "./transferRouter.ts";
 import { remoteJidToPhone } from "./phone.ts";
-import { generatePedroSalesReply } from "./replyGenerator_20260525_photo_flow.ts";
+import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
+import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
 import { searchPedroStock } from "./stockSearch_20260525_photo_flow.ts";
 import { resolvePedroInstance, sendPedroMedia, sendPedroText } from "./uazapiSender_20260524.ts";
 import { PedroV2TurnInput, PedroV2TurnResult } from "./types.ts";
 import { isPedroV2SendingEnabled } from "./server.ts";
 import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } from "./adContext_20260525.ts";
 import { mediaContextToAdLikeContext, resolvePedroMediaContext, sanitizePedroMediaContext } from "./mediaContext_20260524.ts";
+import { resolvePedroVehicleTurn } from "./vehicleResolver_20260525_brain.ts";
 
 async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
   try {
@@ -83,14 +85,18 @@ function pickPushName(payload: any): string {
     "Lead";
 }
 
-function buildStockFilters(intent: any, memory: any, text: string) {
+function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: any, vehicleResolution?: any) {
+  const currentVehicleQuery = brainPlan?.search_query || vehicleResolution?.query || null;
+  const allowMemoryVehicle = !vehicleResolution?.has_current_vehicle_signal && brainPlan?.use_memory_vehicle !== false;
   return {
     ...(memory?.interesse || {}),
     ...(intent?.extracted?.interesse || {}),
+    ...(brainPlan?.search_filters || {}),
     query:
+      currentVehicleQuery ||
       intent?.extracted?.interesse?.modelo_desejado ||
-      memory?.interesse?.modelo_desejado ||
-      memory?.referencia?.veiculo_citado ||
+      (allowMemoryVehicle ? memory?.interesse?.modelo_desejado : null) ||
+      (allowMemoryVehicle ? memory?.referencia?.veiculo_citado : null) ||
       text,
     ad_context:
       intent?.extracted?.referencia?.texto_referencia ||
@@ -115,6 +121,38 @@ function mergeAdAndMediaContext(adContext: any, mediaContext: any) {
     vehicle_type: mediaAsAd.vehicle_type || adContext.vehicle_type || null,
     summary: [adContext.summary, mediaAsAd.summary].filter(Boolean).join("\n") || null,
     confidence: Math.max(Number(adContext.confidence || 0), Number(mediaAsAd.confidence || 0)),
+  };
+}
+
+function mergeBrainPlanIntoIntent(intent: any, brainPlan: any, vehicleResolution: any) {
+  const interestPatch = vehicleResolution?.query
+    ? {
+        modelo_desejado: vehicleResolution.query,
+        tipo_veiculo: vehicleResolution.vehicle_type || intent?.extracted?.interesse?.tipo_veiculo || null,
+      }
+    : {};
+
+  const nextIntent = brainPlan?.intent || intent?.intent || "unknown";
+  return {
+    ...(intent || {}),
+    intent: nextIntent,
+    needs_stock_search: brainPlan?.action === "stock_search",
+    needs_handoff: brainPlan?.action === "handoff" || Boolean(intent?.needs_handoff),
+    confidence: Math.max(Number(intent?.confidence || 0), Number(brainPlan?.confidence || 0)),
+    reason: brainPlan?.reason || intent?.reason || "brain_plan",
+    extracted: {
+      ...(intent?.extracted || {}),
+      interesse: {
+        ...(intent?.extracted?.interesse || {}),
+        ...interestPatch,
+        ...(brainPlan?.search_filters || {}),
+      },
+      referencia: {
+        ...(intent?.extracted?.referencia || {}),
+        veiculo_citado: vehicleResolution?.query || intent?.extracted?.referencia?.veiculo_citado || null,
+        confidence: vehicleResolution?.confidence || intent?.extracted?.referencia?.confidence || null,
+      },
+    },
   };
 }
 
@@ -558,7 +596,7 @@ export async function processPedroV2Turn(
   const enrichedIntent = adContext.has_ad_context
     ? routePedroIntent({ message: enrichedText, current_memory: currentMemory })
     : intent;
-  const contextualIntent = adContext.has_ad_context
+  const contextualIntentBase = adContext.has_ad_context
     ? {
         ...enrichedIntent,
         intent: adNeedsVehicleConfirmation ? "vehicle_reference" : enrichedIntent.intent,
@@ -581,6 +619,24 @@ export async function processPedroV2Turn(
           : `ad_context:${adContext.source || "unknown"}`,
       }
     : intent;
+  const vehicleResolution = resolvePedroVehicleTurn({
+    message: text,
+    enriched_message: enrichedText,
+    memory: currentMemory,
+    ad_context: adContext,
+    media_context: mediaContext,
+  });
+  const brainPlan = await planPedroTurn({
+    agent: input.agent,
+    message: text,
+    enriched_message: enrichedText,
+    memory: currentMemory,
+    heuristic_intent: contextualIntentBase,
+    ad_context: adContext,
+    media_context: sanitizePedroMediaContext(mediaContext),
+    vehicle_resolution: vehicleResolution,
+  });
+  const contextualIntent = mergeBrainPlanIntoIntent(contextualIntentBase, brainPlan, vehicleResolution);
   const nextMemory = !dryRun && lead?.id
     ? await updatePedroMemoryFromIntent(supabase, {
         lead_id: lead.id,
@@ -600,14 +656,19 @@ export async function processPedroV2Turn(
     needs_handoff: contextualIntent.needs_handoff,
     ad_context: adContext,
     media_context: sanitizePedroMediaContext(mediaContext),
+    vehicle_resolution: vehicleResolution,
+    brain_plan: brainPlan,
     memory_stage: nextMemory?.atendimento?.etapa,
   });
 
-  const stockResult = contextualIntent.needs_stock_search
+  const stockFilters = contextualIntent.needs_stock_search
+    ? buildStockFilters(contextualIntent, nextMemory, enrichedText, brainPlan, vehicleResolution)
+    : null;
+  const stockResult = stockFilters
     ? await searchPedroStock(supabase, {
         user_id: input.agent.user_id,
-        query: buildStockFilters(contextualIntent, nextMemory, enrichedText).query,
-        filters: buildStockFilters(contextualIntent, nextMemory, enrichedText),
+        query: stockFilters.query,
+        filters: stockFilters,
         limit: 6,
       })
     : null;
@@ -622,13 +683,19 @@ export async function processPedroV2Turn(
       })
     : nextMemory;
 
-  const reply = contextualIntent.intent === "photo_request"
+  const reply = contextualIntent.intent === "photo_request" && brainPlan.action === "photo_request"
     ? buildVehiclePhotoReply(effectiveMemory, text)
-    : generatePedroSalesReply({
+    : await generatePedroBrainReply({
+        agent: input.agent,
+        agent_system_prompt: input.agent?.system_prompt || input.agent?.prompt || null,
         memory: effectiveMemory,
         intent: contextualIntent,
         stock_result: stockResult,
         message: enrichedText,
+        plan: brainPlan,
+        vehicle_resolution: vehicleResolution,
+        ad_context: adContext,
+        media_context: sanitizePedroMediaContext(mediaContext),
       });
 
   if (!dryRun && lead?.id && reply.source === "vehicle_photos_reply") {
@@ -674,7 +741,7 @@ export async function processPedroV2Turn(
         closing_result: closingResult,
       };
     } else {
-      const preserveFormatting = reply.source === "stock_fact_reply";
+      const preserveFormatting = ["stock_fact_reply", "brain_stock_reply", "brain_stock_fallback"].includes(reply.source);
       sendResult = await sendPedroText(instance, {
         to: remoteJidToPhone(remoteJid),
         text: reply.text,
@@ -716,6 +783,9 @@ export async function processPedroV2Turn(
         enriched_text: enrichedText,
         ad_context: adContext,
         media_context: sanitizePedroMediaContext(mediaContext),
+        vehicle_resolution: vehicleResolution,
+        brain_plan: brainPlan,
+        stock_filters: stockFilters,
         identity_kind: identity.kind,
       },
       result: {
@@ -742,6 +812,8 @@ export async function processPedroV2Turn(
     identity,
     lead_id: lead?.id || null,
     intent: contextualIntent,
+    brain_plan: brainPlan,
+    vehicle_resolution: vehicleResolution,
     stock_result: stockResult,
     reply,
     send_result: sendResult,
