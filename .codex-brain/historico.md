@@ -84,6 +84,13 @@
   - reforcada extracao de thumbnails/imagens em payloads Uazapi com arrays de bytes e objetos tipo Buffer;
   - versionados os imports do orquestrador/reply/adContext/sender para evitar cache antigo de modulo compartilhado no Edge Runtime;
   - validado por `dry_run` remoto que o Supabase responde sem oferecer carro aleatorio quando o card do Facebook nao traz o veiculo.
+- Hotfix do Pedro v2 para contexto de midia e follow-up:
+  - criado `mediaContext_20260524.ts` para extrair contexto de imagens/midias recebidas pela Uazapi, incluindo thumbnails embutidas e tentativa de download via endpoint de midia da Uazapi;
+  - criado orquestrador versionado `orchestrator_20260524_media.ts`, mantendo o Pedro v1 intacto;
+  - Pedro v2 passou a usar visao para identificar veiculo em print/imagem de anuncio antes da busca BNDV;
+  - corrigido registro de `last_agent_reply_at` apos resposta do Pedro v2, requisito para as regras de follow-up de 5 minutos e transferencia por 10 minutos voltarem a enxergar conversas atendidas pelo v2;
+  - deploy realizado em producao da Edge Function `pedro-webhook-v2` com build `2026-05-24-media-context-followup-v1`;
+  - validado por dry-run remoto com print real de Duster: o v2 identificou `Renault Duster Authentique 1.6 2020 Automático` e acionou busca de estoque. No perfil de teste/instancia `agente-ia-hpic`, a busca retornou 0 unidades desse modelo.
 
 ## Historico funcional recente consolidado
 
