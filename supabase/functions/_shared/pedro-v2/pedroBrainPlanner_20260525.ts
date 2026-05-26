@@ -75,6 +75,14 @@ function detectPhotoTarget(message?: string | null) {
   return "overview";
 }
 
+function hasRecentConversation(input: {
+  memory?: PedroV2LeadMemory | null;
+  recent_history?: any[];
+}) {
+  return (Array.isArray(input.recent_history) && input.recent_history.length >= 2) ||
+    (Array.isArray(input.memory?.recent_turns) && input.memory.recent_turns.length >= 2);
+}
+
 function sanitizeModel(model?: string | null) {
   const raw = String(model || "").trim();
   if (!raw) return "gpt-4o";
@@ -89,6 +97,7 @@ function fallbackPlan(input: {
   heuristic_intent?: PedroV2IntentResult | null;
   ad_context?: any;
   media_context?: any;
+  recent_history?: any[];
   vehicle_resolution: PedroVehicleResolution;
 }): PedroBrainPlan {
   const heuristic = input.heuristic_intent;
@@ -178,6 +187,7 @@ function fallbackPlan(input: {
   }
 
   if (isSimpleGreeting(input.message)) {
+    const continuing = hasRecentConversation(input);
     return {
       action: "reply_only",
       intent: "small_talk",
@@ -186,8 +196,10 @@ function fallbackPlan(input: {
       search_filters: {},
       photo_target: null,
       use_memory_vehicle: false,
-      response_guidance: "Primeiro contato comum. Seja humano, se apresente e faca uma pergunta aberta simples.",
-      reason: "fallback_simple_greeting",
+      response_guidance: continuing
+        ? "Cumprimento em conversa existente. Responda naturalmente sem se reapresentar e retome o contexto com leveza."
+        : "Primeiro contato comum. Seja humano, se apresente e faca uma pergunta aberta simples.",
+      reason: continuing ? "fallback_greeting_existing_context" : "fallback_simple_greeting",
       source: "fallback",
     };
   }
@@ -289,11 +301,15 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   }
 
   if (isSimpleGreeting(input.message) && !input.ad_context?.has_ad_context && !vehicle.query) {
+    const continuing = hasRecentConversation(input);
     plan.action = "reply_only";
     plan.intent = "small_talk";
     plan.search_query = null;
     plan.use_memory_vehicle = false;
-    plan.reason = "enforced_plain_greeting";
+    plan.response_guidance = continuing
+      ? "Cumprimento em conversa existente. Nao se apresente de novo; responda como continuidade da conversa."
+      : "Primeiro contato comum. Seja humano, se apresente e faca uma pergunta aberta simples.";
+    plan.reason = continuing ? "enforced_greeting_existing_context" : "enforced_plain_greeting";
   }
 
   if (isSocialQuestion(input.message)) {

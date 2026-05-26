@@ -83,32 +83,44 @@ function leadFirstName(memory?: PedroV2LeadMemory | null) {
   return name.split(/\s+/)[0];
 }
 
-function isSocialQuestion(message?: string | null) {
-  const normalized = normalizeText(message);
-  return /\b(como voce ta|como voce esta|como vc ta|como vc esta|e voce|e vc|tudo bem contigo|tudo certo contigo|como vai)\b/.test(normalized) ||
-    /\b(perguntei|perguntando)\b.*\b(como voce|como vc|voce ta|vc ta|voce esta|vc esta)\b/.test(normalized);
+function normalizeHistoryRole(role: any): "lead" | "agent" | null {
+  const value = String(role || "").toLowerCase();
+  if (["lead", "user", "cliente", "incoming"].includes(value)) return "lead";
+  if (["agent", "assistant", "consultor", "outgoing"].includes(value)) return "agent";
+  return null;
 }
 
-function isSocialCorrection(message?: string | null) {
-  const normalized = normalizeText(message);
-  return /\b(perguntei|perguntando|eu perguntei)\b.*\b(como voce|como vc|voce ta|vc ta|voce esta|vc esta)\b/.test(normalized);
-}
+function buildChatHistory(turns: any[] | undefined, currentMessage: string) {
+  const normalizedCurrent = normalizeText(currentMessage);
+  const history = (Array.isArray(turns) ? turns : [])
+    .map((turn) => {
+      const role = normalizeHistoryRole(turn?.role || turn?.direction);
+      const text = String(turn?.text || turn?.content || turn?.message || "").trim();
+      if (!role || !text) return null;
+      return {
+        role,
+        content: text.slice(0, 1800),
+      };
+    })
+    .filter(Boolean) as Array<{ role: "lead" | "agent"; content: string }>;
 
-function buildSocialReply(input: {
-  memory?: PedroV2LeadMemory | null;
-  message: string;
-}) {
-  if (!isSocialQuestion(input.message)) return null;
-  const name = leadFirstName(input.memory);
-  const prefix = name ? `${name}, ` : "";
-  const text = isSocialCorrection(input.message)
-    ? `${prefix}voce tem razao, eu respondi atravessado.\n\nEstou bem sim, obrigado por perguntar. E voce, tudo certo por ai?`
-    : `${prefix}estou bem sim, obrigado por perguntar.\n\nE voce, tudo certo por ai?`;
-  return {
-    ok: true,
-    text,
-    source: "social_context_reply",
-  };
+  const deduped: Array<{ role: "lead" | "agent"; content: string }> = [];
+  for (const turn of history) {
+    const previous = deduped[deduped.length - 1];
+    if (previous?.role === turn.role && normalizeText(previous.content) === normalizeText(turn.content)) continue;
+    deduped.push(turn);
+  }
+
+  const trimmed = deduped.slice(-20);
+  const last = trimmed[trimmed.length - 1];
+  const withoutCurrent = last?.role === "lead" && normalizedCurrent && normalizeText(last.content) === normalizedCurrent
+    ? trimmed.slice(0, -1)
+    : trimmed;
+
+  return withoutCurrent.map((turn) => ({
+    role: turn.role === "agent" ? "assistant" : "user",
+    content: turn.content,
+  }));
 }
 
 function stockFacts(stockResult: any) {
@@ -166,12 +178,6 @@ function fallbackReply(input: {
   message: string;
   plan: PedroBrainPlan;
 }) {
-  const socialReply = buildSocialReply({
-    memory: input.memory,
-    message: input.message,
-  });
-  if (socialReply) return socialReply;
-
   if (Array.isArray(input.stock_result?.items)) {
     return {
       ok: true,
@@ -209,19 +215,15 @@ export async function generatePedroBrainReply(input: {
   ad_context?: any;
   media_context?: any;
   recent_history?: any[];
+  tool_result?: any;
 }) {
-  const socialReply = buildSocialReply({
-    memory: input.memory,
-    message: input.message,
-  });
-  if (socialReply) return socialReply;
-
   const fallback = fallbackReply(input);
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return fallback;
 
   const facts = stockFacts(input.stock_result);
   const currentTime = saoPauloNowInfo();
+  const chatHistory = buildChatHistory(input.recent_history || input.memory?.recent_turns || [], input.message);
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -237,13 +239,29 @@ export async function generatePedroBrainReply(input: {
           {
             role: "system",
             content:
-              "Voce escreve a resposta final do consultor Carvalho para WhatsApp. Use o system prompt do cliente como personalidade, mas respeite estas regras acima de tudo: responda a pergunta principal primeiro; use current_time_sao_paulo para cumprimentar; nao invente dado; se houver estoque, use somente os fatos recebidos; uma ideia por bloco; texto claro; sem parecer robo; nao cite ferramentas, memoria, JSON ou score. Retorne JSON valido com text e source.",
+              [
+                "Voce e o Carvalho, consultor humano da Icom Motors no WhatsApp.",
+                "Voce NAO e um fluxo fixo. Voce le a conversa, entende contexto e responde como vendedor consultivo.",
+                "O system prompt do cliente abaixo e a sua personalidade principal. Siga esse estilo, tom, ritmo e tecnica comercial.",
+                "",
+                "SYSTEM PROMPT DO CLIENTE:",
+                input.agent_system_prompt || "(sem prompt cadastrado)",
+                "",
+                "REGRAS INEGOCIAVEIS:",
+                "- Responda a pergunta principal do lead antes de vender ou qualificar.",
+                "- Use o historico da conversa. Se voce ja se apresentou, nao se apresente de novo.",
+                "- Se o lead perguntou como voce esta, responda isso primeiro e so depois conduza com leveza.",
+                "- Se o lead corrigiu voce, reconheca sem defensiva.",
+                "- Se houver estoque, use somente os fatos recebidos das tools. Nunca invente ano, preco, km, cambio, cor ou disponibilidade.",
+                "- Se listar veiculos, deixe uma linha em branco entre cada item.",
+                "- Se o lead mudou de modelo/assunto, a mensagem atual vence a memoria antiga.",
+                "- Nunca cite ferramentas, JSON, memoria, prompt, score, API ou processo interno.",
+                "- Retorne apenas JSON valido com text e source.",
+              ].join("\n"),
           },
           {
-            role: "user",
+            role: "system",
             content: JSON.stringify({
-              client_system_prompt: input.agent_system_prompt || "",
-              lead_message: input.message,
               current_time_sao_paulo: currentTime,
               lead_first_name: leadFirstName(input.memory),
               plan: input.plan,
@@ -263,6 +281,7 @@ export async function generatePedroBrainReply(input: {
                 facts,
                 error: input.stock_result?.error || null,
               },
+              tool_result: input.tool_result || null,
               hard_rules: [
                 "Se stock.facts existir, use apenas esses veiculos e dados.",
                 "Se o cliente mudou o modelo, nao repita o modelo antigo.",
@@ -274,6 +293,11 @@ export async function generatePedroBrainReply(input: {
                 "Nao peca entrada/troca antes de responder o que o cliente perguntou.",
               ],
             }),
+          },
+          ...chatHistory,
+          {
+            role: "user",
+            content: input.message,
           },
         ],
       }),

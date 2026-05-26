@@ -191,7 +191,88 @@ function compactRecentTurns(memory: any, incomingText: string, replyText: string
     },
   ]
     .filter((turn) => turn.text)
-    .slice(-12);
+    .slice(-24);
+}
+
+function inboxPhoneCandidates(remoteJid: string) {
+  const digits = remoteJidToPhone(remoteJid);
+  return [
+    remoteJid,
+    digits,
+    digits ? `+${digits}` : null,
+    digits ? `${digits}@s.whatsapp.net` : null,
+    digits ? `${digits}@c.us` : null,
+  ].filter(Boolean).filter((value, index, all) => all.indexOf(value) === index);
+}
+
+function inboxRowToTurn(row: any) {
+  const direction = String(row?.direction || "").toLowerCase();
+  const role = direction === "outgoing" ? "agent" : "lead";
+  const type = String(row?.message_type || "").toLowerCase();
+  const content = String(row?.content || "").trim();
+  const mediaHint = row?.media_url
+    ? type.includes("image")
+      ? "[imagem]"
+      : type.includes("audio")
+        ? "[audio]"
+        : type.includes("video")
+          ? "[video]"
+          : "[midia]"
+    : "";
+  const text = [mediaHint, content].filter(Boolean).join(" ").trim();
+  if (!text) return null;
+  return {
+    role,
+    text: text.slice(0, 1600),
+    at: row?.created_at || new Date().toISOString(),
+    source: "wa_inbox",
+  };
+}
+
+function mergeRecentTurns(...groups: any[][]) {
+  const allTurns = groups.flat().filter((turn) => turn?.text);
+  allTurns.sort((a, b) => new Date(a?.at || 0).getTime() - new Date(b?.at || 0).getTime());
+  const merged: any[] = [];
+  for (const turn of allTurns) {
+    const previous = merged[merged.length - 1];
+    const previousText = normalizePhotoText(previous?.text || "");
+    const currentText = normalizePhotoText(turn?.text || "");
+    if (previous?.role === turn.role && previousText && previousText === currentText) continue;
+    merged.push(turn);
+  }
+  return merged.slice(-24);
+}
+
+async function loadRecentConversationHistory(supabase: any, input: {
+  user_id: string;
+  remote_jid: string;
+  memory: any;
+}) {
+  const memoryTurns = Array.isArray(input.memory?.recent_turns) ? input.memory.recent_turns : [];
+  try {
+    const { data, error } = await supabase
+      .from("wa_inbox")
+      .select("direction, content, message_type, media_url, created_at")
+      .eq("user_id", input.user_id)
+      .in("phone", inboxPhoneCandidates(input.remote_jid))
+      .order("created_at", { ascending: false })
+      .limit(24);
+
+    if (error) {
+      console.warn("[PedroV2] Failed to load wa_inbox history", error);
+      return mergeRecentTurns(memoryTurns);
+    }
+
+    const inboxTurns = (Array.isArray(data) ? data : [])
+      .reverse()
+      .map(inboxRowToTurn)
+      .filter(Boolean);
+
+    return mergeRecentTurns(memoryTurns, inboxTurns);
+  } catch (error) {
+    console.warn("[PedroV2] wa_inbox history unavailable", error);
+    return mergeRecentTurns(memoryTurns);
+  }
 }
 
 async function saveRecentConversationTurn(supabase: any, input: {
@@ -641,9 +722,11 @@ export async function processPedroV2Turn(
         agent_id: input.agent.id,
       })
     : {};
-  const recentHistory = Array.isArray(currentMemory?.recent_turns)
-    ? currentMemory.recent_turns.slice(-10)
-    : [];
+  const recentHistory = await loadRecentConversationHistory(supabase, {
+    user_id: input.agent.user_id,
+    remote_jid: remoteJid,
+    memory: currentMemory,
+  });
 
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
   const mediaContext = await resolvePedroMediaContext(input.payload, input.wa_instance);
@@ -742,7 +825,7 @@ export async function processPedroV2Turn(
       })
     : nextMemory;
 
-  const reply = contextualIntent.intent === "photo_request" && brainPlan.action === "photo_request"
+  let reply = contextualIntent.intent === "photo_request" && brainPlan.action === "photo_request"
     ? buildVehiclePhotoReply(effectiveMemory, text)
     : await generatePedroBrainReply({
         agent: input.agent,
@@ -757,6 +840,41 @@ export async function processPedroV2Turn(
         media_context: sanitizePedroMediaContext(mediaContext),
         recent_history: recentHistory,
       });
+
+  if (reply?.source === "vehicle_photos_reply" && Array.isArray(reply.media) && reply.media.length > 0) {
+    const brainClosing = await generatePedroBrainReply({
+      agent: input.agent,
+      agent_system_prompt: input.agent?.system_prompt || input.agent?.prompt || null,
+      memory: effectiveMemory,
+      intent: contextualIntent,
+      stock_result: stockResult,
+      message: enrichedText,
+      plan: {
+        ...brainPlan,
+        response_guidance:
+          "A tool de fotos ja selecionou e enviara as imagens. Escreva apenas a mensagem humana de fechamento depois das fotos, sem repetir lista de carros.",
+      },
+      vehicle_resolution: vehicleResolution,
+      ad_context: adContext,
+      media_context: sanitizePedroMediaContext(mediaContext),
+      recent_history: recentHistory,
+      tool_result: {
+        type: "vehicle_photos",
+        selected_vehicle_label: reply.selected_vehicle_label || null,
+        selected_vehicle_reason: reply.selected_vehicle_reason || null,
+        photo_target: reply.photo_target || null,
+        media_count: reply.media.length,
+      },
+    });
+
+    if (brainClosing?.ok && brainClosing.text) {
+      reply = {
+        ...reply,
+        text: brainClosing.text,
+        text_source: brainClosing.source,
+      };
+    }
+  }
 
   let memoryAfterReply = effectiveMemory;
   if (!dryRun && lead?.id && reply.source === "vehicle_photos_reply") {

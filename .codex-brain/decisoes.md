@@ -52,6 +52,7 @@
   - o planner decide a acao antes da resposta final;
   - a resposta final usa o system prompt do portal e somente fatos retornados pelas tools;
   - regras de transferencia, vendedor `ok` e CRM nao devem ser alteradas por ajustes de inteligencia conversacional.
+- A resposta final do Pedro v2 deve ser sempre gerada pelo cerebro/LLM com historico real de conversa e system prompt do portal. Tools de fotos/estoque/transferencia executam tarefas e retornam fatos; elas nao devem ditar a conversa como script fixo.
 
 ## Segredos
 

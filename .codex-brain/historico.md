@@ -1,5 +1,13 @@
 # Historico
 
+## 2026-05-26
+
+- Pedro v2: refatorado o fluxo de resposta final para evitar comportamento de robo/script fixo.
+- O orquestrador agora carrega ate 24 turnos recentes combinando `pedro_conversation_state.recent_turns` com historico real de `wa_inbox`.
+- `pedroBrainReply` deixou de responder small talk por regra deterministica e passou a montar mensagens reais de chat para o LLM usando o system prompt cadastrado no portal.
+- A tool de fotos continua selecionando/enviando midias, mas a mensagem humana de fechamento agora passa pelo cerebro com contexto da tool.
+- Deploy realizado da Edge Function `pedro-webhook-v2` no Supabase de producao `seyljsqmhlopkcauhlor`.
+
 ## 2026-05-23
 
 - Criado o cerebro local do projeto em `.codex-brain`.
