@@ -88,14 +88,18 @@ async function checkUazapiInstance(baseUrl: string, _instanceName: string, token
     }
   } catch {}
 
-  // [B3 fix 2026-05-26] Fallback POST /instance/connect REMOVIDO.
-  // Antes: se GET /instance/status falhava, fazia POST /instance/connect →
-  //        forçava reconexão na UazAPI → webhook dispara connection.update →
-  //        status muda no DB → realtime detecta → master abre tela de novo →
-  //        loop perpétuo (bug B3).
-  // Agora: GET falha → retorna 'error' SEM tocar a UazAPI. Master vê estado
-  //        de erro na tela e reconecta manualmente via botão. Sem loop.
-  console.warn(`[audit-master-instances] GET /instance/status falhou para ${_instanceName} — retornando 'error' sem forçar reconexão (B3 fix)`);
+  // Fallback: POST /instance/connect (alguns ambientes retornam estado aqui)
+  try {
+    const res = await fetch(`${baseUrl}/instance/connect`, {
+      method: 'POST', headers, body: JSON.stringify({}),
+    });
+    const txt = await res.text();
+    try {
+      const payload = JSON.parse(txt);
+      return parseUazapiState(payload);
+    } catch {}
+  } catch {}
+
   return { isConnected: false, realStatus: 'error' };
 }
 
@@ -189,11 +193,6 @@ Deno.serve(async (req) => {
       if (isConnected) {
         updates.is_active = true;
         updates.health_score = 100;
-        // [B3 fix 2026-05-26] Reset contadores ao reconectar com sucesso.
-        // Antes: consecutive_undelivered nunca era resetado → instância banida
-        //        permanente mesmo depois de reconectar.
-        updates.consecutive_undelivered = 0;
-        updates.shadow_ban_suspect = false;
       } else if (realStatus !== 'error') {
         updates.is_active = false;
         if (inst.status === 'connected' && realStatus === 'disconnected') {

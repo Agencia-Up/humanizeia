@@ -107,13 +107,14 @@ Deno.serve(async (req) => {
         );
       }
 
-      // [B3 fix 2026-05-26] Fallback POST /instance/connect REMOVIDO.
-      // Antes: GET status falha → GET connectionState falha → POST /instance/connect
-      //        forçava reconexão na UazAPI → webhook dispara → status muda no DB
-      //        → re-verify → loop. Bug B3 (instância oscilando).
-      // Agora: se GET falhou 2x, marca como 'error'. User reconecta manualmente.
+      // If connectionState fails, fallback to POST /instance/connect like in get-qrcode (Uazapi feature)
       if (!stateRes.ok || stateRes.status === 404) {
-        console.warn(`[verify-instance] connectionState falhou (${stateRes.status}) — marcando como 'error' sem forçar reconexão (B3 fix)`);
+        console.log(`[verify-instance] connectionState failed (${stateRes.status}), trying POST /instance/connect`);
+        stateRes = await fetch(`${baseUrl}/instance/connect`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({})
+        });
       }
 
       const rawText = await stateRes.text();
@@ -195,10 +196,6 @@ Deno.serve(async (req) => {
       updateData.is_active = true;
       updateData.health_score = 100;
       updateData.shadow_ban_suspect = false;
-      // [B3 fix 2026-05-26] Reset contador ao reconectar com sucesso.
-      // Antes: consecutive_undelivered nunca era resetado → instância ficava
-      //        permanentemente banida mesmo depois de reconectar.
-      updateData.consecutive_undelivered = 0;
     } else if (realStatus !== 'error') {
       // If disconnected, deactivate
       updateData.is_active = false;
