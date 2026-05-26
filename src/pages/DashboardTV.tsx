@@ -21,12 +21,12 @@
 // Layout inspirado em painel ICOM Motors — mas marca/cores customizáveis.
 // ============================================================================
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
-import { Calendar, Clock, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy } from 'lucide-react';
+import { Calendar, Clock, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -86,16 +86,43 @@ function hashColor(id: string): string {
   return colors[Math.abs(h) % colors.length];
 }
 
-function startOfToday(): string {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
+// ─── Filtros de período ─────────────────────────────────────────────────────
+
+type PeriodPreset = 'today' | '7days' | '30days' | 'custom';
+
+interface CustomRange {
+  start: string; // YYYY-MM-DD (date input format)
+  end: string;
 }
 
-function endOfToday(): string {
-  const d = new Date();
-  d.setHours(23, 59, 59, 999);
-  return d.toISOString();
+const PERIOD_STORAGE_KEY = 'dashboard_tv_period';
+
+/** Retorna { start, end } em ISO baseado no preset e range custom */
+function resolveDateRange(preset: PeriodPreset, custom: CustomRange): { start: string; end: string; label: string } {
+  const now = new Date();
+  if (preset === 'today') {
+    const s = new Date(now); s.setHours(0, 0, 0, 0);
+    const e = new Date(now); e.setHours(23, 59, 59, 999);
+    return { start: s.toISOString(), end: e.toISOString(), label: 'Hoje' };
+  }
+  if (preset === '7days') {
+    const s = new Date(now); s.setDate(s.getDate() - 6); s.setHours(0, 0, 0, 0);
+    const e = new Date(now); e.setHours(23, 59, 59, 999);
+    return { start: s.toISOString(), end: e.toISOString(), label: 'Últimos 7 dias' };
+  }
+  if (preset === '30days') {
+    const s = new Date(now); s.setDate(s.getDate() - 29); s.setHours(0, 0, 0, 0);
+    const e = new Date(now); e.setHours(23, 59, 59, 999);
+    return { start: s.toISOString(), end: e.toISOString(), label: 'Últimos 30 dias' };
+  }
+  // custom
+  const s = custom.start ? new Date(custom.start + 'T00:00:00') : new Date(now.setHours(0,0,0,0));
+  const e = custom.end   ? new Date(custom.end   + 'T23:59:59.999') : new Date(now.setHours(23,59,59,999));
+  return { start: s.toISOString(), end: e.toISOString(), label: 'Personalizado' };
+}
+
+function toDateInput(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 const RANK_COLORS: Record<number, string> = { 1: '#f59e0b', 2: '#94a3b8', 3: '#cd7f32' };
@@ -116,6 +143,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
   const [now, setNow] = useState(new Date());
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [vendedores, setVendedores] = useState<VendedorData[]>([]);
   const [kpis, setKpis] = useState<KPIsData | null>(null);
   const [branding, setBranding] = useState<BrandingConfig>({
@@ -124,6 +152,50 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     primary_color: '#3b82f6',
     secondary_color: '#f59e0b',
   });
+
+  // Filtro de período (persistido em localStorage)
+  const [period, setPeriod] = useState<PeriodPreset>(() => {
+    try {
+      const saved = localStorage.getItem(PERIOD_STORAGE_KEY) as PeriodPreset | null;
+      return saved && ['today','7days','30days','custom'].includes(saved) ? saved : 'today';
+    } catch { return 'today'; }
+  });
+  const [customRange, setCustomRange] = useState<CustomRange>(() => {
+    const today = new Date();
+    const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 6);
+    return { start: toDateInput(weekAgo), end: toDateInput(today) };
+  });
+
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Trigger pra refresh manual (incrementa = força reload)
+  const [reloadTrigger, setReloadTrigger] = useState(0);
+
+  // Persiste período escolhido
+  useEffect(() => {
+    try { localStorage.setItem(PERIOD_STORAGE_KEY, period); } catch {}
+  }, [period]);
+
+  // Listener pra mudanças no fullscreen (ex: ESC sai do fullscreen)
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await (containerRef.current || document.documentElement).requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.warn('[DashboardTV] Fullscreen falhou:', err);
+    }
+  }, []);
 
   // Relógio digital ao vivo
   useEffect(() => {
@@ -137,16 +209,21 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   const effectiveUserId = isSeller ? masterUserId : user?.id;
   const sellerMemberId = isSeller ? seller?.id || null : null;
 
-  // Carregar dados (1ª vez + polling 30s)
+  // Calcula range atual (usado tanto na query quanto no label da toolbar)
+  const dateRange = resolveDateRange(period, customRange);
+
+  // Carregar dados (1ª vez + polling 30s + realtime + manual refresh)
   useEffect(() => {
     if (!user?.id || profileLoading || !effectiveUserId) return;
 
     let cancelled = false;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
     const load = async () => {
       try {
-        const todayStart = startOfToday();
-        const todayEnd = endOfToday();
+        // Usa range do filtro atual (hoje/7d/30d/custom)
+        const todayStart = dateRange.start;
+        const todayEnd = dateRange.end;
 
         // 1. Branding sempre do MASTER (mesmo pra vendedor logado vê branding do master dele)
         const profilePromise = (supabase as any)
@@ -164,7 +241,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .eq('is_active', true);
         if (sellerMemberId) sellersQuery = sellersQuery.eq('id', sellerMemberId);
 
-        // 3. Leads Pedro do dia. Master vê todos com assigned_to_id; vendedor só os dele.
+        // 3. Leads Pedro do período. Master vê todos com assigned_to_id; vendedor só os dele.
         let pedroQuery = (supabase as any)
           .from('ai_crm_leads')
           .select('id, assigned_to_id')
@@ -174,7 +251,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         if (sellerMemberId) pedroQuery = pedroQuery.eq('assigned_to_id', sellerMemberId);
         else pedroQuery = pedroQuery.not('assigned_to_id', 'is', null);
 
-        // 4. Leads Marcos do dia. Mesma lógica.
+        // 4. Leads Marcos do período. Mesma lógica.
         let marcosQuery = (supabase as any)
           .from('crm_leads')
           .select('id, origem, assigned_to')
@@ -275,10 +352,55 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       }
     };
 
+    // Reload com debounce (evita reload-storm quando vários eventos chegam em sequência)
+    const debouncedReload = () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => { if (!cancelled) load(); }, 1000);
+    };
+
     load();
-    const t = setInterval(load, 30_000); // poll a cada 30s
-    return () => { cancelled = true; clearInterval(t); };
-  }, [user?.id, profileLoading, effectiveUserId, sellerMemberId]);
+
+    // Polling 30s como fallback (caso realtime caia)
+    const pollT = setInterval(load, 30_000);
+
+    // Realtime subscription: dispara reload sempre que algo muda em qualquer das 3 tabelas
+    // (com debounce 1s pra agrupar bursts). Garante "ao vivo" sem esperar polling.
+    const channel = supabase
+      .channel(`dashboard-tv-${effectiveUserId}-${sellerMemberId || 'master'}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'ai_team_members',
+        filter: `user_id=eq.${effectiveUserId}`,
+      }, debouncedReload)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'ai_crm_leads',
+        filter: `user_id=eq.${effectiveUserId}`,
+      }, debouncedReload)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'crm_leads',
+        filter: `user_id=eq.${effectiveUserId}`,
+      }, debouncedReload)
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollT);
+      if (reloadTimer) clearTimeout(reloadTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, profileLoading, effectiveUserId, sellerMemberId, dateRange.start, dateRange.end, reloadTrigger]);
+
+  // Refresh manual (botão na toolbar) — incrementa trigger pra forçar useEffect a rodar de novo
+  const handleManualRefresh = useCallback(() => {
+    setRefreshing(true);
+    setReloadTrigger(t => t + 1);
+    setTimeout(() => setRefreshing(false), 800);
+  }, []);
 
   // Vendedor sem master_id resolvido: redirect (RLS bloquearia tudo de qualquer jeito)
   if (!embedded && !profileLoading && isSeller && !masterUserId) {
@@ -302,7 +424,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   return (
-    <div className={wrapperClass}>
+    <div ref={containerRef} className={wrapperClass}>
       {/* ───── Header ───── */}
       <header className="border-b border-blue-900/50 px-8 py-4 flex items-center justify-between bg-slate-900/40 backdrop-blur">
         <div className="flex items-center gap-5">
@@ -321,7 +443,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             <p className="text-xs uppercase tracking-widest text-blue-300/70 mt-0.5">Dashboard Comercial · Produção em Tempo Real</p>
           </div>
         </div>
-        <div className="flex items-center gap-8 text-right">
+        <div className="flex items-center gap-6 text-right">
           <div className="flex flex-col items-end">
             <span className="text-[10px] uppercase tracking-widest text-blue-300/60 flex items-center gap-1.5">
               <Calendar className="h-3 w-3" /> Data
@@ -334,15 +456,84 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             </span>
             <span className="text-base font-bold tabular-nums">{timeStr}</span>
           </div>
+          {/* Botões de ação */}
+          <div className="flex items-center gap-1 ml-2">
+            <button
+              onClick={handleManualRefresh}
+              className="h-9 w-9 rounded-lg bg-slate-800/60 hover:bg-slate-700/80 border border-slate-700/50 flex items-center justify-center text-slate-300 transition-colors"
+              title="Atualizar agora"
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              onClick={toggleFullscreen}
+              className="h-9 w-9 rounded-lg bg-slate-800/60 hover:bg-slate-700/80 border border-slate-700/50 flex items-center justify-center text-slate-300 transition-colors"
+              title={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia (F11)'}
+            >
+              {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
       </header>
+
+      {/* ───── Toolbar de filtro de período ───── */}
+      <div className="px-8 py-3 border-b border-slate-800/60 bg-slate-900/30 flex items-center gap-4 flex-wrap">
+        <span className="text-[10px] uppercase tracking-widest text-blue-300/60 font-bold">Período</span>
+        <div className="flex items-center gap-1.5 bg-slate-900/50 rounded-lg p-1 border border-slate-800">
+          {([
+            { id: 'today',   label: 'Hoje' },
+            { id: '7days',   label: '7 dias' },
+            { id: '30days',  label: '30 dias' },
+            { id: 'custom',  label: 'Personalizado' },
+          ] as const).map(opt => {
+            const active = period === opt.id;
+            return (
+              <button
+                key={opt.id}
+                onClick={() => setPeriod(opt.id)}
+                className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                  active
+                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent'
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+        {period === 'custom' && (
+          <div className="flex items-center gap-2 text-xs">
+            <input
+              type="date"
+              value={customRange.start}
+              max={customRange.end}
+              onChange={e => setCustomRange(r => ({ ...r, start: e.target.value }))}
+              className="bg-slate-900/60 border border-slate-700 rounded px-2 py-1 text-slate-200"
+            />
+            <span className="text-slate-500">até</span>
+            <input
+              type="date"
+              value={customRange.end}
+              min={customRange.start}
+              onChange={e => setCustomRange(r => ({ ...r, end: e.target.value }))}
+              className="bg-slate-900/60 border border-slate-700 rounded px-2 py-1 text-slate-200"
+            />
+          </div>
+        )}
+        <span className="text-[10px] text-slate-500 italic ml-auto">
+          📊 {dateRange.label} · sincronização em tempo real ativa
+        </span>
+      </div>
 
       {/* ───── Bloco LEADS GERAIS + ORIGEM ───── */}
       <section className="px-8 py-6 grid grid-cols-12 gap-4">
         {/* Total geral */}
         <div className="col-span-3 bg-slate-900/60 rounded-2xl p-6 border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Users className="h-7 w-7 text-blue-400 mb-2" />
-          <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Leads Gerais do Dia</p>
+          <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">
+            Leads Gerais · {dateRange.label}
+          </p>
           <p className="text-7xl font-black tabular-nums leading-none" style={{ color: branding.primary_color }}>
             {kpis?.total_leads ?? 0}
           </p>
