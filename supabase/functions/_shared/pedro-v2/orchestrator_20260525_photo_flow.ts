@@ -645,7 +645,7 @@ async function savePresentedVehicles(supabase: any, input: {
   if (!input.lead_id || !Array.isArray(input.vehicles) || input.vehicles.length === 0) return input.current || {};
   const nextState = {
     ...(input.current || {}),
-    veiculos_apresentados: input.vehicles.slice(0, 8),
+    veiculos_apresentados: input.vehicles.slice(0, 30),
     atendimento: {
       ...(input.current?.atendimento || {}),
       etapa: "apresentando_opcoes",
@@ -877,7 +877,7 @@ export async function processPedroV2Turn(
         user_id: input.agent.user_id,
         query: stockFilters.query,
         filters: stockFilters,
-        limit: 6,
+        limit: 24,
       })
     : null;
 

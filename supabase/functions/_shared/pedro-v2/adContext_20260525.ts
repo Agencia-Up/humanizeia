@@ -11,10 +11,12 @@ type PedroV2AdContext = {
   vehicle_type?: string | null;
   summary?: string | null;
   confidence?: number;
+  diagnostics?: Record<string, unknown>;
 };
 
 const URL_RE = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi;
 const METADATA_TIMEOUT_MS = 2500;
+const IMAGE_TIMEOUT_MS = 4500;
 const AD_LINK_RE = /facebook|instagram|story_fbid|post_id|fbclid|igsh|wa\.me|fb\.watch/i;
 
 function asText(value: unknown): string | null {
@@ -137,6 +139,98 @@ function findFirstBase64Image(value: unknown, depth = 0): string | null {
   }
 
   return null;
+}
+
+function isImageLikeUrl(text?: string | null) {
+  const value = String(text || "").trim();
+  if (!/^https?:\/\//i.test(value)) return false;
+  return /\.(png|jpe?g|webp)(\?.*)?$/i.test(value) ||
+    /(?:fbcdn|scontent|lookaside|image|thumbnail|picture|media|blob\.core|cdninstagram)/i.test(value);
+}
+
+function findFirstImageUrlCandidate(value: unknown, depth = 0): string | null {
+  if (!value || depth > 8) return null;
+  if (typeof value === "string") {
+    const text = value.trim();
+    return isImageLikeUrl(text) ? text : null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findFirstImageUrlCandidate(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const priority = [
+      "jpegThumbnail",
+      "thumbnail",
+      "thumbnailUrl",
+      "thumbnail_url",
+      "preview",
+      "image",
+      "imageUrl",
+      "image_url",
+      "mediaUrl",
+      "media_url",
+      "largeThumbnail",
+      "smallThumbnail",
+    ];
+    for (const key of priority) {
+      if (key in record) {
+        const found = findFirstImageUrlCandidate(record[key], depth + 1);
+        if (found) return found;
+      }
+    }
+    for (const nested of Object.values(record)) {
+      const found = findFirstImageUrlCandidate(nested, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function bytesToDataUrl(bytes: Uint8Array, contentType = "image/jpeg") {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 8192) {
+    binary += String.fromCharCode(...bytes.slice(i, i + 8192));
+  }
+  return `data:${contentType || "image/jpeg"};base64,${btoa(binary)}`;
+}
+
+async function fetchImageAsDataUrl(url?: string | null): Promise<{
+  dataUrl?: string | null;
+  ok: boolean;
+  error?: string | null;
+  sourceUrl?: string | null;
+  contentType?: string | null;
+}> {
+  if (!url || !/^https?:\/\//i.test(url)) return { ok: false, error: "missing_url" };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; LogosIA-PedroV2/1.0)",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      },
+    });
+    const contentType = res.headers.get("content-type") || "image/jpeg";
+    if (!res.ok) return { ok: false, error: `status_${res.status}`, sourceUrl: url, contentType };
+    if (!contentType.toLowerCase().startsWith("image/")) {
+      return { ok: false, error: `not_image:${contentType}`, sourceUrl: url, contentType };
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.length === 0) return { ok: false, error: "empty_image", sourceUrl: url, contentType };
+    if (bytes.length > 8_000_000) return { ok: false, error: "image_too_large", sourceUrl: url, contentType };
+    return { ok: true, dataUrl: bytesToDataUrl(bytes, contentType), sourceUrl: url, contentType };
+  } catch (error) {
+    return { ok: false, error: String(error instanceof Error ? error.message : error), sourceUrl: url };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function decodeHtmlEntities(value: string): string {
@@ -280,7 +374,8 @@ function inferVehicleFromText(text: string): Pick<PedroV2AdContext, "vehicle_que
   const knownModels = [
     "renault duster", "duster", "oroch", "strada", "toro", "saveiro", "montana", "hilux",
     "ranger", "s10", "amarok", "onix", "hb20", "creta", "renegade", "compass", "tracker",
-    "corolla", "civic", "cruze", "argo", "mobi", "kwid", "ecosport", "t cross", "tcross", "asx",
+    "corolla", "civic", "cruze", "fiat argo", "argo drive", "argo", "mobi", "kwid", "ecosport",
+    "t cross", "tcross", "asx",
   ];
   const model = knownModels.find((item) => normalized.includes(item));
   if (!model) return { confidence: 0.15 };
@@ -323,7 +418,7 @@ async function inferVehicleFromImage(imageDataUrl: string): Promise<Pick<PedroV2
               {
                 type: "text",
                 text:
-                  "Leia o texto visivel e identifique o veiculo anunciado. vehicle_query deve ser algo pesquisavel no estoque, ex: Renault Duster 1.6 2020 automatico.",
+                  "Leia o texto visivel e identifique o veiculo anunciado. vehicle_query deve ser algo pesquisavel no estoque, incluindo marca, modelo, versao, ano, cambio e preco quando aparecerem. Exemplos: Renault Duster Authentique 1.6 2020 automatico; Fiat Argo Drive 1.0 2023.",
               },
               { type: "image_url", image_url: { url: imageDataUrl } },
             ],
@@ -378,9 +473,20 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
     messageText,
   ]);
   const textInference = inferVehicleFromText(metadataText || textual.raw_text || messageText);
-  const imageDataUrl = findFirstBase64Image(payload) || findFirstBase64Image(pageMetadata?.image);
+  const embeddedImage = findFirstBase64Image(payload) || findFirstBase64Image(pageMetadata?.image);
+  const imageUrlCandidate = !embeddedImage
+    ? findFirstImageUrlCandidate(payload) || (isImageLikeUrl(pageMetadata?.image) ? pageMetadata?.image || null : null)
+    : null;
+  const fetchedImage = embeddedImage && /^https?:\/\//i.test(embeddedImage)
+    ? await fetchImageAsDataUrl(embeddedImage)
+    : imageUrlCandidate
+      ? await fetchImageAsDataUrl(imageUrlCandidate)
+      : { ok: false, error: "no_image_candidate" };
+  const imageDataUrl = embeddedImage && !/^https?:\/\//i.test(embeddedImage)
+    ? embeddedImage
+    : fetchedImage.dataUrl || embeddedImage || imageUrlCandidate || null;
   const imageInference = imageDataUrl ? await inferVehicleFromImage(imageDataUrl) : null;
-  const best = imageInference && Number(imageInference.confidence || 0) > Number(textInference.confidence || 0)
+  const best = imageInference && Number(imageInference.confidence || 0) >= Math.max(0.45, Number(textInference.confidence || 0))
     ? imageInference
     : textInference;
 
@@ -393,6 +499,14 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
     vehicle_type: best.vehicle_type || null,
     summary: best.summary || metadataText || textual.raw_text || null,
     confidence: Number(best.confidence || 0),
+    diagnostics: {
+      text_confidence: Number(textInference.confidence || 0),
+      image_confidence: Number(imageInference?.confidence || 0),
+      image_candidate_host: hostname(embeddedImage || imageUrlCandidate || pageMetadata?.image || null),
+      image_fetch_ok: fetchedImage.ok,
+      image_fetch_error: fetchedImage.error || null,
+      used_image_inference: best === imageInference,
+    },
   };
 }
 

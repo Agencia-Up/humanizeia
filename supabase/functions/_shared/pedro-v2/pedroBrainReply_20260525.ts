@@ -124,7 +124,7 @@ function buildChatHistory(turns: any[] | undefined, currentMessage: string) {
 }
 
 function stockFacts(stockResult: any) {
-  const items = Array.isArray(stockResult?.items) ? stockResult.items.slice(0, 6) : [];
+  const items = Array.isArray(stockResult?.items) ? stockResult.items.slice(0, 24) : [];
   return items.map((vehicle: any, index: number) => ({
     index: index + 1,
     label: vehicleLabel(vehicle) || vehicle?.label || vehicle?.modelo || "Veiculo",
@@ -151,13 +151,13 @@ function buildDeterministicStockReply(input: {
   intent?: PedroV2IntentResult | null;
   stock_result: any;
 }) {
-  const items = stockFacts(input.stock_result).slice(0, 5);
+  const items = stockFacts(input.stock_result);
   const requested = input.plan.search_query || input.intent?.extracted?.interesse?.modelo_desejado || input.memory?.interesse?.modelo_desejado || "o que voce pediu";
   if (items.length === 0) {
     return `Conferi no estoque real e nao achei ${requested} disponivel agora.\n\nSe fizer sentido, posso procurar algo parecido por faixa de valor ou cambio.`;
   }
 
-  const intro = `Temos sim. Separei algumas opcoes de ${requested} no estoque:`;
+  const intro = `Temos sim. Encontrei ${items.length} opcao${items.length === 1 ? "" : "es"} de ${requested} no estoque:`;
   const list = items.map((vehicle) => [
     `${vehicle.index}. *${vehicle.label}*`,
     vehicle.preco_formatado ? `Preco: ${vehicle.preco_formatado}` : null,
@@ -284,7 +284,7 @@ export async function generatePedroBrainReply(input: {
                 "- Se o lead perguntou como voce esta, responda isso primeiro e so depois conduza com leveza.",
                 "- Se o lead corrigiu voce, reconheca sem defensiva.",
                 "- Se houver estoque, use somente os fatos recebidos das tools. Nunca invente ano, preco, km, cambio, cor ou disponibilidade.",
-                "- Se listar veiculos, todos os itens devem vir numerados: 1., 2., 3. Isso permite o lead pedir 'o primeiro'.",
+                "- Se listar veiculos, todos os itens de stock.facts devem vir numerados: 1., 2., 3. Isso permite o lead pedir 'o primeiro'.",
                 "- Se listar veiculos, inclua a linha Foto: URL quando stock.facts.imagem existir.",
                 "- Se listar veiculos, deixe uma linha em branco entre cada item.",
                 "- Se o lead mudou de modelo/assunto, a mensagem atual vence a memoria antiga.",
@@ -317,7 +317,7 @@ export async function generatePedroBrainReply(input: {
               tool_result: input.tool_result || null,
               hard_rules: [
                 "Se stock.facts existir, use apenas esses veiculos e dados.",
-                "Se stock.facts existir, liste os veiculos com numeros e inclua Foto quando houver imagem.",
+                "Se stock.facts existir, liste TODOS os veiculos recebidos em stock.facts com numeros e inclua Foto quando houver imagem.",
                 "Se o cliente mudou o modelo, nao repita o modelo antigo.",
                 "Se a resposta listar veiculos, separe cada item por linha em branco.",
                 "Se cumprimentar, use current_time_sao_paulo.greeting; nunca chute periodo do dia.",

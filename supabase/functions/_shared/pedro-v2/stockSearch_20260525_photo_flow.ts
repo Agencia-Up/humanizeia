@@ -1,5 +1,5 @@
 const BNDV_API_URL = "https://api-estoque.azurewebsites.net/graphql";
-const DEFAULT_LIMIT = 8;
+const DEFAULT_LIMIT = 24;
 
 type BndvCredentials = {
   api_token?: string;
@@ -331,7 +331,7 @@ function parseBndvPictures(rawPictureJs?: string | null) {
 function toPedroVehicle(vehicle: BndvVehicle, rank: { score: number; matchedTokens: string[]; relaxed: boolean }) {
   const pictures = parseBndvPictures(vehicle.pictureJs);
   const principalImage = pictures.find((item: any) => item.principal)?.url || pictures[0]?.url || null;
-  const fotos = pictures.map((item: any) => item.url).filter(Boolean).slice(0, 12);
+  const fotos = pictures.map((item: any) => item.url).filter(Boolean).slice(0, 24);
   return {
     marca: vehicle.markName || null,
     modelo: vehicle.modelName || null,
@@ -418,7 +418,7 @@ export async function searchPedroStock(supabase: any, input: PedroStockSearchInp
     return Number(right.vehicle.year || 0) - Number(left.vehicle.year || 0);
   });
 
-  const limit = Math.max(1, Math.min(Number(input.limit || DEFAULT_LIMIT), 12));
+  const limit = Math.max(1, Math.min(Number(input.limit || DEFAULT_LIMIT), 30));
   const items = ranked.slice(0, limit).map((rank) => toPedroVehicle(rank.vehicle, rank));
   return {
     success: true,

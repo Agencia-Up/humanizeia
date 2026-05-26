@@ -2,6 +2,12 @@
 
 ## 2026-05-26
 
+- Pedro v2: reforcada a leitura de anuncio/link com tentativa de localizar e baixar thumbnail/imagem do card antes da analise por visao; isso melhora casos de Facebook/Instagram em que o texto do link nao traz o veiculo, mas a imagem traz.
+- Pedro v2: ampliado limite de busca/listagem do estoque BNDV e memoria de veiculos apresentados para evitar cortar modelos disponiveis e quebrar referencias como "o segundo" ou "tem mais modelos".
+- Pedro v2: `pedro-webhook-v2` implantada em producao com build `2026-05-26-ad-thumbnail-full-stock-v1`.
+
+## 2026-05-26
+
 - Pedro v2: refatorado o fluxo de resposta final para evitar comportamento de robo/script fixo.
 - O orquestrador agora carrega ate 24 turnos recentes combinando `pedro_conversation_state.recent_turns` com historico real de `wa_inbox`.
 - `pedroBrainReply` deixou de responder small talk por regra deterministica e passou a montar mensagens reais de chat para o LLM usando o system prompt cadastrado no portal.

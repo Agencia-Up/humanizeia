@@ -38,6 +38,11 @@
     - pedir `fotos do automatico` apos uma lista com apenas um automatico e confirmar que as fotos sao do veiculo automatico correto;
     - pedir `fotos do painel` e confirmar que a selecao prioriza painel/interior e nao troca de veiculo;
     - confirmar que mensagens formatadas de estoque continuam com quebras de linha e exibem digitacao antes do envio;
+  - apos o build `2026-05-26-ad-thumbnail-full-stock-v1`, testar no WhatsApp real:
+    - enviar card/link Facebook ou Instagram com thumbnail visivel e confirmar se o Pedro v2 identifica o veiculo anunciado antes de responder;
+    - conferir `pedro_v2_turn_logs` para diagnosticos `ad_context.diagnostics.image_fetch_ok` e `used_image_inference`;
+    - pedir `Voce tem onix?` e confirmar que todos os itens retornados pela tool aparecem numerados;
+    - pedir `Me manda fotos do segundo` e `Tem fotos do automatico?` logo depois da lista, confirmando que o alvo continua sendo o veiculo correto;
   - apos o hotfix `2026-05-26-brain-memory-orchestrator`, testar no WhatsApp real:
     - conversa social com pelo menos 3 mensagens, confirmando que o agente nao repete saudacao/apresentacao;
     - troca de assunto apos estoque/fotos, confirmando que a mensagem atual vence memoria antiga;
