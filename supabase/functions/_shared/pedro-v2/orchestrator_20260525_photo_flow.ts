@@ -172,6 +172,61 @@ async function markAgentReplyForLead(supabase: any, leadId?: string | null) {
   }
 }
 
+function compactRecentTurns(memory: any, incomingText: string, replyText: string, replySource?: string | null) {
+  const now = new Date().toISOString();
+  const previous = Array.isArray(memory?.recent_turns) ? memory.recent_turns : [];
+  return [
+    ...previous,
+    {
+      role: "lead",
+      text: String(incomingText || "").trim().slice(0, 1200),
+      at: now,
+      source: "whatsapp",
+    },
+    {
+      role: "agent",
+      text: String(replyText || "").trim().slice(0, 1600),
+      at: now,
+      source: replySource || null,
+    },
+  ]
+    .filter((turn) => turn.text)
+    .slice(-12);
+}
+
+async function saveRecentConversationTurn(supabase: any, input: {
+  lead_id?: string | null;
+  agent_id: string;
+  user_id: string;
+  current: any;
+  incoming_text: string;
+  reply_text: string;
+  reply_source?: string | null;
+}) {
+  if (!input.lead_id || !input.reply_text) return input.current || {};
+  const nextState = {
+    ...(input.current || {}),
+    recent_turns: compactRecentTurns(input.current, input.incoming_text, input.reply_text, input.reply_source),
+    last_extracted_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("pedro_conversation_state")
+    .upsert({
+      lead_id: input.lead_id,
+      agent_id: input.agent_id,
+      user_id: input.user_id,
+      state: nextState,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "lead_id,agent_id" });
+
+  if (error) {
+    console.warn("[PedroV2] Failed to save recent conversation turn", error);
+    return input.current || {};
+  }
+  return nextState;
+}
+
 type PhotoTarget = "overview" | "front" | "side" | "rear" | "interior" | "dashboard" | "seats" | "trunk" | "wheel";
 
 function normalizePhotoText(value: string) {
@@ -586,6 +641,9 @@ export async function processPedroV2Turn(
         agent_id: input.agent.id,
       })
     : {};
+  const recentHistory = Array.isArray(currentMemory?.recent_turns)
+    ? currentMemory.recent_turns.slice(-10)
+    : [];
 
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
   const mediaContext = await resolvePedroMediaContext(input.payload, input.wa_instance);
@@ -634,6 +692,7 @@ export async function processPedroV2Turn(
     heuristic_intent: contextualIntentBase,
     ad_context: adContext,
     media_context: sanitizePedroMediaContext(mediaContext),
+    recent_history: recentHistory,
     vehicle_resolution: vehicleResolution,
   });
   const contextualIntent = mergeBrainPlanIntoIntent(contextualIntentBase, brainPlan, vehicleResolution);
@@ -696,10 +755,12 @@ export async function processPedroV2Turn(
         vehicle_resolution: vehicleResolution,
         ad_context: adContext,
         media_context: sanitizePedroMediaContext(mediaContext),
+        recent_history: recentHistory,
       });
 
+  let memoryAfterReply = effectiveMemory;
   if (!dryRun && lead?.id && reply.source === "vehicle_photos_reply") {
-    await savePhotoReference(supabase, {
+    memoryAfterReply = await savePhotoReference(supabase, {
       lead_id: lead.id,
       agent_id: input.agent.id,
       user_id: input.agent.user_id,
@@ -766,6 +827,18 @@ export async function processPedroV2Turn(
   } else if (!dryRun && reply.ok) {
     sendResult = { ok: true, dry_run: true, reason: "PEDRO_V2_SEND_ENABLED_disabled" };
     await markAgentReplyForLead(supabase, lead?.id || null);
+  }
+
+  if (!dryRun && lead?.id && reply.ok) {
+    memoryAfterReply = await saveRecentConversationTurn(supabase, {
+      lead_id: lead.id,
+      agent_id: input.agent.id,
+      user_id: input.agent.user_id,
+      current: memoryAfterReply,
+      incoming_text: text,
+      reply_text: reply.text || "",
+      reply_source: reply.source || null,
+    });
   }
 
   if (!dryRun) {

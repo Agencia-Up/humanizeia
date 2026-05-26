@@ -138,6 +138,13 @@
   - cumprimento simples como `bom dia` nao deve mais entrar como anuncio sem payload real de anuncio/midia;
   - deploy realizado em producao da Edge Function `pedro-webhook-v2` com build `2026-05-25-brain-orchestrator-v1`;
   - build frontend validado com `npm.cmd run build`.
+- Hotfix do Pedro v2 para memoria curta e perguntas sociais:
+  - adicionado `recent_turns` em `pedro_conversation_state.state` para o Pedro v2 lembrar as ultimas trocas entre lead e agente;
+  - planner e reply passaram a receber `recent_history`, evitando que o agente se reapresente quando ja conversou com o lead;
+  - perguntas sociais como "como voce esta?", "e voce?" e correcoes como "perguntei como voce esta" agora viram `reply_only/small_talk`, sem acionar estoque, anuncio ou fluxo de primeiro contato;
+  - resposta social passa a responder primeiro a pergunta do lead, com tom humano e humilde quando errou a interpretacao;
+  - deploy realizado em producao da Edge Function `pedro-webhook-v2`;
+  - build frontend validado com `npm.cmd run build`.
 
 ## Historico funcional recente consolidado
 

@@ -83,6 +83,34 @@ function leadFirstName(memory?: PedroV2LeadMemory | null) {
   return name.split(/\s+/)[0];
 }
 
+function isSocialQuestion(message?: string | null) {
+  const normalized = normalizeText(message);
+  return /\b(como voce ta|como voce esta|como vc ta|como vc esta|e voce|e vc|tudo bem contigo|tudo certo contigo|como vai)\b/.test(normalized) ||
+    /\b(perguntei|perguntando)\b.*\b(como voce|como vc|voce ta|vc ta|voce esta|vc esta)\b/.test(normalized);
+}
+
+function isSocialCorrection(message?: string | null) {
+  const normalized = normalizeText(message);
+  return /\b(perguntei|perguntando|eu perguntei)\b.*\b(como voce|como vc|voce ta|vc ta|voce esta|vc esta)\b/.test(normalized);
+}
+
+function buildSocialReply(input: {
+  memory?: PedroV2LeadMemory | null;
+  message: string;
+}) {
+  if (!isSocialQuestion(input.message)) return null;
+  const name = leadFirstName(input.memory);
+  const prefix = name ? `${name}, ` : "";
+  const text = isSocialCorrection(input.message)
+    ? `${prefix}voce tem razao, eu respondi atravessado.\n\nEstou bem sim, obrigado por perguntar. E voce, tudo certo por ai?`
+    : `${prefix}estou bem sim, obrigado por perguntar.\n\nE voce, tudo certo por ai?`;
+  return {
+    ok: true,
+    text,
+    source: "social_context_reply",
+  };
+}
+
 function stockFacts(stockResult: any) {
   const items = Array.isArray(stockResult?.items) ? stockResult.items.slice(0, 6) : [];
   return items.map((vehicle: any, index: number) => ({
@@ -138,6 +166,12 @@ function fallbackReply(input: {
   message: string;
   plan: PedroBrainPlan;
 }) {
+  const socialReply = buildSocialReply({
+    memory: input.memory,
+    message: input.message,
+  });
+  if (socialReply) return socialReply;
+
   if (Array.isArray(input.stock_result?.items)) {
     return {
       ok: true,
@@ -174,7 +208,14 @@ export async function generatePedroBrainReply(input: {
   vehicle_resolution: PedroVehicleResolution;
   ad_context?: any;
   media_context?: any;
+  recent_history?: any[];
 }) {
+  const socialReply = buildSocialReply({
+    memory: input.memory,
+    message: input.message,
+  });
+  if (socialReply) return socialReply;
+
   const fallback = fallbackReply(input);
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return fallback;
@@ -209,6 +250,7 @@ export async function generatePedroBrainReply(input: {
               vehicle_resolution: input.vehicle_resolution,
               ad_context: input.ad_context || null,
               media_context: input.media_context || null,
+              recent_history: input.recent_history || input.memory?.recent_turns || [],
               memory_summary: {
                 lead: input.memory?.lead || {},
                 interesse: input.memory?.interesse || {},
@@ -226,6 +268,8 @@ export async function generatePedroBrainReply(input: {
                 "Se o cliente mudou o modelo, nao repita o modelo antigo.",
                 "Se a resposta listar veiculos, separe cada item por linha em branco.",
                 "Se cumprimentar, use current_time_sao_paulo.greeting; nunca chute periodo do dia.",
+                "Se recent_history mostrar que voce ja se apresentou, nao se apresente de novo.",
+                "Se o lead perguntou como voce esta ou corrigiu uma resposta, responda isso primeiro com humildade e sem vender.",
                 "Nao escreva [IA], ferramenta, tool ou explicacao interna.",
                 "Nao peca entrada/troca antes de responder o que o cliente perguntou.",
               ],

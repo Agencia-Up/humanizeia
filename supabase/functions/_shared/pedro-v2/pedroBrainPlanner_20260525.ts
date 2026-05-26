@@ -51,6 +51,12 @@ function isSimpleGreeting(message?: string | null) {
   return /^(oi|ola|bom dia|boa tarde|boa noite|opa|e ai|tudo bem|td bem|blz|beleza)$/.test(normalized);
 }
 
+function isSocialQuestion(message?: string | null) {
+  const normalized = normalizeText(message);
+  return /\b(como voce ta|como voce esta|como vc ta|como vc esta|e voce|e vc|tudo bem contigo|tudo certo contigo|como vai)\b/.test(normalized) ||
+    /\b(perguntei|perguntando)\b.*\b(como voce|como vc|voce ta|vc ta|voce esta|vc esta)\b/.test(normalized);
+}
+
 function isPhotoText(message?: string | null) {
   const normalized = normalizeText(message);
   return /\b(foto|fotos|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|porta malas|traseira|frente|lateral|video)\b/.test(normalized);
@@ -89,6 +95,21 @@ function fallbackPlan(input: {
   const vehicle = input.vehicle_resolution;
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
   const photo = isPhotoText(input.message);
+
+  if (isSocialQuestion(input.message)) {
+    return {
+      action: "reply_only",
+      intent: "small_talk",
+      confidence: 0.9,
+      search_query: null,
+      search_filters: {},
+      photo_target: null,
+      use_memory_vehicle: false,
+      response_guidance: "Cliente fez pergunta social sobre o consultor. Responda diretamente, sem se reapresentar e sem puxar estoque.",
+      reason: "fallback_social_question",
+      source: "fallback",
+    };
+  }
 
   if (heuristic?.needs_handoff || heuristic?.intent === "human_request") {
     return {
@@ -275,6 +296,15 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     plan.reason = "enforced_plain_greeting";
   }
 
+  if (isSocialQuestion(input.message)) {
+    plan.action = "reply_only";
+    plan.intent = "small_talk";
+    plan.search_query = null;
+    plan.use_memory_vehicle = false;
+    plan.response_guidance = "Responda a pergunta social do lead de forma humana; nao se apresente de novo.";
+    plan.reason = "enforced_social_question";
+  }
+
   return plan;
 }
 
@@ -286,6 +316,7 @@ export async function planPedroTurn(input: {
   heuristic_intent?: PedroV2IntentResult | null;
   ad_context?: any;
   media_context?: any;
+  recent_history?: any[];
   vehicle_resolution: PedroVehicleResolution;
 }): Promise<PedroBrainPlan> {
   const fallback = fallbackPlan(input);
@@ -318,6 +349,7 @@ export async function planPedroTurn(input: {
               heuristic_intent: input.heuristic_intent || null,
               ad_context: input.ad_context || null,
               media_context: input.media_context || null,
+              recent_history: input.recent_history || [],
               vehicle_resolution: input.vehicle_resolution,
             }),
           },

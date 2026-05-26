@@ -72,6 +72,12 @@ export type PedroV2LeadMemory = {
     vendedor_anterior_id?: string | null;
   };
   veiculos_apresentados?: any[];
+  recent_turns?: Array<{
+    role: "lead" | "agent";
+    text: string;
+    at: string;
+    source?: string | null;
+  }>;
 };
 
 export type PedroV2IntentResult = {
