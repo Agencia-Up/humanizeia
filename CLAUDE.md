@@ -4,6 +4,36 @@
 
 ---
 
+## 🛑 0. REGRA INVIOLÁVEL DE DEPLOY (ler ANTES de qualquer coisa)
+
+**Toda alteração técnica segue OBRIGATORIAMENTE este fluxo:**
+
+1. **Implementar em STAGING** — projeto Supabase `ezoltigtqgbmftmiwjxh`, branch git `staging`. Migrations via `scripts/supabase-logosia-staging.cmd`, deploy de edge function via mesmo wrapper, push pra `staging`.
+2. **PARAR. Aguardar validação manual** do usuário no app de staging (`logos-ia-logosia-baseteste.pqaykh.easypanel.host`). O usuário precisa testar e confirmar EXPLICITAMENTE no chat ("ok pode promover pra prod", "promove", "subir prod" ou similar com sentido inequívoco).
+3. **Só DEPOIS da aprovação explícita:** aplicar migration em PROD (`seyljsqmhlopkcauhlor` via `scripts/supabase-logosia.cmd`), deploy de edge function PROD, e merge `staging → main` + push (dispara rebuild EasyPanel prod).
+
+### ❌ NUNCA fazer
+
+- Deploy direto em PROD sem etapa STAGING + validação prévia.
+- Assumir que "ok" genérico significa "promove pra prod" — sempre confirmar via AskUserQuestion se houver qualquer ambiguidade.
+- Aplicar migration em PROD usando `scripts/supabase-logosia-staging.cmd` (apontaria pra staging) ou vice-versa.
+- Acumular múltiplas mudanças e mandar pacote pra prod sem aprovação item-a-item (a menos que o usuário explicitamente diga "promove tudo").
+- Pular o backup do `supabase/.temp/project-ref` antes de re-linkar CLI entre staging/prod.
+
+### ✅ SEMPRE fazer
+
+- Confirmar status do link CLI (`cat supabase/.temp/project-ref`) antes de qualquer comando `db query` ou `functions deploy`.
+- Backup do link de staging antes de re-linkar pra prod (`cp project-ref project-ref.staging-backup`).
+- Re-linkar de volta no staging após terminar trabalho em prod (volta pro fluxo padrão).
+- Commit em `staging` ANTES de validar prod (rastreável + facilita rollback).
+- Verificar via SELECT pós-migration que a mudança foi aplicada (ex: `SELECT column_name FROM information_schema.columns WHERE ...`).
+
+### 🚨 Exceção única
+
+Se houver **bug crítico em produção** já reportado (ex: vazamento de dados, RLS quebrada, vendedores totalmente bloqueados), a auditoria/correção segue o protocolo normal STAGING-primeiro, mas pode ser priorizada acima de outras tasks. O fluxo STAGING → validação → PROD permanece inviolável mesmo em emergência.
+
+---
+
 ## 1. PROJECT OVERVIEW
 
 **Logos IA Platform** é uma plataforma SaaS de agência de marketing digital autônoma, orquestrada por 9 agentes de Inteligência Artificial especializados. Cada agente cobre uma disciplina do marketing digital e trabalha em conjunto sob coordenação do **Salomão** (orquestrador central).
