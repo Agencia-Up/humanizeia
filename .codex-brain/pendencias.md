@@ -63,6 +63,7 @@
   - transferencia automatica por inatividade;
   - vendedor `ok`;
   - lead recorrente;
+  - card/link de anuncio com thumbnail do WhatsApp sendo baixado pela Uazapi e identificado pela visao;
   - campanha com texto + midia;
   - campanha com variacoes IA;
   - follow-up com midia;
@@ -98,3 +99,4 @@
 5. Melhorar indices e queries para escala de leads.
 6. Revisar arquivos sensiveis no repo/local e garantir `.gitignore` adequado.
 7. Manter staging sincronizado antes de mudancas grandes.
+8. Criar uma bateria de teste com payloads reais de anuncio Facebook/Instagram para o Pedro v2, cobrindo `thumbnailDirectPath`, `jpegThumbnail`, imagem anexada e link puro.

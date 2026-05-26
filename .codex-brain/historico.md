@@ -167,6 +167,13 @@
   - pedidos de fotos passam a enviar uma frase curta antes das imagens, citando o veiculo/detalhe selecionado, e depois enviam as midias;
   - a ordem heuristica de fotos foi ajustada para tentar misturar frente/traseira/interior/painel com base na ordem do BNDV, sem alterar regras de transferencia/CRM;
   - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
+- Hotfix do Pedro v2 para leitura real de cards/anuncios do WhatsApp:
+  - `pedro-webhook-v2` recebeu build `2026-05-26-uazapi-full-media-v2`;
+  - corrigido o resolvedor de midia para baixar a imagem completa via Uazapi usando `POST /message/download?instance=...` com `return_base64`;
+  - o v2 deixou de pular o download quando existia `thumbnailDirectPath`, evitando depender apenas da miniatura embutida do WhatsApp;
+  - o parser de retorno da Uazapi passou a aceitar campos como `base64Data`, `fileURL`, `mediaUrl` e variantes;
+  - a visao do anuncio agora prioriza texto visivel do card, como modelo, versao, ano, cambio e preco;
+  - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
 
 ## Historico funcional recente consolidado
 

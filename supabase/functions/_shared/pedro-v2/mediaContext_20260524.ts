@@ -69,6 +69,13 @@ function compact(values: Array<string | null | undefined>) {
     .join(" | ");
 }
 
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.indexOf(value) === index);
+}
+
 function collectKeys(value: unknown, found = new Set<string>(), depth = 0) {
   if (!value || depth > 7) return found;
   if (Array.isArray(value)) {
@@ -88,20 +95,43 @@ function pickMessageId(payload: any): string | null {
   const message = pickIncomingMessage(payload);
   const candidates = [
     message?.id,
+    message?.messageid,
     message?.messageId,
     message?.message_id,
+    message?.id?.id,
     message?.key?.id,
     message?.msgId,
     message?.data?.id,
+    message?.data?.id?.id,
+    message?.data?.messageid,
+    message?.data?.messageId,
+    message?.data?.message_id,
+    message?.data?.key?.id,
     payload?.id,
+    payload?.id?.id,
+    payload?.messageid,
     payload?.messageId,
     payload?.message_id,
     payload?.data?.id,
+    payload?.data?.id?.id,
+    payload?.data?.messageid,
     payload?.data?.messageId,
+    payload?.data?.message_id,
     payload?.data?.key?.id,
+    payload?.message?.id,
+    payload?.message?.id?.id,
+    payload?.message?.messageid,
+    payload?.message?.messageId,
+    payload?.message?.message_id,
     payload?.message?.key?.id,
   ];
   return candidates.map(asText).find(Boolean) || null;
+}
+
+function expandMessageIdCandidates(messageId: string | null): string[] {
+  const id = asText(messageId);
+  const afterColon = id?.includes(":") ? id.split(":").filter(Boolean).pop() : null;
+  return uniqueStrings([id, afterColon]);
 }
 
 function pickKind(payload: any): string | null {
@@ -221,10 +251,47 @@ function findFirstImageCandidate(value: unknown, depth = 0): string | null {
 }
 
 function pickDownloadPayload(data: any): { dataUrl?: string | null; url?: string | null; text?: string | null } {
-  const mime = asText(data?.mimetype || data?.mimeType || data?.mediaType || data?.type) || "image/jpeg";
-  const base64 = asText(data?.base64 || data?.data || data?.file || data?.media);
-  const url = asText(data?.url || data?.mediaUrl || data?.media_url || data?.fileUrl || data?.file_url);
-  const text = asText(data?.text || data?.caption || data?.message);
+  const nested = data?.data || data?.result || data?.message || {};
+  const mime = asText(
+    data?.mimetype ||
+      data?.mimeType ||
+      data?.mediaType ||
+      data?.type ||
+      nested?.mimetype ||
+      nested?.mimeType ||
+      nested?.mediaType ||
+      nested?.type,
+  ) || "image/jpeg";
+  const base64 = asText(
+    data?.base64Data ||
+      data?.base64_data ||
+      data?.base64 ||
+      data?.fileBase64 ||
+      data?.mediaBase64 ||
+      nested?.base64Data ||
+      nested?.base64_data ||
+      nested?.base64 ||
+      nested?.fileBase64 ||
+      nested?.mediaBase64,
+  );
+  const url = asText(
+    data?.fileURL ||
+      data?.fileUrl ||
+      data?.file_url ||
+      data?.mediaURL ||
+      data?.mediaUrl ||
+      data?.media_url ||
+      data?.url ||
+      nested?.fileURL ||
+      nested?.fileUrl ||
+      nested?.file_url ||
+      nested?.mediaURL ||
+      nested?.mediaUrl ||
+      nested?.media_url ||
+      nested?.url,
+  );
+  const text = asText(data?.text || data?.caption || data?.message || data?.transcription || nested?.text || nested?.caption || nested?.transcription);
+  if (base64?.startsWith("data:image/")) return { dataUrl: base64, url, text };
   if (base64 && !/^https?:\/\//i.test(base64) && /^[A-Za-z0-9+/=\r\n]+$/.test(base64)) {
     return { dataUrl: `data:${IMAGE_MIME_RE.test(mime) ? mime : "image/jpeg"};base64,${base64}`, url, text };
   }
@@ -236,29 +303,51 @@ async function downloadUazapiMedia(instance: any, messageId: string | null): Pro
   const baseUrl = String(instance.api_url).replace(/\/$/, "");
   const token = instance.api_key_encrypted || instance.api_key;
   if (!token) return { ok: false, error: "missing_instance_token" };
+  const instanceName = asText(instance.instance_name || instance.name || instance.instance);
+  const ids = expandMessageIdCandidates(messageId);
+  const endpoints = uniqueStrings([
+    instanceName ? `${baseUrl}/message/download?instance=${encodeURIComponent(instanceName)}` : null,
+    `${baseUrl}/message/download`,
+  ]);
 
-  try {
-    const res = await fetch(`${baseUrl}/message/download`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "token": token,
-        "apikey": token,
-      },
-      body: JSON.stringify({ id: messageId }),
-    });
-    const raw = await res.text();
-    let data: any = null;
-    try {
-      data = raw ? JSON.parse(raw) : null;
-    } catch {
-      data = raw;
+  let lastError = "download_not_attempted";
+
+  for (const endpoint of endpoints) {
+    for (const id of ids) {
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "token": token,
+            "apikey": token,
+          },
+          body: JSON.stringify({ id, return_base64: true }),
+        });
+        const raw = await res.text();
+        let data: any = null;
+        try {
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          data = raw;
+        }
+        if (!res.ok) {
+          lastError = `${res.status}:${String(raw || "").slice(0, 160)}`;
+          continue;
+        }
+
+        const payload = pickDownloadPayload(data);
+        if (payload.dataUrl || payload.url || payload.text) {
+          return { ok: true, ...payload };
+        }
+        lastError = "empty_download_payload";
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
     }
-    if (!res.ok) return { ok: false, error: `${res.status}:${String(raw || "").slice(0, 160)}` };
-    return { ok: true, ...pickDownloadPayload(data) };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+
+  return { ok: false, error: lastError };
 }
 
 function inferVehicleFromText(text: string): Pick<PedroV2MediaContext, "vehicle_query" | "vehicle_type" | "confidence"> {
@@ -300,7 +389,7 @@ async function inferMediaWithVision(imageDataUrl: string, caption?: string | nul
           {
             role: "system",
             content:
-              "Voce analisa imagens, thumbnails e prints de anuncios automotivos para um vendedor. Responda apenas JSON valido com: vehicle_query, vehicle_type, summary, confidence. vehicle_query deve ser pesquisavel no estoque. Nunca invente se a imagem nao estiver legivel.",
+              "Voce analisa imagens, thumbnails, prints e cards de anuncios automotivos para um vendedor. Responda apenas JSON valido com: vehicle_query, vehicle_type, summary, confidence. Leia textos visiveis no card, como modelo, versao, ano, cambio e preco. vehicle_query deve ser pesquisavel no estoque, por exemplo 'Fiat Argo Drive 1.0 2023'. Nunca invente se a imagem nao estiver legivel.",
           },
           {
             role: "user",
@@ -308,7 +397,7 @@ async function inferMediaWithVision(imageDataUrl: string, caption?: string | nul
               {
                 type: "text",
                 text:
-                  `Leia todo texto visivel da imagem e identifique o veiculo anunciado. Priorize modelo, versao, ano, cambio, preco e tipo. Caption/mensagem do lead: ${caption || "(sem caption)"}`,
+                  `Leia todo texto visivel da imagem e identifique o veiculo anunciado. Se for um card de Facebook/Instagram/WhatsApp, o texto dentro da imagem vale mais que a URL. Priorize modelo, versao, ano, cambio, preco e tipo. Caption/mensagem do lead: ${caption || "(sem caption)"}`,
               },
               { type: "image_url", image_url: { url: imageDataUrl } },
             ],
@@ -343,10 +432,11 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
   const embeddedImage = findFirstImageCandidate(payload);
   const effectiveKind = kind || (embeddedImage ? "image" : null);
   const keysFound = [...collectKeys(payload)].slice(0, 60);
-  const downloaded = !embeddedImage && kind === "image"
+  const downloaded = effectiveKind === "image" && messageId
     ? await downloadUazapiMedia(instance, messageId)
-    : { ok: false, error: embeddedImage ? "embedded_image_available" : "not_image_or_missing" };
-  const imageData = embeddedImage || downloaded.dataUrl || downloaded.url || null;
+    : { ok: false, error: effectiveKind === "image" ? "missing_message_id" : "not_image_or_missing" };
+  const imageData = downloaded.dataUrl || downloaded.url || embeddedImage || null;
+  const usedDownloadedImage = Boolean(downloaded.ok && (downloaded.dataUrl || downloaded.url));
   const hasMediaPayload = Boolean(effectiveKind || imageData || downloaded.ok);
 
   if (!hasMediaPayload) {
@@ -367,6 +457,7 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
         download_ok: downloaded.ok,
         download_error: downloaded.ok ? null : downloaded.error,
         has_embedded_image: false,
+        used_downloaded_image: false,
         has_image_for_vision: false,
       },
     };
@@ -382,7 +473,7 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
   return {
     has_media_context: true,
     kind: effectiveKind,
-    source: embeddedImage ? "webhook_embedded" : downloaded.ok ? "uazapi_download" : kind ? "media_unavailable" : null,
+    source: usedDownloadedImage ? "uazapi_download" : embeddedImage ? "webhook_embedded" : downloaded.ok ? "uazapi_download_no_image" : kind ? "media_unavailable" : null,
     message_id: messageId,
     media_data_url: imageData?.startsWith("data:image/") ? imageData : null,
     media_url: imageData && /^https?:\/\//i.test(imageData) ? imageData : null,
@@ -396,6 +487,7 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
       download_ok: downloaded.ok,
       download_error: downloaded.ok ? null : downloaded.error,
       has_embedded_image: Boolean(embeddedImage),
+      used_downloaded_image: usedDownloadedImage,
       has_image_for_vision: Boolean(imageData),
     },
   };
