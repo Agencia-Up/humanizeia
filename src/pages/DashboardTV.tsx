@@ -26,7 +26,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
-import { Calendar, Clock, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
+import { Calendar, Clock, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag } from 'lucide-react';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -42,11 +42,16 @@ interface VendedorData {
   marketplace: number;
   consignado: number;
   indicacao: number;
+  outros: number;
   total: number;
 }
 
 interface KPIsData {
   total_leads: number;
+  /** Leads contados no total_leads que NÃO estão atribuídos a nenhum vendedor.
+   *  Não aparecem em vendedor específico, mas precisam aparecer no KPI total
+   *  pra TV refletir TUDO que foi cadastrado no dia. */
+  nao_atribuidos: number;
   por_origem: Record<string, number>;
   percentuais: Record<string, number>;
   /** 0-100 — média ponderada IA(50%) + Feedback(30%) + Notas(20%) */
@@ -134,6 +139,7 @@ const ORIGENS = [
   { key: 'marketplace',  label: 'Marketplace',  icon: Globe,       color: '#a855f7' },
   { key: 'indicacao',    label: 'Indicação',    icon: Users,       color: '#fb923c' },
   { key: 'consignado',   label: 'Consignado',   icon: Phone,       color: '#06b6d4' },
+  { key: 'outros',       label: 'Outros',       icon: Tag,         color: '#94a3b8' },
 ] as const;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -371,7 +377,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             null;
           agg[s.id] = {
             id: s.id, name: s.name, effective_avatar: effectiveAvatar, rank: 0,
-            trafico_pago: 0, porta: 0, olx: 0, marketplace: 0, consignado: 0, indicacao: 0, total: 0,
+            trafico_pago: 0, porta: 0, olx: 0, marketplace: 0, consignado: 0, indicacao: 0, outros: 0, total: 0,
           };
         }
 
@@ -381,29 +387,41 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         }>;
         let pedroTotal = 0;       // total leads Pedro no período (todos)
         let pedroAtribuidos = 0;  // leads Pedro com assigned_to_id != null
+        let naoAtribuidos = 0;    // leads (Pedro+Marcos) que não foram pra vendedor — contam no total mas não no card de vendedor
         for (const l of pedroLeads) {
           pedroTotal++;
           if (l.assigned_to_id) {
             pedroAtribuidos++;
             const v = agg[l.assigned_to_id];
             if (v) { v.trafico_pago++; v.total++; }
+            else naoAtribuidos++; // assigned_to_id aponta pra vendedor que sumiu da lista
+          } else {
+            naoAtribuidos++; // lead Pedro novo, ainda sem transfer pra vendedor
           }
         }
 
-        // 5. Marcos: agrupa por origem (5 categorias; instagram/outros NÃO contam no total)
+        // 5. Marcos: agrupa por origem (6 categorias). 'outros' agora conta
+        //    também (era o default do form e ficava invisível). Leads sem
+        //    vendedor sao somados em naoAtribuidos pra TV refletir TUDO.
         const marcosLeads = (marcosRes.data || []) as Array<{
           id: string; origem: string | null; assigned_to: string | null; stage_id: string | null;
           seller_notes_count: number | null; stage: { name: string } | null;
         }>;
         for (const l of marcosLeads) {
           const v = agg[l.assigned_to || ''];
-          if (!v) continue;
-          const o = l.origem as string;
+          const o = (l.origem || 'outros') as string;
+          if (!v) {
+            // Lead sem vendedor (ou vendedor desativado/removido): conta no
+            // total geral mas nao em vendedor especifico.
+            naoAtribuidos++;
+            continue;
+          }
           if (o === 'porta')           { v.porta++;       v.total++; }
           else if (o === 'olx')        { v.olx++;         v.total++; }
           else if (o === 'marketplace'){ v.marketplace++; v.total++; }
           else if (o === 'consignado') { v.consignado++;  v.total++; }
           else if (o === 'indicacao')  { v.indicacao++;   v.total++; }
+          else                         { v.outros++;      v.total++; } // 'outros' + qualquer origem desconhecida
         }
 
         // 6. Busca feedbacks (priority) dos leads do período (Pedro + Marcos)
@@ -467,9 +485,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .map((v, i) => ({ ...v, rank: i + 1 }));
         setVendedores(sorted);
 
-        // 10. KPIs gerais
+        // 10. KPIs gerais — incluem 'outros' (7a categoria) e os leads
+        //     sem vendedor (nao_atribuidos) somam no total_leads geral.
         const porOrigem: Record<string, number> = {
-          trafico_pago: 0, porta: 0, olx: 0, marketplace: 0, consignado: 0, indicacao: 0,
+          trafico_pago: 0, porta: 0, olx: 0, marketplace: 0, consignado: 0, indicacao: 0, outros: 0,
         };
         for (const v of sorted) {
           porOrigem.trafico_pago += v.trafico_pago;
@@ -478,14 +497,20 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           porOrigem.marketplace  += v.marketplace;
           porOrigem.consignado   += v.consignado;
           porOrigem.indicacao    += v.indicacao;
+          porOrigem.outros       += v.outros;
         }
-        const total = Object.values(porOrigem).reduce((a, b) => a + b, 0);
+        // total_leads = soma dos atribuidos + os nao_atribuidos (TV
+        // mostra TUDO que foi cadastrado no periodo).
+        const totalAtribuidos = Object.values(porOrigem).reduce((a, b) => a + b, 0);
+        const total = totalAtribuidos + naoAtribuidos;
         const percentuais: Record<string, number> = {};
+        const baseParaPct = total > 0 ? total : 1;
         for (const k of Object.keys(porOrigem)) {
-          percentuais[k] = total > 0 ? Math.round((porOrigem[k] / total) * 1000) / 10 : 0;
+          percentuais[k] = Math.round((porOrigem[k] / baseParaPct) * 1000) / 10;
         }
         setKpis({
           total_leads: total,
+          nao_atribuidos: naoAtribuidos,
           por_origem: porOrigem,
           percentuais,
           qualidade_media: qualidadeMedia,
@@ -687,6 +712,11 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             {kpis?.total_leads ?? 0}
           </p>
           <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">Total de Leads</p>
+          {(kpis?.nao_atribuidos ?? 0) > 0 && (
+            <p className="text-[9px] text-amber-400/70 italic mt-1">
+              ({kpis!.nao_atribuidos} sem vendedor atribuído)
+            </p>
+          )}
         </div>
 
         {/* KPI 2: Qualidade Média (IA 50% + Feedback 30% + Notas 20%) */}
@@ -724,10 +754,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </div>
       </section>
 
-      {/* ───── 6 cards de Origem (linha completa abaixo) ───── */}
+      {/* ───── 7 cards de Origem (linha completa abaixo) ───── */}
       <section className="px-8 pb-6">
         <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-3 font-bold">Origem dos Leads</h2>
-        <div className="grid grid-cols-6 gap-3">
+        <div className="grid grid-cols-7 gap-3">
           {ORIGENS.map(origem => {
             const Icon = origem.icon;
             const valor = kpis?.por_origem[origem.key] ?? 0;
@@ -831,6 +861,7 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
         <BreakdownRow label="Marketplace"  value={v.marketplace}  color="#a855f7" />
         <BreakdownRow label="Consignado"   value={v.consignado}   color="#06b6d4" />
         <BreakdownRow label="Indicação"    value={v.indicacao}    color="#fb923c" />
+        <BreakdownRow label="Outros"       value={v.outros}       color="#94a3b8" />
       </div>
 
       {/* Total */}
