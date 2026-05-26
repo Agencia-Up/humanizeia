@@ -33,6 +33,11 @@
     - `Boa noite` -> `Como voce ta?` -> `Perguntei como voce esta`;
     - confirmar que o agente nao se reapresenta, nao aciona estoque e responde a pergunta social antes de vender;
     - conferir em `pedro_conversation_state.state.recent_turns` se as ultimas trocas foram gravadas;
+  - apos o build `2026-05-26-photo-targeting-stock-format-v1`, testar no WhatsApp real:
+    - pedir `Voce tem onix?` e confirmar lista numerada com `Foto:` por veiculo;
+    - pedir `fotos do automatico` apos uma lista com apenas um automatico e confirmar que as fotos sao do veiculo automatico correto;
+    - pedir `fotos do painel` e confirmar que a selecao prioriza painel/interior e nao troca de veiculo;
+    - confirmar que mensagens formatadas de estoque continuam com quebras de linha e exibem digitacao antes do envio;
   - apos o hotfix `2026-05-26-brain-memory-orchestrator`, testar no WhatsApp real:
     - conversa social com pelo menos 3 mensagens, confirmando que o agente nao repete saudacao/apresentacao;
     - troca de assunto apos estoque/fotos, confirmando que a mensagem atual vence memoria antiga;

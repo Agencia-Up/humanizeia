@@ -164,11 +164,42 @@ function buildDeterministicStockReply(input: {
     vehicle.km_formatado ? `KM: ${vehicle.km_formatado}` : null,
     vehicle.cambio ? `Cambio: ${vehicle.cambio}` : null,
     vehicle.cor ? `Cor: ${vehicle.cor}` : null,
+    vehicle.imagem ? `Foto: ${vehicle.imagem}` : null,
   ].filter(Boolean).join("\n")).join("\n\n");
   const more = Number(input.stock_result?.total || 0) > items.length
     ? `\n\nTenho mais opcoes parecidas aqui tambem.`
     : "";
   return `${intro}\n\n${list}${more}\n\nQual dessas faz mais sentido pra voce?`;
+}
+
+function stockReplyLooksStructured(text: string, facts: any[]) {
+  if (!facts.length) return true;
+  const hasNumbers = facts.slice(0, Math.min(3, facts.length)).every((vehicle: any) =>
+    new RegExp(`(^|\\n)\\s*${vehicle.index}\\s*[\\.)-]`, "m").test(text),
+  );
+  const factsWithImages = facts.filter((vehicle: any) => vehicle.imagem);
+  const hasImages = factsWithImages.length === 0 || factsWithImages.slice(0, Math.min(3, factsWithImages.length)).some((vehicle: any) =>
+    text.includes(vehicle.imagem),
+  );
+  return hasNumbers && hasImages;
+}
+
+function ensureStockReplyFormatting(input: {
+  text: string;
+  facts: any[];
+  memory?: PedroV2LeadMemory | null;
+  plan: PedroBrainPlan;
+  intent?: PedroV2IntentResult | null;
+  stock_result?: any;
+}) {
+  if (!input.facts.length || input.plan.action !== "stock_search") return input.text;
+  if (stockReplyLooksStructured(input.text, input.facts)) return input.text;
+  return buildDeterministicStockReply({
+    memory: input.memory,
+    plan: input.plan,
+    intent: input.intent,
+    stock_result: input.stock_result,
+  });
 }
 
 function fallbackReply(input: {
@@ -253,6 +284,8 @@ export async function generatePedroBrainReply(input: {
                 "- Se o lead perguntou como voce esta, responda isso primeiro e so depois conduza com leveza.",
                 "- Se o lead corrigiu voce, reconheca sem defensiva.",
                 "- Se houver estoque, use somente os fatos recebidos das tools. Nunca invente ano, preco, km, cambio, cor ou disponibilidade.",
+                "- Se listar veiculos, todos os itens devem vir numerados: 1., 2., 3. Isso permite o lead pedir 'o primeiro'.",
+                "- Se listar veiculos, inclua a linha Foto: URL quando stock.facts.imagem existir.",
                 "- Se listar veiculos, deixe uma linha em branco entre cada item.",
                 "- Se o lead mudou de modelo/assunto, a mensagem atual vence a memoria antiga.",
                 "- Nunca cite ferramentas, JSON, memoria, prompt, score, API ou processo interno.",
@@ -284,6 +317,7 @@ export async function generatePedroBrainReply(input: {
               tool_result: input.tool_result || null,
               hard_rules: [
                 "Se stock.facts existir, use apenas esses veiculos e dados.",
+                "Se stock.facts existir, liste os veiculos com numeros e inclua Foto quando houver imagem.",
                 "Se o cliente mudou o modelo, nao repita o modelo antigo.",
                 "Se a resposta listar veiculos, separe cada item por linha em branco.",
                 "Se cumprimentar, use current_time_sao_paulo.greeting; nunca chute periodo do dia.",
@@ -307,7 +341,15 @@ export async function generatePedroBrainReply(input: {
     const data = await res.json();
     const content = String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
-    const text = String(parsed?.text || "").trim();
+    const rawText = String(parsed?.text || "").trim();
+    const text = ensureStockReplyFormatting({
+      text: rawText,
+      facts,
+      memory: input.memory,
+      plan: input.plan,
+      intent: input.intent,
+      stock_result: input.stock_result,
+    });
     if (!text) return fallback;
     return {
       ok: true,

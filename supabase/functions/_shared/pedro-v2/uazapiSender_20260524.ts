@@ -116,16 +116,25 @@ async function sendPedroTextOnce(instance: PedroWaInstance, input: { to: string;
 export async function sendPedroText(
   instance: PedroWaInstance,
   input: { to: string; text: string },
-  options?: { humanize?: boolean },
+  options?: { humanize?: boolean; typingOnly?: boolean },
 ) {
-  if (!options?.humanize) return sendPedroTextOnce(instance, input);
-
   const baseUrl = normalizeBaseUrl(instance.api_url);
   const token = getInstanceToken(instance);
   const destination = normalizeDestination(input.to);
   if (!baseUrl) throw new Error("Instancia WhatsApp sem URL configurada");
   if (!token) throw new Error("Instancia WhatsApp sem token configurado");
   if (!destination) throw new Error("Destino WhatsApp invalido");
+
+  if (!options?.humanize) {
+    if (options?.typingOnly) {
+      await sendTypingPresence(baseUrl, token, destination, "composing").catch(() => false);
+      await sleep(calculatePedroV2DelayMs(input.text));
+      const result = await sendPedroTextOnce(instance, input);
+      await sendTypingPresence(baseUrl, token, destination, "paused").catch(() => false);
+      return { ...result, attempt: result.ok ? "typing-preserved-text" : result.attempt };
+    }
+    return sendPedroTextOnce(instance, input);
+  }
 
   const parts = splitMessageForHumanization(input.text, { maxParts: 2, minLength: 260 });
   const attempts: any[] = [];

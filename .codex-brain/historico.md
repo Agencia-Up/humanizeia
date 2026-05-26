@@ -153,6 +153,14 @@
   - resposta social passa a responder primeiro a pergunta do lead, com tom humano e humilde quando errou a interpretacao;
   - deploy realizado em producao da Edge Function `pedro-webhook-v2`;
   - build frontend validado com `npm.cmd run build`.
+- Hotfix do Pedro v2 para refinamento de estoque/fotos:
+  - `pedro-webhook-v2` recebeu build `2026-05-26-photo-targeting-stock-format-v1`;
+  - pedidos de fotos com atributos do lead, como "automatico", "manual", cor, ano ou carroceria, agora tentam escolher o veiculo correto entre os ultimos apresentados antes de cair na memoria antiga;
+  - listas de estoque geradas pelo cerebro passaram a ter fallback deterministico com numeracao `1.`, `2.`, `3.` e linha `Foto:` quando a tool do estoque retorna imagem;
+  - mensagens formatadas de estoque preservam quebras de linha, mas agora ainda enviam presenca de digitacao antes do texto;
+  - pedidos de fotos passam a enviar uma frase curta antes das imagens, citando o veiculo/detalhe selecionado, e depois enviam as midias;
+  - a ordem heuristica de fotos foi ajustada para tentar misturar frente/traseira/interior/painel com base na ordem do BNDV, sem alterar regras de transferencia/CRM;
+  - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
 
 ## Historico funcional recente consolidado
 

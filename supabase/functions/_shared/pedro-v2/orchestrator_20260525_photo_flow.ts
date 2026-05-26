@@ -373,11 +373,76 @@ function explicitVehicleOrdinal(message: string): number | null {
   return null;
 }
 
+function messageVehicleAttributeScore(message: string, vehicle: any) {
+  const normalized = normalizePhotoText(message);
+  const indexed = normalizePhotoText([
+    vehicle?.marca,
+    vehicle?.modelo,
+    vehicle?.versao,
+    vehicle?.ano,
+    vehicle?.cor,
+    vehicle?.cambio,
+    vehicle?.combustivel,
+  ].filter(Boolean).join(" "));
+  if (!normalized || !indexed) return 0;
+
+  let score = 0;
+  const wantsAuto = /\b(automatico|automatica|aut)\b/.test(normalized);
+  const wantsManual = /\b(manual|mecanico|mecanica|mec)\b/.test(normalized);
+  if (wantsAuto) score += /\b(automatico|automatica|aut)\b/.test(indexed) ? 8 : -6;
+  if (wantsManual) score += /\b(manual|mecanico|mecanica|mec)\b/.test(indexed) ? 8 : -6;
+
+  const colors = ["branco", "preto", "prata", "cinza", "azul", "vermelho", "laranja", "verde", "bege", "marrom"];
+  for (const color of colors) {
+    if (new RegExp(`\\b${color}\\b`).test(normalized)) score += indexed.includes(color) ? 5 : -2;
+  }
+
+  for (const body of ["sedan", "hatch", "suv", "picape", "pickup", "caminhonete"]) {
+    if (new RegExp(`\\b${body}\\b`).test(normalized)) score += indexed.includes(body) ? 4 : -1;
+  }
+
+  for (const year of normalized.match(/\b20\d{2}\b/g) || []) {
+    score += indexed.includes(year) ? 4 : -2;
+  }
+
+  const modelTokens = normalizePhotoText([vehicle?.modelo, vehicle?.versao].filter(Boolean).join(" "))
+    .split(/\s+/)
+    .filter((token) => token.length >= 4);
+  for (const token of modelTokens) {
+    if (new RegExp(`\\b${token}\\b`).test(normalized)) score += 3;
+  }
+
+  return score;
+}
+
+function pickVehicleByMessageAttributes(message: string, vehicles: any[]) {
+  const normalized = normalizePhotoText(message);
+  const hasDiscriminator = /\b(automatico|automatica|aut|manual|mecanico|mecanica|mec|branco|preto|prata|cinza|azul|vermelho|laranja|sedan|hatch|suv|picape|pickup|caminhonete|20\d{2})\b/.test(normalized);
+  if (!hasDiscriminator) return null;
+
+  const ranked = vehicles
+    .map((vehicle, index) => ({ vehicle, index, score: messageVehicleAttributeScore(message, vehicle) }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  if (ranked.length === 0) return null;
+  const [best, second] = ranked;
+  if (best.score >= 5 && (!second || best.score >= second.score + 2)) {
+    return { index: best.index, reason: "message_attribute_match", key: vehicleKey(best.vehicle) };
+  }
+  return null;
+}
+
 function pickReferencedVehicle(message: string, memory: any, vehicles: any[]) {
   const explicitIndex = explicitVehicleOrdinal(message);
   if (explicitIndex !== null) {
     const index = clampVehicleIndex(explicitIndex, vehicles);
     return { index, explicit: true, reason: "explicit_ordinal", key: vehicleKey(vehicles[index]) };
+  }
+
+  const attributeMatch = pickVehicleByMessageAttributes(message, vehicles);
+  if (attributeMatch) {
+    return { ...attributeMatch, explicit: true };
   }
 
   const lastKey = memory?.ultima_foto?.veiculo_key || memory?.referencia?.ultimo_veiculo_key || null;
@@ -450,14 +515,15 @@ function selectVehiclePhotos(vehicle: any, message: string) {
 
   const middle = Math.max(4, Math.floor(total * 0.48));
   const late = Math.max(middle + 1, Math.floor(total * 0.66));
+  const maxPhotos = target === "overview" || target === "interior" ? 5 : 3;
   const strategies: Record<PhotoTarget, number[]> = {
-    overview: [0, 3, 5, 6, 7, 1, 2, 4],
+    overview: [0, 3, 6, 7, 8, 9, 4, 1, 2, middle, late],
     front: [0, 1, 2, 3, middle],
     side: [2, 3, 1, 4, middle],
     rear: [4, 5, 3, 6, Math.min(total - 1, late)],
     wheel: [3, 4, 2, 5, 1],
     interior: [5, 6, 7, 8, 9, middle, late, total - 1],
-    dashboard: [6, 7, 8, 5, 9, late, late + 1, total - 1],
+    dashboard: [8, 7, 9, 6, 10, 5, late, late + 1, total - 1],
     seats: [5, 6, 7, 8, 9, middle, late, total - 1],
     trunk: [Math.max(0, total - 2), Math.max(0, total - 3), 4, 5, late],
   };
@@ -466,7 +532,7 @@ function selectVehiclePhotos(vehicle: any, message: string) {
   const indexes = fillIndexes(
     strategies[target],
     total,
-    5,
+    maxPhotos,
     interiorish ? Math.min(total - 1, 5) : 0,
     "forward",
   );
@@ -852,7 +918,7 @@ export async function processPedroV2Turn(
       plan: {
         ...brainPlan,
         response_guidance:
-          "A tool de fotos ja selecionou e enviara as imagens. Escreva apenas a mensagem humana de fechamento depois das fotos, sem repetir lista de carros.",
+          "A tool de fotos ja selecionou as imagens. Escreva a mensagem humana que sera enviada ANTES das fotos, citando o veiculo certo e o detalhe pedido. Nao repita lista de carros.",
       },
       vehicle_resolution: vehicleResolution,
       ad_context: adContext,
@@ -896,6 +962,20 @@ export async function processPedroV2Turn(
     });
     const mediaResults: any[] = [];
     if (reply.source === "vehicle_photos_reply" && Array.isArray(reply.media) && reply.media.length > 0) {
+      const openingResult = reply.text
+        ? await sendPedroText(instance, {
+            to: remoteJidToPhone(remoteJid),
+            text: reply.text,
+          }, { humanize: true })
+        : null;
+      if (openingResult && openingResult.ok === false) {
+        sendResult = {
+          ok: false,
+          media_first: false,
+          opening_result: openingResult,
+          media_results: mediaResults,
+        };
+      } else {
       for (const media of reply.media) {
         const mediaResult = await sendPedroMedia(instance, {
           to: remoteJidToPhone(remoteJid),
@@ -907,24 +987,19 @@ export async function processPedroV2Turn(
         if (!mediaResult.ok) break;
       }
       const mediaOk = mediaResults.length === reply.media.length && mediaResults.every((item) => item?.ok);
-      const closingResult = mediaOk && reply.text
-        ? await sendPedroText(instance, {
-            to: remoteJidToPhone(remoteJid),
-            text: reply.text,
-          }, { humanize: true })
-        : null;
       sendResult = {
-        ok: mediaOk && (closingResult ? closingResult.ok !== false : true),
-        media_first: true,
+        ok: mediaOk,
+        media_first: false,
+        opening_result: openingResult,
         media_results: mediaResults,
-        closing_result: closingResult,
       };
+      }
     } else {
       const preserveFormatting = ["stock_fact_reply", "brain_stock_reply", "brain_stock_fallback"].includes(reply.source);
       sendResult = await sendPedroText(instance, {
         to: remoteJidToPhone(remoteJid),
         text: reply.text,
-      }, { humanize: !preserveFormatting });
+      }, { humanize: !preserveFormatting, typingOnly: preserveFormatting });
       if (sendResult?.ok && Array.isArray(reply.media) && reply.media.length > 0) {
         for (const media of reply.media) {
           const mediaResult = await sendPedroMedia(instance, {
