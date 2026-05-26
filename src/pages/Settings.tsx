@@ -13,6 +13,7 @@ import {
   Circle,
   ArrowRight,
   Tv,
+  KanbanSquare,
 } from 'lucide-react';
 import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
@@ -20,6 +21,7 @@ import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
 import { AdminSettingsTab } from '@/components/settings/AdminSettingsTab';
 import { DashboardTVSettingsTab } from '@/components/settings/DashboardTVSettingsTab';
+import { KanbanSettingsTab } from '@/components/settings/KanbanSettingsTab';
 import { useAuth } from '@/hooks/useAuth';
 
 export default function SettingsPage() {
@@ -27,7 +29,7 @@ export default function SettingsPage() {
   const [searchParams] = useSearchParams();
   const { profile } = useAuth();
   const tabParam = searchParams.get('tab');
-  const validTabs = ['company', 'ai', 'whatsapp', 'sync', 'dashboard-tv', 'admin'];
+  const validTabs = ['company', 'ai', 'whatsapp', 'sync', 'dashboard-tv', 'kanban-marcos', 'admin'];
   const [activeTab, setActiveTab] = useState(
     tabParam && validTabs.includes(tabParam) ? tabParam : 'company'
   );
@@ -120,6 +122,10 @@ export default function SettingsPage() {
               <Tv className="h-4 w-4" />
               Dashboard TV
             </TabsTrigger>
+            <TabsTrigger value="kanban-marcos" className="gap-2">
+              <KanbanSquare className="h-4 w-4" />
+              Kanban Marcos
+            </TabsTrigger>
             {isSuperAdmin && (
               <TabsTrigger value="admin" className="gap-2 text-yellow-500 font-bold border-yellow-500/20">
                 <ShieldCheck className="h-4 w-4" />
@@ -133,6 +139,7 @@ export default function SettingsPage() {
           <TabsContent value="whatsapp"><WhatsAppSettingsTab /></TabsContent>
           <TabsContent value="sync"><DataSyncSettingsTab /></TabsContent>
           <TabsContent value="dashboard-tv"><DashboardTVSettingsTab /></TabsContent>
+          <TabsContent value="kanban-marcos"><KanbanSettingsTab /></TabsContent>
           {isSuperAdmin && (
             <TabsContent value="admin"><AdminSettingsTab /></TabsContent>
           )}
