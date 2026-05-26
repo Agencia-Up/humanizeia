@@ -382,18 +382,44 @@ async function handleMetaProvider(supabase: any, body: any) {
 async function handleEvolutionProvider(supabase: any, body: any) {
   const { instance_name, user_id, friendly_name, seller_member_id } = body;
 
-  const api_url = Deno.env.get('EVOLUTION_API_URL');
-  const api_key = Deno.env.get('EVOLUTION_API_KEY');
+  // 1º — env vars globais (admin token UaZapi)
+  let api_url = Deno.env.get('EVOLUTION_API_URL');
+  let api_key = Deno.env.get('EVOLUTION_API_KEY');
+  let credSource = 'env';
+
+  // Fallback — herdar URL de uma instância ativa do master (mesmo painel UaZapi).
+  // O api_key da instância NÃO funciona como admin token, então não dá pra herdar
+  // do banco; mas pelo menos descobrimos a URL correta quando env var estiver vazia.
+  if ((!api_url || !api_key) && user_id) {
+    const { data: existing } = await supabase
+      .from('wa_instances')
+      .select('api_url, api_key_encrypted')
+      .eq('user_id', user_id)
+      .eq('is_active', true)
+      .not('api_url', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existing?.api_url) {
+      api_url = api_url || existing.api_url;
+      credSource = 'env+db_url';
+    }
+  }
 
   if (!api_url || !api_key) {
     return new Response(JSON.stringify({
       success: false,
-      error: 'Evolution API/Uazapi não configurada no servidor. Contate o administrador.',
+      error: `API do WhatsApp (UaZapi) sem credenciais no servidor. Faltando: ${[
+        !api_url ? 'EVOLUTION_API_URL' : null,
+        !api_key ? 'EVOLUTION_API_KEY (admin token UaZapi)' : null,
+      ].filter(Boolean).join(', ')}. Configure os secrets no Supabase.`,
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
+
+  console.log(`[create-evolution-instance] Using credentials from: ${credSource}, url=${api_url}`);
 
   if (!instance_name || !user_id) {
     return new Response(JSON.stringify({
@@ -494,11 +520,23 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   }
 
   if (!successfulAttempt) {
+    // Erro DETALHADO — não esconde nada. Inclui status, URL real, e os 300
+    // primeiros chars da resposta da UaZapi pra diagnóstico no toast do front.
+    const urlHost = baseUrl.replace(/^https?:\/\//, '');
+    const hint = createStatus === 401
+      ? 'admin token da UaZapi inválido ou expirado (EVOLUTION_API_KEY).'
+      : createStatus === 404
+        ? `endpoint não existe nesse servidor (${urlHost}). Verifique EVOLUTION_API_URL.`
+        : createStatus >= 500
+          ? 'UaZapi indisponível temporariamente.'
+          : 'verifique secrets do Supabase.';
     return new Response(JSON.stringify({
       success: false,
-      error: `Erro ao criar instância na Uazapi/Evolution API: ${createStatus}`,
-      details: createText,
-      attempted_format: createAttempts.map((a) => a.label),
+      error: `Falha ao criar instância na UaZapi (HTTP ${createStatus}): ${hint} Resposta: ${createText.substring(0, 300)}`,
+      status: createStatus,
+      url_host: urlHost,
+      response_body: createText.substring(0, 500),
+      attempted_endpoints: createAttempts.map((a) => `${a.label} → ${a.url}`),
     }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
