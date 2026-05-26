@@ -148,6 +148,7 @@ const WhatsAppInstances = lazy(() => import("./pages/WhatsAppInstances"));
 const WhatsAppAIAgent = lazy(() => import("./pages/WhatsAppAIAgent"));
 const CrmAoVivo = lazy(() => import("./pages/CrmAoVivo"));
 const DashboardTV = lazy(() => import("./pages/DashboardTV"));
+const PainelGeral = lazy(() => import("./pages/PainelGeral"));
 const WhatsAppCampaigns = lazy(() => import("./pages/WhatsAppCampaigns"));
 const WhatsAppGroups = lazy(() => import("./pages/WhatsAppGroups"));
 const MetaPixels = lazy(() => import("./pages/MetaPixels"));
@@ -258,6 +259,8 @@ const App = () => (
                 <Route path="/whatsapp/crm-ao-vivo" element={<ProtectedRoute><Lazy><CrmAoVivo /></Lazy></ProtectedRoute>} />
                 {/* Dashboard TV pra projetar em tela (master only, oculto do menu) */}
                 <Route path="/dashboard-tv"         element={<ProtectedRoute><Lazy><DashboardTV /></Lazy></ProtectedRoute>} />
+                {/* Painel Geral — soma Pedro + Marcos, master only, visível no sidebar */}
+                <Route path="/painel-geral"         element={<ProtectedRoute><Lazy><PainelGeral /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/campaigns"   element={<ProtectedRoute><Lazy><WhatsAppCampaigns /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/groups"      element={<ProtectedRoute><Lazy><WhatsAppGroups /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/capi"        element={<ProtectedRoute><Lazy><WhatsAppCAPI /></Lazy></ProtectedRoute>} />

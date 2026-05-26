@@ -27,6 +27,7 @@ import {
   Users,
   GraduationCap,
   Bot,
+  BarChart3,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -502,6 +503,8 @@ export function AppSidebar() {
             <NavGroup label="Painel" collapsed={collapsed}>
               <NavItem collapsed={collapsed} item={{ title: 'Tela inicial', url: '/tela-inicial', icon: Home }} />
               <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+              {/* Painel Geral — soma Pedro + Marcos. Master only. */}
+              <NavItem collapsed={collapsed} item={{ title: 'Painel Geral', url: '/painel-geral', icon: BarChart3 }} />
             </NavGroup>
 
             {/* ── Agentes (Pedro + Marcos + José + demais conforme plano) ── */}
