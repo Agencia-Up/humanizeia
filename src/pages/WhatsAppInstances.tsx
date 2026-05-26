@@ -62,6 +62,7 @@ interface WaInstance {
 interface TeamMemberLite {
   id: string;
   name: string;
+  is_active?: boolean;
 }
 
 function getStatusConfig(instance: WaInstance) {
@@ -197,11 +198,10 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
       if (error) throw error;
       const list = (data as unknown as WaInstance[]) || [];
       setInstances(list);
-      // Auto-verify all Evolution instances on first load.
-      // Sellers verify only on demand so we do not touch other instances from the master account.
-      if (!isSeller && !skipVerify && list.length > 0) {
-        setTimeout(() => verifyAllInstances(list), 500);
-      }
+      // NÃO disparar auto-verify ao abrir a página — era a causa principal da
+      // instabilidade: a cada montagem rodava audit-master-instances que faz
+      // N requests à UaZapi (uma por instância) e gerava toasts de erro em
+      // cascata. Master clica "Verificar Todos" quando quiser checar.
     } catch (err: any) {
       console.error('Error fetching instances:', err);
     } finally {
@@ -209,21 +209,23 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     }
   };
 
-  // Master: carrega vendedores da conta para o dropdown de atribuição
+  // Master: carrega vendedores da conta para o dropdown de atribuição.
+  // Inclui INATIVOS também — se instância tem seller_member_id de vendedor
+  // removido, o dropdown precisa mostrar o nome (não ficar em branco).
   const fetchTeamMembers = async () => {
     if (!effectiveOwnerId || isSeller) return;
     try {
       const { data } = await (supabase as any)
         .from('ai_team_members')
-        .select('id, name')
+        .select('id, name, is_active')
         .eq('user_id', effectiveOwnerId)
-        .eq('is_active', true)
+        .order('is_active', { ascending: false })
         .order('name');
-      // Dedup por nome (vendedor pode ter múltiplos rows; UI só precisa do label)
+      // Dedup por id (não por nome — id é único; nome pode repetir).
       const seen = new Set<string>();
       const unique: TeamMemberLite[] = [];
       for (const m of (data || []) as TeamMemberLite[]) {
-        if (!seen.has(m.name)) { seen.add(m.name); unique.push(m); }
+        if (!seen.has(m.id)) { seen.add(m.id); unique.push(m); }
       }
       setTeamMembers(unique);
     } catch (err) {
@@ -557,9 +559,21 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
                             </SelectItem>
                             {teamMembers.map(m => (
                               <SelectItem key={m.id} value={m.id} className="text-xs">
-                                {m.name}
+                                {m.name}{m.is_active === false ? ' (inativo)' : ''}
                               </SelectItem>
                             ))}
+                            {/* Fallback — instância referencia vendedor que sumiu
+                                da lista (ex: deletado). Mostra opção fantasma
+                                pra master conseguir desatribuir/reatribuir. */}
+                            {instance.seller_member_id &&
+                              !teamMembers.some(m => m.id === instance.seller_member_id) && (
+                              <SelectItem
+                                value={instance.seller_member_id}
+                                className="text-xs text-amber-500"
+                              >
+                                Vendedor removido (desatribua)
+                              </SelectItem>
+                            )}
                           </SelectContent>
                         </Select>
                       </div>
