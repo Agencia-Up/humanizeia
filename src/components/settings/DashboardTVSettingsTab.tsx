@@ -29,7 +29,11 @@ interface SellerRow {
   name: string;
   whatsapp_number: string | null;
   is_active: boolean;
+  /** Foto que o master subiu via esta UI. */
   profile_picture: string | null;
+  /** Foto que o vendedor mesmo subiu em /perfil — TEM PRIORIDADE no Dashboard TV. */
+  own_avatar_url: string | null;
+  auth_user_id: string | null;
 }
 
 const DEFAULT_BRANDING: BrandingForm = {
@@ -84,7 +88,7 @@ export function DashboardTVSettingsTab() {
             .maybeSingle(),
           (supabase as any)
             .from('ai_team_members')
-            .select('id, name, whatsapp_number, is_active, profile_picture')
+            .select('id, name, whatsapp_number, is_active, profile_picture, auth_user_id')
             .eq('user_id', user.id)
             .order('is_active', { ascending: false })
             .order('name', { ascending: true }),
@@ -97,7 +101,24 @@ export function DashboardTVSettingsTab() {
           primary_color: p.dashboard_tv_primary_color || DEFAULT_BRANDING.primary_color,
           secondary_color: p.dashboard_tv_secondary_color || DEFAULT_BRANDING.secondary_color,
         });
-        setSellers((sellersRes.data || []) as SellerRow[]);
+
+        // Query adicional pra puxar avatar_url do profile de cada vendedor
+        const rawSellers = (sellersRes.data || []) as Array<Omit<SellerRow, 'own_avatar_url'>>;
+        const authIds = rawSellers.map(s => s.auth_user_id).filter((x): x is string => !!x);
+        const ownAvatarMap = new Map<string, string | null>();
+        if (authIds.length > 0) {
+          const { data: avatarRows } = await (supabase as any)
+            .from('profiles')
+            .select('id, avatar_url')
+            .in('id', authIds);
+          for (const r of (avatarRows || []) as Array<{ id: string; avatar_url: string | null }>) {
+            ownAvatarMap.set(r.id, r.avatar_url || null);
+          }
+        }
+        setSellers(rawSellers.map(s => ({
+          ...s,
+          own_avatar_url: s.auth_user_id ? (ownAvatarMap.get(s.auth_user_id) || null) : null,
+        })) as SellerRow[]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -367,7 +388,11 @@ export function DashboardTVSettingsTab() {
             Fotos dos vendedores
           </CardTitle>
           <CardDescription className="text-xs">
-            URL da foto que aparece no card de cada vendedor no Dashboard TV. Sem URL, mostra um avatar com as iniciais do nome + cor automática.
+            Foto que aparece no card de cada vendedor no Dashboard TV.
+            <span className="block mt-1 text-amber-300/80">
+              ⚡ Prioridade: foto que o próprio vendedor sobe em <strong>/perfil</strong> (sempre vence).
+              Você só precisa subir aqui se o vendedor ainda não configurou a foto dele.
+            </span>
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -389,12 +414,20 @@ export function DashboardTVSettingsTab() {
                 const isEditing = editingSellerId === s.id;
                 const isSaving = savingSellerId === s.id;
                 const isUploading = uploadingSellerId === s.id;
-                const hasPhoto = !!s.profile_picture;
+                const hasMasterPhoto = !!s.profile_picture;
+                const hasOwnPhoto = !!s.own_avatar_url;
+                // Foto que VAI APARECER no Dashboard TV (prioridade: vendedor > master > iniciais)
+                const effectivePhoto = s.own_avatar_url || s.profile_picture || null;
                 return (
                   <div key={s.id} className="flex items-center gap-3 rounded-lg border border-border/40 bg-background/30 px-3 py-2 flex-wrap">
-                    {/* Preview avatar */}
-                    {hasPhoto ? (
-                      <img src={s.profile_picture!} alt={s.name} className="h-10 w-10 rounded-full object-cover border border-border/40" />
+                    {/* Preview avatar (mostra a foto EFETIVA — a que vai aparecer no Dashboard TV) */}
+                    {effectivePhoto ? (
+                      <img
+                        src={effectivePhoto}
+                        alt={s.name}
+                        className="h-10 w-10 rounded-full object-cover border border-border/40"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
                     ) : (
                       <div
                         className="h-10 w-10 rounded-full flex items-center justify-center font-bold text-sm text-white border border-border/40"
@@ -404,16 +437,33 @@ export function DashboardTVSettingsTab() {
                       </div>
                     )}
 
-                    {/* Nome */}
+                    {/* Nome + status das 2 fontes */}
                     <div className="flex-1 min-w-[120px]">
                       <p className="text-sm font-medium truncate">
                         {s.name}
                         {!s.is_active && <span className="ml-2 text-[10px] text-muted-foreground">(inativo)</span>}
                       </p>
                       {!isEditing && (
-                        <p className="text-[10px] text-muted-foreground truncate" title={s.profile_picture || undefined}>
-                          {hasPhoto ? 'Foto configurada' : 'Sem foto — usa avatar com iniciais'}
-                        </p>
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          {hasOwnPhoto && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium" title="Vendedor configurou em /perfil — tem prioridade">
+                              ✓ Foto própria
+                            </span>
+                          )}
+                          {hasMasterPhoto && !hasOwnPhoto && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 font-medium" title="Foto subida por você (master). Usada porque vendedor não configurou em /perfil">
+                              ◆ Foto pelo master
+                            </span>
+                          )}
+                          {hasMasterPhoto && hasOwnPhoto && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400 font-medium" title="Você subiu foto mas vendedor também configurou. A do vendedor está sendo usada.">
+                              ◇ Master (não usada)
+                            </span>
+                          )}
+                          {!hasOwnPhoto && !hasMasterPhoto && (
+                            <span className="text-[9px] text-muted-foreground italic">Sem foto — avatar com iniciais</span>
+                          )}
+                        </div>
                       )}
                     </div>
 
@@ -442,10 +492,10 @@ export function DashboardTVSettingsTab() {
                           onClick={() => handleClickUpload(s.id)}
                           disabled={isUploading || isSaving}
                           className="h-8 text-xs gap-1.5"
-                          title="Subir arquivo do computador"
+                          title={hasOwnPhoto ? 'Vendedor já tem foto própria (será usada). Você pode subir uma alternativa, mas ela só apareceria se o vendedor remover a dele.' : 'Subir arquivo do computador'}
                         >
                           {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
-                          {hasPhoto ? 'Trocar' : 'Upload'}
+                          {hasMasterPhoto ? 'Trocar' : 'Upload'}
                         </Button>
                         {/* Alternativa via URL */}
                         <Button
@@ -459,15 +509,15 @@ export function DashboardTVSettingsTab() {
                           <Link2 className="h-3 w-3" />
                           URL
                         </Button>
-                        {/* Remover */}
-                        {hasPhoto && (
+                        {/* Remover foto que MASTER subiu (não mexe na do vendedor) */}
+                        {hasMasterPhoto && (
                           <Button
                             size="sm"
                             variant="ghost"
                             onClick={() => handleRemoveSellerPhoto(s.id)}
                             disabled={isUploading || isSaving}
                             className="h-8 w-8 p-0 text-red-400 hover:text-red-300"
-                            title="Remover foto"
+                            title="Remover foto subida por você (não afeta a foto que o vendedor configurou em /perfil)"
                           >
                             {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
                           </Button>
