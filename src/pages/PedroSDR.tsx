@@ -19,7 +19,7 @@ import {
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
   Pin, PinOff, Image, Mic, Video, Smartphone, Upload, X, Trash2,
   Plus, GripVertical, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle,
-  Pencil, Check,
+  Pencil, Check, Trophy,
 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import {
@@ -61,10 +61,51 @@ interface PerfData {
   taxaConversao: number;
   totalRespostas: number;
   agentesAtivos: number;
+  /** 0-100 — média ponderada IA 50% + Feedback 30% + Notas 20% (Fase 3 DashboardTV) */
+  qualidadeMedia: number;
+  qualidadeLabel: 'Ótimo' | 'Bom' | 'Médio' | 'Baixo' | 'Sem dados';
   leadsPorStatus: { name: string; value: number; color: string }[];
   atividadeSemanal: { dia: string; leads: number; transferencias: number }[];
   agentes: { nome: string; respostas: number; leads: number }[];
   vendedores: { nome: string; leads: number; qualificados: number; whatsapp: string }[];
+}
+
+// ─── Cálculo de qualidade do lead (compartilhado entre DashboardTV e Performance) ───
+
+function scorePedroStatusCrm(status: string | null | undefined): number {
+  if (!status) return 0;
+  const map: Record<string, number> = {
+    qualificado: 100, medio_qualificado: 70, pouco_qualificado: 40,
+    transferido: 100, em_atendimento: 50, novo: 20, inativo: 0,
+    fechado: 100, perdido: 0,
+  };
+  return map[status] ?? 20;
+}
+
+function scorePedroFeedback(priority: string | null | undefined): number {
+  if (!priority) return 0;
+  const map: Record<string, number> = { urgent: 100, high: 75, normal: 50, low: 25 };
+  return map[priority] ?? 0;
+}
+
+function scorePedroNotes(count: number | null | undefined): number {
+  const c = count || 0;
+  if (c >= 3) return 100;
+  if (c >= 1) return 60;
+  return 0;
+}
+
+function combinePedroQuality(iaScore: number, fbScore: number | null, notesScore: number): number {
+  if (fbScore === null) return Math.round((iaScore * 0.7) + (notesScore * 0.3));
+  return Math.round((iaScore * 0.5) + (fbScore * 0.3) + (notesScore * 0.2));
+}
+
+function qualidadeLabelFor(score: number, hasData: boolean): PerfData['qualidadeLabel'] {
+  if (!hasData) return 'Sem dados';
+  if (score >= 80) return 'Ótimo';
+  if (score >= 60) return 'Bom';
+  if (score >= 40) return 'Médio';
+  return 'Baixo';
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -107,7 +148,7 @@ function usePerfData(userId: string | undefined) {
         const [leadsRes, transRes, agentRes, teamRes] = await Promise.all([
           (supabase as any)
             .from('ai_crm_leads')
-            .select('id, status, status_crm, assigned_to_id, agent_id, created_at')
+            .select('id, status, status_crm, assigned_to_id, agent_id, created_at, seller_notes_count')
             .eq('user_id', masterUid),
           (supabase as any)
             .from('ai_lead_transfers')
@@ -143,6 +184,32 @@ function usePerfData(userId: string | undefined) {
         const taxaConversao  = totalLeads > 0 ? Math.round((transferencias / totalLeads) * 100) : 0;
         const totalRespostas = agents.reduce((s: number, a: any) => s + (a.total_replies || 0), 0);
         const agentesAtivos  = agents.filter((a: any) => a.is_active).length;
+
+        // ── qualidade média (IA 50% + Feedback 30% + Notas 20%) ─────────────
+        // Busca feedbacks dos leads do escopo
+        const leadIds = leads.map((l: any) => l.id);
+        const feedbackByLead = new Map<string, string>();
+        if (leadIds.length > 0) {
+          const { data: fbRows } = await (supabase as any)
+            .from('pedro_manager_feedback')
+            .select('lead_id, priority, created_at')
+            .in('lead_id', leadIds)
+            .order('created_at', { ascending: false });
+          for (const fb of (fbRows || []) as Array<{ lead_id: string; priority: string }>) {
+            if (!feedbackByLead.has(fb.lead_id)) feedbackByLead.set(fb.lead_id, fb.priority);
+          }
+        }
+        const scores = leads.map((l: any) => {
+          const ia    = scorePedroStatusCrm(l.status_crm);
+          const fbPri = feedbackByLead.get(l.id);
+          const fb    = fbPri ? scorePedroFeedback(fbPri) : null;
+          const notes = scorePedroNotes(l.seller_notes_count);
+          return combinePedroQuality(ia, fb, notes);
+        });
+        const qualidadeMedia = scores.length > 0
+          ? Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length)
+          : 0;
+        const qualidadeLabel = qualidadeLabelFor(qualidadeMedia, scores.length > 0);
 
         // ── leads por status ─────────────────────────────────────────────────
         const statusCount: Record<string, number> = {};
@@ -208,7 +275,9 @@ function usePerfData(userId: string | undefined) {
 
         setData({
           totalLeads, leadsHoje, transferencias, taxaConversao,
-          totalRespostas, agentesAtivos, leadsPorStatus,
+          totalRespostas, agentesAtivos,
+          qualidadeMedia, qualidadeLabel,
+          leadsPorStatus,
           atividadeSemanal, agentes: agentesRank, vendedores: vendedoresRank,
         });
       } catch {
@@ -280,8 +349,8 @@ function PerformanceTab({ userId }: { userId: string | undefined }) {
 
   return (
     <div className="p-4 lg:p-6 space-y-6">
-      {/* ── KPIs ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* ── KPIs (grid 7 com qualidade média adicionada) ─────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         <MetricCard
           label="Leads Totais"
           value={data.totalLeads}
@@ -309,6 +378,18 @@ function PerformanceTab({ userId }: { userId: string | undefined }) {
           sub="lead → transferência"
           icon={CheckCircle2}
           color="bg-emerald-500/15 text-emerald-400"
+        />
+        <MetricCard
+          label="Qualidade Média"
+          value={data.qualidadeLabel === 'Sem dados' ? '—' : `${data.qualidadeMedia}%`}
+          sub={data.qualidadeLabel}
+          icon={Trophy}
+          color={
+            data.qualidadeMedia >= 80 ? 'bg-emerald-500/15 text-emerald-400' :
+            data.qualidadeMedia >= 60 ? 'bg-blue-500/15 text-blue-400' :
+            data.qualidadeMedia >= 40 ? 'bg-amber-500/15 text-amber-400' :
+            'bg-red-500/15 text-red-400'
+          }
         />
         <MetricCard
           label="Respostas IA"
