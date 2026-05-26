@@ -35,7 +35,8 @@ import {
 import * as XLSX from 'xlsx';
 
 const WhatsAppAIAgent    = lazy(() => import('./WhatsAppAIAgent'));
-const CrmAoVivo          = lazy(() => import('./CrmAoVivo'));
+const CrmAoVivo          = lazy(() => import('./CrmAoVivo')); // mantido pra retrocompat (rota /whatsapp/crm-ao-vivo)
+const DashboardTV        = lazy(() => import('./DashboardTV'));
 const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
@@ -3841,10 +3842,11 @@ export default function PedroSDR() {
                 </TabsContent>
               )}
 
-              {/* CRM ao Vivo */}
+              {/* CRM ao Vivo → substituído pelo Dashboard TV em 2026-05-26 a pedido do usuário.
+                  Kanban antigo (CrmAoVivo) ainda existe em /whatsapp/crm-ao-vivo como rota separada. */}
               {(!isSeller || visibleFeatures.tab_crm_ao_vivo) && (
                 <TabsContent value="ao-vivo" className="mt-0 h-full">
-                  <CrmAoVivo embedded />
+                  <DashboardTV embedded />
                 </TabsContent>
               )}
 

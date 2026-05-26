@@ -88,8 +88,10 @@ export function ProfileSettingsTab() {
     }
     setIsUploading(true);
     try {
-      const ext = file.name.split('.').pop() || 'png';
-      const path = `avatars/${user.id}.${ext}`;
+      const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+      // Path DEVE começar com {user.id}/ pra passar a policy avatars_user_write
+      // (storage.foldername(name)[1] = auth.uid()). Fix 2026-05-26.
+      const path = `${user.id}/avatar.${ext}`;
       const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
       if (upErr) throw upErr;
       const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
