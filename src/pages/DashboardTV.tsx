@@ -104,7 +104,12 @@ function rankColor(rank: number): string {
 
 // ─── Componente principal ───────────────────────────────────────────────────
 
-export default function DashboardTV() {
+interface DashboardTVProps {
+  /** Quando true, renderiza sem min-h-screen pra caber dentro de outra página (ex: tab do Pedro SDR). */
+  embedded?: boolean;
+}
+
+export default function DashboardTV({ embedded = false }: DashboardTVProps = {}) {
   const { user } = useAuth();
   const { isSeller, loading: profileLoading } = useSellerProfile(user?.id);
 
@@ -239,15 +244,20 @@ export default function DashboardTV() {
     return () => { cancelled = true; clearInterval(t); };
   }, [user?.id, profileLoading, isSeller]);
 
-  // Vendedor logado é redirecionado (master only)
-  if (!profileLoading && isSeller) {
+  // Vendedor logado é redirecionado (master only) — mas só se NÃO for embedded
+  // (em embedded, o controle de acesso é do componente pai — PedroSDR já filtra via visibleFeatures)
+  if (!embedded && !profileLoading && isSeller) {
     return <Navigate to="/dashboard" replace />;
   }
+
+  const wrapperClass = embedded
+    ? 'min-h-full bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white'
+    : 'min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white overflow-hidden';
 
   // Loading inicial (perfil + dados)
   if (profileLoading || (loading && !kpis)) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+      <div className={`${wrapperClass} flex items-center justify-center`}>
         <Loader2 className="h-12 w-12 animate-spin text-blue-400" />
       </div>
     );
@@ -257,7 +267,7 @@ export default function DashboardTV() {
   const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white overflow-hidden">
+    <div className={wrapperClass}>
       {/* ───── Header ───── */}
       <header className="border-b border-blue-900/50 px-8 py-4 flex items-center justify-between bg-slate-900/40 backdrop-blur">
         <div className="flex items-center gap-5">
