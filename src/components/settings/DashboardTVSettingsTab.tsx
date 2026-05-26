@@ -6,7 +6,7 @@
 // MVP — foto via URL (input text). Upgrade futuro: upload pra Supabase Storage.
 // ============================================================================
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, Save, Tv, Palette, Users, ExternalLink } from 'lucide-react';
+import { Loader2, Save, Tv, Palette, Users, ExternalLink, Upload, Link2, Trash2 } from 'lucide-react';
 
 interface BrandingForm {
   logo_url: string;
@@ -65,6 +65,9 @@ export function DashboardTVSettingsTab() {
   const [editingSellerId, setEditingSellerId] = useState<string | null>(null);
   const [editingUrl, setEditingUrl] = useState<string>('');
   const [savingSellerId, setSavingSellerId] = useState<string | null>(null);
+  const [uploadingSellerId, setUploadingSellerId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadTargetSellerId, setUploadTargetSellerId] = useState<string | null>(null);
 
   // Load inicial
   useEffect(() => {
@@ -155,6 +158,68 @@ export function DashboardTVSettingsTab() {
       toast({ title: '✅ Foto atualizada' });
     } catch (err: any) {
       toast({ title: 'Erro ao salvar foto', description: err?.message, variant: 'destructive' });
+    } finally {
+      setSavingSellerId(null);
+    }
+  };
+
+  const handleClickUpload = (sellerId: string) => {
+    setUploadTargetSellerId(sellerId);
+    // Pequeno delay garante que state atualize antes do click do input
+    setTimeout(() => fileInputRef.current?.click(), 0);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const sellerId = uploadTargetSellerId;
+    // Reset input pra permitir re-selecionar mesmo arquivo
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file || !sellerId || !user?.id) {
+      setUploadTargetSellerId(null);
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast({ title: 'Arquivo muito grande', description: 'Máximo 2MB.', variant: 'destructive' });
+      setUploadTargetSellerId(null);
+      return;
+    }
+    setUploadingSellerId(sellerId);
+    try {
+      const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+      // Path: {master.id}/sellers/{seller.id}.{ext}
+      // Primeiro folder = auth.uid() → passa policy avatars_user_write
+      const path = `${user.id}/sellers/${sellerId}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+      const publicUrl = urlData.publicUrl + '?t=' + Date.now(); // bust cache
+      const { error: updErr } = await (supabase as any)
+        .from('ai_team_members')
+        .update({ profile_picture: publicUrl })
+        .eq('id', sellerId);
+      if (updErr) throw updErr;
+      setSellers(prev => prev.map(s => s.id === sellerId ? { ...s, profile_picture: publicUrl } : s));
+      toast({ title: '✅ Foto enviada' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao subir foto', description: err?.message || 'Erro desconhecido', variant: 'destructive' });
+    } finally {
+      setUploadingSellerId(null);
+      setUploadTargetSellerId(null);
+    }
+  };
+
+  const handleRemoveSellerPhoto = async (sellerId: string) => {
+    setSavingSellerId(sellerId);
+    try {
+      const { error } = await (supabase as any)
+        .from('ai_team_members')
+        .update({ profile_picture: null })
+        .eq('id', sellerId);
+      if (error) throw error;
+      setSellers(prev => prev.map(s => s.id === sellerId ? { ...s, profile_picture: null } : s));
+      toast({ title: '🗑️ Foto removida' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao remover', description: err?.message, variant: 'destructive' });
     } finally {
       setSavingSellerId(null);
     }
@@ -312,14 +377,24 @@ export function DashboardTVSettingsTab() {
             </p>
           ) : (
             <div className="space-y-2">
+              {/* Input file escondido (compartilhado pra todos os botões Upload) */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                className="hidden"
+                onChange={handleFileChange}
+              />
               {sellers.map(s => {
                 const isEditing = editingSellerId === s.id;
                 const isSaving = savingSellerId === s.id;
+                const isUploading = uploadingSellerId === s.id;
+                const hasPhoto = !!s.profile_picture;
                 return (
-                  <div key={s.id} className="flex items-center gap-3 rounded-lg border border-border/40 bg-background/30 px-3 py-2">
+                  <div key={s.id} className="flex items-center gap-3 rounded-lg border border-border/40 bg-background/30 px-3 py-2 flex-wrap">
                     {/* Preview avatar */}
-                    {s.profile_picture ? (
-                      <img src={s.profile_picture} alt={s.name} className="h-10 w-10 rounded-full object-cover border border-border/40" />
+                    {hasPhoto ? (
+                      <img src={s.profile_picture!} alt={s.name} className="h-10 w-10 rounded-full object-cover border border-border/40" />
                     ) : (
                       <div
                         className="h-10 w-10 rounded-full flex items-center justify-center font-bold text-sm text-white border border-border/40"
@@ -330,19 +405,19 @@ export function DashboardTVSettingsTab() {
                     )}
 
                     {/* Nome */}
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-[120px]">
                       <p className="text-sm font-medium truncate">
                         {s.name}
                         {!s.is_active && <span className="ml-2 text-[10px] text-muted-foreground">(inativo)</span>}
                       </p>
                       {!isEditing && (
-                        <p className="text-[10px] text-muted-foreground truncate">
-                          {s.profile_picture || 'Sem foto — usa avatar com iniciais'}
+                        <p className="text-[10px] text-muted-foreground truncate" title={s.profile_picture || undefined}>
+                          {hasPhoto ? 'Foto configurada' : 'Sem foto — usa avatar com iniciais'}
                         </p>
                       )}
                     </div>
 
-                    {/* Input ou botão Editar */}
+                    {/* Modo edição URL */}
                     {isEditing ? (
                       <>
                         <Input
@@ -359,9 +434,45 @@ export function DashboardTVSettingsTab() {
                         <Button size="sm" variant="ghost" onClick={cancelEditSeller} disabled={isSaving} className="h-8 text-xs">Cancelar</Button>
                       </>
                     ) : (
-                      <Button size="sm" variant="outline" onClick={() => startEditSeller(s)} className="h-8 text-xs">
-                        {s.profile_picture ? 'Trocar' : 'Adicionar foto'}
-                      </Button>
+                      <div className="flex items-center gap-1.5">
+                        {/* Upload arquivo (botão principal) */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleClickUpload(s.id)}
+                          disabled={isUploading || isSaving}
+                          className="h-8 text-xs gap-1.5"
+                          title="Subir arquivo do computador"
+                        >
+                          {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                          {hasPhoto ? 'Trocar' : 'Upload'}
+                        </Button>
+                        {/* Alternativa via URL */}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => startEditSeller(s)}
+                          disabled={isUploading || isSaving}
+                          className="h-8 text-xs gap-1.5"
+                          title="Usar URL externa em vez de upload"
+                        >
+                          <Link2 className="h-3 w-3" />
+                          URL
+                        </Button>
+                        {/* Remover */}
+                        {hasPhoto && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleRemoveSellerPhoto(s.id)}
+                            disabled={isUploading || isSaving}
+                            className="h-8 w-8 p-0 text-red-400 hover:text-red-300"
+                            title="Remover foto"
+                          >
+                            {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
@@ -369,7 +480,7 @@ export function DashboardTVSettingsTab() {
             </div>
           )}
           <p className="text-[10px] text-muted-foreground mt-3 italic">
-            Por enquanto aceita apenas URL externa (ex: link do Google Drive público, Cloudinary, etc.). Upload direto chega numa próxima versão.
+            <strong>Upload</strong>: arquivo do computador (PNG/JPG/WEBP, máx 2MB). <strong>URL</strong>: link externo (Google Drive público, Cloudinary, etc.).
           </p>
         </CardContent>
       </Card>
