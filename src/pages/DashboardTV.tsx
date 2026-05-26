@@ -49,6 +49,73 @@ interface KPIsData {
   total_leads: number;
   por_origem: Record<string, number>;
   percentuais: Record<string, number>;
+  /** 0-100 — média ponderada IA(50%) + Feedback(30%) + Notas(20%) */
+  qualidade_media: number;
+  qualidade_label: 'Ótimo' | 'Bom' | 'Médio' | 'Baixo' | 'Sem dados';
+  /** % de leads Pedro que foram transferidos pra vendedor humano */
+  taxa_transferencia: number;
+  taxa_transferencia_texto: string; // "32 de 44 leads"
+}
+
+// ─── Cálculo de qualidade do lead (50% IA + 30% Feedback + 20% Notas) ────────
+
+/** Score 0-100 baseado em status_crm do Pedro */
+function scorePedroStatus(status: string | null | undefined): number {
+  if (!status) return 0;
+  const map: Record<string, number> = {
+    qualificado: 100, medio_qualificado: 70, pouco_qualificado: 40,
+    transferido: 100, em_atendimento: 50, novo: 20, inativo: 0,
+    fechado: 100, perdido: 0,
+  };
+  return map[status] ?? 20;
+}
+
+/** Score 0-100 baseado no nome da stage do Marcos */
+function scoreMarcosStage(stageName: string | null | undefined): number {
+  if (!stageName) return 0;
+  const n = stageName.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const map: Record<string, number> = {
+    'fechado': 100, 'negociacao': 85, 'agendamento': 60, 'porta/loja': 30,
+    'marketing place': 20, 'leads inativos': 0, 'nao tem no estoque': 0,
+    // legados (caso ainda exista em algum master)
+    'novo lead': 20, 'proposta': 75, 'qualificado': 80, 'perdido': 0,
+    'lead inativo': 0, 'carro nao disponivel': 0, 'porta': 30,
+  };
+  return map[n] ?? 20;
+}
+
+/** Score 0-100 baseado em priority do pedro_manager_feedback */
+function scoreFeedbackPriority(priority: string | null | undefined): number {
+  if (!priority) return 0;
+  const map: Record<string, number> = {
+    urgent: 100, high: 75, normal: 50, low: 25,
+  };
+  return map[priority] ?? 0;
+}
+
+/** Score 0-100 baseado em quantidade de notas do vendedor */
+function scoreNotasCount(count: number | null | undefined): number {
+  const c = count || 0;
+  if (c >= 3) return 100;
+  if (c >= 1) return 60;
+  return 0;
+}
+
+/** Combina os 3 scores com pesos 50% / 30% / 20% */
+function combineLeadScore(iaScore: number, fbScore: number | null, notesScore: number): number {
+  // Se NÃO tiver feedback, redistribui os 30% pros outros 2 (IA 70% + Notas 30%)
+  if (fbScore === null) {
+    return Math.round((iaScore * 0.7) + (notesScore * 0.3));
+  }
+  return Math.round((iaScore * 0.5) + (fbScore * 0.3) + (notesScore * 0.2));
+}
+
+function qualidadeLabel(score: number, hasData: boolean): KPIsData['qualidade_label'] {
+  if (!hasData) return 'Sem dados';
+  if (score >= 80) return 'Ótimo';
+  if (score >= 60) return 'Bom';
+  if (score >= 40) return 'Médio';
+  return 'Baixo';
 }
 
 interface BrandingConfig {
@@ -88,7 +155,7 @@ function hashColor(id: string): string {
 
 // ─── Filtros de período ─────────────────────────────────────────────────────
 
-type PeriodPreset = 'today' | '7days' | '30days' | 'custom';
+type PeriodPreset = 'today' | 'yesterday' | '7days' | '30days' | 'custom';
 
 interface CustomRange {
   start: string; // YYYY-MM-DD (date input format)
@@ -104,6 +171,11 @@ function resolveDateRange(preset: PeriodPreset, custom: CustomRange): { start: s
     const s = new Date(now); s.setHours(0, 0, 0, 0);
     const e = new Date(now); e.setHours(23, 59, 59, 999);
     return { start: s.toISOString(), end: e.toISOString(), label: 'Hoje' };
+  }
+  if (preset === 'yesterday') {
+    const s = new Date(now); s.setDate(s.getDate() - 1); s.setHours(0, 0, 0, 0);
+    const e = new Date(now); e.setDate(e.getDate() - 1); e.setHours(23, 59, 59, 999);
+    return { start: s.toISOString(), end: e.toISOString(), label: 'Ontem' };
   }
   if (preset === '7days') {
     const s = new Date(now); s.setDate(s.getDate() - 6); s.setHours(0, 0, 0, 0);
@@ -157,7 +229,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   const [period, setPeriod] = useState<PeriodPreset>(() => {
     try {
       const saved = localStorage.getItem(PERIOD_STORAGE_KEY) as PeriodPreset | null;
-      return saved && ['today','7days','30days','custom'].includes(saved) ? saved : 'today';
+      return saved && ['today','yesterday','7days','30days','custom'].includes(saved) ? saved : 'today';
     } catch { return 'today'; }
   });
   const [customRange, setCustomRange] = useState<CustomRange>(() => {
@@ -241,20 +313,21 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .eq('is_active', true);
         if (sellerMemberId) sellersQuery = sellersQuery.eq('id', sellerMemberId);
 
-        // 3. Leads Pedro do período. Master vê todos com assigned_to_id; vendedor só os dele.
+        // 3. Leads Pedro do período. +status_crm +seller_notes_count pra cálculo de qualidade.
+        //    Pra "Taxa Transferência" precisamos contar TODOS leads Pedro (com e sem assigned_to_id).
         let pedroQuery = (supabase as any)
           .from('ai_crm_leads')
-          .select('id, assigned_to_id')
+          .select('id, assigned_to_id, status_crm, seller_notes_count')
           .eq('user_id', effectiveUserId)
           .gte('created_at', todayStart)
           .lte('created_at', todayEnd);
         if (sellerMemberId) pedroQuery = pedroQuery.eq('assigned_to_id', sellerMemberId);
-        else pedroQuery = pedroQuery.not('assigned_to_id', 'is', null);
+        // (sem filtro 'assigned_to_id not null' — preciso do total pra taxa)
 
-        // 4. Leads Marcos do período. Mesma lógica.
+        // 4. Leads Marcos do período. +stage_id +seller_notes_count + JOIN com stages pra nome.
         let marcosQuery = (supabase as any)
           .from('crm_leads')
-          .select('id, origem, assigned_to')
+          .select('id, origem, assigned_to, stage_id, seller_notes_count, stage:crm_pipeline_stages(name)')
           .eq('user_id', effectiveUserId)
           .gte('created_at', todayStart)
           .lte('created_at', todayEnd);
@@ -302,15 +375,28 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           };
         }
 
-        // 4. Pedro: cada lead com assigned_to_id conta como trafico_pago
-        for (const l of (pedroRes.data || []) as any[]) {
-          const v = agg[l.assigned_to_id];
-          if (v) { v.trafico_pago++; v.total++; }
+        // 4. Pedro: contar trafico_pago (precisa de assigned_to_id) E coletar dados pra qualidade/taxa
+        const pedroLeads = (pedroRes.data || []) as Array<{
+          id: string; assigned_to_id: string | null; status_crm: string | null; seller_notes_count: number | null;
+        }>;
+        let pedroTotal = 0;       // total leads Pedro no período (todos)
+        let pedroAtribuidos = 0;  // leads Pedro com assigned_to_id != null
+        for (const l of pedroLeads) {
+          pedroTotal++;
+          if (l.assigned_to_id) {
+            pedroAtribuidos++;
+            const v = agg[l.assigned_to_id];
+            if (v) { v.trafico_pago++; v.total++; }
+          }
         }
 
-        // 5. Marcos: agrupa por origem (5 categorias mostradas; instagram/outros não contam)
-        for (const l of (marcosRes.data || []) as any[]) {
-          const v = agg[l.assigned_to];
+        // 5. Marcos: agrupa por origem (5 categorias; instagram/outros NÃO contam no total)
+        const marcosLeads = (marcosRes.data || []) as Array<{
+          id: string; origem: string | null; assigned_to: string | null; stage_id: string | null;
+          seller_notes_count: number | null; stage: { name: string } | null;
+        }>;
+        for (const l of marcosLeads) {
+          const v = agg[l.assigned_to || ''];
           if (!v) continue;
           const o = l.origem as string;
           if (o === 'porta')           { v.porta++;       v.total++; }
@@ -318,16 +404,70 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           else if (o === 'marketplace'){ v.marketplace++; v.total++; }
           else if (o === 'consignado') { v.consignado++;  v.total++; }
           else if (o === 'indicacao')  { v.indicacao++;   v.total++; }
-          // instagram/outros/null: deliberadamente NÃO contam no total
         }
 
-        // 5. Rank por total desc, tie-breaker alfabético
+        // 6. Busca feedbacks (priority) dos leads do período (Pedro + Marcos)
+        //    Usado pra calcular o peso 30% da qualidade
+        const allPedroIds  = pedroLeads.map(l => l.id);
+        const allMarcosIds = marcosLeads.map(l => l.id);
+        const feedbackByLead = new Map<string, string>(); // lead_id → priority (mais recente)
+        if (allPedroIds.length > 0 || allMarcosIds.length > 0) {
+          // Pedro: filter por lead_id IN
+          if (allPedroIds.length > 0) {
+            const { data: pedroFb } = await (supabase as any)
+              .from('pedro_manager_feedback')
+              .select('lead_id, priority, created_at')
+              .in('lead_id', allPedroIds)
+              .order('created_at', { ascending: false });
+            for (const fb of (pedroFb || []) as Array<{ lead_id: string; priority: string }>) {
+              if (!feedbackByLead.has(fb.lead_id)) feedbackByLead.set(fb.lead_id, fb.priority);
+            }
+          }
+          // Marcos: filter por crm_lead_id IN
+          if (allMarcosIds.length > 0) {
+            const { data: marcosFb } = await (supabase as any)
+              .from('pedro_manager_feedback')
+              .select('crm_lead_id, priority, created_at')
+              .in('crm_lead_id', allMarcosIds)
+              .order('created_at', { ascending: false });
+            for (const fb of (marcosFb || []) as Array<{ crm_lead_id: string; priority: string }>) {
+              if (!feedbackByLead.has(fb.crm_lead_id)) feedbackByLead.set(fb.crm_lead_id, fb.priority);
+            }
+          }
+        }
+
+        // 7. Calcula score de qualidade de cada lead, depois média geral
+        const scores: number[] = [];
+        for (const l of pedroLeads) {
+          const iaScore    = scorePedroStatus(l.status_crm);
+          const fbPriority = feedbackByLead.get(l.id);
+          const fbScore    = fbPriority ? scoreFeedbackPriority(fbPriority) : null;
+          const notesScore = scoreNotasCount(l.seller_notes_count);
+          scores.push(combineLeadScore(iaScore, fbScore, notesScore));
+        }
+        for (const l of marcosLeads) {
+          const iaScore    = scoreMarcosStage(l.stage?.name);
+          const fbPriority = feedbackByLead.get(l.id);
+          const fbScore    = fbPriority ? scoreFeedbackPriority(fbPriority) : null;
+          const notesScore = scoreNotasCount(l.seller_notes_count);
+          scores.push(combineLeadScore(iaScore, fbScore, notesScore));
+        }
+        const qualidadeMedia = scores.length > 0
+          ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+          : 0;
+        const qualidadeLbl = qualidadeLabel(qualidadeMedia, scores.length > 0);
+
+        // 8. Taxa de Transferência (Pedro: leads atribuídos / total leads Pedro)
+        const taxaTransf = pedroTotal > 0 ? Math.round((pedroAtribuidos / pedroTotal) * 1000) / 10 : 0;
+        const taxaTransfTexto = `${pedroAtribuidos} de ${pedroTotal} leads do Pedro`;
+
+        // 9. Rank por total desc, tie-breaker alfabético
         const sorted = Object.values(agg)
           .sort((a, b) => (b.total - a.total) || a.name.localeCompare(b.name))
           .map((v, i) => ({ ...v, rank: i + 1 }));
         setVendedores(sorted);
 
-        // 6. KPIs gerais
+        // 10. KPIs gerais
         const porOrigem: Record<string, number> = {
           trafico_pago: 0, porta: 0, olx: 0, marketplace: 0, consignado: 0, indicacao: 0,
         };
@@ -344,7 +484,15 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         for (const k of Object.keys(porOrigem)) {
           percentuais[k] = total > 0 ? Math.round((porOrigem[k] / total) * 1000) / 10 : 0;
         }
-        setKpis({ total_leads: total, por_origem: porOrigem, percentuais });
+        setKpis({
+          total_leads: total,
+          por_origem: porOrigem,
+          percentuais,
+          qualidade_media: qualidadeMedia,
+          qualidade_label: qualidadeLbl,
+          taxa_transferencia: taxaTransf,
+          taxa_transferencia_texto: taxaTransfTexto,
+        });
       } catch (err) {
         console.error('[DashboardTV] erro ao carregar:', err);
       } finally {
@@ -481,10 +629,11 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         <span className="text-[10px] uppercase tracking-widest text-blue-300/60 font-bold">Período</span>
         <div className="flex items-center gap-1.5 bg-slate-900/50 rounded-lg p-1 border border-slate-800">
           {([
-            { id: 'today',   label: 'Hoje' },
-            { id: '7days',   label: '7 dias' },
-            { id: '30days',  label: '30 dias' },
-            { id: 'custom',  label: 'Personalizado' },
+            { id: 'today',     label: 'Hoje' },
+            { id: 'yesterday', label: 'Ontem' },
+            { id: '7days',     label: '7 dias' },
+            { id: '30days',    label: '30 dias' },
+            { id: 'custom',    label: 'Personalizado' },
           ] as const).map(opt => {
             const active = period === opt.id;
             return (
@@ -526,43 +675,77 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </span>
       </div>
 
-      {/* ───── Bloco LEADS GERAIS + ORIGEM ───── */}
-      <section className="px-8 py-6 grid grid-cols-12 gap-4">
-        {/* Total geral */}
-        <div className="col-span-3 bg-slate-900/60 rounded-2xl p-6 border border-blue-900/40 flex flex-col items-center justify-center text-center">
+      {/* ───── Bloco KPIs principais (3 cards lado a lado) ───── */}
+      <section className="px-8 py-6 grid grid-cols-3 gap-4">
+        {/* KPI 1: Leads Gerais */}
+        <div className="bg-slate-900/60 rounded-2xl p-6 border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Users className="h-7 w-7 text-blue-400 mb-2" />
           <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">
             Leads Gerais · {dateRange.label}
           </p>
-          <p className="text-7xl font-black tabular-nums leading-none" style={{ color: branding.primary_color }}>
+          <p className="text-6xl font-black tabular-nums leading-none" style={{ color: branding.primary_color }}>
             {kpis?.total_leads ?? 0}
           </p>
           <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">Total de Leads</p>
         </div>
 
-        {/* 6 origens */}
-        <div className="col-span-9">
-          <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-3 font-bold">Origem dos Leads</h2>
-          <div className="grid grid-cols-6 gap-3">
-            {ORIGENS.map(origem => {
-              const Icon = origem.icon;
-              const valor = kpis?.por_origem[origem.key] ?? 0;
-              const pct = kpis?.percentuais[origem.key] ?? 0;
-              return (
-                <div key={origem.key} className="bg-slate-900/60 rounded-xl p-4 border border-slate-800 hover:border-slate-700 transition-colors">
-                  <Icon className="h-5 w-5 mb-2" style={{ color: origem.color }} />
-                  <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-1 truncate">{origem.label}</p>
-                  <p className="text-3xl font-black tabular-nums leading-none">{valor}</p>
-                  <p className="text-[10px] text-slate-500 mt-1.5">{pct.toFixed(2)}%</p>
-                  <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden mt-1.5">
-                    <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(pct, 100)}%`, background: origem.color }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <p className="text-center text-[10px] text-slate-500 italic mt-2">Dados atualizados automaticamente em tempo real via CRM</p>
+        {/* KPI 2: Qualidade Média (IA 50% + Feedback 30% + Notas 20%) */}
+        <div className="bg-slate-900/60 rounded-2xl p-6 border border-blue-900/40 flex flex-col items-center justify-center text-center">
+          {(() => {
+            const score = kpis?.qualidade_media ?? 0;
+            const label = kpis?.qualidade_label ?? 'Sem dados';
+            const color = score >= 80 ? '#10b981' : score >= 60 ? '#3b82f6' : score >= 40 ? '#f59e0b' : '#ef4444';
+            return (
+              <>
+                <Trophy className="h-7 w-7 mb-2" style={{ color }} />
+                <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Qualidade Média</p>
+                <p className="text-6xl font-black tabular-nums leading-none" style={{ color }}>
+                  {score}<span className="text-2xl text-slate-500">%</span>
+                </p>
+                <p className="text-[10px] uppercase tracking-widest mt-3 font-bold" style={{ color }}>
+                  {label}
+                </p>
+                <p className="text-[9px] text-slate-500 italic mt-1">IA 50% + Feedback 30% + Notas 20%</p>
+              </>
+            );
+          })()}
         </div>
+
+        {/* KPI 3: Taxa Transferência (% leads Pedro atribuídos a vendedor) */}
+        <div className="bg-slate-900/60 rounded-2xl p-6 border border-blue-900/40 flex flex-col items-center justify-center text-center">
+          <Target className="h-7 w-7 text-purple-400 mb-2" />
+          <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Taxa Transferência</p>
+          <p className="text-6xl font-black tabular-nums leading-none" style={{ color: branding.secondary_color }}>
+            {(kpis?.taxa_transferencia ?? 0).toFixed(1)}<span className="text-2xl text-slate-500">%</span>
+          </p>
+          <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">
+            {kpis?.taxa_transferencia_texto ?? '0 leads'}
+          </p>
+        </div>
+      </section>
+
+      {/* ───── 6 cards de Origem (linha completa abaixo) ───── */}
+      <section className="px-8 pb-6">
+        <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-3 font-bold">Origem dos Leads</h2>
+        <div className="grid grid-cols-6 gap-3">
+          {ORIGENS.map(origem => {
+            const Icon = origem.icon;
+            const valor = kpis?.por_origem[origem.key] ?? 0;
+            const pct = kpis?.percentuais[origem.key] ?? 0;
+            return (
+              <div key={origem.key} className="bg-slate-900/60 rounded-xl p-4 border border-slate-800 hover:border-slate-700 transition-colors">
+                <Icon className="h-5 w-5 mb-2" style={{ color: origem.color }} />
+                <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-1 truncate">{origem.label}</p>
+                <p className="text-3xl font-black tabular-nums leading-none">{valor}</p>
+                <p className="text-[10px] text-slate-500 mt-1.5">{pct.toFixed(2)}%</p>
+                <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden mt-1.5">
+                  <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(pct, 100)}%`, background: origem.color }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-center text-[10px] text-slate-500 italic mt-2">Dados atualizados automaticamente em tempo real via CRM</p>
       </section>
 
       {/* ───── PRODUÇÃO INDIVIDUAL DOS VENDEDORES ───── */}
