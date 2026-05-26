@@ -145,6 +145,83 @@ function stockFacts(stockResult: any) {
   }));
 }
 
+function adSignalText(input: {
+  ad_context?: any;
+  message?: string | null;
+  plan?: PedroBrainPlan | null;
+}) {
+  return normalizeText([
+    input.message,
+    input.ad_context?.source,
+    input.ad_context?.url,
+    input.ad_context?.title,
+    input.ad_context?.description,
+    input.ad_context?.raw_text,
+    input.ad_context?.summary,
+    input.plan?.reason,
+    input.plan?.response_guidance,
+  ].filter(Boolean).join(" "));
+}
+
+function hasCurrentAdSignal(input: {
+  ad_context?: any;
+  plan: PedroBrainPlan;
+  vehicle_resolution: PedroVehicleResolution;
+  message: string;
+}) {
+  const signal = adSignalText(input);
+  return Boolean(
+    input.vehicle_resolution?.source === "ad_context" ||
+      input.vehicle_resolution?.source === "media_context" ||
+      /facebook|instagram|story_fbid|post_id|fbclid|anuncio|propaganda|campanha|link|thumbnail|imagem|media/.test(signal),
+  );
+}
+
+function isCurrentTurnAdVehicleConsultation(input: {
+  ad_context?: any;
+  plan: PedroBrainPlan;
+  vehicle_resolution: PedroVehicleResolution;
+  message: string;
+}) {
+  const hasAdVehicle = Boolean(input.ad_context?.has_ad_context && input.ad_context?.vehicle_query);
+
+  return hasAdVehicle && hasCurrentAdSignal(input) && input.plan?.action === "stock_search";
+}
+
+function looksLikeVehicleOptionsList(text: string) {
+  const normalized = normalizeText(text);
+  const hasSecondItem = /(^|\n)\s*2\s*[\.)-]/m.test(text);
+  const hasListLanguage = /\b(opcoes|opcao|modelos|disponiveis|estoque|preco|km|cambio|foto|ver imagem)\b/.test(normalized);
+  return hasSecondItem && hasListLanguage;
+}
+
+function buildAdVehicleConsultationFallback(input: {
+  memory?: PedroV2LeadMemory | null;
+  facts: any[];
+  ad_context?: any;
+}) {
+  const name = leadFirstName(input.memory);
+  const vehicle = input.facts[0];
+  const label = vehicle?.label || input.ad_context?.vehicle_query || "esse carro do anuncio";
+  const details = [
+    vehicle?.preco_formatado,
+    vehicle?.km_formatado,
+    vehicle?.cambio,
+    vehicle?.cor,
+  ].filter(Boolean).join(" | ");
+  const greeting = saoPauloNowInfo().greeting;
+  const firstLine = `${greeting}${name ? `, ${name}` : ""}! Sou o Carvalho, consultor aqui da Icom Motors.`;
+  const stockLine = vehicle
+    ? `Vi que voce veio pelo anuncio do ${label}. Ele aparece aqui no estoque${details ? `: ${details}` : "."}`
+    : `Vi que voce veio pelo anuncio do ${label}. Vou cuidar dele com voce pra nao te passar nada errado.`;
+
+  return [
+    firstLine,
+    stockLine,
+    "Quer que eu te mande mais detalhes ou fotos dele?",
+  ].join("\n\n");
+}
+
 function buildDeterministicStockReply(input: {
   memory?: PedroV2LeadMemory | null;
   plan: PedroBrainPlan;
@@ -191,7 +268,9 @@ function ensureStockReplyFormatting(input: {
   plan: PedroBrainPlan;
   intent?: PedroV2IntentResult | null;
   stock_result?: any;
+  ad_vehicle_consultation?: boolean;
 }) {
+  if (input.ad_vehicle_consultation) return input.text;
   if (!input.facts.length || input.plan.action !== "stock_search") return input.text;
   if (stockReplyLooksStructured(input.text, input.facts)) return input.text;
   return buildDeterministicStockReply({
@@ -208,7 +287,29 @@ function fallbackReply(input: {
   stock_result?: any;
   message: string;
   plan: PedroBrainPlan;
+  ad_context?: any;
+  vehicle_resolution?: PedroVehicleResolution;
 }) {
+  const allFacts = stockFacts(input.stock_result);
+  const adVehicleConsultation = isCurrentTurnAdVehicleConsultation({
+    ad_context: input.ad_context,
+    plan: input.plan,
+    vehicle_resolution: input.vehicle_resolution || ({} as PedroVehicleResolution),
+    message: input.message,
+  });
+
+  if (adVehicleConsultation) {
+    return {
+      ok: true,
+      text: buildAdVehicleConsultationFallback({
+        memory: input.memory,
+        facts: allFacts.slice(0, 1),
+        ad_context: input.ad_context,
+      }),
+      source: "brain_ad_vehicle_fallback",
+    };
+  }
+
   if (Array.isArray(input.stock_result?.items)) {
     return {
       ok: true,
@@ -252,7 +353,9 @@ export async function generatePedroBrainReply(input: {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return fallback;
 
-  const facts = stockFacts(input.stock_result);
+  const allFacts = stockFacts(input.stock_result);
+  const adVehicleConsultation = isCurrentTurnAdVehicleConsultation(input);
+  const facts = adVehicleConsultation ? allFacts.slice(0, 1) : allFacts;
   const currentTime = saoPauloNowInfo();
   const chatHistory = buildChatHistory(input.recent_history || input.memory?.recent_turns || [], input.message);
   try {
@@ -284,7 +387,9 @@ export async function generatePedroBrainReply(input: {
                 "- Se o lead perguntou como voce esta, responda isso primeiro e so depois conduza com leveza.",
                 "- Se o lead corrigiu voce, reconheca sem defensiva.",
                 "- Se houver estoque, use somente os fatos recebidos das tools. Nunca invente ano, preco, km, cambio, cor ou disponibilidade.",
-                "- Se listar veiculos, todos os itens de stock.facts devem vir numerados: 1., 2., 3. Isso permite o lead pedir 'o primeiro'.",
+                "- Se o lead veio agora por anuncio/link/imagem e o veiculo do anuncio foi identificado, NAO liste alternativas. Fale somente do veiculo do anuncio e conduza o atendimento.",
+                "- Em atendimento de anuncio identificado: apresente-se se for primeiro contato, confirme o veiculo do anuncio, cite no maximo 2 dados reais e pergunte se o lead quer detalhes/fotos ou tem alguma duvida.",
+                "- Se listar veiculos em uma busca normal, todos os itens de stock.facts devem vir numerados: 1., 2., 3. Isso permite o lead pedir 'o primeiro'.",
                 "- Se listar veiculos, inclua a linha Foto: URL quando stock.facts.imagem existir.",
                 "- Se listar veiculos, deixe uma linha em branco entre cada item.",
                 "- Se o lead mudou de modelo/assunto, a mensagem atual vence a memoria antiga.",
@@ -311,13 +416,17 @@ export async function generatePedroBrainReply(input: {
               stock: {
                 success: Boolean(input.stock_result?.success),
                 total: input.stock_result?.total || 0,
+                facts_scope: adVehicleConsultation ? "ad_vehicle_only" : "normal_search",
                 facts,
                 error: input.stock_result?.error || null,
               },
               tool_result: input.tool_result || null,
+              ad_vehicle_consultation: adVehicleConsultation,
               hard_rules: [
                 "Se stock.facts existir, use apenas esses veiculos e dados.",
-                "Se stock.facts existir, liste TODOS os veiculos recebidos em stock.facts com numeros e inclua Foto quando houver imagem.",
+                adVehicleConsultation
+                  ? "Este turno veio de anuncio com veiculo identificado: nao liste carros; fale so do veiculo do anuncio e avance como consultor."
+                  : "Se stock.facts existir, liste TODOS os veiculos recebidos em stock.facts com numeros e inclua Foto quando houver imagem.",
                 "Se o cliente mudou o modelo, nao repita o modelo antigo.",
                 "Se a resposta listar veiculos, separe cada item por linha em branco.",
                 "Se cumprimentar, use current_time_sao_paulo.greeting; nunca chute periodo do dia.",
@@ -342,19 +451,27 @@ export async function generatePedroBrainReply(input: {
     const content = String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
     const rawText = String(parsed?.text || "").trim();
+    const guardedRawText = adVehicleConsultation && looksLikeVehicleOptionsList(rawText)
+      ? buildAdVehicleConsultationFallback({
+        memory: input.memory,
+        facts,
+        ad_context: input.ad_context,
+      })
+      : rawText;
     const text = ensureStockReplyFormatting({
-      text: rawText,
+      text: guardedRawText,
       facts,
       memory: input.memory,
       plan: input.plan,
       intent: input.intent,
       stock_result: input.stock_result,
+      ad_vehicle_consultation: adVehicleConsultation,
     });
     if (!text) return fallback;
     return {
       ok: true,
       text,
-      source: facts.length > 0 ? "brain_stock_reply" : "brain_reply",
+      source: adVehicleConsultation ? "brain_ad_vehicle_reply" : (facts.length > 0 ? "brain_stock_reply" : "brain_reply"),
     };
   } catch (error) {
     console.warn("[PedroV2] brain reply fallback:", error);

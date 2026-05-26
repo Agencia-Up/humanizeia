@@ -174,6 +174,12 @@
   - o parser de retorno da Uazapi passou a aceitar campos como `base64Data`, `fileURL`, `mediaUrl` e variantes;
   - a visao do anuncio agora prioriza texto visivel do card, como modelo, versao, ano, cambio e preco;
   - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
+- Hotfix do Pedro v2 para atendimento consultivo de anuncio identificado:
+  - `pedro-webhook-v2` recebeu build `2026-05-26-ad-vehicle-consultative-v3`;
+  - quando o lead chega por anuncio/link/imagem e o veiculo e identificado, o planner agora trata a busca como confirmacao daquele veiculo, nao como catalogo;
+  - o gerador de resposta limita o estoque ao primeiro match do anuncio e bloqueia respostas que tentem listar varias opcoes;
+  - a resposta esperada nesse fluxo e: apresentacao quando necessario, confirmacao do carro do anuncio, poucos dados reais e pergunta natural sobre detalhes/fotos/duvida;
+  - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
 
 ## Historico funcional recente consolidado
 

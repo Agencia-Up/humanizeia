@@ -75,6 +75,15 @@ function detectPhotoTarget(message?: string | null) {
   return "overview";
 }
 
+function adVehicleGuidance() {
+  return [
+    "Lead veio de anuncio/link/imagem com veiculo identificado.",
+    "Consulte o estoque apenas para confirmar esse veiculo especifico.",
+    "Nao liste alternativas, modelos similares ou catalogo sem o lead pedir.",
+    "Depois da consulta, responda como consultor: apresente-se se for primeiro contato, confirme o carro do anuncio e pergunte se ele quer detalhes, fotos ou tem alguma duvida.",
+  ].join(" ");
+}
+
 function hasRecentConversation(input: {
   memory?: PedroV2LeadMemory | null;
   recent_history?: any[];
@@ -151,6 +160,7 @@ function fallbackPlan(input: {
   }
 
   if (vehicle.query && (vehicle.has_current_vehicle_signal || heuristic?.needs_stock_search)) {
+    const adVehicle = Boolean(input.ad_context?.has_ad_context && input.ad_context?.vehicle_query);
     return {
       action: "stock_search",
       intent: photo ? "photo_request" : (heuristic?.intent || "stock_lookup"),
@@ -165,7 +175,9 @@ function fallbackPlan(input: {
       use_memory_vehicle: vehicle.used_memory,
       response_guidance: photo
         ? "Cliente pediu fotos, mas a mensagem atual traz outro veiculo ou nao ha contexto seguro. Consulte estoque antes de enviar fotos."
-        : "Cliente falou de veiculo/estoque. Consulte estoque real antes de responder.",
+        : adVehicle
+          ? adVehicleGuidance()
+          : "Cliente falou de veiculo/estoque. Consulte estoque real antes de responder.",
       reason: `fallback_vehicle_resolution:${vehicle.reason}`,
       source: "fallback",
     };
@@ -285,6 +297,19 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     };
     plan.use_memory_vehicle = vehicle.used_memory;
     plan.reason = `enforced_current_vehicle:${vehicle.reason}`;
+  }
+
+  if (input.ad_context?.has_ad_context && input.ad_context?.vehicle_query && vehicle.query && plan.action === "stock_search") {
+    plan.intent = "vehicle_reference";
+    plan.search_query = vehicle.query;
+    plan.search_filters = {
+      ...(plan.search_filters || {}),
+      modelo_desejado: vehicle.query,
+      tipo_veiculo: vehicle.vehicle_type || plan.search_filters?.tipo_veiculo || null,
+    };
+    plan.use_memory_vehicle = false;
+    plan.response_guidance = adVehicleGuidance();
+    plan.reason = `enforced_ad_vehicle_consultation:${vehicle.reason}`;
   }
 
   if (input.ad_context?.has_ad_context && !input.ad_context?.vehicle_query && !vehicle.query) {
