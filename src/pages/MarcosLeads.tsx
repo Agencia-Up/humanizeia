@@ -3,18 +3,19 @@ import { Navigate, useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Users, Inbox, Send, Smartphone, Zap, Kanban, ClipboardList, Contact } from 'lucide-react';
+import { Loader2, Users, Inbox, Send, Smartphone, Zap, Kanban, ClipboardList, Contact, BarChart3 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile';
 
 // Lazy load cada sub-página
-const FluxCRM           = lazy(() => import('./FluxCRM'));
-const WhatsAppInbox     = lazy(() => import('./WhatsAppInbox'));
-const WhatsAppBroadcast = lazy(() => import('./WhatsAppBroadcast'));
-const WhatsAppInstances = lazy(() => import('./WhatsAppInstances'));
+const FluxCRM             = lazy(() => import('./FluxCRM'));
+const WhatsAppInbox       = lazy(() => import('./WhatsAppInbox'));
+const WhatsAppBroadcast   = lazy(() => import('./WhatsAppBroadcast'));
+const WhatsAppInstances   = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppAutomations = lazy(() => import('./WhatsAppAutomations'));
-const CrmFormularios    = lazy(() => import('./CrmFormularios'));
-const WhatsAppContacts  = lazy(() => import('./WhatsAppContacts'));
+const CrmFormularios      = lazy(() => import('./CrmFormularios'));
+const WhatsAppContacts    = lazy(() => import('./WhatsAppContacts'));
+const MarcosPerformanceTab = lazy(() => import('@/components/marcos/MarcosPerformanceTab'));
 
 const TabLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -23,6 +24,7 @@ const TabLoader = () => (
 );
 
 const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKey: keyof VisibleFeatures }[] = [
+  { id: 'performance', label: 'Performance',      icon: BarChart3,    emoji: '📊', featureKey: 'agent_marcos' },
   { id: 'crm',         label: 'CRM',              icon: Kanban,       emoji: '📊', featureKey: 'marcos_crm' },
   { id: 'formularios', label: 'Formulários',      icon: ClipboardList,emoji: '📋', featureKey: 'marcos_formularios' },
   { id: 'contacts',    label: 'Contatos',         icon: Contact,      emoji: '👥', featureKey: 'marcos_contatos' },
@@ -44,7 +46,7 @@ export default function MarcosLeads() {
     return ALL_TABS.filter(t => visibleFeatures[t.featureKey]);
   }, [isSeller, visibleFeatures]);
 
-  const [activeTab, setActiveTab] = useState(() => tabParam || 'crm');
+  const [activeTab, setActiveTab] = useState(() => tabParam || 'performance');
 
   const handleTabChange = (newTab: string) => {
     setActiveTab(newTab);
@@ -132,6 +134,9 @@ export default function MarcosLeads() {
 
           <div className="flex-1 min-h-0 overflow-hidden">
             <Suspense fallback={<TabLoader />}>
+              <TabsContent value="performance" className="mt-0 h-full overflow-y-auto">
+                <MarcosPerformanceTab />
+              </TabsContent>
               <TabsContent value="crm" className="mt-0 h-full">
                 <FluxCRM embedded />
               </TabsContent>
