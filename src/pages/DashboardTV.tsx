@@ -33,7 +33,8 @@ import { Calendar, Clock, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, 
 interface VendedorData {
   id: string;
   name: string;
-  profile_picture: string | null;
+  /** Foto exibida no card. Prioridade: profiles.avatar_url (vendedor) > ai_team_members.profile_picture (master) > null (fallback iniciais). */
+  effective_avatar: string | null;
   rank: number;
   trafico_pago: number;
   porta: number;
@@ -111,7 +112,7 @@ interface DashboardTVProps {
 
 export default function DashboardTV({ embedded = false }: DashboardTVProps = {}) {
   const { user } = useAuth();
-  const { isSeller, loading: profileLoading } = useSellerProfile(user?.id);
+  const { isSeller, seller, masterUserId, loading: profileLoading } = useSellerProfile(user?.id);
 
   const [now, setNow] = useState(new Date());
   const [loading, setLoading] = useState(true);
@@ -130,9 +131,15 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     return () => clearInterval(t);
   }, []);
 
+  // Decisão de escopo (master vs vendedor):
+  //   master:  effectiveUserId = user.id        | sellerMemberId = null  (vê tudo)
+  //   seller:  effectiveUserId = masterUserId   | sellerMemberId = seller.id (vê só ele)
+  const effectiveUserId = isSeller ? masterUserId : user?.id;
+  const sellerMemberId = isSeller ? seller?.id || null : null;
+
   // Carregar dados (1ª vez + polling 30s)
   useEffect(() => {
-    if (!user?.id || profileLoading || isSeller) return;
+    if (!user?.id || profileLoading || !effectiveUserId) return;
 
     let cancelled = false;
 
@@ -141,31 +148,43 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const todayStart = startOfToday();
         const todayEnd = endOfToday();
 
-        // Roda as 4 queries em paralelo
+        // 1. Branding sempre do MASTER (mesmo pra vendedor logado vê branding do master dele)
+        const profilePromise = (supabase as any)
+          .from('profiles')
+          .select('dashboard_tv_logo_url, dashboard_tv_company_name, dashboard_tv_primary_color, dashboard_tv_secondary_color, full_name, company_name')
+          .eq('id', effectiveUserId)
+          .maybeSingle();
+
+        // 2. Vendedores ativos do master.
+        //    Se for vendedor logado, filtra só ele próprio (member_id == seller.id).
+        let sellersQuery = (supabase as any)
+          .from('ai_team_members')
+          .select('id, name, profile_picture, auth_user_id')
+          .eq('user_id', effectiveUserId)
+          .eq('is_active', true);
+        if (sellerMemberId) sellersQuery = sellersQuery.eq('id', sellerMemberId);
+
+        // 3. Leads Pedro do dia. Master vê todos com assigned_to_id; vendedor só os dele.
+        let pedroQuery = (supabase as any)
+          .from('ai_crm_leads')
+          .select('id, assigned_to_id')
+          .eq('user_id', effectiveUserId)
+          .gte('created_at', todayStart)
+          .lte('created_at', todayEnd);
+        if (sellerMemberId) pedroQuery = pedroQuery.eq('assigned_to_id', sellerMemberId);
+        else pedroQuery = pedroQuery.not('assigned_to_id', 'is', null);
+
+        // 4. Leads Marcos do dia. Mesma lógica.
+        let marcosQuery = (supabase as any)
+          .from('crm_leads')
+          .select('id, origem, assigned_to')
+          .eq('user_id', effectiveUserId)
+          .gte('created_at', todayStart)
+          .lte('created_at', todayEnd);
+        if (sellerMemberId) marcosQuery = marcosQuery.eq('assigned_to', sellerMemberId);
+
         const [profileRes, sellersRes, pedroRes, marcosRes] = await Promise.all([
-          (supabase as any)
-            .from('profiles')
-            .select('dashboard_tv_logo_url, dashboard_tv_company_name, dashboard_tv_primary_color, dashboard_tv_secondary_color, full_name, company_name')
-            .eq('id', user.id)
-            .maybeSingle(),
-          (supabase as any)
-            .from('ai_team_members')
-            .select('id, name, profile_picture')
-            .eq('user_id', user.id)
-            .eq('is_active', true),
-          (supabase as any)
-            .from('ai_crm_leads')
-            .select('id, assigned_to_id')
-            .eq('user_id', user.id)
-            .not('assigned_to_id', 'is', null)
-            .gte('created_at', todayStart)
-            .lte('created_at', todayEnd),
-          (supabase as any)
-            .from('crm_leads')
-            .select('id, origem, assigned_to')
-            .eq('user_id', user.id)
-            .gte('created_at', todayStart)
-            .lte('created_at', todayEnd),
+          profilePromise, sellersQuery, pedroQuery, marcosQuery,
         ]);
 
         if (cancelled) return;
@@ -179,23 +198,40 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           secondary_color: p.dashboard_tv_secondary_color || '#f59e0b',
         });
 
-        // 2. Inicializa agregador por vendedor (todos os ativos)
-        const sellers = (sellersRes.data || []) as Array<{ id: string; name: string; profile_picture: string | null }>;
+        // 2. Carrega avatar_url do profile DE CADA VENDEDOR (prioridade > profile_picture do master)
+        const sellersList = (sellersRes.data || []) as Array<{ id: string; name: string; profile_picture: string | null; auth_user_id: string | null }>;
+        const authIds = sellersList.map(s => s.auth_user_id).filter((x): x is string => !!x);
+        const profileAvatarMap = new Map<string, string>();
+        if (authIds.length > 0) {
+          const { data: avatarRows } = await (supabase as any)
+            .from('profiles')
+            .select('id, avatar_url')
+            .in('id', authIds);
+          for (const r of (avatarRows || []) as Array<{ id: string; avatar_url: string | null }>) {
+            if (r.avatar_url) profileAvatarMap.set(r.id, r.avatar_url);
+          }
+        }
+
+        // 3. Inicializa agregador por vendedor com avatar resolvido
         const agg: Record<string, VendedorData> = {};
-        for (const s of sellers) {
+        for (const s of sellersList) {
+          const effectiveAvatar =
+            (s.auth_user_id && profileAvatarMap.get(s.auth_user_id)) ||
+            s.profile_picture ||
+            null;
           agg[s.id] = {
-            id: s.id, name: s.name, profile_picture: s.profile_picture, rank: 0,
+            id: s.id, name: s.name, effective_avatar: effectiveAvatar, rank: 0,
             trafico_pago: 0, porta: 0, olx: 0, marketplace: 0, consignado: 0, indicacao: 0, total: 0,
           };
         }
 
-        // 3. Pedro: cada lead com assigned_to_id conta como trafico_pago
+        // 4. Pedro: cada lead com assigned_to_id conta como trafico_pago
         for (const l of (pedroRes.data || []) as any[]) {
           const v = agg[l.assigned_to_id];
           if (v) { v.trafico_pago++; v.total++; }
         }
 
-        // 4. Marcos: agrupa por origem (apenas as 5 categorias mostradas; instagram/outros não contam)
+        // 5. Marcos: agrupa por origem (5 categorias mostradas; instagram/outros não contam)
         for (const l of (marcosRes.data || []) as any[]) {
           const v = agg[l.assigned_to];
           if (!v) continue;
@@ -205,7 +241,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           else if (o === 'marketplace'){ v.marketplace++; v.total++; }
           else if (o === 'consignado') { v.consignado++;  v.total++; }
           else if (o === 'indicacao')  { v.indicacao++;   v.total++; }
-          // instagram/outros/null: deliberadamente NÃO contam no total (não estão no dashboard)
+          // instagram/outros/null: deliberadamente NÃO contam no total
         }
 
         // 5. Rank por total desc, tie-breaker alfabético
@@ -242,11 +278,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     load();
     const t = setInterval(load, 30_000); // poll a cada 30s
     return () => { cancelled = true; clearInterval(t); };
-  }, [user?.id, profileLoading, isSeller]);
+  }, [user?.id, profileLoading, effectiveUserId, sellerMemberId]);
 
-  // Vendedor logado é redirecionado (master only) — mas só se NÃO for embedded
-  // (em embedded, o controle de acesso é do componente pai — PedroSDR já filtra via visibleFeatures)
-  if (!embedded && !profileLoading && isSeller) {
+  // Vendedor sem master_id resolvido: redirect (RLS bloquearia tudo de qualquer jeito)
+  if (!embedded && !profileLoading && isSeller && !masterUserId) {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -391,14 +426,18 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
         <span className="text-sm font-bold uppercase truncate flex-1">{v.name}</span>
       </div>
 
-      {/* Avatar */}
+      {/* Avatar — prioridade: profiles.avatar_url > ai_team_members.profile_picture > iniciais */}
       <div className="flex justify-center mb-3">
-        {v.profile_picture ? (
+        {v.effective_avatar ? (
           <img
-            src={v.profile_picture}
+            src={v.effective_avatar}
             alt={v.name}
             className="h-16 w-16 rounded-full object-cover border-2"
             style={{ borderColor: rColor }}
+            onError={(e) => {
+              // Se URL quebrar (ex: foto deletada), esconde a img → React Fragment vazio mostra fallback no próximo render
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
           />
         ) : (
           <div
