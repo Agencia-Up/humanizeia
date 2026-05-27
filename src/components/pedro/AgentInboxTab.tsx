@@ -463,7 +463,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
                           )}
                         </div>
                         {lead.summary && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{lead.summary}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5 truncate whitespace-pre-line">{lead.summary}</p>
                         )}
                       </div>
                     </div>

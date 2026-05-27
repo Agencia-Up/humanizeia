@@ -552,7 +552,7 @@ function LeadCard({ lead, column, activeMembers, onUpdateStatus, onTransfer, onN
       </div>
 
       {lead.summary && (
-        <div className="my-2 text-[10px] bg-muted/40 p-2 rounded-lg border border-border/50 text-foreground/80 leading-relaxed line-clamp-3 hover:line-clamp-none transition-all">
+        <div className="my-2 text-[10px] bg-muted/40 p-2 rounded-lg border border-border/50 text-foreground/80 leading-relaxed line-clamp-3 hover:line-clamp-none transition-all whitespace-pre-line">
           {lead.summary}
         </div>
       )}

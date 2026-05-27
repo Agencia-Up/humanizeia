@@ -321,6 +321,35 @@ function pickMeta(html: string, names: string[]): string | null {
   return null;
 }
 
+const FB_CRAWLERS = [
+  "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+  "Facebot",
+  "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+];
+
+function isFacebookShortLink(url?: string | null): boolean {
+  if (!url) return false;
+  return /^https?:\/\/(fb\.me|fb\.watch|m\.facebook\.com\/|www\.facebook\.com\/)/i.test(url);
+}
+
+/** Tenta extrair contexto de veículo direto da URL/path do Facebook, sem precisar fazer scraping.
+ *  Ex: "Fiat Argo 2024" pode estar no slug da URL. */
+function inferFromFbUrl(url: string): { title: string | null; description: string | null } {
+  try {
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.split("/").filter(Boolean);
+    // Ex: /marketplace/item/fiat-argo-drive-2024/
+    const slug = pathParts.join(" ").replace(/[-_]/g, " ").replace(/\d{10,}/g, "").trim();
+    if (slug && slug.length > 5) {
+      return { title: slug, description: null };
+    }
+  } catch {
+    // noop
+  }
+  return { title: null, description: null };
+}
+
 async function fetchAdPageMetadata(url?: string | null): Promise<{
   title?: string | null;
   description?: string | null;
@@ -328,28 +357,58 @@ async function fetchAdPageMetadata(url?: string | null): Promise<{
 } | null> {
   if (!url || !/^https?:\/\//i.test(url)) return null;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), METADATA_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; LogosIA-PedroV2/1.0)",
-        "Accept": "text/html,application/xhtml+xml",
-      },
-    });
-    if (!res.ok) return null;
-    const html = (await res.text()).slice(0, 250_000);
-    const title = pickMeta(html, ["og:title", "twitter:title"]) || asText(html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]);
-    const description = pickMeta(html, ["og:description", "twitter:description", "description"]);
-    const image = pickMeta(html, ["og:image", "og:image:url", "twitter:image"]);
-    return { title, description, image };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
+  const isFb = isFacebookShortLink(url);
+  const userAgents = isFb ? FB_CRAWLERS : [FB_CRAWLERS[3]];
+
+  for (const ua of userAgents) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), METADATA_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: {
+          "User-Agent": ua,
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        },
+      });
+      if (!res.ok) {
+        clearTimeout(timeout);
+        continue;
+      }
+      // Try to extract from the final redirected URL if Facebook
+      const finalUrl = res.url || url;
+      const urlHint = isFb ? inferFromFbUrl(finalUrl) : { title: null, description: null };
+
+      const html = (await res.text()).slice(0, 250_000);
+      const title = pickMeta(html, ["og:title", "twitter:title"]) ||
+        asText(html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]) ||
+        urlHint.title;
+      const description = pickMeta(html, ["og:description", "twitter:description", "description"]) ||
+        urlHint.description;
+      const image = pickMeta(html, ["og:image", "og:image:url", "twitter:image"]);
+
+      clearTimeout(timeout);
+      // If we got something useful, return it
+      if (title || description) {
+        return { title, description, image };
+      }
+      // Otherwise try next UA
+    } catch {
+      clearTimeout(timeout);
+      // Continue to next UA
+    }
   }
+
+  // All UAs failed — try URL-only inference for Facebook links
+  if (isFb) {
+    const urlHint = inferFromFbUrl(url);
+    if (urlHint.title) return urlHint;
+  }
+  return null;
 }
+
 
 function extractTextualAdContext(payload: any, messageText: string): PedroV2AdContext {
   const rootMessage = pickIncomingMessage(payload);
@@ -766,6 +825,9 @@ export function buildMessageWithAdContext(messageText: string, adContext: PedroV
   if (!adContext.has_ad_context) return messageText;
   const context = [
     adContext.vehicle_query ? `Veiculo do anuncio: ${adContext.vehicle_query}` : null,
+    !adContext.vehicle_query && adContext.source
+      ? `Lead veio de anuncio do ${adContext.source} mas nao foi possivel identificar o veiculo automaticamente. Pergunte de forma natural qual veiculo o lead estava vendo no anuncio.`
+      : null,
     adContext.summary ? `Contexto do anuncio: ${adContext.summary}` : null,
     adContext.url ? `Origem/link do anuncio: ${adContext.url}` : null,
   ].filter(Boolean).join("\n");

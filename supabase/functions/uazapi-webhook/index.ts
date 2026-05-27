@@ -3174,10 +3174,32 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 confirmation_timeout_at: timeoutAt,
               });
 
+              // Gera resumo estruturado a partir dos dados reais do lead (pedro_conversation_state)
+              // em vez de depender apenas do texto livre que a IA escreveu em resumo_breve.
+              const st = conversationState || {};
+              const summaryParts: string[] = [];
+              const modelo = st.interesse?.modelo_desejado || st.referencia?.veiculo_citado || null;
+              const tipoVeiculo = st.interesse?.tipo_veiculo || null;
+              const pagamento = st.negociacao?.forma_pagamento || null;
+              const precoMax = st.interesse?.preco_max || null;
+              const troca = st.negociacao?.tem_troca && st.negociacao?.carro_troca?.modelo
+                ? st.negociacao.carro_troca.modelo
+                : st.negociacao?.tem_troca ? 'sim' : null;
+              const cidade = st.lead?.cidade || null;
+              if (modelo) summaryParts.push(`Interesse: ${modelo}${tipoVeiculo ? ` (${tipoVeiculo})` : ''}`);
+              if (pagamento) summaryParts.push(`Pagamento: ${pagamento}`);
+              if (precoMax) summaryParts.push(`Teto: R$ ${Number(precoMax).toLocaleString('pt-BR')}`);
+              if (troca) summaryParts.push(`Troca: ${troca}`);
+              if (cidade) summaryParts.push(`Cidade: ${cidade}`);
+              if (transferArgs.resumo_breve) summaryParts.push(transferArgs.resumo_breve);
+              const crmSummary = summaryParts.length > 0
+                ? summaryParts.join('\n')
+                : (transferArgs.resumo_breve || null);
+
               await supabase.from('ai_crm_leads').update({
                 status: 'transferido',
                 assigned_to_id: null,
-                summary: transferArgs.resumo_breve || null,
+                summary: crmSummary,
               }).eq('id', leadRow.id);
 
               // 5. Briefing estruturado pro vendedor (IT-2.4: V2 quando flag on)
