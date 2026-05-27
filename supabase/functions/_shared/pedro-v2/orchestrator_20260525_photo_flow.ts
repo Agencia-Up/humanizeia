@@ -130,7 +130,12 @@ function mergeBrainPlanIntoIntent(intent: any, brainPlan: any, vehicleResolution
         modelo_desejado: vehicleResolution.query,
         tipo_veiculo: vehicleResolution.vehicle_type || intent?.extracted?.interesse?.tipo_veiculo || null,
       }
-    : {};
+    : (brainPlan?.search_query
+        ? {
+            modelo_desejado: brainPlan.search_query,
+            tipo_veiculo: brainPlan.search_filters?.tipo_veiculo || intent?.extracted?.interesse?.tipo_veiculo || null,
+          }
+        : {});
 
   const nextIntent = brainPlan?.intent || intent?.intent || "unknown";
   return {
@@ -149,8 +154,8 @@ function mergeBrainPlanIntoIntent(intent: any, brainPlan: any, vehicleResolution
       },
       referencia: {
         ...(intent?.extracted?.referencia || {}),
-        veiculo_citado: vehicleResolution?.query || intent?.extracted?.referencia?.veiculo_citado || null,
-        confidence: vehicleResolution?.confidence || intent?.extracted?.referencia?.confidence || null,
+        veiculo_citado: vehicleResolution?.query || brainPlan?.search_query || intent?.extracted?.referencia?.veiculo_citado || null,
+        confidence: vehicleResolution?.confidence || brainPlan?.confidence || intent?.extracted?.referencia?.confidence || null,
       },
     },
   };

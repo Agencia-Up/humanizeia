@@ -321,13 +321,20 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     intent,
     confidence: Number.isFinite(Number(raw?.confidence)) ? Number(raw.confidence) : fallback.confidence,
     search_query: searchQuery,
-    search_filters: raw?.search_filters && typeof raw.search_filters === "object" ? raw.search_filters : fallback.search_filters,
+    search_filters: raw?.search_filters && typeof raw.search_filters === "object" ? raw.search_filters : { ...(fallback.search_filters || {}) },
     photo_target: typeof raw?.photo_target === "string" ? raw.photo_target : fallback.photo_target,
     use_memory_vehicle: Boolean(raw?.use_memory_vehicle ?? fallback.use_memory_vehicle),
     response_guidance: typeof raw?.response_guidance === "string" ? raw.response_guidance : fallback.response_guidance,
     reason: typeof raw?.reason === "string" ? raw.reason : fallback.reason,
     source: "llm",
   };
+
+  if (plan.search_query) {
+    plan.search_filters = {
+      ...(plan.search_filters || {}),
+      modelo_desejado: plan.search_query,
+    };
+  }
 
   const vehicle = input.vehicle_resolution;
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
@@ -435,7 +442,23 @@ export async function planPedroTurn(input: {
           {
             role: "system",
             content:
-              "Voce e o cerebro/orquestrador Pedro v2. Decida a proxima acao, sem escrever resposta final ao lead. Retorne JSON valido com: action, intent, confidence, search_query, search_filters, photo_target, use_memory_vehicle, response_guidance, reason. Regras: mensagem atual vence memoria antiga; se precisar de estoque, action stock_search; se pedir foto de veiculo em contexto seguro, action photo_request; se o lead respondeu sim/pode/manda depois de oferta recente de fotos, action photo_request com use_memory_vehicle true; se for saudacao comum, reply_only; nunca use memoria antiga quando o lead mudou de modelo; nunca oriente resposta dizendo que enviou fotos sem action photo_request.",
+              [
+                "Voce e o cerebro/orquestrador Pedro v2. Decida a proxima acao, sem escrever resposta final ao lead.",
+                "Retorne JSON valido com: action, intent, confidence, search_query, search_filters, photo_target, use_memory_vehicle, response_guidance, reason.",
+                "",
+                "REGRAS DE RESOLUÇÃO DE VEÍCULOS (INTELIGÊNCIA SEMÂNTICA):",
+                "- Identifique se a mensagem atual do lead (lead_message) ou o contexto recente cita algum veículo (marca, modelo ou versão), mesmo com erros graves de digitação, abreviações ou escrita fonética (ex: 'reguede' -> 'Jeep Renegade', 'tcross' -> 'Volkswagen T-Cross', 'oroqui' -> 'Renault Oroch', 'mini cuper' -> 'Mini Cooper').",
+                "- Se um veículo for mencionado, defina 'action' como 'stock_search' (para buscar no estoque) e coloque o nome do veículo corrigido/canônico (Marca + Modelo, ex: 'Jeep Renegade') em 'search_query'.",
+                "- Preencha em 'search_filters' o campo 'modelo_desejado' com o modelo correto e 'tipo_veiculo' com 'suv', 'pickup', 'hatch', 'sedan' ou 'moto'.",
+                "- Não confie cegamente no 'vehicle_resolution' heurístico se você puder deduzir semanticamente o veículo correto a partir da mensagem do lead.",
+                "",
+                "REGRAS DE ORQUESTRAÇÃO GERAIS:",
+                "- A mensagem atual do lead sempre vence o contexto da memória antiga (se ele mudou de carro, respeite o novo carro).",
+                "- Se o lead pedir fotos de um veículo já apresentado ou em contexto seguro, defina 'action' como 'photo_request'.",
+                "- Se o lead respondeu afirmativamente (sim/pode/manda) após uma oferta recente de fotos, defina 'action' como 'photo_request' com 'use_memory_vehicle' true.",
+                "- Se for apenas uma saudação comum, use 'reply_only'.",
+                "- Nunca invente que enviou fotos sem a ação 'photo_request'."
+              ].join("\n"),
           },
           {
             role: "user",

@@ -27,6 +27,22 @@ function asText(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+function tryDecodeBase64(value?: string | null): string | null {
+  const text = String(value || "").trim();
+  if (!text || text.length < 8 || !/^[A-Za-z0-9+/=\r\n_-]+$/.test(text)) return null;
+  try {
+    const base64 = text.replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = atob(base64);
+    if (/^[\x00-\x7F\s\u00C0-\u00FF]*$/.test(decoded)) {
+      const clean = decoded.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ").trim();
+      return clean.length >= 3 ? clean : null;
+    }
+  } catch {
+    // noop
+  }
+  return null;
+}
+
 function normalizeText(value?: string | null): string {
   return String(value || "")
     .toLowerCase()
@@ -463,6 +479,30 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
     ["payload", "data", "url"],
   ]) || firstUrl(messageText);
 
+  const conversionFields: string[] = [];
+  const conversionPaths = [
+    ["contextInfo", "conversionData"],
+    ["contextInfo", "ctwaPayload"],
+    ["contextInfo", "entryPointConversionSource"],
+    ["contextInfo", "sourceId"],
+    ["contextInfo", "sourceType"],
+    ["extended", "contextInfo", "conversionData"],
+    ["extended", "contextInfo", "ctwaPayload"],
+    ["extended", "contextInfo", "entryPointConversionSource"],
+    ["extended", "contextInfo", "sourceId"],
+    ["extended", "contextInfo", "sourceType"],
+  ];
+  for (const path of conversionPaths) {
+    const rawVal = pickByPaths({ payload, rootMessage, message, extended, contextInfo, adReply }, [path]);
+    if (rawVal) {
+      conversionFields.push(rawVal);
+      const decoded = tryDecodeBase64(rawVal);
+      if (decoded) {
+        conversionFields.push(decoded);
+      }
+    }
+  }
+
   const hasExplicitAdPayload = Boolean(
     contextInfo?.externalAdReply ||
     rootMessage?.externalAdReply ||
@@ -470,16 +510,17 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
     payload?.data?.externalAdReply ||
     adReply?.title ||
     adReply?.body ||
-    adReply?.sourceUrl
+    adReply?.sourceUrl ||
+    conversionFields.length > 0
   );
   const hasAdLink = Boolean(sourceUrl && AD_LINK_RE.test(sourceUrl));
   const hasAdTextMarker = AD_LINK_RE.test(messageText) ||
     AD_LINK_RE.test(payloadText) ||
     AD_TEXT_MARKER_RE.test(messageText) ||
     AD_TEXT_MARKER_RE.test(payloadText) ||
-    AD_TEXT_MARKER_RE.test(compact([title, description]));
+    AD_TEXT_MARKER_RE.test(compact([title, description, ...conversionFields]));
   const hasAdContext = hasExplicitAdPayload || hasAdLink || hasAdTextMarker;
-  const combinedText = compact([title, description, payloadText, messageText]);
+  const combinedText = compact([title, description, payloadText, ...conversionFields, messageText]);
   const normalizedCombined = normalizeText(combinedText);
   const source = hasAdContext
     ? hostname(sourceUrl) || (normalizeText(compact([title, description, messageText])).includes("facebook") ? "facebook" : null)
@@ -497,6 +538,7 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
       ? {
         payload_text_detected: Boolean(payloadText),
         payload_text_sample: payloadText.slice(0, 500) || null,
+        conversion_fields_decoded: conversionFields.filter((item) => item.length < 500),
       }
       : undefined,
   };
