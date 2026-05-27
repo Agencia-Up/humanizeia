@@ -52,6 +52,10 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
   const [isCreating, setIsCreating] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeChannel = useRef<any>(null);
+  // Mutex pra race condition: Realtime e polling disparam handleSuccess em
+  // paralelo. Sem flag, queryClient invalida 2x, onConnected chama 2x,
+  // sync-evolution-webhook é chamado em duplicata (causa instabilidade).
+  const successHandledRef = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -70,6 +74,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
       setIsCreating(false);
       setFriendlyName('');
       setActiveSlug(null);
+      successHandledRef.current = false;
       setMetaPhoneNumberId(''); setMetaWabaId(''); setMetaAccessToken(''); setMetaFriendlyName('');
     }
   }, [open, initialInstanceName, initialFriendlyName]);
@@ -218,6 +223,13 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
   };
 
   const handleSuccess = async () => {
+    // Mutex contra race condition Realtime + polling. Sem isso, ambos os
+    // canais disparam handleSuccess quase simultaneamente quando status muda
+    // pra 'connected', causando invalidateQueries 2x, onConnected 2x, e
+    // sync-evolution-webhook duplicado.
+    if (successHandledRef.current) return;
+    successHandledRef.current = true;
+
     stopPolling();
     setStep('connected');
     queryClient.invalidateQueries({ queryKey: ['wa-instances'] });

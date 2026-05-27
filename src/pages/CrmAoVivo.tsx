@@ -106,10 +106,16 @@ function getTransferLabel(t: any) {
 }
 
 /* ── COMPONENTE CARD (Memoizado para performance) ─────────── */
-const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransfer, transfers, dragHandleProps, hideTransfer }: any) => {
+const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringLeadId, onTransfer, transfers, dragHandleProps, hideTransfer }: any) => {
   const [msg, setMsg] = useState('');
   const [showHist, setShowHist] = useState(false);
+  // Vendedor escolhido pelo master no select. Se vazio, usa nextSeller (round-robin).
+  const [selectedSellerId, setSelectedSellerId] = useState<string>('');
   const isTransferring = transferringLeadId === lead.id;
+  const targetSellerId = selectedSellerId || nextSeller?.id || null;
+  const targetSellerName = selectedSellerId
+    ? (activeMembers?.find((m: any) => m.id === selectedSellerId)?.name || 'selecionado')
+    : (nextSeller?.name || 'vendedor');
 
   const leadTransfers = useMemo(() =>
     transfers.filter((t: any) => t.lead_id === lead.id),
@@ -188,31 +194,58 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, transferringLeadId, onTransf
         </div>
 
         {!hideTransfer && (
-          <Button
-            size="sm"
-            disabled={isTransferring || !nextSeller}
-            style={{
-              background: lead.status === 'transferido' ? 'transparent' : C.orange,
-              border: lead.status === 'transferido' ? `1px solid ${C.orange}` : 'none',
-              color: lead.status === 'transferido' ? C.orangeL : '#fff',
-              fontWeight: 800,
-              fontSize: 11,
-              height: 32,
-              borderRadius: 8,
-              boxShadow: lead.status === 'transferido' ? 'none' : '0 4px 12px rgba(230,81,0,0.2)'
-            }}
-            onClick={() => {
-              onTransfer(lead.id, msg);
-              setMsg('');
-            }}
-          >
-            {isTransferring ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5 mr-2" />
+          <>
+            {/* Select de vendedor — vazio = round-robin (nextSeller). Master
+                pode forçar um vendedor especifico aqui. */}
+            {activeMembers && activeMembers.length > 0 && (
+              <select
+                value={selectedSellerId}
+                onChange={(e) => setSelectedSellerId(e.target.value)}
+                disabled={isTransferring}
+                style={{
+                  width: '100%',
+                  padding: '6px 10px',
+                  fontSize: 11,
+                  borderRadius: 8,
+                  background: 'rgba(0,0,0,0.25)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: '#fff',
+                  outline: 'none',
+                }}
+              >
+                <option value="">Rodízio automático ({nextSeller?.name || 'sem vendedor ativo'})</option>
+                {activeMembers.map((m: any) => (
+                  <option key={m.id} value={m.id}>👤 {m.name}</option>
+                ))}
+              </select>
             )}
-            {lead.status === 'transferido' ? 'Re-transferir lead' : `Transferir para ${nextSeller?.name || 'vendedor'}`}
-          </Button>
+            <Button
+              size="sm"
+              disabled={isTransferring || !targetSellerId}
+              style={{
+                background: lead.status === 'transferido' ? 'transparent' : C.orange,
+                border: lead.status === 'transferido' ? `1px solid ${C.orange}` : 'none',
+                color: lead.status === 'transferido' ? C.orangeL : '#fff',
+                fontWeight: 800,
+                fontSize: 11,
+                height: 32,
+                borderRadius: 8,
+                boxShadow: lead.status === 'transferido' ? 'none' : '0 4px 12px rgba(230,81,0,0.2)'
+              }}
+              onClick={() => {
+                onTransfer(lead.id, msg, selectedSellerId || undefined);
+                setMsg('');
+                setSelectedSellerId('');
+              }}
+            >
+              {isTransferring ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5 mr-2" />
+              )}
+              {lead.status === 'transferido' ? 'Re-transferir lead' : `Transferir para ${targetSellerName}`}
+            </Button>
+          </>
         )}
 
         {showHist && (
@@ -614,11 +647,35 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   const nextSeller = useMemo(() => {
     if (!activeMembers.length) return null;
+
+    // Dedupe por TELEFONE (mesmo vendedor pode ter múltiplas rows em
+    // ai_team_members, uma por agent_id). Sem dedupe, vendedor com 3 rows
+    // domina a fila — backend só atualiza last_lead_received_at em 1 row.
+    // Espelha lógica do backend (uazapi-webhook/uniqueSellersByPhone).
+    const phoneKey = (num: string | null | undefined): string => {
+      if (!num) return '';
+      const digits = String(num).replace(/\D/g, '');
+      // Últimos 10 dígitos (sem código país 55, sem 9 inicial de celular)
+      const last10 = digits.slice(-10);
+      return last10.length === 10 ? last10 : last10.slice(1);
+    };
+    const dedupedByPhone = (() => {
+      const seen = new Set<string>();
+      const out: any[] = [];
+      for (const m of activeMembers) {
+        const key = phoneKey(m.whatsapp_number);
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+        out.push(m);
+      }
+      return out;
+    })();
+
     // Usa last_lead_received_at do próprio membro — atualizado tanto por transferência
     // manual quanto automática do Pedro SDR, nunca fica desatualizado
-    const never = activeMembers.filter(m => !m.last_lead_received_at);
+    const never = dedupedByPhone.filter(m => !m.last_lead_received_at);
     if (never.length) return never[0];
-    return [...activeMembers].sort((a, b) =>
+    return [...dedupedByPhone].sort((a, b) =>
       new Date(a.last_lead_received_at).getTime() - new Date(b.last_lead_received_at).getTime()
     )[0] || null;
   }, [activeMembers]);
@@ -764,19 +821,25 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const totalQualified = filteredLeads.filter(l => ['qualificado', 'medio_qualificado', 'pouco_qualificado', 'transferido'].includes(l.status)).length;
   const attendedNow    = filteredLeads.filter(l => l.status === 'transferido').length;
 
-  const handleManualTransfer = useCallback(async (leadId: string, notes: string) => {
-    if (!nextSeller || !user) {
-      toast.warning('Nenhum vendedor ativo na fila para transferir este lead.');
+  const handleManualTransfer = useCallback(async (leadId: string, notes: string, sellerIdOverride?: string) => {
+    // sellerIdOverride: master escolheu vendedor especifico no select do card.
+    // Se nao tiver override, usa nextSeller (round-robin padrao).
+    const targetSellerId = sellerIdOverride || nextSeller?.id;
+    if (!targetSellerId || !user) {
+      toast.warning('Selecione um vendedor ou ative ao menos um na fila.');
       return;
     }
+    const targetSeller = sellerIdOverride
+      ? activeMembers.find((m: any) => m.id === sellerIdOverride)
+      : nextSeller;
     const lead = leads.find((l: any) => l.id === leadId);
     setTransferringLeadId(leadId);
-    
+
     try {
       const { error } = await supabase.functions.invoke('manual-transfer', {
         body: {
           leadId,
-          memberId: nextSeller.id,
+          memberId: targetSellerId,
           notes,
           remoteJid: lead?.remote_jid || null,
           agentId: lead?.agent_id || null,
@@ -797,7 +860,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         }
         throw new Error(message);
       }
-      toast.success(`Lead transferido para ${nextSeller.name}.`);
+      toast.success(`Lead transferido para ${targetSeller?.name || 'vendedor'}.`, {
+        description: 'Briefing IA enviado ao vendedor. Gerente notificado.',
+      });
       fetchLiveData();
     } catch (e: any) {
       console.error('Transfer error:', e);
@@ -807,7 +872,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     } finally {
       setTransferringLeadId(null);
     }
-  }, [nextSeller, user, leads, effectiveUserId, fetchLiveData]);
+  }, [nextSeller, activeMembers, user, leads, effectiveUserId, fetchLiveData]);
 
   // Atualizar manualmente com feedback visual
   const handleRefresh = useCallback(async () => {
@@ -1360,6 +1425,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                                   lead={lead}
                                   col={col}
                                   nextSeller={nextSeller}
+                                  activeMembers={isSeller ? [] : activeMembers}
                                   transferringLeadId={transferringLeadId}
                                   onTransfer={handleManualTransfer}
                                   transfers={transfers}

@@ -163,21 +163,50 @@ serve(async (req) => {
       let agentForFallback: any = null;
 
       if (crm_lead_id) {
-        // Marcos: pega qualquer agente do master com gerente_phone configurado
-        const { data: anyMasterAgent } = await supabase
-          .from("wa_ai_agents" as any)
-          .select("gerente_phone, instance_id, instance_ids")
+        // Marcos: usa coluna DEDICADA manager_feedback_config.gerente_phone_marcos
+        // (migration 20260522130000). Antes a função pegava arbitrariamente o
+        // gerente_phone do "primeiro agente Pedro" do master — se master tem
+        // múltiplos agentes Pedro com gerentes DIFERENTES, feedback Marcos podia
+        // ir pro gerente errado e não-determinístico.
+        const { data: feedbackCfg } = await supabase
+          .from("manager_feedback_config" as any)
+          .select("gerente_phone_marcos")
           .eq("user_id", gerenteUserId)
-          .not("gerente_phone", "is", null)
-          .neq("gerente_phone", "")
-          .limit(1)
           .maybeSingle();
-        gerentePhone = (anyMasterAgent as any)?.gerente_phone || null;
-        agentForFallback = anyMasterAgent; // pra fallback de instância
-        if (!gerentePhone) {
-          console.log("[pedro-process-feedback] Marcos: nenhum agente Pedro do master tem gerente_phone configurado, pulando notificação");
+        gerentePhone = (feedbackCfg as any)?.gerente_phone_marcos || null;
+
+        if (gerentePhone) {
+          console.log("[pedro-process-feedback] Marcos: usando gerente_phone_marcos dedicado");
         } else {
-          console.log("[pedro-process-feedback] Marcos: reusando gerente_phone do agente Pedro do master");
+          // Fallback: pega qualquer agente Pedro do master com gerente_phone configurado
+          // (mantém compatibilidade pra masters que ainda não configuraram gerente_phone_marcos)
+          const { data: anyMasterAgent } = await supabase
+            .from("wa_ai_agents" as any)
+            .select("gerente_phone, instance_id, instance_ids")
+            .eq("user_id", gerenteUserId)
+            .not("gerente_phone", "is", null)
+            .neq("gerente_phone", "")
+            .limit(1)
+            .maybeSingle();
+          gerentePhone = (anyMasterAgent as any)?.gerente_phone || null;
+          agentForFallback = anyMasterAgent; // pra fallback de instância
+          if (!gerentePhone) {
+            console.log("[pedro-process-feedback] Marcos: sem gerente_phone_marcos nem fallback em wa_ai_agents, pulando notificação");
+          } else {
+            console.log("[pedro-process-feedback] Marcos: fallback — usando gerente_phone do primeiro agente Pedro do master (configurar gerente_phone_marcos pra ter destino determinístico)");
+          }
+        }
+
+        // Pra resolver instância de envio (linhas abaixo) ainda precisamos
+        // de um agente Pedro do master (Marcos não tem agente IA próprio).
+        if (gerentePhone && !agentForFallback) {
+          const { data: anyMasterAgent } = await supabase
+            .from("wa_ai_agents" as any)
+            .select("gerente_phone, instance_id, instance_ids")
+            .eq("user_id", gerenteUserId)
+            .limit(1)
+            .maybeSingle();
+          agentForFallback = anyMasterAgent;
         }
       } else if (agentId) {
         // Pedro: lê do agente IA (per-agente)
@@ -315,13 +344,34 @@ serve(async (req) => {
               await supabase.from("pedro_manager_feedback" as any)
                 .update({ sent_to_manager_at: new Date().toISOString(), pending_send: false })
                 .eq("id", (feedback as any).id);
+            } else if ((feedback as any)?.id) {
+              // FASE 4 BUG-11: envio falhou no modo auto → marca pending_send=true
+              // pra cron-flush-manager-feedbacks repegar no próximo ciclo.
+              // Antes, feedback ficava com sent_to_manager_at=null e pending_send=false
+              // → cron nunca tentava de novo, gerente perdia o feedback silenciosamente.
+              console.warn(`[pedro-process-feedback] Envio falhou (${sendStatus}) — marcando pending_send=true pra cron repegar`);
+              await supabase.from("pedro_manager_feedback" as any)
+                .update({ pending_send: true })
+                .eq("id", (feedback as any).id);
             }
           } else {
-            console.log("[pedro-process-feedback] Nenhuma instância encontrada para envio");
+            // BUG-11 (bonus): se não achou instância, idem — cron tenta de novo
+            console.log("[pedro-process-feedback] Nenhuma instância encontrada — marcando pending_send=true pra cron repegar");
+            if ((feedback as any)?.id) {
+              await supabase.from("pedro_manager_feedback" as any)
+                .update({ pending_send: true })
+                .eq("id", (feedback as any).id);
+            }
           }
       }
-    } catch (notifyErr) {
+    } catch (notifyErr: any) {
       console.warn("[pedro-process-feedback] Falha na notificação:", notifyErr);
+      // BUG-11: exception no envio = marca pending_send=true pra cron repegar
+      if ((feedback as any)?.id) {
+        await supabase.from("pedro_manager_feedback" as any)
+          .update({ pending_send: true })
+          .eq("id", (feedback as any).id);
+      }
     }
 
     return new Response(

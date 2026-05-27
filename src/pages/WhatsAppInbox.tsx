@@ -429,64 +429,51 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     const member = teamMembers.find(m => m.id === memberId);
 
     try {
-      // 1. Buscar ou criar o lead
+      // Busca lead existente (se houver) pra reusar agent_id/lead_name
       const { data: lead } = await supabase
         .from('ai_crm_leads')
-        .select('id')
+        .select('id, agent_id, lead_name')
         .eq('user_id', effectiveUserId as string)
         .eq('remote_jid', jid)
         .maybeSingle();
 
-      let leadId = lead?.id;
-
-      if (!leadId) {
-        // Resolve agent_id: from member, or first active agent
-        let agentId = member?.agent_id || null;
-        if (!agentId) {
-          const { data: firstAgent } = await (supabase as any)
-            .from('wa_ai_agents').select('id').eq('user_id', effectiveUserId).eq('is_active', true).limit(1).single();
-          agentId = firstAgent?.id || null;
-        }
-        if (!agentId) {
-          toast({ title: 'Nenhum agente IA configurado', variant: 'destructive' });
-          return;
-        }
-        const { data: newLead, error: createError } = await (supabase as any)
-          .from('ai_crm_leads')
-          .insert({
-            user_id: effectiveUserId,
-            agent_id: agentId,
-            remote_jid: jid,
-            lead_name: selectedConv?.contact_name || phone,
-            status: 'transferido',
-            assigned_to_id: memberId,
-            last_interaction_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
-        if (createError) throw createError;
-        leadId = newLead.id;
-      } else {
-        await supabase
-          .from('ai_crm_leads')
-          .update({
-            status: 'transferido',
-            assigned_to_id: memberId,
-            last_interaction_at: new Date().toISOString(),
-          } as any)
-          .eq('id', leadId);
+      // Resolve agent_id: lead existente > member.agent_id > primeiro agente ativo
+      let agentId = lead?.agent_id || member?.agent_id || null;
+      if (!agentId) {
+        const { data: firstAgent } = await (supabase as any)
+          .from('wa_ai_agents').select('id').eq('user_id', effectiveUserId).eq('is_active', true).limit(1).maybeSingle();
+        agentId = firstAgent?.id || null;
       }
 
-      // 2. Registrar a transferência
-      await supabase.from('ai_lead_transfers').insert({
-        user_id: effectiveUserId,
-        lead_id: leadId,
-        to_member_id: memberId,
-        transfer_reason: 'manual',
-        notes: 'Transferência manual via Inbox',
-      } as any);
+      // Chama edge function manual-transfer:
+      // - cria/atualiza lead em ai_crm_leads
+      // - envia briefing IA pro vendedor via WhatsApp
+      // - envia relatório de transferência pro gerente
+      // - registra em ai_lead_transfers
+      const { error } = await supabase.functions.invoke('manual-transfer', {
+        body: {
+          leadId: lead?.id || null,
+          memberId,
+          notes: 'Transferência manual via Inbox IA',
+          remoteJid: jid,
+          agentId,
+          leadName: lead?.lead_name || selectedConv?.contact_name || phone,
+          ownerUserId: effectiveUserId,
+        }
+      });
+      if (error) {
+        let message = error.message || 'Falha ao transferir';
+        const context = (error as any).context;
+        if (context && typeof context.json === 'function') {
+          try { const body = await context.json(); message = body?.error || message; } catch {}
+        }
+        throw new Error(message);
+      }
 
-      toast({ title: 'Lead transferido!', description: `Conversa atribuída a ${member?.name}.` });
+      toast({
+        title: '✅ Lead transferido!',
+        description: `${member?.name} recebeu o briefing IA via WhatsApp. Gerente notificado.`,
+      });
     } catch (err: any) {
       toast({ title: 'Erro ao transferir', description: err.message, variant: 'destructive' });
     }

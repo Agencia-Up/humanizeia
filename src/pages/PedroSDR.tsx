@@ -1684,18 +1684,54 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       if (isMarcosCrm) {
         const lead = leads.find(l => l.id === leadId) || selectedLead;
         const newMember = newMemberId ? teamMembers.find(m => m.id === newMemberId) ?? null : null;
+
+        // FASE 2 PLANO_CORRECAO_BUGS — Marcos passa a chamar manual-transfer
+        // (edge function) quando ATRIBUIR vendedor. Edge function envia
+        // briefing WhatsApp pro vendedor + relatorio pro gerente Marcos
+        // (manager_feedback_config.gerente_phone_marcos). Antes era so UPDATE
+        // direto no banco — vendedor recebia lead "no escuro".
+        // DESATRIBUIR (newMemberId=null) continua so UPDATE direto, sem msg.
+        if (newMemberId) {
+          const { error } = await supabase.functions.invoke('manual-transfer', {
+            body: {
+              crmLeadId: leadId,
+              memberId: newMemberId,
+              notes: 'Transferência manual via Marcos CRM',
+            }
+          });
+          if (error) {
+            let message = error.message || 'Falha ao transferir';
+            const context = (error as any).context;
+            if (context && typeof context.json === 'function') {
+              try { const body = await context.json(); message = body?.error || message; } catch {}
+            }
+            throw new Error(message);
+          }
+        } else {
+          // Desatribuição — só UPDATE direto
+          const nextCustomFields = {
+            ...(lead?.custom_fields || {}),
+            seller_member_id: null,
+            seller_name: null,
+            seller_assigned_at: null,
+            seller_assigned_by_auth_user_id: userId || null,
+            seller_unassigned_at: new Date().toISOString(),
+          };
+          const { error } = await (supabase as any)
+            .from('crm_leads')
+            .update({ assigned_to: null, custom_fields: nextCustomFields })
+            .eq('id', leadId);
+          if (error) throw error;
+        }
+
+        // Optimistic UI update (edge function ja persistiu o estado correto)
         const nextCustomFields = {
           ...(lead?.custom_fields || {}),
           seller_member_id: newMemberId,
           seller_name: newMember?.name || null,
-          seller_assigned_at: new Date().toISOString(),
+          seller_assigned_at: newMemberId ? new Date().toISOString() : null,
           seller_assigned_by_auth_user_id: userId || null,
         };
-        const { error } = await (supabase as any)
-          .from('crm_leads')
-          .update({ assigned_to: newMemberId, custom_fields: nextCustomFields })
-          .eq('id', leadId);
-        if (error) throw error;
         setLeads(prev => prev.map(l => l.id === leadId ? {
           ...l,
           assigned_to_id: newMemberId,
@@ -1710,22 +1746,71 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             custom_fields: nextCustomFields,
           });
         }
-        toast({ title: '✅ Lead reatribuído!' });
+        toast({
+          title: newMemberId ? '✅ Lead transferido!' : '✅ Lead desatribuído',
+          description: newMemberId
+            ? `${newMember?.name} recebeu o briefing. Gerente Marcos notificado (se configurado).`
+            : undefined,
+        });
         return;
       }
 
-      const { error } = await (supabase as any)
-        .from('ai_crm_leads')
-        .update({ assigned_to_id: newMemberId })
-        .eq('id', leadId);
-      if (error) throw error;
+      // Pedro: atribuir vendedor passa pela edge function manual-transfer
+      // que ALÉM de atualizar o banco, dispara:
+      //   1. briefing IA via WhatsApp pro vendedor (resumo do lead + histórico)
+      //   2. relatório de transferência pro gerente
+      //   3. registro em ai_lead_transfers
+      // Desatribuir (newMemberId=null) continua só fazendo UPDATE.
       const newMember = newMemberId ? teamMembers.find(m => m.id === newMemberId) ?? null : null;
+
+      if (newMemberId) {
+        const lead = leads.find(l => l.id === leadId) || selectedLead;
+        const { error } = await supabase.functions.invoke('manual-transfer', {
+          body: {
+            leadId,
+            memberId: newMemberId,
+            notes: 'Transferência manual via CRM Avançado',
+            remoteJid: lead?.remote_jid || null,
+            agentId: lead?.agent_id || null,
+            leadName: lead?.lead_name || null,
+            ownerUserId: userId || null,
+          }
+        });
+        if (error) {
+          let message = error.message || 'Falha ao transferir';
+          const context = (error as any).context;
+          if (context && typeof context.json === 'function') {
+            try { const body = await context.json(); message = body?.error || message; } catch {}
+          }
+          throw new Error(message);
+        }
+      } else {
+        // Desatribuição — só UPDATE
+        const { error } = await (supabase as any)
+          .from('ai_crm_leads')
+          .update({ assigned_to_id: null })
+          .eq('id', leadId);
+        if (error) throw error;
+      }
+
       setLeads(prev => prev.map(l => l.id === leadId ? {
         ...l,
         assigned_to_id: newMemberId,
         member: newMember ? { id: newMember.id, name: newMember.name } : null,
       } : l));
-      toast({ title: '✅ Lead reatribuído!' });
+      if (selectedLead?.id === leadId) {
+        setSelectedLead({
+          ...selectedLead,
+          assigned_to_id: newMemberId,
+          member: newMember ? { id: newMember.id, name: newMember.name } : null,
+        });
+      }
+      toast({
+        title: newMemberId ? '✅ Lead transferido!' : '✅ Lead desatribuído',
+        description: newMemberId
+          ? `${newMember?.name} recebeu o briefing IA. Aguardando confirmação do vendedor (até 15min). Se não responder, lead será reescalado.`
+          : undefined,
+      });
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {

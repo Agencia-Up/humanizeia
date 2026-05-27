@@ -1,3 +1,15 @@
+// ─── Imports compartilhados (FASE 1 PLANO_CORRECAO_BUGS) ───────────────────
+// Helpers centralizados pra evitar drift entre call sites diferentes.
+import { sellerPhoneKey as _sellerPhoneKey, uniqueSellersByPhone as _uniqueSellersByPhone } from "../_shared/transfer/phoneKey.ts";
+import { buildEnrichedBriefing as _buildEnrichedBriefing } from "../_shared/transfer/buildBriefing.ts";
+
+// Re-exports com nomes originais pra não quebrar call sites existentes.
+// Quando todo o arquivo migrar pra usar `_sellerPhoneKey` direto, esses
+// aliases podem ser removidos.
+const sellerPhoneKey = _sellerPhoneKey;
+const uniqueSellersByPhone = _uniqueSellersByPhone;
+const buildEnrichedBriefing = _buildEnrichedBriefing;
+
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
   const restBase = `${url}/rest/v1`;
@@ -657,25 +669,9 @@ function formatBantBlock(bant: BantStatus): string {
   return lines.join('\n');
 }
 
-function sellerPhoneKey(seller: any): string {
-  const digits = String(seller?.whatsapp_number || '').replace(/\D/g, '');
-  if (!digits) return '';
-  return digits.startsWith('55') && (digits.length === 12 || digits.length === 13)
-    ? digits.slice(2)
-    : digits;
-}
-
-function uniqueSellersByPhone(sellers: any[] = []): any[] {
-  const seen = new Set<string>();
-  const result: any[] = [];
-  for (const seller of sellers || []) {
-    const key = sellerPhoneKey(seller) || String(seller?.id || '');
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    result.push(seller);
-  }
-  return result;
-}
+// sellerPhoneKey / uniqueSellersByPhone — extraídos para _shared/transfer/phoneKey.ts
+// (FASE 1 PLANO_CORRECAO_BUGS_2026-05-27). Os nomes aqui são aliases dos imports
+// declarados no topo do arquivo, mantidos pra não quebrar call sites internos.
 
 function digitsOnly(value: string | null | undefined): string {
   return String(value || '').replace(/\D/g, '');
@@ -1432,67 +1428,11 @@ const HANDOFF_CATEGORIA_LABEL: Record<HandoffMotivoCategoria, string> = {
   erro_agente: 'Agente travado / erro',
 };
 
-function buildEnrichedBriefing(input: {
-  state: any;
-  leadName: string;
-  leadPhone: string;
-  agentName: string;
-  transferArgs: HandoffTransferArgs;
-  scoreInfo?: { score: number; tier: string };
-  bantNextSuggestedAsk?: string;
-}): string {
-  const { state, leadName, leadPhone, agentName, transferArgs, scoreInfo, bantNextSuggestedAsk } = input;
-  const s = state || {};
-  const lines: string[] = [];
-  const urgencia = transferArgs.urgencia ?? 'media';
-  const emoji = HANDOFF_URGENCIA_EMOJI[urgencia] || '🟡';
-  const displayName = s.lead?.nome_completo || s.lead?.nome || leadName || 'Lead';
-  lines.push(`${emoji} *LEAD QUALIFICADO — ${displayName}* (urgência: ${urgencia})`);
-  lines.push(`📱 Telefone: ${s.lead?.telefone || leadPhone}`);
-  if (s.lead?.cidade) lines.push(`🏙️ Cidade: ${s.lead.cidade}`);
-  if (scoreInfo) lines.push(`📊 Score: ${scoreInfo.score}/100 (${scoreInfo.tier})`);
-  lines.push('');
-  if (transferArgs.motivo_categoria) {
-    const catLabel = HANDOFF_CATEGORIA_LABEL[transferArgs.motivo_categoria] || transferArgs.motivo_categoria;
-    lines.push(`🎯 *Motivo:* ${catLabel}`);
-  }
-  if (transferArgs.motivo) lines.push(`💬 *Detalhe:* ${transferArgs.motivo}`);
-  if (transferArgs.resumo_breve && transferArgs.resumo_breve !== transferArgs.motivo) {
-    lines.push(`📝 *Resumo:* ${transferArgs.resumo_breve}`);
-  }
-  lines.push('');
-  if (s.interesse?.modelo_desejado) {
-    const conf = [s.interesse.configuracao, s.interesse.combustivel, s.interesse.cambio].filter(Boolean).join(', ');
-    lines.push(`🚗 *Interesse:* ${s.interesse.modelo_desejado}${conf ? ` (${conf})` : ''}`);
-  }
-  if (s.veiculo_apresentado?.ja_apresentado) {
-    const vp = s.veiculo_apresentado;
-    lines.push(`📋 *Veículo apresentado:* ${vp.modelo || ''} ${vp.ano || ''}${vp.preco ? ` — R$ ${vp.preco}` : ''}`);
-  }
-  if (s.negociacao?.forma_pagamento) lines.push(`💰 *Forma de pagamento:* ${s.negociacao.forma_pagamento}`);
-  if (s.negociacao?.valor_entrada) lines.push(`💵 *Entrada:* ${s.negociacao.valor_entrada}`);
-  if (s.negociacao?.tem_troca && s.negociacao?.carro_troca) {
-    const ct = s.negociacao.carro_troca;
-    const trocaParts = [ct.modelo, ct.ano, ct.configuracao, ct.cambio].filter(Boolean).join(' ');
-    lines.push(`🔄 *Troca:* ${trocaParts || 'sim'}${ct.status ? ` (${ct.status})` : ''}`);
-  }
-  if (s.atendimento?.pode_visitar_loja === false) {
-    lines.push(`📍 *Visita:* NÃO pode visitar — atendimento REMOTO`);
-  }
-  if (s.atendimento?.objecoes && s.atendimento.objecoes.length > 0) {
-    lines.push(`⚠️ *Objeções:* ${s.atendimento.objecoes.join(', ')}`);
-  }
-  if (s.lead?.acompanhante_decisao) lines.push(`👥 *Decisão envolve:* ${s.lead.acompanhante_decisao}`);
-  if (transferArgs.proxima_acao_sugerida || bantNextSuggestedAsk) {
-    lines.push('');
-    lines.push(`👉 *Próxima ação sugerida:* ${transferArgs.proxima_acao_sugerida || bantNextSuggestedAsk}`);
-  }
-  lines.push('');
-  lines.push(`📲 *Atender:* https://wa.me/${(s.lead?.telefone || leadPhone || '').replace(/\D/g, '')}`);
-  lines.push('');
-  lines.push(`_Briefing V2 gerado pelo Pedro SDR (${agentName})_`);
-  return lines.join('\n');
-}
+// buildEnrichedBriefing — extraído para _shared/transfer/buildBriefing.ts
+// (FASE 1 PLANO_CORRECAO_BUGS_2026-05-27). O nome aqui é alias do import
+// declarado no topo do arquivo, mantido pra não quebrar call sites internos.
+// Tipos HandoffTransferArgs e constantes HANDOFF_* ainda usadas localmente
+// em outros lugares do arquivo continuam definidos abaixo/acima.
 
 function buildBriefingForSeller(state: any, leadName: string, leadPhone: string, agentName: string): string {
   const lines: string[] = [];
