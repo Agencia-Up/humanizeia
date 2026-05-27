@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildConversationBriefing } from "../_shared/transfer/buildBriefing.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -114,38 +115,6 @@ function maybeLeadIdLooksLikeName(value: any) {
 function extractUuid(value: any) {
   const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   return match?.[0] || null;
-}
-
-async function buildConversationBriefing(supabase: any, lead: any) {
-  const parts: string[] = [];
-  if (lead.summary) {
-    parts.push(`Resumo salvo no CRM:\n${String(lead.summary).substring(0, 800)}`);
-  }
-
-  const { data: history, error } = await supabase
-    .from("wa_chat_history")
-    .select("role, content, created_at")
-    .eq("agent_id", lead.agent_id)
-    .eq("remote_jid", lead.remote_jid)
-    .order("created_at", { ascending: false })
-    .limit(12);
-
-  if (!error && history?.length) {
-    const transcript = history
-      .reverse()
-      .map((msg: any) => {
-        const author = msg.role === "user" ? "Cliente" : "IA";
-        return `${author}: ${String(msg.content || "").substring(0, 300)}`;
-      })
-      .join("\n");
-    parts.push(`Ultimas mensagens:\n${transcript}`);
-  }
-
-  if (parts.length === 0) {
-    return "Sem resumo salvo ainda. Abrir o WhatsApp do lead para consultar o contexto completo antes de chamar.";
-  }
-
-  return parts.join("\n\n").substring(0, 1800);
 }
 
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
