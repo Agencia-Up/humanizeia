@@ -21,6 +21,7 @@ import {
 
 /* ── Atalhos para os agentes ──────────────────────────────────── */
 import type { VisibleFeatures } from '@/hooks/useSellerProfile';
+import { isAgentReleased, COMING_SOON_LABEL } from '@/config/releasedAgents';
 
 const AGENTS: Array<{
   key: keyof VisibleFeatures;
@@ -375,24 +376,44 @@ export default function Dashboard() {
           <p className="text-xs text-muted-foreground mb-4">Escolha um agente e comece agora</p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {visibleAgents.map((agent, i) => (
-              <motion.button
-                key={agent.name}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.22 + i * 0.04 }}
-                onClick={() => navigate(agent.url)}
-                className={`group rounded-2xl border bg-card/60 p-4 text-left hover:bg-card/80 transition-all hover:shadow-md ${agent.color}`}
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <span className="text-2xl">{agent.emoji}</span>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors mt-0.5" />
-                </div>
-                <p className="font-semibold text-sm leading-tight">{agent.name}</p>
-                <p className={`text-[10px] font-medium mt-0.5 mb-2 ${agent.badge.split(' ')[1]}`}>{agent.role}</p>
-                <p className="text-xs text-muted-foreground leading-snug">{agent.desc}</p>
-              </motion.button>
-            ))}
+            {visibleAgents.map((agent, i) => {
+              // Decisão de produto: só Pedro e Marcos estão liberados pra todas
+              // as contas. Demais ficam visíveis com badge "Em breve",
+              // não-clicáveis, opacidade reduzida.
+              const released = isAgentReleased(agent.name);
+              return (
+                <motion.button
+                  key={agent.name}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.22 + i * 0.04 }}
+                  onClick={released ? () => navigate(agent.url) : undefined}
+                  disabled={!released}
+                  aria-disabled={!released}
+                  title={released ? undefined : 'Agente em breve disponível'}
+                  className={`group relative rounded-2xl border bg-card/60 p-4 text-left transition-all ${agent.color} ${
+                    released
+                      ? 'hover:bg-card/80 hover:shadow-md cursor-pointer'
+                      : 'opacity-55 cursor-not-allowed grayscale-[40%]'
+                  }`}
+                >
+                  {!released && (
+                    <span className="absolute top-2 right-2 inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-amber-400 border border-amber-500/30 lowercase">
+                      {COMING_SOON_LABEL}
+                    </span>
+                  )}
+                  <div className="flex items-start justify-between mb-3">
+                    <span className="text-2xl">{agent.emoji}</span>
+                    {released && (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors mt-0.5" />
+                    )}
+                  </div>
+                  <p className="font-semibold text-sm leading-tight">{agent.name}</p>
+                  <p className={`text-[10px] font-medium mt-0.5 mb-2 ${agent.badge.split(' ')[1]}`}>{agent.role}</p>
+                  <p className="text-xs text-muted-foreground leading-snug">{agent.desc}</p>
+                </motion.button>
+              );
+            })}
           </div>
         </motion.div>
 

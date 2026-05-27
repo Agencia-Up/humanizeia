@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { isAgentReleased, COMING_SOON_LABEL } from '@/config/releasedAgents';
 
 // ── Todos os agentes com tier mínimo necessário ─────────────────────────────
 // basico = liberado no Básico, pro = liberado no Pro, enterprise = liberado no Pro Max
@@ -130,8 +131,14 @@ export default function AgentHub() {
     ? allAgentsList.filter(a => visibleFeatures[a.featureKey])
     : allAgentsList;
 
-  // Separar agentes desbloqueados vs travados (após filtragem por seller)
+  // Decisão de produto (27/05/2026): só Pedro e Marcos liberados pra todas as
+  // contas. Demais aparecem visíveis com badge "Em breve" + desabilitados.
+  // A lógica de tier/plano continua sendo respeitada PARA OS LIBERADOS (Pedro/
+  // Marcos seguem precisando do tier mínimo deles), mas qualquer agente fora
+  // da lista RELEASED_AGENTS aparece sempre como locked, independente do tier.
   const hasAgentAccess = (agent: typeof allAgentsList[number]) => {
+    // Se o agente NÃO está na lista de liberados, nunca desbloqueia.
+    if (!isAgentReleased(agent.name)) return false;
     if (hasManualAgentRelease(user?.id, agent.featureKey)) return true;
     if (isSeller && visibleFeatures[agent.featureKey]) return true;
     return userTierLevel >= TIER_ORDER[agent.tier];
@@ -233,7 +240,9 @@ export default function AgentHub() {
               </motion.div>
             ))}
 
-            {/* Agentes travados — mostram badge do plano necessário */}
+            {/* Agentes travados — badge "Em breve" (decisão de produto: só
+                Pedro e Marcos liberados por enquanto, demais aparecem mas
+                desabilitados independente do plano). */}
             {lockedAgents.map((agent, i) => (
               <motion.div
                 key={agent.name}
@@ -241,10 +250,14 @@ export default function AgentHub() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: (unlockedAgents.length + i) * 0.04 }}
               >
-                <Card className="relative cursor-not-allowed border-border/20 bg-card/30 backdrop-blur-sm h-full opacity-50 grayscale-[0.6]">
+                <Card
+                  className="relative cursor-not-allowed border-border/20 bg-card/30 backdrop-blur-sm h-full opacity-55 grayscale-[0.4] pointer-events-auto"
+                  title="Agente em breve disponível"
+                  aria-disabled="true"
+                >
                   <div className="absolute top-2 right-2 z-10">
-                    <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px] px-1.5 py-0 gap-1">
-                      <Crown className="h-2.5 w-2.5" /> {tierBadge(agent.tier)}
+                    <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/30 text-[9px] px-2 py-0 font-semibold tracking-wide lowercase">
+                      {COMING_SOON_LABEL}
                     </Badge>
                   </div>
                   <CardContent className="flex flex-col items-center text-center gap-3 p-4">
