@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState, type ElementType } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
+import { Button } from '@/components/ui/button';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
@@ -8,6 +12,7 @@ import {
   AlertCircle,
   BarChart3,
   Bot,
+  Calendar as CalendarIcon,
   CheckCircle2,
   Clock,
   Megaphone,
@@ -16,8 +21,53 @@ import {
   Target,
   TrendingUp,
   UserCheck,
+  UserCircle2,
   Users,
 } from 'lucide-react';
+
+// ─── Tipos dos filtros ──────────────────────────────────────────────────────
+// today = dia atual; week = semana atual seg→dom; month = mês atual;
+// custom = intervalo personalizado via date picker.
+type PeriodPreset = 'today' | 'week' | 'month' | 'custom';
+
+interface CustomRange { start: string; end: string }
+
+interface DateRange { start: string; end: string; label: string }
+
+function resolveDateRange(preset: PeriodPreset, custom: CustomRange): DateRange {
+  const now = new Date();
+  if (preset === 'today') {
+    const s = new Date(now); s.setHours(0, 0, 0, 0);
+    const e = new Date(now); e.setHours(23, 59, 59, 999);
+    return { start: s.toISOString(), end: e.toISOString(), label: 'Hoje' };
+  }
+  if (preset === 'week') {
+    const dow = now.getDay();
+    const diffToMonday = dow === 0 ? -6 : 1 - dow;
+    const s = new Date(now); s.setDate(now.getDate() + diffToMonday); s.setHours(0, 0, 0, 0);
+    const e = new Date(s); e.setDate(s.getDate() + 6); e.setHours(23, 59, 59, 999);
+    return { start: s.toISOString(), end: e.toISOString(), label: 'Esta semana' };
+  }
+  if (preset === 'month') {
+    const s = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    return { start: s.toISOString(), end: e.toISOString(), label: 'Este mês' };
+  }
+  const s = custom.start ? new Date(custom.start + 'T00:00:00') : new Date();
+  const e = custom.end   ? new Date(custom.end   + 'T23:59:59.999') : new Date();
+  return { start: s.toISOString(), end: e.toISOString(), label: 'Personalizado' };
+}
+
+function toDateInput(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const PERIOD_OPTIONS: ReadonlyArray<{ id: PeriodPreset; label: string }> = [
+  { id: 'today', label: 'Dia' },
+  { id: 'week',  label: 'Semana' },
+  { id: 'month', label: 'Mês' },
+  { id: 'custom', label: 'Personalizado' },
+];
 
 type FunnelMetric = {
   label: string;
@@ -34,6 +84,8 @@ type SellerRanking = {
   total: number;
 };
 
+// DashboardData: tudo EXCETO o ranking (que vive em hook próprio
+// com filtros independentes — spec 27/05/2026).
 type DashboardData = {
   pedroTotal: number;
   pedroToday: number;
@@ -46,7 +98,6 @@ type DashboardData = {
   pedroFunnel: FunnelMetric[];
   marcosFunnel: FunnelMetric[];
   weekly: { label: string; pedro: number; marcos: number }[];
-  sellers: SellerRanking[];
   alerts: { title: string; body: string; tone: 'info' | 'warn' | 'good' }[];
 };
 
@@ -62,7 +113,6 @@ const emptyData: DashboardData = {
   pedroFunnel: [],
   marcosFunnel: [],
   weekly: [],
-  sellers: [],
   alerts: [],
 };
 
@@ -170,7 +220,7 @@ function FunnelPanel({
   );
 }
 
-function useCommercialDashboardData(userId: string | undefined) {
+function useCommercialDashboardData(userId: string | undefined, dateRange: DateRange) {
   const { isSeller, seller, masterUserId, loading: sellerLoading } = useSellerProfile(userId);
   const [data, setData] = useState<DashboardData>(emptyData);
   const [loading, setLoading] = useState(true);
@@ -188,10 +238,13 @@ function useCommercialDashboardData(userId: string | undefined) {
         const today = startOfDay();
         const sellerId = isSeller ? seller?.id : null;
 
+        // Filtros DATA aplicados em todas as queries de leads/campanhas/followups
+        // (spec: filtro global afeta TUDO menos o Ranking, que tem hook próprio).
         let pedroQuery = (supabase as any)
           .from('ai_crm_leads')
           .select('id, status, status_crm, assigned_to_id, created_at')
           .eq('user_id', effectiveUserId)
+          .gte('created_at', dateRange.start).lte('created_at', dateRange.end)
           .order('created_at', { ascending: false })
           .limit(5000);
         if (sellerId) pedroQuery = pedroQuery.eq('assigned_to_id', sellerId);
@@ -201,6 +254,7 @@ function useCommercialDashboardData(userId: string | undefined) {
           .select('id, stage_id, assigned_to, source, created_at, custom_fields')
           .eq('user_id', effectiveUserId)
           .not('source', 'like', 'Pedro SDR%')
+          .gte('created_at', dateRange.start).lte('created_at', dateRange.end)
           .order('created_at', { ascending: false })
           .limit(5000);
         if (sellerId) marcosQuery = marcosQuery.eq('assigned_to', sellerId);
@@ -208,16 +262,18 @@ function useCommercialDashboardData(userId: string | undefined) {
         let campaignsQuery = (supabase as any)
           .from('wa_campaigns')
           .select('id, status, sent_count, failed_count, total_contacts, seller_member_id, created_at')
-          .eq('user_id', effectiveUserId);
+          .eq('user_id', effectiveUserId)
+          .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
         if (sellerId) campaignsQuery = campaignsQuery.eq('seller_member_id', sellerId);
 
         let followupsQuery = (supabase as any)
           .from('marcos_followup_schedules')
           .select('id, status, seller_member_id, created_at')
-          .eq('user_id', effectiveUserId);
+          .eq('user_id', effectiveUserId)
+          .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
         if (sellerId) followupsQuery = followupsQuery.eq('seller_member_id', sellerId);
 
-        const [pedroRes, marcosRes, stagesRes, teamRes, campaignsRes, followupsRes] = await Promise.all([
+        const [pedroRes, marcosRes, stagesRes, campaignsRes, followupsRes] = await Promise.all([
           pedroQuery,
           marcosQuery,
           (supabase as any)
@@ -225,12 +281,6 @@ function useCommercialDashboardData(userId: string | undefined) {
             .select('id, name, color, position')
             .eq('user_id', effectiveUserId)
             .order('position', { ascending: true }),
-          (supabase as any)
-            .from('ai_team_members')
-            .select('id, name, whatsapp_number, is_active')
-            .eq('user_id', effectiveUserId)
-            .order('is_active', { ascending: false })
-            .order('name', { ascending: true }),
           campaignsQuery,
           followupsQuery,
         ]);
@@ -240,7 +290,6 @@ function useCommercialDashboardData(userId: string | undefined) {
         const pedroLeads = pedroRes.data || [];
         const marcosLeads = marcosRes.data || [];
         const stages = stagesRes.data || [];
-        const team = teamRes.data || [];
         const campaigns = campaignsRes.data || [];
         const followups = followupsRes.data || [];
 
@@ -270,18 +319,6 @@ function useCommercialDashboardData(userId: string | undefined) {
             marcos: statByDate(marcosLeads, date),
           };
         });
-
-        const sellers = team.map((member: any) => {
-          const pedro = pedroLeads.filter((lead: any) => lead.assigned_to_id === member.id).length;
-          const marcos = marcosLeads.filter((lead: any) => lead.assigned_to === member.id || lead.custom_fields?.seller_member_id === member.id).length;
-          return {
-            id: member.id,
-            name: member.name || 'Vendedor',
-            pedro,
-            marcos,
-            total: pedro + marcos,
-          };
-        }).sort((a: SellerRanking, b: SellerRanking) => b.total - a.total).slice(0, 5);
 
         const pedroTransferred = pedroLeads.filter((lead: any) => lead.assigned_to_id).length;
         const pedroWaiting = pedroLeads.filter((lead: any) => normalizeStatus(lead.status_crm || lead.status) === 'novo' && !lead.assigned_to_id).length;
@@ -313,7 +350,6 @@ function useCommercialDashboardData(userId: string | undefined) {
           pedroFunnel,
           marcosFunnel,
           weekly,
-          sellers,
           alerts,
         });
       } catch (err) {
@@ -326,15 +362,202 @@ function useCommercialDashboardData(userId: string | undefined) {
 
     load();
     return () => { cancelled = true; };
-  }, [effectiveUserId, isSeller, seller?.id, sellerLoading, refreshKey]);
+  }, [effectiveUserId, isSeller, seller?.id, sellerLoading, refreshKey, dateRange.start, dateRange.end]);
 
   return { data, loading, refresh: () => setRefreshKey(key => key + 1) };
+}
+
+// ─── Hook RANKING (filtros INDEPENDENTES do global) ──────────────────────
+// Recebe rankDateRange + rankSellerId, retorna ranking + lista de vendedores
+// pra popular o dropdown.
+function useRankingData(userId: string | undefined, rankDateRange: DateRange, rankSellerId: string) {
+  const { isSeller, seller, masterUserId, loading: sellerLoading } = useSellerProfile(userId);
+  const [ranking, setRanking] = useState<SellerRanking[]>([]);
+  const [allSellers, setAllSellers] = useState<Array<{ id: string; name: string }>>([]);
+  const [loading, setLoading] = useState(true);
+
+  const effectiveUserId = isSeller ? masterUserId : userId;
+
+  // Fetch da lista de vendedores ao montar (1×, sem filtros).
+  useEffect(() => {
+    if (sellerLoading || !effectiveUserId) return;
+    let cancelled = false;
+    (async () => {
+      const { data: teamData } = await (supabase as any)
+        .from('ai_team_members')
+        .select('id, name, is_active')
+        .eq('user_id', effectiveUserId).eq('is_active', true)
+        .order('name', { ascending: true });
+      if (cancelled) return;
+      setAllSellers((teamData || []) as Array<{ id: string; name: string }>);
+    })();
+    return () => { cancelled = true; };
+  }, [effectiveUserId, sellerLoading]);
+
+  // Fetch do ranking quando filtros mudam.
+  useEffect(() => {
+    if (sellerLoading || !effectiveUserId) return;
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      try {
+        // Seller vê só ele mesmo (spec: filtro de vendedor fixado no logado).
+        const forcedSellerId = isSeller ? seller?.id : null;
+        const targetSellerId = forcedSellerId || (rankSellerId === 'all' ? null : rankSellerId);
+
+        let pedroQuery = (supabase as any)
+          .from('ai_crm_leads')
+          .select('id, assigned_to_id, created_at')
+          .eq('user_id', effectiveUserId)
+          .gte('created_at', rankDateRange.start).lte('created_at', rankDateRange.end)
+          .limit(5000);
+        let marcosQuery = (supabase as any)
+          .from('crm_leads')
+          .select('id, assigned_to, custom_fields, created_at')
+          .eq('user_id', effectiveUserId)
+          .not('source', 'like', 'Pedro SDR%')
+          .gte('created_at', rankDateRange.start).lte('created_at', rankDateRange.end)
+          .limit(5000);
+        const teamQuery = (supabase as any)
+          .from('ai_team_members')
+          .select('id, name, is_active')
+          .eq('user_id', effectiveUserId).eq('is_active', true);
+
+        if (targetSellerId) {
+          pedroQuery = pedroQuery.eq('assigned_to_id', targetSellerId);
+          marcosQuery = marcosQuery.eq('assigned_to', targetSellerId);
+        }
+
+        const [pedroRes, marcosRes, teamRes] = await Promise.all([pedroQuery, marcosQuery, teamQuery]);
+        if (cancelled) return;
+
+        const pedroLeads = pedroRes.data || [];
+        const marcosLeads = marcosRes.data || [];
+        const team = (teamRes.data || []) as Array<{ id: string; name: string }>;
+        const targetTeam = targetSellerId ? team.filter(t => t.id === targetSellerId) : team;
+
+        const computed = targetTeam.map((member): SellerRanking => {
+          const pedro = pedroLeads.filter((lead: any) => lead.assigned_to_id === member.id).length;
+          const marcos = marcosLeads.filter((lead: any) => lead.assigned_to === member.id || lead.custom_fields?.seller_member_id === member.id).length;
+          return {
+            id: member.id,
+            name: member.name || 'Vendedor',
+            pedro,
+            marcos,
+            total: pedro + marcos,
+          };
+        }).sort((a, b) => b.total - a.total).slice(0, targetSellerId ? 1 : 5);
+
+        setRanking(computed);
+      } catch (err) {
+        console.error('[CommercialDashboard] failed to load ranking', err);
+        if (!cancelled) setRanking([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, [effectiveUserId, isSeller, seller?.id, sellerLoading, rankDateRange.start, rankDateRange.end, rankSellerId]);
+
+  return { ranking, allSellers, loading, isSeller };
 }
 
 export default function CommercialDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { data, loading, refresh } = useCommercialDashboardData(user?.id);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // ── Filtros persistidos em URL params (survive navegação entre abas) ───
+  // GLOBAL:  ?period=today|week|month|custom + ?from=...&to=... (default 'today')
+  // RANKING: ?rankPeriod + ?rankSeller + ?rankFrom + ?rankTo (default 'month' / 'all')
+  const urlPeriod = (searchParams.get('period') as PeriodPreset | null) || 'today';
+  const urlRankPeriod = (searchParams.get('rankPeriod') as PeriodPreset | null) || 'month';
+  const urlRankSeller = searchParams.get('rankSeller') || 'all';
+
+  // ── State GLOBAL ──────────────────────────────────────────────────────
+  const [period, setPeriod] = useState<PeriodPreset>(urlPeriod);
+  const [customRange, setCustomRange] = useState<CustomRange>(() => {
+    const today = new Date(); const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 6);
+    return {
+      start: searchParams.get('from') || toDateInput(weekAgo),
+      end: searchParams.get('to') || toDateInput(today),
+    };
+  });
+  const [appliedCustomRange, setAppliedCustomRange] = useState<CustomRange>(customRange);
+
+  // ── State RANKING (independente do global) ────────────────────────────
+  const [rankPeriod, setRankPeriod] = useState<PeriodPreset>(urlRankPeriod);
+  const [rankSellerId, setRankSellerId] = useState<string>(urlRankSeller);
+  const [rankCustomRange, setRankCustomRange] = useState<CustomRange>(() => {
+    const today = new Date(); const monthAgo = new Date(); monthAgo.setDate(monthAgo.getDate() - 29);
+    return {
+      start: searchParams.get('rankFrom') || toDateInput(monthAgo),
+      end: searchParams.get('rankTo') || toDateInput(today),
+    };
+  });
+  const [rankAppliedCustomRange, setRankAppliedCustomRange] = useState<CustomRange>(rankCustomRange);
+
+  const dateRange = useMemo(() => resolveDateRange(period, appliedCustomRange), [period, appliedCustomRange]);
+  const rankDateRange = useMemo(() => resolveDateRange(rankPeriod, rankAppliedCustomRange), [rankPeriod, rankAppliedCustomRange]);
+
+  const { data, loading, refresh } = useCommercialDashboardData(user?.id, dateRange);
+  const { ranking, allSellers, loading: rankingLoading, isSeller: rankIsSeller } = useRankingData(user?.id, rankDateRange, rankSellerId);
+
+  // ── Handlers GLOBAL ───────────────────────────────────────────────────
+  const handlePeriodChange = (next: PeriodPreset) => {
+    setPeriod(next);
+    setSearchParams(prev => {
+      const u = new URLSearchParams(prev);
+      u.set('period', next);
+      if (next !== 'custom') { u.delete('from'); u.delete('to'); }
+      return u;
+    }, { replace: true });
+  };
+
+  const handleApplyCustom = () => {
+    setAppliedCustomRange(customRange);
+    setSearchParams(prev => {
+      const u = new URLSearchParams(prev);
+      u.set('period', 'custom');
+      u.set('from', customRange.start);
+      u.set('to', customRange.end);
+      return u;
+    }, { replace: true });
+  };
+
+  // ── Handlers RANKING (independentes) ──────────────────────────────────
+  const handleRankPeriodChange = (next: PeriodPreset) => {
+    setRankPeriod(next);
+    setSearchParams(prev => {
+      const u = new URLSearchParams(prev);
+      u.set('rankPeriod', next);
+      if (next !== 'custom') { u.delete('rankFrom'); u.delete('rankTo'); }
+      return u;
+    }, { replace: true });
+  };
+
+  const handleRankSellerChange = (next: string) => {
+    setRankSellerId(next);
+    setSearchParams(prev => {
+      const u = new URLSearchParams(prev);
+      u.set('rankSeller', next);
+      return u;
+    }, { replace: true });
+  };
+
+  const handleApplyRankCustom = () => {
+    setRankAppliedCustomRange(rankCustomRange);
+    setSearchParams(prev => {
+      const u = new URLSearchParams(prev);
+      u.set('rankPeriod', 'custom');
+      u.set('rankFrom', rankCustomRange.start);
+      u.set('rankTo', rankCustomRange.end);
+      return u;
+    }, { replace: true });
+  };
 
   const totalLeads = data.pedroTotal + data.marcosTotal;
   const paidShare = totalLeads > 0 ? Math.round((data.pedroTotal / totalLeads) * 100) : 0;
@@ -372,6 +595,58 @@ export default function CommercialDashboard() {
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Atualizar
           </button>
+        </div>
+
+        {/* ── Filtro GLOBAL de Data ────────────────────────────────────────
+            Aplica-se a TODOS os cards/métricas exceto o Ranking de Equipe
+            (que tem filtros próprios no card abaixo). */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">
+            <CalendarIcon className="h-3.5 w-3.5 inline-block mr-1 -mt-0.5" />
+            Período
+          </span>
+          <div className="flex items-center gap-1 bg-card/60 rounded-lg p-1 border border-border/50">
+            {PERIOD_OPTIONS.map(opt => {
+              const active = period === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => handlePeriodChange(opt.id)}
+                  className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                    active
+                      ? 'bg-primary/15 text-primary border border-primary/30'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          {period === 'custom' && (
+            <div className="flex items-center gap-1.5 text-xs">
+              <input type="date" value={customRange.start} max={customRange.end}
+                onChange={e => setCustomRange(r => ({ ...r, start: e.target.value }))}
+                className="bg-card/60 border border-border/50 rounded px-2 py-1" />
+              <span className="text-muted-foreground">até</span>
+              <input type="date" value={customRange.end} min={customRange.start}
+                onChange={e => setCustomRange(r => ({ ...r, end: e.target.value }))}
+                className="bg-card/60 border border-border/50 rounded px-2 py-1" />
+              <Button
+                size="sm"
+                onClick={handleApplyCustom}
+                disabled={
+                  !customRange.start || !customRange.end ||
+                  (customRange.start === appliedCustomRange.start &&
+                   customRange.end === appliedCustomRange.end)
+                }
+                className="h-7 px-3 text-xs"
+              >
+                Aplicar
+              </Button>
+            </div>
+          )}
+          <span className="text-xs text-muted-foreground ml-2">· Filtro aplicado: <strong className="text-foreground">{dateRange.label}</strong></span>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -458,24 +733,107 @@ export default function CommercialDashboard() {
           </div>
 
           <div className="rounded-2xl border border-border/50 bg-card/70 p-5">
-            <h3 className="mb-4 flex items-center gap-2 text-base font-bold text-foreground">
-              <TrendingUp className="h-4 w-4 text-emerald-300" />
-              Ranking da equipe
-            </h3>
+            <div className="mb-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+                  <TrendingUp className="h-4 w-4 text-emerald-300" />
+                  Ranking da equipe
+                </h3>
+              </div>
+
+              {/* ── Filtros INDEPENDENTES do ranking (vendedor + período) ── */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Vendedor — oculto pra vendedor (spec: fixado no logado) */}
+                {!rankIsSeller && (
+                  <Select value={rankSellerId} onValueChange={handleRankSellerChange}>
+                    <SelectTrigger className="w-[170px] bg-card/60 border-border/50 h-7 text-[11px]">
+                      <UserCircle2 className="h-3 w-3 mr-1 text-muted-foreground" />
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os vendedores</SelectItem>
+                      {allSellers.map(s => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {/* Período do ranking (segmentado compacto) */}
+                <div className="flex items-center gap-0.5 bg-card/60 rounded-md p-0.5 border border-border/50">
+                  {PERIOD_OPTIONS.map(opt => {
+                    const active = rankPeriod === opt.id;
+                    const compact = opt.id === 'custom' ? 'Custom' : opt.label;
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() => handleRankPeriodChange(opt.id)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                          active
+                            ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
+                        }`}
+                      >
+                        {compact}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Custom date inputs (quando rankPeriod=custom) */}
+              {rankPeriod === 'custom' && (
+                <div className="flex items-center gap-1.5 text-[11px] flex-wrap">
+                  <input type="date" value={rankCustomRange.start} max={rankCustomRange.end}
+                    onChange={e => setRankCustomRange(r => ({ ...r, start: e.target.value }))}
+                    className="bg-card/60 border border-border/50 rounded px-1.5 py-0.5" />
+                  <span className="text-muted-foreground">até</span>
+                  <input type="date" value={rankCustomRange.end} min={rankCustomRange.start}
+                    onChange={e => setRankCustomRange(r => ({ ...r, end: e.target.value }))}
+                    className="bg-card/60 border border-border/50 rounded px-1.5 py-0.5" />
+                  <Button
+                    size="sm"
+                    onClick={handleApplyRankCustom}
+                    disabled={
+                      !rankCustomRange.start || !rankCustomRange.end ||
+                      (rankCustomRange.start === rankAppliedCustomRange.start &&
+                       rankCustomRange.end === rankAppliedCustomRange.end)
+                    }
+                    className="h-6 px-2 text-[11px]"
+                  >
+                    Aplicar
+                  </Button>
+                </div>
+              )}
+
+              <p className="text-[10px] text-muted-foreground">
+                {rankDateRange.label} · {rankSellerId === 'all' || rankIsSeller ? 'todos vendedores' : 'vendedor filtrado'}
+              </p>
+            </div>
+
             <div className="space-y-3">
-              {data.sellers.map((seller, index) => (
-                <div key={seller.id} className="rounded-xl border border-border/40 bg-background/35 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="truncate text-sm font-semibold text-foreground">#{index + 1} {seller.name}</p>
-                    <span className="text-lg font-bold text-primary">{seller.total}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{seller.pedro} Pedro · {seller.marcos} Marcos</p>
-                </div>
-              ))}
-              {data.sellers.length === 0 && (
+              {rankingLoading ? (
                 <div className="rounded-xl border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
-                  Sem vendedores carregados.
+                  Carregando ranking…
                 </div>
+              ) : ranking.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
+                  {rankSellerId === 'all'
+                    ? 'Nenhum vendedor recebeu leads no período.'
+                    : 'Esse vendedor não recebeu leads no período.'}
+                </div>
+              ) : (
+                ranking.map((seller, index) => (
+                  <div key={seller.id} className="rounded-xl border border-border/40 bg-background/35 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate text-sm font-semibold text-foreground">#{index + 1} {seller.name}</p>
+                      <span className="text-lg font-bold text-primary">{seller.total}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {seller.pedro} Pedro · {seller.marcos} Marcos · <strong className="text-foreground">{seller.total} leads recebidos</strong>
+                    </p>
+                  </div>
+                ))
               )}
             </div>
           </div>
