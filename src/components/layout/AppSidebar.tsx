@@ -512,8 +512,14 @@ export function AppSidebar() {
               {/* Pedro — sempre (básico+) */}
               <NavItem collapsed={collapsed} item={{ title: 'Pedro SDR', url: '/pedro', icon: Bot }} />
 
-              {/* Marcos — Pro+ (expandível com sub-itens) */}
-              {showMarcos && <NavMarcosExpandable collapsed={collapsed} />}
+              {/* Marcos — Pro+. Igual ao Pedro: clica e vai pra /marcos (página
+                  individual já tem as 8 abas internas — Performance, CRM,
+                  Formulários, Contatos, Disparo, Inbox, Instâncias, Automações).
+                  Antes era NavMarcosExpandable com sub-itens duplicados no
+                  sidebar, comportamento diferente do Pedro/José. */}
+              {showMarcos && (
+                <NavItem collapsed={collapsed} item={{ title: 'Marcos', url: '/marcos', icon: Users }} />
+              )}
 
               {/* José — Pro+ */}
               {showJose && (
