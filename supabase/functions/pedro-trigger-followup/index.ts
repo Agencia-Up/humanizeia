@@ -359,12 +359,16 @@ serve(async (req) => {
           if (instanceCache[cacheKey]) {
             instance = instanceCache[cacheKey];
           } else {
+            // EXTRA-3: também filtrar status='connected', não basta is_active.
+            // Instância pode estar marcada is_active mas desconectada do WhatsApp
+            // (estado comum) → envio falharia silenciosamente.
             const { data: sellerInst } = await supabase
               .from("wa_instances")
               .select("id, api_url, api_key_encrypted, instance_name")
               .eq("user_id", lead.user_id)
               .eq("seller_member_id", sellerMemberId)
               .eq("is_active", true)
+              .eq("status", "connected")
               .limit(1)
               .maybeSingle();
             if (sellerInst) {
@@ -379,12 +383,14 @@ serve(async (req) => {
           if (instanceCache[cacheKey]) {
             instance = instanceCache[cacheKey];
           } else {
+            // EXTRA-3: mesmo filtro de status='connected' aqui
             const { data: masterInst } = await supabase
               .from("wa_instances")
               .select("id, api_url, api_key_encrypted, instance_name")
               .eq("user_id", lead.user_id)
               .is("seller_member_id", null)
               .eq("is_active", true)
+              .eq("status", "connected")
               .limit(1)
               .maybeSingle();
             if (masterInst) {

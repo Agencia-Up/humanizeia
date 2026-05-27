@@ -138,15 +138,42 @@ Deno.serve(async (req) => {
 
     let instanceQuery = supabaseService
       .from('wa_instances')
-      .select('id, instance_name, friendly_name, api_url, api_key_encrypted, provider, status')
+      .select('id, instance_name, friendly_name, api_url, api_key_encrypted, provider, status, seller_member_id')
       .eq('user_id', masterId);
 
     if (sellerMemberIds.length > 0 && masterId !== user.id) {
+      // Vendedor logado: só audita as instâncias dele.
       instanceQuery = instanceQuery.in('seller_member_id', sellerMemberIds);
     }
 
-    const { data: instances, error: instErr } = await instanceQuery;
+    let { data: instances, error: instErr } = await instanceQuery;
     if (instErr) throw new Error(instErr.message);
+
+    // EXTRA-2: master logado audita instâncias do pool master + dos vendedores
+    // ATIVOS. Antes, audit batia em TODAS as instâncias da conta (incluindo
+    // de vendedores desativados/removidos) — desperdiçava requests à UazAPI
+    // e gerava cascata de erros pra instâncias órfãs.
+    if (masterId === user.id && instances && instances.length > 0) {
+      const sellerIdsInInstances = Array.from(
+        new Set((instances as any[]).map((i) => i.seller_member_id).filter(Boolean))
+      );
+      if (sellerIdsInInstances.length > 0) {
+        const { data: activeSellersRows } = await supabaseService
+          .from('ai_team_members')
+          .select('id')
+          .in('id', sellerIdsInInstances)
+          .eq('is_active', true);
+        const activeSellerIds = new Set((activeSellersRows || []).map((r: any) => r.id));
+        const before = instances.length;
+        instances = (instances as any[]).filter((i) =>
+          !i.seller_member_id || activeSellerIds.has(i.seller_member_id)
+        );
+        const skipped = before - instances.length;
+        if (skipped > 0) {
+          console.log(`[audit-master-instances] Skipped ${skipped} instâncias de vendedores inativos (EXTRA-2 filtro)`);
+        }
+      }
+    }
 
     const report: Array<{
       id: string;
