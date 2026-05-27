@@ -728,7 +728,7 @@ export async function processPedroV2Turn(
   });
 
   const remoteJid = pickRemoteJid(input.payload);
-  const text = pickText(input.payload);
+  const rawText = pickText(input.payload);
   const pushName = pickPushName(input.payload);
   if (!remoteJid) {
     return { ok: false, dry_run: dryRun, correlation_id: correlationId, error: "remote_jid_missing" };
@@ -794,8 +794,11 @@ export async function processPedroV2Turn(
     memory: currentMemory,
   });
 
-  const intent = routePedroIntent({ message: text, current_memory: currentMemory });
   const mediaContext = await resolvePedroMediaContext(input.payload, input.wa_instance);
+  const text = mediaContext.kind === "audio" && mediaContext.text
+    ? mediaContext.text
+    : rawText;
+  const intent = routePedroIntent({ message: text, current_memory: currentMemory });
   const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(input.payload, text), mediaContext);
   const enrichedText = buildMessageWithAdContext(text, adContext);
   const adMemory = adContextToMemory(adContext);

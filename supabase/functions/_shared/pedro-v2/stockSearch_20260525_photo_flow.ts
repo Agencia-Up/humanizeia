@@ -49,6 +49,11 @@ function normalizeText(value?: string | null) {
     .replace(/\beco\s*sport\b/g, "ecosport")
     .replace(/\bfree\s*style\b/g, "freestyle")
     .replace(/\bcresta\b/g, "creta")
+    .replace(/\boroque\b/g, "oroch")
+    .replace(/\boroqui\b/g, "oroch")
+    .replace(/\boroki\b/g, "oroch")
+    .replace(/\borock\b/g, "oroch")
+    .replace(/\boroc\b/g, "oroch")
     .replace(/\bauthen\.?\b/g, "authentique")
     .replace(/\bauthent\.?\b/g, "authentique")
     .replace(/\bauth\b/g, "authentique")
@@ -223,6 +228,58 @@ function buildSearchText(filters: Record<string, any>) {
   ].filter(Boolean).join(" "));
 }
 
+const STRICT_MODEL_ALIASES = [
+  { canonical: "oroch", aliases: ["oroch", "duster oroch", "oroque", "oroqui", "oroki", "orock", "oroc"] },
+  { canonical: "duster", aliases: ["duster", "daster"] },
+  { canonical: "renegade", aliases: ["renegade", "renegad", "renagade"] },
+  { canonical: "onix", aliases: ["onix", "onis", "unix", "onixx"] },
+  { canonical: "strada", aliases: ["strada", "estrada"] },
+  { canonical: "toro", aliases: ["toro", "tora"] },
+  { canonical: "argo", aliases: ["argo"] },
+  { canonical: "kwid", aliases: ["kwid", "quid"] },
+  { canonical: "mobi", aliases: ["mobi"] },
+  { canonical: "pulse", aliases: ["pulse"] },
+  { canonical: "fastback", aliases: ["fastback", "fast back"] },
+  { canonical: "creta", aliases: ["creta", "cretta"] },
+  { canonical: "compass", aliases: ["compass", "compas"] },
+  { canonical: "tracker", aliases: ["tracker", "traker"] },
+  { canonical: "tcross", aliases: ["tcross", "t cross", "t-cross"] },
+  { canonical: "hb20", aliases: ["hb20", "hb 20"] },
+  { canonical: "corolla", aliases: ["corolla", "corola"] },
+  { canonical: "civic", aliases: ["civic", "civc"] },
+  { canonical: "cruze", aliases: ["cruze", "cruse"] },
+  { canonical: "ecosport", aliases: ["ecosport", "eco sport"] },
+  { canonical: "asx", aliases: ["asx"] },
+  { canonical: "polo", aliases: ["polo"] },
+  { canonical: "gol", aliases: ["gol"] },
+  { canonical: "virtus", aliases: ["virtus"] },
+  { canonical: "kicks", aliases: ["kicks", "kick"] },
+  { canonical: "city", aliases: ["city"] },
+  { canonical: "fit", aliases: ["fit"] },
+];
+
+function detectStrictRequestedModel(filters: Record<string, any>) {
+  const searchText = buildSearchText(filters);
+  if (!searchText) return null;
+  for (const model of STRICT_MODEL_ALIASES) {
+    for (const alias of model.aliases) {
+      const normalizedAlias = normalizeText(alias);
+      if (!normalizedAlias) continue;
+      if (new RegExp(`\\b${normalizedAlias.replace(/\s+/g, "\\s+")}\\b`).test(searchText)) {
+        return model.canonical;
+      }
+    }
+  }
+  return null;
+}
+
+function vehicleMatchesStrictModel(vehicle: BndvVehicle, canonical: string | null) {
+  if (!canonical) return true;
+  const indexed = buildIndexedText(vehicle);
+  if (canonical === "tcross") return /\b(tcross|t\s*cross|t-cross)\b/.test(indexed);
+  return new RegExp(`\\b${canonical}\\b`).test(indexed);
+}
+
 function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
   const searchText = buildSearchText(filters);
   if (!searchText) return { score: 1, matchedTokens: [] as string[] };
@@ -289,7 +346,10 @@ function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>
 
 function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
   const requestedVehicleType = inferRequestedVehicleType(filters);
-  const typedVehicles = vehicles.filter((vehicle) => passesRequestedVehicleType(vehicle, requestedVehicleType));
+  const strictModel = detectStrictRequestedModel(filters);
+  const typedVehicles = vehicles
+    .filter((vehicle) => passesRequestedVehicleType(vehicle, requestedVehicleType))
+    .filter((vehicle) => vehicleMatchesStrictModel(vehicle, strictModel));
   const hasSearch = !!buildSearchText(filters);
 
   if (!hasSearch) {
@@ -304,6 +364,7 @@ function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
     .sort((left, right) => right.score - left.score);
 
   if (ranked.length > 0) return ranked;
+  if (strictModel) return [];
 
   return typedVehicles
     .map((vehicle) => ({ vehicle, ...scoreVehicle(vehicle, filters), relaxed: true }))

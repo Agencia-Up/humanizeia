@@ -21,7 +21,7 @@ type VehicleAlias = {
 };
 
 const VEHICLE_ALIASES: VehicleAlias[] = [
-  { canonical: "oroch", label: "Renault Oroch", type: "pickup", aliases: ["oroch", "duster oroch", "oroqui", "oroki", "orochi", "orok", "orock", "oroc", "oroq", "orochh"] },
+  { canonical: "oroch", label: "Renault Oroch", type: "pickup", aliases: ["oroch", "duster oroch", "oroque", "oroqui", "oroki", "orochi", "orok", "orock", "oroc", "oroq", "orochh"] },
   { canonical: "duster", label: "Renault Duster", type: "suv", aliases: ["duster", "daster", "duster authentique", "duster dynamique"] },
   { canonical: "renegade", label: "Jeep Renegade", type: "suv", aliases: ["renegade", "renegad", "renegadee", "renagade", "renegued", "jeep renegade"] },
   { canonical: "onix", label: "Chevrolet Onix", type: "hatch", aliases: ["onix", "onix plus", "onix sedan", "onix hatch", "onis", "unix", "onixx"] },

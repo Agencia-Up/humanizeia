@@ -180,6 +180,13 @@
   - o gerador de resposta limita o estoque ao primeiro match do anuncio e bloqueia respostas que tentem listar varias opcoes;
   - a resposta esperada nesse fluxo e: apresentacao quando necessario, confirmacao do carro do anuncio, poucos dados reais e pergunta natural sobre detalhes/fotos/duvida;
   - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
+- Hotfix do Pedro v2 para busca estrita e audio:
+  - `pedro-webhook-v2` recebeu build `2026-05-26-strict-stock-audio-v4`;
+  - buscas por modelo explicito agora nao caem em fallback relaxado com carros aleatorios: se o lead pedir Oroch/Onix/Renegade etc., a tool so retorna aquele modelo ou retorna vazio para o cerebro pedir permissao antes de sugerir similares;
+  - adicionados aliases de erro comum como `oroque`, `oroqui`, `oroki`, `orock` e `oroc` para Renault Oroch;
+  - midias de audio recebidas via Uazapi agora sao baixadas e transcritas com `OPENAI_API_KEY`; a transcricao vira a mensagem atual antes do roteamento/planner;
+  - audio deixou de ser tratado como contexto de anuncio, evitando resposta antiga/stale quando o lead manda audio mudando de assunto;
+  - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
 
 ## Historico funcional recente consolidado
 

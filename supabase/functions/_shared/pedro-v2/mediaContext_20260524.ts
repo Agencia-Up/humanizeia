@@ -14,6 +14,7 @@ type PedroV2MediaContext = {
 };
 
 const IMAGE_MIME_RE = /^image\/(png|jpe?g|webp)$/i;
+const AUDIO_MIME_RE = /^audio\/[\w.+-]+$/i;
 const MEDIA_KEYS = [
   "imageMessage",
   "videoMessage",
@@ -291,9 +292,10 @@ function pickDownloadPayload(data: any): { dataUrl?: string | null; url?: string
       nested?.url,
   );
   const text = asText(data?.text || data?.caption || data?.message || data?.transcription || nested?.text || nested?.caption || nested?.transcription);
-  if (base64?.startsWith("data:image/")) return { dataUrl: base64, url, text };
+  if (base64?.startsWith("data:")) return { dataUrl: base64, url, text };
   if (base64 && !/^https?:\/\//i.test(base64) && /^[A-Za-z0-9+/=\r\n]+$/.test(base64)) {
-    return { dataUrl: `data:${IMAGE_MIME_RE.test(mime) ? mime : "image/jpeg"};base64,${base64}`, url, text };
+    const effectiveMime = IMAGE_MIME_RE.test(mime) || AUDIO_MIME_RE.test(mime) ? mime : "application/octet-stream";
+    return { dataUrl: `data:${effectiveMime};base64,${base64}`, url, text };
   }
   return { dataUrl: findFirstImageCandidate(data), url, text };
 }
@@ -425,6 +427,53 @@ async function inferMediaWithVision(imageDataUrl: string, caption?: string | nul
   }
 }
 
+function dataUrlToBlob(dataUrl: string) {
+  const match = dataUrl.match(/^data:([^;,]+)?;base64,(.*)$/s);
+  if (!match) return null;
+  const mime = match[1] || "application/octet-stream";
+  const binary = atob(match[2].replace(/\s+/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: mime });
+}
+
+async function transcribeAudioMedia(audioData?: string | null): Promise<string | null> {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey || !audioData) return null;
+
+  try {
+    let blob: Blob | null = null;
+    if (audioData.startsWith("data:")) {
+      blob = dataUrlToBlob(audioData);
+    } else if (/^https?:\/\//i.test(audioData)) {
+      const res = await fetch(audioData);
+      if (res.ok) blob = await res.blob();
+    }
+    if (!blob || blob.size === 0) return null;
+
+    const form = new FormData();
+    form.append("model", "whisper-1");
+    form.append("language", "pt");
+    form.append("response_format", "json");
+    form.append("file", blob, "audio.ogg");
+
+    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+    });
+    if (!res.ok) {
+      console.warn("[PedroV2] audio transcription failed:", res.status, await res.text().catch(() => ""));
+      return null;
+    }
+    const data = await res.json().catch(() => null);
+    return asText(data?.text);
+  } catch (error) {
+    console.warn("[PedroV2] audio transcription error:", error);
+    return null;
+  }
+}
+
 export async function resolvePedroMediaContext(payload: any, instance?: any): Promise<PedroV2MediaContext> {
   const caption = pickCaption(payload);
   const kind = pickKind(payload);
@@ -432,10 +481,16 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
   const embeddedImage = findFirstImageCandidate(payload);
   const effectiveKind = kind || (embeddedImage ? "image" : null);
   const keysFound = [...collectKeys(payload)].slice(0, 60);
-  const downloaded = effectiveKind === "image" && messageId
+  const downloaded = ["image", "audio", "video", "document"].includes(String(effectiveKind || "")) && messageId
     ? await downloadUazapiMedia(instance, messageId)
     : { ok: false, error: effectiveKind === "image" ? "missing_message_id" : "not_image_or_missing" };
-  const imageData = downloaded.dataUrl || downloaded.url || embeddedImage || null;
+  const imageData = effectiveKind === "image"
+    ? downloaded.dataUrl || downloaded.url || embeddedImage || null
+    : null;
+  const audioData = effectiveKind === "audio"
+    ? downloaded.dataUrl || downloaded.url || null
+    : null;
+  const audioTranscript = effectiveKind === "audio" ? await transcribeAudioMedia(audioData) : null;
   const usedDownloadedImage = Boolean(downloaded.ok && (downloaded.dataUrl || downloaded.url));
   const hasMediaPayload = Boolean(effectiveKind || imageData || downloaded.ok);
 
@@ -463,9 +518,9 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
     };
   }
 
-  const visibleText = compact([caption, downloaded.text]);
+  const visibleText = compact([caption, downloaded.text, audioTranscript]);
   const textInference = inferVehicleFromText(visibleText);
-  const visionInference = imageData ? await inferMediaWithVision(imageData, visibleText) : null;
+  const visionInference = effectiveKind === "image" && imageData ? await inferMediaWithVision(imageData, visibleText) : null;
   const best = visionInference && Number(visionInference.confidence || 0) >= Number(textInference.confidence || 0)
     ? visionInference
     : textInference;
@@ -475,8 +530,8 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
     kind: effectiveKind,
     source: usedDownloadedImage ? "uazapi_download" : embeddedImage ? "webhook_embedded" : downloaded.ok ? "uazapi_download_no_image" : kind ? "media_unavailable" : null,
     message_id: messageId,
-    media_data_url: imageData?.startsWith("data:image/") ? imageData : null,
-    media_url: imageData && /^https?:\/\//i.test(imageData) ? imageData : null,
+    media_data_url: imageData?.startsWith("data:image/") || audioData?.startsWith("data:") ? imageData || audioData : null,
+    media_url: imageData && /^https?:\/\//i.test(imageData) ? imageData : audioData && /^https?:\/\//i.test(audioData) ? audioData : null,
     text: visibleText || null,
     vehicle_query: best.vehicle_query || null,
     vehicle_type: best.vehicle_type || null,
@@ -489,6 +544,7 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
       has_embedded_image: Boolean(embeddedImage),
       used_downloaded_image: usedDownloadedImage,
       has_image_for_vision: Boolean(imageData),
+      audio_transcribed: Boolean(audioTranscript),
     },
   };
 }
@@ -511,6 +567,7 @@ export function sanitizePedroMediaContext(context: PedroV2MediaContext): Record<
 }
 
 export function mediaContextToAdLikeContext(context: PedroV2MediaContext) {
+  if (context.kind === "audio") return null;
   if (!context.has_media_context || !context.vehicle_query) return null;
   return {
     has_ad_context: true,
