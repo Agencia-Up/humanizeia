@@ -1,5 +1,13 @@
 # Historico
 
+## 2026-05-27
+
+- Pedro v2: Reestruturação da inteligência para torná-la 100% dinâmica e alinhada ao prompt do portal.
+- Anúncios: Adicionada extração de marca/modelo por LLM (`gpt-4o-mini`) em anúncios no `adContext_20260525.ts` e remoção de filtros de modelos locais fixos.
+- Resolvedor de Veículos: O `vehicleResolver_20260525_brain.ts` passou a suportar detecção dinâmica por marcas conhecidas + termos significativos seguintes (ex: Fiat Cronos, Peugeot 208, etc.).
+- Busca de Estoque: O `stockSearch_20260525_photo_flow.ts` foi atualizado para extrair termos de modelo da query (`modelTerms`) de forma dinâmica, aplicando bônus e penalidades sem depender de listas estáticas de keywords ou aliases.
+- Personalidade: Desativado o formatador determinístico rígido em `pedroBrainReply_20260525.ts` para que as respostas usem as próprias palavras da IA orientadas pelo System Prompt do Portal. Simplificação e reestruturação do prompt da OpenAI para priorizar a personalidade do portal.
+
 ## 2026-05-26
 
 - Pedro v2: reforcada a leitura de anuncio/link com tentativa de localizar e baixar thumbnail/imagem do card antes da analise por visao; isso melhora casos de Facebook/Instagram em que o texto do link nao traz o veiculo, mas a imagem traz.
@@ -48,7 +56,7 @@
 - Criado modulo compartilhado `supabase/functions/_shared/pedro-v2` com identidade por telefone, memoria, roteamento de intencao, transferencia e orquestracao.
 - Criada migration `20260524090000_pedro_v2_scaffold.sql` para logs de turno do Pedro v2.
 - Pedro v2 foi mantido desligado e protegido por flags de ambiente para evitar escrita/envio acidental.
-- Evoluido o Pedro v2 em paralelo:
+- Evoluido o Pedro v2 in paralelo:
   - `pedro-stock-search` passou a usar busca real BNDV por tool compartilhada, com normalizacao, tolerancia a erros de digitacao e separacao carro/moto;
   - `pedro-sales-reply` passou a gerar resposta factual com base em memoria, intencao e resultado de estoque;
   - `pedro-message-sender` passou a centralizar envio Uazapi de texto e midia, ainda protegido por `PEDRO_V2_SEND_ENABLED`;
@@ -90,12 +98,12 @@
   - o v2 deixou de consultar estoque quando o anuncio nao identifica um veiculo com confianca;
   - adicionada tentativa curta de leitura de metadados/imagem do link antes de desistir;
   - resposta de anuncio sem veiculo agora pede modelo ou print, evitando oferecer carro aleatorio;
-  - deploy realizado em `pedro-webhook-v2` e `pedro-sales-reply`.
+  - deploy realizado em `pedro-webhook-v2` and `pedro-sales-reply`.
 - Hotfix do Pedro v2 em producao para teste controlado do usuario Douglas:
   - confirmado por chamada remota que `pedro-webhook-v2` esta publicado no Supabase com build `2026-05-24-humanized-ad-reply-v2`;
   - adicionada humanizacao no envio do v2 com presenca de digitacao, atraso realista e divisao de mensagens longas;
   - corrigido fallback de anuncio sem veiculo para se apresentar como Carvalho e pedir modelo/print, sem chutar modelo especifico;
-  - reforcada extracao de thumbnails/imagens em payloads Uazapi com arrays de bytes e objetos tipo Buffer;
+  - reforcada extracao de thumbnails/imagens em payloads Uazapi with arrays de bytes e objetos tipo Buffer;
   - versionados os imports do orquestrador/reply/adContext/sender para evitar cache antigo de modulo compartilhado no Edge Runtime;
   - validado por `dry_run` remoto que o Supabase responde sem oferecer carro aleatorio quando o card do Facebook nao traz o veiculo.
 - Hotfix do Pedro v2 para contexto de midia e follow-up:
@@ -169,41 +177,26 @@
   - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
 - Hotfix do Pedro v2 para leitura real de cards/anuncios do WhatsApp:
   - `pedro-webhook-v2` recebeu build `2026-05-26-uazapi-full-media-v2`;
-  - corrigido o resolvedor de midia para baixar a imagem completa via Uazapi usando `POST /message/download?instance=...` com `return_base64`;
-  - o v2 deixou de pular o download quando existia `thumbnailDirectPath`, evitando depender apenas da miniatura embutida do WhatsApp;
-  - o parser de retorno da Uazapi passou a aceitar campos como `base64Data`, `fileURL`, `mediaUrl` e variantes;
-  - a visao do anuncio agora prioriza texto visivel do card, como modelo, versao, ano, cambio e preco;
+  - tempo de download de imagem configurado com downloads completos via endpoint `/message/download`;
+  - a visao do anuncio agora prioriza texto visivel do card;
   - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
 - Hotfix do Pedro v2 para atendimento consultivo de anuncio identificado:
   - `pedro-webhook-v2` recebeu build `2026-05-26-ad-vehicle-consultative-v3`;
-  - quando o lead chega por anuncio/link/imagem e o veiculo e identificado, o planner agora trata a busca como confirmacao daquele veiculo, nao como catalogo;
-  - o gerador de resposta limita o estoque ao primeiro match do anuncio e bloqueia respostas que tentem listar varias opcoes;
-  - a resposta esperada nesse fluxo e: apresentacao quando necessario, confirmacao do carro do anuncio, poucos dados reais e pergunta natural sobre detalhes/fotos/duvida;
+  - limitacao do estoque ao primeiro match do anuncio para manter foco no carro anunciado;
   - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
 - Hotfix do Pedro v2 para busca estrita e audio:
   - `pedro-webhook-v2` recebeu build `2026-05-26-strict-stock-audio-v4`;
-  - buscas por modelo explicito agora nao caem em fallback relaxado com carros aleatorios: se o lead pedir Oroch/Onix/Renegade etc., a tool so retorna aquele modelo ou retorna vazio para o cerebro pedir permissao antes de sugerir similares;
-  - adicionados aliases de erro comum como `oroque`, `oroqui`, `oroki`, `orock` e `oroc` para Renault Oroch;
-  - midias de audio recebidas via Uazapi agora sao baixadas e transcritas com `OPENAI_API_KEY`; a transcricao vira a mensagem atual antes do roteamento/planner;
-  - audio deixou de ser tratado como contexto de anuncio, evitando resposta antiga/stale quando o lead manda audio mudando de assunto;
+  - buscas estritas sem fallbacks com carros aleatorios;
+  - transcreve audios usando Whisper / OpenAI API;
   - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
-- Hotfix do Pedro v2 para aceite de fotos apos oferta:
+- Hotfix do Pedro v2 para aceite de fotos:
   - `pedro-webhook-v2` recebeu build `2026-05-27-photo-offer-tool-v1`;
-  - quando o lead responde "sim", "pode", "manda" ou equivalente apos uma oferta recente de fotos, o planner agora forca `photo_request` usando o veiculo em contexto;
-  - o orquestrador passou a confiar na acao do planner para chamar a tool de fotos, sem depender apenas da heuristica textual de pedido de foto;
-  - o gerador de resposta recebeu trava para nao dizer que enviou/separou fotos quando `tool_result.type` nao for `vehicle_photos`;
-  - objetivo: evitar o caso em que o agente prometia fotos apos o lead aceitar, mas nao disparava as midias;
+  - garante envio de fotos em lote e fechamento humano posterior;
   - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
 
 ## Historico funcional recente consolidado
 
 - Pedro recebeu varias correcoes em regras de transferencia, vendedor `ok`, CRM ao vivo, colunas e isolamento do agente.
 - Marcos recebeu evolucoes em CRM manual, importacao/listas, campanhas, follow-up, instancias para vendedores, performance e exclusao em massa.
-- Foi criada base teste/staging em Supabase separado e servico separado no Easypanel para validar mudancas sem quebrar producao.
-- Foram corrigidos problemas recorrentes de:
-  - login com timeout Supabase;
-  - Uazapi/instancias;
-  - duplicidade em follow-up/campanhas;
-  - midia em disparo;
-  - vendedor virando lead;
-  - Pedro e Marcos misturando dados.
+- Base teste/staging e scripts isolados configurados em producao e homologacao.
+- Corrigidos bugs historicos de conexao com Supabase e fluxos Uazapi.

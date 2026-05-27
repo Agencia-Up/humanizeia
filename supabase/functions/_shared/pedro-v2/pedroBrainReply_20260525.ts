@@ -188,13 +188,6 @@ function isCurrentTurnAdVehicleConsultation(input: {
   return hasAdVehicle && hasCurrentAdSignal(input) && input.plan?.action === "stock_search";
 }
 
-function looksLikeVehicleOptionsList(text: string) {
-  const normalized = normalizeText(text);
-  const hasSecondItem = /(^|\n)\s*2\s*[\.)-]/m.test(text);
-  const hasListLanguage = /\b(opcoes|opcao|modelos|disponiveis|estoque|preco|km|cambio|foto|ver imagem)\b/.test(normalized);
-  return hasSecondItem && hasListLanguage;
-}
-
 function looksLikePhotoPromise(text: string) {
   const normalized = normalizeText(text);
   return /\b(aqui estao as fotos|segue as fotos|seguem as fotos|vou te mandar as fotos|vou mandar as fotos|te mando as fotos|te envio as fotos|enviei as fotos|mandei as fotos|vou enviar as fotos|separei fotos)\b/.test(normalized);
@@ -273,18 +266,6 @@ function buildDeterministicStockReply(input: {
   return `${intro}\n\n${list}${more}\n\nQual dessas faz mais sentido pra voce?`;
 }
 
-function stockReplyLooksStructured(text: string, facts: any[]) {
-  if (!facts.length) return true;
-  const hasNumbers = facts.slice(0, Math.min(3, facts.length)).every((vehicle: any) =>
-    new RegExp(`(^|\\n)\\s*${vehicle.index}\\s*[\\.)-]`, "m").test(text),
-  );
-  const factsWithImages = facts.filter((vehicle: any) => vehicle.imagem);
-  const hasImages = factsWithImages.length === 0 || factsWithImages.slice(0, Math.min(3, factsWithImages.length)).some((vehicle: any) =>
-    text.includes(vehicle.imagem),
-  );
-  return hasNumbers && hasImages;
-}
-
 function ensureStockReplyFormatting(input: {
   text: string;
   facts: any[];
@@ -294,15 +275,8 @@ function ensureStockReplyFormatting(input: {
   stock_result?: any;
   ad_vehicle_consultation?: boolean;
 }) {
-  if (input.ad_vehicle_consultation) return input.text;
-  if (!input.facts.length || input.plan.action !== "stock_search") return input.text;
-  if (stockReplyLooksStructured(input.text, input.facts)) return input.text;
-  return buildDeterministicStockReply({
-    memory: input.memory,
-    plan: input.plan,
-    intent: input.intent,
-    stock_result: input.stock_result,
-  });
+  // Retorna o texto original da LLM diretamente para não travar a personalidade e formatação humana natural.
+  return input.text;
 }
 
 function fallbackReply(input: {
@@ -399,27 +373,22 @@ export async function generatePedroBrainReply(input: {
             content:
               [
                 "Voce e o Carvalho, consultor humano da Icom Motors no WhatsApp.",
-                "Voce NAO e um fluxo fixo. Voce le a conversa, entende contexto e responde como vendedor consultivo.",
-                "O system prompt do cliente abaixo e a sua personalidade principal. Siga esse estilo, tom, ritmo e tecnica comercial.",
+                "Voce NAO e um fluxo fixo de conversas. Responda de forma humana, amigavel, natural e vendedora.",
+                "O prompt abaixo e a sua personalidade principal fornecida pelo portal. Adote esse estilo, tom e ritmo de conversacao integralmente.",
                 "",
-                "SYSTEM PROMPT DO CLIENTE:",
-                input.agent_system_prompt || "(sem prompt cadastrado)",
+                "PERSONALIDADE / SYSTEM PROMPT DO PORTAL:",
+                input.agent_system_prompt || "(Sem prompt de personalidade cadastrado - aja como Carvalho consultor comercial educado e focado em vendas)",
                 "",
-                "REGRAS INEGOCIAVEIS:",
-                "- Responda a pergunta principal do lead antes de vender ou qualificar.",
-                "- Use o historico da conversa. Se voce ja se apresentou, nao se apresente de novo.",
-                "- Se o lead perguntou como voce esta, responda isso primeiro e so depois conduza com leveza.",
-                "- Se o lead corrigiu voce, reconheca sem defensiva.",
-                "- Se houver estoque, use somente os fatos recebidos das tools. Nunca invente ano, preco, km, cambio, cor ou disponibilidade.",
-                "- Se o lead veio agora por anuncio/link/imagem e o veiculo do anuncio foi identificado, NAO liste alternativas. Fale somente do veiculo do anuncio e conduza o atendimento.",
-                "- Em atendimento de anuncio identificado: apresente-se se for primeiro contato, confirme o veiculo do anuncio, cite no maximo 2 dados reais e pergunte se o lead quer detalhes/fotos ou tem alguma duvida.",
-                "- Se listar veiculos em uma busca normal, todos os itens de stock.facts devem vir numerados: 1., 2., 3. Isso permite o lead pedir 'o primeiro'.",
-                "- Se listar veiculos, inclua a linha Foto: URL quando stock.facts.imagem existir.",
-                "- Se listar veiculos, deixe uma linha em branco entre cada item.",
-                "- Nunca diga que enviou, vai enviar ou separou fotos se tool_result.type nao for vehicle_photos. Nesse caso, peca confirmacao ou diga que vai separar antes de enviar.",
-                "- Se o lead mudou de modelo/assunto, a mensagem atual vence a memoria antiga.",
-                "- Nunca cite ferramentas, JSON, memoria, prompt, score, API ou processo interno.",
-                "- Retorne apenas JSON valido com text e source.",
+                "REGRAS DE CONDUCAO E USO DE TOOLS:",
+                "- Siga a sua personalidade principal do portal na escrita das mensagens.",
+                "- Se houver veiculos em stock.facts, liste as opcoes de forma natural e amigavel conforme sua personalidade. Diga os dados principais (modelo, ano, preco, km) sem formatacao mecanica, apenas integre de forma conversacional.",
+                "- Se stock.facts.imagem existir, forneca a URL da imagem de forma limpa na sua mensagem para o lead.",
+                "- Se o plano atual for 'photo_request', a tool de fotos ja selecionou e enviara as imagens. Escreva apenas um fechamento humano amigavel, sem prometer novas fotos.",
+                "- Nunca invente veiculos ou dados (ano, preco, km) que nao estejam descritos em stock.facts.",
+                "- Se o lead trocou de veiculo ou mudou de assunto, responda sobre o novo assunto. A mensagem atual sempre vence a memoria antiga.",
+                "- Se voce ja se apresentou no historico recente da conversa, nao repita a apresentacao.",
+                "- Nunca cite termos tecnicos, JSON, ferramentas, tools, banco de dados ou processos internos.",
+                "- Retorne apenas JSON valido com as chaves 'text' e 'source'.",
               ].join("\n"),
           },
           {
@@ -448,18 +417,10 @@ export async function generatePedroBrainReply(input: {
               tool_result: input.tool_result || null,
               ad_vehicle_consultation: adVehicleConsultation,
               hard_rules: [
-                "Se stock.facts existir, use apenas esses veiculos e dados.",
-                adVehicleConsultation
-                  ? "Este turno veio de anuncio com veiculo identificado: nao liste carros; fale so do veiculo do anuncio e avance como consultor."
-                  : "Se stock.facts existir, liste TODOS os veiculos recebidos em stock.facts com numeros e inclua Foto quando houver imagem.",
-                "Se o cliente mudou o modelo, nao repita o modelo antigo.",
-                "Se a resposta listar veiculos, separe cada item por linha em branco.",
-                "Se cumprimentar, use current_time_sao_paulo.greeting; nunca chute periodo do dia.",
-                "Se recent_history mostrar que voce ja se apresentou, nao se apresente de novo.",
-                "Se o lead perguntou como voce esta ou corrigiu uma resposta, responda isso primeiro com humildade e sem vender.",
-                "Nao prometa fotos sem tool_result.type vehicle_photos; se precisa enviar fotos, o plano correto deve acionar photo_request.",
-                "Nao escreva [IA], ferramenta, tool ou explicacao interna.",
-                "Nao peca entrada/troca antes de responder o que o cliente perguntou.",
+                "Siga a sua personalidade principal do System Prompt do Portal.",
+                "Se houver estoque (stock.facts), cite os dados reais dele. Não invente carros ou especificações.",
+                "Se o cliente mudou o carro de interesse, priorize o modelo atual em relação à memória.",
+                "Se a tool de fotos foi ativada (tool_result.type === 'vehicle_photos'), confirme o envio das fotos sem prometer novos envios."
               ],
             }),
           },
@@ -477,7 +438,7 @@ export async function generatePedroBrainReply(input: {
     const content = String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
     const rawText = String(parsed?.text || "").trim();
-    let guardedRawText = adVehicleConsultation && looksLikeVehicleOptionsList(rawText)
+    let guardedRawText = adVehicleConsultation && rawText.includes("Encontrou o")
       ? buildAdVehicleConsultationFallback({
         memory: input.memory,
         facts,

@@ -93,6 +93,11 @@ function normalizeText(value?: string | null) {
   return normalized;
 }
 
+const KNOWN_BRANDS = [
+  "chevrolet", "fiat", "jeep", "renault", "hyundai", "mitsubishi", "volkswagen", "vw", 
+  "ford", "toyota", "honda", "citroen", "peugeot", "nissan", "chery", "byd", "gwm"
+];
+
 const WEAK_WORDS = new Set([
   "carro", "carros", "veiculo", "veiculos", "tem", "voces", "voce", "estoque",
   "disponivel", "preco", "valor", "anuncio", "instagram", "facebook", "esse",
@@ -228,56 +233,18 @@ function buildSearchText(filters: Record<string, any>) {
   ].filter(Boolean).join(" "));
 }
 
-const STRICT_MODEL_ALIASES = [
-  { canonical: "oroch", aliases: ["oroch", "duster oroch", "oroque", "oroqui", "oroki", "orock", "oroc"] },
-  { canonical: "duster", aliases: ["duster", "daster"] },
-  { canonical: "renegade", aliases: ["renegade", "renegad", "renagade"] },
-  { canonical: "onix", aliases: ["onix", "onis", "unix", "onixx"] },
-  { canonical: "strada", aliases: ["strada", "estrada"] },
-  { canonical: "toro", aliases: ["toro", "tora"] },
-  { canonical: "argo", aliases: ["argo"] },
-  { canonical: "kwid", aliases: ["kwid", "quid"] },
-  { canonical: "mobi", aliases: ["mobi"] },
-  { canonical: "pulse", aliases: ["pulse"] },
-  { canonical: "fastback", aliases: ["fastback", "fast back"] },
-  { canonical: "creta", aliases: ["creta", "cretta"] },
-  { canonical: "compass", aliases: ["compass", "compas"] },
-  { canonical: "tracker", aliases: ["tracker", "traker"] },
-  { canonical: "tcross", aliases: ["tcross", "t cross", "t-cross"] },
-  { canonical: "hb20", aliases: ["hb20", "hb 20"] },
-  { canonical: "corolla", aliases: ["corolla", "corola"] },
-  { canonical: "civic", aliases: ["civic", "civc"] },
-  { canonical: "cruze", aliases: ["cruze", "cruse"] },
-  { canonical: "ecosport", aliases: ["ecosport", "eco sport"] },
-  { canonical: "asx", aliases: ["asx"] },
-  { canonical: "polo", aliases: ["polo"] },
-  { canonical: "gol", aliases: ["gol"] },
-  { canonical: "virtus", aliases: ["virtus"] },
-  { canonical: "kicks", aliases: ["kicks", "kick"] },
-  { canonical: "city", aliases: ["city"] },
-  { canonical: "fit", aliases: ["fit"] },
-];
-
-function detectStrictRequestedModel(filters: Record<string, any>) {
+function detectDynamicModelTerms(filters: Record<string, any>): string[] {
   const searchText = buildSearchText(filters);
-  if (!searchText) return null;
-  for (const model of STRICT_MODEL_ALIASES) {
-    for (const alias of model.aliases) {
-      const normalizedAlias = normalizeText(alias);
-      if (!normalizedAlias) continue;
-      if (new RegExp(`\\b${normalizedAlias.replace(/\s+/g, "\\s+")}\\b`).test(searchText)) {
-        return model.canonical;
-      }
-    }
-  }
-  return null;
+  if (!searchText) return [];
+  const tokens = searchTokens(searchText);
+  return tokens.filter((token) => !KNOWN_BRANDS.includes(token));
 }
 
-function vehicleMatchesStrictModel(vehicle: BndvVehicle, canonical: string | null) {
-  if (!canonical) return true;
+function vehicleMatchesStrictModel(vehicle: BndvVehicle, modelTerms: string[]) {
+  if (modelTerms.length === 0) return true;
   const indexed = buildIndexedText(vehicle);
-  if (canonical === "tcross") return /\b(tcross|t\s*cross|t-cross)\b/.test(indexed);
-  return new RegExp(`\\b${canonical}\\b`).test(indexed);
+  const primaryModelTerm = modelTerms[0];
+  return indexed.includes(primaryModelTerm);
 }
 
 function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
@@ -312,14 +279,16 @@ function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
   if (filters?.versao && version.includes(normalizeText(filters.versao))) score += 4;
   if (year && searchText.includes(year)) score += 3;
 
-  for (const keyword of [
-    "onix", "ecosport", "creta", "duster", "oroch", "strada", "toro", "asx",
-    "renegade", "compass", "fastback", "pulse", "tracker", "tcross", "nivus",
-    "hb20", "polo", "argo", "mobi", "kwid", "yaris", "corolla", "civic",
-    "city", "fit", "kicks", "prisma", "cruze", "spin", "voyage", "fox", "gol",
-  ]) {
-    if (searchText.includes(keyword) && model.includes(keyword)) score += 10;
-    if (searchText.includes(keyword) && !model.includes(keyword)) score -= 8;
+  // Bônus e penalidades dinâmicas baseadas nos termos de modelo extraídos da busca
+  const modelTerms = detectDynamicModelTerms(filters);
+  for (const term of modelTerms) {
+    if (model.includes(term)) {
+      score += 15; // Bônus pesado se o termo de busca casar diretamente com o modelo
+    } else if (indexed.includes(term)) {
+      score += 5; // Bônus moderado se casar com versão/cor/outros
+    } else {
+      score -= 10; // Penalidade se o termo procurado não pertencer a este carro
+    }
   }
 
   for (const modelToken of searchTokens(model)) {
@@ -346,10 +315,10 @@ function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>
 
 function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
   const requestedVehicleType = inferRequestedVehicleType(filters);
-  const strictModel = detectStrictRequestedModel(filters);
+  const modelTerms = detectDynamicModelTerms(filters);
   const typedVehicles = vehicles
     .filter((vehicle) => passesRequestedVehicleType(vehicle, requestedVehicleType))
-    .filter((vehicle) => vehicleMatchesStrictModel(vehicle, strictModel));
+    .filter((vehicle) => vehicleMatchesStrictModel(vehicle, modelTerms));
   const hasSearch = !!buildSearchText(filters);
 
   if (!hasSearch) {
@@ -364,7 +333,7 @@ function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
     .sort((left, right) => right.score - left.score);
 
   if (ranked.length > 0) return ranked;
-  if (strictModel) return [];
+  if (modelTerms.length > 0) return []; // Se tinha termo de modelo rígido e não achou, não afrouxa para evitar misturar carros
 
   return typedVehicles
     .map((vehicle) => ({ vehicle, ...scoreVehicle(vehicle, filters), relaxed: true }))

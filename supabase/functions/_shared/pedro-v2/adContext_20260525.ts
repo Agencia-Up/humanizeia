@@ -17,7 +17,9 @@ type PedroV2AdContext = {
 const URL_RE = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi;
 const METADATA_TIMEOUT_MS = 2500;
 const IMAGE_TIMEOUT_MS = 4500;
-const AD_LINK_RE = /facebook|instagram|story_fbid|post_id|fbclid|igsh|wa\.me|fb\.watch/i;
+const AD_LINK_RE = /facebook|instagram|story_fbid|post_id|fbclid|igsh|wa\.me|fb\.watch|fb\.me/i;
+const AD_TEXT_MARKER_RE =
+  /an[uú]ncio\s+do|anuncio\s+do|mostrar\s+detalhes|mensagem\s+de\s+sauda[cç][aã]o\s+autom[aá]tica|fb\.me/i;
 
 function asText(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -59,6 +61,65 @@ function compact(values: Array<string | null | undefined>) {
     .filter(Boolean)
     .filter((value, index, arr) => arr.indexOf(value) === index)
     .join(" | ");
+}
+
+function isLargeEncodedBlob(value: string) {
+  const text = value.trim();
+  return text.length > 500 && /^[A-Za-z0-9+/=\r\n_-]+$/.test(text) && !/https?:\/\//i.test(text);
+}
+
+function collectPayloadStrings(value: unknown, out: string[] = [], depth = 0, seen = new WeakSet<object>()): string[] {
+  if (!value || depth > 8 || out.length > 160) return out;
+
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text || isLargeEncodedBlob(text)) return out;
+    if (
+      text.length >= 3 &&
+      (AD_LINK_RE.test(text) ||
+        AD_TEXT_MARKER_RE.test(text) ||
+        /r\$\s*[\d.]+/i.test(text) ||
+        /\b(20\d{2}|201\d|202\d|automatico|autom[aá]tico|flex|mec|aut|ltz|lt2|plus|drive|longitude)\b/i.test(text))
+    ) {
+      out.push(decodeHtmlEntities(text));
+    }
+    return out;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectPayloadStrings(item, out, depth + 1, seen);
+    return out;
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (seen.has(record)) return out;
+    seen.add(record);
+
+    const priority = [
+      "title",
+      "body",
+      "description",
+      "caption",
+      "text",
+      "matchedText",
+      "canonicalUrl",
+      "sourceUrl",
+      "url",
+      "preview",
+      "externalAdReply",
+      "contextInfo",
+      "extendedTextMessage",
+    ];
+    for (const key of priority) {
+      if (key in record) collectPayloadStrings(record[key], out, depth + 1, seen);
+    }
+    for (const [key, nested] of Object.entries(record)) {
+      if (!priority.includes(key)) collectPayloadStrings(nested, out, depth + 1, seen);
+    }
+  }
+
+  return out;
 }
 
 function pickByPaths(source: any, paths: string[][]): string | null {
@@ -328,6 +389,7 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
     ["payload", "data", "description"],
     ["message", "description"],
   ]);
+  const payloadText = compact(collectPayloadStrings(payload).slice(0, 80));
   const sourceUrl = pickByPaths({ payload, rootMessage, message, extended, contextInfo, adReply, content }, [
     ["adReply", "sourceUrl"],
     ["adReply", "source_url"],
@@ -352,20 +414,32 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
     adReply?.sourceUrl
   );
   const hasAdLink = Boolean(sourceUrl && AD_LINK_RE.test(sourceUrl));
-  const hasAdTextMarker = AD_LINK_RE.test(messageText);
+  const hasAdTextMarker = AD_LINK_RE.test(messageText) ||
+    AD_LINK_RE.test(payloadText) ||
+    AD_TEXT_MARKER_RE.test(messageText) ||
+    AD_TEXT_MARKER_RE.test(payloadText) ||
+    AD_TEXT_MARKER_RE.test(compact([title, description]));
   const hasAdContext = hasExplicitAdPayload || hasAdLink || hasAdTextMarker;
+  const combinedText = compact([title, description, payloadText, messageText]);
+  const normalizedCombined = normalizeText(combinedText);
   const source = hasAdContext
     ? hostname(sourceUrl) || (normalizeText(compact([title, description, messageText])).includes("facebook") ? "facebook" : null)
     : null;
-  const rawText = compact([title, description, messageText]);
+  const rawText = combinedText;
 
   return {
     has_ad_context: hasAdContext,
-    source,
+    source: source || (normalizedCombined.includes("instagram") ? "instagram" : normalizedCombined.includes("facebook") || normalizedCombined.includes("fb.me") ? "facebook" : null),
     url: sourceUrl,
     title: hasAdContext ? title : null,
     description: hasAdContext ? description : null,
     raw_text: hasAdContext ? rawText || messageText || null : null,
+    diagnostics: hasAdContext
+      ? {
+        payload_text_detected: Boolean(payloadText),
+        payload_text_sample: payloadText.slice(0, 500) || null,
+      }
+      : undefined,
   };
 }
 
@@ -389,6 +463,103 @@ function inferVehicleFromText(text: string): Pick<PedroV2AdContext, "vehicle_que
         : "carro";
 
   return { vehicle_query: model, vehicle_type: type, confidence: 0.78 };
+}
+
+function stripAdBoilerplate(value: string): string {
+  return decodeHtmlEntities(value)
+    .replace(URL_RE, " ")
+    .replace(/an[uú]ncio\s+do\s+(facebook|instagram)/ig, " ")
+    .replace(/mostrar\s+detalhes/ig, " ")
+    .replace(/mensagem\s+de\s+sauda[cç][aã]o\s+autom[aá]tica/ig, " ")
+    .replace(/ol[aá]!\s*/ig, " ")
+    .replace(/fale\s+conosco.*$/ig, " ")
+    .replace(/para\s+mais\s+detalhes.*$/ig, " ")
+    .replace(/tenho\s+interesse.*$/ig, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function prependBrandIfMissing(candidate: string): string {
+  const normalized = normalizeText(candidate);
+  if (/^(chevrolet|fiat|jeep|renault|hyundai|mitsubishi|volkswagen|vw|ford|toyota|honda|citroen|peugeot)\b/i.test(candidate)) {
+    return candidate;
+  }
+  if (normalized.includes("onix") || normalized.includes("tracker") || normalized.includes("cruze")) return `Chevrolet ${candidate}`;
+  if (normalized.includes("argo") || normalized.includes("mobi") || normalized.includes("strada") || normalized.includes("toro") || normalized.includes("pulse")) return `Fiat ${candidate}`;
+  if (normalized.includes("compass") || normalized.includes("renegade")) return `Jeep ${candidate}`;
+  if (normalized.includes("duster") || normalized.includes("oroch") || normalized.includes("kwid")) return `Renault ${candidate}`;
+  if (normalized.includes("hb20") || normalized.includes("creta")) return `Hyundai ${candidate}`;
+  if (normalized.includes("asx")) return `Mitsubishi ${candidate}`;
+  return candidate;
+}
+
+function cleanVehicleCandidate(value?: string | null): string | null {
+  let candidate = stripAdBoilerplate(String(value || ""));
+  candidate = candidate
+    .replace(/\b(encontrou|quer\s+saber\s+mais\s+sobre|sobre|o|a|um|uma)\b/ig, " ")
+    .replace(/\s+por\s+r\$\s*[\d.,]+.*$/i, " ")
+    .replace(/\?\s*$/g, " ")
+    .replace(/^[\s:,-]+|[\s:,-]+$/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!candidate || candidate.length < 3) return null;
+  return prependBrandIfMissing(candidate);
+}
+
+function inferVehicleFromAdCopy(text: string): Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> {
+  const raw = decodeHtmlEntities(String(text || "")).replace(/\s+/g, " ").trim();
+  if (!raw || (!AD_LINK_RE.test(raw) && !AD_TEXT_MARKER_RE.test(raw) && !inferVehicleFromText(raw).vehicle_query)) {
+    return { confidence: 0.05 };
+  }
+
+  const patterns = [
+    /encontrou\s+(?:o|a|um|uma)?\s*([^?|\n]+?)\s+por\s+r\$\s*[\d.,]+/i,
+    /quer\s+saber\s+mais\s+sobre\s+(?:o|a|um|uma)?\s*([^?|\n]+?)\?/i,
+    /mais\s+sobre\s+(?:o|a|um|uma)?\s*([^?|\n]+?)\s+dispon[ií]vel\s+por\s+r\$\s*[\d.,]+/i,
+    /\b(?:ve[ií]culo|carro)\s+(?:do\s+an[uú]ncio|anunciado)\s*[:\-]\s*([^|?\n]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const candidate = cleanVehicleCandidate(match?.[1]);
+    if (candidate) {
+      const base = inferVehicleFromText(candidate);
+      return {
+        vehicle_query: candidate,
+        vehicle_type: base.vehicle_type || "carro",
+        summary: `Anuncio mencionou ${candidate}.`,
+        confidence: 0.94,
+      };
+    }
+  }
+
+  const pieces = raw
+    .split(/\s+\|\s+|\n|(?:An[uú]ncio do|Anuncio do|Mensagem de sauda[cç][aã]o autom[aá]tica)/i)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  for (const piece of pieces) {
+    const hasVehicle = inferVehicleFromText(piece).vehicle_query;
+    const hasSpecifics = /\b(20\d{2}|201\d|202\d|ltz|lt2|plus|drive|longitude|authentique|automatico|autom[aá]tico|mec|flex|r\$)\b/i.test(piece);
+    const candidate = hasVehicle && hasSpecifics ? cleanVehicleCandidate(piece) : null;
+    if (candidate) {
+      const base = inferVehicleFromText(candidate);
+      return {
+        vehicle_query: candidate,
+        vehicle_type: base.vehicle_type || "carro",
+        summary: `Anuncio mencionou ${candidate}.`,
+        confidence: 0.86,
+      };
+    }
+  }
+
+  const fallback = inferVehicleFromText(raw);
+  return {
+    ...fallback,
+    summary: fallback.vehicle_query ? `Anuncio mencionou ${fallback.vehicle_query}.` : null,
+    confidence: fallback.vehicle_query ? Math.max(0.62, fallback.confidence || 0) : 0.15,
+  };
 }
 
 async function inferVehicleFromImage(imageDataUrl: string): Promise<Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null> {
@@ -446,6 +617,54 @@ async function inferVehicleFromImage(imageDataUrl: string): Promise<Pick<PedroV2
   }
 }
 
+async function inferVehicleFromAdText(text: string): Promise<Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null> {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Extraia o veiculo de um anuncio/link automotivo a partir do texto ou metadados fornecidos em JSON. Responda apenas com: vehicle_query (Marca + Modelo + Versao + Ano + Cambio quando disponiveis, ex: 'Chevrolet Onix LT 1.0 2023 manual'), vehicle_type ('carro', 'moto', 'suv', 'pickup'), summary (breve descricao do anuncio) e confidence (de 0.0 a 1.0). Se nao houver veiculo citado ou for muito generico, use null em vehicle_query e confidence baixo.",
+          },
+          {
+            role: "user",
+            content: text,
+          },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      console.warn("[PedroV2] ad text analysis failed:", res.status, await res.text().catch(() => ""));
+      return null;
+    }
+
+    const data = await res.json();
+    const parsed = JSON.parse(data?.choices?.[0]?.message?.content || "{}");
+    return {
+      vehicle_query: asText(parsed.vehicle_query),
+      vehicle_type: asText(parsed.vehicle_type),
+      summary: asText(parsed.summary),
+      confidence: Number(parsed.confidence || 0),
+    };
+  } catch (error) {
+    console.warn("[PedroV2] ad text analysis error:", error);
+    return null;
+  }
+}
+
 export async function resolvePedroAdContext(payload: any, messageText: string): Promise<PedroV2AdContext> {
   const textual = extractTextualAdContext(payload, messageText);
   if (!textual.has_ad_context) {
@@ -472,7 +691,18 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
     textual.raw_text,
     messageText,
   ]);
-  const textInference = inferVehicleFromText(metadataText || textual.raw_text || messageText);
+  const explicitAdInference = inferVehicleFromAdCopy(metadataText || textual.raw_text || messageText);
+  let textInference = explicitAdInference.vehicle_query
+    ? explicitAdInference
+    : inferVehicleFromText(metadataText || textual.raw_text || messageText);
+
+  if (textual.has_ad_context && (!textInference.vehicle_query || Number(textInference.confidence || 0) < 0.6)) {
+    const adTextInference = await inferVehicleFromAdText(metadataText || textual.raw_text || messageText);
+    if (adTextInference && adTextInference.vehicle_query && Number(adTextInference.confidence || 0) >= 0.6) {
+      textInference = adTextInference;
+    }
+  }
+
   const embeddedImage = findFirstBase64Image(payload) || findFirstBase64Image(pageMetadata?.image);
   const imageUrlCandidate = !embeddedImage
     ? findFirstImageUrlCandidate(payload) || (isImageLikeUrl(pageMetadata?.image) ? pageMetadata?.image || null : null)
@@ -486,9 +716,12 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
     ? embeddedImage
     : fetchedImage.dataUrl || embeddedImage || imageUrlCandidate || null;
   const imageInference = imageDataUrl ? await inferVehicleFromImage(imageDataUrl) : null;
-  const best = imageInference && Number(imageInference.confidence || 0) >= Math.max(0.45, Number(textInference.confidence || 0))
-    ? imageInference
-    : textInference;
+  const explicitTextIsStrong = Boolean(explicitAdInference.vehicle_query && Number(explicitAdInference.confidence || 0) >= 0.75);
+  const best = explicitTextIsStrong
+    ? explicitAdInference
+    : imageInference && Number(imageInference.confidence || 0) >= Math.max(0.45, Number(textInference.confidence || 0))
+      ? imageInference
+      : textInference;
 
   return {
     ...textual,
@@ -500,11 +733,14 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
     summary: best.summary || metadataText || textual.raw_text || null,
     confidence: Number(best.confidence || 0),
     diagnostics: {
+      ...(textual.diagnostics || {}),
+      explicit_ad_confidence: Number(explicitAdInference.confidence || 0),
       text_confidence: Number(textInference.confidence || 0),
       image_confidence: Number(imageInference?.confidence || 0),
       image_candidate_host: hostname(embeddedImage || imageUrlCandidate || pageMetadata?.image || null),
       image_fetch_ok: fetchedImage.ok,
       image_fetch_error: fetchedImage.error || null,
+      used_explicit_ad_text: best === explicitAdInference && Boolean(explicitAdInference.vehicle_query),
       used_image_inference: best === imageInference,
     },
   };

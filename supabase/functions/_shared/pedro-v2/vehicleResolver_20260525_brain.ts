@@ -56,6 +56,20 @@ const VEHICLE_ALIASES: VehicleAlias[] = [
   { canonical: "fit", label: "Honda Fit", type: "hatch", aliases: ["fit", "honda fit"] },
 ];
 
+const KNOWN_BRANDS = [
+  "chevrolet", "fiat", "jeep", "renault", "hyundai", "mitsubishi", "volkswagen", "vw", 
+  "ford", "toyota", "honda", "citroen", "peugeot", "nissan", "chery", "byd", "gwm"
+];
+
+const WEAK_WORDS = new Set([
+  "carro", "carros", "veiculo", "veiculos", "tem", "voces", "voce", "estoque",
+  "disponivel", "preco", "valor", "anuncio", "instagram", "facebook", "esse",
+  "essa", "este", "esta", "sobre", "quero", "queria", "saber", "mais", "de",
+  "da", "do", "dos", "das", "um", "uma", "com", "sem", "para", "por", "ate",
+  "automatico", "manual", "flex", "gasolina", "diesel", "aut", "mec", "fotos", 
+  "foto", "detalhes", "modelo", "versao", "ano", "cor", "km"
+]);
+
 const REFERENCE_WORDS = /\b(esse|essa|este|esta|aquele|aquela|dele|dela|do\s+\d|da\s+\d|primeiro|primeira|segundo|segunda|terceiro|terceira|quarto|quarta|quinto|quinta|foto|fotos|imagem|imagens|painel|interior|banco|bancos|roda|rodas|traseira|frente|lateral)\b/;
 const VEHICLE_WORDS = /\b(carro|carros|veiculo|veiculos|auto|automovel|suv|sedan|hatch|pickup|picape|caminhonete|camionete|moto|motos)\b/;
 const AD_WORDS = /\b(anuncio|instagram|facebook|story|post|propaganda|campanha|link)\b/;
@@ -102,15 +116,21 @@ function words(value: string) {
   return normalizeText(value).split(/\s+/).filter(Boolean);
 }
 
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function matchVehicleInText(text?: string | null) {
   const normalized = normalizeText(text);
   if (!normalized) return null;
+  
   let best: {
     vehicle: VehicleAlias;
     confidence: number;
     reason: string;
   } | null = null;
 
+  // 1. Tenta correspondência com a lista de aliases pré-definidos
   for (const vehicle of VEHICLE_ALIASES) {
     for (const alias of vehicle.aliases) {
       const normalizedAlias = normalizeText(alias);
@@ -118,11 +138,14 @@ function matchVehicleInText(text?: string | null) {
       const direct = new RegExp(`\\b${normalizedAlias.replace(/\s+/g, "\\s+")}\\b`).test(normalized);
       if (direct) {
         const confidence = normalizedAlias === vehicle.canonical ? 0.95 : 0.9;
-        if (!best || confidence > best.confidence) best = { vehicle, confidence, reason: `alias:${alias}` };
+        if (!best || confidence > best.confidence) {
+          best = { vehicle, confidence, reason: `alias:${alias}` };
+        }
       }
     }
   }
 
+  // 2. Similaridade fuzzy de 1 token com os aliases
   const tokens = words(normalized);
   for (const vehicle of VEHICLE_ALIASES) {
     for (const alias of vehicle.aliases) {
@@ -132,13 +155,43 @@ function matchVehicleInText(text?: string | null) {
         const score = similarity(token, aliasTokens[0]);
         if (score >= 0.78) {
           const confidence = 0.68 + score * 0.22;
-          if (!best || confidence > best.confidence) best = { vehicle, confidence, reason: `fuzzy:${token}->${aliasTokens[0]}` };
+          if (!best || confidence > best.confidence) {
+            best = { vehicle, confidence, reason: `fuzzy:${token}->${aliasTokens[0]}` };
+          }
         }
       }
     }
   }
 
-  return best;
+  if (best) return best;
+
+  // 3. Detecção dinâmica: Marca Conhecida + Palavra significativa seguinte
+  for (const brand of KNOWN_BRANDS) {
+    const brandRegex = new RegExp(`\\b${brand}\\b`, "i");
+    if (brandRegex.test(normalized)) {
+      const parts = normalized.split(brandRegex);
+      if (parts.length > 1) {
+        const afterText = parts[1].trim();
+        const afterTokens = afterText.split(/\s+/).filter(Boolean);
+        const modelCandidate = afterTokens.find((token) => !WEAK_WORDS.has(token) && token.length >= 3);
+        if (modelCandidate) {
+          const label = `${capitalize(brand)} ${capitalize(modelCandidate)}`;
+          return {
+            vehicle: {
+              canonical: modelCandidate,
+              label,
+              type: inferVehicleType(label) || "carro",
+              aliases: [modelCandidate]
+            },
+            confidence: 0.85,
+            reason: `dynamic_brand_match:${brand}:${modelCandidate}`
+          };
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 function inferVehicleType(text?: string | null) {
