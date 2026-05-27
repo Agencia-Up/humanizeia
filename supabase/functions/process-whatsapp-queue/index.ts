@@ -25,7 +25,82 @@ const COLD_CONTACT_MIN_DELAY_SECONDS = 45; // Minimum delay for cold contacts (n
 const COLD_CONTACT_MAX_DELAY_SECONDS = 120; // Maximum delay for cold contacts
 const NUMBER_VALIDATION_TIMEOUT_MS = 5_000;
 
-const instanceFailures = new Map<string, number>();
+// BUG-NOVO-05: o Map de failures era em escopo de MÓDULO. Deno Deploy cria
+// nova runtime a cada invocação, então o contador zerava sempre — circuit
+// breaker NUNCA disparava + handle-instance-ban virava dead code.
+// Solução: o Map agora é populado a cada invocação A PARTIR da coluna
+// wa_instances.consecutive_undelivered (persistente), e cada increment/reset
+// também escreve no banco. Variável global removida em favor de instância
+// per-request (criada no Deno.serve handler).
+//
+// O Map ainda existe como CACHE LOCAL dentro do request — evita SELECTs
+// repetidos quando o mesmo lote processa N itens da mesma instância.
+//
+// Helpers ficam aqui pra reuso:
+
+/**
+ * Pré-carrega failure counts de wa_instances.consecutive_undelivered.
+ * Chamado uma vez no início de cada invocação do queue processor.
+ */
+async function loadInstanceFailureCounts(
+  supabase: any,
+  instanceIds: string[],
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (instanceIds.length === 0) return map;
+  const { data } = await supabase
+    .from("wa_instances")
+    .select("id, consecutive_undelivered")
+    .in("id", instanceIds);
+  for (const row of (data || []) as Array<{ id: string; consecutive_undelivered: number | null }>) {
+    map.set(row.id, row.consecutive_undelivered ?? 0);
+  }
+  return map;
+}
+
+/**
+ * Incrementa o contador no banco E no cache local. Retorna novo valor.
+ * Usa a função SQL increment_consecutive_undelivered que já existe (atômica).
+ */
+async function incrementInstanceFailureCount(
+  supabase: any,
+  failuresCache: Map<string, number>,
+  instanceId: string,
+): Promise<number> {
+  try {
+    await supabase.rpc("increment_consecutive_undelivered", { iid: instanceId });
+  } catch (rpcErr) {
+    console.warn("[circuit-breaker] increment_consecutive_undelivered RPC falhou:", rpcErr);
+  }
+  // Lê valor novo do banco (RPC pode ter side effects extras como shadow_ban_suspect)
+  const { data } = await supabase
+    .from("wa_instances")
+    .select("consecutive_undelivered")
+    .eq("id", instanceId)
+    .maybeSingle();
+  const newCount = (data as any)?.consecutive_undelivered ?? ((failuresCache.get(instanceId) || 0) + 1);
+  failuresCache.set(instanceId, newCount);
+  return newCount;
+}
+
+/**
+ * Zera o contador no banco E no cache local. Chamado a cada envio bem-sucedido.
+ */
+async function resetInstanceFailureCount(
+  supabase: any,
+  failuresCache: Map<string, number>,
+  instanceId: string,
+): Promise<void> {
+  failuresCache.set(instanceId, 0);
+  try {
+    await supabase
+      .from("wa_instances")
+      .update({ consecutive_undelivered: 0 })
+      .eq("id", instanceId);
+  } catch (err) {
+    console.warn("[circuit-breaker] reset consecutive_undelivered falhou:", err);
+  }
+}
 
 interface QueueItem {
   id: string;
@@ -171,6 +246,12 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // BUG-NOVO-05: cache local de failures por instância. Populated do banco
+    // (wa_instances.consecutive_undelivered) e atualizado a cada increment/reset.
+    // Per-request, NÃO mais escopo de módulo — assim circuit breaker funciona
+    // mesmo quando Deno cria nova runtime.
+    const instanceFailures = new Map<string, number>();
+
     await autoStartDueScheduledCampaigns(supabase);
 
     // ===== ATOMIC CLAIM =====
@@ -279,6 +360,13 @@ Deno.serve(async (req) => {
         instanceMap.set(uid, typedInstances);
 
         const instanceIds = typedInstances.map((inst) => inst.id);
+
+        // BUG-NOVO-05: popula instanceFailures a partir de wa_instances.
+        // consecutive_undelivered (persistente) em vez de Map global zerado.
+        const failureCounts = await loadInstanceFailureCounts(supabase, instanceIds);
+        for (const [id, count] of failureCounts) {
+          instanceFailures.set(id, count);
+        }
         const { data: todaySentRows } = await supabase
           .from("wa_queue")
           .select("instance_id")
@@ -535,7 +623,8 @@ Deno.serve(async (req) => {
         } else {
           sendResult = await sendMessageByProvider(instance, item.phone, finalMessage, effectiveMediaUrl, effectiveMediaType);
         }
-        instanceFailures.set(instance.id, 0);
+        // BUG-NOVO-05: zera contador no banco E cache local
+        await resetInstanceFailureCount(supabase, instanceFailures, instance.id);
 
         // Step 6: Read receipt
         await sleep(200 + Math.random() * 500);
@@ -700,8 +789,8 @@ Deno.serve(async (req) => {
 
         // Circuit breaker (for non-disconnect errors)
         if (selectedInstance && !isDisconnectedError) {
-          const currentFailures = (instanceFailures.get(selectedInstance.id) || 0) + 1;
-          instanceFailures.set(selectedInstance.id, currentFailures);
+          // BUG-NOVO-05: incrementa contador PERSISTENTE (banco + cache local)
+          const currentFailures = await incrementInstanceFailureCount(supabase, instanceFailures, selectedInstance.id);
           if (currentFailures >= CIRCUIT_BREAKER_THRESHOLD) {
             console.warn(`Circuit breaker triggered for instance ${selectedInstance.id}`);
             const { error: healthErr } = await supabase.rpc("decrement_instance_health", {
@@ -748,20 +837,75 @@ Deno.serve(async (req) => {
       processed++;
     }
 
-    // Check campaign completion
+    // Check campaign completion — BUG-NOVO-08: distinguir 'completed' (sucessos) de 'failed' (100% falhas)
+    // Antes: count pending+processing = 0 → marcava 'completed'. Se TODOS os itens da campanha
+    // falharam (instância morta, retries esgotados, etc.), campanha aparecia "✅ Concluída" enquanto
+    // 0 mensagens chegaram. Master só percebia depois de horas conferindo manualmente.
     for (const cid of campaignIds) {
       if (!activeCampaignIds.has(cid)) continue; // Don't mark paused as completed
-      const { count } = await supabase
+
+      // Conta itens restantes (pending/processing) + outcomes finais (sent/failed)
+      const { count: pendingCount } = await supabase
         .from("wa_queue")
         .select("id", { count: "exact", head: true })
         .eq("campaign_id", cid)
         .in("status", ["pending", "processing"]);
-      if (count === 0) {
-        await supabase
-          .from("wa_campaigns")
+
+      if (pendingCount !== 0) continue; // Ainda processando
+
+      // Sem itens pending — checa balance sent vs failed pra decidir status final
+      const { count: sentCount } = await supabase
+        .from("wa_queue")
+        .select("id", { count: "exact", head: true })
+        .eq("campaign_id", cid)
+        .eq("status", "sent");
+
+      const { count: failedCount } = await supabase
+        .from("wa_queue")
+        .select("id", { count: "exact", head: true })
+        .eq("campaign_id", cid)
+        .eq("status", "failed");
+
+      const totalFinal = (sentCount ?? 0) + (failedCount ?? 0);
+      if (totalFinal === 0) {
+        // Edge case raro: campanha sem itens. Marca completed sem alerta.
+        await supabase.from("wa_campaigns")
           .update({ status: "completed", completed_at: new Date().toISOString() })
           .eq("id", cid);
+        continue;
       }
+
+      const failRate = (failedCount ?? 0) / totalFinal;
+      let finalStatus: string;
+      let errorMessage: string | null = null;
+
+      if (failRate >= 1.0) {
+        // 100% failed → não é "completed", é "failed"
+        finalStatus = "failed";
+        errorMessage = `Todos os ${failedCount} itens falharam ao enviar. Verifique instância WhatsApp e tente reenviar.`;
+        console.error(`[campaign-completion] Campanha ${cid} marcada como FAILED — ${failedCount}/${totalFinal} itens falharam (100%)`);
+      } else if (failRate >= 0.5) {
+        // Mais de metade falhou → completed mas com alerta
+        finalStatus = "completed_with_errors";
+        errorMessage = `${failedCount} de ${totalFinal} itens falharam (${Math.round(failRate * 100)}%). Revise antes de re-enviar.`;
+        console.warn(`[campaign-completion] Campanha ${cid} concluída com erros — ${failedCount}/${totalFinal} falharam`);
+      } else {
+        // Maioria sucesso → completed normal
+        finalStatus = "completed";
+        if ((failedCount ?? 0) > 0) {
+          errorMessage = `${failedCount} de ${totalFinal} itens falharam.`;
+        }
+      }
+
+      const updatePayload: any = {
+        status: finalStatus,
+        completed_at: new Date().toISOString(),
+      };
+      if (errorMessage) updatePayload.error_message = errorMessage;
+
+      await supabase.from("wa_campaigns")
+        .update(updatePayload)
+        .eq("id", cid);
     }
 
     return new Response(
