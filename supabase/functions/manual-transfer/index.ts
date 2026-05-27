@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { buildConversationBriefing } from "../_shared/transfer/buildBriefing.ts";
+import { buildConversationBriefing, buildMarcosBriefing, buildManagerReport } from "../_shared/transfer/buildBriefing.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -179,6 +179,201 @@ async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member
   }
 }
 
+// ============================================================================
+// MARCOS — Transferência manual de lead Marcos com briefing e notificação gerente
+// ----------------------------------------------------------------------------
+// FASE 2 do PLANO_CORRECAO_BUGS_2026-05-27 (BUG-16). Estende manual-transfer
+// pra aceitar leads do Marcos (crm_leads), antes só Pedro (ai_crm_leads).
+//
+// Diferenças em relação ao fluxo Pedro:
+//   - Tabela origem é crm_leads (não ai_crm_leads).
+//   - Marcos não tem agente IA → sem wa_chat_history → briefing usa só
+//     campos do crm_leads (origem, cidade, veiculo, etc).
+//   - Gerente é resolvido via manager_feedback_config.gerente_phone_marcos
+//     (coluna dedicada, não wa_ai_agents.gerente_phone).
+//   - Atribuição é IMEDIATA E FIRME (sem aguardar Ok do vendedor). Marcos
+//     é manual desde o início; não existe rodízio automático que possa
+//     reescalonar. Diferente do Pedro que vai virar opção A na FASE 3.
+//   - Não grava em ai_lead_transfers (essa tabela é específica de Pedro).
+//     Histórico do Marcos vive em crm_activities (já tem trigger).
+// ============================================================================
+async function handleMarcosTransfer(
+  supabase: any,
+  body: {
+    crmLeadId: string;
+    memberId: string;
+    notes?: string;
+  },
+): Promise<Response> {
+  const { crmLeadId, memberId, notes } = body;
+
+  // 1. Buscar lead Marcos
+  const { data: lead, error: leadErr } = await supabase
+    .from("crm_leads")
+    .select("id, user_id, name, phone, summary, origem, vehicle_interest, client_city, payment_method, custom_fields, assigned_to")
+    .eq("id", crmLeadId)
+    .maybeSingle();
+
+  if (leadErr || !lead) {
+    console.error("[manual-transfer/marcos] lead nao encontrado", { crmLeadId, leadErr });
+    return new Response(JSON.stringify({ error: "Lead Marcos nao encontrado" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // 2. Buscar vendedor + validar
+  const { data: member, error: memberErr } = await supabase
+    .from("ai_team_members")
+    .select("id, user_id, name, whatsapp_number, is_active, auth_user_id")
+    .eq("id", memberId)
+    .maybeSingle();
+
+  if (memberErr || !member) {
+    return new Response(JSON.stringify({ error: "Vendedor nao encontrado" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (!member.is_active) {
+    return new Response(JSON.stringify({ error: "Vendedor inativo. Reative em Pedro > Vendedores antes de atribuir." }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (!member.whatsapp_number) {
+    return new Response(JSON.stringify({ error: "Vendedor sem WhatsApp cadastrado. Configure em Pedro > Vendedores antes de atribuir." }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // 3. Encontrar instância pra enviar mensagens
+  //    Prioridade: instância do vendedor (auth_user_id dele) > instância do master > qualquer ativa
+  let instance: any = null;
+  if (member.auth_user_id) {
+    const { data: sellerInst } = await supabase
+      .from("wa_instances")
+      .select("*")
+      .eq("user_id", member.auth_user_id)
+      .eq("is_active", true)
+      .eq("status", "connected")
+      .order("health_score", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    instance = sellerInst;
+  }
+  if (!instance) {
+    const { data: masterInst } = await supabase
+      .from("wa_instances")
+      .select("*")
+      .eq("user_id", lead.user_id)
+      .eq("is_active", true)
+      .eq("status", "connected")
+      .order("health_score", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    instance = masterInst;
+  }
+
+  if (!instance) {
+    return new Response(JSON.stringify({ error: "Nenhuma instancia WhatsApp conectada para enviar a transferencia. Conecte uma instancia em Pedro > Instancias." }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // 4. Montar briefing pra vendedor (usa helper compartilhado)
+  const briefing = buildMarcosBriefing({
+    name: lead.name,
+    phone: lead.phone,
+    summary: lead.summary,
+    origem: lead.origem,
+    vehicle_interest: lead.vehicle_interest,
+    city: lead.client_city,
+    payment_method: lead.payment_method,
+    custom_fields: lead.custom_fields,
+  });
+
+  const sellerMsg = `🚨 *TRANSFERÊNCIA DE LEAD MARCOS*
+
+${briefing}
+${notes ? `\n💬 *Observação do master:* ${notes}\n` : ""}
+⚡ O cliente está aguardando seu contato!`;
+
+  await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
+
+  // 5. Notificar gerente (se configurado em manager_feedback_config.gerente_phone_marcos)
+  const { data: feedbackCfg } = await supabase
+    .from("manager_feedback_config")
+    .select("gerente_phone_marcos")
+    .eq("user_id", lead.user_id)
+    .maybeSingle();
+
+  const gerentePhone = feedbackCfg?.gerente_phone_marcos || null;
+  if (gerentePhone) {
+    const managerReport = buildManagerReport({
+      leadName: lead.name || "Sem nome",
+      leadPhone: lead.phone || "",
+      status: "atribuido_manualmente",
+      summary: lead.summary,
+      sellerName: member.name,
+      sellerPhone: member.whatsapp_number,
+      origin: "manual",
+      source: "marcos",
+    });
+    try {
+      await sendWAMessage(instance, gerentePhone, managerReport);
+    } catch (err) {
+      console.warn("[manual-transfer/marcos] Falha ao enviar relatorio ao gerente Marcos (nao bloqueante):", err);
+    }
+  } else {
+    console.log("[manual-transfer/marcos] Sem gerente_phone_marcos configurado — pulando notificacao");
+  }
+
+  // 6. Atualizar lead — atribuição imediata e firme (sem timeout)
+  //    Marcos não tem rodízio automático nem confirmação por Ok do vendedor.
+  const nextCustomFields = {
+    ...(lead.custom_fields || {}),
+    seller_member_id: memberId,
+    seller_name: member.name,
+    seller_assigned_at: new Date().toISOString(),
+    seller_assigned_via: "manual-transfer-edge-function",
+  };
+
+  const { error: updateErr } = await supabase
+    .from("crm_leads")
+    .update({
+      assigned_to: memberId,
+      custom_fields: nextCustomFields,
+    })
+    .eq("id", crmLeadId);
+
+  if (updateErr) {
+    console.error("[manual-transfer/marcos] erro ao atualizar crm_leads.assigned_to", updateErr);
+    return new Response(JSON.stringify({ error: `Mensagens enviadas, mas falha ao atualizar lead: ${updateErr.message}` }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // 7. Atualizar last_lead_received_at do vendedor (round-robin global)
+  await supabase
+    .from("ai_team_members")
+    .update({ last_lead_received_at: new Date().toISOString() })
+    .eq("id", memberId);
+
+  return new Response(JSON.stringify({
+    success: true,
+    crmLeadId,
+    memberId,
+    source: "marcos",
+    gerente_notificado: !!gerentePhone,
+  }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -211,10 +406,17 @@ Deno.serve(async (req) => {
     // em ai_team_members, mesmo quando o profile antigo nao esta completo.
     const effectiveUserId = await resolveEffectiveUserId(supabase, userId);
 
-    const { leadId, memberId, notes, remoteJid, agentId, leadName, ownerUserId: bodyOwnerUserId } = await req.json();
+    const { leadId, crmLeadId, memberId, notes, remoteJid, agentId, leadName, ownerUserId: bodyOwnerUserId } = await req.json();
+
+    // FASE 2 — branch Marcos. Lead vive em crm_leads (não ai_crm_leads).
+    // Quando o frontend Marcos chama esta edge function, passa crmLeadId em
+    // vez de leadId. Mesma função, fluxo separado pra não bagunçar Pedro.
+    if (crmLeadId && memberId) {
+      return await handleMarcosTransfer(supabase, { crmLeadId, memberId, notes });
+    }
 
     if (!leadId || !memberId) {
-      return new Response(JSON.stringify({ error: "leadId and memberId are required" }), {
+      return new Response(JSON.stringify({ error: "leadId (ou crmLeadId) e memberId sao obrigatorios" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
