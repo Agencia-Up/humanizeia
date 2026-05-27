@@ -111,6 +111,17 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringL
   const [showHist, setShowHist] = useState(false);
   // Vendedor escolhido pelo master no select. Se vazio, usa nextSeller (round-robin).
   const [selectedSellerId, setSelectedSellerId] = useState<string>('');
+
+  // BUG-NOVO-10: state local pode ficar apontando pra vendedor que sumiu
+  // (desativado por outro master, deletado, etc.). Sem este reset, o <select>
+  // mostra a primeira opção visualmente mas state ainda guarda o ID antigo —
+  // master clica "Transferir" e manda pro vendedor inativo, recebe erro.
+  useEffect(() => {
+    if (selectedSellerId && !activeMembers?.some((m: any) => m.id === selectedSellerId)) {
+      setSelectedSellerId('');
+    }
+  }, [activeMembers, selectedSellerId]);
+
   const isTransferring = transferringLeadId === lead.id;
   const targetSellerId = selectedSellerId || nextSeller?.id || null;
   const targetSellerName = selectedSellerId
@@ -836,7 +847,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     setTransferringLeadId(leadId);
 
     try {
-      const { error } = await supabase.functions.invoke('manual-transfer', {
+      const { data, error } = await supabase.functions.invoke('manual-transfer', {
         body: {
           leadId,
           memberId: targetSellerId,
@@ -860,9 +871,16 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         }
         throw new Error(message);
       }
-      toast.success(`Lead transferido para ${targetSeller?.name || 'vendedor'}.`, {
-        description: 'Briefing IA enviado ao vendedor. Gerente notificado.',
-      });
+      // BUG-NOVO-03: respeitar deduplicated=true do backend (clique duplo < 30s)
+      if ((data as any)?.deduplicated) {
+        toast.info(`Já estava transferido pra ${targetSeller?.name || 'vendedor'}`, {
+          description: 'Clique anterior detectado (< 30s). Sem mensagem duplicada.',
+        });
+      } else {
+        toast.success(`Lead transferido para ${targetSeller?.name || 'vendedor'}.`, {
+          description: 'Briefing IA enviado ao vendedor. Gerente notificado.',
+        });
+      }
       fetchLiveData();
     } catch (e: any) {
       console.error('Transfer error:', e);

@@ -1677,8 +1677,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         // (manager_feedback_config.gerente_phone_marcos). Antes era so UPDATE
         // direto no banco — vendedor recebia lead "no escuro".
         // DESATRIBUIR (newMemberId=null) continua so UPDATE direto, sem msg.
+        let marcosDeduplicated = false;
         if (newMemberId) {
-          const { error } = await supabase.functions.invoke('manual-transfer', {
+          const { data, error } = await supabase.functions.invoke('manual-transfer', {
             body: {
               crmLeadId: leadId,
               memberId: newMemberId,
@@ -1693,6 +1694,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             }
             throw new Error(message);
           }
+          marcosDeduplicated = !!(data as any)?.deduplicated;
         } else {
           // Desatribuição — só UPDATE direto
           const nextCustomFields = {
@@ -1732,12 +1734,20 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             custom_fields: nextCustomFields,
           });
         }
-        toast({
-          title: newMemberId ? '✅ Lead transferido!' : '✅ Lead desatribuído',
-          description: newMemberId
-            ? `${newMember?.name} recebeu o briefing. Gerente Marcos notificado (se configurado).`
-            : undefined,
-        });
+        // BUG-NOVO-03: respeitar deduplicated do backend (clique duplo < 30s)
+        if (marcosDeduplicated) {
+          toast({
+            title: 'ℹ️ Já estava atribuído',
+            description: `Clique recente detectado. ${newMember?.name} não recebeu mensagem duplicada.`,
+          });
+        } else {
+          toast({
+            title: newMemberId ? '✅ Lead transferido!' : '✅ Lead desatribuído',
+            description: newMemberId
+              ? `${newMember?.name} recebeu o briefing. Gerente Marcos notificado (se configurado).`
+              : undefined,
+          });
+        }
         return;
       }
 
@@ -1749,9 +1759,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       // Desatribuir (newMemberId=null) continua só fazendo UPDATE.
       const newMember = newMemberId ? teamMembers.find(m => m.id === newMemberId) ?? null : null;
 
+      let pedroDeduplicated = false;
       if (newMemberId) {
         const lead = leads.find(l => l.id === leadId) || selectedLead;
-        const { error } = await supabase.functions.invoke('manual-transfer', {
+        const { data, error } = await supabase.functions.invoke('manual-transfer', {
           body: {
             leadId,
             memberId: newMemberId,
@@ -1770,6 +1781,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           }
           throw new Error(message);
         }
+        pedroDeduplicated = !!(data as any)?.deduplicated;
       } else {
         // Desatribuição — só UPDATE
         const { error } = await (supabase as any)
@@ -1791,12 +1803,20 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           member: newMember ? { id: newMember.id, name: newMember.name } : null,
         });
       }
-      toast({
-        title: newMemberId ? '✅ Lead transferido!' : '✅ Lead desatribuído',
-        description: newMemberId
-          ? `${newMember?.name} recebeu o briefing IA. Aguardando confirmação do vendedor (até 15min). Se não responder, lead será reescalado.`
-          : undefined,
-      });
+      // BUG-NOVO-03: respeitar deduplicated do backend (clique duplo < 30s)
+      if (pedroDeduplicated) {
+        toast({
+          title: 'ℹ️ Já estava transferido',
+          description: `Clique anterior detectado (< 30s). ${newMember?.name} não recebeu mensagem duplicada.`,
+        });
+      } else {
+        toast({
+          title: newMemberId ? '✅ Lead transferido!' : '✅ Lead desatribuído',
+          description: newMemberId
+            ? `${newMember?.name} recebeu o briefing IA. Aguardando confirmação do vendedor (até 15min). Se não responder, lead será reescalado.`
+            : undefined,
+        });
+      }
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {

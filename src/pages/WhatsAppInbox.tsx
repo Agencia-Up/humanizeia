@@ -450,7 +450,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       // - envia briefing IA pro vendedor via WhatsApp
       // - envia relatório de transferência pro gerente
       // - registra em ai_lead_transfers
-      const { error } = await supabase.functions.invoke('manual-transfer', {
+      const { data, error } = await supabase.functions.invoke('manual-transfer', {
         body: {
           leadId: lead?.id || null,
           memberId,
@@ -470,10 +470,18 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         throw new Error(message);
       }
 
-      toast({
-        title: '✅ Lead transferido!',
-        description: `${member?.name} recebeu o briefing IA via WhatsApp. Gerente notificado.`,
-      });
+      // BUG-NOVO-03: respeitar deduplicated=true do backend (clique duplo < 30s)
+      if ((data as any)?.deduplicated) {
+        toast({
+          title: 'ℹ️ Já estava transferido',
+          description: 'Clique anterior detectado (< 30s). Vendedor não recebeu mensagem duplicada.',
+        });
+      } else {
+        toast({
+          title: '✅ Lead transferido!',
+          description: `${member?.name} recebeu o briefing IA via WhatsApp. Gerente notificado.`,
+        });
+      }
     } catch (err: any) {
       toast({ title: 'Erro ao transferir', description: err.message, variant: 'destructive' });
     }
