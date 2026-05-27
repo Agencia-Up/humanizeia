@@ -170,8 +170,15 @@ export default function AgentHub() {
         </motion.div>
 
         {/* ── Ações Rápidas ─────────────────────────────────────────────────── */}
-        {/* FEATURE FLAG quickActions: quando false, seção INTEIRA não renderiza. */}
-        {FEATURES.quickActions && (
+        {/* FEATURE FLAGS:
+            - googleAdsMetrics/socialMediaContent/businessStrategy: removem
+              individualmente os atalhos /metrics, /davi e /daniel.
+            - Os 3 atalhos permanentes (/copywriter, /whatsapp/broadcast,
+              /marcos) NUNCA são filtrados por flag — devem permanecer
+              visíveis sempre (decisão de produto 27/05/2026).
+            - Por isso a seção NÃO é envolvida por uma flag externa
+              `quickActions`: como ela sempre tem itens visíveis, ela
+              sempre aparece. */}
         <div>
           <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-foreground">
             <Zap className="h-4 w-4 text-primary" />
@@ -179,7 +186,7 @@ export default function AgentHub() {
           </h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {quickActions.filter(a => {
-              // Filtros por feature flag (aplicados qdo seção ativa)
+              // Filtros por feature flag (oculta os 3 atalhos não-liberados)
               if (a.url === '/metrics' && !FEATURES.googleAdsMetrics) return false;
               if (a.url === '/davi' && !FEATURES.socialMediaContent) return false;
               if (a.url === '/daniel' && !FEATURES.businessStrategy) return false;
@@ -210,7 +217,6 @@ export default function AgentHub() {
             ))}
           </div>
         </div>
-        )}{/* ── fim FEATURES.quickActions ── */}
 
         {/* ── Seus Agentes ────────────────────────────────────────────────── */}
         <div>

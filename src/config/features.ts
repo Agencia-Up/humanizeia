@@ -6,8 +6,8 @@
 //
 // Decisão de produto (27/05/2026):
 // Por enquanto só Pedro e Marcos estão liberados. Várias seções do painel
-// (ações rápidas, campanhas, atalhos pra agentes não liberados) ficam
-// desativadas até esses agentes/ferramentas estarem prontos.
+// (campanhas/anúncios, atalhos pra agentes não liberados) ficam desativadas
+// até esses agentes/ferramentas estarem prontos.
 //
 // Pra reativar: mude a flag pra `true` neste arquivo, faça commit, deploy.
 // Nenhuma outra alteração de código é necessária.
@@ -15,15 +15,6 @@
 
 export const FEATURES = {
   // ── SEÇÕES INTEIRAS ─────────────────────────────────────────────────────
-
-  /**
-   * Seção "Ações rápidas" no AgentHub (`/agentes`).
-   * Quando false: a seção inteira não é montada no DOM.
-   * Quando true: a seção aparece, e cada item dentro dela ainda é filtrado
-   * pelas flags individuais abaixo (googleAdsMetrics, socialMediaContent,
-   * businessStrategy).
-   */
-  quickActions: false,
 
   /**
    * Seção de campanhas/anúncios no Dashboard:
@@ -35,9 +26,15 @@ export const FEATURES = {
    */
   campaignSection: false,
 
-  // ── ITENS INDIVIDUAIS ───────────────────────────────────────────────────
-  // Aplicam-se mesmo quando `quickActions: true`. Servem pra filtrar
-  // itens específicos dentro de seções ativas.
+  // ── ITENS INDIVIDUAIS DENTRO DE "AÇÕES RÁPIDAS" (AgentHub) ──────────────
+  // A seção "Ações rápidas" do AgentHub (/agentes) NÃO tem flag externa pra
+  // ocultar a seção inteira porque tem 3 atalhos PERMANENTES que sempre
+  // devem aparecer (decisão de produto 27/05/2026):
+  //   - /copywriter (Criar texto/anúncio)
+  //   - /whatsapp/broadcast (Disparo em massa no WhatsApp)
+  //   - /marcos (Ver leads e pipeline de vendas)
+  // As 3 flags abaixo filtram individualmente os 3 atalhos não liberados
+  // (Google Ads / Davi / Daniel) que ficam dentro do mesmo array.
 
   /** Banner "Ver resultados das campanhas" (rodapé do AgentHub). */
   campaignResults: false,
@@ -56,7 +53,7 @@ export type FeatureFlag = keyof typeof FEATURES;
 
 /**
  * Helper pra checar flag por nome. Type-safe.
- * Uso: `isFeatureEnabled('quickActions')`
+ * Uso: `isFeatureEnabled('campaignSection')`
  */
 export function isFeatureEnabled(flag: FeatureFlag): boolean {
   return FEATURES[flag] === true;
