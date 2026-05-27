@@ -248,6 +248,29 @@ async function handleMarcosTransfer(
     });
   }
 
+  // FASE 3 BUG-14 — dedup ANTES de enviar mensagens. Marcos não usa
+  //   ai_lead_transfers, então a janela é validada pelos custom_fields
+  //   do próprio lead: se seller_assigned_at é < 30s atrás e mesmo vendedor,
+  //   trata como clique duplo. Janela é mais permissiva que Pedro porque
+  //   Marcos pode legitimamente ter atribuição troca-troca em segundos.
+  const lastAssignedAt = lead.custom_fields?.seller_assigned_at;
+  const lastAssignedTo = lead.custom_fields?.seller_member_id;
+  if (lastAssignedAt && lastAssignedTo === memberId) {
+    const elapsedMs = Date.now() - new Date(lastAssignedAt).getTime();
+    if (elapsedMs < 30 * 1000) {
+      console.warn(`[manual-transfer/marcos] Dedup: lead ${crmLeadId} já atribuído ao mesmo vendedor há ${Math.round(elapsedMs / 1000)}s. Retornando sucesso sem reenviar.`);
+      return new Response(JSON.stringify({
+        success: true,
+        crmLeadId,
+        memberId,
+        source: "marcos",
+        deduplicated: true,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // 3. Encontrar instância pra enviar mensagens
   //    Prioridade: instância do vendedor (auth_user_id dele) > instância do master > qualquer ativa
   let instance: any = null;
@@ -574,6 +597,35 @@ Deno.serve(async (req) => {
       });
     }
 
+    // FASE 3 BUG-14 — dedup ANTES de qualquer envio de WhatsApp.
+    // Master clicando 2x rapidamente OU dois operadores agindo simultâneo
+    // no mesmo lead/vendedor → sem dedup, criaria 2 transfers, mandaria 2
+    // mensagens ao vendedor + 2 relatórios ao gerente. Janela 30s é
+    // suficiente pra absorver clique duplo sem bloquear retransferências
+    // legítimas.
+    const dedupCutoff = new Date(Date.now() - 30 * 1000).toISOString();
+    const { data: recentDup } = await supabase
+      .from("ai_lead_transfers")
+      .select("id, created_at, to_member_id")
+      .eq("lead_id", lead.id)
+      .eq("to_member_id", memberCandidate.id)
+      .gte("created_at", dedupCutoff)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (recentDup) {
+      console.warn(`[manual-transfer] Dedup: transfer ${recentDup.id} criado em ${recentDup.created_at} para mesmo lead/vendedor < 30s. Retornando sucesso sem reenviar.`);
+      return new Response(JSON.stringify({
+        success: true,
+        leadId: lead.id,
+        memberId: memberCandidate.id,
+        deduplicated: true,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // 2. Validate member details
     const member = memberCandidate;
     if (member.user_id !== ownerUserId) {
@@ -693,14 +745,18 @@ _Gerado automaticamente pelo Pedro SDR_`;
       }
     }
 
-    // 7. Update Lead
+    // 7. Update Lead — FASE 3 BUG-13 opção A: NÃO seta assigned_to_id agora.
+    //    Atribuição firme acontece quando vendedor confirma com "Ok" via
+    //    handler maybeHandleSellerAck em uazapi-webhook (que seta assigned_to_id
+    //    + status='em_atendimento'). Se vendedor não responde em 15min,
+    //    transfer-timeout-checker escala pro próximo do rodízio.
+    //    Alinha comportamento com auto-transfer (que também não atribui até "Ok").
     await supabase.from("ai_crm_leads").update({
       status: "transferido",
-      assigned_to_id: member.id,
       last_interaction_at: new Date().toISOString(),
     }).eq("id", lead.id);
 
-    // 8. Record transfer
+    // 8. Record transfer (dedup já validado lá em cima antes do envio)
     await supabase.from("ai_lead_transfers").insert({
       user_id: ownerUserId,
       lead_id: lead.id,

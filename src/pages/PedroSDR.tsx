@@ -1794,7 +1794,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       toast({
         title: newMemberId ? '✅ Lead transferido!' : '✅ Lead desatribuído',
         description: newMemberId
-          ? `${newMember?.name} recebeu o briefing IA. Gerente notificado.`
+          ? `${newMember?.name} recebeu o briefing IA. Aguardando confirmação do vendedor (até 15min). Se não responder, lead será reescalado.`
           : undefined,
       });
     } catch (err: any) {
