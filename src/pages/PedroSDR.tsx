@@ -45,6 +45,7 @@ import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
+import { usePendingTransfers, formatPendingAge } from '@/hooks/usePendingTransfers';
 
 const TabLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -2436,8 +2437,51 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     }
   };
 
-  const sellerLabelForLead = (lead?: CrmLead | null) =>
-    lead?.member?.name ?? (lead?.status === 'transferido' ? 'Aguardando' : 'Sem vendedor');
+  // BUG-NOVO-04: carregar pending transfers pra mostrar "Aguardando confirmacao"
+  // baseado em ai_lead_transfers em vez de so assigned_to_id. Esse hook so faz
+  // SELECT (sem render extra), entao impacto perf e minimo.
+  const leadIds = useMemo(() => leads.map(l => l.id), [leads]);
+  const pendingTransfers = usePendingTransfers(leadIds);
+
+  /**
+   * Resolve o que mostrar como vendedor no card do lead.
+   * Prioridade:
+   *   1. member.name (assigned_to_id setado = vendedor confirmou)
+   *   2. pending transfer (manual recente, vendedor ainda nao respondeu Ok)
+   *   3. status='transferido' = aguardando (legacy)
+   *   4. Sem vendedor
+   */
+  const sellerLabelForLead = (lead?: CrmLead | null) => {
+    if (!lead) return 'Sem vendedor';
+    if (lead.member?.name) return lead.member.name;
+    const pending = pendingTransfers.get(lead.id);
+    if (pending) return `${pending.member_name} (aguardando)`;
+    return lead.status === 'transferido' ? 'Aguardando' : 'Sem vendedor';
+  };
+
+  /**
+   * Retorna info pra renderizar badge de status do vendedor.
+   * - confirmed: assigned_to_id setado (verde, "Em atendimento")
+   * - pending: transfer recente sem Ok (amarelo, "Aguardando confirmacao")
+   * - none: sem vendedor
+   */
+  const sellerStatusForLead = (lead?: CrmLead | null): {
+    status: 'confirmed' | 'pending' | 'none';
+    member_name: string | null;
+    pending_since: string | null;
+  } => {
+    if (!lead) return { status: 'none', member_name: null, pending_since: null };
+    if (lead.member?.name) return { status: 'confirmed', member_name: lead.member.name, pending_since: null };
+    const pending = pendingTransfers.get(lead.id);
+    if (pending) {
+      return {
+        status: 'pending',
+        member_name: pending.member_name,
+        pending_since: pending.created_at,
+      };
+    }
+    return { status: 'none', member_name: null, pending_since: null };
+  };
 
   if (loading) {
     return (
@@ -3557,13 +3601,26 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                           {lead.member.name}
                                         </span>
                                       )}
+                                      {/* BUG-NOVO-04: badge amarela 'Aguardando confirmacao' quando transfer pending */}
+                                      {!lead.member && (() => {
+                                        const sellerStatus = sellerStatusForLead(lead);
+                                        if (sellerStatus.status !== 'pending') return null;
+                                        return (
+                                          <span
+                                            className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium truncate max-w-[120px] border border-amber-500/30"
+                                            title={`Vendedor ${sellerStatus.member_name} ${sellerStatus.pending_since ? formatPendingAge(sellerStatus.pending_since) : ''} — aguardando confirmacao via WhatsApp (ate 15min, depois reescala)`}
+                                          >
+                                            ⏳ {sellerStatus.member_name}
+                                          </span>
+                                        );
+                                      })()}
                                       {lead.seller_notes_count > 0 && (
                                         <span className="flex items-center gap-0.5 text-[9px] text-yellow-400">
                                           <StickyNote className="h-2.5 w-2.5" />{lead.seller_notes_count}
                                         </span>
                                       )}
                                     </div>
-                                    {!isSeller && !lead.member && (
+                                    {!isSeller && !lead.member && sellerStatusForLead(lead).status === 'none' && (
                                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 font-medium">
                                         {sellerLabelForLead(lead)}
                                       </span>

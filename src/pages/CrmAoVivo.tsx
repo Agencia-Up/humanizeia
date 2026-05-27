@@ -3,6 +3,7 @@ import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-p
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
+import { usePendingTransfers, formatPendingAge, type PendingTransfer } from '@/hooks/usePendingTransfers';
 import { Button } from '@/components/ui/button';
 import {
   Activity,
@@ -106,7 +107,7 @@ function getTransferLabel(t: any) {
 }
 
 /* ── COMPONENTE CARD (Memoizado para performance) ─────────── */
-const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringLeadId, onTransfer, transfers, dragHandleProps, hideTransfer }: any) => {
+const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringLeadId, onTransfer, transfers, dragHandleProps, hideTransfer, pendingTransfer }: any) => {
   const [msg, setMsg] = useState('');
   const [showHist, setShowHist] = useState(false);
   // Vendedor escolhido pelo master no select. Se vazio, usa nextSeller (round-robin).
@@ -169,10 +170,23 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringL
           <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.15em', color: '#475569', fontWeight: 700 }}>Agente</p>
           <p style={{ marginTop: 3, fontSize: 13, fontWeight: 600, color: '#CBD5E1', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{lead.agent?.name || 'Pedro'}</p>
         </div>
-        <div style={{ borderRadius: 8, background: col.bg, border: `1px solid ${col.main}`, padding: '7px 10px' }}>
-          <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.15em', color: col.light, fontWeight: 700, opacity: 0.7 }}>Vendedor</p>
-          <p style={{ marginTop: 3, fontSize: 13, fontWeight: 800, color: col.light, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-            {lead.member?.name || 'Aguardando'}
+        {/* BUG-NOVO-04: badge muda se transfer ainda pending (vendedor nao confirmou Ok) */}
+        <div
+          style={{
+            borderRadius: 8,
+            background: !lead.member && pendingTransfer ? 'rgba(245,158,11,0.15)' : col.bg,
+            border: `1px solid ${!lead.member && pendingTransfer ? 'rgba(245,158,11,0.5)' : col.main}`,
+            padding: '7px 10px',
+          }}
+          title={!lead.member && pendingTransfer
+            ? `${pendingTransfer.member_name} aguardando confirmacao via WhatsApp ${pendingTransfer.created_at ? formatPendingAge(pendingTransfer.created_at) : ''}. Reescala em 15min se nao responder.`
+            : undefined}
+        >
+          <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.15em', color: !lead.member && pendingTransfer ? '#fbbf24' : col.light, fontWeight: 700, opacity: 0.7 }}>
+            {!lead.member && pendingTransfer ? '⏳ Aguardando' : 'Vendedor'}
+          </p>
+          <p style={{ marginTop: 3, fontSize: 13, fontWeight: 800, color: !lead.member && pendingTransfer ? '#fcd34d' : col.light, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+            {lead.member?.name || pendingTransfer?.member_name || 'Sem vendedor'}
           </p>
         </div>
       </div>
@@ -329,8 +343,22 @@ const TvLeadCard = memo(({ lead, col }: any) => {
         <span style={{ minWidth: 0, color: '#7C8AA5', fontSize: 10.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {lead.agent?.name || 'Pedro'}
         </span>
-        <span style={{ maxWidth: '58%', borderRadius: 6, background: 'rgba(37,99,235,0.18)', color: '#93C5FD', padding: '3px 7px', fontSize: 10.5, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {lead.member?.name || (lead.status === 'transferido' ? 'Aguardando' : 'Sem vendedor')}
+        <span
+          style={{
+            maxWidth: '58%',
+            borderRadius: 6,
+            background: !lead.member && pendingTransfer ? 'rgba(245,158,11,0.18)' : 'rgba(37,99,235,0.18)',
+            color: !lead.member && pendingTransfer ? '#fcd34d' : '#93C5FD',
+            padding: '3px 7px',
+            fontSize: 10.5,
+            fontWeight: 800,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          title={!lead.member && pendingTransfer ? `Aguardando ${pendingTransfer.member_name} confirmar (ate 15min)` : undefined}
+        >
+          {lead.member?.name || pendingTransfer?.member_name || (lead.status === 'transferido' ? 'Aguardando' : 'Sem vendedor')}
         </span>
       </div>
     </div>
@@ -646,6 +674,11 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       return true;
     });
   }, [leads, dateFilter, customStart, customEnd]);
+
+  // BUG-NOVO-04: carrega pending transfers pros leads visiveis pra mostrar
+  // badge amarela 'Aguardando' quando vendedor ainda nao confirmou Ok via WhatsApp.
+  const visibleLeadIds = useMemo(() => filteredLeads.map(l => l.id), [filteredLeads]);
+  const pendingTransfersMap = usePendingTransfers(visibleLeadIds);
 
   // Contagem de hoje (sempre fixa no KPI, independente do filtro)
   const todayStart = useMemo(() => {
@@ -1449,6 +1482,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                                   transfers={transfers}
                                   dragHandleProps={isSeller ? null : prov.dragHandleProps}
                                   hideTransfer={isSeller}
+                                  pendingTransfer={pendingTransfersMap.get(lead.id)}
                                 />
                               </div>
                             )}
