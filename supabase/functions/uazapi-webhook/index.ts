@@ -899,56 +899,25 @@ async function ensurePedroLeadRecord(
   );
 
   if (!currentLead?.id) {
-    const { data: reusableLead } = await supabase
-      .from('ai_crm_leads')
-      .select('id')
-      .eq('user_id', agent.user_id)
-      .eq('remote_jid', remoteJid)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (reusableLead?.id) {
-      const { error: reuseErr } = await supabase.from('ai_crm_leads').update({
-        agent_id: agent.id,
-        instance_id: waInstance.id,
-        lead_name: pushName,
-        assigned_to_id: previousSeller?.id || null,
-        status: previousSeller?.id ? 'em_atendimento' : 'novo',
-        last_user_reply_at: nowStr,
-        last_interaction_at: nowStr,
-        followup_5min_sent: false,
-      }).eq('id', reusableLead.id);
-
-      if (!reuseErr) {
-        console.log(`[CRM] Reaproveitando lead antigo ${reusableLead.id} para agent atual ${agent.id}`);
-        return { id: reusableLead.id, previousSeller };
-      }
-      console.warn('[CRM] Falha ao reaproveitar lead antigo; seguindo com upsert:', reuseErr);
-    }
+    await supabase.from('ai_crm_leads').upsert({
+      user_id: agent.user_id,
+      agent_id: agent.id,
+      instance_id: waInstance.id,
+      remote_jid: remoteJid,
+      lead_name: pushName,
+      message_count: 1,
+      origem: 'outros',
+      assigned_to_id: null,
+      status: 'novo',
+      last_interaction_at: nowStr
+    }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
   }
-
-  await supabase.from('ai_crm_leads').upsert({
-    user_id: agent.user_id,
-    agent_id: agent.id,
-    instance_id: waInstance.id,
-    remote_jid: remoteJid,
-    lead_name: pushName,
-    message_count: 1,
-    origem: 'outros',
-    assigned_to_id: currentLead?.assigned_to_id || previousSeller?.id || null,
-    status: (currentLead?.assigned_to_id || previousSeller?.id) ? 'em_atendimento' : 'novo',
-    last_interaction_at: nowStr
-  }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
 
   await supabase.from('ai_crm_leads').update({
     instance_id: waInstance.id,
     last_user_reply_at: nowStr,
     last_interaction_at: nowStr,
     followup_5min_sent: false,
-    ...(previousSeller?.id && previousSeller.id !== currentLead?.assigned_to_id
-      ? { assigned_to_id: previousSeller.id, status: 'em_atendimento' }
-      : {}),
   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
   const { data: ensuredLead } = await supabase

@@ -897,14 +897,42 @@ export async function processPedroV2Turn(
   const stockFilters = contextualIntent.needs_stock_search
     ? buildStockFilters(contextualIntent, nextMemory, enrichedText, brainPlan, vehicleResolution)
     : null;
-  const stockResult = stockFilters
-    ? await searchPedroStock(supabase, {
-        user_id: input.agent.user_id,
-        query: stockFilters.query,
-        filters: stockFilters,
-        limit: 24,
-      })
-    : null;
+
+  let stockResult = null;
+  let isGenericQuery = false;
+
+  if (stockFilters) {
+    const q = stockFilters.query;
+    const isUrl = /^https?:\/\//i.test(String(q || "").trim());
+    const norm = String(q || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const isWeak = ["carro", "carros", "veiculo", "veiculos", "moto", "motos", "anuncio", "anuncios", "estoque"].includes(norm);
+    
+    // Split and filter tokens that are not weak
+    const weakWordList = ["carro", "carros", "veiculo", "veiculos", "moto", "motos", "anuncio", "anuncios", "estoque", "tem", "voces", "voce", "preco", "valor", "anuncio", "instagram", "facebook", "esse", "essa", "este", "esta", "sobre", "quero", "queria", "saber", "mais", "fotos", "foto", "detalhes", "modelo", "versao"];
+    const tokens = norm.split(/[^a-z0-9]+/).filter(Boolean).filter(t => t.length >= 2 && !weakWordList.includes(t));
+    
+    if (isUrl || isWeak || tokens.length === 0) {
+      isGenericQuery = true;
+    }
+  }
+
+  if (stockFilters && !isGenericQuery) {
+    stockResult = await searchPedroStock(supabase, {
+      user_id: input.agent.user_id,
+      query: stockFilters.query,
+      filters: stockFilters,
+      limit: 24,
+    });
+  } else if (stockFilters && isGenericQuery) {
+    stockResult = {
+      success: true,
+      total: 0,
+      items: [],
+      is_generic_query: true,
+      query: stockFilters.query,
+      response_guidance: "A busca do cliente foi genérica (ex: 'carro', 'veículo' ou link não resolvido). Não pesquise no estoque e pergunte de forma natural qual veículo/modelo específico ele gostaria de ver.",
+    };
+  }
 
   const effectiveMemory = !dryRun && lead?.id && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0
     ? await savePresentedVehicles(supabase, {

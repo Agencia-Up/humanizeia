@@ -298,6 +298,16 @@ function fallbackReply(input: {
     message: input.message,
   });
 
+  if (input.stock_result?.is_generic_query) {
+    const greeting = saoPauloNowInfo().greeting;
+    const name = leadFirstName(input.memory);
+    return {
+      ok: true,
+      text: `${greeting}${name ? `, ${name}` : ""}! Vi que você tem interesse em um de nossos carros pelo anúncio, mas não consegui identificar o modelo certinho. Qual veículo você estava vendo ou tem interesse?`,
+      source: "brain_generic_fallback",
+    };
+  }
+
   if (adVehicleConsultation) {
     return {
       ok: true,
@@ -417,6 +427,8 @@ export async function generatePedroBrainReply(input: {
                 facts_scope: adVehicleConsultation ? "ad_vehicle_only" : "normal_search",
                 facts,
                 error: input.stock_result?.error || null,
+                is_generic_query: Boolean(input.stock_result?.is_generic_query),
+                response_guidance: input.stock_result?.response_guidance || null,
               },
               tool_result: input.tool_result || null,
               ad_vehicle_consultation: adVehicleConsultation,
