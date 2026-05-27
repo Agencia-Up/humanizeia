@@ -1700,18 +1700,62 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         return;
       }
 
-      const { error } = await (supabase as any)
-        .from('ai_crm_leads')
-        .update({ assigned_to_id: newMemberId })
-        .eq('id', leadId);
-      if (error) throw error;
+      // Pedro: atribuir vendedor passa pela edge function manual-transfer
+      // que ALÉM de atualizar o banco, dispara:
+      //   1. briefing IA via WhatsApp pro vendedor (resumo do lead + histórico)
+      //   2. relatório de transferência pro gerente
+      //   3. registro em ai_lead_transfers
+      // Desatribuir (newMemberId=null) continua só fazendo UPDATE.
       const newMember = newMemberId ? teamMembers.find(m => m.id === newMemberId) ?? null : null;
+
+      if (newMemberId) {
+        const lead = leads.find(l => l.id === leadId) || selectedLead;
+        const { error } = await supabase.functions.invoke('manual-transfer', {
+          body: {
+            leadId,
+            memberId: newMemberId,
+            notes: 'Transferência manual via CRM Avançado',
+            remoteJid: lead?.remote_jid || null,
+            agentId: lead?.agent_id || null,
+            leadName: lead?.lead_name || null,
+            ownerUserId: userId || null,
+          }
+        });
+        if (error) {
+          let message = error.message || 'Falha ao transferir';
+          const context = (error as any).context;
+          if (context && typeof context.json === 'function') {
+            try { const body = await context.json(); message = body?.error || message; } catch {}
+          }
+          throw new Error(message);
+        }
+      } else {
+        // Desatribuição — só UPDATE
+        const { error } = await (supabase as any)
+          .from('ai_crm_leads')
+          .update({ assigned_to_id: null })
+          .eq('id', leadId);
+        if (error) throw error;
+      }
+
       setLeads(prev => prev.map(l => l.id === leadId ? {
         ...l,
         assigned_to_id: newMemberId,
         member: newMember ? { id: newMember.id, name: newMember.name } : null,
       } : l));
-      toast({ title: '✅ Lead reatribuído!' });
+      if (selectedLead?.id === leadId) {
+        setSelectedLead({
+          ...selectedLead,
+          assigned_to_id: newMemberId,
+          member: newMember ? { id: newMember.id, name: newMember.name } : null,
+        });
+      }
+      toast({
+        title: newMemberId ? '✅ Lead transferido!' : '✅ Lead desatribuído',
+        description: newMemberId
+          ? `${newMember?.name} recebeu o briefing IA. Gerente notificado.`
+          : undefined,
+      });
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
