@@ -246,9 +246,36 @@ serve(async (req) => {
         }
 
         if (!sent) {
-          await supabase.from("pedro_followup_schedules")
-            .update({ status: "failed" })
-            .eq("id", schedule.id);
+          // BUG-NOVO-06: retry exponencial em vez de marcar failed direto.
+          // Backoff: 5min → 15min → 45min. Após 3 tentativas, marca failed
+          // definitivo (lead aparece em dashboard pra investigação manual).
+          const currentAttempts = (schedule as any).attempt_count || 0;
+          const nextAttempts = currentAttempts + 1;
+          if (nextAttempts >= 3) {
+            await supabase.from("pedro_followup_schedules")
+              .update({
+                status: "failed",
+                attempt_count: nextAttempts,
+                last_failed_at: nowIso,
+                last_error: "Envio falhou apos 3 tentativas (UazAPI rejeitou ou timeout)",
+              })
+              .eq("id", schedule.id);
+            console.error(`[pedro-trigger-followup] Schedule ${schedule.id} desistido apos ${nextAttempts} tentativas`);
+          } else {
+            // Backoff: 5min, 15min, 45min
+            const backoffMin = nextAttempts === 1 ? 5 : nextAttempts === 2 ? 15 : 45;
+            const nextScheduledAt = new Date(Date.now() + backoffMin * 60 * 1000).toISOString();
+            await supabase.from("pedro_followup_schedules")
+              .update({
+                status: "pending",
+                attempt_count: nextAttempts,
+                last_failed_at: nowIso,
+                last_error: "UazAPI rejeitou ou timeout",
+                scheduled_at: nextScheduledAt,
+              })
+              .eq("id", schedule.id);
+            console.warn(`[pedro-trigger-followup] Schedule ${schedule.id} re-agendado tentativa ${nextAttempts}/3 em ${backoffMin}min`);
+          }
           failed++;
           continue;
         }
@@ -394,9 +421,34 @@ serve(async (req) => {
         }
 
         if (!sent) {
-          await supabase.from("marcos_followup_schedules")
-            .update({ status: "failed" })
-            .eq("id", schedule.id);
+          // BUG-NOVO-06: retry exponencial pra Marcos também (5/15/45min,
+          // depois marca failed apos 3 tentativas).
+          const currentAttempts = (schedule as any).attempt_count || 0;
+          const nextAttempts = currentAttempts + 1;
+          if (nextAttempts >= 3) {
+            await supabase.from("marcos_followup_schedules")
+              .update({
+                status: "failed",
+                attempt_count: nextAttempts,
+                last_failed_at: nowIso,
+                last_error: "Envio falhou apos 3 tentativas",
+              })
+              .eq("id", schedule.id);
+            console.error(`[marcos-followup] Schedule ${schedule.id} desistido apos ${nextAttempts} tentativas`);
+          } else {
+            const backoffMin = nextAttempts === 1 ? 5 : nextAttempts === 2 ? 15 : 45;
+            const nextScheduledAt = new Date(Date.now() + backoffMin * 60 * 1000).toISOString();
+            await supabase.from("marcos_followup_schedules")
+              .update({
+                status: "pending",
+                attempt_count: nextAttempts,
+                last_failed_at: nowIso,
+                last_error: "UazAPI rejeitou ou timeout",
+                scheduled_at: nextScheduledAt,
+              })
+              .eq("id", schedule.id);
+            console.warn(`[marcos-followup] Schedule ${schedule.id} re-agendado tentativa ${nextAttempts}/3 em ${backoffMin}min`);
+          }
           failed++;
           continue;
         }
