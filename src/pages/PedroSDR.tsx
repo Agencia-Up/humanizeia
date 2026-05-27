@@ -3591,7 +3591,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                   )}
                                   {lead.summary && (
                                     <button onClick={() => loadLeadDetail(lead)} className="w-full text-left">
-                                      <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2">{lead.summary}</p>
+                                      <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2 whitespace-pre-line">{lead.summary}</p>
                                     </button>
                                   )}
                                   <div className="flex items-center justify-between gap-1">

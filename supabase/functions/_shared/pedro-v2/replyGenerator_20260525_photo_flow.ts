@@ -129,18 +129,21 @@ export function generatePedroSalesReply(input: {
   intent?: PedroV2IntentResult | null;
   stock_result?: any;
   message?: string;
+  agent?: any;
 }) {
   const intent = input.intent?.intent || "unknown";
   const name = leadName(input.memory);
   const greeting = saoPauloGreeting();
   const requested = input.memory?.interesse?.modelo_desejado || input.intent?.extracted?.interesse?.modelo_desejado;
   const currentTurnCameFromAd = Boolean(input.intent?.extracted?.referencia?.origem_anuncio);
+  const agentName = input.agent?.name || "Pedro";
+  const companyName = input.agent?.company_name || "Icom Motors";
 
   if (currentTurnCameFromAd && !requested && input.intent?.reason?.startsWith("ad_context_missing_vehicle")) {
     return {
       ok: true,
       text:
-        `${greeting}! Sou o Carvalho, consultor aqui da Icom Motors.\n\nVi que voce veio por um anuncio nosso, mas o WhatsApp nao me trouxe com seguranca qual carro aparece nele. Voce consegue me confirmar o modelo ou me mandar um print do anuncio? Assim eu confiro no estoque certinho pra nao te passar informacao errada.`,
+        `${greeting}! Sou o ${agentName}, consultor aqui da ${companyName}.\n\nVi que voce veio por um anuncio nosso, mas o WhatsApp nao me trouxe com seguranca qual carro aparece nele. Voce consegue me confirmar o modelo ou me mandar um print do anuncio? Assim eu confiro no estoque certinho pra nao te passar informacao errada.`,
       source: "ad_context_needs_vehicle_confirmation",
     };
   }
@@ -162,7 +165,7 @@ export function generatePedroSalesReply(input: {
       return {
         ok: true,
         text:
-          `${name ? `${name}, ` : `${greeting}! Sou o Carvalho, consultor aqui da Icom Motors. `}vi que voce veio por um anuncio da Icom. Pra eu conferir certinho no estoque, me diz qual modelo apareceu pra voce ou me manda um print do anuncio?`,
+          `${name ? `${name}, ` : `${greeting}! Sou o ${agentName}, consultor aqui da ${companyName}. `}vi que voce veio por um anuncio da ${companyName}. Pra eu conferir certinho no estoque, me diz qual modelo apareceu pra voce ou me manda um print do anuncio?`,
         source: "ad_context_needs_vehicle_confirmation",
       };
     }
@@ -179,7 +182,7 @@ export function generatePedroSalesReply(input: {
   if (intent === "small_talk" || isSimpleGreeting(input.message)) {
     return {
       ok: true,
-      text: `${greeting}! Tudo bem? 😊\n\nSou o Carvalho, consultor aqui da Icom Motors.\n\nMe conta - o que voce esta procurando hoje?`,
+      text: `${greeting}! Tudo bem? 😊\n\nSou o ${agentName}, consultor aqui da ${companyName}.\n\nMe conta - o que voce esta procurando hoje?`,
       source: "greeting_reply",
     };
   }

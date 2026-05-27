@@ -214,6 +214,7 @@ function buildAdVehicleConsultationFallback(input: {
   memory?: PedroV2LeadMemory | null;
   facts: any[];
   ad_context?: any;
+  agent?: any;
 }) {
   const name = leadFirstName(input.memory);
   const vehicle = input.facts[0];
@@ -225,7 +226,9 @@ function buildAdVehicleConsultationFallback(input: {
     vehicle?.cor,
   ].filter(Boolean).join(" | ");
   const greeting = saoPauloNowInfo().greeting;
-  const firstLine = `${greeting}${name ? `, ${name}` : ""}! Sou o Carvalho, consultor aqui da Icom Motors.`;
+  const agentName = input.agent?.name || "Pedro";
+  const companyName = input.agent?.company_name || "Icom Motors";
+  const firstLine = `${greeting}${name ? `, ${name}` : ""}! Sou o ${agentName}, consultor aqui da ${companyName}.`;
   const stockLine = vehicle
     ? `Vi que voce veio pelo anuncio do ${label}. Ele aparece aqui no estoque${details ? `: ${details}` : "."}`
     : `Vi que voce veio pelo anuncio do ${label}. Vou cuidar dele com voce pra nao te passar nada errado.`;
@@ -278,6 +281,7 @@ function ensureStockReplyFormatting(input: {
 }
 
 function fallbackReply(input: {
+  agent?: any;
   memory?: PedroV2LeadMemory | null;
   intent?: PedroV2IntentResult | null;
   stock_result?: any;
@@ -301,6 +305,7 @@ function fallbackReply(input: {
         memory: input.memory,
         facts: allFacts.slice(0, 1),
         ad_context: input.ad_context,
+        agent: input.agent,
       }),
       source: "brain_ad_vehicle_fallback",
     };
@@ -324,6 +329,7 @@ function fallbackReply(input: {
     intent: input.intent,
     stock_result: input.stock_result,
     message: input.message,
+    agent: input.agent,
   });
 }
 
@@ -370,12 +376,12 @@ export async function generatePedroBrainReply(input: {
             role: "system",
             content:
               [
-                "Voce e o Carvalho, consultor humano da Icom Motors no WhatsApp.",
+                `Voce e o ${input.agent?.name || "Pedro"}, consultor humano da ${input.agent?.company_name || "Icom Motors"} no WhatsApp.`,
                 "Voce NAO e um fluxo fixo de conversas. Responda de forma humana, amigavel, natural e vendedora.",
                 "O prompt abaixo e a sua personalidade principal fornecida pelo portal. Adote esse estilo, tom e ritmo de conversacao integralmente.",
                 "",
                 "PERSONALIDADE / SYSTEM PROMPT DO PORTAL:",
-                input.agent_system_prompt || "(Sem prompt de personalidade cadastrado - aja como Carvalho consultor comercial educado e focado em vendas)",
+                input.agent_system_prompt || `(Sem prompt de personalidade cadastrado - aja como ${input.agent?.name || "Pedro"} consultor comercial educado e focado em vendas)`,
                 "",
                 "REGRAS DE CONDUCAO E USO DE TOOLS:",
                 "- Siga a sua personalidade principal do portal na escrita das mensagens.",
@@ -441,6 +447,7 @@ export async function generatePedroBrainReply(input: {
         memory: input.memory,
         facts,
         ad_context: input.ad_context,
+        agent: input.agent,
       })
       : rawText;
 

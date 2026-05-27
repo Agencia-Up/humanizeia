@@ -160,7 +160,7 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringL
       </div>
       
       {lead.summary && (
-        <p style={{ marginTop: 8, fontSize: 12, color: '#94A3B8', lineHeight: 1.55, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } as any}>
+        <p style={{ marginTop: 8, fontSize: 12, color: '#94A3B8', lineHeight: 1.55, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-line' } as any}>
           {lead.summary}
         </p>
       )}
@@ -334,6 +334,7 @@ const TvLeadCard = memo(({ lead, col }: any) => {
           WebkitLineClamp: 2,
           WebkitBoxOrient: 'vertical',
           overflow: 'hidden',
+          whiteSpace: 'pre-line',
         } as any}>
           {lead.summary}
         </p>
