@@ -178,17 +178,18 @@ Deno.serve(async (req) => {
       const seller = sellerQueue[i % sellerQueue.length];
 
       try {
-        // 4a. Atualiza lead
-        await supabase.from("ai_crm_leads").update({
+        // 4a. Atualiza lead — SEM transferred_at/transfer_reason
+        //     (essas colunas vivem em ai_lead_transfers, NÃO em ai_crm_leads).
+        //     Os UPDATEs anteriores quebravam silenciosamente PostgREST.
+        const { error: leadErr } = await supabase.from("ai_crm_leads").update({
           status: "transferido",
           assigned_to_id: seller.id,
-          transferred_at: now,
-          transfer_reason: `Redistribuição manual para ${seller.name}`,
           last_interaction_at: now,
         }).eq("id", lead.id);
+        if (leadErr) throw leadErr;
 
         // 4b. Registra transfer
-        await supabase.from("ai_lead_transfers").insert({
+        const { error: trErr } = await supabase.from("ai_lead_transfers").insert({
           user_id: effectiveUserId,
           lead_id: lead.id,
           to_member_id: seller.id,
@@ -198,17 +199,18 @@ Deno.serve(async (req) => {
           is_confirmed: true,
           confirmed_at: now,
         });
+        if (trErr) throw trErr;
 
-        // 4c. Atualiza stats do vendedor
-        await supabase.from("ai_team_members").update({
+        // 4c. Atualiza stats do vendedor — SEM total_leads_received
+        //     (coluna que não existe; round-robin usa só last_lead_received_at).
+        const { error: memErr } = await supabase.from("ai_team_members").update({
           last_lead_received_at: now,
-          total_leads_received: (seller.total_leads_received || 0) + 1,
         }).eq("id", seller.id);
+        if (memErr) throw memErr;
         // Atualiza em memória para próximas iterações
         sellerQueue[i % sellerQueue.length] = {
           ...seller,
           last_lead_received_at: now,
-          total_leads_received: (seller.total_leads_received || 0) + 1,
         };
 
         // 4d. Notifica vendedor via WhatsApp

@@ -647,11 +647,35 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   const nextSeller = useMemo(() => {
     if (!activeMembers.length) return null;
+
+    // Dedupe por TELEFONE (mesmo vendedor pode ter múltiplas rows em
+    // ai_team_members, uma por agent_id). Sem dedupe, vendedor com 3 rows
+    // domina a fila — backend só atualiza last_lead_received_at em 1 row.
+    // Espelha lógica do backend (uazapi-webhook/uniqueSellersByPhone).
+    const phoneKey = (num: string | null | undefined): string => {
+      if (!num) return '';
+      const digits = String(num).replace(/\D/g, '');
+      // Últimos 10 dígitos (sem código país 55, sem 9 inicial de celular)
+      const last10 = digits.slice(-10);
+      return last10.length === 10 ? last10 : last10.slice(1);
+    };
+    const dedupedByPhone = (() => {
+      const seen = new Set<string>();
+      const out: any[] = [];
+      for (const m of activeMembers) {
+        const key = phoneKey(m.whatsapp_number);
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+        out.push(m);
+      }
+      return out;
+    })();
+
     // Usa last_lead_received_at do próprio membro — atualizado tanto por transferência
     // manual quanto automática do Pedro SDR, nunca fica desatualizado
-    const never = activeMembers.filter(m => !m.last_lead_received_at);
+    const never = dedupedByPhone.filter(m => !m.last_lead_received_at);
     if (never.length) return never[0];
-    return [...activeMembers].sort((a, b) =>
+    return [...dedupedByPhone].sort((a, b) =>
       new Date(a.last_lead_received_at).getTime() - new Date(b.last_lead_received_at).getTime()
     )[0] || null;
   }, [activeMembers]);

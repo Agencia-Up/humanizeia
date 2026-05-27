@@ -163,21 +163,50 @@ serve(async (req) => {
       let agentForFallback: any = null;
 
       if (crm_lead_id) {
-        // Marcos: pega qualquer agente do master com gerente_phone configurado
-        const { data: anyMasterAgent } = await supabase
-          .from("wa_ai_agents" as any)
-          .select("gerente_phone, instance_id, instance_ids")
+        // Marcos: usa coluna DEDICADA manager_feedback_config.gerente_phone_marcos
+        // (migration 20260522130000). Antes a função pegava arbitrariamente o
+        // gerente_phone do "primeiro agente Pedro" do master — se master tem
+        // múltiplos agentes Pedro com gerentes DIFERENTES, feedback Marcos podia
+        // ir pro gerente errado e não-determinístico.
+        const { data: feedbackCfg } = await supabase
+          .from("manager_feedback_config" as any)
+          .select("gerente_phone_marcos")
           .eq("user_id", gerenteUserId)
-          .not("gerente_phone", "is", null)
-          .neq("gerente_phone", "")
-          .limit(1)
           .maybeSingle();
-        gerentePhone = (anyMasterAgent as any)?.gerente_phone || null;
-        agentForFallback = anyMasterAgent; // pra fallback de instância
-        if (!gerentePhone) {
-          console.log("[pedro-process-feedback] Marcos: nenhum agente Pedro do master tem gerente_phone configurado, pulando notificação");
+        gerentePhone = (feedbackCfg as any)?.gerente_phone_marcos || null;
+
+        if (gerentePhone) {
+          console.log("[pedro-process-feedback] Marcos: usando gerente_phone_marcos dedicado");
         } else {
-          console.log("[pedro-process-feedback] Marcos: reusando gerente_phone do agente Pedro do master");
+          // Fallback: pega qualquer agente Pedro do master com gerente_phone configurado
+          // (mantém compatibilidade pra masters que ainda não configuraram gerente_phone_marcos)
+          const { data: anyMasterAgent } = await supabase
+            .from("wa_ai_agents" as any)
+            .select("gerente_phone, instance_id, instance_ids")
+            .eq("user_id", gerenteUserId)
+            .not("gerente_phone", "is", null)
+            .neq("gerente_phone", "")
+            .limit(1)
+            .maybeSingle();
+          gerentePhone = (anyMasterAgent as any)?.gerente_phone || null;
+          agentForFallback = anyMasterAgent; // pra fallback de instância
+          if (!gerentePhone) {
+            console.log("[pedro-process-feedback] Marcos: sem gerente_phone_marcos nem fallback em wa_ai_agents, pulando notificação");
+          } else {
+            console.log("[pedro-process-feedback] Marcos: fallback — usando gerente_phone do primeiro agente Pedro do master (configurar gerente_phone_marcos pra ter destino determinístico)");
+          }
+        }
+
+        // Pra resolver instância de envio (linhas abaixo) ainda precisamos
+        // de um agente Pedro do master (Marcos não tem agente IA próprio).
+        if (gerentePhone && !agentForFallback) {
+          const { data: anyMasterAgent } = await supabase
+            .from("wa_ai_agents" as any)
+            .select("gerente_phone, instance_id, instance_ids")
+            .eq("user_id", gerenteUserId)
+            .limit(1)
+            .maybeSingle();
+          agentForFallback = anyMasterAgent;
         }
       } else if (agentId) {
         // Pedro: lê do agente IA (per-agente)
