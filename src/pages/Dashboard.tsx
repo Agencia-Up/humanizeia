@@ -22,6 +22,7 @@ import {
 /* ── Atalhos para os agentes ──────────────────────────────────── */
 import type { VisibleFeatures } from '@/hooks/useSellerProfile';
 import { isAgentReleased, COMING_SOON_LABEL } from '@/config/releasedAgents';
+import { FEATURES } from '@/config/features';
 
 const AGENTS: Array<{
   key: keyof VisibleFeatures;
@@ -255,6 +256,9 @@ export default function Dashboard() {
         </motion.div>
 
         {/* ── Status geral ─────────────────────────────────────── */}
+        {/* FEATURE FLAG campaignSection: quando false, secao inteira de
+            saude/anomalies das campanhas nao renderiza. */}
+        {FEATURES.campaignSection && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
           <div className={`rounded-2xl border p-4 flex items-center justify-between gap-4 ${healthConfig.bg}`}>
             <div className="flex items-center gap-3">
@@ -275,8 +279,11 @@ export default function Dashboard() {
             )}
           </div>
         </motion.div>
+        )}{/* ── fim FEATURES.campaignSection (Status geral) ── */}
 
         {/* ── Números da semana ────────────────────────────────── */}
+        {/* FEATURE FLAG campaignSection: idem, esconde resultados de anuncios. */}
+        {FEATURES.campaignSection && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -369,6 +376,7 @@ export default function Dashboard() {
             </Button>
           </div>
         </motion.div>
+        )}{/* ── fim FEATURES.campaignSection (Resultados semana) ── */}
 
         {/* ── O que você quer fazer hoje? ──────────────────────── */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>

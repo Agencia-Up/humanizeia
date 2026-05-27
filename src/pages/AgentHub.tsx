@@ -14,6 +14,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { isAgentReleased, COMING_SOON_LABEL } from '@/config/releasedAgents';
+import { FEATURES } from '@/config/features';
 
 // ── Todos os agentes com tier mínimo necessário ─────────────────────────────
 // basico = liberado no Básico, pro = liberado no Pro, enterprise = liberado no Pro Max
@@ -169,6 +170,15 @@ export default function AgentHub() {
         </motion.div>
 
         {/* ── Ações Rápidas ─────────────────────────────────────────────────── */}
+        {/* FEATURE FLAGS:
+            - googleAdsMetrics/socialMediaContent/businessStrategy: removem
+              individualmente os atalhos /metrics, /davi e /daniel.
+            - Os 3 atalhos permanentes (/copywriter, /whatsapp/broadcast,
+              /marcos) NUNCA são filtrados por flag — devem permanecer
+              visíveis sempre (decisão de produto 27/05/2026).
+            - Por isso a seção NÃO é envolvida por uma flag externa
+              `quickActions`: como ela sempre tem itens visíveis, ela
+              sempre aparece. */}
         <div>
           <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-foreground">
             <Zap className="h-4 w-4 text-primary" />
@@ -176,6 +186,11 @@ export default function AgentHub() {
           </h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {quickActions.filter(a => {
+              // Filtros por feature flag (oculta os 3 atalhos não-liberados)
+              if (a.url === '/metrics' && !FEATURES.googleAdsMetrics) return false;
+              if (a.url === '/davi' && !FEATURES.socialMediaContent) return false;
+              if (a.url === '/daniel' && !FEATURES.businessStrategy) return false;
+              // Filtro original por tier do plano
               const actionTier = QUICK_ACTION_TIERS[a.url] || 'basico';
               if (a.url === '/marcos' && (hasManualAgentRelease(user?.id, 'agent_marcos') || (isSeller && visibleFeatures.agent_marcos))) return true;
               return userTierLevel >= TIER_ORDER[actionTier];
@@ -279,7 +294,8 @@ export default function AgentHub() {
         </div>
 
         {/* ── Banner de resultados (Pro ou superior) ──────────────────────── */}
-        {userTierLevel >= TIER_ORDER.pro && (
+        {/* FEATURE FLAG campaignResults: quando false, banner nao renderiza. */}
+        {FEATURES.campaignResults && userTierLevel >= TIER_ORDER.pro && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

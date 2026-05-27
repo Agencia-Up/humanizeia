@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { BarChart3, Loader2, Users, Inbox, Send, Smartphone, Zap, Kanban, ClipboardList, Contact } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile';
+import { FEATURES } from '@/config/features';
 
 // Lazy load cada sub-página
 const FluxCRM           = lazy(() => import('./FluxCRM'));
@@ -23,6 +24,8 @@ const TabLoader = () => (
   </div>
 );
 
+// Performance é filtrada por FEATURES.agentPerformanceTab (default off, 27/05/2026).
+// Métricas consolidadas vivem em /painel-geral pra master.
 const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKey: keyof VisibleFeatures }[] = [
   { id: 'performance', label: 'Performance',      icon: BarChart3,    emoji: '📈', featureKey: 'marcos_crm' },
   { id: 'crm',         label: 'CRM',              icon: Kanban,       emoji: '📊', featureKey: 'marcos_crm' },
@@ -32,7 +35,7 @@ const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKe
   { id: 'inbox',       label: 'Inbox',            icon: Inbox,        emoji: '💬', featureKey: 'marcos_inbox' },
   { id: 'instances',   label: 'Instâncias',       icon: Smartphone,   emoji: '📱', featureKey: 'marcos_instancias' },
   { id: 'automations', label: 'Automações',       icon: Zap,          emoji: '⚡', featureKey: 'marcos_automacoes' },
-];
+].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
 
 export default function MarcosLeads() {
   const { user } = useAuth();
@@ -46,7 +49,9 @@ export default function MarcosLeads() {
     return ALL_TABS.filter(t => visibleFeatures[t.featureKey]);
   }, [isSeller, visibleFeatures]);
 
-  const [activeTab, setActiveTab] = useState(() => tabParam || 'crm');
+  // Default tab — quando agentPerformanceTab off (27/05/2026), cai em 'crm'.
+  const initialDefault = FEATURES.agentPerformanceTab ? 'performance' : 'crm';
+  const [activeTab, setActiveTab] = useState(() => tabParam || initialDefault);
 
   const handleTabChange = (newTab: string) => {
     setActiveTab(newTab);
@@ -134,9 +139,14 @@ export default function MarcosLeads() {
 
           <div className="flex-1 min-h-0 overflow-hidden">
             <Suspense fallback={<TabLoader />}>
-              <TabsContent value="performance" className="mt-0 h-full">
-                <MarcosPerformance embedded />
-              </TabsContent>
+              {/* Performance — desativada via FEATURES.agentPerformanceTab (27/05/2026).
+                  Conteúdo consolidado vive em /painel-geral pra master.
+                  Componente MarcosPerformance (lazy import linha 19) intacto. */}
+              {FEATURES.agentPerformanceTab && (
+                <TabsContent value="performance" className="mt-0 h-full">
+                  <MarcosPerformance embedded />
+                </TabsContent>
+              )}
               <TabsContent value="crm" className="mt-0 h-full">
                 <FluxCRM embedded />
               </TabsContent>

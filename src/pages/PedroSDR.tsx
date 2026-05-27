@@ -46,6 +46,7 @@ import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackCon
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { usePendingTransfers, formatPendingAge } from '@/hooks/usePendingTransfers';
+import { FEATURES } from '@/config/features';
 
 const TabLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -3943,6 +3944,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 // Tabs do gerente (master) — todas as abas
+// Performance é filtrada pela feature flag FEATURES.agentPerformanceTab
+// (default false — métricas consolidadas vivem em /painel-geral pra master).
 const MASTER_TABS = [
   { id: 'performance',  label: 'Performance',  icon: BarChart3,     emoji: '📊' },
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
@@ -3951,7 +3954,7 @@ const MASTER_TABS = [
   { id: 'ao-vivo',      label: 'CRM ao Vivo',  icon: MonitorPlay,   emoji: '📺' },
   { id: 'instancias',   label: 'Instâncias',   icon: Smartphone,    emoji: '📱' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
-];
+].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
 
 // Todas as tabs possíveis para o seller (filtradas por visible_features)
 const ALL_SELLER_TABS = [
@@ -3962,7 +3965,7 @@ const ALL_SELLER_TABS = [
   { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,    emoji: '📱', featureKey: 'tab_instancias' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
   { id: 'inbox',       label: 'Inbox',        icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },
-];
+].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
 
 export default function PedroSDR() {
   const { user } = useAuth();
@@ -3974,7 +3977,10 @@ export default function PedroSDR() {
   const tabs = isSeller
     ? ALL_SELLER_TABS.filter(t => (visibleFeatures as any)[t.featureKey])
     : MASTER_TABS;
-  const defaultTab = isSeller ? (tabs[0]?.id || 'crm') : (tabParam || 'performance');
+  // Default tab — quando agentPerformanceTab está off (decisão 27/05/2026),
+  // o master cai em 'crm'. Se reativar a flag, 'performance' volta a ser default.
+  const masterDefaultTab = FEATURES.agentPerformanceTab ? 'performance' : 'crm';
+  const defaultTab = isSeller ? (tabs[0]?.id || 'crm') : (tabParam || masterDefaultTab);
   const [activeTab, setActiveTab] = useState(defaultTab);
 
   // Sincroniza activeTab → URL. Assim, mesmo se o ErrorBoundary remontar
@@ -4050,8 +4056,9 @@ export default function PedroSDR() {
           </div>
 
           <div className="flex-1 min-h-0 overflow-auto">
-            {/* Performance */}
-            {(!isSeller || visibleFeatures.tab_performance) && (
+            {/* Performance — desativada via FEATURES.agentPerformanceTab (27/05/2026).
+                Conteúdo consolidado vive em /painel-geral pra master. */}
+            {FEATURES.agentPerformanceTab && (!isSeller || visibleFeatures.tab_performance) && (
               <TabsContent value="performance" className="mt-0">
                 <PerformanceTab userId={user?.id} />
               </TabsContent>
