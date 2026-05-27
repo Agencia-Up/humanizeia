@@ -47,6 +47,19 @@ export const FEATURES = {
 
   /** Atalho "Montar estratégia de negócio" / `/daniel`. */
   businessStrategy: false,
+
+  // ── ABAS DENTRO DAS PÁGINAS DE AGENTES ──────────────────────────────────
+
+  /**
+   * Aba "Performance" nas páginas individuais dos agentes Pedro (`/pedro`)
+   * e Marcos (`/marcos`). Vale tanto pra master quanto vendedor.
+   * Decisão de produto (27/05/2026): performance consolidada vive em
+   * `/painel-geral` (master only); abas individuais desativadas.
+   * Quando false: a aba não aparece no header e o conteúdo não renderiza.
+   * Quando true: aba volta + dados via PerformanceTab (Pedro) ou
+   * MarcosPerformanceTab (Marcos).
+   */
+  agentPerformanceTab: false,
 } as const;
 
 export type FeatureFlag = keyof typeof FEATURES;
