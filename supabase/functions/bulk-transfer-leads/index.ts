@@ -92,11 +92,15 @@ Deno.serve(async (req) => {
 
   try {
     // 1. Busca todos os leads qualificados SEM vendedor atribuído
+    // FASE 5 BUG-17: aceita mais status além de 'qualificado'. Antes pegava
+    // só leads com status='qualificado', deixando órfãos com pouco/medio
+    // qualificado fora da redistribuição. Master agora consegue redistribuir
+    // qualquer lead "em jogo" que ficou sem vendedor.
     const { data: unassigned, error: leadsErr } = await supabase
       .from("ai_crm_leads")
       .select("id, remote_jid, lead_name, summary, agent_id, status, created_at")
       .eq("user_id", effectiveUserId)
-      .in("status", ["qualificado"])
+      .in("status", ["qualificado", "medio_qualificado", "pouco_qualificado", "transferido"])
       .is("assigned_to_id", null)
       .order("created_at", { ascending: true });
 
