@@ -798,6 +798,23 @@ export async function processPedroV2Turn(
   const text = mediaContext.kind === "audio" && mediaContext.text
     ? mediaContext.text
     : rawText;
+
+  // Salvar mensagem do usuário no histórico para transferências e CRM funcionarem com o Pedro v2
+  if (!dryRun && lead?.id && text) {
+    try {
+      await supabase.from("wa_chat_history").insert({
+        user_id: input.agent.user_id,
+        agent_id: input.agent.id,
+        instance_id: input.wa_instance?.instance_name,
+        remote_jid: remoteJid,
+        role: "user",
+        content: text,
+      });
+    } catch (err) {
+      console.warn("[PedroV2] Failed to save user message to chat history:", err);
+    }
+  }
+
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
   const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(input.payload, text), mediaContext);
   const enrichedText = buildMessageWithAdContext(text, adContext);
@@ -1019,10 +1036,38 @@ export async function processPedroV2Turn(
     }
     if (sendResult?.ok) {
       await markAgentReplyForLead(supabase, lead?.id || null);
+      if (reply.text) {
+        try {
+          await supabase.from("wa_chat_history").insert({
+            user_id: input.agent.user_id,
+            agent_id: input.agent.id,
+            instance_id: input.wa_instance?.instance_name,
+            remote_jid: remoteJid,
+            role: "assistant",
+            content: reply.text,
+          });
+        } catch (err) {
+          console.warn("[PedroV2] Failed to save assistant reply to chat history:", err);
+        }
+      }
     }
   } else if (!dryRun && reply.ok) {
     sendResult = { ok: true, dry_run: true, reason: "PEDRO_V2_SEND_ENABLED_disabled" };
     await markAgentReplyForLead(supabase, lead?.id || null);
+    if (reply.text) {
+      try {
+        await supabase.from("wa_chat_history").insert({
+          user_id: input.agent.user_id,
+          agent_id: input.agent.id,
+          instance_id: input.wa_instance?.instance_name,
+          remote_jid: remoteJid,
+          role: "assistant",
+          content: reply.text,
+        });
+      } catch (err) {
+        console.warn("[PedroV2] Failed to save assistant reply to chat history:", err);
+      }
+    }
   }
 
   if (!dryRun && lead?.id && reply.ok) {

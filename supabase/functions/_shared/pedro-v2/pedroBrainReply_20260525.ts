@@ -183,9 +183,7 @@ function isCurrentTurnAdVehicleConsultation(input: {
   vehicle_resolution: PedroVehicleResolution;
   message: string;
 }) {
-  const hasAdVehicle = Boolean(input.ad_context?.has_ad_context && input.ad_context?.vehicle_query);
-
-  return hasAdVehicle && hasCurrentAdSignal(input) && input.plan?.action === "stock_search";
+  return String(input.plan?.reason || "").startsWith("enforced_ad_vehicle_consultation");
 }
 
 function looksLikePhotoPromise(text: string) {

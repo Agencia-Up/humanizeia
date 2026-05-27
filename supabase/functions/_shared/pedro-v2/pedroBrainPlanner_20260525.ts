@@ -205,7 +205,7 @@ function fallbackPlan(input: {
   }
 
   if (vehicle.query && (vehicle.has_current_vehicle_signal || heuristic?.needs_stock_search)) {
-    const adVehicle = Boolean(input.ad_context?.has_ad_context && input.ad_context?.vehicle_query);
+    const adVehicle = Boolean(input.ad_context?.has_ad_context && input.ad_context?.vehicle_query && !hasRecentConversation(input));
     return {
       action: "stock_search",
       intent: photo ? "photo_request" : (heuristic?.intent || "stock_lookup"),
@@ -355,7 +355,7 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     plan.reason = `enforced_current_vehicle:${vehicle.reason}`;
   }
 
-  if (input.ad_context?.has_ad_context && input.ad_context?.vehicle_query && vehicle.query && plan.action === "stock_search") {
+  if (input.ad_context?.has_ad_context && input.ad_context?.vehicle_query && vehicle.query && plan.action === "stock_search" && !hasRecentConversation(input)) {
     plan.intent = "vehicle_reference";
     plan.search_query = vehicle.query;
     plan.search_filters = {

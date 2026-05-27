@@ -36,7 +36,7 @@ export async function ensurePedroV2Lead(
     .maybeSingle();
 
   if (!existing?.id) {
-    await supabase.from("ai_crm_leads").upsert(
+    const { error: upsertError } = await supabase.from("ai_crm_leads").upsert(
       {
         user_id: input.user_id,
         agent_id: input.agent_id,
@@ -54,9 +54,12 @@ export async function ensurePedroV2Lead(
       },
       { onConflict: "agent_id, remote_jid", ignoreDuplicates: true },
     );
+    if (upsertError) {
+      console.error("[ensurePedroV2Lead] Upsert error:", upsertError);
+    }
   }
 
-  await supabase
+  const { error: updateError } = await supabase
     .from("ai_crm_leads")
     .update({
       instance_id: input.instance_id || null,
@@ -68,6 +71,10 @@ export async function ensurePedroV2Lead(
     .eq("agent_id", input.agent_id)
     .eq("remote_jid", input.remote_jid);
 
+  if (updateError) {
+    console.error("[ensurePedroV2Lead] Update error:", updateError);
+  }
+
   const { data: lead, error } = await supabase
     .from("ai_crm_leads")
     .select("id, assigned_to_id, status, status_crm, lead_name")
@@ -75,7 +82,10 @@ export async function ensurePedroV2Lead(
     .eq("remote_jid", input.remote_jid)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    console.error("[ensurePedroV2Lead] Final select error:", error);
+    throw error;
+  }
   return lead;
 }
 
