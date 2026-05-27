@@ -1,5 +1,5 @@
 import { authorizeToolRequest, corsHeaders, jsonResponse, parseJson } from "../_shared/pedro-v2/server.ts";
-import { generatePedroSalesReply } from "../_shared/pedro-v2/replyGenerator_20260524.ts";
+import { generatePedroSalesReply } from "../_shared/pedro-v2/replyGenerator_20260525_photo_flow.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -14,6 +14,7 @@ Deno.serve(async (req) => {
     intent: body.intent || null,
     stock_result: body.stock_result || null,
     message: body.message || body.text || "",
+    agent: body.agent || null,
   });
 
   return jsonResponse({
