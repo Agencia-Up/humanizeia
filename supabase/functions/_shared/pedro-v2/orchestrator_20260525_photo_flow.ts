@@ -894,7 +894,7 @@ export async function processPedroV2Turn(
       })
     : nextMemory;
 
-  let reply = contextualIntent.intent === "photo_request" && brainPlan.action === "photo_request"
+  let reply = brainPlan.action === "photo_request"
     ? buildVehiclePhotoReply(effectiveMemory, text)
     : await generatePedroBrainReply({
         agent: input.agent,

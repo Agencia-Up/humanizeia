@@ -62,6 +62,35 @@ function isPhotoText(message?: string | null) {
   return /\b(foto|fotos|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|porta malas|traseira|frente|lateral|video)\b/.test(normalized);
 }
 
+function isAffirmativeText(message?: string | null) {
+  const normalized = normalizeText(message);
+  return /^(sim|s|ss|quero|pode|pode sim|pode mandar|manda|manda sim|envia|envia sim|claro|bora|vamos|ok|ta bom|beleza|blz)$/.test(normalized) ||
+    /\b(pode mandar|manda pra mim|manda ai|me manda|envia pra mim|quero ver|quero sim|pode enviar)\b/.test(normalized);
+}
+
+function hasRecentPhotoOffer(input: {
+  memory?: PedroV2LeadMemory | null;
+  recent_history?: any[];
+}) {
+  const turns = [
+    ...(Array.isArray(input.recent_history) ? input.recent_history : []),
+    ...(Array.isArray(input.memory?.recent_turns) ? input.memory.recent_turns : []),
+  ];
+  const agentTurns = turns
+    .slice(-12)
+    .filter((turn) => {
+      const role = String(turn?.role || turn?.direction || "").toLowerCase();
+      return ["agent", "assistant", "consultor", "outgoing"].includes(role);
+    })
+    .slice(-5);
+
+  return agentTurns.some((turn) => {
+    const text = normalizeText(turn?.text || turn?.content || turn?.message || "");
+    return /\b(quer|posso|te mando|mandar|envio|ver)\b.*\b(foto|fotos|imagem|imagens)\b/.test(text) ||
+      /\b(foto|fotos|imagem|imagens)\b.*\b(dele|desse|deste|carro|veiculo|anuncio)\b/.test(text);
+  });
+}
+
 function detectPhotoTarget(message?: string | null) {
   const normalized = normalizeText(message);
   if (/\b(roda|rodas|pneu|pneus|aro|calota)\b/.test(normalized)) return "wheel";
@@ -113,6 +142,7 @@ function fallbackPlan(input: {
   const vehicle = input.vehicle_resolution;
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
   const photo = isPhotoText(input.message);
+  const acceptedPhotoOffer = isAffirmativeText(input.message) && hasRecentPhotoOffer(input);
 
   if (isSocialQuestion(input.message)) {
     return {
@@ -140,6 +170,21 @@ function fallbackPlan(input: {
       use_memory_vehicle: false,
       response_guidance: "Cliente pediu humano/consultor. Responda curto e acione transferencia quando a regra permitir.",
       reason: "fallback_handoff",
+      source: "fallback",
+    };
+  }
+
+  if (acceptedPhotoOffer && hasPresentedVehicles && !vehicle.possible_new_topic) {
+    return {
+      action: "photo_request",
+      intent: "photo_request",
+      confidence: 0.91,
+      search_query: vehicle.query,
+      search_filters: {},
+      photo_target: detectPhotoTarget(input.message),
+      use_memory_vehicle: true,
+      response_guidance: "Lead aceitou a oferta recente de fotos. Acione a tool de fotos usando o veiculo em contexto; nao prometa fotos sem enviar midia.",
+      reason: "fallback_accepted_recent_photo_offer",
       source: "fallback",
     };
   }
@@ -262,6 +307,7 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   vehicle_resolution: PedroVehicleResolution;
   ad_context?: any;
   memory?: PedroV2LeadMemory | null;
+  recent_history?: any[];
 }): PedroBrainPlan {
   const action = ["reply_only", "stock_search", "photo_request", "handoff", "clarify"].includes(raw?.action)
     ? raw.action as PedroBrainAction
@@ -286,6 +332,16 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   const vehicle = input.vehicle_resolution;
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
   const photo = isPhotoText(input.message);
+  const acceptedPhotoOffer = isAffirmativeText(input.message) && hasRecentPhotoOffer(input);
+
+  if (acceptedPhotoOffer && hasPresentedVehicles && !vehicle.possible_new_topic) {
+    plan.action = "photo_request";
+    plan.intent = "photo_request";
+    plan.photo_target = detectPhotoTarget(input.message);
+    plan.use_memory_vehicle = true;
+    plan.reason = "enforced_accepted_recent_photo_offer";
+    plan.response_guidance = "Lead aceitou a oferta recente de fotos. Acione a tool de fotos usando o veiculo em contexto; nao prometa fotos sem enviar midia.";
+  }
 
   if (vehicle.has_current_vehicle_signal && vehicle.query) {
     plan.action = photo && hasPresentedVehicles && !vehicle.possible_new_topic ? "photo_request" : "stock_search";
@@ -379,7 +435,7 @@ export async function planPedroTurn(input: {
           {
             role: "system",
             content:
-              "Voce e o cerebro/orquestrador Pedro v2. Decida a proxima acao, sem escrever resposta final ao lead. Retorne JSON valido com: action, intent, confidence, search_query, search_filters, photo_target, use_memory_vehicle, response_guidance, reason. Regras: mensagem atual vence memoria antiga; se precisar de estoque, action stock_search; se pedir foto de veiculo em contexto seguro, action photo_request; se for saudacao comum, reply_only; nunca use memoria antiga quando o lead mudou de modelo.",
+              "Voce e o cerebro/orquestrador Pedro v2. Decida a proxima acao, sem escrever resposta final ao lead. Retorne JSON valido com: action, intent, confidence, search_query, search_filters, photo_target, use_memory_vehicle, response_guidance, reason. Regras: mensagem atual vence memoria antiga; se precisar de estoque, action stock_search; se pedir foto de veiculo em contexto seguro, action photo_request; se o lead respondeu sim/pode/manda depois de oferta recente de fotos, action photo_request com use_memory_vehicle true; se for saudacao comum, reply_only; nunca use memoria antiga quando o lead mudou de modelo; nunca oriente resposta dizendo que enviou fotos sem action photo_request.",
           },
           {
             role: "user",

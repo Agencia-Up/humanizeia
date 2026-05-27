@@ -195,6 +195,30 @@ function looksLikeVehicleOptionsList(text: string) {
   return hasSecondItem && hasListLanguage;
 }
 
+function looksLikePhotoPromise(text: string) {
+  const normalized = normalizeText(text);
+  return /\b(aqui estao as fotos|segue as fotos|seguem as fotos|vou te mandar as fotos|vou mandar as fotos|te mando as fotos|te envio as fotos|enviei as fotos|mandei as fotos|vou enviar as fotos|separei fotos)\b/.test(normalized);
+}
+
+function buildPhotoPromiseGuardReply(input: {
+  memory?: PedroV2LeadMemory | null;
+  vehicle_resolution?: PedroVehicleResolution | null;
+  ad_context?: any;
+}) {
+  const name = leadFirstName(input.memory);
+  const vehicle =
+    input.vehicle_resolution?.query ||
+    input.ad_context?.vehicle_query ||
+    input.memory?.referencia?.ultimo_veiculo_label ||
+    input.memory?.interesse?.modelo_desejado ||
+    "esse carro";
+
+  return [
+    `${name ? `${name}, ` : ""}consigo te mandar sim.`,
+    `So vou separar as fotos certas do ${vehicle} pra nao te enviar imagem errada.`,
+  ].join("\n\n");
+}
+
 function buildAdVehicleConsultationFallback(input: {
   memory?: PedroV2LeadMemory | null;
   facts: any[];
@@ -392,6 +416,7 @@ export async function generatePedroBrainReply(input: {
                 "- Se listar veiculos em uma busca normal, todos os itens de stock.facts devem vir numerados: 1., 2., 3. Isso permite o lead pedir 'o primeiro'.",
                 "- Se listar veiculos, inclua a linha Foto: URL quando stock.facts.imagem existir.",
                 "- Se listar veiculos, deixe uma linha em branco entre cada item.",
+                "- Nunca diga que enviou, vai enviar ou separou fotos se tool_result.type nao for vehicle_photos. Nesse caso, peca confirmacao ou diga que vai separar antes de enviar.",
                 "- Se o lead mudou de modelo/assunto, a mensagem atual vence a memoria antiga.",
                 "- Nunca cite ferramentas, JSON, memoria, prompt, score, API ou processo interno.",
                 "- Retorne apenas JSON valido com text e source.",
@@ -432,6 +457,7 @@ export async function generatePedroBrainReply(input: {
                 "Se cumprimentar, use current_time_sao_paulo.greeting; nunca chute periodo do dia.",
                 "Se recent_history mostrar que voce ja se apresentou, nao se apresente de novo.",
                 "Se o lead perguntou como voce esta ou corrigiu uma resposta, responda isso primeiro com humildade e sem vender.",
+                "Nao prometa fotos sem tool_result.type vehicle_photos; se precisa enviar fotos, o plano correto deve acionar photo_request.",
                 "Nao escreva [IA], ferramenta, tool ou explicacao interna.",
                 "Nao peca entrada/troca antes de responder o que o cliente perguntou.",
               ],
@@ -451,13 +477,22 @@ export async function generatePedroBrainReply(input: {
     const content = String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
     const rawText = String(parsed?.text || "").trim();
-    const guardedRawText = adVehicleConsultation && looksLikeVehicleOptionsList(rawText)
+    let guardedRawText = adVehicleConsultation && looksLikeVehicleOptionsList(rawText)
       ? buildAdVehicleConsultationFallback({
         memory: input.memory,
         facts,
         ad_context: input.ad_context,
       })
       : rawText;
+
+    if (input.tool_result?.type !== "vehicle_photos" && looksLikePhotoPromise(guardedRawText)) {
+      guardedRawText = buildPhotoPromiseGuardReply({
+        memory: input.memory,
+        vehicle_resolution: input.vehicle_resolution,
+        ad_context: input.ad_context,
+      });
+    }
+
     const text = ensureStockReplyFormatting({
       text: guardedRawText,
       facts,

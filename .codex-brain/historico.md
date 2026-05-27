@@ -187,6 +187,13 @@
   - midias de audio recebidas via Uazapi agora sao baixadas e transcritas com `OPENAI_API_KEY`; a transcricao vira a mensagem atual antes do roteamento/planner;
   - audio deixou de ser tratado como contexto de anuncio, evitando resposta antiga/stale quando o lead manda audio mudando de assunto;
   - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
+- Hotfix do Pedro v2 para aceite de fotos apos oferta:
+  - `pedro-webhook-v2` recebeu build `2026-05-27-photo-offer-tool-v1`;
+  - quando o lead responde "sim", "pode", "manda" ou equivalente apos uma oferta recente de fotos, o planner agora forca `photo_request` usando o veiculo em contexto;
+  - o orquestrador passou a confiar na acao do planner para chamar a tool de fotos, sem depender apenas da heuristica textual de pedido de foto;
+  - o gerador de resposta recebeu trava para nao dizer que enviou/separou fotos quando `tool_result.type` nao for `vehicle_photos`;
+  - objetivo: evitar o caso em que o agente prometia fotos apos o lead aceitar, mas nao disparava as midias;
+  - build frontend validado com `npm.cmd run build` e deploy realizado em producao da Edge Function `pedro-webhook-v2`.
 
 ## Historico funcional recente consolidado
 
