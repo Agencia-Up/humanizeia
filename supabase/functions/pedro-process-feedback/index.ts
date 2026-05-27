@@ -344,13 +344,34 @@ serve(async (req) => {
               await supabase.from("pedro_manager_feedback" as any)
                 .update({ sent_to_manager_at: new Date().toISOString(), pending_send: false })
                 .eq("id", (feedback as any).id);
+            } else if ((feedback as any)?.id) {
+              // FASE 4 BUG-11: envio falhou no modo auto → marca pending_send=true
+              // pra cron-flush-manager-feedbacks repegar no próximo ciclo.
+              // Antes, feedback ficava com sent_to_manager_at=null e pending_send=false
+              // → cron nunca tentava de novo, gerente perdia o feedback silenciosamente.
+              console.warn(`[pedro-process-feedback] Envio falhou (${sendStatus}) — marcando pending_send=true pra cron repegar`);
+              await supabase.from("pedro_manager_feedback" as any)
+                .update({ pending_send: true })
+                .eq("id", (feedback as any).id);
             }
           } else {
-            console.log("[pedro-process-feedback] Nenhuma instância encontrada para envio");
+            // BUG-11 (bonus): se não achou instância, idem — cron tenta de novo
+            console.log("[pedro-process-feedback] Nenhuma instância encontrada — marcando pending_send=true pra cron repegar");
+            if ((feedback as any)?.id) {
+              await supabase.from("pedro_manager_feedback" as any)
+                .update({ pending_send: true })
+                .eq("id", (feedback as any).id);
+            }
           }
       }
-    } catch (notifyErr) {
+    } catch (notifyErr: any) {
       console.warn("[pedro-process-feedback] Falha na notificação:", notifyErr);
+      // BUG-11: exception no envio = marca pending_send=true pra cron repegar
+      if ((feedback as any)?.id) {
+        await supabase.from("pedro_manager_feedback" as any)
+          .update({ pending_send: true })
+          .eq("id", (feedback as any).id);
+      }
     }
 
     return new Response(
