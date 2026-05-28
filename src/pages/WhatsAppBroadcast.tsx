@@ -81,7 +81,8 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   const [editingCampaign, setEditingCampaign] = useState<(CampaignFormData & { id: string }) | null>(null);
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [aiVariations, setAiVariations] = useState<string[]>([]);
+  // 28/05/2026: cada variação agora vem com contact_name + message (Fase 1 IA)
+  const [aiVariations, setAiVariations] = useState<Array<{ contact_name: string; message: string }>>([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [renamingListId, setRenamingListId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -348,13 +349,18 @@ Use emojis com moderação. Separe cada variação com "---".
 Não numere as variações. Não inclua explicações adicionais.`
       );
       const variations = response.split('---').map((v: string) => v.trim()).filter(Boolean);
-      setAiVariations(variations);
+      // legacy: wrap em objetos pra bater com tipo novo (sem contact_name personalizado)
+      setAiVariations(variations.map((v: string, i: number) => ({ contact_name: `Variação ${i + 1}`, message: v })));
       setPreviewOpen(true);
     } catch {
       toast({ title: 'Erro ao gerar variações', variant: 'destructive' });
     }
   };
 
+  // 28/05/2026 — FASE 1 IA: preview agora gera mensagens personalizadas pra
+  // 3 contatos fictícios (definidos no edge function) ou amostragem dos leads
+  // selecionados quando vier do Marcos CRM. Cada mensagem respeita system prompt
+  // específico do nível (Conservador/Moderado/Criativo).
   const handleGeneratePreview = async (prompt: string, variationLevel = 'medium') => {
     if (!prompt.trim()) {
       toast({ title: 'Escreva o prompt base antes de gerar previa', variant: 'destructive' });
@@ -363,21 +369,45 @@ Não numere as variações. Não inclua explicações adicionais.`
 
     setAiLoading(true);
     try {
+      // Se vier do CRM Marcos, amostra até 3 contatos com nome+origem como dados extras
+      // Senão, deixa o edge function usar os 3 contatos fictícios default
+      let contacts: Array<{ name: string; dados_extras: string }> | undefined;
+      if (prefilledMarcos && prefilledMarcos.contacts.length > 0) {
+        contacts = prefilledMarcos.contacts.slice(0, 3).map((c) => ({
+          name: c.name || 'Contato',
+          dados_extras: c.origem ? `Origem do lead: ${c.origem}` : '',
+        }));
+      }
+
       const { data, error } = await supabase.functions.invoke('preview-wa-variations', {
         body: {
           prompt: prompt.trim(),
           variation_level: variationLevel,
+          ...(contacts ? { contacts } : {}),
         },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
       const variations = Array.isArray(data?.variations)
-        ? data.variations.map((v: unknown) => String(v).trim()).filter(Boolean)
+        ? data.variations
+            .map((v: any) => ({
+              contact_name: typeof v?.contact_name === 'string' ? v.contact_name : '',
+              message: typeof v?.message === 'string' ? v.message.trim() : '',
+            }))
+            .filter((v: { message: string }) => v.message)
         : [];
 
       setAiVariations(variations);
       setPreviewOpen(true);
+
+      if (data?.fallback) {
+        toast({
+          title: 'Prévia em modo fallback',
+          description: data?.reason || 'A IA não respondeu, mostrando exemplos genéricos.',
+          variant: 'destructive',
+        });
+      }
     } catch (err: any) {
       toast({
         title: 'Erro ao gerar variacoes',
@@ -1051,11 +1081,15 @@ Não numere as variações. Não inclua explicações adicionais.`
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+            <p className="text-xs text-muted-foreground italic">
+              Mensagens personalizadas pra contatos de exemplo — mostra como a IA adapta o texto pra cada lead real
+              na hora do disparo.
+            </p>
             {aiVariations.map((v, i) => (
               <Card key={i} className="bg-muted/30">
                 <CardContent className="p-3">
-                  <p className="text-xs text-muted-foreground mb-1">Variação {i + 1}</p>
-                  <p className="text-sm whitespace-pre-wrap">{v}</p>
+                  <p className="text-xs text-primary font-semibold mb-1.5">Para {v.contact_name}</p>
+                  <p className="text-sm whitespace-pre-wrap">{v.message}</p>
                 </CardContent>
               </Card>
             ))}
