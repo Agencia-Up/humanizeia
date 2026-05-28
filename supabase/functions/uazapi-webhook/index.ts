@@ -284,46 +284,6 @@ const CLAUDE_HAIKU_MODEL_CANDIDATES = [
   'claude-3-5-haiku-20241022', // fallback antigo se nada acima funcionar
 ];
 
-// Fix 28/05/2026 (Douglas): fail-open helpers pra impedir que travas na
-// Anthropic API bloqueiem a resposta do Pedro. fetchAnthropicMessages aborta
-// o request após timeoutMs via AbortController. timeoutPromise envolve
-// qualquer promise pra resolver com fallback se demorar demais.
-function timeoutPromise<T>(promise: Promise<T>, timeoutMs: number, label: string, fallback: T): Promise<T> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      console.warn(`[timeout] ${label} excedeu ${timeoutMs}ms - seguindo sem bloquear resposta`);
-      resolve(fallback);
-    }, timeoutMs);
-
-    promise
-      .then((value) => resolve(value))
-      .catch((err) => {
-        console.warn(`[timeout] ${label} falhou - seguindo sem bloquear resposta:`, err);
-        resolve(fallback);
-      })
-      .finally(() => clearTimeout(timer));
-  });
-}
-
-async function fetchAnthropicMessages(apiKey: string, body: any, timeoutMs = 4500): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function extractEntitiesWithClaude(args: {
   message: string;
   currentState: any;
@@ -361,11 +321,19 @@ Se nada de novo, retorne {}.`;
   // Tenta cada modelo até um funcionar (Anthropic às vezes muda IDs)
   for (const model of CLAUDE_HAIKU_MODEL_CANDIDATES) {
     try {
-      const res = await fetchAnthropicMessages(apiKey, {
-        model,
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMsg }],
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMsg }],
+        }),
       });
 
       if (!res.ok) {
@@ -931,25 +899,56 @@ async function ensurePedroLeadRecord(
   );
 
   if (!currentLead?.id) {
-    await supabase.from('ai_crm_leads').upsert({
-      user_id: agent.user_id,
-      agent_id: agent.id,
-      instance_id: waInstance.id,
-      remote_jid: remoteJid,
-      lead_name: pushName,
-      message_count: 1,
-      origem: 'outros',
-      assigned_to_id: null,
-      status: 'novo',
-      last_interaction_at: nowStr
-    }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
+    const { data: reusableLead } = await supabase
+      .from('ai_crm_leads')
+      .select('id')
+      .eq('user_id', agent.user_id)
+      .eq('remote_jid', remoteJid)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (reusableLead?.id) {
+      const { error: reuseErr } = await supabase.from('ai_crm_leads').update({
+        agent_id: agent.id,
+        instance_id: waInstance.id,
+        lead_name: pushName,
+        assigned_to_id: previousSeller?.id || null,
+        status: previousSeller?.id ? 'em_atendimento' : 'novo',
+        last_user_reply_at: nowStr,
+        last_interaction_at: nowStr,
+        followup_5min_sent: false,
+      }).eq('id', reusableLead.id);
+
+      if (!reuseErr) {
+        console.log(`[CRM] Reaproveitando lead antigo ${reusableLead.id} para agent atual ${agent.id}`);
+        return { id: reusableLead.id, previousSeller };
+      }
+      console.warn('[CRM] Falha ao reaproveitar lead antigo; seguindo com upsert:', reuseErr);
+    }
   }
+
+  await supabase.from('ai_crm_leads').upsert({
+    user_id: agent.user_id,
+    agent_id: agent.id,
+    instance_id: waInstance.id,
+    remote_jid: remoteJid,
+    lead_name: pushName,
+    message_count: 1,
+    origem: 'outros',
+    assigned_to_id: currentLead?.assigned_to_id || previousSeller?.id || null,
+    status: (currentLead?.assigned_to_id || previousSeller?.id) ? 'em_atendimento' : 'novo',
+    last_interaction_at: nowStr
+  }, { onConflict: 'agent_id, remote_jid', ignoreDuplicates: true });
 
   await supabase.from('ai_crm_leads').update({
     instance_id: waInstance.id,
     last_user_reply_at: nowStr,
     last_interaction_at: nowStr,
     followup_5min_sent: false,
+    ...(previousSeller?.id && previousSeller.id !== currentLead?.assigned_to_id
+      ? { assigned_to_id: previousSeller.id, status: 'em_atendimento' }
+      : {}),
   }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
 
   const { data: ensuredLead } = await supabase
@@ -1282,11 +1281,10 @@ async function summarizeOldMessages(oldMessages: any[], apiKey: string, modelCan
   const { systemPrompt, userMessage } = buildSummarizationPrompt(oldMessages);
   for (const model of modelCandidates) {
     try {
-      const res = await fetchAnthropicMessages(apiKey, {
-        model,
-        max_tokens: 512,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model, max_tokens: 512, system: systemPrompt, messages: [{ role: 'user', content: userMessage }] }),
       });
       if (!res.ok) {
         const err = await res.text();
@@ -2003,18 +2001,18 @@ Deno.serve(async (req) => {
 
       console.log(`[Webhook] Mensagem recebida [UAZAPI]. Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
 
-      // ── DEDUP DESATIVADA 28/05/2026 EMERGENCIAL ────────────────────────
-      // A trava de dedup que verificava wa_inbox.remote_message_id ANTES de
-      // processar estava silenciando 100% das mensagens em PROD desde
-      // 27/05 22:40 BRT (17 inbound, 0 outbound). O wa-inbox-webhook (que
-      // também grava em wa_inbox) ganha consistentemente a corrida desde
-      // alguma mudança feita em 22:00, e o uazapi-webhook via "já processada"
-      // → pulava sem chamar a IA. Pedro ficou mudo. Removendo a trava pra
-      // restaurar atendimento. Risco aceito: respostas duplicadas podem
-      // voltar (caso original que motivou a trava em 12/05 — commit 54b3057).
-      // Fix definitivo (advisory lock por remote_message_id ou janela
-      // temporal curta) deve ser feito em sequencia.
-      // ─────────────────────────────────────────────────────────────────────
+      // ── DEDUP: se wa-inbox-webhook já processou esta mensagem, pular ──
+      const messageIdForDedup = msgObj.messageid || msgObj.id?.id || msgObj.key?.id || '';
+      if (messageIdForDedup) {
+        const { data: alreadyInInbox } = await supabase.from('wa_inbox')
+          .select('id')
+          .eq('remote_message_id', messageIdForDedup)
+          .maybeSingle();
+        if (alreadyInInbox) {
+          console.log(`[Webhook] ⏭️ Mensagem ${messageIdForDedup} já processada pelo wa-inbox-webhook. Pulando.`);
+          return new Response(JSON.stringify({ ok: true, skipped: 'dedup' }), { headers: corsHeaders });
+        }
+      }
 
       return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
     }
@@ -2051,7 +2049,18 @@ Deno.serve(async (req) => {
 
     let userText = message.conversation || message.extendedTextMessage?.text || message.text || data.text || ''
 
-    // ── DEDUP DESATIVADA 28/05/2026 EMERGENCIAL (ver bloco acima no formato UazAPI) ──
+    // ── DEDUP: se wa-inbox-webhook já processou esta mensagem, pular ──
+    const evMsgId = key.id || '';
+    if (evMsgId) {
+      const { data: alreadyInInbox } = await supabase.from('wa_inbox')
+        .select('id')
+        .eq('remote_message_id', evMsgId)
+        .maybeSingle();
+      if (alreadyInInbox) {
+        console.log(`[Webhook] ⏭️ Mensagem ${evMsgId} já processada pelo wa-inbox-webhook. Pulando.`);
+        return new Response(JSON.stringify({ ok: true, skipped: 'dedup' }), { headers: corsHeaders });
+      }
+    }
 
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
 
@@ -3165,32 +3174,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 confirmation_timeout_at: timeoutAt,
               });
 
-              // Gera resumo estruturado a partir dos dados reais do lead (pedro_conversation_state)
-              // em vez de depender apenas do texto livre que a IA escreveu em resumo_breve.
-              const st = conversationState || {};
-              const summaryParts: string[] = [];
-              const modelo = st.interesse?.modelo_desejado || st.referencia?.veiculo_citado || null;
-              const tipoVeiculo = st.interesse?.tipo_veiculo || null;
-              const pagamento = st.negociacao?.forma_pagamento || null;
-              const precoMax = st.interesse?.preco_max || null;
-              const troca = st.negociacao?.tem_troca && st.negociacao?.carro_troca?.modelo
-                ? st.negociacao.carro_troca.modelo
-                : st.negociacao?.tem_troca ? 'sim' : null;
-              const cidade = st.lead?.cidade || null;
-              if (modelo) summaryParts.push(`Interesse: ${modelo}${tipoVeiculo ? ` (${tipoVeiculo})` : ''}`);
-              if (pagamento) summaryParts.push(`Pagamento: ${pagamento}`);
-              if (precoMax) summaryParts.push(`Teto: R$ ${Number(precoMax).toLocaleString('pt-BR')}`);
-              if (troca) summaryParts.push(`Troca: ${troca}`);
-              if (cidade) summaryParts.push(`Cidade: ${cidade}`);
-              if (transferArgs.resumo_breve) summaryParts.push(transferArgs.resumo_breve);
-              const crmSummary = summaryParts.length > 0
-                ? summaryParts.join('\n')
-                : (transferArgs.resumo_breve || null);
-
               await supabase.from('ai_crm_leads').update({
                 status: 'transferido',
                 assigned_to_id: null,
-                summary: crmSummary,
+                summary: transferArgs.resumo_breve || null,
               }).eq('id', leadRow.id);
 
               // 5. Briefing estruturado pro vendedor (IT-2.4: V2 quando flag on)
