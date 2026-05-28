@@ -301,11 +301,11 @@ export function CampaignFormDialog({
 
             <Separator />
 
-            {/* Prompt IA (Claude AI) */}
+            {/* Prompt IA */}
             <div className="space-y-2">
               <Label htmlFor="prompt-base" className="flex items-center gap-1.5">
                 <Sparkles className="h-4 w-4 text-primary" />
-                Prompt Base para IA (Claude AI)
+                Prompt Base para IA
               </Label>
               <Textarea
                 id="prompt-base"
