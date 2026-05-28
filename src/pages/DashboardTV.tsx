@@ -346,6 +346,32 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
         if (cancelled) return;
 
+        // DEBUG 28/05/2026: investigacao por que Marcos lead nao aparece
+        // no Painel ao Vivo do seller. Remover apos confirmar fix.
+        // eslint-disable-next-line no-console
+        console.group('[DashboardTV-DEBUG] Resultado das 4 queries');
+        // eslint-disable-next-line no-console
+        console.log('Filtros aplicados:', {
+          effectiveUserId,
+          sellerMemberId,
+          isSeller,
+          dateRange,
+          todayStart,
+          todayEnd,
+        });
+        // eslint-disable-next-line no-console
+        console.log('sellers fetched:', sellersRes.data?.length || 0, sellersRes.data);
+        // eslint-disable-next-line no-console
+        console.log('pedro leads:', pedroRes.data?.length || 0);
+        // eslint-disable-next-line no-console
+        console.log('MARCOS leads RAW:', marcosRes.data?.length || 0, marcosRes.data);
+        if (marcosRes.error) {
+          // eslint-disable-next-line no-console
+          console.error('MARCOS QUERY ERROR:', marcosRes.error);
+        }
+        // eslint-disable-next-line no-console
+        console.groupEnd();
+
         // 1. Branding (com fallbacks razoáveis)
         const p = profileRes.data || {};
         setBranding({
