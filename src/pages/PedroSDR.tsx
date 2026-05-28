@@ -2031,8 +2031,12 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [addLeadOpen, setAddLeadOpen]   = useState(false);
   const [addLeadName, setAddLeadName]   = useState('');
   const [addLeadPhone, setAddLeadPhone] = useState('');
-  const [addLeadOrigem, setAddLeadOrigem] = useState<string>(''); // '' = origem NULL no banco (LEGACY — mantém compat)
+  const [addLeadOrigem, setAddLeadOrigem] = useState<string>(''); // '' = origem NULL no banco (LEGACY — mantém compat). '__custom__' = modo personalizado (Marcos)
   const [addLeadOrigemOutros, setAddLeadOrigemOutros] = useState<string>('');
+  // Spec 28/05/2026: Marcos — origem personalizada (texto livre) + opção
+  // de criar nova coluna no Kanban com o nome digitado
+  const [addLeadCustomOrigem, setAddLeadCustomOrigem] = useState<string>('');
+  const [addLeadCustomOrigemCreateColumn, setAddLeadCustomOrigemCreateColumn] = useState<boolean>(false);
   // Fase 6.4: novo source_id (uuid) — referência a lead_sources
   const [addLeadSourceId, setAddLeadSourceId] = useState<string | null>(null);
   const [addLeadSourceName, setAddLeadSourceName] = useState<string>('');
@@ -2252,9 +2256,52 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       if (isMarcosCrm) {
         const firstStageId = await resolveFirstMarcosStageId(effectiveUserId);
+        // Spec 28/05/2026: modo personalizado — vendedor digitou um nome
+        // custom (ex: "Feira do automovel") + opcionalmente marcou pra criar
+        // coluna nova no Kanban.
+        const isCustomOrigem = addLeadOrigem === '__custom__';
+        const customOrigemText = addLeadCustomOrigem.trim();
+        let customStageId: string | null = null;
+        if (isCustomOrigem && addLeadCustomOrigemCreateColumn && customOrigemText) {
+          // Tenta achar stage existente com esse nome (case-insensitive) antes
+          // de criar nova — evita duplicatas se vendedor digitar igual de novo.
+          const { data: existingStage } = await (supabase as any)
+            .from('crm_pipeline_stages')
+            .select('id')
+            .eq('user_id', effectiveUserId)
+            .ilike('name', customOrigemText)
+            .maybeSingle();
+          if (existingStage?.id) {
+            customStageId = existingStage.id;
+          } else {
+            // Cria nova coluna no fim do pipeline (maior position + 1)
+            const { data: maxStagePos } = await (supabase as any)
+              .from('crm_pipeline_stages')
+              .select('position')
+              .eq('user_id', effectiveUserId)
+              .order('position', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            const nextPos = (maxStagePos?.position ?? -1) + 1;
+            const { data: newStage, error: stageErr } = await (supabase as any)
+              .from('crm_pipeline_stages')
+              .insert({
+                user_id: effectiveUserId,
+                name: customOrigemText,
+                position: nextPos,
+                color: '#a78bfa', // roxo neutro pra origens personalizadas
+              })
+              .select('id')
+              .single();
+            if (stageErr) throw stageErr;
+            customStageId = newStage?.id || null;
+          }
+        }
         // Bug 1 (spec 27/05/2026): lead vai pra coluna que casa com a origem
         // selecionada. Fallback pra firstStageId se origem nao tiver mapping.
-        const stageIdForOrigem = resolveMarcosStageIdForOrigem(addLeadOrigem, manualStages);
+        const stageIdForOrigem = isCustomOrigem
+          ? (customStageId || firstStageId)  // 28/05: prioriza coluna personalizada criada
+          : resolveMarcosStageIdForOrigem(addLeadOrigem, manualStages);
         const targetStageId = stageIdForOrigem || firstStageId;
         const currentSeller = await resolveCurrentSellerForMarcos();
         const sellerCustomFields = currentSeller ? {
@@ -2277,13 +2324,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           stage_id: targetStageId,
           name: addLeadName.trim(),
           phone: cleanPhone,
-          source: addLeadOrigem || 'manual',
+          // Spec 28/05/2026: source guarda o NOME real digitado quando custom
+          // (ex: 'Feira do automovel') pro vendedor ver no detalhe do lead;
+          // senao usa o slug fixo (ex: 'consignado').
+          source: isCustomOrigem ? (customOrigemText || 'manual') : (addLeadOrigem || 'manual'),
           // Spec 27/05/2026: grava tambem em crm_leads.origem (slug canonico)
           // pro Painel ao Vivo do Pedro contar esse lead na seção correta.
-          // marcosOrigemSlugToCanonical mapeia consignado_indicacao→indicacao
-          // e loja→outros (slugs nao previstos no CHECK constraint).
-          origem: marcosOrigemSlugToCanonical(addLeadOrigem),
-          notes: addLeadOrigem === 'outros' ? (addLeadOrigemOutros.trim() || null) : null,
+          // Custom origem: cai em 'outros' (CHECK constraint nao aceita custom).
+          origem: isCustomOrigem ? 'outros' : marcosOrigemSlugToCanonical(addLeadOrigem),
+          notes: isCustomOrigem
+            ? `Origem personalizada: ${customOrigemText}`
+            : (addLeadOrigem === 'outros' ? (addLeadOrigemOutros.trim() || null) : null),
           tags: ['Marcos Manual'],
           value: 0,
           currency: 'BRL',
@@ -2301,8 +2352,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           visit_scheduled_at: addLeadVisit ? new Date(addLeadVisit).toISOString() : null,
         });
         if (error) throw error;
-        toast({ title: '✅ Lead adicionado ao CRM!' });
+        toast({
+          title: '✅ Lead adicionado ao CRM!',
+          description: isCustomOrigem && addLeadCustomOrigemCreateColumn && customStageId
+            ? `Coluna "${customOrigemText}" criada no Kanban.`
+            : undefined,
+        });
         setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros('');
+        setAddLeadCustomOrigem(''); setAddLeadCustomOrigemCreateColumn(false);
         setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit('');
         setAddLeadOpen(false);
         await fetchData(true);
@@ -2325,6 +2382,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         return;
       }
 
+      // Spec 28/05/2026: Pedro form so aceita "Tráfego Pago" como origem
+      // (campo eh um label read-only). Lead manual no Pedro = sempre vindo
+      // de campanha de tráfego pago.
       const { error } = await (supabase as any).from('ai_crm_leads').insert({
         user_id:     effectiveUserId,
         agent_id:    agentId,
@@ -2333,9 +2393,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         status_crm:  'novo',
         status:      'novo',
         assigned_to_id: memberId || null,
-        // Fase 6.4: source_id (nova FK pra lead_sources) + origem legacy mantida
-        source_id:     addLeadSourceId || null,
-        origem:        addLeadSourceName || addLeadOrigem || null,
+        // Fase 6.4: source_id (nova FK pra lead_sources) — nao usado mais pra
+        // Pedro form (deixado null). Origem agora eh sempre 'trafico_pago'
+        // conforme spec 28/05/2026.
+        source_id:     null,
+        origem:        'trafico_pago',
         origem_outros: null,
         // Fase 6 Feature B + Item 2: cidade/carro/visita (visita agora salva texto + timestamp)
         client_city:        addLeadCity.trim() || null,
@@ -3611,39 +3673,63 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             </div>
             <div className="flex-1 min-w-[180px] space-y-1">
               <label className="text-[10px] text-muted-foreground font-medium">Origem</label>
-              {/* Spec 27/05/2026: 6 origens fixas pro Marcos (substitui o
-                  DynamicSelect/lead_sources que era usado antes). Sem opção
-                  pre-selecionada — placeholder "Selecione a origem". */}
-              <Select
-                value={addLeadOrigem || '__none__'}
-                onValueChange={(v) => {
-                  if (v === '__none__') {
-                    setAddLeadOrigem('');
-                    setAddLeadSourceId(null);
-                    setAddLeadSourceName('');
-                  } else {
-                    setAddLeadOrigem(v);
-                    setAddLeadSourceId(null);
-                    const opt = MARCOS_ORIGEM_OPTIONS.find(o => o.value === v);
-                    setAddLeadSourceName(opt?.label || v);
-                  }
-                }}
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Selecione a origem" />
-                </SelectTrigger>
-                <SelectContent>
-                  {MARCOS_ORIGEM_OPTIONS.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                      {opt.label}
+              {isMarcosCrm ? (
+                // Marcos: 6 origens fixas + "Outra" personalizada (spec 28/05/2026)
+                <Select
+                  value={addLeadOrigem || '__none__'}
+                  onValueChange={(v) => {
+                    if (v === '__none__') {
+                      setAddLeadOrigem('');
+                      setAddLeadSourceId(null);
+                      setAddLeadSourceName('');
+                      setAddLeadCustomOrigem('');
+                      setAddLeadCustomOrigemCreateColumn(false);
+                    } else if (v === '__custom__') {
+                      // Modo personalizado — pede texto livre + checkbox
+                      setAddLeadOrigem('__custom__');
+                      setAddLeadSourceId(null);
+                      setAddLeadSourceName('');
+                    } else {
+                      setAddLeadOrigem(v);
+                      setAddLeadSourceId(null);
+                      const opt = MARCOS_ORIGEM_OPTIONS.find(o => o.value === v);
+                      setAddLeadSourceName(opt?.label || v);
+                      setAddLeadCustomOrigem('');
+                      setAddLeadCustomOrigemCreateColumn(false);
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Selecione a origem" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MARCOS_ORIGEM_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__custom__" className="text-xs border-t border-border/40 mt-1 pt-1">
+                      ➕ Outra origem (personalizada)
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  </SelectContent>
+                </Select>
+              ) : (
+                // Pedro: spec 28/05/2026 — somente "Tráfego Pago" como label read-only.
+                // Pedro CRM serve so pra leads vindos de campanhas de tráfego pago;
+                // outros canais ficam no Marcos CRM.
+                <div className="h-8 px-2.5 text-xs flex items-center rounded-md border border-input bg-muted/30 text-foreground/80 select-none">
+                  🎯 Tráfego Pago
+                </div>
+              )}
             </div>
             <Button
               onClick={handleAddLeadManual}
-              disabled={addLeadSaving || !addLeadName.trim() || !addLeadPhone.trim()}
+              disabled={
+                addLeadSaving
+                || !addLeadName.trim()
+                || !addLeadPhone.trim()
+                || (isMarcosCrm && addLeadOrigem === '__custom__' && !addLeadCustomOrigem.trim())
+              }
               size="sm"
               className="h-8 px-4 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
             >
@@ -3651,6 +3737,36 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               Salvar
             </Button>
           </div>
+          {/* Spec 28/05/2026: input pra origem personalizada do Marcos quando
+              "__custom__" eh selecionado no select acima. Texto livre +
+              checkbox pra (opcional) criar nova coluna no Kanban. */}
+          {isMarcosCrm && addLeadOrigem === '__custom__' && (
+            <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-emerald-500/20">
+              <div className="space-y-1">
+                <label className="text-[10px] text-muted-foreground font-medium">
+                  ➕ Nome da origem personalizada
+                </label>
+                <Input
+                  value={addLeadCustomOrigem}
+                  onChange={e => setAddLeadCustomOrigem(e.target.value)}
+                  placeholder="Ex: Feira do automóvel, Site próprio, Indicação do João..."
+                  className="h-8 text-xs"
+                  maxLength={60}
+                />
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={addLeadCustomOrigemCreateColumn}
+                  onChange={e => setAddLeadCustomOrigemCreateColumn(e.target.checked)}
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                <span className="text-[11px] text-muted-foreground">
+                  Criar uma coluna no Kanban com esse nome (se ainda não existir)
+                </span>
+              </label>
+            </div>
+          )}
           {/* Fase 6.4: removido o input "Especificar origem" — vendedor agora cadastra
               origem nova direto pelo botão "+ Adicionar novo(a)" no select acima */}
 
