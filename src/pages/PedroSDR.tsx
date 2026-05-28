@@ -41,6 +41,7 @@ const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
 import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal';
+import { ConsignadoVehicleForm } from '@/components/marcos/ConsignadoVehicleForm';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
@@ -788,6 +789,15 @@ interface CrmLead {
   visit_scheduled_at?: string | null;          // Item 2: timestamptz pra comparar com hoje (banner laranja)
   // Feature C: pro cálculo de inativo (>7 dias sem resposta)
   last_user_reply_at?: string | null;
+  // Marcos Consignado (27/05/2026) — 6 campos do veículo do cliente.
+  // Só preenchidos quando lead está em stage "Consignado". Renderizados pelo
+  // ConsignadoVehicleForm + badge 🚗 no card kanban.
+  consignado_modelo?: string | null;
+  consignado_ano?: number | null;
+  consignado_versao?: string | null;
+  consignado_km?: number | null;
+  consignado_cor?: string | null;
+  consignado_estado?: 'bom' | 'medio' | 'ruim' | null;
 }
 
 interface Note {
@@ -1025,7 +1035,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         let marcosLeadsQuery = (supabase as any)
           .from('crm_leads')
           // Feature M1: campos enriched (Marcos agora tem client_city, vehicle_interest, visit_scheduled)
-          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at')
+          // Marcos Consignado (27/05/2026): 6 campos do veiculo do cliente (consignado_*)
+          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, consignado_modelo, consignado_ano, consignado_versao, consignado_km, consignado_cor, consignado_estado')
           .eq('user_id', effectiveUserId)
           .not('source', 'like', 'Pedro SDR%')
           .order('created_at', { ascending: false })
@@ -1085,6 +1096,13 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           vehicle_interest: lead.vehicle_interest || null,
           visit_scheduled: lead.visit_scheduled || null,
           visit_scheduled_at: lead.visit_scheduled_at || null,
+          // Marcos Consignado (27/05/2026): 6 campos do veiculo
+          consignado_modelo: lead.consignado_modelo || null,
+          consignado_ano: lead.consignado_ano ?? null,
+          consignado_versao: lead.consignado_versao || null,
+          consignado_km: lead.consignado_km ?? null,
+          consignado_cor: lead.consignado_cor || null,
+          consignado_estado: lead.consignado_estado || null,
         }));
 
         const enrichedTeam = teamData.map(m => ({
@@ -2728,6 +2746,31 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           );
         })()}
 
+        {/* Marcos Consignado (27/05/2026) — formulário inline com 6 campos do veículo
+            do cliente. Aparece SÓ no Marcos E quando lead está na stage "Consignado". */}
+        {isMarcosCrm && (() => {
+          const consignadoStageId = manualStages.find(s => s.title === 'Consignado')?.id;
+          if (!consignadoStageId || selectedLead.status_crm !== consignadoStageId) return null;
+          return (
+            <ConsignadoVehicleForm
+              leadId={selectedLead.id}
+              initialData={{
+                consignado_modelo: selectedLead.consignado_modelo ?? null,
+                consignado_ano: selectedLead.consignado_ano ?? null,
+                consignado_versao: selectedLead.consignado_versao ?? null,
+                consignado_km: selectedLead.consignado_km ?? null,
+                consignado_cor: selectedLead.consignado_cor ?? null,
+                consignado_estado: selectedLead.consignado_estado ?? null,
+              }}
+              onUpdated={(data) => {
+                // Atualiza state local pra badge no kanban refletir sem reload
+                setSelectedLead(prev => prev ? { ...prev, ...data } : prev);
+                setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, ...data } : l));
+              }}
+            />
+          );
+        })()}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* ── Anotações ─────────────────────────────────────────────── */}
           <Card className="bg-card border-border/50">
@@ -3585,7 +3628,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                     );
                                   })()}
                                   {/* Fase 6 badges enriched — só renderiza se algum tem valor */}
-                                  {(lead.client_city || lead.vehicle_interest || lead.visit_scheduled) && (
+                                  {(lead.client_city || lead.vehicle_interest || lead.visit_scheduled || (isMarcosCrm && lead.consignado_modelo)) && (
                                     <div className="flex flex-wrap gap-1">
                                       {lead.client_city ? (
                                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-medium truncate max-w-[100px]" title={`Cidade: ${lead.client_city}`}>
@@ -3600,6 +3643,16 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                       {lead.visit_scheduled ? (
                                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium truncate max-w-[110px]" title={`Visita: ${lead.visit_scheduled}`}>
                                           📅 {String(lead.visit_scheduled).slice(0, 18)}
+                                        </span>
+                                      ) : null}
+                                      {/* Marcos Consignado: badge indica que o form do veiculo do cliente
+                                          ja foi (parcialmente) preenchido. So aparece no CRM do Marcos. */}
+                                      {isMarcosCrm && lead.consignado_modelo ? (
+                                        <span
+                                          className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 font-medium truncate max-w-[140px] border border-purple-500/30"
+                                          title={`Consignado: ${lead.consignado_modelo}${lead.consignado_ano ? ` ${lead.consignado_ano}` : ''}${lead.consignado_km ? ` · ${lead.consignado_km.toLocaleString('pt-BR')}km` : ''}`}
+                                        >
+                                          🚙 Consig. {lead.consignado_modelo}
                                         </span>
                                       ) : null}
                                     </div>
