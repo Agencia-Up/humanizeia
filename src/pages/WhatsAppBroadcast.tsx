@@ -95,8 +95,24 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   const [newContactPhone, setNewContactPhone] = useState('');
   // Fase 6 Feature C: lista vinda do CRM Pedro (sessionStorage)
   const [prefilledPedro, setPrefilledPedro] = useState<{ phones: string[]; label: string } | null>(null);
+  // Bug 28/05/2026: lista RICA vinda do CRM Marcos com name+phone+origem +
+  // checkbox individual pra remover antes de criar a campanha.
+  type MarcosContact = { id: string; name: string; phone: string; origem: string };
+  const [prefilledMarcos, setPrefilledMarcos] = useState<{ contacts: MarcosContact[]; label: string } | null>(null);
+  // IDs dos contatos Marcos que o usuario removeu manualmente da lista importada
+  const [marcosRemoved, setMarcosRemoved] = useState<Set<string>>(new Set());
+  const [creatingMarcosList, setCreatingMarcosList] = useState(false);
   useEffect(() => {
     try {
+      const rawMarcos = sessionStorage.getItem('marcos_campaign_contacts');
+      if (rawMarcos) {
+        const data = JSON.parse(rawMarcos);
+        if (Array.isArray(data?.contacts) && data.contacts.length > 0) {
+          setPrefilledMarcos({ contacts: data.contacts, label: data.label || 'Lista do CRM Marcos' });
+        }
+        sessionStorage.removeItem('marcos_campaign_contacts');
+        return; // se veio do Marcos, ignora banner Pedro pra nao confundir
+      }
       const raw = sessionStorage.getItem('pedro_campaign_phones');
       if (!raw) return;
       const data = JSON.parse(raw);
@@ -108,6 +124,58 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // ignora — banner é opcional
     }
   }, []);
+
+  // Funcao que: cria uma wa_contact_list + insere os contatos selecionados
+  // como wa_contacts dessa list. Apos sucesso, abre o editor de lista pra
+  // usuario revisar e (futuramente) marcar como destinataria da campanha.
+  const handleCreateListFromMarcos = async () => {
+    if (!prefilledMarcos || !effectiveUserId) return;
+    const visibleContacts = prefilledMarcos.contacts.filter(c => !marcosRemoved.has(c.id));
+    if (visibleContacts.length === 0) {
+      toast({ title: 'Nenhum contato selecionado pra criar a lista', variant: 'destructive' });
+      return;
+    }
+    setCreatingMarcosList(true);
+    try {
+      const ts = new Date();
+      const listName = `Marcos CRM ${ts.toLocaleDateString('pt-BR')} ${ts.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+      const { data: listRow, error: listErr } = await (supabase as any)
+        .from('wa_contact_lists')
+        .insert({ user_id: effectiveUserId, name: listName, contact_count: visibleContacts.length })
+        .select('id')
+        .single();
+      if (listErr || !listRow?.id) throw listErr || new Error('Falha ao criar lista');
+      const contactRows = visibleContacts.map(c => ({
+        user_id: effectiveUserId,
+        list_id: listRow.id,
+        phone: c.phone,
+        name: c.name,
+        source: 'marcos_crm',
+        is_valid: true,
+        metadata: { origem: c.origem, lead_id: c.id },
+      }));
+      const { error: contactsErr } = await (supabase as any)
+        .from('wa_contacts')
+        .insert(contactRows);
+      if (contactsErr) throw contactsErr;
+      toast({
+        title: '✅ Lista criada',
+        description: `${visibleContacts.length} contato(s) em "${listName}". Crie sua campanha selecionando essa lista.`,
+      });
+      setPrefilledMarcos(null);
+      setMarcosRemoved(new Set());
+      // Recarrega listas pra aparecer na UI imediatamente
+      fetchData(true);
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao criar lista',
+        description: err?.message || 'Tente novamente.',
+        variant: 'destructive',
+      });
+    } finally {
+      setCreatingMarcosList(false);
+    }
+  };
 
   const legacyClaudeConfig = useMemo(() => ({ creativity: 0.8, variations: 3 }), []);
   const { sendSingleMessage } = useClaudeChat({
@@ -574,6 +642,81 @@ Não numere as variações. Não inclua explicações adicionais.`
 
   const mainContent = (
     <div className={embedded ? 'space-y-6 p-4 md:p-6' : 'space-y-6'}>
+        {/* Bug 28/05/2026: Lista importada do CRM do Marcos (substitui banner laranja pra esse fluxo) */}
+        {prefilledMarcos && (
+          <div className="rounded-lg border-2 border-emerald-500/40 bg-emerald-500/5 p-4">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <p className="text-sm font-semibold text-emerald-300 flex items-center gap-2">
+                  📋 Lista importada do CRM do Marcos
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {prefilledMarcos.contacts.length - marcosRemoved.size} contato(s) selecionado(s)
+                  {marcosRemoved.size > 0 && (
+                    <span className="text-orange-400 ml-1">
+                      ({marcosRemoved.size} removido{marcosRemoved.size > 1 ? 's' : ''})
+                    </span>
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setPrefilledMarcos(null); setMarcosRemoved(new Set()); }}
+                className="text-muted-foreground hover:text-foreground text-lg leading-none"
+                title="Cancelar import e voltar ao fluxo normal"
+              >×</button>
+            </div>
+            <div className="bg-background/40 border border-border/40 rounded max-h-60 overflow-y-auto">
+              {prefilledMarcos.contacts.map(c => {
+                const removed = marcosRemoved.has(c.id);
+                return (
+                  <label
+                    key={c.id}
+                    className={`flex items-center gap-3 px-3 py-2 border-b border-border/30 last:border-0 cursor-pointer hover:bg-background/60 ${removed ? 'opacity-50' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!removed}
+                      onChange={() => {
+                        setMarcosRemoved(prev => {
+                          const next = new Set(prev);
+                          if (next.has(c.id)) next.delete(c.id); else next.add(c.id);
+                          return next;
+                        });
+                      }}
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+                    <div className="flex-1 min-w-0 grid grid-cols-3 gap-2 text-xs">
+                      <span className="font-medium truncate">{c.name}</span>
+                      <span className="text-muted-foreground tabular-nums">{c.phone}</span>
+                      <span className="text-emerald-400 truncate">{c.origem}</span>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setPrefilledMarcos(null); setMarcosRemoved(new Set()); }}
+                disabled={creatingMarcosList}
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleCreateListFromMarcos}
+                disabled={creatingMarcosList || (prefilledMarcos.contacts.length - marcosRemoved.size) === 0}
+                className="bg-emerald-500 hover:bg-emerald-600 text-white"
+              >
+                {creatingMarcosList
+                  ? 'Criando...'
+                  : `Criar lista com ${prefilledMarcos.contacts.length - marcosRemoved.size} contato(s)`}
+              </Button>
+            </div>
+          </div>
+        )}
         {/* Fase 6 Feature C: banner quando vem do Pedro CRM */}
         {prefilledPedro && (
           <div className="rounded-lg border-2 border-orange-500/40 bg-orange-500/5 p-3 flex items-start gap-2">

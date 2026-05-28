@@ -3348,6 +3348,48 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       toast({ title: 'Nenhum lead selecionado', variant: 'destructive' });
       return;
     }
+    if (isMarcosCrm) {
+      // Marcos: salva payload RICO (id, name, phone, origem) pra tela de disparo
+      // criar lista automaticamente — bug 28/05/2026: antes so passava phones
+      // e usuario tinha que copiar/colar manualmente. Agora vira "Lista
+      // importada do CRM do Marcos" na tela de broadcast.
+      const contacts = selected
+        .map(l => {
+          const phone = (l.remote_jid || '').replace(/@.*/, '').replace(/\D/g, '');
+          if (!phone) return null;
+          const origemSlug = (l.source || '').toString();
+          const origemLabel = MARCOS_ORIGEM_OPTIONS.find(o => o.value === origemSlug)?.label || origemSlug || 'manual';
+          return {
+            id: l.id,
+            name: l.lead_name || phone,
+            phone,
+            origem: origemLabel,
+          };
+        })
+        .filter(Boolean) as Array<{ id: string; name: string; phone: string; origem: string }>;
+      if (contacts.length === 0) {
+        toast({ title: 'Nenhum telefone valido nos leads selecionados', variant: 'destructive' });
+        return;
+      }
+      try {
+        sessionStorage.setItem('marcos_campaign_contacts', JSON.stringify({
+          contacts,
+          label: `CRM Marcos — ${contacts.length} lead(s) selecionado(s)`,
+          source: 'marcos_selecionados',
+          created_at: new Date().toISOString(),
+        }));
+        sessionStorage.removeItem('pedro_campaign_phones'); // evita banner Pedro aparecer junto
+      } catch {
+        // sessionStorage pode falhar em modo privacy — ignora, segue redirect
+      }
+      toast({
+        title: `📢 ${contacts.length} contato(s) pre-carregado(s) do Marcos`,
+        description: 'Indo pro disparo em massa...',
+      });
+      setTimeout(() => { window.location.href = '/whatsapp/broadcast'; }, 600);
+      return;
+    }
+    // Pedro: comportamento legado mantido (so phones via banner copy/paste)
     const phones = selected
       .map(l => l.remote_jid?.replace(/@.*/, '').replace(/\D/g, ''))
       .filter(Boolean) as string[];
