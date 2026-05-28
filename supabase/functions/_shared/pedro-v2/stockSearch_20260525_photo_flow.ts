@@ -62,34 +62,6 @@ function normalizeText(value?: string | null) {
     .replace(/\bonix\s+plus\b/g, "onix sedan plus")
     .trim();
 
-  const expansions: string[] = [];
-  if (/\bonix\b/.test(normalized)) expansions.push("chevrolet onix hatch sedan plus joy premier lt ltz activ");
-  if (/\bcreta\b/.test(normalized)) expansions.push("hyundai creta action comfort limited platinum ultimate");
-  if (/\bduster\b/.test(normalized)) expansions.push("renault duster authentique dynamique expression intense iconic suv");
-  if (/\boroch\b/.test(normalized)) expansions.push("renault oroch duster pickup camionete picape");
-  if (/\brenegade\b/.test(normalized)) expansions.push("jeep renegade longitude sport limited trailhawk suv");
-  if (/\bcompass\b/.test(normalized)) expansions.push("jeep compass longitude limited sport suv");
-  if (/\btracker\b/.test(normalized)) expansions.push("chevrolet tracker premier ltz lt suv");
-  if (/\bfastback\b/.test(normalized)) expansions.push("fiat fastback audace impetus limited suv");
-  if (/\bpulse\b/.test(normalized)) expansions.push("fiat pulse audace impetus drive suv");
-  if (/\bstrada\b/.test(normalized)) expansions.push("fiat strada cabine dupla cd volcano freedom endurance pickup");
-  if (/\btoro\b/.test(normalized)) expansions.push("fiat toro pickup caminhonete");
-  if (/\basx\b/.test(normalized)) expansions.push("mitsubishi asx suv automatico");
-  if (/\becosport\b/.test(normalized)) expansions.push("ford ecosport freestyle titanium se");
-  if (/\bhb20\b/.test(normalized)) expansions.push("hyundai hb20 hatch sedan comfort platinum");
-  if (/\bcorolla\b/.test(normalized)) expansions.push("toyota corolla xei gli altis sedan");
-  if (/\bcivic\b/.test(normalized)) expansions.push("honda civic ex exl touring sedan");
-  if (/\bcity\b/.test(normalized)) expansions.push("honda city ex exl touring sedan hatch");
-  if (/\bfit\b/.test(normalized)) expansions.push("honda fit ex exl lx hatch");
-  if (/\bkicks\b/.test(normalized)) expansions.push("nissan kicks sense advance exclusive suv");
-  if (/\bprisma\b/.test(normalized)) expansions.push("chevrolet prisma joy lt ltz sedan");
-  if (/\bcruze\b/.test(normalized)) expansions.push("chevrolet cruze lt ltz premier sedan hatch");
-  if (/\bspin\b/.test(normalized)) expansions.push("chevrolet spin activ premier minivan");
-  if (/\byaris\b/.test(normalized)) expansions.push("toyota yaris xl xs sedan hatch");
-  if (/\b(polo|virtus|nivus|tcross|fox|gol|voyage)\b/.test(normalized)) expansions.push("volkswagen polo virtus nivus tcross fox gol voyage");
-  if (/\b(argo|mobi|kwid)\b/.test(normalized)) expansions.push("fiat argo mobi renault kwid hatch popular");
-  if (expansions.length > 0) normalized = `${normalized} ${expansions.join(" ")}`;
-
   return normalized;
 }
 
@@ -105,6 +77,37 @@ const WEAK_WORDS = new Set([
   "da", "do", "dos", "das", "um", "uma", "com", "sem", "para", "por", "ate",
   "automatico", "manual", "flex", "gasolina", "diesel", "aut", "mec",
 ]);
+
+function getQueryTokens(searchText: string) {
+  const norm = normalizeText(searchText);
+  const originalTokens = norm
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2)
+    .filter((token) => !WEAK_WORDS.has(token));
+
+  const expansions: string[] = [];
+  if (/\b(onix|tracker|prisma|cruze|spin)\b/.test(norm)) expansions.push("chevrolet");
+  if (/\b(argo|mobi|fastback|pulse|strada|toro)\b/.test(norm)) expansions.push("fiat");
+  if (/\b(renegade|compass)\b/.test(norm)) expansions.push("jeep");
+  if (/\b(duster|oroch|sandero|kwid)\b/.test(norm)) expansions.push("renault");
+  if (/\b(creta|hb20)\b/.test(norm)) expansions.push("hyundai");
+  if (/\basx\b/.test(norm)) expansions.push("mitsubishi");
+  if (/\becosport\b/.test(norm)) expansions.push("ford");
+  if (/\b(corolla|yaris)\b/.test(norm)) expansions.push("toyota");
+  if (/\b(civic|city|fit)\b/.test(norm)) expansions.push("honda");
+  if (/\bkicks\b/.test(norm)) expansions.push("nissan");
+  if (/\b(polo|virtus|nivus|tcross|fox|gol|voyage)\b/.test(norm)) expansions.push("volkswagen vw");
+
+  const expansionTokens = expansions
+    .join(" ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2)
+    .filter((token) => !originalTokens.includes(token));
+
+  return { originalTokens, expansionTokens };
+}
 
 function searchTokens(value?: string | null) {
   return normalizeText(value)
@@ -165,6 +168,29 @@ function tokenSimilarity(left: string, right: string) {
   return 1 - levenshteinDistance(left, right) / Math.max(left.length, right.length);
 }
 
+function getVehicleSubcategory(vehicle: BndvVehicle): "hatch" | "sedan" | "suv" | "pickup" | "unknown" {
+  const model = normalizeText(vehicle.modelName);
+  const version = normalizeText(vehicle.versionName);
+  const text = `${model} ${version}`;
+
+  if (/\b(hilux|s10|ranger|amarok|toro|frontier|triton|l200|strada|saveiro|montana|oroch|maverick|ram|picape|pickup|caminhonete|camionete)\b/i.test(text)) {
+    return "pickup";
+  }
+  if (/\b(compass|renegade|creta|kicks|hrv|tracker|tcross|nivus|fastback|pulse|tiggo|sw4|ecosport|duster|asx|suv|utilitario)\b/i.test(text)) {
+    return "suv";
+  }
+  if (/\b(plus|sedan|sedã|virtus|voyage|prisma|cronos|grand siena|logan|corolla|civic|sentra|city sedan|yaris sedan)\b/i.test(text)) {
+    return "sedan";
+  }
+  if (/\b(hatch|hatchback|polo|argo|mobi|kwid|c3|gol|fox|sandero|up|fit|peugeot 208|hb20|onix)\b/i.test(text)) {
+    if (/\b(plus|sedan|sedã|hb20s)\b/i.test(text)) {
+      return "sedan";
+    }
+    return "hatch";
+  }
+  return "unknown";
+}
+
 function buildIndexedText(vehicle: BndvVehicle) {
   let indexed = normalizeText([
     vehicle.markName,
@@ -176,13 +202,14 @@ function buildIndexedText(vehicle: BndvVehicle) {
     vehicle.year?.toString(),
   ].filter(Boolean).join(" "));
 
-  if (/\b(hilux|s10|ranger|amarok|toro|frontier|triton|l200|strada|saveiro|montana|oroch|maverick|ram)\b/i.test(indexed)) {
+  const subcat = getVehicleSubcategory(vehicle);
+  if (subcat === "pickup") {
     indexed += " picape caminhonete camionete pickup";
-  }
-  if (/\b(compass|renegade|creta|kicks|hrv|tracker|tcross|nivus|fastback|pulse|tiggo|sw4|ecosport|duster|oroch|asx)\b/i.test(indexed)) {
+  } else if (subcat === "suv") {
     indexed += " suv utilitario";
-  }
-  if (/\b(onix|hb20|polo|argo|208|yaris|mobi|kwid|c3|gol|fox|sandero)\b/i.test(indexed)) {
+  } else if (subcat === "sedan") {
+    indexed += " sedan plus";
+  } else if (subcat === "hatch") {
     indexed += " hatch popular";
   }
   return indexed;
@@ -207,15 +234,54 @@ function inferRequestedVehicleType(filters: Record<string, any>): "carro" | "mot
   return "qualquer";
 }
 
+function inferVehicleSubcategory(filters: Record<string, any>): "hatch" | "sedan" | "suv" | "pickup" | "qualquer" {
+  const explicit = normalizeText(filters?.tipo_veiculo || filters?.tipo || filters?.categoria || filters?.subcategoria || filters?.body_type);
+  const searchText = normalizeText([
+    explicit,
+    filters?.query,
+    filters?.ad_context,
+    filters?.contexto_anuncio,
+    filters?.modelo,
+  ].filter(Boolean).join(" "));
+
+  if (/\b(suv|utilitario|utilitarios)\b/.test(searchText)) {
+    return "suv";
+  }
+  if (/\b(sedan|sedans|plus|sedã|sedãs|tres volumes|3 volumes)\b/.test(searchText)) {
+    return "sedan";
+  }
+  if (/\b(hatch|hatches|hatchback|hatchbacks|popular|populares)\b/.test(searchText)) {
+    return "hatch";
+  }
+  if (/\b(pickup|pickups|picape|picapes|caminhonete|caminhonetes|camionete|camionetes)\b/.test(searchText)) {
+    return "pickup";
+  }
+  return "qualquer";
+}
+
 function isLikelyMotorcycle(vehicle: BndvVehicle) {
   const indexed = buildIndexedText(vehicle);
   return /\b(yamaha|kawasaki|shineray|harley|dafra|triumph|ducati|ktm|bajaj|haojue|biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|scooter)\b/.test(indexed);
 }
 
-function passesRequestedVehicleType(vehicle: BndvVehicle, requestedType: "carro" | "moto" | "qualquer") {
-  if (requestedType === "qualquer") return true;
-  const moto = isLikelyMotorcycle(vehicle);
-  return requestedType === "moto" ? moto : !moto;
+function passesRequestedVehicleType(vehicle: BndvVehicle, filters: Record<string, any>) {
+  const requestedType = inferRequestedVehicleType(filters);
+  if (requestedType === "moto") {
+    return isLikelyMotorcycle(vehicle);
+  }
+  if (requestedType === "carro") {
+    if (isLikelyMotorcycle(vehicle)) return false;
+  }
+
+  const requestedSubcat = inferVehicleSubcategory(filters);
+  if (requestedSubcat !== "qualquer") {
+    const vehicleSubcat = getVehicleSubcategory(vehicle);
+    if (vehicleSubcat !== "unknown" && vehicleSubcat !== requestedSubcat) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function buildSearchText(filters: Record<string, any>) {
@@ -251,21 +317,31 @@ function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
   const searchText = buildSearchText(filters);
   if (!searchText) return { score: 1, matchedTokens: [] as string[] };
 
+  const { originalTokens, expansionTokens } = getQueryTokens(searchText);
   const indexed = buildIndexedText(vehicle);
   const indexedTokens = searchTokens(indexed);
-  const queryTokens = [...new Set(searchTokens(searchText))];
   const matchedTokens: string[] = [];
   let score = 0;
 
-  for (const token of queryTokens) {
+  for (const token of originalTokens) {
     if (indexed.includes(token)) {
       matchedTokens.push(token);
-      score += token.length <= 3 ? 1 : 2;
+      score += token.length <= 3 ? 5 : 10;
       continue;
     }
     if (indexedTokens.some((candidate) => tokenSimilarity(candidate, token) >= 0.84)) {
       matchedTokens.push(token);
-      score += 1.25;
+      score += 4;
+    }
+  }
+
+  for (const token of expansionTokens) {
+    if (indexed.includes(token)) {
+      score += 0.1;
+      continue;
+    }
+    if (indexedTokens.some((candidate) => tokenSimilarity(candidate, token) >= 0.84)) {
+      score += 0.05;
     }
   }
 
@@ -279,31 +355,31 @@ function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
   if (filters?.versao && version.includes(normalizeText(filters.versao))) score += 4;
   if (year && searchText.includes(year)) score += 3;
 
-  // Bônus e penalidades dinâmicas baseadas nos termos de modelo extraídos da busca
-  const modelTerms = detectDynamicModelTerms(filters);
+  const modelTerms = originalTokens.filter((token) => !KNOWN_BRANDS.includes(token));
   for (const term of modelTerms) {
     if (model.includes(term)) {
-      score += 15; // Bônus pesado se o termo de busca casar diretamente com o modelo
+      score += 15;
     } else if (indexed.includes(term)) {
-      score += 5; // Bônus moderado se casar com versão/cor/outros
+      score += 5;
     } else {
-      score -= 10; // Penalidade se o termo procurado não pertencer a este carro
+      score -= 10;
     }
   }
 
   for (const modelToken of searchTokens(model)) {
-    if (queryTokens.includes(modelToken)) score += 5;
+    if (originalTokens.includes(modelToken)) score += 5;
   }
 
-  const requiredTokens = Math.min(2, queryTokens.length);
-  if (queryTokens.length > 0 && matchedTokens.length < requiredTokens && score < 5) score = 0;
+  const requiredTokens = Math.min(2, originalTokens.length);
+  if (originalTokens.length > 0 && matchedTokens.length < requiredTokens && score < 5) score = 0;
   return { score, matchedTokens };
 }
 
 function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>, relaxed = false) {
+  const price = Number(vehicle.saleValue || 0);
+  if (price <= 0) return false;
   if (relaxed) return true;
   const year = Number(vehicle.year || 0);
-  const price = Number(vehicle.saleValue || 0);
   const mileage = Number(vehicle.km || 0);
   return (
     (!filters?.ano_min || year >= Number(filters.ano_min)) &&
@@ -314,12 +390,14 @@ function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>
 }
 
 function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
-  const requestedVehicleType = inferRequestedVehicleType(filters);
   const modelTerms = detectDynamicModelTerms(filters);
   const typedVehicles = vehicles
-    .filter((vehicle) => passesRequestedVehicleType(vehicle, requestedVehicleType))
+    .filter((vehicle) => passesRequestedVehicleType(vehicle, filters))
     .filter((vehicle) => vehicleMatchesStrictModel(vehicle, modelTerms));
-  const hasSearch = !!buildSearchText(filters);
+  const searchText = buildSearchText(filters);
+  const hasSearch = searchTokens(searchText).length > 0 ||
+    (!!filters.modelo && !WEAK_WORDS.has(normalizeText(filters.modelo))) ||
+    (!!filters.marca && !WEAK_WORDS.has(normalizeText(filters.marca)));
 
   if (!hasSearch) {
     return typedVehicles
@@ -402,6 +480,13 @@ export async function searchPedroStock(supabase: any, input: PedroStockSearchInp
     ...(input.filters || {}),
     query: input.query || input.filters?.query || input.filters?.modelo || "",
   };
+
+  if (filters.modelo && WEAK_WORDS.has(normalizeText(filters.modelo))) {
+    filters.modelo = undefined;
+  }
+  if (filters.marca && WEAK_WORDS.has(normalizeText(filters.marca))) {
+    filters.marca = undefined;
+  }
 
   const graphqlResponse = await fetch(BNDV_API_URL, {
     method: "POST",
