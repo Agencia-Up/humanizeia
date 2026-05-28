@@ -705,7 +705,13 @@ export const MARCOS_ORIGEM_OPTIONS = [
  *   indicacao            → indicacao
  *   consignado           → consignado
  *   consignado_indicacao → indicacao (conta como Indicação no Painel)
- *   loja                 → outros    (não há card próprio "Loja" no Painel)
+ *   loja                 → porta     (spec original 27/05 22:00: "Loja → Porta")
+ *
+ * CORREÇÃO 28/05/2026: 'loja' estava caindo em 'outros' por engano meu —
+ * a spec original do usuário pedia explicitamente "Loja → Porta" no Painel
+ * ao Vivo (mesma coluna do Porta). Migration de retrofit 20260528100000
+ * corrige leads ja criados com origem='outros' que deveriam ser 'porta'.
+ *
  * CHECK constraint de crm_leads.origem aceita só: porta/olx/marketplace/
  * instagram/consignado/indicacao/outros. Qualquer slug fora dessa lista
  * cai em "outros" pra nunca quebrar o INSERT.
@@ -715,10 +721,10 @@ export function marcosOrigemSlugToCanonical(slug: string | null | undefined): st
   switch (slug) {
     case 'marketplace':           return 'marketplace';
     case 'porta':                 return 'porta';
+    case 'loja':                  return 'porta'; // 28/05/2026: spec original
     case 'indicacao':             return 'indicacao';
     case 'consignado':            return 'consignado';
     case 'consignado_indicacao':  return 'indicacao';
-    case 'loja':                  return 'outros';
     default:                      return 'outros';
   }
 }
