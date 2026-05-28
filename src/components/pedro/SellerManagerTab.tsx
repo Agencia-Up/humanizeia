@@ -336,22 +336,43 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
       toast({ title: 'Preencha nome e WhatsApp do vendedor.', variant: 'destructive' });
       return;
     }
+    if (!userId) {
+      toast({ title: 'Sessão expirada', description: 'Faça login de novo (userId vazio).', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
       const cleanPhone = newPhone.replace(/\D/g, '');
-      const { error } = await (supabase as any).from('ai_team_members').insert({
+      const payload = {
         user_id: userId,
         agent_id: newAgentId || null,
         name: newName.trim(),
         whatsapp_number: cleanPhone,
         email: newEmail.trim() || null,
-      });
-      if (error) throw error;
+      };
+      // Fix 28/05/2026: usar .select() pra confirmar que o INSERT retornou row
+      // (RLS silencioso = INSERT "passa" sem inserir, retorna [] sem erro).
+      // E logar erro completo do Postgres (code + details + hint) — antes so
+      // mostrava err.message que omite info do que quebrou.
+      const { data, error } = await (supabase as any)
+        .from('ai_team_members')
+        .insert(payload)
+        .select('id, name');
+      if (error) {
+        console.error('[SellerManager] handleAddSeller erro:', { error, payload });
+        const detalhe = [error.message, error.details, error.hint, error.code ? `code=${error.code}` : null]
+          .filter(Boolean).join(' | ');
+        throw new Error(detalhe || 'Erro desconhecido ao cadastrar vendedor');
+      }
+      if (!Array.isArray(data) || data.length === 0) {
+        console.error('[SellerManager] handleAddSeller silently dropped (RLS?). payload:', payload);
+        throw new Error('Vendedor não foi inserido. Possível RLS bloqueando — confirme que você está logado como master.');
+      }
       toast({ title: '✅ Vendedor cadastrado!' });
       setNewName(''); setNewPhone(''); setNewEmail(''); setNewAgentId('');
       fetchData();
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao cadastrar vendedor', description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -394,11 +415,35 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   const handleDelete = async (id: string) => {
     if (!confirm('Deseja excluir este vendedor da equipe? Esta ação não pode ser desfeita.')) return;
     try {
-      await (supabase as any).from('ai_team_members').delete().eq('id', id);
+      // Fix 28/05/2026: usar .select() pra confirmar que o DELETE realmente
+      // removeu rows. RLS silenciosa retorna error=null + data=[] (zero rows
+      // afetados) — antes o codigo so fazia .delete().eq() sem ler retorno e
+      // atualizava UI otimisticamente, dando aparencia de sucesso mas o registro
+      // persistia no banco e voltava no reload.
+      const { data, error } = await (supabase as any)
+        .from('ai_team_members')
+        .delete()
+        .eq('id', id)
+        .select('id');
+      if (error) {
+        console.error('[SellerManager] handleDelete erro:', { error, id });
+        const detalhe = [error.message, error.details, error.hint, error.code ? `code=${error.code}` : null]
+          .filter(Boolean).join(' | ');
+        throw new Error(detalhe || 'Erro desconhecido ao excluir vendedor');
+      }
+      if (!Array.isArray(data) || data.length === 0) {
+        console.error('[SellerManager] handleDelete silently dropped (RLS?). id:', id);
+        toast({
+          title: 'Não foi possível excluir',
+          description: 'O registro não foi removido — pode ser permissão (RLS) ou o vendedor pertence a outro master.',
+          variant: 'destructive',
+        });
+        return;
+      }
       setSellers(prev => prev.filter(s => s.id !== id));
-      toast({ title: 'Vendedor removido' });
+      toast({ title: '✅ Vendedor removido' });
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao excluir vendedor', description: err.message, variant: 'destructive' });
     }
   };
 
