@@ -102,6 +102,9 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   // IDs dos contatos Marcos que o usuario removeu manualmente da lista importada
   const [marcosRemoved, setMarcosRemoved] = useState<Set<string>>(new Set());
   const [creatingMarcosList, setCreatingMarcosList] = useState(false);
+  // Spec 28/05/2026: nome customizavel pela vendedor. Vazio = usa default
+  // "Marcos CRM dd/mm/yyyy hh:mm" gerado no handleCreateListFromMarcos.
+  const [marcosListNameInput, setMarcosListNameInput] = useState<string>('');
   useEffect(() => {
     try {
       const rawMarcos = sessionStorage.getItem('marcos_campaign_contacts');
@@ -138,7 +141,10 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
     setCreatingMarcosList(true);
     try {
       const ts = new Date();
-      const listName = `Marcos CRM ${ts.toLocaleDateString('pt-BR')} ${ts.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+      // Spec 28/05/2026: usa nome digitado pelo vendedor se preencheu;
+      // senao gera default "Marcos CRM dd/mm/yyyy hh:mm" pra ter sempre algo.
+      const customName = marcosListNameInput.trim();
+      const listName = customName || `Marcos CRM ${ts.toLocaleDateString('pt-BR')} ${ts.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
       // Fix 28/05/2026: seller_member_id eh OBRIGATORIO no INSERT quando seller
       // cria a lista, senao ela fica "invisivel" pra ele depois (fetchData
       // filtra listsQuery.eq('seller_member_id', seller!.id) quando seller logado).
@@ -176,6 +182,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       });
       setPrefilledMarcos(null);
       setMarcosRemoved(new Set());
+      setMarcosListNameInput('');
       // Recarrega listas pra aparecer na UI imediatamente
       fetchData(true);
     } catch (err: any) {
@@ -673,10 +680,25 @@ Não numere as variações. Não inclua explicações adicionais.`
               </div>
               <button
                 type="button"
-                onClick={() => { setPrefilledMarcos(null); setMarcosRemoved(new Set()); }}
+                onClick={() => { setPrefilledMarcos(null); setMarcosRemoved(new Set()); setMarcosListNameInput(''); }}
                 className="text-muted-foreground hover:text-foreground text-lg leading-none"
                 title="Cancelar import e voltar ao fluxo normal"
               >×</button>
+            </div>
+            {/* Spec 28/05/2026: input pro vendedor nomear a lista (opcional).
+                Se deixar em branco, gera default "Marcos CRM dd/mm/yyyy hh:mm". */}
+            <div className="mb-3 space-y-1">
+              <label className="text-[11px] text-emerald-200/90 font-medium block">
+                Nome da lista <span className="text-muted-foreground font-normal">(opcional)</span>
+              </label>
+              <Input
+                value={marcosListNameInput}
+                onChange={e => setMarcosListNameInput(e.target.value)}
+                placeholder={`Ex: Indicações Maio, Consignados Taubaté... (vazio = "Marcos CRM ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}")`}
+                maxLength={80}
+                disabled={creatingMarcosList}
+                className="h-9 text-xs bg-background/60 border-emerald-500/30 focus-visible:border-emerald-400"
+              />
             </div>
             <div className="bg-background/40 border border-border/40 rounded max-h-60 overflow-y-auto">
               {prefilledMarcos.contacts.map(c => {
@@ -711,7 +733,7 @@ Não numere as variações. Não inclua explicações adicionais.`
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => { setPrefilledMarcos(null); setMarcosRemoved(new Set()); }}
+                onClick={() => { setPrefilledMarcos(null); setMarcosRemoved(new Set()); setMarcosListNameInput(''); }}
                 disabled={creatingMarcosList}
               >
                 Cancelar
