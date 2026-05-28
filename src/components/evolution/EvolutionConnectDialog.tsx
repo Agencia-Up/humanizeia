@@ -110,7 +110,19 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
         },
       });
       if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Erro ao criar instância');
+      if (!data?.success) {
+        // 28/05/2026 — payload de erro tem admin_probe + attempted_endpoints
+        // pra diagnosticar exatamente o que o servidor UaZapi respondeu.
+        // Mantem visivel no console pra debug sem precisar de logs Supabase.
+        console.error('[create-uazapi-instance] Diagnostico completo:', {
+          error: data?.error,
+          admin_probe: data?.admin_probe,
+          attempted_endpoints: data?.attempted_endpoints,
+          url_host: data?.url_host,
+          response_body: data?.response_body,
+        });
+        throw new Error(data?.error || 'Erro ao criar instância');
+      }
       const createdSlug = data.instance_name || slug;
       setActiveSlug(createdSlug);
       setQrCode(data.qr_code || null);

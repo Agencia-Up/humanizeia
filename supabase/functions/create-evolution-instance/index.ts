@@ -416,9 +416,11 @@ async function handleMetaProvider(supabase: any, body: any) {
 async function handleEvolutionProvider(supabase: any, body: any) {
   const { instance_name, user_id, friendly_name, seller_member_id } = body;
 
-  // 1º — env vars globais (admin token UaZapi)
-  let api_url = Deno.env.get('EVOLUTION_API_URL');
-  let api_key = Deno.env.get('EVOLUTION_API_KEY');
+  // 28/05/2026 — Cliente NUNCA usa Evolution API. Sempre UaZapi.
+  // UAZAPI_URL / UAZAPI_TOKEN sao as keys preferidas; legacy EVOLUTION_*
+  // mantidas como fallback pra nao quebrar deploys atuais.
+  let api_url = Deno.env.get('UAZAPI_URL') || Deno.env.get('EVOLUTION_API_URL');
+  let api_key = Deno.env.get('UAZAPI_ADMIN_TOKEN') || Deno.env.get('EVOLUTION_API_KEY');
   let credSource = 'env';
 
   // Fallback — herdar URL de uma instância ativa do master (mesmo painel UaZapi).
@@ -444,8 +446,8 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     return new Response(JSON.stringify({
       success: false,
       error: `API do WhatsApp (UaZapi) sem credenciais no servidor. Faltando: ${[
-        !api_url ? 'EVOLUTION_API_URL' : null,
-        !api_key ? 'EVOLUTION_API_KEY (admin token UaZapi)' : null,
+        !api_url ? 'UAZAPI_URL' : null,
+        !api_key ? 'UAZAPI_ADMIN_TOKEN (admin token UaZapi)' : null,
       ].filter(Boolean).join(', ')}. Configure os secrets no Supabase.`,
     }), {
       status: 500,
@@ -453,7 +455,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     });
   }
 
-  console.log(`[create-evolution-instance] Using credentials from: ${credSource}, url=${api_url}`);
+  console.log(`[create-uazapi-instance] Using credentials from: ${credSource}, url=${api_url}`);
 
   if (!instance_name || !user_id) {
     return new Response(JSON.stringify({
@@ -470,59 +472,68 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   const requestedInstanceName = String(instance_name);
   const uazapiInstanceName = normalizeUazapiInstanceName(requestedInstanceName, seller_member_id);
 
-  console.log(`[create-evolution-instance] Creating Uazapi instance: ${uazapiInstanceName} at ${baseUrl}`);
+  // ========================================================================
+  // PROBE — testa se o admin token funciona em endpoints conhecidos.
+  // UazAPI V6 expoe /instance/all listando instancias com admin token.
+  // Se ESSE endpoint tambem 404, o problema NAO eh o caminho de criacao,
+  // eh o token errado ou o painel UaZapi nao expoe API admin nesse host.
+  // ========================================================================
+  let adminProbeStatus = 0;
+  let adminProbeBody = '';
+  try {
+    const probeRes = await fetch(`${baseUrl}/instance/all`, { method: 'GET', headers: adminHeaders });
+    adminProbeStatus = probeRes.status;
+    adminProbeBody = (await probeRes.text()).substring(0, 200);
+    console.log(`[create-uazapi-instance] Admin probe GET /instance/all → ${adminProbeStatus}: ${adminProbeBody}`);
+  } catch (err) {
+    console.warn(`[create-uazapi-instance] Admin probe falhou: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
+  console.log(`[create-uazapi-instance] Creating Uazapi instance: ${uazapiInstanceName} at ${baseUrl}`);
+
+  // Endpoints conhecidos do UazAPI V6 + alguns aliases comuns.
+  // Reordenado por probabilidade de funcionar primeiro.
   const createAttempts = [
     {
-      label: 'uazapi-instance-init-name',
+      label: 'uazapi-v6-instance-init-name',
       url: `${baseUrl}/instance/init`,
-      payload: {
-        name: uazapiInstanceName,
-        systemName: 'LogosIA',
-        qrcode: true,
-      },
+      payload: { name: uazapiInstanceName, systemName: 'LogosIA' },
       headers: adminHeaders,
     },
     {
-      label: 'uazapi-instance-init-instanceName',
+      label: 'uazapi-v6-instance-init-full',
       url: `${baseUrl}/instance/init`,
-      payload: {
-        instanceName: uazapiInstanceName,
-        systemName: 'LogosIA',
-        qrcode: true,
-      },
+      payload: { name: uazapiInstanceName, systemName: 'LogosIA', qrcode: true, integration: 'WHATSAPP-BAILEYS' },
       headers: adminHeaders,
     },
     {
-      label: 'url-name',
+      label: 'uazapi-v6-instance-init-instanceName',
+      url: `${baseUrl}/instance/init`,
+      payload: { instanceName: uazapiInstanceName, systemName: 'LogosIA', qrcode: true },
+      headers: adminHeaders,
+    },
+    {
+      label: 'manager-instance-init',
+      url: `${baseUrl}/manager/instance/init`,
+      payload: { name: uazapiInstanceName, systemName: 'LogosIA' },
+      headers: adminHeaders,
+    },
+    {
+      label: 'evolution-compat-create-path-name',
       url: `${baseUrl}/instance/create/${encodeURIComponent(uazapiInstanceName)}`,
-      payload: {
-        qrcode: true,
-        integration: 'WHATSAPP-BAILEYS',
-        groupsIgnore: true,
-      },
+      payload: { qrcode: true, integration: 'WHATSAPP-BAILEYS', groupsIgnore: true },
       headers: adminHeaders,
     },
     {
-      label: 'body-instanceName',
+      label: 'evolution-compat-create-body-instanceName',
       url: `${baseUrl}/instance/create`,
-      payload: {
-        instanceName: uazapiInstanceName,
-        qrcode: true,
-        integration: 'WHATSAPP-BAILEYS',
-        groupsIgnore: true,
-      },
+      payload: { instanceName: uazapiInstanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS', groupsIgnore: true },
       headers: adminHeaders,
     },
     {
-      label: 'body-name',
+      label: 'evolution-compat-create-body-name',
       url: `${baseUrl}/instance/create`,
-      payload: {
-        name: uazapiInstanceName,
-        qrcode: true,
-        integration: 'WHATSAPP-BAILEYS',
-        groupsIgnore: true,
-      },
+      payload: { name: uazapiInstanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS', groupsIgnore: true },
       headers: adminHeaders,
     },
   ];
@@ -531,9 +542,11 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   let createText = '';
   let createData: any = {};
   let successfulAttempt: string | null = null;
+  // 28/05/2026 — guarda resultado de CADA attempt pra diagnostico no front
+  const attemptResults: Array<{ label: string; url: string; status: number; body: string }> = [];
 
   for (const attempt of createAttempts) {
-    console.log(`[create-evolution-instance] Create attempt (${attempt.label}): ${attempt.url}`);
+    console.log(`[create-uazapi-instance] Create attempt (${attempt.label}): ${attempt.url}`);
     const createRes = await fetch(attempt.url, {
       method: 'POST',
       headers: attempt.headers,
@@ -542,7 +555,14 @@ async function handleEvolutionProvider(supabase: any, body: any) {
 
     createStatus = createRes.status;
     createText = await createRes.text();
-    console.log(`[create-evolution-instance] ${attempt.label} response (${createStatus}): ${createText.substring(0, 500)}`);
+    console.log(`[create-uazapi-instance] ${attempt.label} response (${createStatus}): ${createText.substring(0, 500)}`);
+
+    attemptResults.push({
+      label: attempt.label,
+      url: attempt.url,
+      status: createStatus,
+      body: createText.substring(0, 200),
+    });
 
     createData = {};
     try { createData = JSON.parse(createText); } catch {}
@@ -554,23 +574,33 @@ async function handleEvolutionProvider(supabase: any, body: any) {
   }
 
   if (!successfulAttempt) {
-    // Erro DETALHADO — não esconde nada. Inclui status, URL real, e os 300
-    // primeiros chars da resposta da UaZapi pra diagnóstico no toast do front.
     const urlHost = baseUrl.replace(/^https?:\/\//, '');
-    const hint = createStatus === 401
-      ? 'admin token da UaZapi inválido ou expirado (EVOLUTION_API_KEY).'
-      : createStatus === 404
-        ? `endpoint não existe nesse servidor (${urlHost}). Verifique EVOLUTION_API_URL.`
-        : createStatus >= 500
-          ? 'UaZapi indisponível temporariamente.'
-          : 'verifique secrets do Supabase.';
+    const allReturned404 = attemptResults.every((r) => r.status === 404);
+    const adminProbeOk = adminProbeStatus >= 200 && adminProbeStatus < 300;
+
+    let hint: string;
+    if (createStatus === 401 || createStatus === 403) {
+      hint = 'admin token da UaZapi invalido ou sem permissao (UAZAPI_ADMIN_TOKEN).';
+    } else if (allReturned404 && !adminProbeOk) {
+      // Probe + create ambos 404: token errado OU painel sem API admin habilitada
+      hint = `painel UaZapi em ${urlHost} nao expoe API admin (probe /instance/all → ${adminProbeStatus}). Token errado ou host so aceita /send/* publico. Crie a instancia direto no painel UaZapi e cole o token aqui.`;
+    } else if (allReturned404 && adminProbeOk) {
+      // Probe OK mas create 404: caminho de criacao desse painel eh diferente
+      hint = `admin token OK (probe respondeu ${adminProbeStatus}), mas nenhum dos caminhos de criacao existe. Possivelmente UazAPI custom — confirmar com docs do painel.`;
+    } else if (createStatus >= 500) {
+      hint = 'UaZapi indisponivel temporariamente.';
+    } else {
+      hint = 'verifique secrets do Supabase e logs da edge function.';
+    }
+
     return new Response(JSON.stringify({
       success: false,
-      error: `Falha ao criar instância na UaZapi (HTTP ${createStatus}): ${hint} Resposta: ${createText.substring(0, 300)}`,
+      error: `Falha ao criar instancia na UaZapi (HTTP ${createStatus}): ${hint}`,
       status: createStatus,
       url_host: urlHost,
+      admin_probe: { status: adminProbeStatus, body: adminProbeBody },
       response_body: createText.substring(0, 500),
-      attempted_endpoints: createAttempts.map((a) => `${a.label} → ${a.url}`),
+      attempted_endpoints: attemptResults,
     }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
