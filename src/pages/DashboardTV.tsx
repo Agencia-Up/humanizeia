@@ -333,10 +333,14 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         if (sellerMemberId) pedroQuery = pedroQuery.eq('assigned_to_id', sellerMemberId);
         // (sem filtro 'assigned_to_id not null' — preciso do total pra taxa)
 
-        // 4. Leads Marcos do período. +stage_id +seller_notes_count + JOIN com stages pra nome.
+        // 4. Leads Marcos do período. +stage_id + JOIN com stages pra nome.
+        // FIX 28/05/2026: removida coluna `seller_notes_count` que NAO existe
+        // em crm_leads (so existe em ai_crm_leads do Pedro). A query inteira
+        // estava falhando silenciosamente, fazendo todo Painel mostrar 0 leads
+        // do Marcos desde sempre. Bug exposto pelo banner de debug.
         let marcosQuery = (supabase as any)
           .from('crm_leads')
-          .select('id, origem, assigned_to, stage_id, seller_notes_count, stage:crm_pipeline_stages(name)')
+          .select('id, origem, assigned_to, stage_id, stage:crm_pipeline_stages(name)')
           .eq('user_id', effectiveUserId)
           .gte('created_at', todayStart)
           .lte('created_at', todayEnd);
@@ -462,7 +466,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         }
         const marcosLeads = (marcosRes.data || []) as Array<{
           id: string; origem: string | null; assigned_to: string | null; stage_id: string | null;
-          seller_notes_count: number | null; stage: { name: string } | null;
+          stage: { name: string } | null;
         }>;
         for (const l of marcosLeads) {
           // Fallback pra row virtual "Sem vendedor atribuído" quando assigned_to=NULL
@@ -530,7 +534,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           const iaScore    = scoreMarcosStage(l.stage?.name);
           const fbPriority = feedbackByLead.get(l.id);
           const fbScore    = fbPriority ? scoreFeedbackPriority(fbPriority) : null;
-          const notesScore = scoreNotasCount(l.seller_notes_count);
+          // seller_notes_count nao existe em crm_leads — passa null pra
+          // calculo de qualidade nao quebrar.
+          const notesScore = scoreNotasCount(null);
           scores.push(combineLeadScore(iaScore, fbScore, notesScore));
         }
         const qualidadeMedia = scores.length > 0
