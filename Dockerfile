@@ -1,5 +1,8 @@
 # Estágio 1: Build
-FROM node:20-alpine AS build
+# Digest pinning pra reprodutibilidade + reduzir round-trips ao Docker Hub
+# (resolve auth 404 transiente que quebrou builds em 28/05/2026 14:34 GMT).
+# Atualizar este digest manualmente quando quiser bumpar node:20-alpine.
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS build
 WORKDIR /app
 
 # Instala as dependências primeiro (otimização de cache do Docker)
@@ -25,7 +28,8 @@ ENV VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY
 RUN npm run build:prod
 
 # Estágio 2: Produção (Servidor Web Nginx super rápido e leve)
-FROM nginx:alpine
+# Digest pinning (mesma motivação do estágio 1).
+FROM nginx:alpine@sha256:8b1e78743a03dbb2c95171cc58639fef29abc8816598e27fb910ed2e621e589a
 
 # Copia os arquivos compilados do Estágio 1 para a pasta do Nginx
 COPY --from=build /app/dist /usr/share/nginx/html
