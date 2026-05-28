@@ -696,6 +696,33 @@ export const MARCOS_ORIGEM_OPTIONS = [
   { value: 'consignado_indicacao',  label: 'Consignado-Indicação' },
 ] as const;
 
+/**
+ * Mapeia o slug salvo em crm_leads.source (lista MARCOS_ORIGEM_OPTIONS) pro
+ * slug canônico da coluna crm_leads.origem que o Painel ao Vivo lê pra
+ * agregar contadores. Spec 27/05/2026:
+ *   marketplace          → marketplace
+ *   porta                → porta
+ *   indicacao            → indicacao
+ *   consignado           → consignado
+ *   consignado_indicacao → indicacao (conta como Indicação no Painel)
+ *   loja                 → outros    (não há card próprio "Loja" no Painel)
+ * CHECK constraint de crm_leads.origem aceita só: porta/olx/marketplace/
+ * instagram/consignado/indicacao/outros. Qualquer slug fora dessa lista
+ * cai em "outros" pra nunca quebrar o INSERT.
+ */
+export function marcosOrigemSlugToCanonical(slug: string | null | undefined): string | null {
+  if (!slug) return null;
+  switch (slug) {
+    case 'marketplace':           return 'marketplace';
+    case 'porta':                 return 'porta';
+    case 'indicacao':             return 'indicacao';
+    case 'consignado':            return 'consignado';
+    case 'consignado_indicacao':  return 'indicacao';
+    case 'loja':                  return 'outros';
+    default:                      return 'outros';
+  }
+}
+
 function leadOrigemLabel(v: string | null | undefined): string | null {
   if (!v) return null;
   // Tenta resolver primeiro pela lista do Marcos (mais novas), depois pela legacy do Pedro,
@@ -2195,6 +2222,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           name: addLeadName.trim(),
           phone: cleanPhone,
           source: addLeadOrigem || 'manual',
+          // Spec 27/05/2026: grava tambem em crm_leads.origem (slug canonico)
+          // pro Painel ao Vivo do Pedro contar esse lead na seção correta.
+          // marcosOrigemSlugToCanonical mapeia consignado_indicacao→indicacao
+          // e loja→outros (slugs nao previstos no CHECK constraint).
+          origem: marcosOrigemSlugToCanonical(addLeadOrigem),
           notes: addLeadOrigem === 'outros' ? (addLeadOrigemOutros.trim() || null) : null,
           tags: ['Marcos Manual'],
           value: 0,
@@ -4055,7 +4087,7 @@ const MASTER_TABS = [
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
   { id: 'inbox-ia',     label: 'Inbox IA',     icon: Inbox,         emoji: '📨' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
-  { id: 'ao-vivo',      label: 'CRM ao Vivo',  icon: MonitorPlay,   emoji: '📺' },
+  { id: 'ao-vivo',      label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺' },
   { id: 'instancias',   label: 'Instâncias',   icon: Smartphone,    emoji: '📱' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
@@ -4065,7 +4097,7 @@ const ALL_SELLER_TABS = [
   { id: 'performance', label: 'Performance',  icon: BarChart3,     emoji: '📊', featureKey: 'tab_performance' },
   { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,   emoji: '🗒️', featureKey: 'tab_crm' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
-  { id: 'ao-vivo',     label: 'CRM ao Vivo',  icon: MonitorPlay,   emoji: '📺', featureKey: 'tab_crm_ao_vivo' },
+  { id: 'ao-vivo',     label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺', featureKey: 'tab_crm_ao_vivo' },
   { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,    emoji: '📱', featureKey: 'tab_instancias' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
   { id: 'inbox',       label: 'Inbox',        icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },
