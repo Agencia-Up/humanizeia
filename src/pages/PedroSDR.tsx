@@ -670,6 +670,7 @@ const STATUS_CRM_OPTIONS = [
 
 // ─── Origem do Lead (Prompt 1.1) ───────────────────────────────────────────
 // Bate com CHECK constraint da migration 20260516120000_lead_origem
+// Usado pelo PEDRO. Marcos tem lista propria abaixo (MARCOS_ORIGEM_OPTIONS).
 export const LEAD_ORIGEM_OPTIONS = [
   { value: 'porta',                  label: '🚪 Porta (loja)',     short: 'Porta' },
   { value: 'marketplace_facebook',   label: '🛒 Marketplace FB',   short: 'FB Marketplace' },
@@ -679,9 +680,31 @@ export const LEAD_ORIGEM_OPTIONS = [
   { value: 'outros',                 label: '📌 Outros',           short: 'Outros' },
 ] as const;
 const LEAD_ORIGEM_VALUES = LEAD_ORIGEM_OPTIONS.map(o => o.value) as readonly string[];
+
+// ─── Origem do Lead — MARCOS CRM (spec 27/05/2026) ─────────────────────────
+// Lista FIXA pro form "Adicionar Lead" do Marcos. Substitui o DynamicSelect
+// que usava lead_sources (esse continua disponivel pro Pedro).
+// Valores salvos em crm_leads.source como slugs snake_case. Leads antigos
+// com source='marketplace_facebook', 'instagram_vendedor' etc. continuam
+// existindo no banco (sem migration de mapping — compatibilidade preservada).
+export const MARCOS_ORIGEM_OPTIONS = [
+  { value: 'marketplace',           label: 'Marketplace' },
+  { value: 'porta',                 label: 'Porta' },
+  { value: 'loja',                  label: 'Loja' },
+  { value: 'indicacao',             label: 'Indicação' },
+  { value: 'consignado',            label: 'Consignado' },
+  { value: 'consignado_indicacao',  label: 'Consignado-Indicação' },
+] as const;
+
 function leadOrigemLabel(v: string | null | undefined): string | null {
   if (!v) return null;
-  return LEAD_ORIGEM_OPTIONS.find(o => o.value === v)?.short || v;
+  // Tenta resolver primeiro pela lista do Marcos (mais novas), depois pela legacy do Pedro,
+  // pra garantir que ambos os formatos rendam um label legivel no badge do detalhe.
+  return (
+    MARCOS_ORIGEM_OPTIONS.find(o => o.value === v)?.label ||
+    LEAD_ORIGEM_OPTIONS.find(o => o.value === v)?.short ||
+    v
+  );
 }
 
 // Mapeia status legacy no kanban. Etapas antigas de qualificacao do Pedro voltam para Novo na tela.
@@ -3453,22 +3476,36 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               />
             </div>
             <div className="flex-1 min-w-[180px] space-y-1">
-              <label className="text-[10px] text-muted-foreground font-medium">Origem (opcional)</label>
-              {/* Fase 6.4: select dinâmico — vendedor pode adicionar nova origem direto */}
-              <DynamicSelect
-                entity="lead_source"
-                userId={effectiveUserIdState || userId}
-                value={addLeadSourceId}
-                onChange={(id, row) => {
-                  setAddLeadSourceId(id);
-                  setAddLeadSourceName(row?.name || '');
-                  // Mantém compat com coluna `origem` legacy via normalized_name
-                  setAddLeadOrigem(row?.normalized_name || '');
+              <label className="text-[10px] text-muted-foreground font-medium">Origem</label>
+              {/* Spec 27/05/2026: 6 origens fixas pro Marcos (substitui o
+                  DynamicSelect/lead_sources que era usado antes). Sem opção
+                  pre-selecionada — placeholder "Selecione a origem". */}
+              <Select
+                value={addLeadOrigem || '__none__'}
+                onValueChange={(v) => {
+                  if (v === '__none__') {
+                    setAddLeadOrigem('');
+                    setAddLeadSourceId(null);
+                    setAddLeadSourceName('');
+                  } else {
+                    setAddLeadOrigem(v);
+                    setAddLeadSourceId(null);
+                    const opt = MARCOS_ORIGEM_OPTIONS.find(o => o.value === v);
+                    setAddLeadSourceName(opt?.label || v);
+                  }
                 }}
-                placeholder="Origem do lead"
-                triggerClassName="h-8 text-xs"
-                filter={(r) => r.status === 'active'}
-              />
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Selecione a origem" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MARCOS_ORIGEM_OPTIONS.map(opt => (
+                    <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <Button
               onClick={handleAddLeadManual}
