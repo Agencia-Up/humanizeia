@@ -182,6 +182,18 @@ Deno.serve(async (req) => {
         if (typeof regras_aquecimento.initial_messages !== "number" || regras_aquecimento.initial_messages < 1 || regras_aquecimento.initial_messages > 1000) {
           errors.push("regras_aquecimento.initial_messages deve ser entre 1 e 1000.");
         }
+        // 28/05/2026: keys novas que o queue processor realmente le.
+        // Opcionais (legacy data nao tem), mas se presentes precisam ser validas.
+        if (regras_aquecimento.limite_diario_inicial !== undefined && regras_aquecimento.limite_diario_inicial !== null) {
+          if (typeof regras_aquecimento.limite_diario_inicial !== "number" || regras_aquecimento.limite_diario_inicial < 10 || regras_aquecimento.limite_diario_inicial > 5000) {
+            errors.push("regras_aquecimento.limite_diario_inicial deve ser entre 10 e 5000.");
+          }
+        }
+        if (regras_aquecimento.dias_rampa !== undefined && regras_aquecimento.dias_rampa !== null) {
+          if (typeof regras_aquecimento.dias_rampa !== "number" || regras_aquecimento.dias_rampa < 1 || regras_aquecimento.dias_rampa > 60) {
+            errors.push("regras_aquecimento.dias_rampa deve ser entre 1 e 60.");
+          }
+        }
       }
     }
 

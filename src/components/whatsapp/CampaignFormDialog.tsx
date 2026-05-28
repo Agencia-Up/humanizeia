@@ -101,6 +101,10 @@ export function CampaignFormDialog({
   const [rotationPause, setRotationPause] = useState(300);
   const [warmupEnabled, setWarmupEnabled] = useState(false);
   const [warmupInitial, setWarmupInitial] = useState(20);
+  // 28/05/2026 — keys que o backend (process-whatsapp-queue) realmente le.
+  // Sem elas, o warmup nunca era aplicado mesmo com o toggle ligado.
+  const [warmupDailyLimit, setWarmupDailyLimit] = useState(50);
+  const [warmupRampDays, setWarmupRampDays] = useState(14);
   const [startDate, setStartDate] = useState<Date | undefined>();
   const [startTime, setStartTime] = useState('08:00');
   const [endDate, setEndDate] = useState<Date | undefined>();
@@ -136,6 +140,8 @@ export function CampaignFormDialog({
       setRotationPause(editingCampaign.regras_rodizio?.pausa_entre_instancias ?? 300);
       setWarmupEnabled(editingCampaign.regras_aquecimento?.enabled ?? false);
       setWarmupInitial(editingCampaign.regras_aquecimento?.initial_messages ?? 20);
+      setWarmupDailyLimit((editingCampaign.regras_aquecimento as any)?.limite_diario_inicial ?? 50);
+      setWarmupRampDays((editingCampaign.regras_aquecimento as any)?.dias_rampa ?? 14);
       setInstanceId(editingCampaign.instance_id || 'auto');
       setMediaUrl(editingCampaign.media_url || '');
       setMediaType(editingCampaign.media_type || '');
@@ -170,6 +176,7 @@ export function CampaignFormDialog({
     setSelectedLists([]); setDelayMin(35); setDelayMax(89);
     setRotationMsgs(10); setRotationPause(300);
     setWarmupEnabled(false); setWarmupInitial(20);
+    setWarmupDailyLimit(50); setWarmupRampDays(14);
     setStartDate(undefined); setStartTime('08:00');
     setEndDate(undefined); setEndTime('18:00');
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
@@ -214,7 +221,12 @@ export function CampaignFormDialog({
       listas_alvo: selectedLists,
       regras_delay: { min: delayMin, max: delayMax },
       regras_rodizio: { mensagens_por_instancia: rotationMsgs, pausa_entre_instancias: rotationPause },
-      regras_aquecimento: { enabled: warmupEnabled, initial_messages: warmupInitial },
+      regras_aquecimento: {
+        enabled: warmupEnabled,
+        initial_messages: warmupInitial,
+        limite_diario_inicial: warmupDailyLimit,
+        dias_rampa: warmupRampDays,
+      } as any,
       start_time: startTimestamp,
       end_time: endTimestamp,
       instance_id: instanceId === 'auto' ? null : instanceId,
@@ -626,54 +638,51 @@ export function CampaignFormDialog({
                 </Label>
               </div>
               {warmupEnabled && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Mensagens iniciais (ramp-up)</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={warmupInitial}
-                    onChange={e => setWarmupInitial(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-32"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    A campanha começará enviando até {warmupInitial} mensagens antes de acelerar para o ritmo normal.
-                  </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-muted/30 rounded-lg p-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Mensagens iniciais</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={200}
+                      value={warmupInitial}
+                      onChange={e => setWarmupInitial(Math.max(1, parseInt(e.target.value) || 1))}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Mensagens da primeira leva (ramp-up).
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Limite diário máximo</Label>
+                    <Input
+                      type="number"
+                      min={10}
+                      max={5000}
+                      value={warmupDailyLimit}
+                      onChange={e => setWarmupDailyLimit(Math.max(10, parseInt(e.target.value) || 10))}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Teto de mensagens/dia por instância após rampa.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Dias até atingir o teto</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={warmupRampDays}
+                      onChange={e => setWarmupRampDays(Math.max(1, parseInt(e.target.value) || 1))}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Dias de aceleração gradual até o limite cheio.
+                    </p>
+                  </div>
                 </div>
               )}
               <p className="text-xs text-muted-foreground italic">
-                Salvo como: {`{ "enabled": ${warmupEnabled}, "initial_messages": ${warmupInitial} }`}
+                Salvo como: {`{ "enabled": ${warmupEnabled}, "initial_messages": ${warmupInitial}, "limite_diario_inicial": ${warmupDailyLimit}, "dias_rampa": ${warmupRampDays} }`}
               </p>
-            </div>
-
-            <Separator />
-
-            {/* Opt-in / Opt-out Buttons */}
-            <div className="space-y-3">
-              <Label className="flex items-center gap-1.5">
-                ✋ Botões de Opt-in / Opt-out
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                Adiciona botões interativos na primeira mensagem para novos leads, permitindo que eles optem por continuar ou parar de receber mensagens. Leads que clicarem em "Não quero mais" serão automaticamente movidos para a blacklist.
-              </p>
-              <div className="flex items-center gap-3">
-                <Switch checked={includeOptoutButtons} onCheckedChange={setIncludeOptoutButtons} id="optout-buttons" />
-                <Label htmlFor="optout-buttons" className="text-sm cursor-pointer">
-                  {includeOptoutButtons ? 'Botões ativados' : 'Botões desativados'}
-                </Label>
-              </div>
-              {includeOptoutButtons && (
-                <div className="bg-muted/50 rounded-md p-3 space-y-1.5 text-xs">
-                  <p className="font-medium">Prévia dos botões:</p>
-                  <div className="flex gap-2 mt-1">
-                    <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20">✅ Quero Continuar Recebendo</Badge>
-                    <Badge variant="secondary" className="bg-destructive/10 text-destructive border-destructive/20">❌ Não Quero Mais Receber</Badge>
-                  </div>
-                  <p className="text-muted-foreground mt-1">
-                    Contatos que clicarem em "Não quero mais" serão adicionados à blacklist e excluídos de futuros disparos.
-                  </p>
-                </div>
-              )}
             </div>
 
             <Separator />
