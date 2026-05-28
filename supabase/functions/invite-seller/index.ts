@@ -437,12 +437,23 @@ Deno.serve(async (req) => {
         redirectTo,
       );
       const candidateLink = linkData?.action_link || null;
-      // VALIDA que o link contém token real (PKCE code OU token_hash OU implicit flow hash)
-      const hasValidToken = !!candidateLink && (
-        candidateLink.includes('token_hash=') ||
-        candidateLink.includes('code=') ||
-        candidateLink.includes('#access_token=')
-      );
+      // FIX 28/05/2026 v3: GoTrue retorna o action_link com query param ?token=XXX
+      // (singular, sem underscore). Codigo antigo procurava 'token_hash=' que NUNCA
+      // bate — sempre retornava hasToken=false e a funcao falhava antes de chamar
+      // Resend, mesmo com link 100% valido. Esse era o verdadeiro bug raiz.
+      let hasValidToken = false;
+      if (candidateLink) {
+        try {
+          const u = new URL(candidateLink);
+          hasValidToken =
+            u.searchParams.has('token') ||
+            u.searchParams.has('token_hash') ||
+            u.searchParams.has('code') ||
+            u.hash.includes('access_token=');
+        } catch {
+          hasValidToken = false;
+        }
+      }
       // Captura debug info pra cada tentativa.
       // Sanitiza token (qualquer query/hash param eh removido) mas preserva
       // URL completa pra eu ver pra onde o GoTrue esta redirecionando.
