@@ -450,32 +450,47 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           }
         }
 
-        // 5. Marcos: agrupa por origem em 4 categorias visiveis (Porta /
-        //    Marketplace / Consignado / Indicacao). Spec 27/05/2026 Bug 1:
-        //    OLX e Outros removidos — leads com essas origens (ou origem
-        //    NULL/desconhecida) sao IGNORADOS no painel (nao somam pra
-        //    vendedor especifico nem pro total). Apenas Trafico Pago (do
-        //    Pedro) tem seu proprio contador.
+        // 5. Marcos: agrupa por STAGE NAME (coluna do Kanban) — fix 28/05/2026.
+        // Spec do usuario: "o que aparece na coluna do Marcos tem que aparecer
+        // no Painel ao Vivo". Antes contava por `origem` que dava mismatch:
+        // ex: form "Consignado-Indicacao" -> kanban Consignado mas origem=indicacao
+        // -> Painel mostrava como Indicacao em vez de Consignado.
+        // Agora usa stage.name diretamente do JOIN com crm_pipeline_stages.
+        function stageToCol(stageName: string | null | undefined): keyof Pick<VendedorData, 'porta'|'marketplace'|'consignado'|'indicacao'> | null {
+          if (!stageName) return null;
+          const n = stageName.trim().toLowerCase();
+          // Porta/loja, Porta, Loja -> porta
+          if (n === 'porta/loja' || n === 'porta' || n === 'loja' || n === 'porta loja') return 'porta';
+          if (n === 'marketplace') return 'marketplace';
+          if (n === 'consignado') return 'consignado';
+          if (n === 'indicação' || n === 'indicacao') return 'indicacao';
+          return null; // outras stages (Leads Inativos, Negociacao, Fechado, etc.) nao contam
+        }
         const marcosLeads = (marcosRes.data || []) as Array<{
           id: string; origem: string | null; assigned_to: string | null; stage_id: string | null;
           seller_notes_count: number | null; stage: { name: string } | null;
         }>;
         for (const l of marcosLeads) {
-          // Fallback pra row virtual "Sem vendedor atribuído" quando
-          // assigned_to=NULL ou aponta pra vendedor inexistente (importação
-          // sem auto-atribuição, lead criado pelo master, vendedor inativo).
-          // Spec 27/05/2026: leads Marcos historicos devem aparecer no
-          // breakdown por origem mesmo sem vendedor.
+          // Fallback pra row virtual "Sem vendedor atribuído" quando assigned_to=NULL
+          // ou aponta pra vendedor inexistente.
           const v = agg[l.assigned_to || ''] || agg[NAO_ATRIBUIDO_ID];
-          const o = (l.origem || '') as string;
           if (!l.assigned_to || !agg[l.assigned_to]) {
             naoAtribuidos++; // conta no contador geral (UI sub-texto)
           }
-          if (o === 'porta')           { v.porta++;       v.total++; }
-          else if (o === 'marketplace'){ v.marketplace++; v.total++; }
-          else if (o === 'consignado') { v.consignado++;  v.total++; }
-          else if (o === 'indicacao')  { v.indicacao++;   v.total++; }
-          // olx/outros/instagram/null/desconhecido: ignorados (spec 27/05/2026)
+          // PRIORIDADE: usar stage.name (coluna Kanban onde o lead esta visualmente).
+          // Fallback pra origem se stage for null (lead sem stage_id ou stage deletada).
+          const col = stageToCol(l.stage?.name) || (
+            l.origem === 'porta' ? 'porta' :
+            l.origem === 'marketplace' ? 'marketplace' :
+            l.origem === 'consignado' ? 'consignado' :
+            l.origem === 'indicacao' ? 'indicacao' : null
+          );
+          if (col) {
+            v[col]++;
+            v.total++;
+          }
+          // Stages "Leads Inativos", "Negociacao", "Fechado", "Nao tem no Estoque",
+          // "Agendamento" nao tem coluna no Painel — sao ignorados.
         }
 
         // 6. Busca feedbacks (priority) dos leads do período (Pedro + Marcos)
