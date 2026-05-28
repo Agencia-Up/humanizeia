@@ -34,7 +34,67 @@ Se houver **bug crítico em produção** já reportado (ex: vazamento de dados, 
 
 ---
 
-## 1. PROJECT OVERVIEW
+## 🛑 0.1. REGRAS DE PROMOÇÃO RESPONSÁVEL (compartilhamento de `main` com outros devs)
+
+> **Contexto**: o projeto tem um segundo desenvolvedor que trabalha em paralelo via Codex/OpenAI (autor: `dev-aloan`). Commits dele caem direto na `main` enquanto eu trabalho em `staging`. Quando faço `git pull origin main` antes de promover staging→main, **arrasto os commits dele juntos** sem que o usuário tenha visto. Em 27/05/2026 isso causou um incidente: 2 commits do `dev-aloan` tocando `uazapi-webhook` e `pedro-v2/*` foram promovidos junto com meu pacote sem aviso, e o agente Pedro parou de responder corretamente no WhatsApp.
+
+### Regra 1 — Listar TUDO antes de qualquer `git merge staging --no-edit` pra `main`
+
+Antes de rodar o comando de merge, **SEMPRE**:
+1. Rodar `git log origin/main..staging --pretty=format:"%h | %an | %s"` pra ver o que **eu** estou enviando
+2. Rodar `git log fe942c4..origin/main --pretty=format:"%h | %an | %s"` (substituindo pelo último merge meu conhecido) pra ver o que **outros autores** vão entrar junto se eu fizer pull
+3. **Imprimir no chat** a lista completa identificando autor de cada commit, separando "MEUS" vs "DE OUTROS AUTORES"
+
+### Regra 2 — Commits de outros autores exigem aprovação explícita item-a-item
+
+Se algum commit no pacote de promoção foi feito por outro autor que não eu (`dev-aloan`, `dev-*`, qualquer não-Wander-via-Claude), **PARAR e perguntar** via AskUserQuestion. Formato obrigatório:
+
+> "Vou promover X commits. Y são meus (listo abaixo). Mas Z commits foram feitos pelo `<autor>` e tocam `<arquivos>`. Esses **não** foram revisados nesta sessão. Você quer:
+> (a) Promover tudo (assumindo que `<autor>` já validou em outro lugar)
+> (b) Revisar comigo cada commit do `<autor>` antes
+> (c) Promover só os meus e deixar os do `<autor>` pra ele subir separado"
+
+Nunca presumir que "Pode subir tudo no MAIN" cobre commits de outros autores. "Tudo" se refere ao MEU pacote.
+
+### Regra 3 — Edge functions críticas: deploy + teste end-to-end obrigatórios
+
+Commits que tocam estas edge functions **JAMAIS** são promovidos sem teste end-to-end real em staging (uma mensagem real do WhatsApp processada de ponta-a-ponta, ou cron rodando de verdade, etc):
+
+- `supabase/functions/uazapi-webhook/`
+- `supabase/functions/cron-lead-followup/`
+- `supabase/functions/pedro-trigger-followup/`
+- `supabase/functions/_shared/pedro-v2/**`
+- `supabase/functions/pedro-*/`
+- `supabase/functions/claude-chat/`
+- `supabase/functions/auto-classify-leads/`
+- Qualquer função listada em `supabase/functions/_shared/pedro-v2/` (orchestrator, brain, reply generator, etc)
+
+Aplicar a regra mesmo se o commit é **de outro autor** sendo arrastado via `git pull`. Se eu não posso garantir teste end-to-end (porque não toquei naquele código ou não foi testado nesta sessão), **bloquear a promoção** desses commits até o autor confirmar.
+
+### Regra 4 — Monitorar 30 min após promoção que envolva edge function
+
+Após qualquer `git push origin main` que carregue commits tocando edge functions Pedro/Marcos/cron:
+1. Avisar o usuário: "Vou monitorar logs da `uazapi-webhook` em PROD pelos próximos 30 minutos"
+2. A cada 5-10 min, consultar logs via MCP/CLI se autorizado
+3. Se aparecer **qualquer erro novo** que não existia antes do push, **reverter imediatamente** via `git revert <hash> && git push` + redeploy do código anterior
+
+Se não tiver acesso a logs PROD nessa sessão, **explicitamente pedir** ao usuário pra monitorar e reportar.
+
+### Regra 5 — "Sobe tudo no MAIN" exige resposta-confirmação do pacote
+
+Quando o usuário disser "Pode subir tudo", "promove tudo", "manda pra prod" ou similar, **NÃO executar imediatamente**. Responder com formato:
+
+> "Pacote de promoção (`origin/main` → `main` após merge de `staging`):
+> - X commits meus: [lista]
+> - Y commits de `<outro autor>`: [lista]
+> - Z migrations aplicar em PROD: [lista]
+> - W edge functions a redeployar: [lista — se aplicável]
+>
+> Confirma promoção do pacote completo? (sim/só meus/cancela)"
+
+Só promover após resposta explícita. "Pode subir tudo" sozinho **não é mais aprovação válida** quando há commits de outros autores no diff.
+
+---
 
 **Logos IA Platform** é uma plataforma SaaS de agência de marketing digital autônoma, orquestrada por 9 agentes de Inteligência Artificial especializados. Cada agente cobre uma disciplina do marketing digital e trabalha em conjunto sob coordenação do **Salomão** (orquestrador central).
 
