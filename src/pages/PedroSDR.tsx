@@ -3617,17 +3617,22 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
+          {/* Spec 28/05/2026: "Adicionar Lead" disponivel pra Pedro tambem
+              (antes era so Marcos). Pedro form mostra apenas origem
+              read-only "Trafego Pago"; Marcos mantem as 6 opcoes + custom. */}
+          <Button
+            variant={addLeadOpen ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => setAddLeadOpen(!addLeadOpen)}
+            className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+          >
+            {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+            {addLeadOpen ? 'Fechar' : 'Adicionar Lead'}
+          </Button>
+          {/* Importar Planilha continua so no Marcos por ora — bulk import
+              tem logica especifica de mapping/origem que so faz sentido la. */}
           {isMarcosCrm && (
             <>
-              <Button
-                variant={addLeadOpen ? 'secondary' : 'outline'}
-                size="sm"
-                onClick={() => setAddLeadOpen(!addLeadOpen)}
-                className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
-              >
-                {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-                {addLeadOpen ? 'Fechar' : 'Adicionar Lead'}
-              </Button>
               <Button
                 variant="outline"
                 size="sm"
