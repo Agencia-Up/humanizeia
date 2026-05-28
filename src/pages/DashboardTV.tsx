@@ -5,13 +5,13 @@
 // Mostra produção do dia agregando leads do Pedro (ai_crm_leads) +
 // Marcos (crm_leads) por vendedor e por origem.
 //
-// Regras de agregação:
+// Regras de agregação (spec 27/05/2026 Bug 1: 5 colunas, OLX e Outros removidos):
 //   • TRÁFEGO PAGO = ai_crm_leads com assigned_to_id IS NOT NULL
 //   • PORTA        = crm_leads WHERE origem='porta'
-//   • OLX          = crm_leads WHERE origem='olx'
 //   • MARKETPLACE  = crm_leads WHERE origem='marketplace'
 //   • CONSIGNADO   = crm_leads WHERE origem='consignado'
 //   • INDICAÇÃO    = crm_leads WHERE origem='indicacao'
+// Leads com origem='olx', 'outros', 'instagram' ou NULL são IGNORADOS.
 //
 // Período: apenas leads do dia atual (created_at >= 00:00 local).
 // Atualização: polling a cada 30s + relógio digital atualiza a cada 1s.
@@ -36,13 +36,14 @@ interface VendedorData {
   /** Foto exibida no card. Prioridade: profiles.avatar_url (vendedor) > ai_team_members.profile_picture (master) > null (fallback iniciais). */
   effective_avatar: string | null;
   rank: number;
+  // Spec 27/05/2026 Bug 1: removidas OLX e Outros do painel. Tipos mantidos
+  // como propriedades obrigatórias do agg pra simplicidade, mas a UI só
+  // exibe 5 colunas: Tráfego Pago / Porta / Marketplace / Consignado / Indicação.
   trafico_pago: number;
   porta: number;
-  olx: number;
   marketplace: number;
   consignado: number;
   indicacao: number;
-  outros: number;
   total: number;
 }
 
@@ -132,14 +133,14 @@ interface BrandingConfig {
 
 // ─── Config visual das 6 origens (ordem da imagem ICOM) ─────────────────────
 
+// Spec 27/05/2026 Bug 1: 5 colunas finais na ordem Trafego Pago / Porta /
+// Marketplace / Consignado / Indicacao. OLX e Outros removidos.
 const ORIGENS = [
   { key: 'trafico_pago', label: 'Tráfego Pago', icon: Target,      color: '#3b82f6' },
   { key: 'porta',        label: 'Porta',        icon: DoorOpen,    color: '#f59e0b' },
-  { key: 'olx',          label: 'OLX',          icon: ShoppingBag, color: '#84cc16' },
   { key: 'marketplace',  label: 'Marketplace',  icon: Globe,       color: '#a855f7' },
-  { key: 'indicacao',    label: 'Indicação',    icon: Users,       color: '#fb923c' },
   { key: 'consignado',   label: 'Consignado',   icon: Phone,       color: '#06b6d4' },
-  { key: 'outros',       label: 'Outros',       icon: Tag,         color: '#94a3b8' },
+  { key: 'indicacao',    label: 'Indicação',    icon: Users,       color: '#fb923c' },
 ] as const;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -377,7 +378,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             null;
           agg[s.id] = {
             id: s.id, name: s.name, effective_avatar: effectiveAvatar, rank: 0,
-            trafico_pago: 0, porta: 0, olx: 0, marketplace: 0, consignado: 0, indicacao: 0, outros: 0, total: 0,
+            trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, total: 0,
           };
         }
 
@@ -400,16 +401,19 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           }
         }
 
-        // 5. Marcos: agrupa por origem (6 categorias). 'outros' agora conta
-        //    também (era o default do form e ficava invisível). Leads sem
-        //    vendedor sao somados em naoAtribuidos pra TV refletir TUDO.
+        // 5. Marcos: agrupa por origem em 4 categorias visiveis (Porta /
+        //    Marketplace / Consignado / Indicacao). Spec 27/05/2026 Bug 1:
+        //    OLX e Outros removidos — leads com essas origens (ou origem
+        //    NULL/desconhecida) sao IGNORADOS no painel (nao somam pra
+        //    vendedor especifico nem pro total). Apenas Trafico Pago (do
+        //    Pedro) tem seu proprio contador.
         const marcosLeads = (marcosRes.data || []) as Array<{
           id: string; origem: string | null; assigned_to: string | null; stage_id: string | null;
           seller_notes_count: number | null; stage: { name: string } | null;
         }>;
         for (const l of marcosLeads) {
           const v = agg[l.assigned_to || ''];
-          const o = (l.origem || 'outros') as string;
+          const o = (l.origem || '') as string;
           if (!v) {
             // Lead sem vendedor (ou vendedor desativado/removido): conta no
             // total geral mas nao em vendedor especifico.
@@ -417,11 +421,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             continue;
           }
           if (o === 'porta')           { v.porta++;       v.total++; }
-          else if (o === 'olx')        { v.olx++;         v.total++; }
           else if (o === 'marketplace'){ v.marketplace++; v.total++; }
           else if (o === 'consignado') { v.consignado++;  v.total++; }
           else if (o === 'indicacao')  { v.indicacao++;   v.total++; }
-          else                         { v.outros++;      v.total++; } // 'outros' + qualquer origem desconhecida
+          // olx/outros/instagram/null/desconhecido: ignorados (spec 27/05/2026)
         }
 
         // 6. Busca feedbacks (priority) dos leads do período (Pedro + Marcos)
@@ -485,19 +488,18 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .map((v, i) => ({ ...v, rank: i + 1 }));
         setVendedores(sorted);
 
-        // 10. KPIs gerais — incluem 'outros' (7a categoria) e os leads
-        //     sem vendedor (nao_atribuidos) somam no total_leads geral.
+        // 10. KPIs gerais — 5 categorias visiveis. Leads sem vendedor
+        //     (nao_atribuidos) somam no total_leads geral. Spec 27/05/2026
+        //     Bug 1: OLX e Outros removidos da agregacao.
         const porOrigem: Record<string, number> = {
-          trafico_pago: 0, porta: 0, olx: 0, marketplace: 0, consignado: 0, indicacao: 0, outros: 0,
+          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0,
         };
         for (const v of sorted) {
           porOrigem.trafico_pago += v.trafico_pago;
           porOrigem.porta        += v.porta;
-          porOrigem.olx          += v.olx;
           porOrigem.marketplace  += v.marketplace;
           porOrigem.consignado   += v.consignado;
           porOrigem.indicacao    += v.indicacao;
-          porOrigem.outros       += v.outros;
         }
         // total_leads = soma dos atribuidos + os nao_atribuidos (TV
         // mostra TUDO que foi cadastrado no periodo).
@@ -853,15 +855,13 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
         )}
       </div>
 
-      {/* Breakdown por origem */}
+      {/* Breakdown por origem — 5 colunas (spec 27/05/2026 Bug 1) */}
       <div className="space-y-1">
         <BreakdownRow label="Tráfego Pago" value={v.trafico_pago} color="#3b82f6" />
         <BreakdownRow label="Porta"        value={v.porta}        color="#f59e0b" />
-        <BreakdownRow label="OLX"          value={v.olx}          color="#84cc16" />
         <BreakdownRow label="Marketplace"  value={v.marketplace}  color="#a855f7" />
         <BreakdownRow label="Consignado"   value={v.consignado}   color="#06b6d4" />
         <BreakdownRow label="Indicação"    value={v.indicacao}    color="#fb923c" />
-        <BreakdownRow label="Outros"       value={v.outros}       color="#94a3b8" />
       </div>
 
       {/* Total */}
