@@ -284,6 +284,46 @@ const CLAUDE_HAIKU_MODEL_CANDIDATES = [
   'claude-3-5-haiku-20241022', // fallback antigo se nada acima funcionar
 ];
 
+// Fix 28/05/2026 (Douglas): fail-open helpers pra impedir que travas na
+// Anthropic API bloqueiem a resposta do Pedro. fetchAnthropicMessages aborta
+// o request após timeoutMs via AbortController. timeoutPromise envolve
+// qualquer promise pra resolver com fallback se demorar demais.
+function timeoutPromise<T>(promise: Promise<T>, timeoutMs: number, label: string, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(`[timeout] ${label} excedeu ${timeoutMs}ms - seguindo sem bloquear resposta`);
+      resolve(fallback);
+    }, timeoutMs);
+
+    promise
+      .then((value) => resolve(value))
+      .catch((err) => {
+        console.warn(`[timeout] ${label} falhou - seguindo sem bloquear resposta:`, err);
+        resolve(fallback);
+      })
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+async function fetchAnthropicMessages(apiKey: string, body: any, timeoutMs = 4500): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function extractEntitiesWithClaude(args: {
   message: string;
   currentState: any;
@@ -321,19 +361,11 @@ Se nada de novo, retorne {}.`;
   // Tenta cada modelo até um funcionar (Anthropic às vezes muda IDs)
   for (const model of CLAUDE_HAIKU_MODEL_CANDIDATES) {
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 1024,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userMsg }],
-        }),
+      const res = await fetchAnthropicMessages(apiKey, {
+        model,
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMsg }],
       });
 
       if (!res.ok) {
@@ -1250,10 +1282,11 @@ async function summarizeOldMessages(oldMessages: any[], apiKey: string, modelCan
   const { systemPrompt, userMessage } = buildSummarizationPrompt(oldMessages);
   for (const model of modelCandidates) {
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model, max_tokens: 512, system: systemPrompt, messages: [{ role: 'user', content: userMessage }] }),
+      const res = await fetchAnthropicMessages(apiKey, {
+        model,
+        max_tokens: 512,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
       });
       if (!res.ok) {
         const err = await res.text();
