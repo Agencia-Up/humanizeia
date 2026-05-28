@@ -723,6 +723,52 @@ export function marcosOrigemSlugToCanonical(slug: string | null | undefined): st
   }
 }
 
+/**
+ * Bug 1 (spec 27/05/2026): mapeia origem do form Adicionar Lead pro stage_id
+ * da coluna correspondente no kanban Marcos. Diferente do canonical pra
+ * Painel ao Vivo: aqui consignado_indicacao vai pra coluna "Consignado"
+ * (no Painel ao Vivo, vai pra Indicação como contador).
+ *
+ * Mapping spec:
+ *   marketplace          → Marketplace
+ *   porta                → Porta/loja
+ *   loja                 → Porta/loja
+ *   indicacao            → Indicação
+ *   consignado           → Consignado
+ *   consignado_indicacao → Consignado
+ *
+ * Match por substring case-insensitive + sem acento, pra tolerar variações
+ * ("Porta/loja" vs "Porta / Loja", "Marketplace" vs "Marketing Place").
+ * Retorna null se nenhuma stage casar — caller deve fallback pra firstStageId.
+ */
+export function resolveMarcosStageIdForOrigem(
+  slug: string | null | undefined,
+  stages: Array<{ id: string; title: string }>,
+): string | null {
+  if (!slug) return null;
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const findByName = (target: string): string | null => {
+    const t = norm(target);
+    return stages.find(s => norm(s.title) === t)?.id
+        || stages.find(s => norm(s.title).includes(t))?.id
+        || null;
+  };
+  switch (slug) {
+    case 'marketplace':
+      return findByName('marketplace') || findByName('marketing place');
+    case 'porta':
+    case 'loja':
+      return findByName('porta/loja') || findByName('porta');
+    case 'indicacao':
+      return findByName('indicacao');
+    case 'consignado':
+    case 'consignado_indicacao':
+      return findByName('consignado');
+    default:
+      return null;
+  }
+}
+
 function leadOrigemLabel(v: string | null | undefined): string | null {
   if (!v) return null;
   // Tenta resolver primeiro pela lista do Marcos (mais novas), depois pela legacy do Pedro,
@@ -2200,6 +2246,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       if (isMarcosCrm) {
         const firstStageId = await resolveFirstMarcosStageId(effectiveUserId);
+        // Bug 1 (spec 27/05/2026): lead vai pra coluna que casa com a origem
+        // selecionada. Fallback pra firstStageId se origem nao tiver mapping.
+        const stageIdForOrigem = resolveMarcosStageIdForOrigem(addLeadOrigem, manualStages);
+        const targetStageId = stageIdForOrigem || firstStageId;
         const currentSeller = await resolveCurrentSellerForMarcos();
         const sellerCustomFields = currentSeller ? {
           seller_member_id: currentSeller.id,
@@ -2212,13 +2262,13 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .from('crm_leads')
           .select('position')
           .eq('user_id', effectiveUserId)
-          .eq('stage_id', firstStageId)
+          .eq('stage_id', targetStageId)
           .order('position', { ascending: false })
           .limit(1)
           .maybeSingle();
         const { error } = await (supabase as any).from('crm_leads').insert({
           user_id: effectiveUserId,
-          stage_id: firstStageId,
+          stage_id: targetStageId,
           name: addLeadName.trim(),
           phone: cleanPhone,
           source: addLeadOrigem || 'manual',

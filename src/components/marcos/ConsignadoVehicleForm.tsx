@@ -62,6 +62,21 @@ export function hasConsignadoData(d: Partial<ConsignadoVehicleData> | null | und
   );
 }
 
+// Bug 3 (spec 27/05/2026): formata número de KM com separador de milhar
+// pt-BR (150000 → "150.000"). Valor salvo no banco é sempre o número puro.
+function formatKmDisplay(km: number | null | undefined): string {
+  if (km == null || isNaN(km as number)) return '';
+  return new Intl.NumberFormat('pt-BR').format(km);
+}
+
+// Parser inverso: aceita "150.000", "150000", "150 000" e retorna 150000.
+function parseKmInput(s: string): number | null {
+  const digits = (s || '').replace(/\D/g, '');
+  if (!digits) return null;
+  const n = parseInt(digits, 10);
+  return isNaN(n) ? null : n;
+}
+
 // ─── Props ──────────────────────────────────────────────────────────────────
 
 export interface ConsignadoVehicleFormProps {
@@ -98,8 +113,18 @@ export function ConsignadoVehicleForm({
       consignado_cor: initialData?.consignado_cor ?? null,
       consignado_estado: (initialData?.consignado_estado as any) ?? null,
     });
+    setAnoText(initialData?.consignado_ano != null ? String(initialData.consignado_ano) : '');
+    setKmText(formatKmDisplay(initialData?.consignado_km));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadId]);
+
+  // Bug 2+3 (spec 27/05/2026): inputs de Ano e KM agora são type="text" pra
+  // remover setas de incremento (UX ruim no number) e permitir formatação
+  // visual da KM. State texto separado pra controle do display.
+  const [anoText, setAnoText] = useState<string>(
+    initialData?.consignado_ano != null ? String(initialData.consignado_ano) : ''
+  );
+  const [kmText, setKmText] = useState<string>(formatKmDisplay(initialData?.consignado_km));
 
   // Autosave de um campo específico. Chamado on blur (text) ou on change (select).
   const persistField = useCallback(async (
@@ -140,19 +165,6 @@ export function ConsignadoVehicleForm({
       }
     };
 
-  const handleNumberBlur = (field: keyof ConsignadoVehicleData) =>
-    (e: React.FocusEvent<HTMLInputElement>) => {
-      const raw = e.target.value.trim();
-      const newValue = raw === '' ? null : Number(raw);
-      if (newValue !== null && (isNaN(newValue) || newValue < 0)) {
-        toast({ title: 'Valor inválido', description: 'Use um número >= 0.', variant: 'destructive' });
-        return;
-      }
-      if (newValue !== (data[field] ?? null)) {
-        persistField(field, newValue);
-      }
-    };
-
   return (
     <div className={`rounded-lg border border-purple-500/30 bg-purple-500/5 p-4 ${className || ''}`}>
       {/* Header */}
@@ -186,19 +198,32 @@ export function ConsignadoVehicleForm({
           />
         </div>
 
-        {/* Ano */}
+        {/* Ano — Bug 2: type=text + inputMode numeric pra remover setas do number */}
         <div className="space-y-1">
           <Label htmlFor={`consig-ano-${leadId}`} className="text-[11px] text-muted-foreground">
             Ano
           </Label>
           <Input
             id={`consig-ano-${leadId}`}
-            type="number"
-            min={1900}
-            max={2030}
-            defaultValue={data.consignado_ano ?? ''}
-            placeholder="Ex: 2022"
-            onBlur={handleNumberBlur('consignado_ano')}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={4}
+            value={anoText}
+            onChange={(e) => setAnoText(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            onBlur={() => {
+              const raw = anoText.trim();
+              const newValue = raw === '' ? null : Number(raw);
+              if (newValue !== null && (isNaN(newValue) || newValue < 1900 || newValue > 2030)) {
+                toast({ title: 'Ano inválido', description: 'Use um ano entre 1900 e 2030.', variant: 'destructive' });
+                setAnoText(data.consignado_ano != null ? String(data.consignado_ano) : '');
+                return;
+              }
+              if (newValue !== (data.consignado_ano ?? null)) {
+                persistField('consignado_ano', newValue);
+              }
+            }}
+            placeholder="Ex: 2021"
             className="h-8 text-xs"
           />
         </div>
@@ -218,20 +243,36 @@ export function ConsignadoVehicleForm({
           />
         </div>
 
-        {/* KM */}
+        {/* KM — Bug 3: type=text + inputMode numeric + formatação visual milhar + sufixo "km" */}
         <div className="space-y-1">
           <Label htmlFor={`consig-km-${leadId}`} className="text-[11px] text-muted-foreground">
-            Quilometragem aproximada (km)
+            Quilometragem aproximada
           </Label>
-          <Input
-            id={`consig-km-${leadId}`}
-            type="number"
-            min={0}
-            defaultValue={data.consignado_km ?? ''}
-            placeholder="Ex: 45000"
-            onBlur={handleNumberBlur('consignado_km')}
-            className="h-8 text-xs"
-          />
+          <div className="relative">
+            <Input
+              id={`consig-km-${leadId}`}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={kmText}
+              onChange={(e) => {
+                // Mantém só dígitos, mas mostra formatado on-the-fly
+                const parsed = parseKmInput(e.target.value);
+                setKmText(parsed != null ? formatKmDisplay(parsed) : '');
+              }}
+              onBlur={() => {
+                const parsed = parseKmInput(kmText);
+                if (parsed !== (data.consignado_km ?? null)) {
+                  persistField('consignado_km', parsed);
+                }
+              }}
+              placeholder="Ex: 85.000"
+              className="h-8 text-xs pr-9"
+            />
+            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none select-none">
+              km
+            </span>
+          </div>
         </div>
 
         {/* Cor */}
