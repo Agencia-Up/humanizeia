@@ -382,6 +382,18 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           };
         }
 
+        // Spec 27/05/2026 Bug integração Marcos: cria uma row virtual "Sem
+        // vendedor" pros leads com assigned_to=NULL (Marcos importados em
+        // planilha sem vendedor, ou criados pelo master sem auto-atribuir).
+        // Sem isso esses leads cairiam em naoAtribuidos++ (subtexto invisível)
+        // e nunca apareceriam no breakdown por origem. Filtrada do ranking
+        // mais abaixo se ficar com total=0.
+        const NAO_ATRIBUIDO_ID = '__nao_atribuido__';
+        agg[NAO_ATRIBUIDO_ID] = {
+          id: NAO_ATRIBUIDO_ID, name: 'Sem vendedor atribuído', effective_avatar: null, rank: 0,
+          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, total: 0,
+        };
+
         // 4. Pedro: contar trafico_pago (precisa de assigned_to_id) E coletar dados pra qualidade/taxa
         const pedroLeads = (pedroRes.data || []) as Array<{
           id: string; assigned_to_id: string | null; status_crm: string | null; seller_notes_count: number | null;
@@ -394,10 +406,21 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           if (l.assigned_to_id) {
             pedroAtribuidos++;
             const v = agg[l.assigned_to_id];
-            if (v) { v.trafico_pago++; v.total++; }
-            else naoAtribuidos++; // assigned_to_id aponta pra vendedor que sumiu da lista
+            if (v) {
+              v.trafico_pago++; v.total++;
+            } else {
+              // assigned_to_id aponta pra vendedor que sumiu — registra na row
+              // virtual "Sem vendedor" pra aparecer no breakdown (Bug integração).
+              agg[NAO_ATRIBUIDO_ID].trafico_pago++;
+              agg[NAO_ATRIBUIDO_ID].total++;
+              naoAtribuidos++;
+            }
           } else {
-            naoAtribuidos++; // lead Pedro novo, ainda sem transfer pra vendedor
+            // Lead Pedro novo, ainda sem transfer. Tecnicamente não conta como
+            // "Tráfego Pago" (já que essa categoria precisa de assigned_to_id),
+            // mas pra visibilidade aparece no total da row "Sem vendedor".
+            agg[NAO_ATRIBUIDO_ID].total++;
+            naoAtribuidos++;
           }
         }
 
@@ -412,13 +435,15 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           seller_notes_count: number | null; stage: { name: string } | null;
         }>;
         for (const l of marcosLeads) {
-          const v = agg[l.assigned_to || ''];
+          // Fallback pra row virtual "Sem vendedor atribuído" quando
+          // assigned_to=NULL ou aponta pra vendedor inexistente (importação
+          // sem auto-atribuição, lead criado pelo master, vendedor inativo).
+          // Spec 27/05/2026: leads Marcos historicos devem aparecer no
+          // breakdown por origem mesmo sem vendedor.
+          const v = agg[l.assigned_to || ''] || agg[NAO_ATRIBUIDO_ID];
           const o = (l.origem || '') as string;
-          if (!v) {
-            // Lead sem vendedor (ou vendedor desativado/removido): conta no
-            // total geral mas nao em vendedor especifico.
-            naoAtribuidos++;
-            continue;
+          if (!l.assigned_to || !agg[l.assigned_to]) {
+            naoAtribuidos++; // conta no contador geral (UI sub-texto)
           }
           if (o === 'porta')           { v.porta++;       v.total++; }
           else if (o === 'marketplace'){ v.marketplace++; v.total++; }
@@ -482,15 +507,20 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const taxaTransf = pedroTotal > 0 ? Math.round((pedroAtribuidos / pedroTotal) * 1000) / 10 : 0;
         const taxaTransfTexto = `${pedroAtribuidos} de ${pedroTotal} leads do Pedro`;
 
-        // 9. Rank por total desc, tie-breaker alfabético
+        // 9. Rank por total desc, tie-breaker alfabético.
+        //    A row virtual "Sem vendedor atribuído" é incluída SÓ se tiver
+        //    leads (total > 0). Senão fica oculta pra nao poluir o ranking.
         const sorted = Object.values(agg)
+          .filter(v => v.id !== NAO_ATRIBUIDO_ID || v.total > 0)
           .sort((a, b) => (b.total - a.total) || a.name.localeCompare(b.name))
           .map((v, i) => ({ ...v, rank: i + 1 }));
         setVendedores(sorted);
 
-        // 10. KPIs gerais — 5 categorias visiveis. Leads sem vendedor
-        //     (nao_atribuidos) somam no total_leads geral. Spec 27/05/2026
-        //     Bug 1: OLX e Outros removidos da agregacao.
+        // 10. KPIs gerais — 5 categorias visiveis. Spec 27/05/2026 Bug 1:
+        //     OLX e Outros removidos. Spec Bug integracao: row virtual
+        //     "Sem vendedor" ja entra em sorted, entao porOrigem soma TUDO
+        //     (vendedores reais + virtual). total = soma dos v.total
+        //     (inclui Pedros sem assigned_to_id que so somam .total++).
         const porOrigem: Record<string, number> = {
           trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0,
         };
@@ -501,10 +531,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           porOrigem.consignado   += v.consignado;
           porOrigem.indicacao    += v.indicacao;
         }
-        // total_leads = soma dos atribuidos + os nao_atribuidos (TV
-        // mostra TUDO que foi cadastrado no periodo).
-        const totalAtribuidos = Object.values(porOrigem).reduce((a, b) => a + b, 0);
-        const total = totalAtribuidos + naoAtribuidos;
+        // total_leads = soma dos v.total de todas as rows (vendedores reais
+        // + virtual "Sem vendedor"). Sem duplo-contar: cada lead vai pra
+        // exatamente uma row e incrementa apenas o v.total dela.
+        const total = sorted.reduce((sum, v) => sum + v.total, 0);
         const percentuais: Record<string, number> = {};
         const baseParaPct = total > 0 ? total : 1;
         for (const k of Object.keys(porOrigem)) {
@@ -800,15 +830,19 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         )}
       </section>
 
-      {/* ───── Destaque do Dia (fixed bottom) ───── */}
-      {vendedores[0] && vendedores[0].total > 0 && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-400/40 rounded-full px-6 py-2.5 flex items-center gap-3 backdrop-blur shadow-2xl">
-          <Trophy className="h-5 w-5 text-amber-400" />
-          <span className="text-[10px] uppercase tracking-widest font-bold text-amber-300">Destaque do Dia</span>
-          <span className="text-sm font-bold">{vendedores[0].name}</span>
-          <span className="text-xs text-amber-300/80 font-semibold">· {vendedores[0].total} leads</span>
-        </div>
-      )}
+      {/* ───── Destaque do Dia (fixed bottom) — pula row virtual "Sem vendedor" ───── */}
+      {(() => {
+        const destaque = vendedores.find(v => v.id !== '__nao_atribuido__' && v.total > 0);
+        if (!destaque) return null;
+        return (
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-400/40 rounded-full px-6 py-2.5 flex items-center gap-3 backdrop-blur shadow-2xl">
+            <Trophy className="h-5 w-5 text-amber-400" />
+            <span className="text-[10px] uppercase tracking-widest font-bold text-amber-300">Destaque do Dia</span>
+            <span className="text-sm font-bold">{destaque.name}</span>
+            <span className="text-xs text-amber-300/80 font-semibold">· {destaque.total} leads</span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
