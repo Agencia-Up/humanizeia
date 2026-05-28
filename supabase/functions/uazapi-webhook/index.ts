@@ -2003,18 +2003,18 @@ Deno.serve(async (req) => {
 
       console.log(`[Webhook] Mensagem recebida [UAZAPI]. Instance: ${instanceName}, From: ${remoteJid}, Text: ${userText}`);
 
-      // ── DEDUP: se wa-inbox-webhook já processou esta mensagem, pular ──
-      const messageIdForDedup = msgObj.messageid || msgObj.id?.id || msgObj.key?.id || '';
-      if (messageIdForDedup) {
-        const { data: alreadyInInbox } = await supabase.from('wa_inbox')
-          .select('id')
-          .eq('remote_message_id', messageIdForDedup)
-          .maybeSingle();
-        if (alreadyInInbox) {
-          console.log(`[Webhook] ⏭️ Mensagem ${messageIdForDedup} já processada pelo wa-inbox-webhook. Pulando.`);
-          return new Response(JSON.stringify({ ok: true, skipped: 'dedup' }), { headers: corsHeaders });
-        }
-      }
+      // ── DEDUP DESATIVADA 28/05/2026 EMERGENCIAL ────────────────────────
+      // A trava de dedup que verificava wa_inbox.remote_message_id ANTES de
+      // processar estava silenciando 100% das mensagens em PROD desde
+      // 27/05 22:40 BRT (17 inbound, 0 outbound). O wa-inbox-webhook (que
+      // também grava em wa_inbox) ganha consistentemente a corrida desde
+      // alguma mudança feita em 22:00, e o uazapi-webhook via "já processada"
+      // → pulava sem chamar a IA. Pedro ficou mudo. Removendo a trava pra
+      // restaurar atendimento. Risco aceito: respostas duplicadas podem
+      // voltar (caso original que motivou a trava em 12/05 — commit 54b3057).
+      // Fix definitivo (advisory lock por remote_message_id ou janela
+      // temporal curta) deve ser feito em sequencia.
+      // ─────────────────────────────────────────────────────────────────────
 
       return await processMessage(supabase, instanceName, remoteJid, userText, pushName, msgObj);
     }
@@ -2051,18 +2051,7 @@ Deno.serve(async (req) => {
 
     let userText = message.conversation || message.extendedTextMessage?.text || message.text || data.text || ''
 
-    // ── DEDUP: se wa-inbox-webhook já processou esta mensagem, pular ──
-    const evMsgId = key.id || '';
-    if (evMsgId) {
-      const { data: alreadyInInbox } = await supabase.from('wa_inbox')
-        .select('id')
-        .eq('remote_message_id', evMsgId)
-        .maybeSingle();
-      if (alreadyInInbox) {
-        console.log(`[Webhook] ⏭️ Mensagem ${evMsgId} já processada pelo wa-inbox-webhook. Pulando.`);
-        return new Response(JSON.stringify({ ok: true, skipped: 'dedup' }), { headers: corsHeaders });
-      }
-    }
+    // ── DEDUP DESATIVADA 28/05/2026 EMERGENCIAL (ver bloco acima no formato UazAPI) ──
 
     return await processMessage(supabase, instance, key.remoteJid, userText.trim(), pushName || 'Lead', data)
 
