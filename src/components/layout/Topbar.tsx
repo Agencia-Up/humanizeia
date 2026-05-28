@@ -65,11 +65,11 @@ export function Topbar() {
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>Minha Conta</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate('/settings?tab=profile')}>
+            <DropdownMenuItem onClick={() => navigate('/perfil')}>
               <UserIcon className="mr-2 h-4 w-4" /> Perfil
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate('/settings')}>
-              <Settings className="mr-2 h-4 w-4" /> Configuracoes
+              <Settings className="mr-2 h-4 w-4" /> Configurações
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-destructive" onClick={handleSignOut}>
