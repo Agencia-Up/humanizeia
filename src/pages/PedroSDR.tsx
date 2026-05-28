@@ -40,6 +40,8 @@ const DashboardTV        = lazy(() => import('./DashboardTV'));
 const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
+import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal';
+import { ConsignadoVehicleForm } from '@/components/marcos/ConsignadoVehicleForm';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
@@ -668,6 +670,7 @@ const STATUS_CRM_OPTIONS = [
 
 // ─── Origem do Lead (Prompt 1.1) ───────────────────────────────────────────
 // Bate com CHECK constraint da migration 20260516120000_lead_origem
+// Usado pelo PEDRO. Marcos tem lista propria abaixo (MARCOS_ORIGEM_OPTIONS).
 export const LEAD_ORIGEM_OPTIONS = [
   { value: 'porta',                  label: '🚪 Porta (loja)',     short: 'Porta' },
   { value: 'marketplace_facebook',   label: '🛒 Marketplace FB',   short: 'FB Marketplace' },
@@ -677,9 +680,104 @@ export const LEAD_ORIGEM_OPTIONS = [
   { value: 'outros',                 label: '📌 Outros',           short: 'Outros' },
 ] as const;
 const LEAD_ORIGEM_VALUES = LEAD_ORIGEM_OPTIONS.map(o => o.value) as readonly string[];
+
+// ─── Origem do Lead — MARCOS CRM (spec 27/05/2026) ─────────────────────────
+// Lista FIXA pro form "Adicionar Lead" do Marcos. Substitui o DynamicSelect
+// que usava lead_sources (esse continua disponivel pro Pedro).
+// Valores salvos em crm_leads.source como slugs snake_case. Leads antigos
+// com source='marketplace_facebook', 'instagram_vendedor' etc. continuam
+// existindo no banco (sem migration de mapping — compatibilidade preservada).
+export const MARCOS_ORIGEM_OPTIONS = [
+  { value: 'marketplace',           label: 'Marketplace' },
+  { value: 'porta',                 label: 'Porta' },
+  { value: 'loja',                  label: 'Loja' },
+  { value: 'indicacao',             label: 'Indicação' },
+  { value: 'consignado',            label: 'Consignado' },
+  { value: 'consignado_indicacao',  label: 'Consignado-Indicação' },
+] as const;
+
+/**
+ * Mapeia o slug salvo em crm_leads.source (lista MARCOS_ORIGEM_OPTIONS) pro
+ * slug canônico da coluna crm_leads.origem que o Painel ao Vivo lê pra
+ * agregar contadores. Spec 27/05/2026:
+ *   marketplace          → marketplace
+ *   porta                → porta
+ *   indicacao            → indicacao
+ *   consignado           → consignado
+ *   consignado_indicacao → indicacao (conta como Indicação no Painel)
+ *   loja                 → outros    (não há card próprio "Loja" no Painel)
+ * CHECK constraint de crm_leads.origem aceita só: porta/olx/marketplace/
+ * instagram/consignado/indicacao/outros. Qualquer slug fora dessa lista
+ * cai em "outros" pra nunca quebrar o INSERT.
+ */
+export function marcosOrigemSlugToCanonical(slug: string | null | undefined): string | null {
+  if (!slug) return null;
+  switch (slug) {
+    case 'marketplace':           return 'marketplace';
+    case 'porta':                 return 'porta';
+    case 'indicacao':             return 'indicacao';
+    case 'consignado':            return 'consignado';
+    case 'consignado_indicacao':  return 'indicacao';
+    case 'loja':                  return 'outros';
+    default:                      return 'outros';
+  }
+}
+
+/**
+ * Bug 1 (spec 27/05/2026): mapeia origem do form Adicionar Lead pro stage_id
+ * da coluna correspondente no kanban Marcos. Diferente do canonical pra
+ * Painel ao Vivo: aqui consignado_indicacao vai pra coluna "Consignado"
+ * (no Painel ao Vivo, vai pra Indicação como contador).
+ *
+ * Mapping spec:
+ *   marketplace          → Marketplace
+ *   porta                → Porta/loja
+ *   loja                 → Porta/loja
+ *   indicacao            → Indicação
+ *   consignado           → Consignado
+ *   consignado_indicacao → Consignado
+ *
+ * Match por substring case-insensitive + sem acento, pra tolerar variações
+ * ("Porta/loja" vs "Porta / Loja", "Marketplace" vs "Marketing Place").
+ * Retorna null se nenhuma stage casar — caller deve fallback pra firstStageId.
+ */
+export function resolveMarcosStageIdForOrigem(
+  slug: string | null | undefined,
+  stages: Array<{ id: string; title: string }>,
+): string | null {
+  if (!slug) return null;
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const findByName = (target: string): string | null => {
+    const t = norm(target);
+    return stages.find(s => norm(s.title) === t)?.id
+        || stages.find(s => norm(s.title).includes(t))?.id
+        || null;
+  };
+  switch (slug) {
+    case 'marketplace':
+      return findByName('marketplace') || findByName('marketing place');
+    case 'porta':
+    case 'loja':
+      return findByName('porta/loja') || findByName('porta');
+    case 'indicacao':
+      return findByName('indicacao');
+    case 'consignado':
+    case 'consignado_indicacao':
+      return findByName('consignado');
+    default:
+      return null;
+  }
+}
+
 function leadOrigemLabel(v: string | null | undefined): string | null {
   if (!v) return null;
-  return LEAD_ORIGEM_OPTIONS.find(o => o.value === v)?.short || v;
+  // Tenta resolver primeiro pela lista do Marcos (mais novas), depois pela legacy do Pedro,
+  // pra garantir que ambos os formatos rendam um label legivel no badge do detalhe.
+  return (
+    MARCOS_ORIGEM_OPTIONS.find(o => o.value === v)?.label ||
+    LEAD_ORIGEM_OPTIONS.find(o => o.value === v)?.short ||
+    v
+  );
 }
 
 // Mapeia status legacy no kanban. Etapas antigas de qualificacao do Pedro voltam para Novo na tela.
@@ -787,6 +885,15 @@ interface CrmLead {
   visit_scheduled_at?: string | null;          // Item 2: timestamptz pra comparar com hoje (banner laranja)
   // Feature C: pro cálculo de inativo (>7 dias sem resposta)
   last_user_reply_at?: string | null;
+  // Marcos Consignado (27/05/2026) — 6 campos do veículo do cliente.
+  // Só preenchidos quando lead está em stage "Consignado". Renderizados pelo
+  // ConsignadoVehicleForm + badge 🚗 no card kanban.
+  consignado_modelo?: string | null;
+  consignado_ano?: number | null;
+  consignado_versao?: string | null;
+  consignado_km?: number | null;
+  consignado_cor?: string | null;
+  consignado_estado?: 'bom' | 'medio' | 'ruim' | null;
 }
 
 interface Note {
@@ -915,6 +1022,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [funnelOpen, setFunnelOpen]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
+  // F1 Follow-up IA: modal de configuração (substitui o disparo direto do botão "Follow-ups")
+  const [followupIAModalOpen, setFollowupIAModalOpen] = useState(false);
   const [classifyLoading, setClassifyLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [reassigning, setReassigning]       = useState<string | null>(null);
@@ -1022,7 +1131,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         let marcosLeadsQuery = (supabase as any)
           .from('crm_leads')
           // Feature M1: campos enriched (Marcos agora tem client_city, vehicle_interest, visit_scheduled)
-          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at')
+          // Marcos Consignado (27/05/2026): 6 campos do veiculo do cliente (consignado_*)
+          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, consignado_modelo, consignado_ano, consignado_versao, consignado_km, consignado_cor, consignado_estado')
           .eq('user_id', effectiveUserId)
           .not('source', 'like', 'Pedro SDR%')
           .order('created_at', { ascending: false })
@@ -1082,6 +1192,13 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           vehicle_interest: lead.vehicle_interest || null,
           visit_scheduled: lead.visit_scheduled || null,
           visit_scheduled_at: lead.visit_scheduled_at || null,
+          // Marcos Consignado (27/05/2026): 6 campos do veiculo
+          consignado_modelo: lead.consignado_modelo || null,
+          consignado_ano: lead.consignado_ano ?? null,
+          consignado_versao: lead.consignado_versao || null,
+          consignado_km: lead.consignado_km ?? null,
+          consignado_cor: lead.consignado_cor || null,
+          consignado_estado: lead.consignado_estado || null,
         }));
 
         const enrichedTeam = teamData.map(m => ({
@@ -2129,6 +2246,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       if (isMarcosCrm) {
         const firstStageId = await resolveFirstMarcosStageId(effectiveUserId);
+        // Bug 1 (spec 27/05/2026): lead vai pra coluna que casa com a origem
+        // selecionada. Fallback pra firstStageId se origem nao tiver mapping.
+        const stageIdForOrigem = resolveMarcosStageIdForOrigem(addLeadOrigem, manualStages);
+        const targetStageId = stageIdForOrigem || firstStageId;
         const currentSeller = await resolveCurrentSellerForMarcos();
         const sellerCustomFields = currentSeller ? {
           seller_member_id: currentSeller.id,
@@ -2141,16 +2262,21 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .from('crm_leads')
           .select('position')
           .eq('user_id', effectiveUserId)
-          .eq('stage_id', firstStageId)
+          .eq('stage_id', targetStageId)
           .order('position', { ascending: false })
           .limit(1)
           .maybeSingle();
         const { error } = await (supabase as any).from('crm_leads').insert({
           user_id: effectiveUserId,
-          stage_id: firstStageId,
+          stage_id: targetStageId,
           name: addLeadName.trim(),
           phone: cleanPhone,
           source: addLeadOrigem || 'manual',
+          // Spec 27/05/2026: grava tambem em crm_leads.origem (slug canonico)
+          // pro Painel ao Vivo do Pedro contar esse lead na seção correta.
+          // marcosOrigemSlugToCanonical mapeia consignado_indicacao→indicacao
+          // e loja→outros (slugs nao previstos no CHECK constraint).
+          origem: marcosOrigemSlugToCanonical(addLeadOrigem),
           notes: addLeadOrigem === 'outros' ? (addLeadOrigemOutros.trim() || null) : null,
           tags: ['Marcos Manual'],
           value: 0,
@@ -2722,6 +2848,31 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 })}
               </CardContent>
             </Card>
+          );
+        })()}
+
+        {/* Marcos Consignado (27/05/2026) — formulário inline com 6 campos do veículo
+            do cliente. Aparece SÓ no Marcos E quando lead está na stage "Consignado". */}
+        {isMarcosCrm && (() => {
+          const consignadoStageId = manualStages.find(s => s.title === 'Consignado')?.id;
+          if (!consignadoStageId || selectedLead.status_crm !== consignadoStageId) return null;
+          return (
+            <ConsignadoVehicleForm
+              leadId={selectedLead.id}
+              initialData={{
+                consignado_modelo: selectedLead.consignado_modelo ?? null,
+                consignado_ano: selectedLead.consignado_ano ?? null,
+                consignado_versao: selectedLead.consignado_versao ?? null,
+                consignado_km: selectedLead.consignado_km ?? null,
+                consignado_cor: selectedLead.consignado_cor ?? null,
+                consignado_estado: selectedLead.consignado_estado ?? null,
+              }}
+              onUpdated={(data) => {
+                // Atualiza state local pra badge no kanban refletir sem reload
+                setSelectedLead(prev => prev ? { ...prev, ...data } : prev);
+                setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, ...data } : l));
+              }}
+            />
           );
         })()}
 
@@ -3317,13 +3468,24 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           {!isMarcosCrm && (
             <Button
               variant="outline" size="sm"
-              onClick={handleTriggerFollowups}
+              onClick={() => setFollowupIAModalOpen(true)}
               disabled={triggerLoading}
+              title="Configurar disparo automático de reativação de leads inativos pelo Pedro IA"
               className="h-7 px-2.5 text-xs gap-1.5 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
             >
               {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-              Follow-ups
+              Follow-up IA
             </Button>
+          )}
+          {/* Modal de config do Follow-up IA. "Iniciar agora" chama o disparo
+              atual (pedro-trigger-followup). Aplicação das configs (horário,
+              jitter, IA generativa) virá nas Fases 2+ do plano. */}
+          {!isMarcosCrm && (
+            <FollowupIAConfigModal
+              open={followupIAModalOpen}
+              onOpenChange={setFollowupIAModalOpen}
+              onStartFollowup={async () => { await handleTriggerFollowups(); }}
+            />
           )}
           {!isSeller && !isMarcosCrm && (
             <Button
@@ -3396,22 +3558,36 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               />
             </div>
             <div className="flex-1 min-w-[180px] space-y-1">
-              <label className="text-[10px] text-muted-foreground font-medium">Origem (opcional)</label>
-              {/* Fase 6.4: select dinâmico — vendedor pode adicionar nova origem direto */}
-              <DynamicSelect
-                entity="lead_source"
-                userId={effectiveUserIdState || userId}
-                value={addLeadSourceId}
-                onChange={(id, row) => {
-                  setAddLeadSourceId(id);
-                  setAddLeadSourceName(row?.name || '');
-                  // Mantém compat com coluna `origem` legacy via normalized_name
-                  setAddLeadOrigem(row?.normalized_name || '');
+              <label className="text-[10px] text-muted-foreground font-medium">Origem</label>
+              {/* Spec 27/05/2026: 6 origens fixas pro Marcos (substitui o
+                  DynamicSelect/lead_sources que era usado antes). Sem opção
+                  pre-selecionada — placeholder "Selecione a origem". */}
+              <Select
+                value={addLeadOrigem || '__none__'}
+                onValueChange={(v) => {
+                  if (v === '__none__') {
+                    setAddLeadOrigem('');
+                    setAddLeadSourceId(null);
+                    setAddLeadSourceName('');
+                  } else {
+                    setAddLeadOrigem(v);
+                    setAddLeadSourceId(null);
+                    const opt = MARCOS_ORIGEM_OPTIONS.find(o => o.value === v);
+                    setAddLeadSourceName(opt?.label || v);
+                  }
                 }}
-                placeholder="Origem do lead"
-                triggerClassName="h-8 text-xs"
-                filter={(r) => r.status === 'active'}
-              />
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Selecione a origem" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MARCOS_ORIGEM_OPTIONS.map(opt => (
+                    <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <Button
               onClick={handleAddLeadManual}
@@ -3571,7 +3747,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                     );
                                   })()}
                                   {/* Fase 6 badges enriched — só renderiza se algum tem valor */}
-                                  {(lead.client_city || lead.vehicle_interest || lead.visit_scheduled) && (
+                                  {(lead.client_city || lead.vehicle_interest || lead.visit_scheduled || (isMarcosCrm && lead.consignado_modelo)) && (
                                     <div className="flex flex-wrap gap-1">
                                       {lead.client_city ? (
                                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-medium truncate max-w-[100px]" title={`Cidade: ${lead.client_city}`}>
@@ -3586,6 +3762,16 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                                       {lead.visit_scheduled ? (
                                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium truncate max-w-[110px]" title={`Visita: ${lead.visit_scheduled}`}>
                                           📅 {String(lead.visit_scheduled).slice(0, 18)}
+                                        </span>
+                                      ) : null}
+                                      {/* Marcos Consignado: badge indica que o form do veiculo do cliente
+                                          ja foi (parcialmente) preenchido. So aparece no CRM do Marcos. */}
+                                      {isMarcosCrm && lead.consignado_modelo ? (
+                                        <span
+                                          className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 font-medium truncate max-w-[140px] border border-purple-500/30"
+                                          title={`Consignado: ${lead.consignado_modelo}${lead.consignado_ano ? ` ${lead.consignado_ano}` : ''}${lead.consignado_km ? ` · ${lead.consignado_km.toLocaleString('pt-BR')}km` : ''}`}
+                                        >
+                                          🚙 Consig. {lead.consignado_modelo}
                                         </span>
                                       ) : null}
                                     </div>
@@ -3946,12 +4132,13 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 // Tabs do gerente (master) — todas as abas
 // Performance é filtrada pela feature flag FEATURES.agentPerformanceTab
 // (default false — métricas consolidadas vivem em /painel-geral pra master).
+// Spec 27/05/2026: "Painel ao Vivo" antes do "CRM Avançado" no agente Pedro.
 const MASTER_TABS = [
   { id: 'performance',  label: 'Performance',  icon: BarChart3,     emoji: '📊' },
+  { id: 'ao-vivo',      label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺' },
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
   { id: 'inbox-ia',     label: 'Inbox IA',     icon: Inbox,         emoji: '📨' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
-  { id: 'ao-vivo',      label: 'CRM ao Vivo',  icon: MonitorPlay,   emoji: '📺' },
   { id: 'instancias',   label: 'Instâncias',   icon: Smartphone,    emoji: '📱' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
@@ -3959,9 +4146,9 @@ const MASTER_TABS = [
 // Todas as tabs possíveis para o seller (filtradas por visible_features)
 const ALL_SELLER_TABS = [
   { id: 'performance', label: 'Performance',  icon: BarChart3,     emoji: '📊', featureKey: 'tab_performance' },
+  { id: 'ao-vivo',     label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺', featureKey: 'tab_crm_ao_vivo' },
   { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,   emoji: '🗒️', featureKey: 'tab_crm' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
-  { id: 'ao-vivo',     label: 'CRM ao Vivo',  icon: MonitorPlay,   emoji: '📺', featureKey: 'tab_crm_ao_vivo' },
   { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,    emoji: '📱', featureKey: 'tab_instancias' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
   { id: 'inbox',       label: 'Inbox',        icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },

@@ -15,19 +15,15 @@
 // ============================================================================
 
 import { useEffect, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Loader2, Users, Trophy, ArrowRightLeft, BarChart3, Bot, Layers,
-  Calendar as CalendarIcon, TrendingUp, CheckCircle2, AlertCircle, UserCircle2,
+  Calendar as CalendarIcon, TrendingUp, CheckCircle2, AlertCircle,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -178,94 +174,16 @@ function MetricCard({
 export default function PainelGeral() {
   const { user } = useAuth();
   const { isSeller, loading: profileLoading } = useSellerProfile(user?.id);
-  const [searchParams, setSearchParams] = useSearchParams();
 
-  // ── Filtros: persistidos em URL params pra manter entre navegações ──────
-  // ?period=today|yesterday|7days|30days|custom  (default 'today')
-  // ?seller=all|<seller_id>                       (default 'all')
-  // ?from=YYYY-MM-DD & ?to=YYYY-MM-DD             (só usados quando period=custom)
-  const urlPeriod = (searchParams.get('period') as PeriodPreset | null) || 'today';
-  const urlSeller = searchParams.get('seller') || 'all';
-
-  const [period, setPeriod] = useState<PeriodPreset>(urlPeriod);
-  const [selectedSellerId, setSelectedSellerId] = useState<string>(urlSeller);
-
-  // customRange editable (o que o user está digitando no datepicker)
+  const [period, setPeriod] = useState<PeriodPreset>('30days');
   const [customRange, setCustomRange] = useState<CustomRange>(() => {
-    const today = new Date(); const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 6);
-    return {
-      start: searchParams.get('from') || toDateInput(weekAgo),
-      end: searchParams.get('to') || toDateInput(today),
-    };
+    const today = new Date(); const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 29);
+    return { start: toDateInput(weekAgo), end: toDateInput(today) };
   });
-  // customRange APPLIED — só atualiza qdo user clica "Aplicar" (spec: modo
-  // Personalizado só atualiza dados após confirmar as datas)
-  const [appliedCustomRange, setAppliedCustomRange] = useState<CustomRange>(customRange);
-
   const [data, setData] = useState<CombinedData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Lista de TODOS os vendedores (pra popular dropdown). Carregada uma vez
-  // — não muda com filtros, então fica em state separado do data principal.
-  const [allSellers, setAllSellers] = useState<Array<{ id: string; name: string }>>([]);
-
-  const dateRange = resolveDateRange(period, appliedCustomRange);
-
-  // ── Handlers que atualizam state + URL juntos (persistência entre navegações)
-  const updateUrlParam = (key: string, value: string | null) => {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev);
-      if (value === null) next.delete(key); else next.set(key, value);
-      return next;
-    }, { replace: true });
-  };
-
-  const handlePeriodChange = (next: PeriodPreset) => {
-    setPeriod(next);
-    updateUrlParam('period', next);
-    // Saindo do 'custom' → limpa from/to da URL
-    if (next !== 'custom') {
-      setSearchParams(prev => {
-        const u = new URLSearchParams(prev);
-        u.set('period', next);
-        u.delete('from'); u.delete('to');
-        return u;
-      }, { replace: true });
-    }
-  };
-
-  const handleSellerChange = (next: string) => {
-    setSelectedSellerId(next);
-    updateUrlParam('seller', next);
-  };
-
-  const handleApplyCustom = () => {
-    setAppliedCustomRange(customRange);
-    setSearchParams(prev => {
-      const u = new URLSearchParams(prev);
-      u.set('period', 'custom');
-      u.set('from', customRange.start);
-      u.set('to', customRange.end);
-      return u;
-    }, { replace: true });
-  };
-
-  // Fetch da lista de vendedores (uma vez, ao montar). Não filtra por nada
-  // — sempre traz a lista completa pro dropdown.
-  useEffect(() => {
-    if (!user?.id || profileLoading || isSeller) return;
-    let cancelled = false;
-    (async () => {
-      const { data: sellersData } = await (supabase as any)
-        .from('ai_team_members')
-        .select('id, name, is_active')
-        .eq('user_id', user.id).eq('is_active', true)
-        .order('name', { ascending: true });
-      if (cancelled) return;
-      setAllSellers((sellersData || []) as Array<{ id: string; name: string }>);
-    })();
-    return () => { cancelled = true; };
-  }, [user?.id, profileLoading, isSeller]);
+  const dateRange = resolveDateRange(period, customRange);
 
   useEffect(() => {
     if (!user?.id || profileLoading || isSeller) return;
@@ -276,27 +194,20 @@ export default function PainelGeral() {
       try {
         const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
 
-        // Queries paralelas. Quando vendedor específico selecionado, filtra
-        // por assigned_to_id (Pedro) e assigned_to (Marcos). Quando 'all',
-        // traz tudo do user_id.
-        const pedroQ = (supabase as any).from('ai_crm_leads')
-          .select('id, status_crm, assigned_to_id, seller_notes_count, created_at')
-          .eq('user_id', user!.id)
-          .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
-        const marcosQ = (supabase as any).from('crm_leads')
-          .select('id, stage_id, assigned_to, seller_notes_count, created_at, stage:crm_pipeline_stages(name)')
-          .eq('user_id', user!.id)
-          .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
-        const sellersQ = (supabase as any).from('ai_team_members')
-          .select('id, name, is_active')
-          .eq('user_id', user!.id).eq('is_active', true);
-
-        if (selectedSellerId !== 'all') {
-          pedroQ.eq('assigned_to_id', selectedSellerId);
-          marcosQ.eq('assigned_to', selectedSellerId);
-        }
-
-        const [pedroRes, marcosRes, sellersRes] = await Promise.all([pedroQ, marcosQ, sellersQ]);
+        // 4 queries paralelas
+        const [pedroRes, marcosRes, sellersRes] = await Promise.all([
+          (supabase as any).from('ai_crm_leads')
+            .select('id, status_crm, assigned_to_id, seller_notes_count, created_at')
+            .eq('user_id', user!.id)
+            .gte('created_at', dateRange.start).lte('created_at', dateRange.end),
+          (supabase as any).from('crm_leads')
+            .select('id, stage_id, assigned_to, seller_notes_count, created_at, stage:crm_pipeline_stages(name)')
+            .eq('user_id', user!.id)
+            .gte('created_at', dateRange.start).lte('created_at', dateRange.end),
+          (supabase as any).from('ai_team_members')
+            .select('id, name, is_active')
+            .eq('user_id', user!.id).eq('is_active', true),
+        ]);
         if (cancelled) return;
 
         type PedroLead = { id: string; status_crm: string | null; assigned_to_id: string | null; seller_notes_count: number | null; created_at: string };
@@ -448,7 +359,7 @@ export default function PainelGeral() {
 
     load();
     return () => { cancelled = true; };
-  }, [user?.id, profileLoading, isSeller, dateRange.start, dateRange.end, selectedSellerId]);
+  }, [user?.id, profileLoading, isSeller, dateRange.start, dateRange.end]);
 
   // Vendedor não pode ver — redireciona
   if (!profileLoading && isSeller) {
@@ -482,82 +393,44 @@ export default function PainelGeral() {
             <p className="text-sm text-muted-foreground">Soma e média Pedro (Tráfego Pago) + Marcos (Outros canais)</p>
           </div>
 
-          {/* Filtros (vendedor + período) — lado a lado, alinhados à direita */}
-          <div className="flex items-center gap-3 flex-wrap">
-
-            {/* ── Filtro: Vendedor ─────────────────────────────────────── */}
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">
-                <UserCircle2 className="h-3.5 w-3.5 inline-block mr-1 -mt-0.5" />
-                Vendedor
-              </span>
-              <Select value={selectedSellerId} onValueChange={handleSellerChange}>
-                <SelectTrigger className="w-[200px] bg-card/60 border-border/50 h-8 text-xs">
-                  <SelectValue placeholder="Todos os vendedores" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos os vendedores</SelectItem>
-                  {allSellers.map(s => (
-                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* ── Filtro: Período ──────────────────────────────────────── */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">
-                <CalendarIcon className="h-3.5 w-3.5 inline-block mr-1 -mt-0.5" />
-                Período
-              </span>
-              <div className="flex items-center gap-1 bg-card/60 rounded-lg p-1 border border-border/50">
-                {([
-                  { id: 'today',     label: 'Hoje' },
-                  { id: 'yesterday', label: 'Ontem' },
-                  { id: '7days',     label: '7 dias' },
-                  { id: '30days',    label: '30 dias' },
-                  { id: 'custom',    label: 'Personalizado' },
-                ] as const).map(opt => {
-                  const active = period === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      onClick={() => handlePeriodChange(opt.id)}
-                      className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
-                        active
-                          ? 'bg-primary/15 text-primary border border-primary/30'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
-              {period === 'custom' && (
-                <div className="flex items-center gap-1.5 text-xs">
-                  <input type="date" value={customRange.start} max={customRange.end}
-                    onChange={e => setCustomRange(r => ({ ...r, start: e.target.value }))}
-                    className="bg-card/60 border border-border/50 rounded px-2 py-1" />
-                  <span className="text-muted-foreground">até</span>
-                  <input type="date" value={customRange.end} min={customRange.start}
-                    onChange={e => setCustomRange(r => ({ ...r, end: e.target.value }))}
-                    className="bg-card/60 border border-border/50 rounded px-2 py-1" />
-                  <Button
-                    size="sm"
-                    onClick={handleApplyCustom}
-                    disabled={
-                      !customRange.start || !customRange.end ||
-                      (customRange.start === appliedCustomRange.start &&
-                       customRange.end === appliedCustomRange.end)
-                    }
-                    className="h-7 px-3 text-xs"
+          {/* Filtro de período */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Período</span>
+            <div className="flex items-center gap-1 bg-card/60 rounded-lg p-1 border border-border/50">
+              {([
+                { id: 'today',     label: 'Hoje' },
+                { id: 'yesterday', label: 'Ontem' },
+                { id: '7days',     label: '7 dias' },
+                { id: '30days',    label: '30 dias' },
+                { id: 'custom',    label: 'Custom' },
+              ] as const).map(opt => {
+                const active = period === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    onClick={() => setPeriod(opt.id)}
+                    className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                      active
+                        ? 'bg-primary/15 text-primary border border-primary/30'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
+                    }`}
                   >
-                    Aplicar
-                  </Button>
-                </div>
-              )}
+                    {opt.label}
+                  </button>
+                );
+              })}
             </div>
+            {period === 'custom' && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <input type="date" value={customRange.start} max={customRange.end}
+                  onChange={e => setCustomRange(r => ({ ...r, start: e.target.value }))}
+                  className="bg-card/60 border border-border/50 rounded px-2 py-1" />
+                <span className="text-muted-foreground">até</span>
+                <input type="date" value={customRange.end} min={customRange.start}
+                  onChange={e => setCustomRange(r => ({ ...r, end: e.target.value }))}
+                  className="bg-card/60 border border-border/50 rounded px-2 py-1" />
+              </div>
+            )}
           </div>
         </div>
 
