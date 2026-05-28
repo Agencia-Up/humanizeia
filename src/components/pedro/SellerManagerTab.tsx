@@ -389,7 +389,29 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
       const { data, error } = await supabase.functions.invoke('invite-seller', {
         body: { memberId: member.id, email: email.trim() },
       });
-      if (error) throw error;
+      // Fix 28/05/2026: o cliente Supabase JS encapsula erro de edge function como
+      // "Edge Function returned a non-2xx status code" generico, mascarando o erro
+      // real do servidor. error.context.response eh o Response object cru. Lemos
+      // o body pra extrair o JSON { error: "..." } enviado pela funcao.
+      if (error) {
+        let serverDetail = '';
+        try {
+          const ctxResp = (error as any)?.context?.response;
+          if (ctxResp && typeof ctxResp.text === 'function') {
+            const body = await ctxResp.text();
+            try {
+              const parsed = JSON.parse(body);
+              serverDetail = parsed.error || parsed.message || body;
+            } catch {
+              serverDetail = body;
+            }
+          }
+        } catch (readErr) {
+          console.warn('[SellerManager] handleInviteSeller — falha ao ler error body:', readErr);
+        }
+        console.error('[SellerManager] handleInviteSeller erro completo:', { error, serverDetail, member, email });
+        throw new Error(serverDetail || error.message || 'Erro desconhecido ao convidar');
+      }
       toast({
         title: data?.action === 'linked' ? '🔗 Conta vinculada!' : '✅ Convite enviado!',
         description: data?.message || 'O vendedor receberá um e-mail para criar sua conta.',
