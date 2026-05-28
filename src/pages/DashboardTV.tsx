@@ -231,8 +231,6 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     primary_color: '#3b82f6',
     secondary_color: '#f59e0b',
   });
-  // DEBUG 28/05/2026 — banner visivel no painel (remover apos fix)
-  const [debugInfo, setDebugInfo] = useState<any>(null);
 
   // Filtro de período (persistido em localStorage)
   const [period, setPeriod] = useState<PeriodPreset>(() => {
@@ -352,23 +350,6 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
         if (cancelled) return;
 
-        // DEBUG 28/05/2026: banner visivel no proprio painel pra confirmar
-        // contagem da query (sem precisar abrir DevTools). Remover apos fix.
-        setDebugInfo({
-          user: effectiveUserId?.slice(0, 8) || 'null',
-          seller: sellerMemberId?.slice(0, 8) || 'null',
-          isSeller,
-          period: dateRange.label,
-          start: todayStart.slice(11, 19),
-          end: todayEnd.slice(11, 19),
-          sellersCount: sellersRes.data?.length || 0,
-          pedroCount: pedroRes.data?.length || 0,
-          marcosCount: marcosRes.data?.length || 0,
-          marcosError: marcosRes.error?.message || null,
-          marcosFirstLead: marcosRes.data?.[0]
-            ? `${marcosRes.data[0].id?.slice(0,8)} stage=${marcosRes.data[0].stage?.name || '<NULL>'} origem=${marcosRes.data[0].origem || '<NULL>'} assigned_to=${(marcosRes.data[0].assigned_to || '<NULL>').slice(0,8)}`
-            : 'no leads in query result',
-        });
 
         // 1. Branding (com fallbacks razoáveis)
         const p = profileRes.data || {};
@@ -671,17 +652,6 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
   return (
     <div ref={containerRef} className={wrapperClass}>
-      {/* DEBUG banner — remover apos fix */}
-      {debugInfo && (
-        <div className="bg-yellow-600 text-black text-xs px-4 py-2 font-mono leading-relaxed">
-          <div className="font-bold mb-1">🔍 DEBUG (remover apos fix):</div>
-          <div>user={debugInfo.user} | seller={debugInfo.seller} | isSeller={String(debugInfo.isSeller)} | period={debugInfo.period}</div>
-          <div>range: {debugInfo.start} → {debugInfo.end}</div>
-          <div>sellers fetched={debugInfo.sellersCount} | pedro leads={debugInfo.pedroCount} | <b>MARCOS leads={debugInfo.marcosCount}</b></div>
-          {debugInfo.marcosError && <div className="text-red-700 font-bold">MARCOS ERROR: {debugInfo.marcosError}</div>}
-          <div>1º Marcos lead: {debugInfo.marcosFirstLead}</div>
-        </div>
-      )}
       {/* ───── Header ───── */}
       <header className="border-b border-blue-900/50 px-8 py-4 flex items-center justify-between bg-slate-900/40 backdrop-blur">
         <div className="flex items-center gap-5">
