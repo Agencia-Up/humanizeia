@@ -40,6 +40,7 @@ const DashboardTV        = lazy(() => import('./DashboardTV'));
 const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
+import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
@@ -915,6 +916,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [funnelOpen, setFunnelOpen]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
+  // F1 Follow-up IA: modal de configuração (substitui o disparo direto do botão "Follow-ups")
+  const [followupIAModalOpen, setFollowupIAModalOpen] = useState(false);
   const [classifyLoading, setClassifyLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [reassigning, setReassigning]       = useState<string | null>(null);
@@ -3317,13 +3320,24 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           {!isMarcosCrm && (
             <Button
               variant="outline" size="sm"
-              onClick={handleTriggerFollowups}
+              onClick={() => setFollowupIAModalOpen(true)}
               disabled={triggerLoading}
+              title="Configurar disparo automático de reativação de leads inativos pelo Pedro IA"
               className="h-7 px-2.5 text-xs gap-1.5 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
             >
               {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-              Follow-ups
+              Follow-up IA
             </Button>
+          )}
+          {/* Modal de config do Follow-up IA. "Iniciar agora" chama o disparo
+              atual (pedro-trigger-followup). Aplicação das configs (horário,
+              jitter, IA generativa) virá nas Fases 2+ do plano. */}
+          {!isMarcosCrm && (
+            <FollowupIAConfigModal
+              open={followupIAModalOpen}
+              onOpenChange={setFollowupIAModalOpen}
+              onStartFollowup={async () => { await handleTriggerFollowups(); }}
+            />
           )}
           {!isSeller && !isMarcosCrm && (
             <Button
