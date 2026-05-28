@@ -139,12 +139,24 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
     try {
       const ts = new Date();
       const listName = `Marcos CRM ${ts.toLocaleDateString('pt-BR')} ${ts.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+      // Fix 28/05/2026: seller_member_id eh OBRIGATORIO no INSERT quando seller
+      // cria a lista, senao ela fica "invisivel" pra ele depois (fetchData
+      // filtra listsQuery.eq('seller_member_id', seller!.id) quando seller logado).
+      // Master inserindo: seller_member_id=null (= lista da equipe toda).
+      const sellerMemberId = isSeller && seller?.id ? seller.id : null;
       const { data: listRow, error: listErr } = await (supabase as any)
         .from('wa_contact_lists')
-        .insert({ user_id: effectiveUserId, name: listName, contact_count: visibleContacts.length })
+        .insert({
+          user_id: effectiveUserId,
+          name: listName,
+          contact_count: visibleContacts.length,
+          seller_member_id: sellerMemberId,
+          source: 'marcos_crm',
+        })
         .select('id')
         .single();
-      if (listErr || !listRow?.id) throw listErr || new Error('Falha ao criar lista');
+      if (listErr) throw listErr;
+      if (!listRow?.id) throw new Error('Lista nao foi criada (RLS bloqueou silenciosamente?)');
       const contactRows = visibleContacts.map(c => ({
         user_id: effectiveUserId,
         list_id: listRow.id,
