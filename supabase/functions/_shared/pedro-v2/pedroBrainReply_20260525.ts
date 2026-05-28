@@ -3,6 +3,29 @@ import { PedroBrainPlan } from "./pedroBrainPlanner_20260525.ts";
 import { PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 
+function sanitizeAgentName(name?: string | null) {
+  const clean = String(name || "").trim();
+  if (!clean || /^(agente ia|agenteia|ia agente|robo|bot)$/i.test(clean)) {
+    return "Carvalho";
+  }
+  return clean;
+}
+
+function checkAgentHasPresented(recentHistory?: any[], recentTurns?: any[]) {
+  const history = recentHistory || recentTurns || [];
+  if (!Array.isArray(history)) return false;
+  for (const turn of history) {
+    const role = normalizeHistoryRole(turn?.role || turn?.direction);
+    if (role === "agent") {
+      const text = String(turn?.text || turn?.content || turn?.message || "").toLowerCase();
+      if (/\b(sou o|sou a|meu nome|aqui da|aqui de|sou consultor|sou consultora)\b/i.test(text)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function money(value?: number | null) {
   if (!value || !Number.isFinite(Number(value))) return null;
   return Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -215,6 +238,7 @@ function buildAdVehicleConsultationFallback(input: {
   facts: any[];
   ad_context?: any;
   agent?: any;
+  has_presented?: boolean;
 }) {
   const name = leadFirstName(input.memory);
   const vehicle = input.facts[0];
@@ -226,12 +250,21 @@ function buildAdVehicleConsultationFallback(input: {
     vehicle?.cor,
   ].filter(Boolean).join(" | ");
   const greeting = saoPauloNowInfo().greeting;
-  const agentName = input.agent?.name || "Pedro";
+  const agentName = sanitizeAgentName(input.agent?.name);
   const companyName = input.agent?.company_name || "Icom Motors";
-  const firstLine = `${greeting}${name ? `, ${name}` : ""}! Sou o ${agentName}, consultor aqui da ${companyName}.`;
+
   const stockLine = vehicle
     ? `Vi que voce veio pelo anuncio do ${label}. Ele aparece aqui no estoque${details ? `: ${details}` : "."}`
     : `Vi que voce veio pelo anuncio do ${label}. Vou cuidar dele com voce pra nao te passar nada errado.`;
+
+  if (input.has_presented) {
+    return [
+      stockLine,
+      "Quer que eu te mande mais detalhes ou fotos dele?",
+    ].join("\n\n");
+  }
+
+  const firstLine = `${greeting}${name ? `, ${name}` : ""}! Sou o ${agentName}, consultor aqui da ${companyName}.`;
 
   return [
     firstLine,
@@ -289,6 +322,7 @@ function fallbackReply(input: {
   plan: PedroBrainPlan;
   ad_context?: any;
   vehicle_resolution?: PedroVehicleResolution;
+  recent_history?: any[];
 }) {
   const allFacts = stockFacts(input.stock_result);
   const adVehicleConsultation = isCurrentTurnAdVehicleConsultation({
@@ -298,13 +332,21 @@ function fallbackReply(input: {
     message: input.message,
   });
 
+  const hasPresented = checkAgentHasPresented(input.recent_history, input.memory?.recent_turns);
+  const agentName = sanitizeAgentName(input.agent?.name);
+  const companyName = input.agent?.company_name || "Icom Motors";
+
   if (input.stock_result?.is_generic_query) {
     const greeting = saoPauloNowInfo().greeting;
     const name = leadFirstName(input.memory);
+    const text = hasPresented
+      ? `Ainda não consegui identificar qual era o veículo do anúncio que você estava vendo. Qual veículo você tem interesse?`
+      : `${greeting}${name ? `, ${name}` : ""}! Sou o ${agentName}, consultor aqui da ${companyName}. Vi que você veio pelo anúncio, mas não consegui identificar o modelo certinho. Qual veículo você estava vendo ou tem interesse?`;
     return {
       ok: true,
-      text: `${greeting}${name ? `, ${name}` : ""}! Vi que você tem interesse em um de nossos carros pelo anúncio, mas não consegui identificar o modelo certinho. Qual veículo você estava vendo ou tem interesse?`,
+      text,
       source: "brain_generic_fallback",
+      presented_vehicle_indices: [],
     };
   }
 
@@ -316,8 +358,10 @@ function fallbackReply(input: {
         facts: allFacts.slice(0, 1),
         ad_context: input.ad_context,
         agent: input.agent,
+        has_presented: hasPresented,
       }),
       source: "brain_ad_vehicle_fallback",
+      presented_vehicle_indices: allFacts.length > 0 ? [1] : [],
     };
   }
 
@@ -331,6 +375,7 @@ function fallbackReply(input: {
         stock_result: input.stock_result,
       }),
       source: "brain_stock_fallback",
+      presented_vehicle_indices: allFacts.map((item) => item.index),
     };
   }
 
@@ -340,6 +385,7 @@ function fallbackReply(input: {
     stock_result: input.stock_result,
     message: input.message,
     agent: input.agent,
+    recent_history: input.recent_history,
   });
 }
 
@@ -361,7 +407,9 @@ export async function generatePedroBrainReply(input: {
   recent_history?: any[];
   tool_result?: any;
 }) {
-  const fallback = fallbackReply(input);
+  const hasPresented = checkAgentHasPresented(input.recent_history, input.memory?.recent_turns);
+  const agentName = sanitizeAgentName(input.agent?.name);
+  const fallback = fallbackReply({ ...input, recent_history: input.recent_history });
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return fallback;
 
@@ -386,12 +434,12 @@ export async function generatePedroBrainReply(input: {
             role: "system",
             content:
               [
-                `Voce e o ${input.agent?.name || "Pedro"}, consultor humano da ${input.agent?.company_name || "Icom Motors"} no WhatsApp.`,
+                `Voce e o ${agentName}, consultor humano da ${input.agent?.company_name || "Icom Motors"} no WhatsApp.`,
                 "Voce NAO e um fluxo fixo de conversas. Responda de forma humana, amigavel, natural e vendedora.",
                 "O prompt abaixo e a sua personalidade principal fornecida pelo portal. Adote esse estilo, tom e ritmo de conversacao integralmente.",
                 "",
                 "PERSONALIDADE / SYSTEM PROMPT DO PORTAL:",
-                input.agent_system_prompt || `(Sem prompt de personalidade cadastrado - aja como ${input.agent?.name || "Pedro"} consultor comercial educado e focado em vendas)`,
+                input.agent_system_prompt || `(Sem prompt de personalidade cadastrado - aja como ${agentName} consultor comercial educado e focado em vendas)`,
                 "",
                 "REGRAS DE CONDUCAO E USO DE TOOLS:",
                 "- Siga a sua personalidade principal do portal na escrita das mensagens.",
@@ -400,9 +448,15 @@ export async function generatePedroBrainReply(input: {
                 "- Se o plano atual for 'photo_request', a tool de fotos ja selecionou e enviara as imagens. Escreva apenas um fechamento humano amigavel, sem prometer novas fotos.",
                 "- Nunca invente veiculos ou dados (ano, preco, km) que nao estejam descritos em stock.facts.",
                 "- Se o lead trocou de veiculo ou mudou de assunto, responda sobre o novo assunto. A mensagem atual sempre vence a memoria antiga.",
-                "- Se voce ja se apresentou no historico recente da conversa, nao repita a apresentacao.",
+                `- Se voce ja se apresentou no historico recente da conversa (status: ${hasPresented ? "já apresentado" : "não apresentado ainda"}), nao repita a apresentacao. Se for a primeira mensagem, apresente-se como ${agentName}, consultor da ${input.agent?.company_name || "Icom Motors"}.`,
                 "- Nunca cite termos tecnicos, JSON, ferramentas, tools, banco de dados ou processos internos.",
-                "- Retorne apenas JSON valido com as chaves 'text' e 'source'.",
+                "- Retorne apenas JSON valido com as chaves 'text', 'source' e 'presented_vehicle_indices'.",
+                "- Na chave 'presented_vehicle_indices', retorne um array de inteiros contendo os indices (de 1 a N, conforme o campo 'index' dos fatos em stock.facts) dos veiculos que voce de fato apresentou/citou no texto da sua resposta. Se nao apresentou nenhum ou nao havia estoque, retorne um array vazio [].",
+                "",
+                "DIRETRIZES DE VENDAS ATIVAS (SDR):",
+                "- O GANCHO VISUAL: Sempre que houver veículo no estoque (stock.facts), ofereça proativamente enviar fotos ou vídeos adicionais para atrair o interesse.",
+                "- O GANCHO DA SOLUÇÃO ALTERNATIVA: Se o veículo procurado não estiver no estoque, não encerre a conversa de mãos vazias. Ofereça opções semelhantes (mesma categoria, valor ou câmbio) e chame para fotos.",
+                "- O GANCHO DA QUALIFICAÇÃO: Conduza a conversa para as etapas seguintes de forma amigável: pergunte se tem carro na troca, ofereça simular financiamento perguntando sobre a entrada, ou convide para visitar a loja e fazer um test drive.",
               ].join("\n"),
           },
           {
@@ -436,7 +490,8 @@ export async function generatePedroBrainReply(input: {
                 "Siga a sua personalidade principal do System Prompt do Portal.",
                 "Se houver estoque (stock.facts), cite os dados reais dele. Não invente carros ou especificações.",
                 "Se o cliente mudou o carro de interesse, priorize o modelo atual em relação à memória.",
-                "Se a tool de fotos foi ativada (tool_result.type === 'vehicle_photos'), confirme o envio das fotos sem prometer novos envios."
+                "Se a tool de fotos foi ativada (tool_result.type === 'vehicle_photos'), confirme o envio das fotos sem prometer novos envios.",
+                "Retorne no JSON a chave 'presented_vehicle_indices' listando os indices (1-baseados, campo 'index') dos veiculos citados no texto."
               ],
             }),
           },
@@ -454,14 +509,23 @@ export async function generatePedroBrainReply(input: {
     const content = String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
     const rawText = String(parsed?.text || "").trim();
+    let presented_vehicle_indices = Array.isArray(parsed?.presented_vehicle_indices)
+      ? parsed.presented_vehicle_indices.map((idx: any) => Number(idx)).filter((n: number) => !isNaN(n))
+      : [];
+
     let guardedRawText = adVehicleConsultation && rawText.includes("Encontrou o")
       ? buildAdVehicleConsultationFallback({
         memory: input.memory,
         facts,
         ad_context: input.ad_context,
         agent: input.agent,
+        has_presented: hasPresented,
       })
       : rawText;
+
+    if (adVehicleConsultation && rawText.includes("Encontrou o")) {
+      presented_vehicle_indices = [1];
+    }
 
     if (input.tool_result?.type !== "vehicle_photos" && looksLikePhotoPromise(guardedRawText)) {
       guardedRawText = buildPhotoPromiseGuardReply({
@@ -485,6 +549,7 @@ export async function generatePedroBrainReply(input: {
       ok: true,
       text,
       source: adVehicleConsultation ? "brain_ad_vehicle_reply" : (facts.length > 0 ? "brain_stock_reply" : "brain_reply"),
+      presented_vehicle_indices,
     };
   } catch (error) {
     console.warn("[PedroV2] brain reply fallback:", error);
