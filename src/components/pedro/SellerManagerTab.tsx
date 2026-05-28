@@ -396,6 +396,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
       // Lemos o body pra extrair o JSON { error: "..." } enviado pela funcao.
       if (error) {
         let serverDetail = '';
+        let serverDebug: any = null;
         try {
           // 2.x: error.context = Response (direct). 1.x: error.context.response.
           const ctxResp = (error as any)?.context;
@@ -405,6 +406,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
             try {
               const parsed = JSON.parse(body);
               serverDetail = parsed.error || parsed.message || body;
+              serverDebug = parsed.debug || null;
             } catch {
               serverDetail = body;
             }
@@ -412,14 +414,18 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
         } catch (readErr) {
           console.warn('[SellerManager] handleInviteSeller — falha ao ler error body:', readErr);
         }
+        // DEBUG 28/05/2026: log estruturado pro console mostrar attempts crus do GoTrue
         console.error('[SellerManager] handleInviteSeller erro completo:', {
           error,
-          errorKeys: error ? Object.keys(error) : [],
-          contextKeys: (error as any)?.context ? Object.keys((error as any).context) : [],
           serverDetail,
-          member,
-          email,
+          serverDebug,  // <-- ATTEMPTS do GoTrue com raw responses
+          member: { id: member.id, name: member.name, email: member.email },
+          emailUsed: email,
         });
+        if (serverDebug?.attempts) {
+          console.error('[SellerManager] GoTrue attempts (cada tipo de link):');
+          console.table(serverDebug.attempts);
+        }
         throw new Error(serverDetail || error.message || 'Erro desconhecido ao convidar');
       }
       toast({

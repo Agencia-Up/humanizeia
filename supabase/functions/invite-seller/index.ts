@@ -212,7 +212,7 @@ async function authAdminGenerateLink(
   type: string,
   email: string,
   redirectTo: string
-): Promise<{ data: any; error: any }> {
+): Promise<{ data: any; error: any; rawResponse?: any; status?: number }> {
   try {
     const res = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
       method: 'POST',
@@ -229,14 +229,19 @@ async function authAdminGenerateLink(
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { data: null, error: { message: body.message || 'Generate link failed' } };
+      return {
+        data: null,
+        error: { message: body.message || body.error_description || body.error || 'Generate link failed', code: body.error_code || body.code, status: res.status },
+        rawResponse: body,
+        status: res.status,
+      };
     }
     // GoTrue returns action_link at top level (NOT inside properties)
     const actionLink = body.action_link || body.properties?.action_link || null;
-    console.log(`[invite-seller] generate_link response keys: ${Object.keys(body).join(',')}, action_link: ${actionLink ? actionLink.substring(0, 60) + '...' : 'NONE'}`);
-    return { data: { action_link: actionLink, ...body }, error: null };
+    console.log(`[invite-seller] generate_link type=${type} status=${res.status} response keys: ${Object.keys(body).join(',')}, action_link: ${actionLink ? actionLink.substring(0, 80) + '...' : 'NONE'}`);
+    return { data: { action_link: actionLink, ...body }, error: null, rawResponse: body, status: res.status };
   } catch (err: any) {
-    return { data: null, error: { message: err.message } };
+    return { data: null, error: { message: err.message }, rawResponse: null };
   }
 }
 
@@ -367,9 +372,13 @@ Deno.serve(async (req) => {
     let actionLink: string | null = null;
     let usedType: string | null = null;
     let lastErr: any = null;
+    // DEBUG 28/05/2026: capturar resposta crua do GoTrue de cada tentativa
+    // pra diagnosticar por que action_link nao tem token. Sera retornado no
+    // JSON de erro pra o frontend exibir.
+    const debugAttempts: Array<{ type: string; status?: number; rawKeys?: string[]; rawSample?: any; hasToken: boolean; linkPreview: string | null; errorMsg?: string }> = [];
 
     for (const linkType of linkTypesToTry) {
-      const { data: linkData, error: linkErr } = await authAdminGenerateLink(
+      const { data: linkData, error: linkErr, rawResponse, status } = await authAdminGenerateLink(
         supabaseUrl,
         serviceKey,
         linkType,
@@ -383,6 +392,24 @@ Deno.serve(async (req) => {
         candidateLink.includes('code=') ||
         candidateLink.includes('#access_token=')
       );
+      // Captura debug info pra cada tentativa (sanitiza pra nao expor token bruto)
+      debugAttempts.push({
+        type: linkType,
+        status,
+        rawKeys: rawResponse ? Object.keys(rawResponse) : undefined,
+        rawSample: rawResponse ? {
+          action_link_present: !!rawResponse.action_link,
+          action_link_has_token: hasValidToken,
+          action_link_host: candidateLink ? new URL(candidateLink).host : null,
+          action_link_pathname: candidateLink ? new URL(candidateLink).pathname : null,
+          properties_present: !!rawResponse.properties,
+          error_field: rawResponse.error || rawResponse.error_description || null,
+          msg_field: rawResponse.msg || rawResponse.message || null,
+        } : null,
+        hasToken: hasValidToken,
+        linkPreview: candidateLink ? candidateLink.substring(0, 100) : null,
+        errorMsg: linkErr?.message,
+      });
       if (hasValidToken) {
         actionLink = candidateLink;
         usedType = linkType;
@@ -394,11 +421,19 @@ Deno.serve(async (req) => {
     }
 
     if (!actionLink) {
-      const errMsg = `Não foi possível gerar link de confirmação para ${email}. Tentei: ${linkTypesToTry.join(', ')}. Verifique se '${redirectTo}' está na allowlist de Redirect URLs do Supabase Auth (Dashboard → Authentication → URL Configuration). Último erro: ${lastErr?.message || 'desconhecido'}`;
+      const errMsg = `Não foi possível gerar link para ${email}. Tentei: ${linkTypesToTry.join(', ')}. redirect_to enviado: ${redirectTo}. Último erro: ${lastErr?.message || 'GoTrue retornou OK mas link sem token (allowlist?)'}`;
       console.error(`[invite-seller] FATAL: ${errMsg}`);
+      console.error(`[invite-seller] DEBUG attempts:`, JSON.stringify(debugAttempts, null, 2));
       return new Response(JSON.stringify({
         error: errMsg,
-        debug: { authUserId, alreadyConfirmed, typesAttempted: linkTypesToTry, lastError: lastErr?.message },
+        debug: {
+          authUserId,
+          alreadyConfirmed,
+          typesAttempted: linkTypesToTry,
+          redirectTo,
+          siteUrl: supabaseUrl,
+          attempts: debugAttempts,
+        },
       }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
