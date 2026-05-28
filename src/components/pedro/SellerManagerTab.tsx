@@ -389,16 +389,19 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
       const { data, error } = await supabase.functions.invoke('invite-seller', {
         body: { memberId: member.id, email: email.trim() },
       });
-      // Fix 28/05/2026: o cliente Supabase JS encapsula erro de edge function como
-      // "Edge Function returned a non-2xx status code" generico, mascarando o erro
-      // real do servidor. error.context.response eh o Response object cru. Lemos
-      // o body pra extrair o JSON { error: "..." } enviado pela funcao.
+      // Fix 28/05/2026 v2: cliente Supabase JS encapsula erro de edge function
+      // como "Edge Function returned a non-2xx status code" generico, mascarando
+      // o erro real do servidor. Em @supabase/supabase-js 2.x, FunctionsHttpError
+      // expoe `error.context` que JA EH o Response object cru (nao tem .response).
+      // Lemos o body pra extrair o JSON { error: "..." } enviado pela funcao.
       if (error) {
         let serverDetail = '';
         try {
-          const ctxResp = (error as any)?.context?.response;
-          if (ctxResp && typeof ctxResp.text === 'function') {
-            const body = await ctxResp.text();
+          // 2.x: error.context = Response (direct). 1.x: error.context.response.
+          const ctxResp = (error as any)?.context;
+          const respObj = ctxResp && typeof ctxResp.text === 'function' ? ctxResp : ctxResp?.response;
+          if (respObj && typeof respObj.text === 'function') {
+            const body = await respObj.text();
             try {
               const parsed = JSON.parse(body);
               serverDetail = parsed.error || parsed.message || body;
@@ -409,7 +412,14 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
         } catch (readErr) {
           console.warn('[SellerManager] handleInviteSeller — falha ao ler error body:', readErr);
         }
-        console.error('[SellerManager] handleInviteSeller erro completo:', { error, serverDetail, member, email });
+        console.error('[SellerManager] handleInviteSeller erro completo:', {
+          error,
+          errorKeys: error ? Object.keys(error) : [],
+          contextKeys: (error as any)?.context ? Object.keys((error as any).context) : [],
+          serverDetail,
+          member,
+          email,
+        });
         throw new Error(serverDetail || error.message || 'Erro desconhecido ao convidar');
       }
       toast({
