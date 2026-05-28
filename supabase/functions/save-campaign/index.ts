@@ -91,6 +91,7 @@ Deno.serve(async (req) => {
       media_type,
       tags,
       variation_level,
+      ai_model,
       include_optout_buttons,
       reply_auto_tag,
       reply_auto_message,
@@ -246,6 +247,11 @@ Deno.serve(async (req) => {
       errors.push("variation_level deve ser 'low', 'medium' ou 'high'.");
     }
 
+    // Validate ai_model (seletor de inteligencia OpenAI)
+    if (ai_model && !["gpt-4o", "gpt-4o-mini"].includes(ai_model)) {
+      errors.push("ai_model deve ser 'gpt-4o' ou 'gpt-4o-mini'.");
+    }
+
     if (errors.length > 0) {
       return jsonResponse({ error: "Dados inválidos", details: errors }, 400);
     }
@@ -284,6 +290,7 @@ Deno.serve(async (req) => {
       tags: Array.isArray(tags) && tags.length > 0 ? tags : null,
       organization_id: orgId,
       variation_level: variation_level || 'medium',
+      ai_model: ai_model || 'gpt-4o',
       include_optout_buttons: include_optout_buttons === true,
       reply_auto_tag: reply_auto_tag?.trim() || null,
       reply_auto_message: reply_auto_message?.trim() || null,

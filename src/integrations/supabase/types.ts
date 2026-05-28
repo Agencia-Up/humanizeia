@@ -3528,6 +3528,7 @@ export type Database = {
           updated_at: string
           user_id: string
           variation_level: string
+          ai_model: string
         }
         Insert: {
           completed_at?: string | null
@@ -3564,6 +3565,7 @@ export type Database = {
           updated_at?: string
           user_id: string
           variation_level?: string
+          ai_model?: string
         }
         Update: {
           completed_at?: string | null
@@ -3600,6 +3602,7 @@ export type Database = {
           updated_at?: string
           user_id?: string
           variation_level?: string
+          ai_model?: string
         }
         Relationships: [
           {

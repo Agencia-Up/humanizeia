@@ -146,6 +146,10 @@ Deno.serve(async (req) => {
     const variationLevel = ["low", "medium", "high"].includes(body.variation_level)
       ? body.variation_level
       : "medium";
+    // Modelo OpenAI escolhido na campanha: gpt-4o (mais inteligente) ou
+    // gpt-4o-mini (economico). Default gpt-4o. A previa usa o MESMO modelo do
+    // envio real pra nao haver surpresa entre o que o usuario ve e o que sai.
+    const aiModel = body.ai_model === "gpt-4o-mini" ? "gpt-4o-mini" : "gpt-4o";
     const contacts = normalizeContacts(body.contacts);
 
     if (!prompt) return jsonResponse({ error: "Prompt base obrigatorio." }, 400);
@@ -192,7 +196,7 @@ REGRAS DE RESPOSTA:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: aiModel,
         temperature,
         max_tokens: 1200,
         response_format: { type: "json_object" },
@@ -235,7 +239,7 @@ REGRAS DE RESPOSTA:
     return jsonResponse({
       variations: normalized,
       fallback: false,
-      model: "gpt-4o",
+      model: aiModel,
       level: variationLevel,
     });
   } catch (err) {

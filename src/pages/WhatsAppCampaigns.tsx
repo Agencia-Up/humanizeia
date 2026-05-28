@@ -184,6 +184,7 @@ export default function WhatsAppCampaigns() {
         media_type: data.media_type || null,
         tags: data.tags.length > 0 ? data.tags : null,
         variation_level: data.variation_level || 'medium',
+        ai_model: data.ai_model || 'gpt-4o',
         // Vendedor: marca campanha como dele pra isolamento.
         // Master: null (campanha do master, sem dono específico).
         seller_member_id: isSeller && seller?.id ? seller.id : null,
@@ -254,6 +255,7 @@ Não numere as variações. Não inclua explicações adicionais.`
       media_type: c.media_type || '',
       tags: c.tags || [],
       variation_level: (c as any).variation_level || 'medium',
+      ai_model: (c as any).ai_model || 'gpt-4o',
       include_optout_buttons: (c as any).include_optout_buttons ?? false,
       reply_auto_tag: (c as any).reply_auto_tag || '',
       reply_auto_message: (c as any).reply_auto_message || '',

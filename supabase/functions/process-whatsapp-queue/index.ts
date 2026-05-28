@@ -151,6 +151,7 @@ interface Campaign {
   regras_aquecimento: any;
   started_at: string | null;
   variation_level: string;
+  ai_model: string | null;
   sent_count: number;
   instance_id: string | null;
   include_optout_buttons: boolean;
@@ -286,7 +287,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, media_url, media_type, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons, seller_member_id")
+        .select("id, prompt_base, message_template, media_url, media_type, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, ai_model, sent_count, instance_id, include_optout_buttons, seller_member_id")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -507,6 +508,7 @@ Deno.serve(async (req) => {
         // --- Generate UNIQUE AI message for EACH contact ---
         let finalMessage = item.message;
         const variationLevel = campaign?.variation_level || "medium";
+        const aiModel = campaign?.ai_model || "gpt-4o";
 
         if (campaign?.prompt_base) {
           const fixedTemplate = normalizeFixedTemplate(campaign.message_template);
@@ -523,9 +525,11 @@ Deno.serve(async (req) => {
                 item.contact_metadata,
                 variationLevel,
                 fixedTemplate,
+                aiModel,
                 supabase,
                 item.user_id
               );
+              console.log(`[QUEUE-AI] OpenAI gerou msg (model=${aiModel}, level=${variationLevel}) para ${item.phone}`);
 
               const hash = await generateHash(finalMessage);
               if (!recentMessageHashes.has(hash)) {
@@ -536,7 +540,7 @@ Deno.serve(async (req) => {
                 genAttempts++;
               }
             } catch (aiErr) {
-              console.error("AI generation failed, using template with variation:", aiErr);
+              console.error(`[QUEUE-AI] FALHA OpenAI (model=${aiModel}), usando fallback template:`, aiErr);
               finalMessage = buildFallbackAIMessage(campaign.prompt_base, item.contact_name, item.contact_metadata, variationLevel, fixedTemplate || normalizeFixedTemplate(item.message));
               messageIsUnique = true;
             }
@@ -1510,11 +1514,15 @@ async function generateAIMessage(
   _contactMetadata: any,
   variationLevel: string,
   messageTemplate: string | null,
+  aiModel: string,
   supabaseClient?: any,
   userId?: string
 ): Promise<string> {
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+  // 28/05/2026: migrado do gateway morto da Lovable (LOVABLE_API_KEY inexistente
+  // em staging E prod) para OpenAI direto — mesma chave que a previa ja usa.
+  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
+  const model = aiModel === "gpt-4o-mini" ? "gpt-4o-mini" : "gpt-4o";
 
   let personalizationContext = "";
   if (contactName) personalizationContext += `\nNome do lead: ${contactName}`;
@@ -1613,14 +1621,14 @@ REGRAS OBRIGATÓRIAS:
     ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
     : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
 
-  const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
+      model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -1632,7 +1640,7 @@ REGRAS OBRIGATÓRIAS:
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`AI gateway error: ${response.status} - ${errText}`);
+    throw new Error(`OpenAI error: ${response.status} - ${errText}`);
   }
 
   const data = await response.json();

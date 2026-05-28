@@ -39,6 +39,7 @@ export interface CampaignFormData {
   media_type: string;
   tags: string[];
   variation_level: string;
+  ai_model: string;
   include_optout_buttons: boolean;
   reply_auto_tag: string;
   reply_auto_message: string;
@@ -61,7 +62,7 @@ interface CampaignFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (data: CampaignFormData) => Promise<void>;
-  onGeneratePreview: (prompt: string, variationLevel?: string) => Promise<void>;
+  onGeneratePreview: (prompt: string, variationLevel?: string, aiModel?: string) => Promise<void>;
   contactLists: ContactList[];
   instances: WaInstance[];
   saving: boolean;
@@ -115,6 +116,7 @@ export function CampaignFormDialog({
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [variationLevel, setVariationLevel] = useState<string>('medium');
+  const [aiModel, setAiModel] = useState<string>('gpt-4o');
   const [includeOptoutButtons, setIncludeOptoutButtons] = useState(false);
   const [replyAutoTag, setReplyAutoTag] = useState('');
   const [replyAutoMessage, setReplyAutoMessage] = useState('');
@@ -147,6 +149,7 @@ export function CampaignFormDialog({
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
       setVariationLevel(editingCampaign.variation_level || 'medium');
+      setAiModel(editingCampaign.ai_model || 'gpt-4o');
       setIncludeOptoutButtons(editingCampaign.include_optout_buttons ?? false);
       setReplyAutoTag(editingCampaign.reply_auto_tag || '');
       setReplyAutoMessage(editingCampaign.reply_auto_message || '');
@@ -182,6 +185,7 @@ export function CampaignFormDialog({
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
     setTags([]); setTagInput('');
     setVariationLevel('medium');
+    setAiModel('gpt-4o');
     setIncludeOptoutButtons(false);
     setReplyAutoTag('');
     setReplyAutoMessage('');
@@ -234,6 +238,7 @@ export function CampaignFormDialog({
       media_type: mediaType,
       tags,
       variation_level: variationLevel,
+      ai_model: aiModel,
       include_optout_buttons: includeOptoutButtons,
       reply_auto_tag: replyAutoTag,
       reply_auto_message: replyAutoMessage,
@@ -350,7 +355,7 @@ export function CampaignFormDialog({
                   ))}
                 </div>
               </div>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onGeneratePreview(prompt, variationLevel)} disabled={aiLoading || !prompt.trim()}>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onGeneratePreview(prompt, variationLevel, aiModel)} disabled={aiLoading || !prompt.trim()}>
                 {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
                 Pré-visualizar Variações
               </Button>
@@ -371,6 +376,32 @@ export function CampaignFormDialog({
                       className={cn(
                         "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-xs transition-all",
                         variationLevel === opt.value
+                          ? "border-primary bg-primary/5 text-primary"
+                          : "border-border hover:border-primary/30 text-muted-foreground"
+                      )}
+                    >
+                      <span className="font-medium">{opt.label}</span>
+                      <span className="text-[10px] text-center leading-tight">{opt.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Inteligência da IA (modelo OpenAI) */}
+              <div className="space-y-2 mt-3">
+                <Label className="text-xs font-medium">Inteligência da IA (modelo OpenAI)</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { value: 'gpt-4o', label: '🧠 Mais Inteligente', desc: 'Melhor qualidade de copy (GPT-4o)' },
+                    { value: 'gpt-4o-mini', label: '⚡ Econômico', desc: 'Mais rápido e gasta menos tokens (GPT-4o mini)' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setAiModel(opt.value)}
+                      className={cn(
+                        "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-xs transition-all",
+                        aiModel === opt.value
                           ? "border-primary bg-primary/5 text-primary"
                           : "border-border hover:border-primary/30 text-muted-foreground"
                       )}
