@@ -4132,12 +4132,13 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 // Tabs do gerente (master) — todas as abas
 // Performance é filtrada pela feature flag FEATURES.agentPerformanceTab
 // (default false — métricas consolidadas vivem em /painel-geral pra master).
+// Spec 27/05/2026: "Painel ao Vivo" antes do "CRM Avançado" no agente Pedro.
 const MASTER_TABS = [
   { id: 'performance',  label: 'Performance',  icon: BarChart3,     emoji: '📊' },
+  { id: 'ao-vivo',      label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺' },
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
   { id: 'inbox-ia',     label: 'Inbox IA',     icon: Inbox,         emoji: '📨' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
-  { id: 'ao-vivo',      label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺' },
   { id: 'instancias',   label: 'Instâncias',   icon: Smartphone,    emoji: '📱' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
@@ -4145,9 +4146,9 @@ const MASTER_TABS = [
 // Todas as tabs possíveis para o seller (filtradas por visible_features)
 const ALL_SELLER_TABS = [
   { id: 'performance', label: 'Performance',  icon: BarChart3,     emoji: '📊', featureKey: 'tab_performance' },
+  { id: 'ao-vivo',     label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺', featureKey: 'tab_crm_ao_vivo' },
   { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,   emoji: '🗒️', featureKey: 'tab_crm' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
-  { id: 'ao-vivo',     label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺', featureKey: 'tab_crm_ao_vivo' },
   { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,    emoji: '📱', featureKey: 'tab_instancias' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
   { id: 'inbox',       label: 'Inbox',        icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },

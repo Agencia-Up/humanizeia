@@ -71,11 +71,12 @@ const agentItems = [
 ];
 
 // ── Pedro Seller — todos sub-itens possíveis, filtrados por visibleFeatures ──
+// Spec 27/05/2026: "Painel ao Vivo" antes do "CRM" pra alinhar com tabs do PedroSDR.
 const allPedroSellerSubItems = [
   { title: 'Performance', url: '/pedro?tab=performance', icon: LayoutDashboard, featureKey: 'tab_performance' as keyof VisibleFeatures },
+  { title: 'Painel ao Vivo', url: '/pedro?tab=ao-vivo',  icon: Radar,           featureKey: 'tab_crm_ao_vivo' as keyof VisibleFeatures },
   { title: 'CRM',         url: '/pedro?tab=crm',         icon: Kanban,          featureKey: 'tab_crm' as keyof VisibleFeatures },
   { title: 'Agente IA',   url: '/pedro?tab=agente',      icon: Brain,           featureKey: 'tab_agente_ia' as keyof VisibleFeatures },
-  { title: 'Painel ao Vivo', url: '/pedro?tab=ao-vivo',  icon: Radar,           featureKey: 'tab_crm_ao_vivo' as keyof VisibleFeatures },
   { title: 'Instâncias',  url: '/pedro?tab=instancias',  icon: Smartphone,      featureKey: 'tab_instancias' as keyof VisibleFeatures },
   { title: 'Vendedores',  url: '/pedro?tab=vendedores',  icon: Users,           featureKey: 'tab_vendedores' as keyof VisibleFeatures },
   { title: 'Inbox',       url: '/pedro?tab=inbox',       icon: Inbox,           featureKey: 'tab_inbox' as keyof VisibleFeatures },
