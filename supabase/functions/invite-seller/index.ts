@@ -182,6 +182,29 @@ async function authAdminCreateUser(
   }
 }
 
+async function authAdminDeleteUser(
+  supabaseUrl: string,
+  serviceKey: string,
+  userId: string,
+): Promise<{ ok: boolean; error: any }> {
+  try {
+    const res = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+    });
+    if (!res.ok && res.status !== 404) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, error: { message: body.message || body.msg || `DELETE user failed (${res.status})` } };
+    }
+    return { ok: true, error: null };
+  } catch (err: any) {
+    return { ok: false, error: { message: err.message } };
+  }
+}
+
 async function authAdminListUsers(
   supabaseUrl: string,
   serviceKey: string,
@@ -318,17 +341,45 @@ Deno.serve(async (req) => {
     let authUserId: string | null = null;
 
     if (createErr) {
-      // User might already exist — find and reuse them
+      // User might already exist — find them
       const alreadyExists = createErr.message?.toLowerCase().includes('already') || createErr.status === 422;
       if (alreadyExists) {
         const { users } = await authAdminListUsers(supabaseUrl, serviceKey, 1000);
         const existingUser = users.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
         if (existingUser) {
-          authUserId = existingUser.id;
-          await supabase.from('ai_team_members')
-            .update({ email, auth_user_id: existingUser.id })
-            .eq('id', memberId);
-          console.log(`[invite-seller] User ${email} already exists (${authUserId}), reusing for invite link`);
+          // FIX 28/05/2026: Detecta state TRAVADO (user existe mas nunca confirmou
+          // o invite) e auto-recupera DELETANDO o user via Admin API + RECRIANDO
+          // fresh. GoTrue nao regenera token de invite pra users ja "invited"
+          // mas nao confirmados — fica preso retornando action_link sem token.
+          // Solucao: clean slate antes de tentar generate_link.
+          const isStuck = !existingUser.email_confirmed_at && !existingUser.last_sign_in_at;
+          if (isStuck) {
+            console.log(`[invite-seller] User ${email} (${existingUser.id}) em estado TRAVADO (invited mas nao confirmado, never_logged). Deletando e recriando fresh.`);
+            const { ok: delOk, error: delErr } = await authAdminDeleteUser(supabaseUrl, serviceKey, existingUser.id);
+            if (!delOk) {
+              console.error('[invite-seller] Falha ao deletar user travado:', delErr?.message);
+              throw new Error(`Falha ao recuperar user travado: ${delErr?.message || 'unknown'}`);
+            }
+            // Recria fresh
+            const retry = await authAdminCreateUser(supabaseUrl, serviceKey, email, userMetadata);
+            if (retry.error) {
+              console.error('[invite-seller] Falha ao recriar user apos delete:', retry.error.message);
+              throw new Error(`Falha ao recriar user fresh: ${retry.error.message}`);
+            }
+            authUserId = retry.data?.user?.id || null;
+            if (!authUserId) throw new Error('Recriacao nao retornou novo authUserId');
+            await supabase.from('ai_team_members')
+              .update({ email, auth_user_id: authUserId })
+              .eq('id', memberId);
+            console.log(`[invite-seller] User ${email} recriado fresh: ${authUserId}`);
+          } else {
+            // User existe e ja confirmou/logou — reusa pra tentativa de recovery/magiclink
+            authUserId = existingUser.id;
+            await supabase.from('ai_team_members')
+              .update({ email, auth_user_id: existingUser.id })
+              .eq('id', memberId);
+            console.log(`[invite-seller] User ${email} existe e ja confirmou — reusando ${authUserId}`);
+          }
         } else {
           console.error('[invite-seller] User reportedly exists but not found in list');
           throw new Error('User creation conflict — please try again');
@@ -392,7 +443,21 @@ Deno.serve(async (req) => {
         candidateLink.includes('code=') ||
         candidateLink.includes('#access_token=')
       );
-      // Captura debug info pra cada tentativa (sanitiza pra nao expor token bruto)
+      // Captura debug info pra cada tentativa.
+      // Sanitiza token (qualquer query/hash param eh removido) mas preserva
+      // URL completa pra eu ver pra onde o GoTrue esta redirecionando.
+      let sanitizedLink = '';
+      if (candidateLink) {
+        try {
+          const u = new URL(candidateLink);
+          // Coleta NOMES dos params (sem valores) pra preservar privacy
+          const queryParamNames = Array.from(u.searchParams.keys()).join(',');
+          const hashParamNames = u.hash ? u.hash.substring(1).split('&').map(p => p.split('=')[0]).join(',') : '';
+          sanitizedLink = `${u.origin}${u.pathname}?[${queryParamNames}]#[${hashParamNames}]`;
+        } catch {
+          sanitizedLink = candidateLink.substring(0, 150);
+        }
+      }
       debugAttempts.push({
         type: linkType,
         status,
@@ -400,14 +465,17 @@ Deno.serve(async (req) => {
         rawSample: rawResponse ? {
           action_link_present: !!rawResponse.action_link,
           action_link_has_token: hasValidToken,
-          action_link_host: candidateLink ? new URL(candidateLink).host : null,
-          action_link_pathname: candidateLink ? new URL(candidateLink).pathname : null,
-          properties_present: !!rawResponse.properties,
+          sanitizedActionLink: sanitizedLink,  // <-- URL COMPLETA mostrada (sem valores de token)
+          properties_action_link_present: !!rawResponse.properties?.action_link,
+          email_otp_present: !!rawResponse.email_otp,
+          hashed_token_present: !!rawResponse.hashed_token,
+          verification_type_present: !!rawResponse.verification_type,
+          redirect_to_field: rawResponse.redirect_to || null,
           error_field: rawResponse.error || rawResponse.error_description || null,
           msg_field: rawResponse.msg || rawResponse.message || null,
         } : null,
         hasToken: hasValidToken,
-        linkPreview: candidateLink ? candidateLink.substring(0, 100) : null,
+        linkPreview: sanitizedLink || null,
         errorMsg: linkErr?.message,
       });
       if (hasValidToken) {
@@ -424,6 +492,26 @@ Deno.serve(async (req) => {
       const errMsg = `Não foi possível gerar link para ${email}. Tentei: ${linkTypesToTry.join(', ')}. redirect_to enviado: ${redirectTo}. Último erro: ${lastErr?.message || 'GoTrue retornou OK mas link sem token (allowlist?)'}`;
       console.error(`[invite-seller] FATAL: ${errMsg}`);
       console.error(`[invite-seller] DEBUG attempts:`, JSON.stringify(debugAttempts, null, 2));
+
+      // Grava o debug numa tabela do banco pra eu ler via SQL CLI sem precisar
+      // de DevTools no browser do usuario. Tabela tempo, sera dropada apos fix.
+      try {
+        await supabase.from('_debug_invite_attempts').insert({
+          member_id: memberId,
+          email,
+          redirect_to: redirectTo,
+          attempt: {
+            authUserId,
+            alreadyConfirmed,
+            typesAttempted: linkTypesToTry,
+            siteUrl: supabaseUrl,
+            attempts: debugAttempts,
+          },
+        });
+      } catch (insErr: any) {
+        console.error('[invite-seller] Falha ao gravar _debug_invite_attempts:', insErr?.message);
+      }
+
       return new Response(JSON.stringify({
         error: errMsg,
         debug: {
