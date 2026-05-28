@@ -3500,7 +3500,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                   <button onClick={exitSelectionMode} className="text-orange-400 hover:text-orange-300 ml-1" title="Sair"><X className="h-3 w-3" /></button>
                 </div>
               )}
-              {selectionMode && selectedLeadIds.size > 0 && !isSeller && (
+              {/* Botao Disparar: master sempre pode; seller pode quando esta
+                  no Marcos CRM (caso de uso: vendedor seleciona leads dele
+                  pra campanha). No Pedro CRM, seller continua sem o botao
+                  (campanhas Pedro sao gerenciadas pelo master). */}
+              {selectionMode && selectedLeadIds.size > 0 && (!isSeller || isMarcosCrm) && (
                 <Button
                   size="sm"
                   onClick={handleDispararCampanha}
