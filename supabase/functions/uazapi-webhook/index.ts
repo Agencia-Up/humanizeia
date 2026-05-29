@@ -715,6 +715,37 @@ function phonesMatch(left: string | null | undefined, right: string | null | und
   return phoneMatchKeys(left).some((key) => rightKeys.has(key));
 }
 
+// WhatsApp privacy addressing (@lid): quando o chat id vem como "<id>@lid", o
+// valor antes de "@lid" e um id interno, NAO o telefone. Recupera o JID real
+// (@s.whatsapp.net) a partir de remoteJidAlt/senderPn, espelhando o tratamento
+// ja provado no wa-inbox-webhook. Sem isso a checagem vendedor-vs-lead nao casa
+// o numero do vendedor (vendedor vira lead, e transferido e entra no fluxo de
+// lead) e as respostas saem pros digitos do LID (numero invalido).
+function resolveRealJid(remoteJid: string | null | undefined, rawMsgObj: any): string {
+  const jid = String(remoteJid || '');
+  if (!jid.endsWith('@lid')) return jid;
+
+  const key = rawMsgObj?.key || rawMsgObj?.data?.key || {};
+  const altRaw = String(
+    key?.remoteJidAlt ||
+    rawMsgObj?.remoteJidAlt ||
+    rawMsgObj?.data?.remoteJidAlt ||
+    key?.senderPn ||
+    rawMsgObj?.senderPn ||
+    rawMsgObj?.data?.senderPn ||
+    ''
+  );
+
+  if (altRaw.endsWith('@s.whatsapp.net')) return altRaw;
+  const altDigits = digitsOnly(altRaw);
+  if (!altRaw.endsWith('@lid') && altDigits.length >= 10) {
+    return `${altDigits}@s.whatsapp.net`;
+  }
+
+  console.warn(`[Webhook] LID sem remoteJidAlt/senderPn resolvivel para ${jid}; resolucao de telefone vai usar os digitos do LID (fallback, sem regressao)`);
+  return jid;
+}
+
 function normalizePedroCrmStage(status: string | null | undefined, fallback = 'qualificado'): string {
   const raw = String(status || '').trim();
   if (raw === 'medio_qualificado') return 'pouco_qualificado';
@@ -2072,6 +2103,11 @@ Deno.serve(async (req) => {
 
 async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any) {
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
+
+  // @lid → telefone real como PRIMEIRO passo, antes de qualquer fluxo
+  // (vendedor-vs-lead, criacao de lead, envio de resposta). Cobre os dois entry
+  // paths (messages.upsert e UAZAPI V6) que chamam processMessage.
+  remoteJid = resolveRealJid(remoteJid, rawMsgObj);
 
   // IT-4.3: trace_id por turno + timer pra latencia
   const traceId = newTraceId();
