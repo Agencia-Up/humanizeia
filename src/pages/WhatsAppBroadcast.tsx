@@ -151,12 +151,31 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // filtra listsQuery.eq('seller_member_id', seller!.id) quando seller logado).
       // Master inserindo: seller_member_id=null (= lista da equipe toda).
       const sellerMemberId = isSeller && seller?.id ? seller.id : null;
+
+      // Fix 29/05/2026: a lista do CRM do Marcos pode trazer o mesmo telefone
+      // repetido (mesmo lead em origens diferentes) e/ou em formatos mistos (com
+      // e sem 55). O INSERT direto estourava wa_contacts_user_list_phone_key
+      // (UNIQUE user_id, list_id, phone) sempre que havia duplicata no lote ->
+      // "duplicate key value". Por isso normalizamos e deduplicamos por telefone
+      // (mantendo a 1a ocorrencia) ANTES de inserir, igual ao fluxo manual
+      // (addListContact / saveListEditor). Em staging os dados de teste nao tinham
+      // duplicata, por isso so quebrou em producao com a lista real.
+      const seenPhones = new Set<string>();
+      const dedupedContacts = visibleContacts
+        .map(c => ({ ...c, phone: normalizePhone(c.phone) }))
+        .filter(c => {
+          if (!c.phone || seenPhones.has(c.phone)) return false;
+          seenPhones.add(c.phone);
+          return true;
+        });
+      const duplicatesRemoved = visibleContacts.length - dedupedContacts.length;
+
       const { data: listRow, error: listErr } = await (supabase as any)
         .from('wa_contact_lists')
         .insert({
           user_id: effectiveUserId,
           name: listName,
-          contact_count: visibleContacts.length,
+          contact_count: dedupedContacts.length,
           seller_member_id: sellerMemberId,
           source: 'marcos_crm',
         })
@@ -164,7 +183,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         .single();
       if (listErr) throw listErr;
       if (!listRow?.id) throw new Error('Lista nao foi criada (RLS bloqueou silenciosamente?)');
-      const contactRows = visibleContacts.map(c => ({
+      const contactRows = dedupedContacts.map(c => ({
         user_id: effectiveUserId,
         list_id: listRow.id,
         phone: c.phone,
@@ -179,7 +198,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       if (contactsErr) throw contactsErr;
       toast({
         title: '✅ Lista criada',
-        description: `${visibleContacts.length} contato(s) em "${listName}". Crie sua campanha selecionando essa lista.`,
+        description: `${dedupedContacts.length} contato(s) em "${listName}"${duplicatesRemoved > 0 ? ` (${duplicatesRemoved} telefone${duplicatesRemoved > 1 ? 's' : ''} duplicado${duplicatesRemoved > 1 ? 's' : ''} removido${duplicatesRemoved > 1 ? 's' : ''})` : ''}. Crie sua campanha selecionando essa lista.`,
       });
       setPrefilledMarcos(null);
       setMarcosRemoved(new Set());
