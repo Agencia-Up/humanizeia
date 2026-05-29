@@ -550,7 +550,7 @@ function fillIndexes(indexes: number[], total: number, max = 5, fallbackStart = 
   return selected.slice(0, Math.min(max, total));
 }
 
-function selectVehiclePhotos(vehicle: any, message: string) {
+function selectVehiclePhotos(vehicle: any, message: string, alreadySent: number[] = []) {
   const photos = [
     ...(Array.isArray(vehicle?.fotos) ? vehicle.fotos : []),
     vehicle?.principal_image,
@@ -558,7 +558,11 @@ function selectVehiclePhotos(vehicle: any, message: string) {
 
   const total = photos.length;
   const target = detectPhotoTarget(message);
-  if (total <= 5) return { target, photos: photos.slice(0, 5) };
+  if (total === 0) return { target, photos: [] as string[], sent_indexes: [] as number[] };
+  if (total <= 5) {
+    const idx = Array.from({ length: total }, (_, i) => i);
+    return { target, photos: idx.map((i) => photos[i]), sent_indexes: idx };
+  }
 
   const middle = Math.max(4, Math.floor(total * 0.48));
   const late = Math.max(middle + 1, Math.floor(total * 0.66));
@@ -575,15 +579,24 @@ function selectVehiclePhotos(vehicle: any, message: string) {
     trunk: [Math.max(0, total - 2), Math.max(0, total - 3), 4, 5, late],
   };
 
+  // Ordem COMPLETA de exibicao: a estrategia do alvo primeiro, depois todas as
+  // demais fotos em ordem (garante que "mais fotos" caminhe por todo o acervo).
   const interiorish = target === "interior" || target === "dashboard" || target === "seats";
-  const indexes = fillIndexes(
-    strategies[target],
+  const ordered = uniqueIndexes(
+    [...strategies[target], ...Array.from({ length: total }, (_, i) => i)],
     total,
-    maxPhotos,
-    interiorish ? Math.min(total - 1, 5) : 0,
-    "forward",
+    total,
   );
-  return { target, photos: indexes.map((index) => photos[index]) };
+  // Remove as fotos JA enviadas para este veiculo -> "mais fotos" manda diferentes.
+  // Se o lead ja viu todas, recomeca o ciclo (nunca fica sem foto).
+  const sentSet = new Set((alreadySent || []).map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n)));
+  let remaining = ordered.filter((i) => !sentSet.has(i));
+  if (remaining.length === 0) remaining = ordered;
+  let indexes = remaining.slice(0, Math.min(maxPhotos, remaining.length));
+  if (indexes.length === 0) {
+    indexes = fillIndexes(strategies[target], total, maxPhotos, interiorish ? Math.min(total - 1, 5) : 0, "forward");
+  }
+  return { target, photos: indexes.map((index) => photos[index]), sent_indexes: indexes };
 }
 
 function pickPhrase(seed: string, phrases: string[]) {
@@ -651,7 +664,13 @@ function buildVehiclePhotoReply(memory: any, message: string) {
   const reference = pickReferencedVehicle(message, memory, vehicles);
   const index = reference.index;
   const vehicle = vehicles[index] || vehicles[0];
-  const selection = selectVehiclePhotos(vehicle, message);
+  // Fotos ja enviadas SO contam se for o MESMO veiculo da ultima vez (senao reseta).
+  const refKey = reference.key || vehicleKey(vehicle);
+  const sameVehicle = memory?.ultima_foto?.veiculo_key && memory.ultima_foto.veiculo_key === refKey;
+  const alreadySent = sameVehicle && Array.isArray(memory?.ultima_foto?.fotos_enviadas)
+    ? memory.ultima_foto.fotos_enviadas
+    : [];
+  const selection = selectVehiclePhotos(vehicle, message, alreadySent);
   const photos = selection.photos;
 
   if (photos.length === 0) {
@@ -673,6 +692,8 @@ function buildVehiclePhotoReply(memory: any, message: string) {
     selected_vehicle_label: cleanVehicleLabel(vehicle),
     selected_vehicle_reason: reference.reason,
     photo_target: selection.target,
+    sent_photo_indexes: selection.sent_indexes,
+    same_vehicle_as_last: Boolean(sameVehicle),
     media: photos.map((file: string, photoIndex: number) => ({
       file,
       type: "image",
@@ -728,6 +749,13 @@ async function savePhotoReference(supabase: any, input: {
   const selectedIndex = Number.isFinite(Number(input.reply.selected_index)) ? Number(input.reply.selected_index) : 0;
   const selectedKey = input.reply.selected_vehicle_key || vehicleKey(input.reply.vehicle);
   const selectedLabel = input.reply.selected_vehicle_label || cleanVehicleLabel(input.reply.vehicle);
+  // Acumula os indices de fotos ja enviadas deste veiculo (para "mais fotos"
+  // mandar diferentes). Reseta se for um veiculo diferente do ultimo.
+  const prevSent = (input.reply.same_vehicle_as_last && Array.isArray(input.current?.ultima_foto?.fotos_enviadas))
+    ? input.current.ultima_foto.fotos_enviadas
+    : [];
+  const newSent = Array.isArray(input.reply.sent_photo_indexes) ? input.reply.sent_photo_indexes : [];
+  const fotosEnviadas = Array.from(new Set([...prevSent, ...newSent].map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n))));
   const nextState = {
     ...(input.current || {}),
     ultima_foto: {
@@ -735,6 +763,7 @@ async function savePhotoReference(supabase: any, input: {
       veiculo_key: selectedKey,
       veiculo_label: selectedLabel,
       target: input.reply.photo_target || "overview",
+      fotos_enviadas: fotosEnviadas,
       updated_at: new Date().toISOString(),
     },
     referencia: {
@@ -1167,15 +1196,23 @@ export async function processPedroV2Turn(
   // Marca status='transferido' (sem mexer no status_crm); com isso o follow-up de
   // inatividade para sozinho (o cron so processa novo/interessado). Gated a v2.
   let handoffResult: any = null;
-  if (!dryRun && lead?.id && contextualIntent.needs_handoff && identity.kind !== "seller") {
+  // Transfere quando: (1) o planner mandou handoff (agendamento / pediu humano), OU
+  // (2) o cerebro, seguindo o system prompt, marcou pronto_para_transferir COM a
+  // qualificacao minima coletada (nome + ao menos troca/entrada/forma de pagamento).
+  // Isso evita transferir cedo demais (ex: no "vou querer" sem qualificar).
+  const _q = (reply?.qualificacao_coletada && typeof reply.qualificacao_coletada === "object") ? reply.qualificacao_coletada : {};
+  const _hasNome = Boolean(_q.nome || lead?.lead_name);
+  const _askedQualif = _q.tem_troca === true || _q.tem_troca === false || Boolean(_q.valor_entrada) || Boolean(_q.forma_pagamento);
+  const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _askedQualif;
+  if (!dryRun && lead?.id && (contextualIntent.needs_handoff || brainReadyToTransfer) && identity.kind !== "seller") {
     try {
       handoffResult = await executePedroV2Handoff(supabase, {
         user_id: input.agent.user_id,
         agent_id: input.agent.id,
         lead_id: lead.id,
         remote_jid: remoteJid,
-        lead_name: lead.lead_name || pushName || null,
-        reason: `handoff:${brainPlan?.intent || contextualIntent.intent || "qualificado"}`,
+        lead_name: _q.nome || lead.lead_name || pushName || null,
+        reason: contextualIntent.needs_handoff ? `handoff:${brainPlan?.intent || contextualIntent.intent || "humano"}` : "handoff:qualificado_pronto",
       });
       if (handoffResult?.ok && handoffResult.seller?.whatsapp_number && isPedroV2SendingEnabled()) {
         const handoffInstance = input.wa_instance || await resolvePedroInstance(supabase, {
