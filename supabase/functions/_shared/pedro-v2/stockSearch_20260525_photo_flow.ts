@@ -299,8 +299,29 @@ function buildSearchText(filters: Record<string, any>) {
   ].filter(Boolean).join(" "));
 }
 
+// Texto usado SO para scoring/seleção de modelo. NAO inclui o blob cru do
+// anuncio (ad_context/contexto_anuncio): esse texto do Facebook (icom, motors,
+// story_fbid, numeros...) virava termos-ruido que a penalidade de -10/termo
+// derrubava o score do carro certo a 0. O sinal do veiculo ja vem estruturado
+// em query/marca/modelo/versao. Fallback para o texto completo se nao houver
+// sinal estruturado (preserva comportamento antigo nesse caso).
+function buildScoringText(filters: Record<string, any>) {
+  const clean = normalizeText([
+    filters?.query,
+    filters?.marca,
+    filters?.modelo,
+    filters?.modelo_desejado,
+    filters?.versao,
+    filters?.cor,
+    filters?.combustivel,
+    filters?.cambio,
+    filters?.ano_min && filters?.ano_min === filters?.ano_max ? String(filters.ano_min) : "",
+  ].filter(Boolean).join(" "));
+  return clean || buildSearchText(filters);
+}
+
 function detectDynamicModelTerms(filters: Record<string, any>): string[] {
-  const searchText = buildSearchText(filters);
+  const searchText = buildScoringText(filters);
   if (!searchText) return [];
   const tokens = searchTokens(searchText);
   return tokens.filter((token) => !KNOWN_BRANDS.includes(token));
@@ -314,7 +335,7 @@ function vehicleMatchesStrictModel(vehicle: BndvVehicle, modelTerms: string[]) {
 }
 
 function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
-  const searchText = buildSearchText(filters);
+  const searchText = buildScoringText(filters);
   if (!searchText) return { score: 1, matchedTokens: [] as string[] };
 
   const { originalTokens, expansionTokens } = getQueryTokens(searchText);
