@@ -12,6 +12,10 @@ export interface PipelineStage {
   color: string;
   position: number;
   is_default: boolean;
+  // MELHORIA 2 (29/05/2026): config da coluna (tabela de Configuracoes do Kanban).
+  ativo?: boolean;                                   // false => oculta do board
+  tipo?: 'entrada' | 'em_andamento' | 'saida' | null;
+  responsavel_padrao_id?: string | null;             // ai_team_members.id
 }
 
 export interface CRMLead {
@@ -101,7 +105,10 @@ export function useFluxCRM() {
 
         stagesData = (fresh || []) as unknown as PipelineStage[];
       }
-      return deduplicateStagesByName(stagesData);
+      // MELHORIA 2: o board so mostra colunas ATIVAS. Colunas desativadas na
+      // tabela de Configuracoes somem do board (master e vendedores), mas
+      // continuam na config (reativaveis) e os dados nao sao apagados.
+      return deduplicateStagesByName(stagesData).filter((s) => s.ativo !== false);
     },
     enabled: !!effectiveUserId,
   });
