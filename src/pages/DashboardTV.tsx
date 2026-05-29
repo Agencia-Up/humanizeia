@@ -634,9 +634,13 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     return <Navigate to="/dashboard" replace />;
   }
 
+  // Embedded (tab do Pedro SDR): fluxo normal, cresce com o conteúdo.
+  // Standalone (TV): preenche exatamente a viewport (100dvh/100dvw) como
+  // coluna flex, sem scroll. ~2% de padding em cada eixo = margem de overscan
+  // pra TVs que cortam as bordas. A área de vendedores (flex-1) absorve a sobra.
   const wrapperClass = embedded
     ? 'min-h-full bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white'
-    : 'min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white overflow-hidden';
+    : 'relative flex flex-col h-[100dvh] w-[100dvw] overflow-hidden px-[2vw] py-[2vh] bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white';
 
   // Loading inicial (perfil + dados)
   if (profileLoading || (loading && !kpis)) {
@@ -653,7 +657,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   return (
     <div ref={containerRef} className={wrapperClass}>
       {/* ───── Header ───── */}
-      <header className="border-b border-blue-900/50 px-8 py-4 flex items-center justify-between bg-slate-900/40 backdrop-blur">
+      <header className="shrink-0 border-b border-blue-900/50 px-8 py-4 flex items-center justify-between bg-slate-900/40 backdrop-blur">
         <div className="flex items-center gap-5">
           {branding.logo_url ? (
             <img src={branding.logo_url} alt="logo" className="h-14 w-auto object-contain" />
@@ -704,7 +708,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </header>
 
       {/* ───── Toolbar de filtro de período ───── */}
-      <div className="px-8 py-3 border-b border-slate-800/60 bg-slate-900/30 flex items-center gap-4 flex-wrap">
+      <div className="shrink-0 px-8 py-3 border-b border-slate-800/60 bg-slate-900/30 flex items-center gap-4 flex-wrap">
         <span className="text-[10px] uppercase tracking-widest text-blue-300/60 font-bold">Período</span>
         <div className="flex items-center gap-1.5 bg-slate-900/50 rounded-lg p-1 border border-slate-800">
           {([
@@ -755,7 +759,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </div>
 
       {/* ───── Bloco KPIs principais (3 cards lado a lado) ───── */}
-      <section className="px-8 py-6 grid grid-cols-3 gap-4">
+      <section className="shrink-0 px-8 py-6 grid grid-cols-3 gap-4">
         {/* KPI 1: Leads Gerais */}
         <div className="bg-slate-900/60 rounded-2xl p-6 border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Users className="h-7 w-7 text-blue-400 mb-2" />
@@ -808,8 +812,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </div>
       </section>
 
-      {/* ───── 7 cards de Origem (linha completa abaixo) ───── */}
-      <section className="px-8 pb-6">
+      {/* ───── Cards de Origem (linha completa abaixo) ───── */}
+      <section className="shrink-0 px-8 pb-6">
         <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-3 font-bold">Origem dos Leads</h2>
         <div className="grid grid-cols-7 gap-3">
           {ORIGENS.map(origem => {
@@ -833,7 +837,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </section>
 
       {/* ───── PRODUÇÃO INDIVIDUAL DOS VENDEDORES ───── */}
-      <section className="px-8 pb-20">
+      <section className="flex-1 min-h-0 px-8 pb-20">
         <div className="flex items-baseline justify-between mb-3">
           <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 font-bold">Produção Individual dos Vendedores</h2>
           <p className="text-[10px] text-slate-500 italic">Total de Leads Trabalhados</p>
