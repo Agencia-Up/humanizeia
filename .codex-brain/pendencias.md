@@ -2,6 +2,7 @@
 
 ## Alta prioridade
 
+- SEGREDOS VAZADOS (descoberto 2026-05-29): `.env` e `secrets.txt` estao RASTREADOS no Git (`git ls-files`), portanto ja foram para o repo remoto `Agencia-Up/humanizeia`. `.env` expoe `SUPABASE_SERVICE_ROLE_KEY`/`LEGACY_SUPABASE_SERVICE_ROLE_KEY`; `secrets.txt` referencia ANTHROPIC, OPENAI, EVOLUTION/Uazapi, META e SERVICE_ROLE. Acoes: (1) ROTACIONAR todos esses segredos + o access token Supabase (staging+prod) e o GitHub PAT que estavam no `pedro_v2_architecture_and_credentials.md`; (2) `git rm --cached .env secrets.txt` e commitar (mantem arquivo local); (3) ja feito: `.gitignore` agora cobre `/.env`, `/secrets.txt` e `pedro_v2_architecture_and_credentials.md`, e o `.md` teve os valores trocados por placeholders; (4) avaliar limpeza do historico do Git (filter-repo/BFG) — operacao destrutiva, exige force-push e alinhamento com o socio antes.
 - Validar seguranca de Edge Functions com `verify_jwt = false`: cada function precisa autenticar/autorizacao internamente quando manipula dados reais.
 - Resolver historico de migrations antes de aplicar novas migrations em producao. Em 2026-05-24, `supabase db push --linked` pediu `--include-all` por migrations antigas nao registradas no remoto; nao aplicar em massa sem auditoria.
 - Revisar RLS das tabelas criticas para garantir isolamento entre gerente, vendedor e usuario comum.
@@ -79,7 +80,7 @@
   - Utility Tailwind com theme invalido em radial gradient.
   - `ConnectionsTab.tsx` possui case duplicado `instagram_publisher`.
   - Aviso de dynamic import em `dynamicFields`.
-- Existem arquivos locais potencialmente sensiveis (`.env`, `secrets.txt`); nao copiar valores para documentacao.
+- Existem arquivos sensiveis RASTREADOS no Git (`.env`, `secrets.txt`) e um doc local com credenciais (`pedro_v2_architecture_and_credentials.md`); nao copiar valores para documentacao. Ver item de SEGREDOS VAZADOS em "Alta prioridade".
 - Ha diretorios temporarios/untracked (`.tmp-edge-mockup/`, `docs/mockups/`) que nao devem ser incluidos em commits sem decisao explicita.
 - Historico recente teve problemas de:
   - login/Supabase timeout;
