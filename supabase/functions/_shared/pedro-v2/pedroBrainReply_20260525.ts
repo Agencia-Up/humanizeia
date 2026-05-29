@@ -450,13 +450,19 @@ export async function generatePedroBrainReply(input: {
                 "- Se o lead trocou de veiculo ou mudou de assunto, responda sobre o novo assunto. A mensagem atual sempre vence a memoria antiga.",
                 `- Se voce ja se apresentou no historico recente da conversa (status: ${hasPresented ? "já apresentado" : "não apresentado ainda"}), nao repita a apresentacao. Se for a primeira mensagem, apresente-se como ${agentName}, consultor da ${input.agent?.company_name || "Icom Motors"}.`,
                 "- Nunca cite termos tecnicos, JSON, ferramentas, tools, banco de dados ou processos internos.",
-                "- Retorne apenas JSON valido com as chaves 'text', 'source' e 'presented_vehicle_indices'.",
+                "- Retorne apenas JSON valido com as chaves 'text', 'source', 'presented_vehicle_indices', 'qualificacao_coletada' e 'pronto_para_transferir'.",
                 "- Na chave 'presented_vehicle_indices', retorne um array de inteiros contendo os indices (de 1 a N, conforme o campo 'index' dos fatos em stock.facts) dos veiculos que voce de fato apresentou/citou no texto da sua resposta. Se nao apresentou nenhum ou nao havia estoque, retorne um array vazio [].",
                 "",
                 "DIRETRIZES DE VENDAS ATIVAS (SDR):",
                 "- O GANCHO VISUAL: Sempre que houver veículo no estoque (stock.facts), ofereça proativamente enviar fotos ou vídeos adicionais para atrair o interesse.",
                 "- O GANCHO DA SOLUÇÃO ALTERNATIVA: Se o veículo procurado não estiver no estoque, não encerre a conversa de mãos vazias. Ofereça opções semelhantes (mesma categoria, valor ou câmbio) e chame para fotos.",
                 "- O GANCHO DA QUALIFICAÇÃO: Conduza a conversa para as etapas seguintes de forma amigável: pergunte se tem carro na troca, ofereça simular financiamento perguntando sobre a entrada, ou convide para visitar a loja e fazer um test drive.",
+                "",
+                "QUALIFICAÇÃO OBRIGATÓRIA (siga o passo-a-passo do seu System Prompt do Portal):",
+                "- Quando o lead demonstrar interesse de compra (ex: 'vou querer', 'quero comprar', 'gostei'), CONDUZA a qualificação obrigatória do seu prompt fazendo UMA pergunta por vez, na ordem, PULANDO o que já foi respondido (consulte memory_summary e o histórico recente). Tipicamente: nome, se tem carro na troca, se tem valor de entrada, e se conhece a loja.",
+                "- NUNCA encaminhe para o consultor ANTES de coletar os dados obrigatórios do seu prompt. No mínimo: nome + interesse específico, e ter avançado nas perguntas de troca/entrada.",
+                "- Defina 'pronto_para_transferir' = true SOMENTE quando o lead estiver qualificado e pronto conforme os critérios do seu System Prompt (interesse real + perguntas de qualificação respondidas). Nesse caso, escreva uma despedida curta avisando que um consultor vai dar continuidade. Caso contrário, 'pronto_para_transferir' = false e siga conduzindo/qualificando com uma pergunta por vez.",
+                "- Em 'qualificacao_coletada', devolva um objeto com o que você JÁ apurou na conversa inteira (use null no que ainda não souber): { \"nome\": string|null, \"tem_troca\": true|false|null, \"valor_entrada\": string|null, \"forma_pagamento\": \"financiamento\"|\"a_vista\"|null, \"sabe_localizacao\": true|false|null, \"interesse\": string|null }.",
               ].join("\n"),
           },
           {
@@ -472,6 +478,7 @@ export async function generatePedroBrainReply(input: {
               memory_summary: {
                 lead: input.memory?.lead || {},
                 interesse: input.memory?.interesse || {},
+                negociacao: input.memory?.negociacao || {},
                 referencia: input.memory?.referencia || {},
                 atendimento: input.memory?.atendimento || {},
               },
@@ -512,6 +519,10 @@ export async function generatePedroBrainReply(input: {
     let presented_vehicle_indices = Array.isArray(parsed?.presented_vehicle_indices)
       ? parsed.presented_vehicle_indices.map((idx: any) => Number(idx)).filter((n: number) => !isNaN(n))
       : [];
+    const qualificacao_coletada = (parsed?.qualificacao_coletada && typeof parsed.qualificacao_coletada === "object")
+      ? parsed.qualificacao_coletada
+      : null;
+    const pronto_para_transferir = parsed?.pronto_para_transferir === true;
 
     let guardedRawText = adVehicleConsultation && rawText.includes("Encontrou o")
       ? buildAdVehicleConsultationFallback({
@@ -550,6 +561,8 @@ export async function generatePedroBrainReply(input: {
       text,
       source: adVehicleConsultation ? "brain_ad_vehicle_reply" : (facts.length > 0 ? "brain_stock_reply" : "brain_reply"),
       presented_vehicle_indices,
+      qualificacao_coletada,
+      pronto_para_transferir,
     };
   } catch (error) {
     console.warn("[PedroV2] brain reply fallback:", error);
