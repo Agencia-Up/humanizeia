@@ -31,9 +31,12 @@ function sleep(ms: number) {
 
 function calculatePedroV2DelayMs(text: string) {
   const len = String(text || "").length;
-  const bySize = Math.min(7000, len * 28);
-  const jitter = Math.floor(Math.random() * 3500);
-  return Math.max(8500, Math.min(18000, 7500 + bySize + jitter));
+  // Delay proporcional ao tamanho: partes curtas (rajada conversacional)
+  // saem rapido e naturais; textos longos (lista de estoque) levam um pouco
+  // mais, mas com teto menor que antes pra nao parecer travado.
+  const bySize = Math.min(5000, len * 30);
+  const jitter = Math.floor(Math.random() * 1800);
+  return Math.max(2500, Math.min(9000, 2000 + bySize + jitter));
 }
 
 export async function resolvePedroInstance(supabase: any, input: {
@@ -136,7 +139,9 @@ export async function sendPedroText(
     return sendPedroTextOnce(instance, input);
   }
 
-  const parts = splitMessageForHumanization(input.text, { maxParts: 2, minLength: 260 });
+  // Conversa: quebra em ate 3 mensagens curtas a partir de ~130 chars (rajada
+  // humana). NAO afeta a lista de estoque, que vem por outro caminho (typingOnly).
+  const parts = splitMessageForHumanization(input.text, { maxParts: 3, minLength: 130 });
   const attempts: any[] = [];
 
   for (let index = 0; index < parts.length; index++) {
