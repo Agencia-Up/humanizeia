@@ -56,6 +56,12 @@
 - Apos novo teste real no WhatsApp do usuario liberado, conferir se `pedro_v2_turn_logs` recebeu eventos; se continuar vazio, investigar payload da Uazapi antes de alterar inteligencia do agente.
 - O historico de migrations continua desalinhado: a tabela `pedro_v2_turn_logs` foi aplicada com `db query --file`, mas `db push --include-all` segue proibido sem auditoria das migrations antigas.
 
+## Roadmap Pedro v2 — melhorias de venda (planejado 2026-05-29, fazer uma de cada vez, GATED na conta do usuario para nao afetar v1/Marcos)
+
+- ETAPA A (FEITA): split conversacional por LLM (`gpt-4o-mini`) evitando separar modelo/ano; fallback heuristico. Ver historico.
+- ETAPA B (A FAZER): follow-up de inatividade contextual em 3 tempos, substituindo 5min(fixo)/10min(transfere). Novo: 5min = pergunta contextual gerada pela IA conforme a conversa; 8min = pergunta se ainda precisa de ajuda; 12min = avisa amigavelmente que vai transferir + agradece + transfere (fila/round-robin/"aguardando" como hoje). CRITICO: o `cron-lead-followup` (linhas ~602-802) processa `ai_crm_leads` SEM gate v1/v2 -> mexer cru afeta o Pedro v1 da OUTRA conta. Solucao: ramificar por allowlist/`isPedroV2EnabledForUser(lead.user_id)`; usuarios v2 -> fluxo novo; resto -> codigo atual byte a byte. Mensagens contextuais exigem carregar `pedro_conversation_state` + chamada LLM por lead no cron.
+- ETAPA C (A FAZER): inteligencia de parar follow-up + transferir quando o lead QUALIFICOU / AGENDOU visita / esta PRONTO pra comprar (tem troca, quer dar entrada, fechar). Hoje o orquestrador do v2 NAO executa transferencia real (so loga `needs_handoff`); a unica transferencia que atinge v2 e a de inatividade no cron compartilhado. Implementar: detectar agendamento/pronto-pra-comprar (intentRouter/planner), executar transferencia real reusando `chooseSellerForPedroTransfer` + insert `ai_lead_transfers` + status, despedir avisando que um consultor vai chamar, e marcar o lead para o cron NAO fazer follow-up (cron ja pula quem saiu de `novo/interessado`/ja atribuido). Usuario tem vendedor (`ai_team_members`) cadastrado na conta de teste. NAO mudar o fluxo de transferencia do v1/Marcos.
+
 ## Media prioridade
 
 - Atualizar base teste/staging periodicamente a partir da producao sem copiar segredos indevidos.
