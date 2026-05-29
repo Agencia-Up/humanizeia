@@ -759,14 +759,14 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </div>
 
       {/* ───── Bloco KPIs principais (3 cards lado a lado) ───── */}
-      <section className="shrink-0 px-8 py-[clamp(0.5rem,2.2vmin,1.5rem)] grid grid-cols-3 gap-4">
+      <section className="shrink-0 px-8 py-[clamp(0.5rem,2.2vmin,1.5rem)] grid grid-cols-3 portrait:grid-cols-1 gap-4">
         {/* KPI 1: Leads Gerais */}
         <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Users className="h-7 w-7 text-blue-400 mb-2" />
           <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">
             Leads Gerais · {dateRange.label}
           </p>
-          <p className="text-[clamp(2rem,6vmin,3.75rem)] font-black tabular-nums leading-none" style={{ color: branding.primary_color }}>
+          <p className="text-[clamp(2rem,6vmin,3.75rem)] portrait:text-[clamp(2.5rem,9vw,6rem)] font-black tabular-nums leading-none" style={{ color: branding.primary_color }}>
             {kpis?.total_leads ?? 0}
           </p>
           <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">Total de Leads</p>
@@ -787,8 +787,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
               <>
                 <Trophy className="h-7 w-7 mb-2" style={{ color }} />
                 <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Qualidade Média</p>
-                <p className="text-[clamp(2rem,6vmin,3.75rem)] font-black tabular-nums leading-none" style={{ color }}>
-                  {score}<span className="text-[clamp(0.9rem,2.2vmin,1.5rem)] text-slate-500">%</span>
+                <p className="text-[clamp(2rem,6vmin,3.75rem)] portrait:text-[clamp(2.5rem,9vw,6rem)] font-black tabular-nums leading-none" style={{ color }}>
+                  {score}<span className="text-[clamp(0.9rem,2.2vmin,1.5rem)] portrait:text-[clamp(1rem,3vw,2rem)] text-slate-500">%</span>
                 </p>
                 <p className="text-[10px] uppercase tracking-widest mt-3 font-bold" style={{ color }}>
                   {label}
@@ -803,8 +803,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Target className="h-7 w-7 text-purple-400 mb-2" />
           <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Taxa Transferência</p>
-          <p className="text-[clamp(2rem,6vmin,3.75rem)] font-black tabular-nums leading-none" style={{ color: branding.secondary_color }}>
-            {(kpis?.taxa_transferencia ?? 0).toFixed(1)}<span className="text-[clamp(0.9rem,2.2vmin,1.5rem)] text-slate-500">%</span>
+          <p className="text-[clamp(2rem,6vmin,3.75rem)] portrait:text-[clamp(2.5rem,9vw,6rem)] font-black tabular-nums leading-none" style={{ color: branding.secondary_color }}>
+            {(kpis?.taxa_transferencia ?? 0).toFixed(1)}<span className="text-[clamp(0.9rem,2.2vmin,1.5rem)] portrait:text-[clamp(1rem,3vw,2rem)] text-slate-500">%</span>
           </p>
           <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">
             {kpis?.taxa_transferencia_texto ?? '0 leads'}
@@ -815,7 +815,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       {/* ───── Cards de Origem (linha completa abaixo) ───── */}
       <section className="shrink-0 px-8 pb-6">
         <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-3 font-bold">Origem dos Leads</h2>
-        <div className="grid grid-cols-7 gap-3">
+        <div className="grid grid-cols-5 portrait:grid-cols-2 gap-3">
           {ORIGENS.map(origem => {
             const Icon = origem.icon;
             const valor = kpis?.por_origem[origem.key] ?? 0;
@@ -848,7 +848,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             Nenhum vendedor ativo. Cadastre vendedores em Pedro SDR → Vendedores.
           </div>
         ) : (
-          <div className="grid grid-cols-5 gap-3">
+          <div className="grid grid-cols-5 portrait:grid-cols-2 gap-3">
             {vendedores.slice(0, 10).map(v => (
               <VendedorCard key={v.id} v={v} secondary={branding.secondary_color} />
             ))}
@@ -861,7 +861,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const destaque = vendedores.find(v => v.id !== '__nao_atribuido__' && v.total > 0);
         if (!destaque) return null;
         return (
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-400/40 rounded-full px-6 py-2.5 flex items-center gap-3 backdrop-blur shadow-2xl">
+          <div className={`${embedded ? 'fixed bottom-4' : 'absolute bottom-[3vh]'} left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-400/40 rounded-full px-6 py-2.5 flex items-center gap-3 backdrop-blur shadow-2xl`}>
             <Trophy className="h-5 w-5 text-amber-400" />
             <span className="text-[10px] uppercase tracking-widest font-bold text-amber-300">Destaque do Dia</span>
             <span className="text-sm font-bold">{destaque.name}</span>
@@ -898,7 +898,7 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
           <img
             src={v.effective_avatar}
             alt={v.name}
-            className="h-16 w-16 rounded-full object-cover border-2"
+            className="h-16 w-16 portrait:h-12 portrait:w-12 rounded-full object-cover border-2"
             style={{ borderColor: rColor }}
             onError={(e) => {
               // Se URL quebrar (ex: foto deletada), esconde a img → React Fragment vazio mostra fallback no próximo render
@@ -907,7 +907,7 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
           />
         ) : (
           <div
-            className="h-16 w-16 rounded-full flex items-center justify-center font-bold text-xl border-2 text-white"
+            className="h-16 w-16 portrait:h-12 portrait:w-12 rounded-full flex items-center justify-center font-bold text-xl border-2 text-white"
             style={{ background: avatarColor, borderColor: rColor }}
           >
             {getInitials(v.name)}
