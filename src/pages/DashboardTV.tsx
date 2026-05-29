@@ -26,7 +26,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
-import { Calendar, Clock, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag } from 'lucide-react';
+import { Calendar, Clock, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag, Instagram } from 'lucide-react';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -37,13 +37,15 @@ interface VendedorData {
   effective_avatar: string | null;
   rank: number;
   // Spec 27/05/2026 Bug 1: removidas OLX e Outros do painel. Tipos mantidos
-  // como propriedades obrigatórias do agg pra simplicidade, mas a UI só
-  // exibe 5 colunas: Tráfego Pago / Porta / Marketplace / Consignado / Indicação.
+  // como propriedades obrigatórias do agg pra simplicidade.
+  // MELHORIA 1 (29/05/2026): + Redes Sociais → 6 colunas:
+  // Tráfego Pago / Porta / Marketplace / Consignado / Indicação / Redes Sociais.
   trafico_pago: number;
   porta: number;
   marketplace: number;
   consignado: number;
   indicacao: number;
+  redes_sociais: number;
   total: number;
 }
 
@@ -131,16 +133,18 @@ interface BrandingConfig {
   secondary_color: string;
 }
 
-// ─── Config visual das 6 origens (ordem da imagem ICOM) ─────────────────────
+// ─── Config visual das origens (ordem da imagem ICOM) ───────────────────────
 
-// Spec 27/05/2026 Bug 1: 5 colunas finais na ordem Trafego Pago / Porta /
-// Marketplace / Consignado / Indicacao. OLX e Outros removidos.
+// Spec 27/05/2026 Bug 1: colunas Trafego Pago / Porta / Marketplace /
+// Consignado / Indicacao. OLX e Outros removidos.
+// MELHORIA 1 (29/05/2026): + Redes Sociais ao final (ícone Instagram, rosa).
 const ORIGENS = [
-  { key: 'trafico_pago', label: 'Tráfego Pago', icon: Target,      color: '#3b82f6' },
-  { key: 'porta',        label: 'Porta',        icon: DoorOpen,    color: '#f59e0b' },
-  { key: 'marketplace',  label: 'Marketplace',  icon: Globe,       color: '#a855f7' },
-  { key: 'consignado',   label: 'Consignado',   icon: Phone,       color: '#06b6d4' },
-  { key: 'indicacao',    label: 'Indicação',    icon: Users,       color: '#fb923c' },
+  { key: 'trafico_pago',  label: 'Tráfego Pago', icon: Target,      color: '#3b82f6' },
+  { key: 'porta',         label: 'Porta',        icon: DoorOpen,    color: '#f59e0b' },
+  { key: 'marketplace',   label: 'Marketplace',  icon: Globe,       color: '#a855f7' },
+  { key: 'consignado',    label: 'Consignado',   icon: Phone,       color: '#06b6d4' },
+  { key: 'indicacao',     label: 'Indicação',    icon: Users,       color: '#fb923c' },
+  { key: 'redes_sociais', label: 'Redes Sociais', icon: Instagram,  color: '#ec4899' },
 ] as const;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -386,7 +390,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             null;
           agg[s.id] = {
             id: s.id, name: s.name, effective_avatar: effectiveAvatar, rank: 0,
-            trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, total: 0,
+            trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, total: 0,
           };
         }
 
@@ -399,7 +403,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const NAO_ATRIBUIDO_ID = '__nao_atribuido__';
         agg[NAO_ATRIBUIDO_ID] = {
           id: NAO_ATRIBUIDO_ID, name: 'Sem vendedor atribuído', effective_avatar: null, rank: 0,
-          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, total: 0,
+          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, total: 0,
         };
 
         // 4. Pedro: contar trafico_pago (precisa de assigned_to_id) E coletar dados pra qualidade/taxa
@@ -438,7 +442,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // ex: form "Consignado-Indicacao" -> kanban Consignado mas origem=indicacao
         // -> Painel mostrava como Indicacao em vez de Consignado.
         // Agora usa stage.name diretamente do JOIN com crm_pipeline_stages.
-        function stageToCol(stageName: string | null | undefined): keyof Pick<VendedorData, 'porta'|'marketplace'|'consignado'|'indicacao'> | null {
+        function stageToCol(stageName: string | null | undefined): keyof Pick<VendedorData, 'porta'|'marketplace'|'consignado'|'indicacao'|'redes_sociais'> | null {
           if (!stageName) return null;
           const n = stageName.trim().toLowerCase();
           // Porta/loja, Porta, Loja -> porta
@@ -446,6 +450,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           if (n === 'marketplace') return 'marketplace';
           if (n === 'consignado') return 'consignado';
           if (n === 'indicação' || n === 'indicacao') return 'indicacao';
+          // MELHORIA 1 (29/05/2026): coluna "Redes Sociais"
+          if (n === 'redes sociais' || n === 'redes_sociais' || n === 'redes') return 'redes_sociais';
           return null; // outras stages (Leads Inativos, Negociacao, Fechado, etc.) nao contam
         }
         const marcosLeads = (marcosRes.data || []) as Array<{
@@ -465,7 +471,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             l.origem === 'porta' ? 'porta' :
             l.origem === 'marketplace' ? 'marketplace' :
             l.origem === 'consignado' ? 'consignado' :
-            l.origem === 'indicacao' ? 'indicacao' : null
+            l.origem === 'indicacao' ? 'indicacao' :
+            l.origem === 'redes_sociais' ? 'redes_sociais' : null // MELHORIA 1 (29/05/2026)
           );
           if (col) {
             v[col]++;
@@ -547,7 +554,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         //     (vendedores reais + virtual). total = soma dos v.total
         //     (inclui Pedros sem assigned_to_id que so somam .total++).
         const porOrigem: Record<string, number> = {
-          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0,
+          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0,
         };
         for (const v of sorted) {
           porOrigem.trafico_pago += v.trafico_pago;
@@ -555,6 +562,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           porOrigem.marketplace  += v.marketplace;
           porOrigem.consignado   += v.consignado;
           porOrigem.indicacao    += v.indicacao;
+          porOrigem.redes_sociais += v.redes_sociais; // MELHORIA 1 (29/05/2026)
         }
         // total_leads = soma dos v.total de todas as rows (vendedores reais
         // + virtual "Sem vendedor"). Sem duplo-contar: cada lead vai pra
@@ -818,7 +826,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       {/* ───── Cards de Origem (linha completa abaixo) ───── */}
       <section className="shrink-0 px-8 pb-6">
         <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-3 font-bold">Origem dos Leads</h2>
-        <div className="grid grid-cols-5 portrait:grid-cols-2 gap-3">
+        <div className="grid grid-cols-6 portrait:grid-cols-2 gap-3">
           {ORIGENS.map(origem => {
             const Icon = origem.icon;
             const valor = kpis?.por_origem[origem.key] ?? 0;
@@ -918,13 +926,14 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
         )}
       </div>
 
-      {/* Breakdown por origem — 5 colunas (spec 27/05/2026 Bug 1) */}
+      {/* Breakdown por origem — 6 colunas (MELHORIA 1 29/05/2026: + Redes Sociais) */}
       <div className="space-y-1">
-        <BreakdownRow label="Tráfego Pago" value={v.trafico_pago} color="#3b82f6" />
-        <BreakdownRow label="Porta"        value={v.porta}        color="#f59e0b" />
-        <BreakdownRow label="Marketplace"  value={v.marketplace}  color="#a855f7" />
-        <BreakdownRow label="Consignado"   value={v.consignado}   color="#06b6d4" />
-        <BreakdownRow label="Indicação"    value={v.indicacao}    color="#fb923c" />
+        <BreakdownRow label="Tráfego Pago" value={v.trafico_pago}  color="#3b82f6" />
+        <BreakdownRow label="Porta"        value={v.porta}         color="#f59e0b" />
+        <BreakdownRow label="Marketplace"  value={v.marketplace}   color="#a855f7" />
+        <BreakdownRow label="Consignado"   value={v.consignado}    color="#06b6d4" />
+        <BreakdownRow label="Indicação"    value={v.indicacao}     color="#fb923c" />
+        <BreakdownRow label="Redes Sociais" value={v.redes_sociais} color="#ec4899" />
       </div>
 
       {/* Total */}

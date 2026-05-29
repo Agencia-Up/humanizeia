@@ -694,6 +694,7 @@ export const MARCOS_ORIGEM_OPTIONS = [
   { value: 'indicacao',             label: 'Indicação' },
   { value: 'consignado',            label: 'Consignado' },
   { value: 'consignado_indicacao',  label: 'Consignado-Indicação' },
+  { value: 'redes_sociais',         label: 'Redes Sociais' }, // MELHORIA 1 (29/05/2026)
 ] as const;
 
 /**
@@ -725,6 +726,7 @@ export function marcosOrigemSlugToCanonical(slug: string | null | undefined): st
     case 'indicacao':             return 'indicacao';
     case 'consignado':            return 'consignado';
     case 'consignado_indicacao':  return 'indicacao';
+    case 'redes_sociais':         return 'redes_sociais'; // MELHORIA 1 (29/05/2026): CHECK ja aceita
     default:                      return 'outros';
   }
 }
@@ -770,6 +772,8 @@ export function resolveMarcosStageIdForOrigem(
     case 'consignado':
     case 'consignado_indicacao':
       return findByName('consignado');
+    case 'redes_sociais': // MELHORIA 1 (29/05/2026): coluna "Redes Sociais" no Kanban
+      return findByName('redes sociais') || findByName('redes');
     default:
       return null;
   }
@@ -3688,7 +3692,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             <div className="flex-1 min-w-[180px] space-y-1">
               <label className="text-[10px] text-muted-foreground font-medium">Origem</label>
               {isMarcosCrm ? (
-                // Marcos: 6 origens fixas + "Outra" personalizada (spec 28/05/2026)
+                // Marcos: 7 origens fixas + "Outra" personalizada (spec 28/05/2026;
+                // + Redes Sociais 29/05/2026)
                 <Select
                   value={addLeadOrigem || '__none__'}
                   onValueChange={(v) => {
