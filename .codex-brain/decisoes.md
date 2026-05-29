@@ -58,3 +58,10 @@
 
 - Nunca registrar valores reais de tokens/API keys em arquivos do repo ou cerebro.
 - No cerebro, registrar apenas nomes de variaveis e locais esperados.
+
+## Identidade e versionamento (por maquina)
+
+- Modelo trunk-based: tanto `dev-aloan` quanto o socio Wander commitam e empurram para a `main`. A branch local `dev-wander` e compartilhada; a branch `dev-aloan` esta obsoleta e nao deve ser usada.
+- Cada maquina deve commitar com a identidade do seu dono. NESTA maquina (do dev-aloan): `user.name=dev-aloan`, `user.email=douglasaloan@gmail.com` no `.git/config` local; NAO usar `--author` de outra pessoa.
+- Guarda local instalada: `.git/hooks/pre-commit` bloqueia commits cujo autor nao seja `douglasaloan@gmail.com` (protege contra confusao de identidade por ferramentas como o Antigravity). Hook nao e versionado — recriar apos novo clone. Pular so com `git commit --no-verify`.
+- Pushes para `origin` usam o wrapper `scripts/git-logosia.cmd` (PAT do `github/.env.local`).
