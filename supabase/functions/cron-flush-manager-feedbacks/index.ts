@@ -88,7 +88,11 @@ function isWithinWindow(nowSP: Date, startStr: string, endStr: string): boolean 
   // start/end no formato 'HH:MM:SS' ou 'HH:MM'
   const [sH, sM] = startStr.split(":").map(Number);
   const [eH, eM] = endStr.split(":").map(Number);
-  const minutesNow = nowSP.getHours() * 60 + nowSP.getMinutes();
+  // FIX-17: nowSP já é o instante deslocado p/ -3h (nowInSaoPaulo). Ler com
+  // getHours()/getMinutes() depende do fuso do runtime (só funciona porque o
+  // Edge roda em UTC). getUTCHours/getUTCMinutes lê o relógio de parede SP já
+  // embutido no instante — correto independente do fuso do servidor.
+  const minutesNow = nowSP.getUTCHours() * 60 + nowSP.getUTCMinutes();
   const minutesStart = sH * 60 + sM;
   const minutesEnd = eH * 60 + eM;
   return minutesNow >= minutesStart && minutesNow <= minutesEnd;

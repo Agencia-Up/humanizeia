@@ -787,21 +787,27 @@ async function maybeHandleSellerAck(
   const sellerIds = matches.map((row: any) => row.id).filter(Boolean);
   console.log(`[TransferGuard] Mensagem de vendedor detectada: ${seller.name} (${senderPhone}). IA bloqueada.`);
 
-  const { data: pendingTransfer } = await supabase
+  // FIX-12: antes pegávamos só a transferência MAIS RECENTE (created_at DESC,
+  // limit 1). Com 2+ leads pendentes pro mesmo vendedor, um "Ok" confirmava o
+  // lead errado silenciosamente. Agora buscamos TODAS as pendentes e confirmamos
+  // a MAIS ANTIGA (FIFO — a mais próxima do timeout de 15 min), informando ao
+  // vendedor QUAL lead foi confirmado e quantos ainda faltam.
+  const { data: pendingTransfers } = await supabase
     .from('ai_lead_transfers')
     .select('id, lead_id, to_member_id, transfer_status, is_confirmed, created_at')
     .in('to_member_id', sellerIds)
     .eq('transfer_status', 'pending')
     .eq('is_confirmed', false)
     .not('lead_id', 'is', null)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order('created_at', { ascending: true });
 
-  if (!pendingTransfer) {
+  if (!pendingTransfers || pendingTransfers.length === 0) {
     console.log(`[TransferGuard] Vendedor ${seller.name} sem transferencia pendente. Mensagem ignorada pela IA.`);
     return { isSeller: true, confirmed: false };
   }
+
+  const pendingTransfer = pendingTransfers[0]; // FIFO: mais antiga primeiro
+  const remainingCount = pendingTransfers.length - 1;
 
   const now = new Date().toISOString();
   await supabase.from('ai_lead_transfers').update({
@@ -820,27 +826,47 @@ async function maybeHandleSellerAck(
     last_interaction_at: now,
   }).eq('id', pendingTransfer.lead_id);
 
+  // Identifica o lead confirmado para deixar claro ao vendedor qual foi.
+  let confirmedLeadLabel = '';
+  try {
+    const { data: confirmedLead } = await supabase
+      .from('ai_crm_leads')
+      .select('lead_name, client_name, remote_jid')
+      .eq('id', pendingTransfer.lead_id)
+      .maybeSingle();
+    if (confirmedLead) {
+      const leadPhone = digitsOnly(String(confirmedLead.remote_jid || '').split('@')[0] || '');
+      confirmedLeadLabel = [
+        confirmedLead.lead_name || confirmedLead.client_name,
+        leadPhone ? `wa.me/${leadPhone}` : '',
+      ].filter(Boolean).join(' — ');
+    }
+  } catch (_labelErr) { /* best-effort: mensagem genérica se falhar */ }
+
   try {
     const baseUrl = String(waInstance.api_url || '').replace(/\/$/, '');
     const instKey = waInstance.api_key_encrypted || '';
     let sellerPhone = digitsOnly(seller.whatsapp_number || senderPhone);
     if (sellerPhone.length === 10 || sellerPhone.length === 11) sellerPhone = `55${sellerPhone}`;
     if (baseUrl && instKey && sellerPhone) {
+      let ackText = confirmedLeadLabel
+        ? `Atendimento confirmado para o lead: ${confirmedLeadLabel}. Ele foi movido para voce no CRM.`
+        : 'Atendimento confirmado. O lead foi movido para voce no CRM.';
+      if (remainingCount > 0) {
+        ackText += `\n\nVoce ainda tem ${remainingCount} lead(s) aguardando confirmacao. Responda novamente para confirmar o proximo da fila (o mais antigo primeiro).`;
+      }
       await fetch(`${baseUrl}/send/text`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', token: instKey, apikey: instKey },
-        body: JSON.stringify({
-          number: sellerPhone,
-          text: 'Atendimento confirmado. O lead foi movido para voce no CRM.',
-        }),
+        body: JSON.stringify({ number: sellerPhone, text: ackText }),
       });
     }
   } catch (err) {
     console.warn('[TransferGuard] Falha ao enviar confirmacao ao vendedor:', err);
   }
 
-  console.log(`[TransferGuard] Transfer ${pendingTransfer.id} confirmado por ${seller.name}`);
-  return { isSeller: true, confirmed: true, transferId: pendingTransfer.id };
+  console.log(`[TransferGuard] Transfer ${pendingTransfer.id} confirmado (FIFO) por ${seller.name}. Restantes: ${remainingCount}`);
+  return { isSeller: true, confirmed: true, transferId: pendingTransfer.id, remaining: remainingCount };
 }
 
 async function getPreviousSellerForPedroLead(
@@ -1467,13 +1493,22 @@ const HANDOFF_CATEGORIA_LABEL: Record<HandoffMotivoCategoria, string> = {
 
 function buildBriefingForSeller(state: any, leadName: string, leadPhone: string, agentName: string): string {
   const lines: string[] = [];
-  lines.push(`🆕 *NOVO LEAD PARA ATENDIMENTO — ${state?.lead?.nome_completo || state?.lead?.nome || leadName || 'Lead'}*`);
+  // FIX-17: quando nenhum nome foi capturado, cai num rótulo com final do telefone
+  // em vez do literal "Lead" — o vendedor precisa conseguir identificar o contato.
+  const briefingName = state?.lead?.nome_completo || state?.lead?.nome || (leadName && leadName !== 'Lead' ? leadName : '');
+  const briefingPhoneTail = String(state?.lead?.telefone || leadPhone || '').replace(/\D/g, '').slice(-4);
+  const briefingDisplayName = briefingName || (briefingPhoneTail ? `Lead (final ${briefingPhoneTail})` : 'Lead');
+  lines.push(`🆕 *NOVO LEAD PARA ATENDIMENTO — ${briefingDisplayName}*`);
   lines.push(`📱 Telefone: ${state?.lead?.telefone || leadPhone}`);
   if (state?.lead?.cidade) lines.push(`🏙️ Cidade: ${state.lead.cidade}`);
+  // FIX-16: temperatura legível (Quente/Morno/Frio) em vez de só score interno.
+  lines.push(`*Temperatura:* ${temperaturaLabel(state)}`);
   lines.push('');
   if (state?.interesse?.modelo_desejado) {
     const conf = [state.interesse.configuracao, state.interesse.combustivel, state.interesse.cambio].filter(Boolean).join(', ');
-    lines.push(`🚗 *Interesse:* ${state.interesse.modelo_desejado}${conf ? ' (' + conf + ')' : ''}`);
+    // FIX-16: incluir ano desejado no interesse.
+    const ano = state.interesse.ano_desejado ? ` ${state.interesse.ano_desejado}` : '';
+    lines.push(`🚗 *Interesse:* ${state.interesse.modelo_desejado}${ano}${conf ? ' (' + conf + ')' : ''}`);
   }
   if (state?.veiculo_apresentado?.ja_apresentado) {
     const vp = state.veiculo_apresentado;
@@ -1497,6 +1532,84 @@ function buildBriefingForSeller(state: any, leadName: string, leadPhone: string,
   lines.push(`👉 *Atender:* https://wa.me/${(state?.lead?.telefone || leadPhone || '').replace(/\D/g, '')}`);
   lines.push('');
   lines.push(`_Briefing gerado pelo Pedro SDR (${agentName})_`);
+  return lines.join('\n');
+}
+
+// ─── Relatório do gerente (FIX-14) ─────────────────────────────────────────
+// Antes: cada caminho de transferência montava um relatório inline diferente e
+// incompleto — faltava cidade, interesse (modelo/ano/versão), condição
+// financeira e a temperatura do lead. Agora um helper único gera o relatório
+// completo a partir do conversationState, reaproveitado nos 3 caminhos.
+function temperaturaLabel(state: any): string {
+  const tier = calcLeadScoreV2(state || {}).tier;
+  if (tier === 'qualified' || tier === 'hot') return '🔥 Quente';
+  if (tier === 'warm') return '🌡️ Morno';
+  return '❄️ Frio';
+}
+
+function buildGerenteReport(opts: {
+  state: any;
+  agentName: string;
+  leadName: string;
+  leadPhone: string;
+  classificacao: string;
+  resumo?: string | null;
+  sellerName: string;
+  sellerPhone?: string | null;
+  transferredAt: string;
+  kind?: 'novo' | 'retorno';
+}): string {
+  const state = opts.state || {};
+  const phoneDigits = String(opts.leadPhone || state?.lead?.telefone || '').replace(/\D/g, '');
+  const header = (opts.kind === 'retorno') ? '🔄 *RETORNO DE LEAD*' : '📊 *RELATÓRIO DE LEAD*';
+  const lines: string[] = [];
+
+  lines.push(`${header} — ${opts.agentName}`);
+  lines.push('');
+  lines.push(`🕐 *Horário:* ${opts.transferredAt}`);
+  // FIX-17: fallback de nome com final do telefone em vez do literal "Lead".
+  const reportName = state?.lead?.nome_completo || state?.lead?.nome || (opts.leadName && opts.leadName !== 'Lead' ? opts.leadName : '');
+  const reportDisplayName = reportName || (phoneDigits ? `Lead (final ${phoneDigits.slice(-4)})` : 'Lead');
+  lines.push(`👤 *Lead:* ${reportDisplayName}`);
+  lines.push(`📱 *Telefone:* wa.me/${phoneDigits}`);
+  if (state?.lead?.cidade) lines.push(`🏙️ *Cidade:* ${state.lead.cidade}`);
+  lines.push(`🌡️ *Temperatura:* ${temperaturaLabel(state)}`);
+  lines.push(`📊 *Classificação IA:* ${opts.classificacao}`);
+
+  if (state?.interesse?.modelo_desejado) {
+    const conf = [state.interesse.ano_desejado, state.interesse.configuracao, state.interesse.combustivel, state.interesse.cambio]
+      .filter(Boolean).join(', ');
+    lines.push(`🚗 *Interesse:* ${state.interesse.modelo_desejado}${conf ? ' (' + conf + ')' : ''}`);
+  }
+  if (state?.veiculo_apresentado?.ja_apresentado) {
+    const vp = state.veiculo_apresentado;
+    const apresentado = [vp.modelo, vp.ano].filter(Boolean).join(' ');
+    lines.push(`📋 *Veículo apresentado:* ${apresentado || 'sim'}${vp.preco ? ' — R$ ' + vp.preco : ''}`);
+  }
+
+  const fin: string[] = [];
+  if (state?.negociacao?.forma_pagamento) fin.push(`forma: ${state.negociacao.forma_pagamento}`);
+  if (state?.negociacao?.valor_entrada) fin.push(`entrada: ${state.negociacao.valor_entrada}`);
+  if (state?.negociacao?.tem_troca && state?.negociacao?.carro_troca) {
+    const ct = state.negociacao.carro_troca;
+    const trocaParts = [ct.modelo, ct.ano, ct.configuracao, ct.cambio].filter(Boolean).join(' ');
+    fin.push(`troca: ${trocaParts || 'sim'}${ct.status ? ' (' + ct.status + ')' : ''}`);
+  } else if (state?.negociacao?.tem_troca === false) {
+    fin.push('sem troca');
+  }
+  if (fin.length > 0) lines.push(`💰 *Condição financeira:* ${fin.join(' | ')}`);
+
+  if (opts.resumo) {
+    lines.push('');
+    lines.push(`📝 *Resumo:* ${String(opts.resumo).substring(0, 300)}`);
+  }
+
+  lines.push('');
+  lines.push('━━━━━━━━━━━━━━━━━━━━');
+  lines.push(`🎯 *Enviado para:* ${opts.sellerName}`);
+  if (opts.sellerPhone) lines.push(`📲 *WhatsApp vendedor:* ${opts.sellerPhone}`);
+  lines.push('━━━━━━━━━━━━━━━━━━━━');
+  lines.push('_Gerado automaticamente pelo Pedro SDR_');
   return lines.join('\n');
 }
 
@@ -1560,6 +1673,155 @@ function semanticMatch(needle: string, haystack: string): { matched: boolean; ex
   return { matched: false, exact: false };
 }
 
+// ─── FIX-10/FIX-15: Normalização fuzzy de modelo + tipo de veículo ──────────
+// Portado de _shared/pedro-v2/vehicleResolver_20260525_brain.ts. Antes o match
+// de modelo era .includes() literal: "corola" NÃO batia em "Corolla", "civiqui"
+// NÃO batia em "Civic". Agora usamos aliases curados + distância de Levenshtein.
+// inferRequestedVehicleType separa carro × moto para o filtro do FIX-15.
+type V1VehicleAlias = { canonical: string; type: string; aliases: string[] };
+const V1_VEHICLE_ALIASES: V1VehicleAlias[] = [
+  { canonical: "oroch", type: "pickup", aliases: ["oroch", "duster oroch", "oroque", "oroqui", "oroki", "orochi", "orok", "orock", "oroc", "oroq", "orochh"] },
+  { canonical: "duster", type: "suv", aliases: ["duster", "daster", "duster authentique", "duster dynamique"] },
+  { canonical: "renegade", type: "suv", aliases: ["renegade", "renegad", "renegadee", "renagade", "renegued", "jeep renegade"] },
+  { canonical: "onix", type: "hatch", aliases: ["onix", "onix plus", "onix sedan", "onix hatch", "onis", "unix", "onixx"] },
+  { canonical: "strada", type: "pickup", aliases: ["strada", "strada cabine dupla", "strada cd", "estrada"] },
+  { canonical: "toro", type: "pickup", aliases: ["toro", "fiat toro", "tora"] },
+  { canonical: "saveiro", type: "pickup", aliases: ["saveiro", "savero", "saveiru"] },
+  { canonical: "montana", type: "pickup", aliases: ["montana", "chevrolet montana"] },
+  { canonical: "hilux", type: "pickup", aliases: ["hilux", "hilux sw4"] },
+  { canonical: "ranger", type: "pickup", aliases: ["ranger", "ford ranger"] },
+  { canonical: "s10", type: "pickup", aliases: ["s10", "s 10", "chevrolet s10"] },
+  { canonical: "amarok", type: "pickup", aliases: ["amarok", "amaroc"] },
+  { canonical: "hb20", type: "hatch", aliases: ["hb20", "hb 20", "hb20s"] },
+  { canonical: "creta", type: "suv", aliases: ["creta", "cretta", "creta n line", "creta action"] },
+  { canonical: "compass", type: "suv", aliases: ["compass", "compas", "jeep compass"] },
+  { canonical: "tracker", type: "suv", aliases: ["tracker", "traker", "chevrolet tracker"] },
+  { canonical: "tcross", type: "suv", aliases: ["t cross", "tcross", "t-cross", "volkswagen t cross", "vw t cross"] },
+  { canonical: "asx", type: "suv", aliases: ["asx", "mitsubishi asx"] },
+  { canonical: "fastback", type: "suv", aliases: ["fastback", "fast back", "fiat fastback"] },
+  { canonical: "pulse", type: "suv", aliases: ["pulse", "fiat pulse"] },
+  { canonical: "ecosport", type: "suv", aliases: ["ecosport", "eco sport", "ford ecosport"] },
+  { canonical: "corolla", type: "sedan", aliases: ["corolla", "corola", "toyota corolla"] },
+  { canonical: "civic", type: "sedan", aliases: ["civic", "civc", "civiqui", "sivic", "honda civic"] },
+  { canonical: "cruze", type: "sedan", aliases: ["cruze", "cruse", "chevrolet cruze"] },
+  { canonical: "argo", type: "hatch", aliases: ["argo", "fiat argo"] },
+  { canonical: "mobi", type: "hatch", aliases: ["mobi", "fiat mobi"] },
+  { canonical: "kwid", type: "hatch", aliases: ["kwid", "quid", "renault kwid"] },
+  { canonical: "gol", type: "hatch", aliases: ["gol", "vw gol", "volkswagen gol"] },
+  { canonical: "polo", type: "hatch", aliases: ["polo", "vw polo", "volkswagen polo"] },
+  { canonical: "virtus", type: "sedan", aliases: ["virtus", "vw virtus", "volkswagen virtus"] },
+  { canonical: "kicks", type: "suv", aliases: ["kicks", "kick", "nissan kicks"] },
+  { canonical: "city", type: "sedan", aliases: ["city", "honda city"] },
+  { canonical: "fit", type: "hatch", aliases: ["fit", "honda fit"] },
+];
+
+function modelNormalize(value?: string | null): string {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[-_/]/g, " ")
+    .replace(/[^\w\s.]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function bndvLevenshtein(left: string, right: string): number {
+  if (left === right) return 0;
+  if (!left) return right.length;
+  if (!right) return left.length;
+  const previous = Array.from({ length: right.length + 1 }, (_, i) => i);
+  const current = new Array(right.length + 1).fill(0);
+  for (let i = 1; i <= left.length; i++) {
+    current[0] = i;
+    for (let j = 1; j <= right.length; j++) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      current[j] = Math.min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
+    }
+    for (let j = 0; j <= right.length; j++) previous[j] = current[j];
+  }
+  return previous[right.length];
+}
+
+// Similaridade 0..1. Tokens ≤3 chars retornam 0 para evitar falso positivo
+// (gol/fit/s10/city dependem de alias/exato, nunca de fuzzy).
+function bndvSimilarity(left: string, right: string): number {
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.length <= 3 || right.length <= 3) return 0;
+  return 1 - bndvLevenshtein(left, right) / Math.max(left.length, right.length);
+}
+
+// Resolve um texto (pedido do cliente OU modelName do BNDV) ao modelo canônico.
+function canonicalizeModel(text: string): string | null {
+  const normalized = modelNormalize(text);
+  if (!normalized) return null;
+  for (const v of V1_VEHICLE_ALIASES) {
+    for (const alias of v.aliases) {
+      const a = modelNormalize(alias);
+      if (!a) continue;
+      if (new RegExp(`\\b${a.replace(/\s+/g, "\\s+")}\\b`).test(normalized)) return v.canonical;
+    }
+  }
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  let best: { canonical: string; score: number } | null = null;
+  for (const v of V1_VEHICLE_ALIASES) {
+    for (const alias of v.aliases) {
+      const aTokens = modelNormalize(alias).split(/\s+/).filter(Boolean);
+      if (aTokens.length !== 1) continue;
+      for (const token of tokens) {
+        const score = bndvSimilarity(token, aTokens[0]);
+        if (score >= 0.8 && (!best || score > best.score)) best = { canonical: v.canonical, score };
+      }
+    }
+  }
+  return best?.canonical || null;
+}
+
+// Match de modelo tolerante a erro de digitação. exact=true quando há substring
+// literal; exact=false quando bate por canônico/fuzzy (peso menor no score).
+function modelMatches(needle: string, haystack: string): { matched: boolean; exact: boolean } {
+  const n = modelNormalize(needle);
+  const h = modelNormalize(haystack);
+  if (!n) return { matched: true, exact: true };
+  if (!h) return { matched: false, exact: false };
+  if (h.includes(n) || n.includes(h)) return { matched: true, exact: true };
+  const cn = canonicalizeModel(n);
+  const ch = canonicalizeModel(h);
+  if (cn && ch && cn === ch) return { matched: true, exact: false };
+  for (const t of h.split(/\s+/).filter(Boolean)) {
+    if (bndvSimilarity(n, t) >= 0.8) return { matched: true, exact: false };
+  }
+  return { matched: false, exact: false };
+}
+
+// FIX-15: tipo de veículo pedido pelo cliente (carro × moto × subtipos).
+function inferRequestedVehicleType(text?: string | null): string | null {
+  const n = modelNormalize(text);
+  if (!n) return null;
+  if (/\b(moto|motos|motocicleta|scooter|biz|cg|fan|titan|bros|xre|pcx|factor|fazer|tenere|lander|crosser|nmax|adv)\b/.test(n)) return "moto";
+  if (/\b(picape|pickup|caminhonete|camionete|strada|toro|saveiro|montana|oroch|hilux|ranger|s10|amarok)\b/.test(n)) return "pickup";
+  if (/\b(suv|renegade|compass|creta|kicks|hrv|tracker|duster|tcross|fastback|pulse|asx)\b/.test(n)) return "suv";
+  if (/\b(sedan|corolla|civic|cruze|virtus|versa|logan)\b/.test(n)) return "sedan";
+  if (/\b(hatch|onix|hb20|argo|kwid|mobi|gol|fox|sandero|polo)\b/.test(n)) return "hatch";
+  if (/\b(carro|carros|veiculo|veiculos|auto|automovel)\b/.test(n)) return "carro";
+  return null;
+}
+
+// Infere o tipo de um veículo do BNDV a partir de marca+modelo+versão.
+function bndvVehicleType(v: any): string | null {
+  const t = inferRequestedVehicleType(`${v?.markName || ""} ${v?.modelName || ""} ${v?.versionName || ""}`);
+  if (t && t !== "carro") return t;
+  const canonical = canonicalizeModel(`${v?.modelName || ""}`);
+  if (canonical) {
+    const found = V1_VEHICLE_ALIASES.find((a) => a.canonical === canonical);
+    if (found) return found.type;
+  }
+  return t; // pode ser "carro" genérico ou null
+}
+
+const CAR_TYPES = new Set(["carro", "pickup", "suv", "sedan", "hatch"]);
+
 // ─── BNDV Fallback Filters (INLINED from _shared/qualification/bndvFallback.ts)
 // IT-2.3: quando filtros originais retornam 0 itens, gera tentativas
 // progressivamente mais relaxadas. Mantém marca + modelo em TODAS as
@@ -1601,6 +1863,12 @@ function applyBndvFiltering(vehicles: any[], filters: any, synonymsEnabled: bool
     ['cambio', 'transmissionName'],
     ['cor', 'color'],
   ];
+  // FIX-15: tipo pedido (carro × moto). Deriva de modelo/versão/query do cliente.
+  const requestedType = inferRequestedVehicleType(filters.modelo) ||
+    inferRequestedVehicleType(filters.versao) ||
+    inferRequestedVehicleType(filters.query);
+  const wantsMoto = requestedType === 'moto';
+  const wantsCar = !!requestedType && CAR_TYPES.has(requestedType);
   let result = vehicles.map((v: any) => {
     let score = 0;
     let kept = true;
@@ -1608,6 +1876,13 @@ function applyBndvFiltering(vehicles: any[], filters: any, synonymsEnabled: bool
       const needle = filters[filterKey];
       if (!needle) continue;
       const haystack = v[fieldKey] || '';
+      if (filterKey === 'modelo') {
+        // FIX-10: modelo usa matching fuzzy/alias (corola→corolla, civiqui/sivic→civic)
+        const m = modelMatches(needle, haystack);
+        if (!m.matched) { kept = false; break; }
+        score += m.exact ? 2 : 1;
+        continue;
+      }
       if (synonymsEnabled) {
         const r = semanticMatch(needle, haystack);
         if (!r.matched) { kept = false; break; }
@@ -1621,6 +1896,12 @@ function applyBndvFiltering(vehicles: any[], filters: any, synonymsEnabled: bool
     if (kept && filters.ano_max && (v.year || 9999) > filters.ano_max) kept = false;
     if (kept && filters.preco_max && (v.saleValue || 0) > filters.preco_max) kept = false;
     if (kept && filters.km_max && (v.km || 0) > filters.km_max) kept = false;
+    // FIX-15: não misturar moto com carro. Se cliente pediu carro, exclui motos; se pediu moto, só motos.
+    if (kept && (wantsMoto || wantsCar)) {
+      const vType = bndvVehicleType(v);
+      if (wantsMoto && vType !== 'moto') kept = false;
+      else if (wantsCar && vType === 'moto') kept = false;
+    }
     return { ...v, _filterScore: kept ? score : -1 };
   }).filter((v: any) => v._filterScore >= 0)
     .sort((a: any, b: any) => b._filterScore - a._filterScore);
@@ -1721,6 +2002,8 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
 }`;
 
     console.log('[BNDV] Consultando estoque...');
+    // BUGFIX auditoria 2026-05-28: sem timeout, uma Azure pendurada travava o turno
+    // do lead até o limite da edge function. AbortSignal.timeout aborta em 8s.
     const gqlRes = await fetch('https://api-estoque.azurewebsites.net/graphql', {
       method: 'POST',
       headers: {
@@ -1728,15 +2011,34 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
         'Authorization': `Bearer ${apiToken}`,
       },
       body: JSON.stringify({ query: graphqlQuery }),
+      signal: AbortSignal.timeout(8000),
     });
 
     if (!gqlRes.ok) {
       const errText = await gqlRes.text();
       console.error('[BNDV] Erro GraphQL:', gqlRes.status, errText);
-      return { success: false, total: 0, items: [], error: `Erro BNDV: ${gqlRes.status}` };
+      return {
+        success: false, total: 0, items: [], error: `Erro BNDV: ${gqlRes.status}`,
+        system_error: true,
+        agent_instruction: 'ERRO TÉCNICO ao consultar o estoque (NÃO é falta do veículo). NÃO diga que não temos o carro. Peça um instante e diga que vai confirmar a disponibilidade, ou ofereça encaminhar a um consultor.',
+      };
     }
 
     const gqlData = await gqlRes.json();
+
+    // BUGFIX auditoria 2026-05-28: o BNDV pode responder HTTP 200 com corpo de erro
+    // GraphQL (sem `data`). Antes virava lista vazia → Pedro dizia "não temos"
+    // (falso negativo / bug "Roberta"). Agora distinguimos erro de sistema de
+    // "carro inexistente".
+    if (Array.isArray(gqlData?.errors) && gqlData.errors.length > 0) {
+      console.error('[BNDV] GraphQL retornou errors:', JSON.stringify(gqlData.errors).slice(0, 300));
+      return {
+        success: false, total: 0, items: [], error: 'bndv_graphql_error',
+        system_error: true,
+        agent_instruction: 'ERRO TÉCNICO ao consultar o estoque (NÃO é falta do veículo). NÃO diga que não temos o carro. Peça um instante e diga que vai confirmar a disponibilidade, ou ofereça encaminhar a um consultor.',
+      };
+    }
+
     const originalVehicles = gqlData?.data?.vehiclesBy || [];
     console.log(`[BNDV] Total veículos retornados: ${originalVehicles.length}`);
 
@@ -1800,8 +2102,15 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
     }
     return result;
   } catch (err: any) {
-    console.error('[BNDV] Erro na consulta:', err);
-    return { success: false, total: 0, items: [], error: err.message };
+    // BUGFIX auditoria 2026-05-28: distinguir timeout/erro de rede de "sem estoque".
+    const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    console.error('[BNDV] Erro na consulta:', isTimeout ? 'TIMEOUT (8s)' : err);
+    return {
+      success: false, total: 0, items: [],
+      error: isTimeout ? 'bndv_timeout' : (err?.message || 'bndv_error'),
+      system_error: true,
+      agent_instruction: 'ERRO TÉCNICO/timeout ao consultar o estoque (NÃO é falta do veículo). NÃO diga que não temos o carro. Peça um instante e diga que vai confirmar a disponibilidade, ou ofereça encaminhar a um consultor.',
+    };
   }
 }
 
@@ -2038,6 +2347,7 @@ Deno.serve(async (req) => {
         const { data: alreadyInInbox } = await supabase.from('wa_inbox')
           .select('id')
           .eq('remote_message_id', messageIdForDedup)
+          .limit(1) // FIX-17: sem unique constraint, dups podem gerar >1 row; .limit(1) evita o maybeSingle() falhar e reprocessar
           .maybeSingle();
         if (alreadyInInbox) {
           console.log(`[Webhook] ⏭️ Mensagem ${messageIdForDedup} já processada pelo wa-inbox-webhook. Pulando.`);
@@ -2086,6 +2396,7 @@ Deno.serve(async (req) => {
       const { data: alreadyInInbox } = await supabase.from('wa_inbox')
         .select('id')
         .eq('remote_message_id', evMsgId)
+        .limit(1) // FIX-17: ver nota acima (dedup robusto a linhas duplicadas)
         .maybeSingle();
       if (alreadyInInbox) {
         console.log(`[Webhook] ⏭️ Mensagem ${evMsgId} já processada pelo wa-inbox-webhook. Pulando.`);
@@ -2173,30 +2484,45 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   for (const seller of (senderSellers || [])) sellerById.set(seller.id, seller);
   for (const seller of (fallbackSellers || [])) sellerById.set(seller.id, seller);
   senderSellers = [...sellerById.values()];
+
+  // FIX-17: o ilike '%last10' casa só pelos últimos 10 dígitos e pode bater em
+  // números de DDDs diferentes que compartilham esse sufixo (ex.: 47 vs 57).
+  // Refina via phonesMatch (normalizador BR: trata 9º dígito e código de país) e
+  // prioriza igualdade exata de dígitos, eliminando o falso-positivo de sufixo.
+  const senderFullDigits = digitsOnly(remoteJid);
+  const verifiedSellers = senderSellers.filter((seller: any) => phonesMatch(seller.whatsapp_number, remoteJid));
+  if (verifiedSellers.length) senderSellers = verifiedSellers; // mantém o ilike como prefiltro só se nada casar
+  senderSellers.sort((a: any, b: any) => {
+    const strength = (seller: any) => digitsOnly(seller.whatsapp_number) === senderFullDigits ? 1 : 0;
+    return strength(b) - strength(a); // exato primeiro; empate preserva ordem (auth_user_id)
+  });
   const senderSeller = senderSellers[0] || null;
   const senderSellerIds = senderSellers.map((seller: any) => seller.id).filter(Boolean);
 
   if (senderSeller) {
     console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} (id=${senderSeller.id}, jid=${remoteJid}) — verificando transfer pendente`);
     const now = new Date().toISOString();
-    // Busca QUALQUER transfer recente do vendedor — não só pending. Cobre casos
-    // onde confirmation_timeout_at já passou mas vendedor está respondendo.
-    const { data: pendingTransfer } = await supabase
+    // FIX-12 (fallback): mesma correção do maybeHandleSellerAck. Antes pegava a
+    // transferência MAIS RECENTE (DESC, limit 1), confirmando o lead errado quando
+    // o vendedor tinha 2+ pendentes. Agora confirma a MAIS ANTIGA (FIFO).
+    const { data: pendingTransfers } = await supabase
       .from('ai_lead_transfers')
       .select('id, lead_id, to_member_id, transfer_status, is_confirmed, created_at')
       .in('to_member_id', senderSellerIds)
       .eq('transfer_status', 'pending')
       .not('lead_id', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .order('created_at', { ascending: true });
+
+    const unconfirmedTransfers = (pendingTransfers || []).filter((t: any) => !t.is_confirmed);
+    const pendingTransfer = unconfirmedTransfers[0] || null; // mais antiga não confirmada
+    const remainingCount = Math.max(0, unconfirmedTransfers.length - 1);
     if (pendingTransfer) {
-      console.log(`[Transfer] Último transfer do vendedor: id=${pendingTransfer.id} status=${pendingTransfer.transfer_status} confirmed=${pendingTransfer.is_confirmed} created=${pendingTransfer.created_at}`);
+      console.log(`[Transfer] Transfer FIFO do vendedor: id=${pendingTransfer.id} created=${pendingTransfer.created_at} | pendentes restantes=${remainingCount}`);
     } else {
-      console.log(`[Transfer] Nenhum transfer encontrado para vendedor ${senderSeller.name}`);
+      console.log(`[Transfer] Nenhum transfer pendente não-confirmado para vendedor ${senderSeller.name}`);
     }
-    // Só confirma se ainda está pending E não confirmado
-    const shouldConfirm = pendingTransfer && !pendingTransfer.is_confirmed;
+    // Só confirma se ainda está pending E não confirmado (já garantido pelo filtro)
+    const shouldConfirm = !!pendingTransfer;
 
     if (shouldConfirm && pendingTransfer) {
       // Confirma o transfer
@@ -2236,7 +2562,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         let sellerDest = remoteJid.replace(/\D/g, '');
         if (sellerDest.length === 10 || sellerDest.length === 11) sellerDest = `55${sellerDest}`;
 
-        const confirmMsg = `✅ *Atendimento Confirmado!*\n\nO lead foi atribuído a você no CRM. Pode seguir com a venda! 🚀`;
+        let confirmMsg = `✅ *Atendimento Confirmado!*\n\nO lead foi atribuído a você no CRM. Pode seguir com a venda! 🚀`;
+        if (remainingCount > 0) {
+          confirmMsg += `\n\nVocê ainda tem ${remainingCount} lead(s) aguardando confirmação. Responda novamente para confirmar o próximo (o mais antigo primeiro).`;
+        }
 
         await fetch(`${sellerBaseUrl}/send/text`, {
           method: 'POST',
@@ -2509,8 +2838,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           }
           console.log(`[Webhook] ✅ Mídia baixada! length: ${base64.length}, mime: ${dData.mimetype || 'N/A'}, cached: ${dData.cached || false}`);
 
-          // UazAPI V6 pode incluir transcrição automática para áudio
+          // UazAPI V6 pode incluir transcrição automática para áudio.
+          // BUGFIX auditoria 2026-05-28: antes só logava e descartava — agora
+          // aproveita a transcrição gratuita do UazAPI (evita custo/latência do Whisper).
           if (isAudio && dData.transcription && !finalUserText) {
+            finalUserText = String(dData.transcription).trim();
+            userMessageContentForOpenAi = finalUserText;
             console.log(`[Webhook] UazAPI já transcreveu o áudio: "${dData.transcription}"`);
           }
         } else {
@@ -2582,8 +2915,37 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   }
 
   if (!finalUserText && typeof userMessageContentForOpenAi === 'string') {
-    if (isAudio || isImage) {
-      console.error(`[Webhook] ⚠️ Mídia ${msgType} recebida mas não foi possível processar (download/transcrição falhou). Mensagem ignorada.`);
+    if (isAudio) {
+      // BUGFIX auditoria 2026-05-28: antes, áudio sem transcrição era ignorado em
+      // silêncio — o cliente não recebia NENHUMA resposta. Agora pedimos reenvio em texto.
+      console.error(`[Webhook] ⚠️ Áudio ${msgType} sem transcrição (download/Whisper falhou) — pedindo reenvio em texto.`);
+      const audioFallbackMsg = 'Oi! Não consegui ouvir seu áudio agora 🙉 Consegue me mandar por mensagem de texto? Assim já te ajudo certinho 👍';
+      try {
+        await fetch(`${baseUrl}/send/text`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'token': instKey },
+          body: JSON.stringify({ number: phoneNumber, text: audioFallbackMsg })
+        });
+        await supabase.from('wa_inbox').insert({
+          user_id: waInstance.user_id,
+          instance_id: waInstance.id,
+          phone: phoneNumber,
+          contact_name: pushName || null,
+          direction: 'outgoing',
+          message_type: 'text',
+          content: audioFallbackMsg,
+          is_read: true,
+          ai_category: 'agent',
+        }).then(({ error }: any) => {
+          if (error) console.error('[Webhook] audio-fallback inbox insert error:', error.message);
+        });
+      } catch (err) {
+        console.error('[Webhook] Falha ao enviar fallback de áudio:', err);
+      }
+      return new Response('Audio without transcription — asked for text', { headers: corsHeaders });
+    }
+    if (isImage) {
+      console.error(`[Webhook] ⚠️ Mídia ${msgType} recebida mas não foi possível processar (download falhou). Mensagem ignorada.`);
     } else {
       console.log('[Webhook] Empty text message — ignorando');
     }
@@ -2930,7 +3292,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     body: JSON.stringify({
       model: aiModel,
       messages: [{ role: 'system', content: systemPrompt }, ...chatHistory, { role: 'user', content: userMessageContentForOpenAi }],
-      temperature: agent.temperature || 0.7,
+      temperature: agent.temperature ?? 0.7,
       tools: tools,
       tool_choice: "auto"
     })
@@ -3052,7 +3414,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           body: JSON.stringify({
             model: aiModel,
             messages: toolMessages,
-            temperature: agent.temperature || 0.7,
+            temperature: agent.temperature ?? 0.7,
           }),
         });
 
@@ -3088,6 +3450,10 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
     // ── TRANSFERIR PARA VENDEDOR (tool explícita com sync feedback) ─────
     // Resolve ERR_15 (anunciou transfer mas não executou) e ERR_16 (handoff sem briefing)
+    // FIX-13: sinaliza que a transferência já foi resolvida neste turno, para o
+    // handler atualizar_etapa_crm NÃO disparar uma segunda transferência nem
+    // sobrescrever o status 'transferido' com a etapa do CRM.
+    let transferExecutedThisTurn = false;
     const transferToolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'transferir_para_vendedor');
     if (transferToolCall) {
       let transferResult: any = { success: false, error: 'unknown' };
@@ -3136,6 +3502,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 vendedor_nome: 'vendedor',
                 message: 'Este lead ja esta aguardando confirmacao de um vendedor.',
               };
+              transferExecutedThisTurn = true; // FIX-13: já há transfer pendente
               console.log(`[Transfer-Tool] Lead ${leadRow.id} ja tem transferencia pendente.`);
             } else {
             // 3. Selecionar vendedor — preferência: assigned_to_id existente (lead retornou)
@@ -3215,6 +3582,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 assigned_to_id: null,
                 summary: transferArgs.resumo_breve || null,
               }).eq('id', leadRow.id);
+              transferExecutedThisTurn = true; // FIX-13: transferência efetivada neste turno
 
               // 5. Briefing estruturado pro vendedor (IT-2.4: V2 quando flag on)
               let briefing: string;
@@ -3266,16 +3634,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
                     if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
 
-                    const gerenteMsg =
-                      `RELATORIO DE LEAD - ${agent.name}\n\n` +
-                      `Horario: ${transferredAt}\n` +
-                      `Lead: ${conversationState?.lead?.nome_completo || conversationState?.lead?.nome || pushName || 'Lead'}\n` +
-                      `Telefone: wa.me/${phoneNumber}\n` +
-                      `Classificacao IA: ${crmStage}\n` +
-                      `${transferArgs.resumo_breve ? `Resumo: ${String(transferArgs.resumo_breve).substring(0, 300)}\n` : ''}` +
-                      `\nEnviado para: ${chosenSeller.name}\n` +
-                      `WhatsApp vendedor: ${chosenSeller.whatsapp_number || 'sem numero'}\n\n` +
-                      `_Gerado automaticamente pelo Pedro SDR_`;
+                    const gerenteMsg = buildGerenteReport({
+                      state: conversationState,
+                      agentName: agent.name || 'Pedro SDR',
+                      leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                      leadPhone: phoneNumber,
+                      classificacao: crmStage,
+                      resumo: transferArgs.resumo_breve,
+                      sellerName: chosenSeller.name,
+                      sellerPhone: chosenSeller.whatsapp_number || 'sem numero',
+                      transferredAt,
+                      kind: 'novo',
+                    });
 
                     const gerenteRes = await fetch(`${baseUrl}/send/text`, {
                       method: 'POST',
@@ -3286,6 +3656,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   } catch (gerenteErr) {
                     console.error('[Transfer-Tool] Falha ao notificar gerente:', gerenteErr);
                   }
+                } else {
+                  console.warn(`[Transfer-Tool] ⚠️ gerente_phone vazio (agent=${agent.id}) — relatório do gerente NÃO enviado. Configure wa_ai_agents.gerente_phone.`);
                 }
 
                 const updatedState = deepMerge(conversationState || {}, {
@@ -3345,7 +3717,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 content: JSON.stringify(transferResult),
               },
             ],
-            temperature: agent.temperature || 0.7,
+            temperature: agent.temperature ?? 0.7,
           }),
         });
         if (followupRes.ok) {
@@ -3378,7 +3750,12 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
     // ── CRM Tool Call (atualizar_etapa_crm) ─────────────────────────────
     const toolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'atualizar_etapa_crm');
-    if (toolCall) {
+    if (toolCall && transferExecutedThisTurn) {
+      // FIX-13: transferir_para_vendedor já resolveu a transferência neste turno
+      // (status='transferido', briefing + gerente já enviados). Rodar o handler
+      // legado aqui sobrescreveria o status e poderia disparar transferência dupla.
+      console.log('[CRM] atualizar_etapa_crm ignorado: transferência já executada neste turno (FIX-13).');
+    } else if (toolCall) {
       try {
         const args = JSON.parse(toolCall.function.arguments);
 
@@ -3521,16 +3898,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
                     if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
 
-                    const gerenteMsg =
-                      `🔄 *RETORNO DE LEAD — ${agent.name}*\n\n` +
-                      `🕐 *Horário:* ${transferredAt}\n\n` +
-                      `👤 *Lead:* ${pushName}\n` +
-                      `📱 *Telefone:* wa.me/${phoneNumber}\n` +
-                      `${args.resumo ? `\n📝 *O que ele quer agora:* ${args.resumo.substring(0, 300)}\n` : ''}` +
-                      `\n━━━━━━━━━━━━━━━━━━━━\n\n` +
-                      `🎯 *Reencaminhado para:* ${returnSeller.name}\n` +
-                      `\n━━━━━━━━━━━━━━━━━━━━\n` +
-                      `_Gerado automaticamente pelo Pedro SDR_`;
+                    const gerenteMsg = buildGerenteReport({
+                      state: conversationState,
+                      agentName: agent.name || 'Pedro SDR',
+                      leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                      leadPhone: phoneNumber,
+                      classificacao: nextCrmStatus,
+                      resumo: args.resumo,
+                      sellerName: returnSeller.name,
+                      sellerPhone: returnSeller.whatsapp_number,
+                      transferredAt,
+                      kind: 'retorno',
+                    });
 
                     await fetch(`${baseUrl}/send/text`, {
                       method: 'POST',
@@ -3540,6 +3919,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   } catch (gerenteErr) {
                     console.error('[Transfer] Falha ao notificar gerente (retorno):', gerenteErr);
                   }
+                } else {
+                  console.warn(`[Transfer] ⚠️ gerente_phone vazio (agent=${agent.id}) — relatório de retorno NÃO enviado ao gerente.`);
                 }
 
                 // CRM do Marcos e manual/isolado; retorno do Pedro nao atualiza crm_leads.
@@ -3624,19 +4005,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                       let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
                       if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
 
-                      const gerenteMsg =
-                        `📊 *RELATÓRIO DE LEAD — ${agent.name}*\n\n` +
-                        `🕐 *Horário:* ${transferredAt}\n\n` +
-                        `👤 *Lead:* ${pushName}\n` +
-                        `📱 *Telefone:* wa.me/${phoneNumber}\n` +
-                        `📊 *Classificacao IA:* ${nextCrmStatus}\n` +
-                        `📌 *CRM:* permanece em Novo ate vendedor/gerente mover\n` +
-                        `${args.resumo ? `\n📝 *Resumo:* ${args.resumo.substring(0, 300)}\n` : ''}` +
-                        `\n━━━━━━━━━━━━━━━━━━━━\n\n` +
-                        `🎯 *Enviado para:* ${nextSeller.name}\n` +
-                        `📲 *WhatsApp vendedor:* ${nextSeller.whatsapp_number}\n` +
-                        `\n━━━━━━━━━━━━━━━━━━━━\n` +
-                        `_Gerado automaticamente pelo Pedro SDR_`;
+                      const gerenteMsg = buildGerenteReport({
+                        state: conversationState,
+                        agentName: agent.name || 'Pedro SDR',
+                        leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                        leadPhone: phoneNumber,
+                        classificacao: nextCrmStatus,
+                        resumo: args.resumo,
+                        sellerName: nextSeller.name,
+                        sellerPhone: nextSeller.whatsapp_number,
+                        transferredAt,
+                        kind: 'novo',
+                      });
 
                       const gerenteRes = await fetch(`${baseUrl}/send/text`, {
                         method: 'POST',
@@ -3647,6 +4027,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                     } catch (gerenteErr) {
                       console.error('[Transfer] Falha ao notificar gerente:', gerenteErr);
                     }
+                  } else {
+                    console.warn(`[Transfer] ⚠️ gerente_phone vazio (agent=${agent.id}) — relatório do gerente NÃO enviado.`);
                   }
 
                   // CRM do Marcos e manual/isolado; transferencia do Pedro nao cria lead em crm_leads.
@@ -3676,7 +4058,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                 aiMessage,
                 { role: 'tool', tool_call_id: toolCall.id, name: toolCall.function.name, content: `{"success": true}` }
               ],
-              temperature: agent.temperature || 0.7
+              temperature: agent.temperature ?? 0.7
             })
           });
           if (secondRes.ok) {
