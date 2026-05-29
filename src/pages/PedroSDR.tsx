@@ -3381,6 +3381,26 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     return true;
   });
 
+  // ── TAREFA 2 (29/05/2026): cards do topo refletem o vendedor selecionado ──────
+  // Aplica-se SOMENTE ao painel do Marcos (isMarcosCrm). No Pedro o comportamento
+  // fica intacto (cards sempre = total geral do banco). Regra:
+  //   • filterSeller === 'all'  -> usa leadMetrics (count queries do banco, exatas)
+  //   • vendedor específico      -> conta a partir dos leads carregados (assigned_to_id)
+  //   • 'unassigned'             -> leads sem vendedor
+  // Faixas de data IDÊNTICAS às queries: hoje=meia-noite, semana=segunda (ISO),
+  // mês=dia 1. Não há escrita no banco; é só recontagem em memória.
+  const displayMetrics = (() => {
+    if (!isMarcosCrm || filterSeller === 'all') return leadMetrics;
+    const dToday = new Date(); dToday.setHours(0, 0, 0, 0);
+    const dWeek = new Date(dToday); dWeek.setDate(dWeek.getDate() - ((dWeek.getDay() + 6) % 7));
+    const dMonth = new Date(dToday.getFullYear(), dToday.getMonth(), 1);
+    const sellerLeads = leads.filter(l =>
+      filterSeller === 'unassigned' ? !l.assigned_to_id : l.assigned_to_id === filterSeller
+    );
+    const since = (from: Date) => sellerLeads.filter(l => l.created_at && new Date(l.created_at) >= from).length;
+    return { total: sellerLeads.length, today: since(dToday), week: since(dWeek), month: since(dMonth) };
+  })();
+
   // Fase 6 Feature C: cálculo de inativo + handlers de seleção/disparo
   const INATIVO_DIAS = 7;
   const inativoCutoffMs = Date.now() - INATIVO_DIAS * 24 * 60 * 60 * 1000;
@@ -3490,10 +3510,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       {/* ── Métricas ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Total Leads',  value: leadMetrics.total,  icon: Users,       color: 'text-blue-400' },
-          { label: 'Hoje',         value: leadMetrics.today,  icon: Clock,       color: 'text-emerald-400' },
-          { label: 'Na Semana',    value: leadMetrics.week,   icon: TrendingUp,  color: 'text-cyan-400' },
-          { label: 'No Mês',       value: leadMetrics.month,  icon: BarChart3,   color: 'text-purple-400' },
+          { label: 'Total Leads',  value: displayMetrics.total,  icon: Users,       color: 'text-blue-400' },
+          { label: 'Hoje',         value: displayMetrics.today,  icon: Clock,       color: 'text-emerald-400' },
+          { label: 'Na Semana',    value: displayMetrics.week,   icon: TrendingUp,  color: 'text-cyan-400' },
+          { label: 'No Mês',       value: displayMetrics.month,  icon: BarChart3,   color: 'text-purple-400' },
         ].map(m => (
           <div key={m.label} className="bg-card border border-border/50 rounded-xl px-4 py-3 flex items-center gap-3">
             <m.icon className={`h-5 w-5 ${m.color} shrink-0`} />
@@ -3510,9 +3530,15 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         <div className="flex gap-1 bg-muted/40 rounded-lg p-1">
           {[
             { id: 'pipeline',  label: 'Pipeline',   icon: ArrowRightLeft, badge: 0 },
-            { id: 'leads',     label: 'Lista',      icon: Users,          badge: 0 },
-            { id: 'feedbacks', label: 'Feedbacks',   icon: BellRing,      badge: unreadFeedbacks.length },
-            ...(!isSeller ? [{ id: 'sellers', label: 'Vendedores', icon: Users, badge: 0 }] : []),
+            // TAREFA 1 (29/05/2026): no painel do Marcos (isMarcosCrm) o CRM mostra
+            // SOMENTE o Pipeline. As views Lista, Feedbacks e Vendedores continuam
+            // existindo e ativas no painel do Pedro (mode='pedro') — só ficam ocultas
+            // aqui. Nada de dado removido; apenas os botoes de navegacao sao filtrados.
+            ...(!isMarcosCrm ? [
+              { id: 'leads',     label: 'Lista',      icon: Users,          badge: 0 },
+              { id: 'feedbacks', label: 'Feedbacks',  icon: BellRing,       badge: unreadFeedbacks.length },
+            ] : []),
+            ...(!isSeller && !isMarcosCrm ? [{ id: 'sellers', label: 'Vendedores', icon: Users, badge: 0 }] : []),
           ].map(v => (
             <button
               key={v.id}
