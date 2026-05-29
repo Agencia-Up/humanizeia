@@ -3,9 +3,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { AdminRoute } from "@/components/auth/AdminRoute";
+import { FEATURES } from "@/config/features";
 import { Loader2 } from "lucide-react";
 import { AgentTasksProvider } from "@/contexts/AgentTasksContext";
 import { AgentChatProvider } from "@/contexts/AgentChatContext";
@@ -253,7 +254,14 @@ const App = () => (
                 <Route path="/whatsapp/contacts"    element={<ProtectedRoute><Lazy><WhatsAppContacts /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/broadcast"   element={<ProtectedRoute><Lazy><WhatsAppBroadcast /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/analytics"   element={<ProtectedRoute><Lazy><WhatsAppAnalytics /></Lazy></ProtectedRoute>} />
-                <Route path="/whatsapp/automations" element={<ProtectedRoute><Lazy><WhatsAppAutomations /></Lazy></ProtectedRoute>} />
+                {/* TAREFA 4 (29/05/2026): Automação OCULTA enquanto FEATURES.automacao = false.
+                    Acesso direto à rota redireciona pro dashboard. Código (WhatsAppAutomations)
+                    permanece importado e intacto; basta a flag voltar a true pra reativar. */}
+                <Route path="/whatsapp/automations" element={
+                  FEATURES.automacao
+                    ? <ProtectedRoute><Lazy><WhatsAppAutomations /></Lazy></ProtectedRoute>
+                    : <Navigate to="/dashboard" replace />
+                } />
                 <Route path="/whatsapp/instances"   element={<ProtectedRoute><Lazy><WhatsAppInstances /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/ai-agent"    element={<ProtectedRoute><Lazy><WhatsAppAIAgent /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/crm-ao-vivo" element={<ProtectedRoute><Lazy><CrmAoVivo /></Lazy></ProtectedRoute>} />
