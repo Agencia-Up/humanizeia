@@ -1,6 +1,6 @@
 import { digitsOnly } from "./phone.ts";
 
-import { splitMessageForHumanization } from "../humanization/messageSplit.ts";
+import { splitMessageForHumanizationLLM } from "../humanization/llmMessageSplit.ts";
 import { sendTypingPresence } from "../humanization/typingSimulator.ts";
 
 type PedroWaInstance = {
@@ -139,9 +139,10 @@ export async function sendPedroText(
     return sendPedroTextOnce(instance, input);
   }
 
-  // Conversa: quebra em ate 3 mensagens curtas a partir de ~130 chars (rajada
-  // humana). NAO afeta a lista de estoque, que vem por outro caminho (typingOnly).
-  const parts = splitMessageForHumanization(input.text, { maxParts: 3, minLength: 130 });
+  // Conversa: LLM barata (gpt-4o-mini) escolhe cortes naturais ate 3 mensagens
+  // (>=130 chars), evitando separar modelo/ano. Cai no splitter heuristico em
+  // qualquer falha. NAO afeta a lista de estoque (vem por outro caminho, typingOnly).
+  const parts = await splitMessageForHumanizationLLM(input.text, { maxParts: 3, minLength: 130 });
   const attempts: any[] = [];
 
   for (let index = 0; index < parts.length; index++) {
