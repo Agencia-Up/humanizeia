@@ -35,7 +35,15 @@ const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKe
   { id: 'inbox',       label: 'Inbox',            icon: Inbox,        emoji: '💬', featureKey: 'marcos_inbox' },
   { id: 'instances',   label: 'Instâncias',       icon: Smartphone,   emoji: '📱', featureKey: 'marcos_instancias' },
   { id: 'automations', label: 'Automações',       icon: Zap,          emoji: '⚡', featureKey: 'marcos_automacoes' },
-].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
+].filter(t => {
+  // TAREFA 4 (29/05/2026): Automação OCULTA enquanto FEATURES.automacao = false.
+  // Código intacto (WhatsAppAutomations continua importado e o TabsContent abaixo
+  // renderiza se a flag voltar); apenas some da navegação de abas do Marcos.
+  if (t.id === 'automations') return FEATURES.automacao;
+  // Performance segue filtrada por FEATURES.agentPerformanceTab (27/05/2026).
+  if (t.id === 'performance') return FEATURES.agentPerformanceTab;
+  return true;
+});
 
 export default function MarcosLeads() {
   const { user } = useAuth();

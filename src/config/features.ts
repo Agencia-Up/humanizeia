@@ -60,6 +60,15 @@ export const FEATURES = {
    * MarcosPerformanceTab (Marcos).
    */
   agentPerformanceTab: false,
+
+  // ── PÁGINAS / SEÇÕES DO MARCOS (WhatsApp) ───────────────────────────────
+
+  /**
+   * AUTOMAÇÃO — OCULTA TEMPORARIAMENTE (29/05/2026)
+   * Motivo: ainda não testada. Código mantido intacto.
+   * Para reativar: FEATURES.automacao = true
+   */
+  automacao: false,
 } as const;
 
 export type FeatureFlag = keyof typeof FEATURES;

@@ -56,6 +56,7 @@ import { useState } from 'react';
 import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useSubscription } from '@/hooks/useSubscription';
+import { FEATURES } from '@/config/features';
 
 const BRUNO_LIRA_USER_ID = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
 
@@ -112,7 +113,12 @@ const marcosSubItems: { title: string; url: string; icon: any; featureKey: keyof
   { title: 'Inbox',           url: '/whatsapp/inbox',    icon: Inbox,         featureKey: 'marcos_inbox' },
   { title: 'Instâncias',      url: '/whatsapp/instances',icon: Smartphone,    featureKey: 'marcos_instancias' },
   { title: 'Automações',      url: '/whatsapp/automations',icon: Zap,         featureKey: 'marcos_automacoes' },
-];
+].filter(item =>
+  // TAREFA 4 (29/05/2026): Automação OCULTA do menu lateral enquanto
+  // FEATURES.automacao = false. Filtra aqui na definição → some dos 3
+  // consumidores (master, vendedor e showMarcosSeller) de uma vez.
+  item.url !== '/whatsapp/automations' || FEATURES.automacao
+);
 
 // ── Sistema ───────────────────────────────────────────────────────────────────
 const systemItems = [
