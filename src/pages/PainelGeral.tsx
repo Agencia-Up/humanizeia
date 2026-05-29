@@ -205,8 +205,8 @@ export default function PainelGeral() {
             .eq('user_id', user!.id)
             .gte('created_at', dateRange.start).lte('created_at', dateRange.end),
           (supabase as any).from('ai_team_members')
-            .select('id, name, is_active')
-            .eq('user_id', user!.id).eq('is_active', true),
+            .select('*')
+            .eq('user_id', user!.id),
         ]);
         if (cancelled) return;
 
@@ -215,7 +215,8 @@ export default function PainelGeral() {
 
         const pedroLeads = (pedroRes.data || []) as PedroLead[];
         const marcosLeads = (marcosRes.data || []) as MarcosLead[];
-        const sellers = (sellersRes.data || []) as Array<{ id: string; name: string }>;
+        // Vendedores ATIVOS NO SISTEMA (não filtra pelo status do agente de IA).
+        const sellers = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false) as Array<{ id: string; name: string }>;
 
         // Busca feedbacks (uma query só com IN nos 2 ID sets)
         const fbByLead = new Map<string, string>();

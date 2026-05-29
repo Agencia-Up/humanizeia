@@ -313,11 +313,13 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
         // 2. Vendedores ativos do master.
         //    Se for vendedor logado, filtra só ele próprio (member_id == seller.id).
+        // select('*') + filtro client-side por active_in_system (ativo NO SISTEMA),
+        // não pelo status do agente de IA. select('*') evita quebra se a migration
+        // ainda não rodou; o filtro active_in_system !== false é aplicado abaixo.
         let sellersQuery = (supabase as any)
           .from('ai_team_members')
-          .select('id, name, profile_picture, auth_user_id')
-          .eq('user_id', effectiveUserId)
-          .eq('is_active', true);
+          .select('*')
+          .eq('user_id', effectiveUserId);
         if (sellerMemberId) sellersQuery = sellersQuery.eq('id', sellerMemberId);
 
         // 3. Leads Pedro do período. +status_crm +seller_notes_count pra cálculo de qualidade.
@@ -361,7 +363,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         });
 
         // 2. Carrega avatar_url do profile DE CADA VENDEDOR (prioridade > profile_picture do master)
-        const sellersList = (sellersRes.data || []) as Array<{ id: string; name: string; profile_picture: string | null; auth_user_id: string | null }>;
+        // Ativos NO SISTEMA (visibilidade no painel) — independe do status no agente de IA.
+        const sellersList = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false) as Array<{ id: string; name: string; profile_picture: string | null; auth_user_id: string | null }>;
         const authIds = sellersList.map(s => s.auth_user_id).filter((x): x is string => !!x);
         const profileAvatarMap = new Map<string, string>();
         if (authIds.length > 0) {

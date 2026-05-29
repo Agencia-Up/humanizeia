@@ -34,7 +34,8 @@ interface SellerMember {
   name: string;
   whatsapp_number: string;
   email: string | null;
-  is_active: boolean;
+  is_active: boolean;          // ativo no AGENTE de IA (distribuição automática de leads)
+  active_in_system: boolean;   // ativo no SISTEMA (visibilidade no CRM e módulos) — fonte de verdade deste painel
   auth_user_id: string | null;
   agent_id: string | null;
   total_leads_received: number;
@@ -304,7 +305,9 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
       const [sellersRes, agentsRes] = await Promise.all([
         (supabase as any)
           .from('ai_team_members')
-          .select('id, name, whatsapp_number, email, is_active, auth_user_id, agent_id, total_leads_received, last_lead_received_at, created_at, visible_features')
+          // select('*') (em vez de lista explícita) p/ incluir active_in_system
+          // sem quebrar caso a migration ainda não esteja aplicada no banco.
+          .select('*')
           .eq('user_id', userId)
           .order('created_at', { ascending: true }),
         (supabase as any)
@@ -313,12 +316,12 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
           .eq('user_id', userId),
       ]);
 
-      // Deduplicate by whatsapp_number — prefer active record
+      // Deduplicate by whatsapp_number — prefer record ativo no sistema
       const deduped = new Map<string, SellerMember>();
       for (const s of (sellersRes.data || [])) {
         const key = s.whatsapp_number || s.id;
         const existing = deduped.get(key);
-        if (!existing || (!existing.is_active && s.is_active)) {
+        if (!existing || ((existing.active_in_system === false) && (s.active_in_system !== false))) {
           deduped.set(key, s);
         }
       }
@@ -440,11 +443,32 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
     }
   };
 
+  // Toggle do painel "Vendedores" = ativo NO SISTEMA (fonte de verdade).
+  // Pausar no sistema também tira o vendedor da distribuição automática
+  // (is_active=false) — um vendedor fora do sistema não pode receber leads.
+  // Ativar restaura ambos (volta a aparecer em tudo e elegível a receber leads).
+  // `current` = active_in_system atual.
   const handleToggleActive = async (id: string, current: boolean) => {
     try {
-      await (supabase as any).from('ai_team_members').update({ is_active: !current }).eq('id', id);
-      setSellers(prev => prev.map(s => s.id === id ? { ...s, is_active: !current } : s));
-      toast({ title: current ? '⛔ Vendedor pausado' : '✅ Vendedor ativado' });
+      const target = sellers.find(s => s.id === id);
+      const next = !current;
+      const update = next
+        ? { active_in_system: true, is_active: true }
+        : { active_in_system: false, is_active: false };
+
+      // Atualiza TODOS os registros do mesmo vendedor (pode ter 1 row por agente),
+      // filtrando por whatsapp + master — igual ao handleSaveConfig.
+      let q = (supabase as any).from('ai_team_members').update(update).eq('user_id', userId);
+      q = target?.whatsapp_number ? q.eq('whatsapp_number', target.whatsapp_number) : q.eq('id', id);
+      const { error } = await q;
+      if (error) throw error;
+
+      setSellers(prev => prev.map(s =>
+        (target?.whatsapp_number ? s.whatsapp_number === target.whatsapp_number : s.id === id)
+          ? { ...s, ...update }
+          : s
+      ));
+      toast({ title: next ? '✅ Vendedor ativado' : '⛔ Vendedor pausado' });
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     }
@@ -660,7 +684,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${
-                            s.is_active
+                            s.active_in_system !== false
                               ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                               : 'bg-muted text-muted-foreground border border-border/40'
                           }`}>
@@ -669,7 +693,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                           <div>
                             <div className="flex items-center gap-2">
                               <p className="text-sm font-medium text-foreground">{s.name}</p>
-                              {s.is_active ? (
+                              {s.active_in_system !== false ? (
                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold">ATIVO</span>
                               ) : (
                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400 font-semibold">PAUSADO</span>
@@ -687,10 +711,10 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                           </div>
                           <div className="flex items-center gap-1.5">
                             <Label className="text-[10px] uppercase font-bold text-muted-foreground cursor-pointer" htmlFor={`act-${s.id}`}>
-                              {s.is_active ? 'Ativo' : 'Pausado'}
+                              {s.active_in_system !== false ? 'Ativo' : 'Pausado'}
                             </Label>
-                            <Switch id={`act-${s.id}`} checked={s.is_active}
-                              onCheckedChange={() => handleToggleActive(s.id, s.is_active)} className="scale-90" />
+                            <Switch id={`act-${s.id}`} checked={s.active_in_system !== false}
+                              onCheckedChange={() => handleToggleActive(s.id, s.active_in_system !== false)} className="scale-90" />
                           </div>
                           <Button variant="ghost" size="sm"
                             className="h-7 w-7 p-0 text-violet-400 hover:text-violet-300"
@@ -824,7 +848,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                     <div className="flex items-start gap-3">
                       {/* Avatar com iniciais (igual à lista) */}
                       <div className={`h-11 w-11 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
-                        currentSeller?.is_active
+                        currentSeller?.active_in_system !== false
                           ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                           : 'bg-muted text-muted-foreground border border-border/40'
                       }`}>
@@ -836,7 +860,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                           <Shield className="h-4 w-4 text-violet-400 shrink-0" />
                           <span>Permissões de</span>
                           <span className="text-violet-300">{currentSeller?.name || 'Vendedor'}</span>
-                          {currentSeller?.is_active ? (
+                          {currentSeller?.active_in_system !== false ? (
                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold border border-emerald-500/20">
                               ATIVO
                             </span>

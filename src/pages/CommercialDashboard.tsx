@@ -385,11 +385,13 @@ function useRankingData(userId: string | undefined, rankDateRange: DateRange, ra
     (async () => {
       const { data: teamData } = await (supabase as any)
         .from('ai_team_members')
-        .select('id, name, is_active')
-        .eq('user_id', effectiveUserId).eq('is_active', true)
+        .select('*')
+        .eq('user_id', effectiveUserId)
         .order('name', { ascending: true });
       if (cancelled) return;
-      setAllSellers((teamData || []) as Array<{ id: string; name: string }>);
+      // Vendedores ATIVOS NO SISTEMA — não filtra pelo status do agente de IA
+      // (is_active). !== false p/ resiliência se a migration ainda não rodou.
+      setAllSellers((teamData || []).filter((s: any) => s.active_in_system !== false) as Array<{ id: string; name: string }>);
     })();
     return () => { cancelled = true; };
   }, [effectiveUserId, sellerLoading]);
@@ -421,8 +423,8 @@ function useRankingData(userId: string | undefined, rankDateRange: DateRange, ra
           .limit(5000);
         const teamQuery = (supabase as any)
           .from('ai_team_members')
-          .select('id, name, is_active')
-          .eq('user_id', effectiveUserId).eq('is_active', true);
+          .select('*')
+          .eq('user_id', effectiveUserId);
 
         if (targetSellerId) {
           pedroQuery = pedroQuery.eq('assigned_to_id', targetSellerId);
@@ -434,7 +436,8 @@ function useRankingData(userId: string | undefined, rankDateRange: DateRange, ra
 
         const pedroLeads = pedroRes.data || [];
         const marcosLeads = marcosRes.data || [];
-        const team = (teamRes.data || []) as Array<{ id: string; name: string }>;
+        // Ativos NO SISTEMA (visibilidade) — não filtra pelo status do agente.
+        const team = ((teamRes.data || []) as any[]).filter((t: any) => t.active_in_system !== false) as Array<{ id: string; name: string }>;
         const targetTeam = targetSellerId ? team.filter(t => t.id === targetSellerId) : team;
 
         const computed = targetTeam.map((member): SellerRanking => {
