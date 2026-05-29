@@ -178,7 +178,7 @@ function useMarcosPerformanceData(userId: string | undefined) {
           leadsQuery,
           (supabase as any)
             .from('ai_team_members')
-            .select('id, name, whatsapp_number, is_active')
+            .select('*')
             .eq('user_id', effectiveUserId)
             .order('is_active', { ascending: false })
             .order('name', { ascending: true }),
@@ -229,7 +229,9 @@ function useMarcosPerformanceData(userId: string | undefined) {
         const leadsFechados = leads.filter((l: any) => closedStageIds.has(l.stage_id)).length;
         const taxaFechamento = totalLeads > 0 ? (leadsFechados / totalLeads) * 100 : 0;
         const coberturaVendedor = totalLeads > 0 ? ((totalLeads - semVendedor) / totalLeads) * 100 : 100;
-        const vendedoresAtivos = team.filter((t: any) => t.is_active).length;
+        // "Vendedores ativos" = ativos no SISTEMA (visíveis em CRM/módulos), não distribuição do agente.
+        // active_in_system !== false → resiliente a pré-migration (coluna ausente conta como visível).
+        const vendedoresAtivos = team.filter((t: any) => t.active_in_system !== false).length;
         const instanciasConectadas = instances.filter((i: any) => i.is_active && ['connected', 'open'].includes(String(i.status || '').toLowerCase())).length;
         const campanhasAtivas = campaigns.filter((c: any) => ['running', 'scheduled'].includes(c.status)).length;
         const mensagensEnviadas = campaigns.reduce((sum: number, c: any) => sum + (Number(c.sent_count) || 0), 0);

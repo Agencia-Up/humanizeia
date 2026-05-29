@@ -952,7 +952,8 @@ interface TeamMember {
   id: string;
   name: string;
   whatsapp_number: string | null;
-  is_active: boolean;
+  is_active: boolean;              // ativo no AGENTE de IA (distribuição automática)
+  active_in_system?: boolean;      // ativo no SISTEMA (visibilidade no CRM e módulos)
   last_lead_received_at: string | null;
   agent_id: string | null;
   leadsCount?: number;
@@ -1160,7 +1161,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           marcosLeadsQuery,
           (supabase as any)
             .from('ai_team_members')
-            .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
+            .select('*')
             .eq('user_id', effectiveUserId)
             .order('is_active', { ascending: false })
             .order('name', { ascending: true }),
@@ -1298,7 +1299,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         })(),
         (supabase as any)
           .from('ai_team_members')
-          .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
+          .select('*')
           .eq('user_id', effectiveUserId)
           .order('is_active', { ascending: false })
           .order('name', { ascending: true }),
@@ -1354,8 +1355,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         if (!existing) {
           deduped.set(key, m);
         } else {
-          // Mantém o mais recente / ativo; junta IDs para contagem
-          if (m.is_active && !existing.is_active) {
+          // Mantém o registro ativo NO SISTEMA; junta IDs para contagem
+          if ((m.active_in_system !== false) && (existing.active_in_system === false)) {
             deduped.set(key, { ...m, _allIds: [...(existing as any)._allIds || [existing.id], m.id] });
           } else {
             (existing as any)._allIds = [...((existing as any)._allIds || [existing.id]), m.id];
@@ -1424,7 +1425,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
     const { data } = await (supabase as any)
       .from('ai_team_members')
-      .select('id, name, whatsapp_number, is_active, last_lead_received_at, agent_id')
+      .select('*')
       .eq('id', memberId)
       .maybeSingle();
     return data || null;
@@ -1963,20 +1964,28 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     }
   };
 
+  // Toggle da aba "Vendedores" = ativo NO SISTEMA (fonte de verdade do vendedor).
+  // Pausar no sistema também tira da distribuição automática (is_active=false) —
+  // vendedor fora do sistema não pode receber leads. Ativar restaura ambos.
+  // `currentActive` = active_in_system atual.
   const toggleSellerActive = async (memberId: string, currentActive: boolean) => {
     try {
       // Encontra todos os IDs deste vendedor (pode ter múltiplos agent_id)
       const member = teamMembers.find(m => m.id === memberId);
       const allIds: string[] = (member as any)?._allIds || [memberId];
+      const next = !currentActive;
+      const update = next
+        ? { active_in_system: true, is_active: true }
+        : { active_in_system: false, is_active: false };
 
       // Atualiza todos os registros do mesmo vendedor
       const { error } = await (supabase as any)
         .from('ai_team_members')
-        .update({ is_active: !currentActive })
+        .update(update)
         .in('id', allIds);
       if (error) throw error;
-      setTeamMembers(prev => prev.map(m => m.id === memberId ? { ...m, is_active: !currentActive } : m));
-      toast({ title: currentActive ? '⛔ Vendedor pausado' : '✅ Vendedor ativado' });
+      setTeamMembers(prev => prev.map(m => m.id === memberId ? { ...m, ...update } : m));
+      toast({ title: next ? '✅ Vendedor ativado' : '⛔ Vendedor pausado' });
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     }
@@ -2811,7 +2820,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
-                  {teamMembers.filter(m => m.is_active).map(m => (
+                  {teamMembers.filter(m => m.active_in_system !== false).map(m => (
                     <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
                   ))}
                 </SelectContent>
@@ -3531,7 +3540,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               <SelectContent>
                 <SelectItem value="all" className="text-xs">Todos</SelectItem>
                 <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
-                {teamMembers.filter(m => m.is_active).map(m => (
+                {teamMembers.filter(m => m.active_in_system !== false).map(m => (
                   <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -4132,7 +4141,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${
-                    m.is_active
+                    m.active_in_system !== false
                       ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                       : 'bg-muted text-muted-foreground border border-border/40'
                   }`}>
@@ -4141,7 +4150,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-medium text-foreground truncate">{m.name}</p>
-                      {m.is_active ? (
+                      {m.active_in_system !== false ? (
                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold">ATIVO</span>
                       ) : (
                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400 font-semibold">PAUSADO</span>
@@ -4164,15 +4173,15 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                   </div>
                   <Button
                     variant="outline" size="sm"
-                    onClick={() => toggleSellerActive(m.id, m.is_active)}
+                    onClick={() => toggleSellerActive(m.id, m.active_in_system !== false)}
                     className={`h-8 px-2.5 text-[11px] gap-1 ${
-                      m.is_active
+                      m.active_in_system !== false
                         ? 'border-orange-500/30 text-orange-400 hover:bg-orange-500/10'
                         : 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'
                     }`}
                   >
-                    {m.is_active ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                    {m.is_active ? 'Pausar' : 'Ativar'}
+                    {m.active_in_system !== false ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                    {m.active_in_system !== false ? 'Pausar' : 'Ativar'}
                   </Button>
                 </div>
               </div>

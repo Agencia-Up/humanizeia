@@ -659,7 +659,15 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     window.addEventListener('resize', h); return () => window.removeEventListener('resize', h);
   }, []);
 
-  const activeMembers  = useMemo(() => teamMembers.filter(m => m.is_active), [teamMembers]);
+  // Vendedores VISÍVEIS no CRM/painel = ativos NO SISTEMA (fonte de verdade do
+  // painel "Vendedores"). Independe do status no agente de IA — um vendedor
+  // "Ausente" no agente (não recebe lead automático) CONTINUA aparecendo aqui.
+  const visibleMembers = useMemo(() => teamMembers.filter(m => m.active_in_system !== false), [teamMembers]);
+  // Vendedores elegíveis ao RODÍZIO automático = espelha o backend (uazapi-webhook
+  // só distribui pra quem tem is_active=true). Usado só na prévia "próximo vendedor".
+  const distributionMembers = useMemo(() => teamMembers.filter(m => m.is_active), [teamMembers]);
+  // Exibição (dropdown de transferência manual, KPIs, stats) usa a lista do SISTEMA.
+  const activeMembers = visibleMembers;
 
   // Leads filtrados pelo período selecionado
   const filteredLeads = useMemo(() => {
@@ -691,7 +699,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   );
 
   const nextSeller = useMemo(() => {
-    if (!activeMembers.length) return null;
+    if (!distributionMembers.length) return null;
 
     // Dedupe por TELEFONE (mesmo vendedor pode ter múltiplas rows em
     // ai_team_members, uma por agent_id). Sem dedupe, vendedor com 3 rows
@@ -707,7 +715,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     const dedupedByPhone = (() => {
       const seen = new Set<string>();
       const out: any[] = [];
-      for (const m of activeMembers) {
+      for (const m of distributionMembers) {
         const key = phoneKey(m.whatsapp_number);
         if (key && seen.has(key)) continue;
         if (key) seen.add(key);
@@ -723,7 +731,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     return [...dedupedByPhone].sort((a, b) =>
       new Date(a.last_lead_received_at).getTime() - new Date(b.last_lead_received_at).getTime()
     )[0] || null;
-  }, [activeMembers]);
+  }, [distributionMembers]);
 
   const memberStats = useMemo(() => {
     // ── Usa ai_lead_transfers para contar atendimentos por vendedor ──────────
