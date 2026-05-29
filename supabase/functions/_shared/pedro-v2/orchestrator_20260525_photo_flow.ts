@@ -2,7 +2,7 @@ import { makeTurnLogger, newTraceId } from "../observability/structuredLog.ts";
 import { identifyPedroContact } from "./contactIdentity.ts";
 import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
-import { confirmSellerAck } from "./transferRouter.ts";
+import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
 import { remoteJidToPhone } from "./phone.ts";
 import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
@@ -1163,6 +1163,35 @@ export async function processPedroV2Turn(
     }
   }
 
+  // ETAPA C: lead qualificado / agendou / pediu humano -> transfere para vendedor.
+  // Marca status='transferido' (sem mexer no status_crm); com isso o follow-up de
+  // inatividade para sozinho (o cron so processa novo/interessado). Gated a v2.
+  let handoffResult: any = null;
+  if (!dryRun && lead?.id && contextualIntent.needs_handoff && identity.kind !== "seller") {
+    try {
+      handoffResult = await executePedroV2Handoff(supabase, {
+        user_id: input.agent.user_id,
+        agent_id: input.agent.id,
+        lead_id: lead.id,
+        remote_jid: remoteJid,
+        lead_name: lead.lead_name || pushName || null,
+        reason: `handoff:${brainPlan?.intent || contextualIntent.intent || "qualificado"}`,
+      });
+      if (handoffResult?.ok && handoffResult.seller?.whatsapp_number && isPedroV2SendingEnabled()) {
+        const handoffInstance = input.wa_instance || await resolvePedroInstance(supabase, {
+          user_id: input.agent.user_id,
+          agent_id: input.agent.id,
+          instance_id: input.wa_instance?.id,
+        });
+        const leadPhone = remoteJidToPhone(remoteJid);
+        const sellerNotif = `*NOVO LEAD QUALIFICADO (Pedro v2)*\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n*Contato:* +${leadPhone}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n*Atender agora:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
+      }
+    } catch (e) {
+      console.warn("[PedroV2] Falha ao executar handoff (Etapa C):", e);
+    }
+  }
+
   if (!dryRun && lead?.id && reply.ok) {
     memoryAfterReply = await saveRecentConversationTurn(supabase, {
       lead_id: lead.id,
@@ -1208,6 +1237,7 @@ export async function processPedroV2Turn(
         selected_vehicle_reason: reply.selected_vehicle_reason || null,
         photo_target: reply.photo_target || null,
         send_result: sendResult,
+        handoff: handoffResult ? { ok: handoffResult.ok, reason: handoffResult.reason, seller: handoffResult.seller?.name || null } : null,
       },
     });
   }

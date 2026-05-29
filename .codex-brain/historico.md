@@ -2,6 +2,9 @@
 
 ## 2026-05-29
 
+- ETAPA C (transferir lead qualificado/agendou/pediu-humano + parar follow-up) + fix do LEAD APAGADO. Build `2026-05-29-etapa-c-handoff-v4`.
+  - Lead apagado no CRM voltava a ser tratado como conversa em andamento (sem reapresentacao). CAUSA: `ensurePedroV2Lead`/`findPedroV2Lead` (leadMemory.ts) nao retornavam `created_at`, entao o orquestrador (linha ~842) passava `undefined` e NAO filtrava o historico por data -> carregava `wa_inbox`/`wa_chat_history` antigos por remote_jid. FIX: incluido `created_at` nos 2 selects -> lead recriado tem created_at=agora -> historico filtrado ignora msgs antigas -> recomeca do zero. Tambem: `PedroSDR.tsx` (delete do lead) passou a apagar `pedro_conversation_state` junto (faxina da memoria).
+  - Etapa C: planner (`pedroBrainPlanner`) ganhou regra de HANDOFF (agendou visita / pronto pra comprar / pediu humano; conservador) + re-afirmacao no `normalizePlan` para nao ser sobrescrita pelas regras de veiculo (foto explicita ainda vence). Orquestrador: quando `needs_handoff`, executa `executePedroV2Handoff` (novo em transferRouter.ts) que reusa `chooseSellerForPedroTransfer` + briefing gpt-4o-mini + cria `ai_lead_transfers` + marca `status='transferido'` (NAO mexe em status_crm) + notifica o vendedor; o agente manda a despedida avisando que um consultor vai chamar. Como o lead sai de novo/interessado, o cron de follow-up PARA SOZINHO. Guard atomico evita transferencia dupla. Tudo gated v2 (orquestrador v2-only) -> bug fica contido a conta do usuario.
 - Sessao de analise do Pedro v2 + inicio da "Fase 0" (higiene de segredos), sem alterar runtime: Pedro v1 e Pedro v2 seguem intactos (nenhuma Edge Function/deploy tocado).
 - Mapeado o caminho de codigo VIVO do Pedro v2 a partir de `pedro-webhook-v2/index.ts`:
   - orquestrador ativo: `orchestrator_20260525_photo_flow.ts`;

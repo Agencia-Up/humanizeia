@@ -77,7 +77,7 @@ export async function ensurePedroV2Lead(
 
   const { data: lead, error } = await supabase
     .from("ai_crm_leads")
-    .select("id, assigned_to_id, status, status_crm, lead_name")
+    .select("id, assigned_to_id, status, status_crm, lead_name, created_at")
     .eq("agent_id", input.agent_id)
     .eq("remote_jid", input.remote_jid)
     .maybeSingle();
@@ -95,7 +95,7 @@ export async function findPedroV2Lead(
 ) {
   const { data, error } = await supabase
     .from("ai_crm_leads")
-    .select("id, assigned_to_id, status, status_crm, lead_name")
+    .select("id, assigned_to_id, status, status_crm, lead_name, created_at")
     .eq("agent_id", input.agent_id)
     .eq("remote_jid", input.remote_jid)
     .maybeSingle();

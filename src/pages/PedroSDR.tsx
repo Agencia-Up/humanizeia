@@ -2343,11 +2343,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         setLeads(prev => prev.filter(l => l.id !== leadId));
         return;
       }
-      // Remove notas, followups e feedbacks associados primeiro
+      // Remove notas, followups, feedbacks e a MEMORIA da conversa associados
+      // primeiro. Limpar pedro_conversation_state garante que o Pedro v2 recomeca
+      // a conversa do zero (se reapresenta) ao apagar o lead do CRM.
       await Promise.all([
         (supabase as any).from('pedro_crm_notes').delete().eq('lead_id', leadId),
         (supabase as any).from('pedro_followup_schedules').delete().eq('lead_id', leadId),
         (supabase as any).from('pedro_manager_feedback').delete().eq('lead_id', leadId),
+        (supabase as any).from('pedro_conversation_state').delete().eq('lead_id', leadId),
       ]);
       const { error } = await (supabase as any).from('ai_crm_leads').delete().eq('id', leadId);
       if (error) throw error;
