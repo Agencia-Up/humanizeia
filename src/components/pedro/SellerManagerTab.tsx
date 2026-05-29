@@ -475,20 +475,66 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Deseja excluir este vendedor da equipe? Esta ação não pode ser desfeita.')) return;
+    if (!confirm('Deseja excluir este vendedor da equipe? Os leads atribuídos a ele ficarão "sem vendedor". Esta ação não pode ser desfeita.')) return;
     try {
-      // Fix 28/05/2026: usar .select() pra confirmar que o DELETE realmente
-      // removeu rows. RLS silenciosa retorna error=null + data=[] (zero rows
-      // afetados) — antes o codigo so fazia .delete().eq() sem ler retorno e
-      // atualizava UI otimisticamente, dando aparencia de sucesso mas o registro
-      // persistia no banco e voltava no reload.
-      const { data, error } = await (supabase as any)
-        .from('ai_team_members')
-        .delete()
-        .eq('id', id)
-        .select('id');
+      const target = sellers.find(s => s.id === id);
+
+      // 1. Resolver TODOS os ids deste vendedor. Um mesmo vendedor pode ter 1 row
+      //    por agente (mesmo whatsapp_number), e leads de cada canal apontam pra
+      //    rows diferentes — precisamos desvincular/excluir todas.
+      let memberIds: string[] = [id];
+      if (target?.whatsapp_number) {
+        const { data: rows } = await (supabase as any)
+          .from('ai_team_members')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('whatsapp_number', target.whatsapp_number);
+        if (Array.isArray(rows) && rows.length) memberIds = rows.map((r: any) => r.id);
+      }
+
+      // 2. BLINDAGEM (fix 29/05/2026): desvincular os leads ANTES de excluir o
+      //    vendedor. Sem isso o lead vira ORFAO e o painel renderiza um "Vendedor
+      //    fantasma" (id que nao existe mais em ai_team_members). O painel le
+      //    assigned_to || custom_fields.seller_member_id, entao zeramos os DOIS,
+      //    em crm_leads (Marcos) E ai_crm_leads (Pedro). Se qualquer desvinculo
+      //    falhar, ABORTAMOS a exclusao — melhor manter o vendedor do que criar
+      //    um fantasma.
+      // 2a. crm_leads.assigned_to (TEXT = ai_team_members.id)
+      const detachCrm = await (supabase as any)
+        .from('crm_leads').update({ assigned_to: null })
+        .eq('user_id', userId).in('assigned_to', memberIds);
+      if (detachCrm.error) throw new Error('Falha ao desvincular leads (crm_leads.assigned_to): ' + detachCrm.error.message);
+
+      // 2b. crm_leads.custom_fields->>seller_member_id (fallback do painel) — limpa
+      //     a chave por row, preservando o resto do JSON.
+      for (const mid of memberIds) {
+        const cfRes = await (supabase as any)
+          .from('crm_leads').select('id, custom_fields')
+          .eq('user_id', userId).eq('custom_fields->>seller_member_id', mid);
+        if (cfRes.error) throw new Error('Falha ao buscar leads por custom_fields: ' + cfRes.error.message);
+        for (const row of (cfRes.data || [])) {
+          const cf = { ...(row.custom_fields || {}) };
+          delete cf.seller_member_id;
+          const upd = await (supabase as any).from('crm_leads').update({ custom_fields: cf }).eq('id', row.id);
+          if (upd.error) throw new Error(`Falha ao limpar custom_fields do lead ${row.id}: ${upd.error.message}`);
+        }
+      }
+
+      // 2c. ai_crm_leads.assigned_to_id (UUID = ai_team_members.id) — canal Pedro.
+      const detachAi = await (supabase as any)
+        .from('ai_crm_leads').update({ assigned_to_id: null }).in('assigned_to_id', memberIds);
+      if (detachAi.error) throw new Error('Falha ao desvincular leads do Pedro (ai_crm_leads): ' + detachAi.error.message);
+
+      // 3. Excluir TODAS as rows do vendedor (todas com o mesmo whatsapp_number).
+      //    Fix 28/05/2026: .select() confirma que o DELETE removeu rows — RLS
+      //    silenciosa retorna error=null + data=[] (zero afetados).
+      let delQ = (supabase as any).from('ai_team_members').delete();
+      delQ = target?.whatsapp_number
+        ? delQ.eq('user_id', userId).eq('whatsapp_number', target.whatsapp_number)
+        : delQ.eq('id', id);
+      const { data, error } = await delQ.select('id');
       if (error) {
-        console.error('[SellerManager] handleDelete erro:', { error, id });
+        console.error('[SellerManager] handleDelete erro:', { error, id, memberIds });
         const detalhe = [error.message, error.details, error.hint, error.code ? `code=${error.code}` : null]
           .filter(Boolean).join(' | ');
         throw new Error(detalhe || 'Erro desconhecido ao excluir vendedor');
@@ -502,8 +548,8 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
         });
         return;
       }
-      setSellers(prev => prev.filter(s => s.id !== id));
-      toast({ title: '✅ Vendedor removido' });
+      setSellers(prev => prev.filter(s => target?.whatsapp_number ? s.whatsapp_number !== target.whatsapp_number : s.id !== id));
+      toast({ title: '✅ Vendedor removido', description: 'Leads atribuídos a ele agora estão sem vendedor.' });
     } catch (err: any) {
       toast({ title: 'Erro ao excluir vendedor', description: err.message, variant: 'destructive' });
     }
