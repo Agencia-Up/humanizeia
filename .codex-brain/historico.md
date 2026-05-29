@@ -1,5 +1,19 @@
 # Historico
 
+## 2026-05-29
+
+- Sessao de analise do Pedro v2 + inicio da "Fase 0" (higiene de segredos), sem alterar runtime: Pedro v1 e Pedro v2 seguem intactos (nenhuma Edge Function/deploy tocado).
+- Mapeado o caminho de codigo VIVO do Pedro v2 a partir de `pedro-webhook-v2/index.ts`:
+  - orquestrador ativo: `orchestrator_20260525_photo_flow.ts`;
+  - modulos ativos: `server.ts`, `leadMemory.ts`, `contactIdentity.ts`, `intentRouter_20260525_sales.ts`, `transferRouter.ts`, `pedroBrainPlanner_20260525.ts`, `pedroBrainReply_20260525.ts`, `stockSearch_20260525_photo_flow.ts`, `vehicleResolver_20260525_brain.ts`, `adContext_20260525.ts`, `mediaContext_20260524.ts`, `uazapiSender_20260524.ts`, `phone.ts`, `types.ts`;
+  - "cerebro" do agente usa OpenAI `gpt-4o` (planner temp 0.1 / reply temp 0.35), nao Claude;
+  - identificados ~18 arquivos versionados possivelmente mortos em `_shared/pedro-v2`. NAO removidos: 9 functions `pedro-*` (identify-contact, intent-router, lead-memory, transfer-router, stock-search, sales-reply, crm-sync, seller-ack, message-sender) + `sync-evolution-webhook` tambem importam de `_shared/pedro-v2`. Limpeza so apos analise de alcance completa, para nao arriscar Pedro v1.
+- Higiene de segredos (apenas arquivos locais/doc, sem runtime):
+  - removidos os valores reais de tokens de `pedro_v2_architecture_and_credentials.md` (access token Supabase staging+prod e GitHub PAT), trocados por placeholders + aviso; arquivo adicionado ao `.gitignore`.
+  - `.gitignore` passou a ignorar `/.env`, `/secrets.txt` e `pedro_v2_architecture_and_credentials.md`.
+  - CONFIRMADO que `.env` e `secrets.txt` estao RASTREADOS no Git (ja no repo remoto): `.env` contem `SUPABASE_SERVICE_ROLE_KEY` e `LEGACY_SUPABASE_SERVICE_ROLE_KEY` (entre outras); `secrets.txt` referencia ANTHROPIC, OPENAI, EVOLUTION/Uazapi, META e SERVICE_ROLE. Pendente: `git rm --cached` + ROTACAO de todos esses segredos.
+- Identidade do dev confirmada: usuario e `dev-aloan` (git `user.name=dev-aloan`, email `douglasaloan@gmail.com`); `dev-wander` e o socio. Regras validas do usuario estao em `.agents/instructions/user_preferences.md` (trabalhar em `dev-aloan`, commits como `dev-aloan`); o `CLAUDE.md` do repo foi escrito para o socio.
+
 ## 2026-05-27
 
 - Pedro v2: Reestruturação da inteligência para torná-la 100% dinâmica e alinhada ao prompt do portal.

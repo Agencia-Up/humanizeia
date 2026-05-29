@@ -49,3 +49,8 @@ WhatsApp_Image_*
 # Staging seed data (não commitado — é só pra teste local)
 tests/staging-seeds/
 .tmp-video/
+
+# Segredos — NUNCA commitar. Os que já foram rastreados precisam de `git rm --cached` + ROTAÇÃO.
+/.env
+/secrets.txt
+pedro_v2_architecture_and_credentials.md
