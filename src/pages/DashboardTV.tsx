@@ -759,14 +759,14 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </div>
 
       {/* ───── Bloco KPIs principais (3 cards lado a lado) ───── */}
-      <section className="shrink-0 px-8 py-6 grid grid-cols-3 gap-4">
+      <section className="shrink-0 px-8 py-[clamp(0.5rem,2.2vmin,1.5rem)] grid grid-cols-3 gap-4">
         {/* KPI 1: Leads Gerais */}
-        <div className="bg-slate-900/60 rounded-2xl p-6 border border-blue-900/40 flex flex-col items-center justify-center text-center">
+        <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Users className="h-7 w-7 text-blue-400 mb-2" />
           <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">
             Leads Gerais · {dateRange.label}
           </p>
-          <p className="text-6xl font-black tabular-nums leading-none" style={{ color: branding.primary_color }}>
+          <p className="text-[clamp(2rem,6vmin,3.75rem)] font-black tabular-nums leading-none" style={{ color: branding.primary_color }}>
             {kpis?.total_leads ?? 0}
           </p>
           <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">Total de Leads</p>
@@ -778,7 +778,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </div>
 
         {/* KPI 2: Qualidade Média (IA 50% + Feedback 30% + Notas 20%) */}
-        <div className="bg-slate-900/60 rounded-2xl p-6 border border-blue-900/40 flex flex-col items-center justify-center text-center">
+        <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           {(() => {
             const score = kpis?.qualidade_media ?? 0;
             const label = kpis?.qualidade_label ?? 'Sem dados';
@@ -787,8 +787,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
               <>
                 <Trophy className="h-7 w-7 mb-2" style={{ color }} />
                 <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Qualidade Média</p>
-                <p className="text-6xl font-black tabular-nums leading-none" style={{ color }}>
-                  {score}<span className="text-2xl text-slate-500">%</span>
+                <p className="text-[clamp(2rem,6vmin,3.75rem)] font-black tabular-nums leading-none" style={{ color }}>
+                  {score}<span className="text-[clamp(0.9rem,2.2vmin,1.5rem)] text-slate-500">%</span>
                 </p>
                 <p className="text-[10px] uppercase tracking-widest mt-3 font-bold" style={{ color }}>
                   {label}
@@ -800,11 +800,11 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </div>
 
         {/* KPI 3: Taxa Transferência (% leads Pedro atribuídos a vendedor) */}
-        <div className="bg-slate-900/60 rounded-2xl p-6 border border-blue-900/40 flex flex-col items-center justify-center text-center">
+        <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Target className="h-7 w-7 text-purple-400 mb-2" />
           <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Taxa Transferência</p>
-          <p className="text-6xl font-black tabular-nums leading-none" style={{ color: branding.secondary_color }}>
-            {(kpis?.taxa_transferencia ?? 0).toFixed(1)}<span className="text-2xl text-slate-500">%</span>
+          <p className="text-[clamp(2rem,6vmin,3.75rem)] font-black tabular-nums leading-none" style={{ color: branding.secondary_color }}>
+            {(kpis?.taxa_transferencia ?? 0).toFixed(1)}<span className="text-[clamp(0.9rem,2.2vmin,1.5rem)] text-slate-500">%</span>
           </p>
           <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">
             {kpis?.taxa_transferencia_texto ?? '0 leads'}
@@ -821,10 +821,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             const valor = kpis?.por_origem[origem.key] ?? 0;
             const pct = kpis?.percentuais[origem.key] ?? 0;
             return (
-              <div key={origem.key} className="bg-slate-900/60 rounded-xl p-4 border border-slate-800 hover:border-slate-700 transition-colors">
+              <div key={origem.key} className="bg-slate-900/60 rounded-xl p-[clamp(0.5rem,1.8vmin,1rem)] border border-slate-800 hover:border-slate-700 transition-colors">
                 <Icon className="h-5 w-5 mb-2" style={{ color: origem.color }} />
                 <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-1 truncate">{origem.label}</p>
-                <p className="text-3xl font-black tabular-nums leading-none">{valor}</p>
+                <p className="text-[clamp(1.25rem,3vmin,1.875rem)] font-black tabular-nums leading-none">{valor}</p>
                 <p className="text-[10px] text-slate-500 mt-1.5">{pct.toFixed(2)}%</p>
                 <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden mt-1.5">
                   <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(pct, 100)}%`, background: origem.color }} />
@@ -880,7 +880,7 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
   const avatarColor = hashColor(v.id);
 
   return (
-    <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-800">
+    <div className="bg-slate-900/60 rounded-xl p-[clamp(0.4rem,1.5vmin,0.75rem)] border border-slate-800">
       {/* Header: rank + nome */}
       <div className="flex items-center gap-2 mb-3">
         <span
@@ -927,7 +927,7 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
       {/* Total */}
       <div className="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Total</span>
-        <span className="text-2xl font-black tabular-nums" style={{ color: secondary }}>{v.total}</span>
+        <span className="text-[clamp(1.1rem,2.6vmin,1.5rem)] font-black tabular-nums" style={{ color: secondary }}>{v.total}</span>
       </div>
     </div>
   );
