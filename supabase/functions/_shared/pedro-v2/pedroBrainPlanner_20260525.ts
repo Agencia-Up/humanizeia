@@ -409,6 +409,19 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     plan.reason = "enforced_social_question";
   }
 
+  // ETAPA C: preserva a decisao de HANDOFF do cerebro (lead qualificado/agendou/
+  // pediu humano) contra as regras de veiculo/estoque acima. Pedido explicito de
+  // FOTO ainda vence (intencao clara de imagem).
+  if (raw?.action === "handoff" && plan.action !== "photo_request") {
+    plan.action = "handoff";
+    plan.intent = "human_request";
+    plan.use_memory_vehicle = false;
+    if (typeof raw?.response_guidance !== "string" || !raw.response_guidance.trim()) {
+      plan.response_guidance = "Lead qualificado, agendou visita ou pediu um humano. Despeca-se de forma curta e amigavel avisando que um consultor de vendas vai entrar em contato em breve, e agradeca. Nao acione estoque nem prometa mais nada.";
+    }
+    plan.reason = `enforced_handoff:${raw?.reason || plan.reason || "qualificado"}`;
+  }
+
   return plan;
 }
 
@@ -457,7 +470,14 @@ export async function planPedroTurn(input: {
                 "- Se o lead pedir fotos de um veículo já apresentado ou em contexto seguro, defina 'action' como 'photo_request'.",
                 "- Se o lead respondeu afirmativamente (sim/pode/manda) após uma oferta recente de fotos, defina 'action' como 'photo_request' com 'use_memory_vehicle' true.",
                 "- Se for apenas uma saudação comum, use 'reply_only'.",
-                "- Nunca invente que enviou fotos sem a ação 'photo_request'."
+                "- Nunca invente que enviou fotos sem a ação 'photo_request'.",
+                "",
+                "REGRA DE TRANSFERÊNCIA (HANDOFF) — defina 'action' como 'handoff' quando:",
+                "  (a) o lead AGENDOU ou quer agendar uma visita/test-drive (ex: 'quero agendar', 'posso ir aí?', 'marcar uma visita', 'vou aí ver', ou cita um dia/horário para ir à loja);",
+                "  (b) o lead demonstrou que está PRONTO para fechar/comprar (ex: 'quero comprar', 'fechar negócio', 'pode preparar a proposta', ou já disse que tem carro na troca E quer dar entrada/financiar para seguir);",
+                "  (c) o lead pediu explicitamente falar com um humano/vendedor/consultor.",
+                "  Seja CONSERVADOR: interesse vago, dúvida de preço, pedir foto ou só perguntar sobre um modelo NÃO é handoff.",
+                "  Em 'handoff', preencha 'response_guidance' orientando uma despedida curta e amigável avisando que um consultor de vendas vai entrar em contato e agradecendo — sem prometer mais nada e sem acionar estoque."
               ].join("\n"),
           },
           {
