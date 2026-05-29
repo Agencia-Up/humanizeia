@@ -267,7 +267,7 @@ const App = () => (
                 <Route path="/whatsapp/crm-ao-vivo" element={<ProtectedRoute><Lazy><CrmAoVivo /></Lazy></ProtectedRoute>} />
                 {/* Dashboard TV pra projetar em tela (master only, oculto do menu) */}
                 <Route path="/dashboard-tv"         element={<ProtectedRoute><Lazy><DashboardTV /></Lazy></ProtectedRoute>} />
-                {/* Painel Geral — soma Pedro + Marcos, master only, visível no sidebar */}
+                {/* Painel Geral — master vê todos (ranking); vendedor vê só os próprios leads (liberado via sidebar_painel_geral) */}
                 <Route path="/painel-geral"         element={<ProtectedRoute><Lazy><PainelGeral /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/campaigns"   element={<ProtectedRoute><Lazy><WhatsAppCampaigns /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/groups"      element={<ProtectedRoute><Lazy><WhatsAppGroups /></Lazy></ProtectedRoute>} />
