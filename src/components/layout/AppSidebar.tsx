@@ -340,10 +340,20 @@ export function AppSidebar() {
         {sellerLoading ? null : isSeller ? (
           /* ── SELLER: tudo agrupado em "Agentes" filtrado por visibleFeatures ── */
           <>
-            {visibleFeatures.sidebar_dashboard && (
+            {(visibleFeatures.sidebar_dashboard || visibleFeatures.sidebar_painel_geral) && (
               <NavGroup label="Painel" collapsed={collapsed}>
-                <NavItem collapsed={collapsed} item={{ title: 'Tela inicial', url: '/tela-inicial', icon: Home }} />
-                <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+                {visibleFeatures.sidebar_dashboard && (
+                  <>
+                    <NavItem collapsed={collapsed} item={{ title: 'Tela inicial', url: '/tela-inicial', icon: Home }} />
+                    <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+                  </>
+                )}
+                {/* 29/05/2026: Painel Geral também no vendedor (igual ao master),
+                    liberado pelo master via sidebar_painel_geral. A página re-escopa
+                    pra mostrar SÓ os leads do próprio vendedor (ranking de colegas oculto). */}
+                {visibleFeatures.sidebar_painel_geral && (
+                  <NavItem collapsed={collapsed} item={{ title: 'Painel Geral', url: '/painel-geral', icon: BarChart3 }} />
+                )}
               </NavGroup>
             )}
 

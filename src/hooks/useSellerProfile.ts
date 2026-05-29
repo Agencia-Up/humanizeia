@@ -32,6 +32,7 @@ export interface VisibleFeatures {
   marcos_automacoes: boolean;
   // Sidebar
   sidebar_dashboard: boolean;
+  sidebar_painel_geral: boolean;
   sidebar_treinamento: boolean;
   sidebar_meu_plano: boolean;
   sidebar_integracoes: boolean;
@@ -71,8 +72,9 @@ export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   marcos_instancias: false,
   marcos_automacoes: false,
   // ── Sidebar ─────────────────────────────────────────────────────────
-  sidebar_dashboard: true,   // Painel principal
-  sidebar_treinamento: true, // Base de conhecimento
+  sidebar_dashboard: true,    // Painel principal
+  sidebar_painel_geral: false,// Painel Geral (visão dos próprios leads) — master libera
+  sidebar_treinamento: true,  // Base de conhecimento
   sidebar_meu_plano: false,
   sidebar_integracoes: false,
   sidebar_configuracoes: false,

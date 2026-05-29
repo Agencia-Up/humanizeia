@@ -84,6 +84,7 @@ const FEATURE_LABELS: FeatureItem[] = [
   { key: 'marcos_automacoes',  label: 'Automações',             desc: 'Fluxos automáticos',             icon: Zap,            group: 'marcos' },
   // ── Menu Lateral ──
   { key: 'sidebar_dashboard',     label: 'Dashboard',           desc: 'Painel principal',               icon: LayoutDashboard, group: 'sidebar' },
+  { key: 'sidebar_painel_geral',  label: 'Painel Geral',        desc: 'Visão geral dos próprios leads', icon: BarChart3,       group: 'sidebar' },
   { key: 'sidebar_treinamento',   label: 'Treinamento',         desc: 'Base de conhecimento',           icon: GraduationCap,   group: 'sidebar' },
   { key: 'sidebar_meu_plano',     label: 'Meu Plano',           desc: 'Assinatura e tokens',            icon: CreditCard,      group: 'sidebar' },
   { key: 'sidebar_integracoes',   label: 'Integrações',         desc: 'Conexões externas',              icon: Plug,            group: 'sidebar' },

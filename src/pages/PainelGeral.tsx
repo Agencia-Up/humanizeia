@@ -1,7 +1,7 @@
 // ============================================================================
 // PainelGeral
 // ----------------------------------------------------------------------------
-// Dashboard executivo MASTER-ONLY que SOMA + média Pedro + Marcos.
+// Dashboard executivo que SOMA + média Pedro + Marcos.
 //
 // Não é o Dashboard TV (esse é pra projetar em TV). Painel Geral é uma página
 // admin tradicional com:
@@ -10,12 +10,16 @@
 //   • Ranking unificado de vendedores (soma leads dos 2 CRMs)
 //   • Filtro de período (Hoje/Ontem/7d/30d/Custom)
 //
-// Acesso: SÓ master (vendedor redirecionado).
-// Sidebar: grupo Dashboard, item "Painel Geral".
+// Acesso (29/05/2026):
+//   • master   → agregado de TODOS os vendedores + ranking geral.
+//   • vendedor → MESMA página re-escopada: vê SÓ os próprios leads
+//                (assigned_to ∈ ids dele em ai_team_members); ranking de
+//                colegas oculto. Liberado pelo master via
+//                visible_features.sidebar_painel_geral.
+// Sidebar: grupo "Painel", item "Painel Geral".
 // ============================================================================
 
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
@@ -173,7 +177,7 @@ function MetricCard({
 
 export default function PainelGeral() {
   const { user } = useAuth();
-  const { isSeller, loading: profileLoading } = useSellerProfile(user?.id);
+  const { isSeller, masterUserId, loading: profileLoading } = useSellerProfile(user?.id);
 
   const [period, setPeriod] = useState<PeriodPreset>('30days');
   const [customRange, setCustomRange] = useState<CustomRange>(() => {
@@ -186,7 +190,7 @@ export default function PainelGeral() {
   const dateRange = resolveDateRange(period, customRange);
 
   useEffect(() => {
-    if (!user?.id || profileLoading || isSeller) return;
+    if (!user?.id || profileLoading) return;
 
     let cancelled = false;
     async function load() {
@@ -194,19 +198,46 @@ export default function PainelGeral() {
       try {
         const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
 
-        // 4 queries paralelas
+        // Escopo dos dados:
+        //   • master   → user_id = próprio id; vê todos os vendedores (ranking).
+        //   • vendedor → user_id = master (dono dos leads) e filtra só os DELE
+        //                (assigned_to ∈ ids dele em ai_team_members). Ranking oculto.
+        //                Mesmo padrão de PedroSDR/FluxCRM (memberIds por auth_user_id).
+        let ownerId = user!.id;
+        let memberIds: string[] = [];
+        if (isSeller) {
+          const { data: memberRows } = await (supabase as any)
+            .from('ai_team_members')
+            .select('id, user_id')
+            .eq('auth_user_id', user!.id);
+          if (cancelled) return;
+          const rows = (memberRows || []) as Array<{ id: string; user_id: string }>;
+          memberIds = rows.map(r => r.id);
+          ownerId = rows[0]?.user_id || masterUserId || user!.id;
+        }
+        // UUID-sentinela: vendedor sem vínculo → 0 resultados (nunca varre o master).
+        const safeIds = memberIds.length > 0 ? memberIds : ['00000000-0000-0000-0000-000000000000'];
+
+        let pedroQuery = (supabase as any).from('ai_crm_leads')
+          .select('id, status_crm, assigned_to_id, seller_notes_count, created_at')
+          .eq('user_id', ownerId)
+          .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
+        let marcosQuery = (supabase as any).from('crm_leads')
+          .select('id, stage_id, assigned_to, seller_notes_count, created_at, stage:crm_pipeline_stages(name)')
+          .eq('user_id', ownerId)
+          .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
+        if (isSeller) {
+          pedroQuery = pedroQuery.in('assigned_to_id', safeIds);
+          marcosQuery = marcosQuery.in('assigned_to', safeIds);
+        }
+        // Ranking de vendedores só pro master — vendedor não enxerga colegas.
+        const sellersPromise = isSeller
+          ? Promise.resolve({ data: [] as any[] })
+          : (supabase as any).from('ai_team_members').select('*').eq('user_id', ownerId);
+
+        // 3 queries paralelas
         const [pedroRes, marcosRes, sellersRes] = await Promise.all([
-          (supabase as any).from('ai_crm_leads')
-            .select('id, status_crm, assigned_to_id, seller_notes_count, created_at')
-            .eq('user_id', user!.id)
-            .gte('created_at', dateRange.start).lte('created_at', dateRange.end),
-          (supabase as any).from('crm_leads')
-            .select('id, stage_id, assigned_to, seller_notes_count, created_at, stage:crm_pipeline_stages(name)')
-            .eq('user_id', user!.id)
-            .gte('created_at', dateRange.start).lte('created_at', dateRange.end),
-          (supabase as any).from('ai_team_members')
-            .select('*')
-            .eq('user_id', user!.id),
+          pedroQuery, marcosQuery, sellersPromise,
         ]);
         if (cancelled) return;
 
@@ -360,12 +391,7 @@ export default function PainelGeral() {
 
     load();
     return () => { cancelled = true; };
-  }, [user?.id, profileLoading, isSeller, dateRange.start, dateRange.end]);
-
-  // Vendedor não pode ver — redireciona
-  if (!profileLoading && isSeller) {
-    return <Navigate to="/dashboard" replace />;
-  }
+  }, [user?.id, profileLoading, isSeller, masterUserId, dateRange.start, dateRange.end]);
 
   if (loading || !data) {
     return (
@@ -391,7 +417,11 @@ export default function PainelGeral() {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-bold lg:text-3xl">Painel Geral</h1>
-            <p className="text-sm text-muted-foreground">Soma e média Pedro (Tráfego Pago) + Marcos (Outros canais)</p>
+            <p className="text-sm text-muted-foreground">
+              {isSeller
+                ? 'Seus leads — Pedro (Tráfego Pago) + Marcos (Outros canais)'
+                : 'Soma e média Pedro (Tráfego Pago) + Marcos (Outros canais)'}
+            </p>
           </div>
 
           {/* Filtro de período */}
@@ -563,7 +593,8 @@ export default function PainelGeral() {
           </CardContent>
         </Card>
 
-        {/* ── Ranking de Vendedores (unificado) ─────────────────────────── */}
+        {/* ── Ranking de Vendedores (unificado) — só master (vendedor não vê colegas) ── */}
+        {!isSeller && (
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -609,6 +640,7 @@ export default function PainelGeral() {
             )}
           </CardContent>
         </Card>
+        )}
 
         {/* Erro silencioso fallback */}
         {!data && (
