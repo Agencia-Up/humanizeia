@@ -13,8 +13,8 @@ import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import {
   Contact, Search, Trash2, Loader2, Plus, FolderOpen, Users, Phone, Tag,
-  Edit, Eye, ArrowLeft, MoreHorizontal, MapPin, MessageCircle, Globe,
-  Download, RefreshCw, UserPlus, CheckCircle, WifiOff, Upload,
+  Edit, Eye, ArrowLeft, MoreHorizontal, MapPin, MessageCircle,
+  Download, Upload,
   CheckCheck, Clock, AlertCircle, MessageSquare,
 } from 'lucide-react';
 import {
@@ -60,15 +60,6 @@ interface WAContact {
   metadata?: Record<string, any>;
 }
 
-interface WhatsAppGroup {
-  id: string;
-  subject: string;
-  size: number;
-  owner: string;
-  creation: number;
-  instance_name?: string;
-}
-
 const sourceLabels: Record<string, { label: string; icon: typeof Phone }> = {
   manual: { label: 'Manual', icon: Phone },
   whatsapp_group: { label: 'Grupo WhatsApp', icon: MessageCircle },
@@ -77,68 +68,8 @@ const sourceLabels: Record<string, { label: string; icon: typeof Phone }> = {
   import: { label: 'Importação', icon: FolderOpen },
 };
 
-// ============= Group Table Component =============
-function GroupTable({
-  groups, selectedGroups, toggleGroup, toggleAll, search, setSearch, onExtract,
-}: {
-  groups: WhatsAppGroup[]; selectedGroups: string[]; toggleGroup: (id: string) => void;
-  toggleAll: () => void; search: string; setSearch: (v: string) => void; onExtract: () => void;
-}) {
-  const filtered = groups.filter(g => g.subject.toLowerCase().includes(search.toLowerCase()));
-  return (
-    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-      <CardHeader>
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <CardTitle className="text-lg">{groups.length} grupo(s) encontrado(s)</CardTitle>
-            <CardDescription>Selecione os grupos para extrair os contatos</CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Filtrar grupo..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 w-64" />
-            </div>
-            {selectedGroups.length > 0 && (
-              <Button onClick={onExtract}>
-                <Download className="h-4 w-4 mr-2" /> Extrair ({selectedGroups.length})
-              </Button>
-            )}
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-12">
-                <Checkbox checked={selectedGroups.length === filtered.length && filtered.length > 0} onCheckedChange={toggleAll} />
-              </TableHead>
-              <TableHead>Nome do Grupo</TableHead>
-              <TableHead className="text-center">Membros</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map(group => (
-              <TableRow key={group.id}>
-                <TableCell><Checkbox checked={selectedGroups.includes(group.id)} onCheckedChange={() => toggleGroup(group.id)} /></TableCell>
-                <TableCell className="font-medium">{group.subject}</TableCell>
-                <TableCell className="text-center">
-                  <Badge variant="secondary"><UserPlus className="h-3 w-3 mr-1" />{group.size}</Badge>
-                </TableCell>
-                <TableCell>
-                  <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
-                    <CheckCircle className="h-3 w-3 mr-1" /> Ativo
-                  </Badge>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
-  );
-}
+// TAREFA 3 (29/05/2026): componente GroupTable removido junto com as abas
+// "Meus Grupos" e "Grupos Externos". A pagina Contatos passa a ter so "Listas".
 
 export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
@@ -172,7 +103,6 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const [showAddContacts, setShowAddContacts] = useState(false);
   const [showDeleteList, setShowDeleteList] = useState(false);
   const [showFileImport, setShowFileImport] = useState(false);
-  const [showGoogleMaps, setShowGoogleMaps] = useState(false);
   const [showPedroImport, setShowPedroImport] = useState(false);
 
   // Form state
@@ -188,48 +118,9 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const [pedroAutoSync, setPedroAutoSync] = useState(true);
   const [pedroLeadCount, setPedroLeadCount] = useState<number | null>(null);
 
-  // Google Maps state
-  const [mapsQuery, setMapsQuery] = useState('');
-  const [mapsTargetListId, setMapsTargetListId] = useState('');
-  const [mapsNewListName, setMapsNewListName] = useState('');
-  const [isExtractingMaps, setIsExtractingMaps] = useState(false);
-  const [mapsListMode, setMapsListMode] = useState<'existing' | 'new'>('new');
-
-  // === Own Groups state ===
-  const [ownGroups, setOwnGroups] = useState<WhatsAppGroup[]>([]);
-  const [isLoadingOwn, setIsLoadingOwn] = useState(false);
-  const [searchOwn, setSearchOwn] = useState('');
-  const [selectedOwn, setSelectedOwn] = useState<string[]>([]);
-
-  // === External Groups state ===
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<WhatsAppGroup[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchFilter, setSearchFilter] = useState('');
-  const [selectedSearch, setSelectedSearch] = useState<string[]>([]);
-
-  // === Extract dialog state ===
-  const [showExtractDialog, setShowExtractDialog] = useState(false);
-  const [extractListMode, setExtractListMode] = useState<'new' | 'existing'>('new');
-  const [extractNewListName, setExtractNewListName] = useState('');
-  const [extractTargetListId, setExtractTargetListId] = useState('');
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [extractSource, setExtractSource] = useState<'own' | 'search'>('own');
-
-  // === Instance check ===
-  const [hasInstance, setHasInstance] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    if (!effectiveUserId) return;
-    (async () => {
-      const { count } = await supabase
-        .from('wa_instances')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', effectiveUserId)
-        .eq('provider', 'evolution');
-      setHasInstance((count ?? 0) > 0);
-    })();
-  }, [effectiveUserId]);
+  // TAREFA 3 (29/05/2026): estados de Google Maps, Meus Grupos, Grupos Externos,
+  // dialog de extracao e checagem de instancia (hasInstance) removidos junto com
+  // as respectivas abas. Nada disso era usado pela aba "Listas".
 
   // ============= Contact Lists Logic =============
   // Modelo: master vê TODAS as listas (suas + dos vendedores). Vendedor vê só as dele.
@@ -615,116 +506,11 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     }
   };
 
-  const extractGoogleMaps = async () => {
-    if (!effectiveUserId || !mapsQuery.trim()) return;
-    setIsExtractingMaps(true);
-    try {
-      const payload: any = { user_id: effectiveUserId, search_query: mapsQuery.trim() };
-      if (mapsListMode === 'existing' && mapsTargetListId) payload.list_id = mapsTargetListId;
-      else if (mapsListMode === 'new' && mapsNewListName.trim()) payload.list_name = mapsNewListName.trim();
-      const { data, error } = await supabase.functions.invoke('extract-google-maps-leads', { body: payload });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Erro na extração');
-      toast({ title: 'Extração concluída!', description: `${data.total_leads || 0} leads extraídos do Google Maps` });
-      setShowGoogleMaps(false); setMapsQuery(''); setMapsNewListName(''); fetchLists();
-    } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
-    } finally { setIsExtractingMaps(false); }
-  };
-
-  // ============= Group Extraction Logic =============
-  const fetchOwnGroups = async () => {
-    if (!effectiveUserId) return;
-    setIsLoadingOwn(true);
-    try {
-      console.log('[WhatsAppContacts] Fetching groups for user:', effectiveUserId);
-      const { data, error } = await supabase.functions.invoke('wa-extract-groups', { body: { user_id: effectiveUserId } });
-      console.log('[WhatsAppContacts] Response:', JSON.stringify(data), 'Error:', error);
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Erro ao buscar grupos');
-      const groups = data.groups || [];
-      setOwnGroups(groups);
-      toast({ title: `${groups.length} grupo(s) encontrado(s)` });
-    } catch (err: any) {
-      console.error('[WhatsAppContacts] Error:', err);
-      toast({ title: 'Erro ao buscar grupos', description: err.message, variant: 'destructive' });
-    } finally { setIsLoadingOwn(false); }
-  };
-
-  const searchGroupsByNiche = async () => {
-    if (!effectiveUserId || !searchQuery.trim()) return;
-    setIsSearching(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
-        body: { user_id: effectiveUserId, action: 'search_groups', query: searchQuery.trim() },
-      });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Erro ao pesquisar grupos');
-      setSearchResults(data.groups || []);
-      toast({ title: `${data.groups?.length || 0} grupos encontrados para "${searchQuery}"` });
-    } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
-    } finally { setIsSearching(false); }
-  };
-
-  const openExtractDialog = (source: 'own' | 'search') => {
-    setExtractSource(source);
-    fetchLists();
-    const label = source === 'own' ? 'Meus Grupos' : `Pesquisa: ${searchQuery}`;
-    setExtractNewListName(`${label} - ${new Date().toLocaleDateString('pt-BR')}`);
-    setExtractListMode('new'); setExtractTargetListId('');
-    setShowExtractDialog(true);
-  };
-
-  const currentSelectedGroups = extractSource === 'own' ? selectedOwn : selectedSearch;
-  const currentGroups = extractSource === 'own' ? ownGroups : searchResults;
-
-  const extractGroupContacts = async () => {
-    if (!effectiveUserId || currentSelectedGroups.length === 0) return;
-    setIsExtracting(true);
-    try {
-      let listId = extractListMode === 'existing' ? extractTargetListId : undefined;
-      if (extractListMode === 'new' && extractNewListName.trim()) {
-        const { data: newList, error: listErr } = await (supabase as any)
-          .from('wa_contact_lists')
-          .insert({
-            user_id: effectiveUserId,
-            name: extractNewListName.trim(),
-            source: 'group_extract',
-            contact_count: 0,
-            seller_member_id: (isSeller && seller?.id) ? seller.id : null,
-          })
-          .select('id').single();
-        if (listErr) throw listErr;
-        listId = newList.id;
-      }
-      const selectedGroupData = currentGroups.filter(g => currentSelectedGroups.includes(g.id));
-      const { data, error } = await supabase.functions.invoke('wa-extract-groups', {
-        body: { user_id: effectiveUserId, action: 'extract_contacts', group_ids: currentSelectedGroups, groups: selectedGroupData, list_id: listId },
-      });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Erro ao extrair contatos');
-      toast({ title: 'Contatos extraídos!', description: `${data.total_contacts || 0} contatos salvos de ${currentSelectedGroups.length} grupo(s)` });
-      if (extractSource === 'own') setSelectedOwn([]); else setSelectedSearch([]);
-      setShowExtractDialog(false); fetchLists();
-    } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
-    } finally { setIsExtracting(false); }
-  };
-
-  const toggleGroup = (id: string, type: 'own' | 'search') => {
-    const setter = type === 'own' ? setSelectedOwn : setSelectedSearch;
-    setter(prev => prev.includes(id) ? prev.filter(g => g !== id) : [...prev, id]);
-  };
-
-  const toggleAllGroups = (type: 'own' | 'search') => {
-    const setter = type === 'own' ? setSelectedOwn : setSelectedSearch;
-    const groups = type === 'own'
-      ? ownGroups.filter(g => g.subject.toLowerCase().includes(searchOwn.toLowerCase()))
-      : searchResults.filter(g => g.subject.toLowerCase().includes(searchFilter.toLowerCase()));
-    const selected = type === 'own' ? selectedOwn : selectedSearch;
-    if (selected.length === groups.length) setter([]); else setter(groups.map(g => g.id));
-  };
+  // TAREFA 3 (29/05/2026): helpers de Google Maps e de extracao de grupos
+  // (extractGoogleMaps, fetchOwnGroups, searchGroupsByNiche, openExtractDialog,
+  // extractGroupContacts, toggleGroup, toggleAllGroups) removidos junto com as
+  // abas. As edge functions 'wa-extract-groups' e 'extract-google-maps-leads'
+  // permanecem intactas no backend; so o acesso pela UI foi retirado.
 
   const openEditDialog = (list: ContactList) => {
     setEditingList(list); setFormListName(list.name); setFormListDesc(list.description || ''); setShowEditList(true);
@@ -737,8 +523,6 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const filteredContacts = contacts.filter(c =>
     !search || c.phone?.includes(search) || c.name?.toLowerCase().includes(search.toLowerCase()) || c.group_name?.toLowerCase().includes(search.toLowerCase())
   );
-
-  const needsInstance = mainTab === 'groups' || mainTab === 'external';
 
   const content = (
     <><div className="space-y-6 p-4 md:p-6">
@@ -754,18 +538,11 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         </div>
 
         <Tabs value={mainTab} onValueChange={setMainTab}>
-          <TabsList className="grid w-full max-w-2xl grid-cols-4">
+          {/* TAREFA 3 (29/05/2026): abas Meus Grupos / Grupos Externos / Google Maps
+              removidas. Resta apenas "Listas". */}
+          <TabsList className="grid w-full max-w-xs grid-cols-1">
             <TabsTrigger value="lists" className="flex items-center gap-1.5 text-xs sm:text-sm">
               <FolderOpen className="h-4 w-4" /> Listas
-            </TabsTrigger>
-            <TabsTrigger value="groups" className="flex items-center gap-1.5 text-xs sm:text-sm">
-              <Users className="h-4 w-4" /> Meus Grupos
-            </TabsTrigger>
-            <TabsTrigger value="external" className="flex items-center gap-1.5 text-xs sm:text-sm">
-              <Globe className="h-4 w-4" /> Grupos Externos
-            </TabsTrigger>
-            <TabsTrigger value="gmb" className="flex items-center gap-1.5 text-xs sm:text-sm">
-              <MapPin className="h-4 w-4" /> Google Maps
             </TabsTrigger>
           </TabsList>
 
@@ -1148,141 +925,8 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
             })()}
           </TabsContent>
 
-          {/* ============ TAB: Meus Grupos ============ */}
-          <TabsContent value="groups" className="mt-4 space-y-4">
-            {hasInstance === false ? (
-              <Card><CardContent className="flex flex-col items-center justify-center gap-4 py-16">
-                <WifiOff className="h-12 w-12 text-muted-foreground" />
-                <p className="text-muted-foreground text-center max-w-md">
-                  Para extrair grupos, conecte uma instância WhatsApp em <strong>Configurações → WhatsApp</strong>.
-                </p>
-                <Button variant="outline" onClick={() => window.location.href = '/settings'}>Ir para Configurações</Button>
-              </CardContent></Card>
-            ) : (
-              <>
-                <div className="flex justify-between items-center">
-                  <p className="text-sm text-muted-foreground">Extraia membros dos seus grupos e comunidades WhatsApp</p>
-                  <Button onClick={fetchOwnGroups} disabled={isLoadingOwn}>
-                    {isLoadingOwn ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-                    Buscar Meus Grupos
-                  </Button>
-                </div>
-                {ownGroups.length > 0 && (
-                  <GroupTable
-                    groups={ownGroups} selectedGroups={selectedOwn}
-                    toggleGroup={id => toggleGroup(id, 'own')} toggleAll={() => toggleAllGroups('own')}
-                    search={searchOwn} setSearch={setSearchOwn} onExtract={() => openExtractDialog('own')}
-                  />
-                )}
-                {ownGroups.length === 0 && !isLoadingOwn && (
-                  <Card><CardContent className="flex flex-col items-center justify-center py-16 gap-4">
-                    <Users className="h-12 w-12 text-muted-foreground opacity-40" />
-                    <p className="text-muted-foreground text-center">Clique em <strong>"Buscar Meus Grupos"</strong> para listar os grupos das suas instâncias.</p>
-                  </CardContent></Card>
-                )}
-              </>
-            )}
-          </TabsContent>
-
-          {/* ============ TAB: Grupos Externos ============ */}
-          <TabsContent value="external" className="mt-4 space-y-4">
-            {hasInstance === false ? (
-              <Card><CardContent className="flex flex-col items-center justify-center gap-4 py-16">
-                <WifiOff className="h-12 w-12 text-muted-foreground" />
-                <p className="text-muted-foreground text-center max-w-md">
-                  Para pesquisar grupos, conecte uma instância WhatsApp em <strong>Configurações → WhatsApp</strong>.
-                </p>
-                <Button variant="outline" onClick={() => window.location.href = '/settings'}>Ir para Configurações</Button>
-              </CardContent></Card>
-            ) : (
-              <>
-                <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-                  <CardHeader>
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Globe className="h-5 w-5 text-primary" /> Pesquisar Grupos por Nicho
-                    </CardTitle>
-                    <CardDescription>Digite o nicho ou tema para encontrar grupos públicos e extrair os contatos</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          placeholder="Ex: marketing digital, emagrecimento, criptomoedas..."
-                          value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && searchGroupsByNiche()} className="pl-9"
-                        />
-                      </div>
-                      <Button onClick={searchGroupsByNiche} disabled={isSearching || !searchQuery.trim()}>
-                        {isSearching ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
-                        Pesquisar
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-                {searchResults.length > 0 && (
-                  <GroupTable
-                    groups={searchResults} selectedGroups={selectedSearch}
-                    toggleGroup={id => toggleGroup(id, 'search')} toggleAll={() => toggleAllGroups('search')}
-                    search={searchFilter} setSearch={setSearchFilter} onExtract={() => openExtractDialog('search')}
-                  />
-                )}
-                {searchResults.length === 0 && !isSearching && searchQuery && (
-                  <Card><CardContent className="flex flex-col items-center justify-center py-12 gap-3">
-                    <Search className="h-10 w-10 text-muted-foreground" />
-                    <p className="text-muted-foreground text-center">Nenhum grupo encontrado. Tente outro termo.</p>
-                  </CardContent></Card>
-                )}
-              </>
-            )}
-          </TabsContent>
-
-          {/* ============ TAB: Google Maps ============ */}
-          <TabsContent value="gmb" className="mt-4 space-y-4">
-            <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <MapPin className="h-5 w-5 text-primary" /> Extrair Leads do Google Maps
-                </CardTitle>
-                <CardDescription>Busque empresas e extraia telefones, endereços e avaliações automaticamente</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Termo de busca *</Label>
-                  <Input value={mapsQuery} onChange={e => setMapsQuery(e.target.value)} placeholder="Ex: Clínicas Odontológicas em São Paulo" maxLength={200} />
-                  <p className="text-xs text-muted-foreground">Use termos específicos com localização para melhores resultados</p>
-                </div>
-                <div className="space-y-2">
-                  <Label>Salvar em</Label>
-                  <div className="flex gap-2">
-                    <Button type="button" variant={mapsListMode === 'new' ? 'default' : 'outline'} size="sm" onClick={() => setMapsListMode('new')}>Nova Lista</Button>
-                    <Button type="button" variant={mapsListMode === 'existing' ? 'default' : 'outline'} size="sm" onClick={() => setMapsListMode('existing')} disabled={lists.length === 0}>Lista Existente</Button>
-                  </div>
-                </div>
-                {mapsListMode === 'new' ? (
-                  <div className="space-y-2">
-                    <Label>Nome da nova lista</Label>
-                    <Input value={mapsNewListName} onChange={e => setMapsNewListName(e.target.value)} placeholder="Ex: Clínicas SP" maxLength={100} />
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <Label>Selecione a lista</Label>
-                    <Select value={mapsTargetListId} onValueChange={setMapsTargetListId}>
-                      <SelectTrigger><SelectValue placeholder="Selecione uma lista" /></SelectTrigger>
-                      <SelectContent>{lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.contact_count})</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
-                )}
-                <Button
-                  onClick={extractGoogleMaps} className="w-full"
-                  disabled={isExtractingMaps || !mapsQuery.trim() || (mapsListMode === 'existing' && !mapsTargetListId)}
-                >
-                  {isExtractingMaps ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Globe className="h-4 w-4 mr-2" />}
-                  {isExtractingMaps ? 'Extraindo...' : 'Extrair Leads'}
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
+          {/* TAREFA 3 (29/05/2026): conteudos das abas Meus Grupos, Grupos Externos
+              e Google Maps removidos. So a aba "Listas" permanece. */}
         </Tabs>
       </div>
       {/* ============ DIALOGS ============ */}
@@ -1445,42 +1089,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         </DialogContent>
       </Dialog>
 
-      {/* Extract Group Contacts */}
-      <Dialog open={showExtractDialog} onOpenChange={setShowExtractDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Download className="h-5 w-5 text-primary" /> Extrair Contatos</DialogTitle>
-            <DialogDescription>Extrair contatos de {currentSelectedGroups.length} grupo(s). Escolha onde salvar.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Salvar em</Label>
-              <div className="flex gap-2">
-                <Button type="button" variant={extractListMode === 'new' ? 'default' : 'outline'} size="sm" onClick={() => setExtractListMode('new')}><Plus className="h-3.5 w-3.5 mr-1" /> Nova Lista</Button>
-                <Button type="button" variant={extractListMode === 'existing' ? 'default' : 'outline'} size="sm" onClick={() => setExtractListMode('existing')} disabled={lists.length === 0}>Lista Existente</Button>
-              </div>
-            </div>
-            {extractListMode === 'new' ? (
-              <div className="space-y-2"><Label>Nome da nova lista</Label><Input value={extractNewListName} onChange={e => setExtractNewListName(e.target.value)} placeholder="Ex: Grupos extraídos" maxLength={100} /></div>
-            ) : (
-              <div className="space-y-2">
-                <Label>Selecione a lista</Label>
-                <Select value={extractTargetListId} onValueChange={setExtractTargetListId}>
-                  <SelectTrigger><SelectValue placeholder="Selecione uma lista" /></SelectTrigger>
-                  <SelectContent>{lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.contact_count})</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowExtractDialog(false)}>Cancelar</Button>
-            <Button onClick={extractGroupContacts} disabled={isExtracting || (extractListMode === 'new' && !extractNewListName.trim()) || (extractListMode === 'existing' && !extractTargetListId)}>
-              {isExtracting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-              {isExtracting ? 'Extraindo...' : 'Extrair Contatos'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* TAREFA 3 (29/05/2026): dialog "Extrair Contatos" (de grupos) removido. */}
 
       {/* File Import Dialog */}
       <FileImportDialog
