@@ -1196,14 +1196,18 @@ export async function processPedroV2Turn(
   // Marca status='transferido' (sem mexer no status_crm); com isso o follow-up de
   // inatividade para sozinho (o cron so processa novo/interessado). Gated a v2.
   let handoffResult: any = null;
-  // Transfere quando: (1) o planner mandou handoff (agendamento / pediu humano), OU
-  // (2) o cerebro, seguindo o system prompt, marcou pronto_para_transferir COM a
-  // qualificacao minima coletada (nome + ao menos troca/entrada/forma de pagamento).
-  // Isso evita transferir cedo demais (ex: no "vou querer" sem qualificar).
+  // Transfere quando: (1) o planner mandou handoff (lead pediu humano explicitamente), OU
+  // (2) o cerebro, seguindo o system prompt, marcou pronto_para_transferir COM nome +
+  // algum contexto real (interesse, dia de agendamento, troca/entrada/pagamento). Quem
+  // controla o TIMING (qualificar antes) e o cerebro seguindo o System Prompt; este guard
+  // so evita transferir um turno vazio/sem contexto.
   const _q = (reply?.qualificacao_coletada && typeof reply.qualificacao_coletada === "object") ? reply.qualificacao_coletada : {};
   const _hasNome = Boolean(_q.nome || lead?.lead_name);
-  const _askedQualif = _q.tem_troca === true || _q.tem_troca === false || Boolean(_q.valor_entrada) || Boolean(_q.forma_pagamento);
-  const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _askedQualif;
+  const _hasContext = Boolean(_q.interesse) || Boolean(_q.dia_agendamento)
+    || _q.tem_troca === true || _q.tem_troca === false || Boolean(_q.valor_entrada) || Boolean(_q.forma_pagamento)
+    || Boolean(effectiveMemory?.interesse?.modelo_desejado)
+    || (Array.isArray(effectiveMemory?.veiculos_apresentados) && effectiveMemory.veiculos_apresentados.length > 0);
+  const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
   if (!dryRun && lead?.id && (contextualIntent.needs_handoff || brainReadyToTransfer) && identity.kind !== "seller") {
     try {
       handoffResult = await executePedroV2Handoff(supabase, {
@@ -1213,6 +1217,7 @@ export async function processPedroV2Turn(
         remote_jid: remoteJid,
         lead_name: _q.nome || lead.lead_name || pushName || null,
         reason: contextualIntent.needs_handoff ? `handoff:${brainPlan?.intent || contextualIntent.intent || "humano"}` : "handoff:qualificado_pronto",
+        qualificacao: _q,
       });
       if (handoffResult?.ok && handoffResult.seller?.whatsapp_number && isPedroV2SendingEnabled()) {
         const handoffInstance = input.wa_instance || await resolvePedroInstance(supabase, {
