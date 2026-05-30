@@ -450,7 +450,7 @@ export async function generatePedroBrainReply(input: {
                 "- Se o lead trocou de veiculo ou mudou de assunto, responda sobre o novo assunto. A mensagem atual sempre vence a memoria antiga.",
                 `- Se voce ja se apresentou no historico recente da conversa (status: ${hasPresented ? "já apresentado" : "não apresentado ainda"}), nao repita a apresentacao. Se for a primeira mensagem, apresente-se como ${agentName}, consultor da ${input.agent?.company_name || "Icom Motors"}.`,
                 "- Nunca cite termos tecnicos, JSON, ferramentas, tools, banco de dados ou processos internos.",
-                "- Retorne apenas JSON valido com as chaves 'text', 'source', 'presented_vehicle_indices', 'qualificacao_coletada' e 'pronto_para_transferir'.",
+                "- Retorne apenas JSON valido com as chaves 'text', 'source', 'presented_vehicle_indices', 'qualificacao_coletada', 'pronto_para_transferir' e 'transferir_silencioso'.",
                 "- Na chave 'presented_vehicle_indices', retorne um array de inteiros contendo os indices (de 1 a N, conforme o campo 'index' dos fatos em stock.facts) dos veiculos que voce de fato apresentou/citou no texto da sua resposta. Se nao apresentou nenhum ou nao havia estoque, retorne um array vazio [].",
                 "",
                 "DIRETRIZES DE APOIO (use SOMENTE quando o seu System Prompt do Portal nao especificar o passo a passo — o Portal sempre prevalece):",
@@ -460,9 +460,10 @@ export async function generatePedroBrainReply(input: {
                 "",
                 "QUALIFICAÇÃO OBRIGATÓRIA (siga o passo-a-passo do seu System Prompt do Portal):",
                 "- Quando o lead demonstrar interesse de compra (ex: 'vou querer', 'quero comprar', 'gostei'), CONDUZA a qualificação obrigatória do seu prompt fazendo UMA pergunta por vez, na ordem, PULANDO o que já foi respondido (consulte memory_summary e o histórico recente). Tipicamente: nome, se tem carro na troca, se tem valor de entrada, e se conhece a loja.",
-                "- NUNCA encaminhe para o consultor ANTES de coletar os dados obrigatórios do seu prompt. No mínimo: nome + interesse específico (e, no caso de visita, o DIA/horário desejado).",
-                "- AGENDAMENTO: se o lead quer agendar uma visita/test-drive, PERGUNTE e confirme o dia e horário ANTES de encaminhar — isso vai no briefing do vendedor. Agendamento sem dia confirmado NÃO está pronto para transferir.",
-                "- Defina 'pronto_para_transferir' = true SOMENTE quando o lead estiver qualificado e pronto conforme os critérios do seu System Prompt (interesse real + perguntas de qualificação respondidas; se for visita, com o dia confirmado). Nesse caso, escreva uma despedida curta avisando que um consultor vai dar continuidade. Caso contrário, 'pronto_para_transferir' = false e siga conduzindo/qualificando com UMA pergunta por vez.",
+                "- INSISTÊNCIA INTELIGENTE — você NUNCA encerra a conversa de forma definitiva, NUNCA se despede com 'obrigado pelo seu tempo' / 'estou à disposição no futuro' como fim. Um 'não' a uma pergunta do funil (ex: 'tem entrada?' → 'não'; 'conhece a loja?' → 'não') NÃO desqualifica e NÃO encerra: apenas registre e conduza com gentileza para a próxima etapa.",
+                "- AGENDAMENTO: se o lead quer agendar visita/test-drive, pergunte e confirme o dia/horário antes de encaminhar (vai no briefing).",
+                "- TRANSFERIR (qualificado o suficiente): depois de conduzir as perguntas do funil (MESMO com respostas 'não') e tendo no mínimo nome + interesse, defina 'pronto_para_transferir' = true e escreva uma despedida curta avisando que um consultor vai dar continuidade. NÃO exija respostas perfeitas — colete o que der e ENCAMINHE. Enquanto ainda houver etapa do funil a conduzir, 'pronto_para_transferir' = false e siga com UMA pergunta por vez.",
+                "- TRANSFERIR SILENCIOSO (desqualificado): defina 'transferir_silencioso' = true SOMENTE se o lead disser EXPLICITAMENTE que não quer o veículo / não tem interesse / pede para parar. Nesse caso NÃO avise sobre transferência — apenas se coloque à disposição de forma curta e gentil (o lead será encaminhado em SILÊNCIO para o vendedor fazer follow-up futuro). NUNCA marque por um 'não' a uma pergunta do funil.",
                 "- Em 'qualificacao_coletada', devolva um objeto com o que você JÁ apurou na conversa inteira (use null no que ainda não souber). ATENÇÃO: 'interesse' é o veículo que o lead QUER COMPRAR; 'carro_troca' é o carro que ele tem para dar de TROCA — NÃO confunda os dois. Formato: { \"nome\": string|null, \"interesse\": string|null, \"tem_troca\": true|false|null, \"carro_troca\": string|null, \"valor_entrada\": string|null, \"forma_pagamento\": \"financiamento\"|\"a_vista\"|null, \"sabe_localizacao\": true|false|null, \"dia_agendamento\": string|null }.",
               ].join("\n"),
           },
@@ -524,6 +525,7 @@ export async function generatePedroBrainReply(input: {
       ? parsed.qualificacao_coletada
       : null;
     const pronto_para_transferir = parsed?.pronto_para_transferir === true;
+    const transferir_silencioso = parsed?.transferir_silencioso === true;
 
     let guardedRawText = adVehicleConsultation && rawText.includes("Encontrou o")
       ? buildAdVehicleConsultationFallback({
@@ -564,6 +566,7 @@ export async function generatePedroBrainReply(input: {
       presented_vehicle_indices,
       qualificacao_coletada,
       pronto_para_transferir,
+      transferir_silencioso,
     };
   } catch (error) {
     console.warn("[PedroV2] brain reply fallback:", error);
