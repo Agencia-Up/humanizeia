@@ -149,6 +149,7 @@ export async function executePedroV2Handoff(
     remote_jid: string;
     lead_name?: string | null;
     reason?: string | null;
+    qualificacao?: Record<string, any> | null;
   },
 ): Promise<{ ok: boolean; seller: any; briefing: string; reason: string }> {
   // 1) Precisa ter vendedor disponivel ANTES de mexer no status (senao o lead
@@ -203,6 +204,22 @@ export async function executePedroV2Handoff(
       if (res.ok) { const d = await res.json(); const t = d?.choices?.[0]?.message?.content; if (t) briefing = t; }
     }
   } catch (_e) { /* silencioso */ }
+
+  // 3.1) Anexa os DADOS ESTRUTURADOS coletados pelo agente (vao no briefing do vendedor).
+  const q = input.qualificacao && typeof input.qualificacao === "object" ? input.qualificacao : null;
+  if (q) {
+    const linhas: string[] = [];
+    if (q.nome) linhas.push(`Nome: ${q.nome}`);
+    if (q.interesse) linhas.push(`Interesse: ${q.interesse}`);
+    if (q.dia_agendamento) linhas.push(`Agendamento desejado: ${q.dia_agendamento}`);
+    if (q.tem_troca === true) linhas.push("Tem carro na troca: sim");
+    else if (q.tem_troca === false) linhas.push("Tem carro na troca: nao");
+    if (q.valor_entrada) linhas.push(`Valor de entrada: ${q.valor_entrada}`);
+    if (q.forma_pagamento) linhas.push(`Forma de pagamento: ${q.forma_pagamento}`);
+    if (q.sabe_localizacao === true) linhas.push("Conhece a loja: sim");
+    else if (q.sabe_localizacao === false) linhas.push("Conhece a loja: nao");
+    if (linhas.length > 0) briefing = `${briefing}\n\n*DADOS COLETADOS PELO AGENTE:*\n${linhas.join("\n")}`;
+  }
 
   // 4) Cria a transferencia (mesma estrutura/fila do fluxo atual) e grava o resumo.
   await supabase.from("ai_lead_transfers").insert({

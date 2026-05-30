@@ -472,12 +472,13 @@ export async function planPedroTurn(input: {
                 "- Se for apenas uma saudação comum, use 'reply_only'.",
                 "- Nunca invente que enviou fotos sem a ação 'photo_request'.",
                 "",
-                "REGRA DE TRANSFERÊNCIA (HANDOFF) — defina 'action' como 'handoff' SOMENTE quando:",
-                "  (a) o lead AGENDOU ou quer agendar uma visita/test-drive (ex: 'quero agendar', 'posso ir aí?', 'marcar uma visita', 'vou aí ver', ou cita um dia/horário para ir à loja); ou",
-                "  (b) o lead pediu explicitamente falar com um humano/vendedor/consultor.",
-                "  IMPORTANTE: demonstrar que quer comprar ('quero comprar', 'vou querer', 'fechar', 'gostei') NÃO é handoff aqui — nesse caso use 'reply_only' para o agente fazer a QUALIFICAÇÃO obrigatória (nome, troca, entrada, etc.) ANTES; a decisão de transferir o lead já qualificado é tomada na resposta (campo 'pronto_para_transferir'), não aqui.",
-                "  Seja CONSERVADOR: interesse vago, dúvida de preço, pedir foto ou só perguntar sobre um modelo NÃO é handoff.",
-                "  Em 'handoff', preencha 'response_guidance' orientando uma despedida curta e amigável avisando que um consultor de vendas vai entrar em contato e agradecendo — sem prometer mais nada e sem acionar estoque."
+                "REGRA DE TRANSFERÊNCIA (HANDOFF) — defina 'action' como 'handoff' SOMENTE quando o lead pediu EXPLICITAMENTE falar com um humano/vendedor/consultor (ex: 'quero falar com um vendedor', 'me passa pra um atendente').",
+                "  ATENÇÃO — NÃO é handoff aqui (use 'reply_only' e deixe o agente conduzir a QUALIFICAÇÃO do System Prompt, uma pergunta por vez, ANTES de qualquer transferência):",
+                "  - querer comprar ('quero comprar', 'vou querer', 'fechar', 'gostei');",
+                "  - querer AGENDAR uma visita/test-drive ('quero agendar', 'posso ir aí?', 'marcar visita') — o agente deve coletar dia/horário + dados antes;",
+                "  - interesse vago, dúvida de preço, pedir foto ou só perguntar sobre um modelo.",
+                "  Nesses casos a decisão de transferir o lead JÁ QUALIFICADO é tomada na resposta (campo 'pronto_para_transferir' do brain), NÃO aqui.",
+                "  Em 'handoff', preencha 'response_guidance' orientando uma despedida curta avisando que um consultor de vendas vai entrar em contato e agradecendo — sem prometer mais nada e sem acionar estoque."
               ].join("\n"),
           },
           {
