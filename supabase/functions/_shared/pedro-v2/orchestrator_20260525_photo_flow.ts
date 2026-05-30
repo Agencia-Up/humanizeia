@@ -590,9 +590,17 @@ function selectVehiclePhotos(vehicle: any, message: string, alreadySent: number[
   // Remove as fotos JA enviadas para este veiculo -> "mais fotos" manda diferentes.
   // Se o lead ja viu todas, recomeca o ciclo (nunca fica sem foto).
   const sentSet = new Set((alreadySent || []).map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n)));
-  let remaining = ordered.filter((i) => !sentSet.has(i));
-  if (remaining.length === 0) remaining = ordered;
-  let indexes = remaining.slice(0, Math.min(maxPhotos, remaining.length));
+  const remaining = ordered.filter((i) => !sentSet.has(i));
+  // Sempre tenta entregar maxPhotos (5 no overview "como antes"): prioriza as NAO
+  // enviadas e, se faltar, completa com o restante do acervo (ja vistas). Assim um
+  // lote de "mais fotos" nao sai com 3 quando ha como completar.
+  let indexes = remaining.slice(0, maxPhotos);
+  if (indexes.length < maxPhotos) {
+    for (const i of ordered) {
+      if (indexes.length >= maxPhotos) break;
+      if (!indexes.includes(i)) indexes.push(i);
+    }
+  }
   if (indexes.length === 0) {
     indexes = fillIndexes(strategies[target], total, maxPhotos, interiorish ? Math.min(total - 1, 5) : 0, "forward");
   }

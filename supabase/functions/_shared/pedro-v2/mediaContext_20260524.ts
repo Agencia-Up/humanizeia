@@ -139,9 +139,14 @@ function pickKind(payload: any): string | null {
   const text = normalizeText(JSON.stringify(collectKeys(payload)));
   const message = pickIncomingMessage(payload);
   const mime = asText(message?.mimetype || message?.mimeType || payload?.mimetype || payload?.mimeType);
-  if (mime?.startsWith("image/") || text.includes("imagemessage") || text.includes("jpegthumbnail")) return "image";
+  // Tipo REAL da mensagem primeiro (audio/video/documento) ANTES de imagem. Se nao,
+  // o `jpegThumbnail` da miniatura do anuncio (Facebook CTWA), que vem em TODA
+  // mensagem, faria audios/textos virarem "image" -> audio iria pra visao em vez do
+  // Whisper. O `jpegThumbnail` e contexto de ANUNCIO (tratado pelo adContext), NAO a
+  // midia da mensagem, entao nao classificamos como image por causa dele.
   if (mime?.startsWith("audio/") || text.includes("audiomessage")) return "audio";
   if (mime?.startsWith("video/") || text.includes("videomessage")) return "video";
+  if (mime?.startsWith("image/") || text.includes("imagemessage")) return "image";
   if (mime || text.includes("documentmessage")) return "document";
   return null;
 }

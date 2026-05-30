@@ -212,7 +212,8 @@ export async function executePedroV2Handoff(
     if (q.nome) linhas.push(`Nome: ${q.nome}`);
     if (q.interesse) linhas.push(`Interesse: ${q.interesse}`);
     if (q.dia_agendamento) linhas.push(`Agendamento desejado: ${q.dia_agendamento}`);
-    if (q.tem_troca === true) linhas.push("Tem carro na troca: sim");
+    if (q.carro_troca) linhas.push(`Veiculo de troca: ${q.carro_troca}`);
+    else if (q.tem_troca === true) linhas.push("Tem carro na troca: sim");
     else if (q.tem_troca === false) linhas.push("Tem carro na troca: nao");
     if (q.valor_entrada) linhas.push(`Valor de entrada: ${q.valor_entrada}`);
     if (q.forma_pagamento) linhas.push(`Forma de pagamento: ${q.forma_pagamento}`);
