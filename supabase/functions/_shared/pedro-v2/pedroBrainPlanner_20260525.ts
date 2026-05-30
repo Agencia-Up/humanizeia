@@ -76,19 +76,21 @@ function hasRecentPhotoOffer(input: {
     ...(Array.isArray(input.recent_history) ? input.recent_history : []),
     ...(Array.isArray(input.memory?.recent_turns) ? input.memory.recent_turns : []),
   ];
-  const agentTurns = turns
-    .slice(-12)
-    .filter((turn) => {
-      const role = String(turn?.role || turn?.direction || "").toLowerCase();
-      return ["agent", "assistant", "consultor", "outgoing"].includes(role);
-    })
-    .slice(-5);
-
-  return agentTurns.some((turn) => {
-    const text = normalizeText(turn?.text || turn?.content || turn?.message || "");
-    return /\b(quer|posso|te mando|mandar|envio|ver)\b.*\b(foto|fotos|imagem|imagens)\b/.test(text) ||
-      /\b(foto|fotos|imagem|imagens)\b.*\b(dele|desse|deste|carro|veiculo|anuncio)\b/.test(text);
+  const agentTurns = turns.filter((turn) => {
+    const role = String(turn?.role || turn?.direction || "").toLowerCase();
+    return ["agent", "assistant", "consultor", "outgoing"].includes(role);
   });
+  // SO a ULTIMA mensagem do agente conta como "oferta de foto" — e a mensagem que o
+  // "sim/pode" do lead esta respondendo. Se o agente ja seguiu para a qualificacao
+  // (ex: "tem carro na troca?"), um "sim" responde a ISSO, nao a uma oferta de foto.
+  const lastAgent = agentTurns[agentTurns.length - 1];
+  if (!lastAgent) return false;
+  const text = normalizeText(lastAgent?.text || lastAgent?.content || lastAgent?.message || "");
+  if (!text) return false;
+  // Se a ultima msg do agente foi uma PERGUNTA DE QUALIFICACAO/agendamento, nao e oferta de foto.
+  if (/\b(troca|entrada|pagamento|financ|cpf|nascimento|nome|loja|visita|test ?drive|orcamento|parcela|valor)\b/.test(text)) return false;
+  // Conta como oferta de fotos SO se a ultima msg do agente OFERECEU/perguntou sobre enviar fotos.
+  return (/\b(quer|posso|gostaria|deseja|quer que eu|te mando|posso te mostrar)\b/.test(text) && /\b(foto|fotos|imagem|imagens|video|videos)\b/.test(text));
 }
 
 function detectPhotoTarget(message?: string | null) {
