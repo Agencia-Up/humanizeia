@@ -2430,23 +2430,32 @@ function extractOpenAiTokens(data: any): number {
 
 async function consumePedroTokensAndAlert(
   supabase: any,
-  opts: { userId: string; tokens: number; baseUrl: string; instKey: string; gerentePhone?: string | null },
+  opts: { userId: string; leadKey: string; tokens: number; baseUrl: string; instKey: string; gerentePhone?: string | null },
 ): Promise<void> {
-  const amount = Math.round(opts.tokens || 0);
-  if (amount <= 0 || !opts.userId) return;
+  const rawTokens = Math.round(opts.tokens || 0);
+  const leadKey = String(opts.leadKey || '').replace(/\D/g, '');
+  if (!opts.userId || !leadKey) return;
   try {
-    const { data, error } = await supabase.rpc('consume_user_tokens', {
+    // Cobra 1 ATENDIMENTO por lead por ciclo (não por token). O custo real em
+    // token vai junto só como métrica INTERNA de margem (p_raw_tokens). O mesmo
+    // lead voltando no mesmo ciclo não cobra de novo (bill_pedro_lead resolve).
+    const { data, error } = await supabase.rpc('bill_pedro_lead', {
       p_user_id: opts.userId,
-      p_amount: amount,
+      p_lead_key: leadKey,
+      p_raw_tokens: rawTokens,
       p_agent: 'pedro',
-      p_description: 'Pedro SDR — resposta no WhatsApp',
     });
-    if (error) { console.error('[tokens] consume_user_tokens erro:', error.message); return; }
-    if (!data || data.ok !== true) {
-      if (data?.error) console.warn('[tokens] consume ignorado:', data.error);
+    if (error) { console.error('[tokens] bill_pedro_lead erro:', error.message); return; }
+    if (!data || data.ok === false) {
+      if (data?.error) console.warn('[tokens] cobrança ignorada:', data.error);
       return;
     }
-    console.log(`[tokens] Pedro consumiu ${amount} tokens (saldo: ${data.balance_after}/${data.total})`);
+    if (data.billed !== true) {
+      // Lead já contado neste ciclo → não cobra de novo (só acumulou custo interno).
+      console.log(`[tokens] lead …${leadKey.slice(-4)} já contava no ciclo; +${rawTokens} tokens internos`);
+      return;
+    }
+    console.log(`[tokens] Pedro: +1 atendimento (lead …${leadKey.slice(-4)}, saldo: ${data.balance_after}/${data.total}, ~${rawTokens} tokens reais)`);
     const justDepleted = data.just_depleted === true;
     const justLow = data.just_low === true;
     if (!justDepleted && !justLow) return;
@@ -2454,8 +2463,8 @@ async function consumePedroTokensAndAlert(
     if (!phone) { console.warn('[tokens] aviso não enviado: gerente_phone ausente'); return; }
     if (phone.length === 10 || phone.length === 11) phone = `55${phone}`;
     const text = justDepleted
-      ? '⚠️ *Seus tokens de IA acabaram.*\n\nO Pedro vai continuar atendendo seus leads normalmente, mas o consumo já passou do limite do seu plano. Recarregue no painel para manter o controle de uso em dia.'
-      : '🔔 *Seus tokens de IA estão acabando* (menos de 10% do plano).\n\nRecarregue no painel para não ficar sem antes da renovação.';
+      ? '⚠️ *Seus atendimentos de IA acabaram.*\n\nO Pedro vai continuar atendendo seus leads normalmente, mas o consumo já passou do limite do seu plano. Recarregue no painel para manter o controle de uso em dia.'
+      : '🔔 *Seus atendimentos de IA estão acabando* (menos de 10% do plano).\n\nRecarregue no painel para não ficar sem antes da renovação.';
     try {
       await fetch(`${opts.baseUrl}/send/text`, {
         method: 'POST',
@@ -4345,6 +4354,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // Roda DEPOIS de já ter respondido o lead — nunca bloqueia nem atrasa o atendimento.
   await consumePedroTokensAndAlert(supabase, {
     userId: waInstance.user_id,
+    leadKey: digitsOnly(remoteJid),
     tokens: llmUsage.tokens,
     baseUrl,
     instKey,
