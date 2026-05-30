@@ -13,6 +13,7 @@ import { isPedroV2SendingEnabled } from "./server.ts";
 import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } from "./adContext_20260525.ts";
 import { mediaContextToAdLikeContext, resolvePedroMediaContext, sanitizePedroMediaContext } from "./mediaContext_20260524.ts";
 import { resolvePedroVehicleTurn } from "./vehicleResolver_20260525_brain.ts";
+import { buildTokenAlertText, consumeUserTokens, normalizeAlertPhone } from "./tokenMeter.ts";
 
 async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
   try {
@@ -769,6 +770,8 @@ export async function processPedroV2Turn(
 ): Promise<PedroV2TurnResult> {
   const correlationId = newTraceId();
   const dryRun = input.dry_run !== false;
+  // Token metering: acumula o uso dos cérebros (planner + reply) deste turno.
+  const usageSink = { tokens: 0 };
   const log = makeTurnLogger(correlationId, {
     agent_id: input.agent?.id,
     instance_id: input.wa_instance?.id,
@@ -911,6 +914,7 @@ export async function processPedroV2Turn(
     media_context: sanitizePedroMediaContext(mediaContext),
     recent_history: recentHistory,
     vehicle_resolution: vehicleResolution,
+    usage_sink: usageSink,
   });
   const contextualIntent = mergeBrainPlanIntoIntent(contextualIntentBase, brainPlan, vehicleResolution);
   const nextMemory = !dryRun && lead?.id
@@ -991,6 +995,7 @@ export async function processPedroV2Turn(
         ad_context: adContext,
         media_context: sanitizePedroMediaContext(mediaContext),
         recent_history: recentHistory,
+        usage_sink: usageSink,
       });
 
   let effectiveMemory = nextMemory;
@@ -1037,6 +1042,7 @@ export async function processPedroV2Turn(
       ad_context: adContext,
       media_context: sanitizePedroMediaContext(mediaContext),
       recent_history: recentHistory,
+      usage_sink: usageSink,
       tool_result: {
         type: "vehicle_photos",
         selected_vehicle_label: reply.selected_vehicle_label || null,
@@ -1210,6 +1216,35 @@ export async function processPedroV2Turn(
         send_result: sendResult,
       },
     });
+  }
+
+  // Token metering: desconta o que os cérebros gastaram neste turno e avisa o
+  // dono no WhatsApp (gerente_phone) quando o saldo cruza ≤10% ou ≤0. Nunca
+  // bloqueia o atendimento — roda depois da resposta e nunca lança erro.
+  if (!dryRun) {
+    const consume = await consumeUserTokens(supabase, {
+      userId: input.agent.user_id,
+      tokens: usageSink.tokens,
+      agent: "pedro",
+      description: "Pedro SDR v2 — resposta no WhatsApp",
+    });
+    if (consume.just_depleted || consume.just_low) {
+      const alertPhone = normalizeAlertPhone(input.agent.gerente_phone);
+      if (alertPhone && input.wa_instance) {
+        try {
+          await sendPedroText(input.wa_instance, {
+            to: alertPhone,
+            text: buildTokenAlertText(consume.just_depleted ? "depleted" : "low"),
+          }, { humanize: false });
+          log("info", "pedro_v2_token_alert_sent", {
+            kind: consume.just_depleted ? "depleted" : "low",
+            balance_after: consume.balance_after,
+          });
+        } catch (alertErr) {
+          console.warn("[tokens] v2 alert send failed", alertErr);
+        }
+      }
+    }
   }
 
   return {

@@ -2,6 +2,7 @@ import { generatePedroSalesReply } from "./replyGenerator_20260525_photo_flow.ts
 import { PedroBrainPlan } from "./pedroBrainPlanner_20260525.ts";
 import { PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
+import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 
 function sanitizeAgentName(name?: string | null) {
   const clean = String(name || "").trim();
@@ -406,6 +407,7 @@ export async function generatePedroBrainReply(input: {
   media_context?: any;
   recent_history?: any[];
   tool_result?: any;
+  usage_sink?: UsageSink;
 }) {
   const hasPresented = checkAgentHasPresented(input.recent_history, input.memory?.recent_turns);
   const agentName = sanitizeAgentName(input.agent?.name);
@@ -506,6 +508,7 @@ export async function generatePedroBrainReply(input: {
 
     if (!res.ok) return fallback;
     const data = await res.json();
+    if (input.usage_sink) input.usage_sink.tokens += sumOpenAiTokens(data);
     const content = String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
     const rawText = String(parsed?.text || "").trim();

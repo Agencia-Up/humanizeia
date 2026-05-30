@@ -1,5 +1,6 @@
 import { PedroV2Intent, PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
+import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -422,6 +423,7 @@ export async function planPedroTurn(input: {
   media_context?: any;
   recent_history?: any[];
   vehicle_resolution: PedroVehicleResolution;
+  usage_sink?: UsageSink;
 }): Promise<PedroBrainPlan> {
   const fallback = fallbackPlan(input);
   const apiKey = Deno.env.get("OPENAI_API_KEY");
@@ -479,6 +481,7 @@ export async function planPedroTurn(input: {
 
     if (!res.ok) return fallback;
     const data = await res.json();
+    if (input.usage_sink) input.usage_sink.tokens += sumOpenAiTokens(data);
     const content = String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
     return normalizePlan(parsed, fallback, input);
