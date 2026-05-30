@@ -16,7 +16,6 @@ import { useToast } from '@/hooks/use-toast';
 
 /* ── helpers ────────────────────────────────────────────────────────── */
 function fmt(n: number) { return n.toLocaleString('pt-BR'); }
-function fmtR(n: number) { return `R$ ${n.toFixed(2).replace('.', ',')}`.replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
 
 const AGENT_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   davi: Instagram,
@@ -61,7 +60,7 @@ const PLAN_FEATURES: Record<PlanId, string[]> = {
   basico: [
     '🤖 Agente Pedro (SDR & IA)',
     'Área de membros / treinamento',
-    '400 atendimentos/mês',
+    '100 atendimentos/mês',
     'Até 5 instâncias de WhatsApp',
     'Dashboard básico',
     'Configurações essenciais',
@@ -72,7 +71,7 @@ const PLAN_FEATURES: Record<PlanId, string[]> = {
     '🤝 Agente Marcos (CRM & WhatsApp)',
     '🎯 Agente José (Tráfego Pago)',
     'Área de membros / treinamento',
-    '1.000 atendimentos/mês',
+    '300 atendimentos/mês',
     'Até 10 instâncias de WhatsApp',
     'Dashboard avançado com métricas',
     'CRM de leads integrado',
@@ -85,7 +84,7 @@ const PLAN_FEATURES: Record<PlanId, string[]> = {
     'Pedro, Marcos, José, Paulo, Maria',
     'Davi, João, Daniel, Salomão',
     'Área de membros / treinamento',
-    '2.000 atendimentos/mês',
+    '500 atendimentos/mês',
     'Até 15 instâncias de WhatsApp',
     'Copywriting IA (Paulo)',
     'Design criativo IA (Maria)',
@@ -156,7 +155,7 @@ export default function MeuPlano() {
     if (res.success) {
       toast({
         title: 'Recarga solicitada!',
-        description: `${fmt(amount)} atendimentos — ${fmtR(res.price)}. Integração com gateway em breve.`,
+        description: `${fmt(amount)} atendimentos. Integração com gateway em breve.`,
       });
     }
   };
@@ -172,8 +171,6 @@ export default function MeuPlano() {
       });
     }
   };
-
-  const customPrice = customAtendimentos * plan.atendimentoCost;
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-5xl mx-auto">
@@ -278,7 +275,7 @@ export default function MeuPlano() {
           {[
             { label: 'Atendimentos inclusos/mês', value: fmt(plan.atendimentosIncluded), icon: Zap, color: 'text-primary' },
             { label: 'Atendimentos avulsos', value: fmt(subscription.tokens_purchased), icon: TrendingUp, color: 'text-green-400' },
-            { label: 'Custo por atendimento', value: `R$ ${plan.atendimentoCost.toFixed(2).replace('.', ',')}`, icon: CreditCard, color: 'text-yellow-400' },
+            { label: 'Atendimentos restantes', value: fmt(tokensAvailable), icon: CreditCard, color: 'text-yellow-400' },
           ].map((s) => (
             <div key={s.label} className="rounded-xl border border-border/50 bg-card/40 p-3.5 flex items-center gap-3">
               <div className="rounded-lg bg-background p-2">
@@ -411,13 +408,7 @@ export default function MeuPlano() {
                   </p>
                   <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
                     <p>{fmt(p.atendimentosIncluded)} atendimentos/mês</p>
-                    <p className="text-primary font-medium">Avulso: R$ {p.atendimentoCost.toFixed(2).replace('.', ',')}/atendimento</p>
                     <p className="text-amber-400 font-medium">Implementação: R$ {p.setup.toLocaleString('pt-BR')}</p>
-                    {!isCurrent && plan.atendimentoCost > p.atendimentoCost && (
-                      <p className="text-green-400 font-medium">
-                        Economia {Math.round((1 - p.atendimentoCost / plan.atendimentoCost) * 100)}% por atendimento vs. atual
-                      </p>
-                    )}
                   </div>
                   <div className="flex-1 my-4 space-y-2">
                     {features.map((f) => (
@@ -458,9 +449,8 @@ export default function MeuPlano() {
             <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 text-yellow-400 shrink-0 mt-0.5" />
               <p className="text-sm text-muted-foreground">
-                Você está no plano <strong>{plan.name}</strong> com custo de <strong>R$ {plan.atendimentoCost.toFixed(2).replace('.', ',')} por atendimento</strong>.{' '}
-                Fazendo upgrade para o Pro, o custo cai para R$ {PLANS.pro.atendimentoCost.toFixed(2).replace('.', ',')} por atendimento — economia de{' '}
-                {Math.round((1 - PLANS.pro.atendimentoCost / plan.atendimentoCost) * 100)}% por atendimento.{' '}
+                Você está no plano <strong>{plan.name}</strong> com <strong>{fmt(plan.atendimentosIncluded)} atendimentos/mês</strong>.{' '}
+                Fazendo upgrade para o Pro, você passa a ter {fmt(PLANS.pro.atendimentosIncluded)} atendimentos/mês.{' '}
                 <button className="text-primary underline" onClick={() => setTab('upgrade')}>Ver upgrade</button>
               </p>
             </div>
@@ -470,28 +460,23 @@ export default function MeuPlano() {
           <div>
             <h3 className="font-semibold mb-3">Pacotes de Atendimentos</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {ATENDIMENTO_PACKAGES.map((pkg) => {
-                const price = pkg.atendimentos * plan.atendimentoCost;
-                return (
-                  <div key={pkg.atendimentos} className="rounded-xl border border-border/50 bg-card/50 p-4 flex flex-col gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <Zap className="h-4 w-4 text-primary" />
-                      <span className="font-bold">{fmt(pkg.atendimentos)}</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">{pkg.label}</p>
-                    <p className="text-lg font-bold">{fmtR(price)}</p>
-                    <p className="text-xs text-muted-foreground">R$ {plan.atendimentoCost.toFixed(2).replace('.', ',')} por atendimento</p>
-                    <Button
-                      size="sm"
-                      className="w-full mt-1"
-                      onClick={() => handlePurchase(pkg.atendimentos)}
-                      disabled={buyingPkg === pkg.atendimentos}
-                    >
-                      {buyingPkg === pkg.atendimentos ? 'Processando...' : 'Comprar'}
-                    </Button>
+              {ATENDIMENTO_PACKAGES.map((pkg) => (
+                <div key={pkg.atendimentos} className="rounded-xl border border-border/50 bg-card/50 p-4 flex flex-col gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <Zap className="h-4 w-4 text-primary" />
+                    <span className="font-bold">{fmt(pkg.atendimentos)}</span>
                   </div>
-                );
-              })}
+                  <p className="text-xs text-muted-foreground">{pkg.label}</p>
+                  <Button
+                    size="sm"
+                    className="w-full mt-1"
+                    onClick={() => handlePurchase(pkg.atendimentos)}
+                    disabled={buyingPkg === pkg.atendimentos}
+                  >
+                    {buyingPkg === pkg.atendimentos ? 'Processando...' : 'Solicitar'}
+                  </Button>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -525,26 +510,15 @@ export default function MeuPlano() {
                 </div>
               </div>
               <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 min-w-[180px]">
-                <p className="text-xs text-muted-foreground">Total a pagar</p>
-                <p className="text-3xl font-bold text-primary mt-1">{fmtR(customPrice)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{fmt(customAtendimentos)} atendimentos</p>
-                <p className="text-xs text-muted-foreground">R$ {plan.atendimentoCost.toFixed(2).replace('.', ',')} por atendimento</p>
+                <p className="text-xs text-muted-foreground">Atendimentos selecionados</p>
+                <p className="text-3xl font-bold text-primary mt-1">{fmt(customAtendimentos)}</p>
+                <p className="text-xs text-muted-foreground mt-1">atendimentos avulsos</p>
                 <Button className="w-full mt-3" size="sm" onClick={() => handlePurchase(customAtendimentos)} disabled={buyingPkg === customAtendimentos}>
-                  {buyingPkg === customAtendimentos ? 'Processando...' : 'Comprar Agora'}
+                  {buyingPkg === customAtendimentos ? 'Processando...' : 'Solicitar'}
                 </Button>
               </div>
             </div>
 
-            {/* Savings tip */}
-            {subscription.plan_id !== 'enterprise' && customAtendimentos >= 100 && (
-              <div className="mt-4 rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2 flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-green-400 shrink-0" />
-                <p className="text-xs text-green-400">
-                  No Plano Pro, essa recarga custaria <strong>{fmtR(customAtendimentos * PLANS.pro.atendimentoCost)}</strong>{' '}
-                  — economia de <strong>{fmtR(customPrice - customAtendimentos * PLANS.pro.atendimentoCost)}</strong>.
-                </p>
-              </div>
-            )}
           </div>
 
           {/* Payment note */}
