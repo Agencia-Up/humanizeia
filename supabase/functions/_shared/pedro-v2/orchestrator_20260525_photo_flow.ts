@@ -1216,7 +1216,11 @@ export async function processPedroV2Turn(
     || Boolean(effectiveMemory?.interesse?.modelo_desejado)
     || (Array.isArray(effectiveMemory?.veiculos_apresentados) && effectiveMemory.veiculos_apresentados.length > 0);
   const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
-  if (!dryRun && lead?.id && (contextualIntent.needs_handoff || brainReadyToTransfer) && identity.kind !== "seller") {
+  // Transferencia SILENCIOSA: lead desqualificado (recusou EXPLICITAMENTE) -> vai para o
+  // vendedor para follow-up futuro, SEM anunciar ao lead (a msg do cerebro ja e uma
+  // despedida gentil, sem dizer que vai transferir). NUNCA encerramos sem encaminhar.
+  const silentTransfer = reply?.transferir_silencioso === true && _hasNome && !brainReadyToTransfer && !contextualIntent.needs_handoff;
+  if (!dryRun && lead?.id && (contextualIntent.needs_handoff || brainReadyToTransfer || silentTransfer) && identity.kind !== "seller") {
     try {
       handoffResult = await executePedroV2Handoff(supabase, {
         user_id: input.agent.user_id,
@@ -1224,7 +1228,7 @@ export async function processPedroV2Turn(
         lead_id: lead.id,
         remote_jid: remoteJid,
         lead_name: _q.nome || lead.lead_name || pushName || null,
-        reason: contextualIntent.needs_handoff ? `handoff:${brainPlan?.intent || contextualIntent.intent || "humano"}` : "handoff:qualificado_pronto",
+        reason: contextualIntent.needs_handoff ? `handoff:${brainPlan?.intent || contextualIntent.intent || "humano"}` : (silentTransfer ? "handoff:desqualificado_silencioso_followup" : "handoff:qualificado_pronto"),
         qualificacao: _q,
       });
       if (handoffResult?.ok && handoffResult.seller?.whatsapp_number && isPedroV2SendingEnabled()) {
@@ -1234,7 +1238,10 @@ export async function processPedroV2Turn(
           instance_id: input.wa_instance?.id,
         });
         const leadPhone = remoteJidToPhone(remoteJid);
-        const sellerNotif = `*NOVO LEAD QUALIFICADO (Pedro v2)*\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n*Contato:* +${leadPhone}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n*Atender agora:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        const sellerHeader = silentTransfer
+          ? `*LEAD PARA FOLLOW-UP (nao avancou agora) - Pedro v2*\nCliente nao se desqualificou de vez; vale retomar depois.`
+          : `*NOVO LEAD QUALIFICADO (Pedro v2)*`;
+        const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n*Contato:* +${leadPhone}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
         await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
       }
     } catch (e) {
