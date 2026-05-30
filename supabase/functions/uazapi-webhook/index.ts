@@ -2412,6 +2412,65 @@ Deno.serve(async (req) => {
   }
 })
 
+// ─── Token metering (desconto REAL + aviso "acabando/acabou") ───────────────
+// Conta os tokens que o cérebro do Pedro (gpt-4o) gasta no turno e desconta de
+// verdade do plano via consume_user_tokens. Quando o saldo cruza p/ "acabando"
+// (≤10%) ou "acabou" (≤0), a RPC devolve just_low / just_depleted (1x por ciclo)
+// e a gente avisa no WhatsApp do dono (gerente_phone). NUNCA bloqueia o Pedro.
+// Obs.: as chamadas Haiku auxiliares (extração de entidades / resumo) são
+// baratas e pequenas perto do gpt-4o; não são medidas separadamente aqui.
+function extractOpenAiTokens(data: any): number {
+  const u = data?.usage;
+  if (!u) return 0;
+  const t = typeof u.total_tokens === 'number'
+    ? u.total_tokens
+    : (Number(u.prompt_tokens) || 0) + (Number(u.completion_tokens) || 0);
+  return t > 0 ? Math.round(t) : 0;
+}
+
+async function consumePedroTokensAndAlert(
+  supabase: any,
+  opts: { userId: string; tokens: number; baseUrl: string; instKey: string; gerentePhone?: string | null },
+): Promise<void> {
+  const amount = Math.round(opts.tokens || 0);
+  if (amount <= 0 || !opts.userId) return;
+  try {
+    const { data, error } = await supabase.rpc('consume_user_tokens', {
+      p_user_id: opts.userId,
+      p_amount: amount,
+      p_agent: 'pedro',
+      p_description: 'Pedro SDR — resposta no WhatsApp',
+    });
+    if (error) { console.error('[tokens] consume_user_tokens erro:', error.message); return; }
+    if (!data || data.ok !== true) {
+      if (data?.error) console.warn('[tokens] consume ignorado:', data.error);
+      return;
+    }
+    console.log(`[tokens] Pedro consumiu ${amount} tokens (saldo: ${data.balance_after}/${data.total})`);
+    const justDepleted = data.just_depleted === true;
+    const justLow = data.just_low === true;
+    if (!justDepleted && !justLow) return;
+    let phone = String(opts.gerentePhone || '').replace(/\D/g, '');
+    if (!phone) { console.warn('[tokens] aviso não enviado: gerente_phone ausente'); return; }
+    if (phone.length === 10 || phone.length === 11) phone = `55${phone}`;
+    const text = justDepleted
+      ? '⚠️ *Seus tokens de IA acabaram.*\n\nO Pedro vai continuar atendendo seus leads normalmente, mas o consumo já passou do limite do seu plano. Recarregue no painel para manter o controle de uso em dia.'
+      : '🔔 *Seus tokens de IA estão acabando* (menos de 10% do plano).\n\nRecarregue no painel para não ficar sem antes da renovação.';
+    try {
+      await fetch(`${opts.baseUrl}/send/text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'token': opts.instKey },
+        body: JSON.stringify({ number: phone, text }),
+      });
+      console.log(`[tokens] aviso "${justDepleted ? 'ACABOU' : 'ACABANDO'}" enviado p/ ${phone}`);
+    } catch (e) {
+      console.error('[tokens] falha ao enviar aviso WhatsApp:', e);
+    }
+  } catch (e) {
+    console.error('[tokens] consumePedroTokensAndAlert exceção:', e);
+  }
+}
+
 async function processMessage(supabase: any, instanceName: string, remoteJid: string, userText: string, pushName: string, rawMsgObj: any) {
   const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 
@@ -2419,6 +2478,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // (vendedor-vs-lead, criacao de lead, envio de resposta). Cobre os dois entry
   // paths (messages.upsert e UAZAPI V6) que chamam processMessage.
   remoteJid = resolveRealJid(remoteJid, rawMsgObj);
+
+  // Token metering: acumula os tokens gastos pelo cérebro (gpt-4o) neste turno.
+  // É descontado de verdade no fim do turno (consumePedroTokensAndAlert), depois
+  // que o lead já foi respondido — então nunca atrasa nem bloqueia o atendimento.
+  const llmUsage = { tokens: 0 };
 
   // IT-4.3: trace_id por turno + timer pra latencia
   const traceId = newTraceId();
@@ -3355,6 +3419,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Response('OpenAI erro', { status: 500 });
   }
   const openaiData = await openaiRes.json()
+  llmUsage.tokens += extractOpenAiTokens(openaiData);
   const aiMessage = openaiData.choices?.[0]?.message
 
   console.log(`[Webhook] Resposta da IA recebida. ToolCalls: ${aiMessage?.tool_calls?.length || 0}`);
@@ -3420,6 +3485,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
         if (bndvFollowupRes.ok) {
           const bndvFollowupData = await bndvFollowupRes.json();
+          llmUsage.tokens += extractOpenAiTokens(bndvFollowupData);
           const bndvTextResponse = bndvFollowupData.choices?.[0]?.message?.content || '';
           if (bndvTextResponse) {
             aiResponse = bndvTextResponse;
@@ -3722,6 +3788,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         });
         if (followupRes.ok) {
           const followupData = await followupRes.json();
+          llmUsage.tokens += extractOpenAiTokens(followupData);
           const finalText = followupData.choices?.[0]?.message?.content || '';
           if (finalText) aiResponse = finalText;
         } else {
@@ -4063,6 +4130,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           });
           if (secondRes.ok) {
             const secondData = await secondRes.json();
+            llmUsage.tokens += extractOpenAiTokens(secondData);
             aiResponse = secondData.choices?.[0]?.message?.content || '';
             console.log(`[Webhook] Resposta final capturada: ${aiResponse}`);
           } else {
@@ -4273,5 +4341,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       typing_enabled: typingEnabled,
     });
   }
+  // Desconto REAL dos tokens gastos pelo Pedro neste turno + aviso "acabando/acabou".
+  // Roda DEPOIS de já ter respondido o lead — nunca bloqueia nem atrasa o atendimento.
+  await consumePedroTokensAndAlert(supabase, {
+    userId: waInstance.user_id,
+    tokens: llmUsage.tokens,
+    baseUrl,
+    instKey,
+    gerentePhone: agent.gerente_phone,
+  });
+
   return new Response(JSON.stringify({ success: true, trace_id: traceId }), { headers: corsHeaders, status: 200 })
 }

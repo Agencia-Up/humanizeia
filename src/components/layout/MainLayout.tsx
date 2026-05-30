@@ -8,6 +8,7 @@ import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft } from 'lucide-react';
 import { Topbar } from './Topbar';
+import { TokenAlertBanner } from '@/components/subscription/TokenAlertBanner';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -52,7 +53,9 @@ export function MainLayout({ children }: MainLayoutProps) {
         <SidebarInset className="flex flex-1 flex-col overflow-hidden relative">
           
           <Topbar />
-          
+
+          <TokenAlertBanner />
+
           <div className="flex-1 flex flex-col overflow-auto p-4 lg:p-6">
             {/* Botão Voltar — aparece em todas as páginas exceto no Dashboard */}
             {showBackButton && (
