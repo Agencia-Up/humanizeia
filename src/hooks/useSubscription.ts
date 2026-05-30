@@ -14,7 +14,7 @@ export const PLANS = {
     subtitle: 'Solo',
     price: 497,
     setup: 2000,
-    atendimentosIncluded: 100,
+    atendimentosIncluded: 150,
     atendimentoCost: 2.0,
     color: '#6B7280',
   },
@@ -40,12 +40,12 @@ export const PLANS = {
   },
 };
 
-// Pacotes de recarga avulsa, em atendimentos.
+// Pacotes de recarga avulsa (quando os atendimentos do plano acabam).
+// Preço fixo por pacote — pacote maior tem preço por atendimento menor.
 export const ATENDIMENTO_PACKAGES = [
-  { atendimentos: 50, label: '50 atendimentos' },
-  { atendimentos: 100, label: '100 atendimentos' },
-  { atendimentos: 250, label: '250 atendimentos' },
-  { atendimentos: 500, label: '500 atendimentos' },
+  { atendimentos: 150, price: 229.90, label: '150 atendimentos' },
+  { atendimentos: 300, price: 359.90, label: '300 atendimentos' },
+  { atendimentos: 500, price: 549.90, label: '500 atendimentos' },
 ];
 
 export interface Subscription {
@@ -142,7 +142,7 @@ export function useSubscription() {
           user_id: user.id,
           plan_id: 'basico',
           status: 'active',
-          tokens_included: 100,
+          tokens_included: 150,
           tokens_used: 0,
           tokens_purchased: 0,
           renewal_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),

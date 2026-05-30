@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import {
   Zap, TrendingUp, CheckCircle2, XCircle, CreditCard, AlertTriangle,
-  RefreshCcw, ArrowUpRight, Star, Clock, BarChart3, Sparkles, Info,
+  RefreshCcw, Star, Clock, BarChart3, Info,
   Bot, PenTool, Instagram, Mail, Brain, Target, ChevronLeft,
 } from 'lucide-react';
 import {
@@ -16,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 
 /* ── helpers ────────────────────────────────────────────────────────── */
 function fmt(n: number) { return n.toLocaleString('pt-BR'); }
+function fmtR(n: number) { return `R$ ${n.toFixed(2).replace('.', ',')}`.replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
 
 const AGENT_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   davi: Instagram,
@@ -60,7 +61,7 @@ const PLAN_FEATURES: Record<PlanId, string[]> = {
   basico: [
     '🤖 Agente Pedro (SDR & IA)',
     'Área de membros / treinamento',
-    '100 atendimentos/mês',
+    '150 atendimentos/mês',
     'Até 5 instâncias de WhatsApp',
     'Dashboard básico',
     'Configurações essenciais',
@@ -108,7 +109,6 @@ export default function MeuPlano() {
   } = useSubscription();
 
   const [tab, setTab] = useState<'overview' | 'upgrade' | 'recharge'>('overview');
-  const [customAtendimentos, setCustomAtendimentos] = useState(50);
   const [buyingPkg, setBuyingPkg] = useState<number | null>(null);
   const [upgradingPlan, setUpgradingPlan] = useState<PlanId | null>(null);
 
@@ -148,14 +148,14 @@ export default function MeuPlano() {
   const renewDate = new Date(subscription.renewal_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const chartData = buildChartData(transactions);
 
-  const handlePurchase = async (amount: number) => {
+  const handlePurchase = async (amount: number, price: number) => {
     setBuyingPkg(amount);
     const res = await purchaseTokens(amount);
     setBuyingPkg(null);
     if (res.success) {
       toast({
         title: 'Recarga solicitada!',
-        description: `${fmt(amount)} atendimentos. Integração com gateway em breve.`,
+        description: `${fmt(amount)} atendimentos — ${fmtR(price)}. Integração com gateway em breve.`,
       });
     }
   };
@@ -262,11 +262,6 @@ export default function MeuPlano() {
             <Button size="sm" className="bg-primary text-primary-foreground gap-1.5" onClick={() => setTab('recharge')}>
               <Zap className="h-3.5 w-3.5" /> Recarregar Atendimentos
             </Button>
-            {subscription.plan_id !== 'enterprise' && (
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setTab('upgrade')}>
-                <ArrowUpRight className="h-3.5 w-3.5" /> Fazer Upgrade
-              </Button>
-            )}
           </div>
         </div>
 
@@ -294,7 +289,6 @@ export default function MeuPlano() {
       <div className="flex gap-1 rounded-lg bg-muted/50 p-1 w-fit">
         {([
           { key: 'overview', label: 'Histórico' },
-          { key: 'upgrade', label: 'Upgrade de Plano' },
           { key: 'recharge', label: 'Recarregar Atendimentos' },
         ] as const).map((t) => (
           <button
@@ -445,80 +439,35 @@ export default function MeuPlano() {
       {/* ── Recharge tab ───────────────────────────────────────────── */}
       {tab === 'recharge' && (
         <div className="space-y-5">
-          {subscription.plan_id !== 'enterprise' && (
-            <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 flex items-start gap-2">
-              <AlertTriangle className="h-4 w-4 text-yellow-400 shrink-0 mt-0.5" />
-              <p className="text-sm text-muted-foreground">
-                Você está no plano <strong>{plan.name}</strong> com <strong>{fmt(plan.atendimentosIncluded)} atendimentos/mês</strong>.{' '}
-                Fazendo upgrade para o Pro, você passa a ter {fmt(PLANS.pro.atendimentosIncluded)} atendimentos/mês.{' '}
-                <button className="text-primary underline" onClick={() => setTab('upgrade')}>Ver upgrade</button>
-              </p>
-            </div>
-          )}
+          <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex items-start gap-2">
+            <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+            <p className="text-sm text-muted-foreground">
+              Acabaram os atendimentos do seu plano? Recarregue com um dos pacotes abaixo. Os atendimentos extras entram na hora e valem até a próxima renovação.
+            </p>
+          </div>
 
           {/* Packages */}
           <div>
             <h3 className="font-semibold mb-3">Pacotes de Atendimentos</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {ATENDIMENTO_PACKAGES.map((pkg) => (
                 <div key={pkg.atendimentos} className="rounded-xl border border-border/50 bg-card/50 p-4 flex flex-col gap-2">
                   <div className="flex items-center gap-1.5">
                     <Zap className="h-4 w-4 text-primary" />
-                    <span className="font-bold">{fmt(pkg.atendimentos)}</span>
+                    <span className="font-bold">{fmt(pkg.atendimentos)} atendimentos</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">{pkg.label}</p>
+                  <p className="text-2xl font-bold text-primary">{fmtR(pkg.price)}</p>
                   <Button
                     size="sm"
                     className="w-full mt-1"
-                    onClick={() => handlePurchase(pkg.atendimentos)}
+                    onClick={() => handlePurchase(pkg.atendimentos, pkg.price)}
                     disabled={buyingPkg === pkg.atendimentos}
                   >
-                    {buyingPkg === pkg.atendimentos ? 'Processando...' : 'Solicitar'}
+                    {buyingPkg === pkg.atendimentos ? 'Processando...' : 'Comprar'}
                   </Button>
                 </div>
               ))}
             </div>
-          </div>
-
-          {/* Custom calculator */}
-          <div className="rounded-xl border border-border/50 bg-card/50 p-5">
-            <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" /> Calculadora de Atendimentos
-            </h3>
-            <div className="flex flex-col md:flex-row gap-4 items-start md:items-end">
-              <div className="flex-1 space-y-2">
-                <label className="text-sm text-muted-foreground">Quantidade de atendimentos</label>
-                <input
-                  type="number"
-                  min={10}
-                  step={10}
-                  value={customAtendimentos}
-                  onChange={(e) => setCustomAtendimentos(Math.max(10, parseInt(e.target.value) || 10))}
-                  className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-                <input
-                  type="range"
-                  min={10}
-                  max={1000}
-                  step={10}
-                  value={customAtendimentos}
-                  onChange={(e) => setCustomAtendimentos(parseInt(e.target.value))}
-                  className="w-full accent-primary"
-                />
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>10</span><span>500</span><span>1.000</span>
-                </div>
-              </div>
-              <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 min-w-[180px]">
-                <p className="text-xs text-muted-foreground">Atendimentos selecionados</p>
-                <p className="text-3xl font-bold text-primary mt-1">{fmt(customAtendimentos)}</p>
-                <p className="text-xs text-muted-foreground mt-1">atendimentos avulsos</p>
-                <Button className="w-full mt-3" size="sm" onClick={() => handlePurchase(customAtendimentos)} disabled={buyingPkg === customAtendimentos}>
-                  {buyingPkg === customAtendimentos ? 'Processando...' : 'Solicitar'}
-                </Button>
-              </div>
-            </div>
-
           </div>
 
           {/* Payment note */}
