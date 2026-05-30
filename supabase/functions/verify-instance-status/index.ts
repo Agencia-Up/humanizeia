@@ -5,6 +5,48 @@ const corsHeaders = {
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Extração AGNÓSTICA ao nome do campo do número de WhatsApp conectado.
+// O uazapi varia o caminho onde devolve o número (owner / jid / wid / instance.owner...),
+// então NÃO confiamos num único nome de campo. Estratégia:
+//  (1) varre a resposta inteira procurando um JID de WhatsApp ("5541999999999@s.whatsapp.net"
+//      ou com sufixo de device "...:12@s.whatsapp.net") — sinal mais forte e inequívoco;
+//  (2) como reforço, aceita chaves conhecidas de telefone com valor "limpo" de 10-15 dígitos.
+const PHONE_KEY_HINTS = ['owner', 'jid', 'wid', 'wuid', 'me', 'number', 'phone', 'phonenumber', 'msisdn'];
+
+function extractWhatsappNumber(root: unknown): string {
+  let jidMatch = '';
+  let keyMatch = '';
+  const seen = new WeakSet<object>();
+
+  const walk = (value: unknown, keyHint = ''): void => {
+    if (jidMatch) return; // JID encontrado = mais forte; pode parar.
+    if (typeof value === 'string') {
+      const m = value.match(/(\d{10,15})(?::\d+)?@(?:s\.whatsapp\.net|c\.us)/);
+      if (m) { jidMatch = m[1]; return; }
+      if (!keyMatch && PHONE_KEY_HINTS.includes(keyHint.toLowerCase()) && !value.includes('/')) {
+        const d = value.replace(/\D/g, '');
+        if (d.length >= 10 && d.length <= 15) keyMatch = d;
+      }
+      return;
+    }
+    if (typeof value === 'number') {
+      if (!keyMatch && PHONE_KEY_HINTS.includes(keyHint.toLowerCase())) {
+        const d = String(value);
+        if (d.length >= 10 && d.length <= 15) keyMatch = d;
+      }
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    if (seen.has(value as object)) return;
+    seen.add(value as object);
+    if (Array.isArray(value)) { for (const v of value) walk(v, keyHint); return; }
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) walk(v, k);
+  };
+
+  walk(root);
+  return jidMatch || keyMatch || '';
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -164,21 +206,10 @@ Deno.serve(async (req) => {
       realStatus = 'error';
     }
 
-    // Try to extract the connected phone number from UazAPI response
-    let connectedPhone = '';
-    if (isConnected) {
-      const rawPhone =
-        stateData?.instance?.owner ||
-        stateData?.instance?.jid ||
-        stateData?.owner ||
-        stateData?.jid ||
-        stateData?.status?.jid ||
-        stateData?.phoneNumber ||
-        stateData?.user?.id ||
-        stateData?.instance?.wuid ||
-        '';
-      connectedPhone = String(rawPhone).split('@')[0].split(':')[0].replace(/\D/g, '');
-    }
+    // Extrai o número conectado de forma AGNÓSTICA ao nome do campo (ver helper acima).
+    // Roda sempre que houver resposta — o próprio número é o sinal de que está conectado.
+    const connectedPhone = extractWhatsappNumber(stateData);
+    console.log(`[verify-instance] ${instance.instance_name} connected phone extracted: ${connectedPhone || '(none)'}`);
 
     // Update the DB with the real status
     const updateData: Record<string, unknown> = {
@@ -220,6 +251,7 @@ Deno.serve(async (req) => {
       previous_status: instance.status,
       current_status: realStatus,
       is_connected: isConnected,
+      connected_phone: connectedPhone || null,
       status_changed: statusChanged,
       message: statusChanged
         ? `Status atualizado: ${instance.status} → ${realStatus}`

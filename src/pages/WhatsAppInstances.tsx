@@ -95,6 +95,17 @@ function getHealthBg(score: number | null) {
   return 'bg-red-500';
 }
 
+// Formata o número conectado (só dígitos no banco) num formato BR legível.
+// Ex.: "554199999999" -> "+55 (41) 99999-9999". Se não casar, mostra "+<digitos>".
+function formatWaNumber(raw: string | null | undefined): string {
+  const d = (raw || '').replace(/\D/g, '');
+  if (!d) return '';
+  const br = d.startsWith('55') ? d.slice(2) : d;
+  if (br.length === 11) return `+55 (${br.slice(0, 2)}) ${br.slice(2, 7)}-${br.slice(7)}`;
+  if (br.length === 10) return `+55 (${br.slice(0, 2)}) ${br.slice(2, 6)}-${br.slice(6)}`;
+  return `+${d}`;
+}
+
 const INSTANCE_LIMITS: Record<string, number> = {
   basico: 5,
   pro: 10,
@@ -494,7 +505,11 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
                             {instance.friendly_name || instance.instance_name}
                           </CardTitle>
                           <CardDescription className="text-xs">
-                            {instance.provider === 'meta' ? 'Meta API Oficial' : 'Uazapi'}
+                            {instance.phone_number ? (
+                              <span className="font-mono text-foreground">{formatWaNumber(instance.phone_number)}</span>
+                            ) : (
+                              instance.provider === 'meta' ? 'Meta API Oficial' : 'Uazapi'
+                            )}
                           </CardDescription>
                         </div>
                       </div>
@@ -507,16 +522,16 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
                   <CardContent className="space-y-4">
                     {/* Details */}
                     <div className="grid grid-cols-2 gap-3 text-sm">
-                      {instance.phone_number && (
-                        <div>
-                          <p className="text-muted-foreground text-xs">Número</p>
-                          <p className="font-mono text-xs">{instance.phone_number}</p>
-                        </div>
-                      )}
                       <div>
                         <p className="text-muted-foreground text-xs">Provedor</p>
                         <p className="font-medium text-xs">{instance.provider === 'meta' ? 'Meta API' : 'Uazapi'}</p>
                       </div>
+                      {instance.phone_number && (
+                        <div>
+                          <p className="text-muted-foreground text-xs">Número conectado</p>
+                          <p className="font-mono text-xs">{formatWaNumber(instance.phone_number)}</p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Health Bar */}
