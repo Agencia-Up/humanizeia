@@ -540,23 +540,28 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const taxaTransfTexto = `${pedroAtribuidos} de ${pedroTotal} leads do Pedro`;
 
         // 9. Rank por total desc, tie-breaker alfabético.
-        //    A row virtual "Sem vendedor atribuído" é incluída SÓ se tiver
-        //    leads (total > 0). Senão fica oculta pra nao poluir o ranking.
+        //    Spec usuario (30/05/2026): a row virtual "Sem vendedor atribuído"
+        //    NUNCA aparece como card no ranking — nem quando tem leads. Leads sem
+        //    vendedor (inclusive os de um vendedor EXCLUÍDO, cujos leads o painel
+        //    desvincula) nao podem virar um card fantasma "Sem vendedor". Eles
+        //    seguem contabilizados nos KPIs (Total + Origem) e no subtexto
+        //    "(N sem vendedor atribuído)" — so nao ganham card proprio.
         const sorted = Object.values(agg)
-          .filter(v => v.id !== NAO_ATRIBUIDO_ID || v.total > 0)
+          .filter(v => v.id !== NAO_ATRIBUIDO_ID)
           .sort((a, b) => (b.total - a.total) || a.name.localeCompare(b.name))
           .map((v, i) => ({ ...v, rank: i + 1 }));
         setVendedores(sorted);
 
         // 10. KPIs gerais — 5 categorias visiveis. Spec 27/05/2026 Bug 1:
-        //     OLX e Outros removidos. Spec Bug integracao: row virtual
-        //     "Sem vendedor" ja entra em sorted, entao porOrigem soma TUDO
-        //     (vendedores reais + virtual). total = soma dos v.total
-        //     (inclui Pedros sem assigned_to_id que so somam .total++).
+        //     OLX e Outros removidos. IMPORTANTE: os KPIs somam TODAS as rows
+        //     (vendedores reais + virtual "Sem vendedor"), entao "Total de Leads"
+        //     e "Origem dos Leads" continuam refletindo todos os leads mesmo
+        //     agora que a row virtual saiu do ranking de cards (passo 9).
+        const allRows = Object.values(agg); // reais + virtual "Sem vendedor"
         const porOrigem: Record<string, number> = {
           trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0,
         };
-        for (const v of sorted) {
+        for (const v of allRows) {
           porOrigem.trafico_pago += v.trafico_pago;
           porOrigem.porta        += v.porta;
           porOrigem.marketplace  += v.marketplace;
@@ -567,7 +572,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // total_leads = soma dos v.total de todas as rows (vendedores reais
         // + virtual "Sem vendedor"). Sem duplo-contar: cada lead vai pra
         // exatamente uma row e incrementa apenas o v.total dela.
-        const total = sorted.reduce((sum, v) => sum + v.total, 0);
+        const total = allRows.reduce((sum, v) => sum + v.total, 0);
         const percentuais: Record<string, number> = {};
         const baseParaPct = total > 0 ? total : 1;
         for (const k of Object.keys(porOrigem)) {
