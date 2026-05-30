@@ -4,6 +4,9 @@ import { useAuth } from '@/hooks/useAuth';
 
 export type PlanId = 'basico' | 'pro' | 'enterprise';
 
+// O plano é vendido/medido em ATENDIMENTOS (leads), não em tokens crus.
+// 1 atendimento = 1 lead atendido pelo Pedro dentro do ciclo de cobrança.
+// `atendimentoCost` = preço de 1 atendimento avulso (recarga), em R$.
 export const PLANS = {
   basico: {
     id: 'basico' as PlanId,
@@ -11,8 +14,8 @@ export const PLANS = {
     subtitle: 'Solo',
     price: 497,
     setup: 2000,
-    tokensIncluded: 50000,
-    tokenCostPer1k: 1.5,
+    atendimentosIncluded: 400,
+    atendimentoCost: 2.0,
     color: '#6B7280',
   },
   pro: {
@@ -21,8 +24,8 @@ export const PLANS = {
     subtitle: 'Agência',
     price: 997,
     setup: 3997,
-    tokensIncluded: 150000,
-    tokenCostPer1k: 1.0,
+    atendimentosIncluded: 1000,
+    atendimentoCost: 1.5,
     color: '#5C6BC0',
   },
   enterprise: {
@@ -31,17 +34,18 @@ export const PLANS = {
     subtitle: 'Completo',
     price: 1497,
     setup: 5997,
-    tokensIncluded: 500000,
-    tokenCostPer1k: 0.5,
+    atendimentosIncluded: 2000,
+    atendimentoCost: 1.0,
     color: '#DAA520',
   },
 };
 
-export const TOKEN_PACKAGES = [
-  { tokens: 10000, label: '10.000 tokens' },
-  { tokens: 50000, label: '50.000 tokens' },
-  { tokens: 100000, label: '100.000 tokens' },
-  { tokens: 500000, label: '500.000 tokens' },
+// Pacotes de recarga avulsa, em atendimentos.
+export const ATENDIMENTO_PACKAGES = [
+  { atendimentos: 50, label: '50 atendimentos' },
+  { atendimentos: 100, label: '100 atendimentos' },
+  { atendimentos: 250, label: '250 atendimentos' },
+  { atendimentos: 500, label: '500 atendimentos' },
 ];
 
 export interface Subscription {
@@ -138,7 +142,7 @@ export function useSubscription() {
           user_id: user.id,
           plan_id: 'basico',
           status: 'active',
-          tokens_included: 50000,
+          tokens_included: 400,
           tokens_used: 0,
           tokens_purchased: 0,
           renewal_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -187,6 +191,8 @@ export function useSubscription() {
     fetchSubscription();
   }, [fetchSubscription]);
 
+  // As colunas tokens_* do banco agora contam ATENDIMENTOS (1 = 1 lead/ciclo),
+  // não mais tokens crus. Os nomes das colunas seguem por compatibilidade.
   const tokensAvailable = subscription
     ? subscription.tokens_included + subscription.tokens_purchased - subscription.tokens_used
     : 0;
@@ -201,12 +207,12 @@ export function useSubscription() {
 
   const planInfo = subscription ? PLANS[subscription.plan_id] : PLANS.basico;
 
-  // Simulate token purchase (demo)
-  const purchaseTokens = async (tokenAmount: number) => {
+  // Simulate atendimento recharge (demo)
+  const purchaseTokens = async (atendimentoAmount: number) => {
     const plan = PLANS[subscription?.plan_id || 'basico'];
-    const price = (tokenAmount / 1000) * plan.tokenCostPer1k;
+    const price = atendimentoAmount * plan.atendimentoCost;
     // In production: integrate with Stripe/Hotmart
-    return { success: true, price, tokenAmount };
+    return { success: true, price, atendimentoAmount };
   };
 
   // Simulate plan upgrade (demo)

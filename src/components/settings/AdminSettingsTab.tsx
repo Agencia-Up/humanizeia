@@ -131,7 +131,7 @@ export function AdminSettingsTab() {
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-muted-foreground bg-muted/20 p-4 rounded-lg border border-dashed text-center italic">
         <p>Aba de Logs e Auditoria virá em breve.</p>
-        <p>Gestão de Planos e Tokens em desenvolvimento.</p>
+        <p>Gestão de Planos e Atendimentos em desenvolvimento.</p>
       </div>
     </div>
   );

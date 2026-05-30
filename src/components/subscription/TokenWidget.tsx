@@ -6,8 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useSubscription } from '@/hooks/useSubscription';
 
 function fmt(n: number) {
-  if (n >= 1000) return `${(n / 1000).toFixed(0)}k`;
-  return String(n);
+  return n.toLocaleString('pt-BR');
 }
 
 export function TokenWidget() {
@@ -78,9 +77,9 @@ export function TokenWidget() {
             </span>
           </div>
           <div className="text-muted-foreground">
-            <div>{subscription.tokens_used.toLocaleString('pt-BR')} usados</div>
+            <div>{subscription.tokens_used.toLocaleString('pt-BR')} atendimentos usados</div>
             <div>{tokensAvailable.toLocaleString('pt-BR')} restantes</div>
-            <div>{tokensTotal.toLocaleString('pt-BR')} total</div>
+            <div>{tokensTotal.toLocaleString('pt-BR')} no total</div>
           </div>
           <div className="pt-1 border-t border-border/50 text-muted-foreground">
             Renova em {renewDate}
@@ -123,7 +122,7 @@ export function TokenWidgetCompact() {
           <span className="text-[10px] font-medium">{planInfo.name}</span>
         </div>
         <span className={`text-[10px] font-semibold ${isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-muted-foreground'}`}>
-          {fmt(tokensAvailable)} left
+          {fmt(tokensAvailable)} restantes
         </span>
       </div>
       <div className="h-1 w-full rounded-full bg-muted overflow-hidden">

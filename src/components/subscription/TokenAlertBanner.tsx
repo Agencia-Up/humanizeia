@@ -12,7 +12,7 @@ function readDismissed(): string | null {
 }
 
 /**
- * Faixa de aviso no topo do painel quando os tokens de IA estão acabando
+ * Faixa de aviso no topo do painel quando os atendimentos de IA estão acabando
  * (≤10% do plano) ou já acabaram (≤0). Espelha o mesmo limite usado no
  * backend (consume_user_tokens) e o mesmo tom do aviso enviado no WhatsApp.
  *
@@ -57,12 +57,12 @@ export function TokenAlertBanner() {
       };
 
   const title = depleted
-    ? 'Seus tokens de IA acabaram'
-    : 'Seus tokens de IA estão acabando';
+    ? 'Seus atendimentos de IA acabaram'
+    : 'Seus atendimentos de IA estão acabando';
 
   const message = depleted
-    ? 'O Pedro continua atendendo seus leads normalmente, mas o consumo já passou do limite do seu plano. Recarregue para manter o controle de uso em dia.'
-    : `Restam menos de 10% (${tokensAvailable.toLocaleString('pt-BR')} de ${tokensTotal.toLocaleString('pt-BR')}). Recarregue para não ficar sem antes da renovação.`;
+    ? 'O Pedro continua atendendo seus leads normalmente, mas você já passou do limite de atendimentos do seu plano. Recarregue para manter o controle de uso em dia.'
+    : `Restam menos de 10% (${tokensAvailable.toLocaleString('pt-BR')} de ${tokensTotal.toLocaleString('pt-BR')} atendimentos). Recarregue para não ficar sem antes da renovação.`;
 
   return (
     <div className={`flex items-center gap-3 border-b px-4 py-2.5 lg:px-6 ${styles.wrap}`}>

@@ -11,7 +11,7 @@ import {
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import { useSubscription, PLANS, TOKEN_PACKAGES, type PlanId } from '@/hooks/useSubscription';
+import { useSubscription, PLANS, ATENDIMENTO_PACKAGES, type PlanId } from '@/hooks/useSubscription';
 import { useToast } from '@/hooks/use-toast';
 
 /* ── helpers ────────────────────────────────────────────────────────── */
@@ -61,7 +61,7 @@ const PLAN_FEATURES: Record<PlanId, string[]> = {
   basico: [
     '🤖 Agente Pedro (SDR & IA)',
     'Área de membros / treinamento',
-    '50.000 tokens/mês',
+    '400 atendimentos/mês',
     'Até 5 instâncias de WhatsApp',
     'Dashboard básico',
     'Configurações essenciais',
@@ -72,7 +72,7 @@ const PLAN_FEATURES: Record<PlanId, string[]> = {
     '🤝 Agente Marcos (CRM & WhatsApp)',
     '🎯 Agente José (Tráfego Pago)',
     'Área de membros / treinamento',
-    '150.000 tokens/mês',
+    '1.000 atendimentos/mês',
     'Até 10 instâncias de WhatsApp',
     'Dashboard avançado com métricas',
     'CRM de leads integrado',
@@ -85,7 +85,7 @@ const PLAN_FEATURES: Record<PlanId, string[]> = {
     'Pedro, Marcos, José, Paulo, Maria',
     'Davi, João, Daniel, Salomão',
     'Área de membros / treinamento',
-    '500.000 tokens/mês',
+    '2.000 atendimentos/mês',
     'Até 15 instâncias de WhatsApp',
     'Copywriting IA (Paulo)',
     'Design criativo IA (Maria)',
@@ -109,7 +109,7 @@ export default function MeuPlano() {
   } = useSubscription();
 
   const [tab, setTab] = useState<'overview' | 'upgrade' | 'recharge'>('overview');
-  const [customTokens, setCustomTokens] = useState(10000);
+  const [customAtendimentos, setCustomAtendimentos] = useState(50);
   const [buyingPkg, setBuyingPkg] = useState<number | null>(null);
   const [upgradingPlan, setUpgradingPlan] = useState<PlanId | null>(null);
 
@@ -156,7 +156,7 @@ export default function MeuPlano() {
     if (res.success) {
       toast({
         title: 'Recarga solicitada!',
-        description: `${fmt(amount)} tokens — ${fmtR(res.price)}. Integração com gateway em breve.`,
+        description: `${fmt(amount)} atendimentos — ${fmtR(res.price)}. Integração com gateway em breve.`,
       });
     }
   };
@@ -173,7 +173,7 @@ export default function MeuPlano() {
     }
   };
 
-  const customPrice = (customTokens / 1000) * plan.tokenCostPer1k;
+  const customPrice = customAtendimentos * plan.atendimentoCost;
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-5xl mx-auto">
@@ -201,7 +201,7 @@ export default function MeuPlano() {
             <CreditCard className="h-6 w-6 text-primary" />
             Meu Plano e Créditos
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">Gerencie sua assinatura, tokens e upgrades</p>
+          <p className="text-muted-foreground text-sm mt-1">Gerencie sua assinatura, atendimentos e upgrades</p>
         </div>
         <Badge
           className={`px-3 py-1 text-sm font-semibold ${
@@ -230,14 +230,14 @@ export default function MeuPlano() {
               <p className="font-semibold flex items-center gap-1 justify-end">
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" /> {renewDate}
               </p>
-              <p className="text-xs text-muted-foreground mt-1">{fmt(plan.tokensIncluded)} tokens/mês</p>
+              <p className="text-xs text-muted-foreground mt-1">{fmt(plan.atendimentosIncluded)} atendimentos/mês</p>
             </div>
           </div>
 
           {/* Token bar */}
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Tokens utilizados</span>
+              <span className="text-muted-foreground">Atendimentos utilizados</span>
               <span className={`font-semibold ${isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : ''}`}>
                 {fmt(subscription.tokens_used)} / {fmt(tokensTotal)}
               </span>
@@ -253,7 +253,7 @@ export default function MeuPlano() {
               {isLow && (
                 <span className={`flex items-center gap-1 font-medium ${isCritical ? 'text-red-400' : 'text-yellow-400'}`}>
                   <AlertTriangle className="h-3 w-3" />
-                  {isCritical ? 'Tokens críticos!' : 'Tokens baixos'}
+                  {isCritical ? 'Atendimentos críticos!' : 'Atendimentos baixos'}
                 </span>
               )}
               <span>Renova em {renewDate}</span>
@@ -263,7 +263,7 @@ export default function MeuPlano() {
           {/* Quick actions */}
           <div className="flex gap-2 mt-4 flex-wrap">
             <Button size="sm" className="bg-primary text-primary-foreground gap-1.5" onClick={() => setTab('recharge')}>
-              <Zap className="h-3.5 w-3.5" /> Recarregar Tokens
+              <Zap className="h-3.5 w-3.5" /> Recarregar Atendimentos
             </Button>
             {subscription.plan_id !== 'enterprise' && (
               <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setTab('upgrade')}>
@@ -276,9 +276,9 @@ export default function MeuPlano() {
         {/* Stats */}
         <div className="flex flex-col gap-3">
           {[
-            { label: 'Tokens inclusos/mês', value: fmt(plan.tokensIncluded), icon: Zap, color: 'text-primary' },
-            { label: 'Tokens comprados', value: fmt(subscription.tokens_purchased), icon: TrendingUp, color: 'text-green-400' },
-            { label: 'Custo recarga/1k', value: `R$ ${plan.tokenCostPer1k.toFixed(2).replace('.', ',')}`, icon: CreditCard, color: 'text-yellow-400' },
+            { label: 'Atendimentos inclusos/mês', value: fmt(plan.atendimentosIncluded), icon: Zap, color: 'text-primary' },
+            { label: 'Atendimentos avulsos', value: fmt(subscription.tokens_purchased), icon: TrendingUp, color: 'text-green-400' },
+            { label: 'Custo por atendimento', value: `R$ ${plan.atendimentoCost.toFixed(2).replace('.', ',')}`, icon: CreditCard, color: 'text-yellow-400' },
           ].map((s) => (
             <div key={s.label} className="rounded-xl border border-border/50 bg-card/40 p-3.5 flex items-center gap-3">
               <div className="rounded-lg bg-background p-2">
@@ -298,7 +298,7 @@ export default function MeuPlano() {
         {([
           { key: 'overview', label: 'Histórico' },
           { key: 'upgrade', label: 'Upgrade de Plano' },
-          { key: 'recharge', label: 'Recarregar Tokens' },
+          { key: 'recharge', label: 'Recarregar Atendimentos' },
         ] as const).map((t) => (
           <button
             key={t.key}
@@ -347,7 +347,7 @@ export default function MeuPlano() {
           {/* Transactions */}
           <div className="rounded-xl border border-border/50 bg-card/50 overflow-hidden">
             <div className="px-5 py-3 border-b border-border/40">
-              <h3 className="font-semibold">Extrato de Tokens</h3>
+              <h3 className="font-semibold">Extrato de Atendimentos</h3>
             </div>
             <div className="divide-y divide-border/30">
               {transactions.slice(0, 15).map((tx) => {
@@ -410,12 +410,12 @@ export default function MeuPlano() {
                     <span className="text-sm font-normal text-muted-foreground">/mês</span>
                   </p>
                   <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-                    <p>{fmt(p.tokensIncluded)} tokens/mês</p>
-                    <p className="text-primary font-medium">Recarga: R$ {p.tokenCostPer1k.toFixed(2).replace('.', ',')}/1k</p>
+                    <p>{fmt(p.atendimentosIncluded)} atendimentos/mês</p>
+                    <p className="text-primary font-medium">Avulso: R$ {p.atendimentoCost.toFixed(2).replace('.', ',')}/atendimento</p>
                     <p className="text-amber-400 font-medium">Implementação: R$ {p.setup.toLocaleString('pt-BR')}</p>
-                    {!isCurrent && plan.tokenCostPer1k > p.tokenCostPer1k && (
+                    {!isCurrent && plan.atendimentoCost > p.atendimentoCost && (
                       <p className="text-green-400 font-medium">
-                        Economia {Math.round((1 - p.tokenCostPer1k / plan.tokenCostPer1k) * 100)}% por token vs. atual
+                        Economia {Math.round((1 - p.atendimentoCost / plan.atendimentoCost) * 100)}% por atendimento vs. atual
                       </p>
                     )}
                   </div>
@@ -444,8 +444,8 @@ export default function MeuPlano() {
           <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4 flex items-start gap-3">
             <Star className="h-5 w-5 text-yellow-400 shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold text-sm">Mais do que tokens — mais poder de agência</p>
-              <p className="text-sm text-muted-foreground mt-1">Cada upgrade desbloqueia funcionalidades de IA mais avançadas, menor custo por token e maior ROI nas suas campanhas. O investimento se paga no primeiro mês.</p>
+              <p className="font-semibold text-sm">Mais do que atendimentos — mais poder de agência</p>
+              <p className="text-sm text-muted-foreground mt-1">Cada upgrade desbloqueia funcionalidades de IA mais avançadas, menor custo por atendimento e maior ROI nas suas campanhas. O investimento se paga no primeiro mês.</p>
             </div>
           </div>
         </div>
@@ -458,9 +458,9 @@ export default function MeuPlano() {
             <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 text-yellow-400 shrink-0 mt-0.5" />
               <p className="text-sm text-muted-foreground">
-                Você está no plano <strong>{plan.name}</strong> com custo de <strong>R$ {plan.tokenCostPer1k.toFixed(2).replace('.', ',')}/1k tokens</strong>.{' '}
-                Fazendo upgrade para o Pro, o custo cai para R$ 1,00/1k — economia de{' '}
-                {Math.round((1 - PLANS.pro.tokenCostPer1k / plan.tokenCostPer1k) * 100)}% por token.{' '}
+                Você está no plano <strong>{plan.name}</strong> com custo de <strong>R$ {plan.atendimentoCost.toFixed(2).replace('.', ',')} por atendimento</strong>.{' '}
+                Fazendo upgrade para o Pro, o custo cai para R$ {PLANS.pro.atendimentoCost.toFixed(2).replace('.', ',')} por atendimento — economia de{' '}
+                {Math.round((1 - PLANS.pro.atendimentoCost / plan.atendimentoCost) * 100)}% por atendimento.{' '}
                 <button className="text-primary underline" onClick={() => setTab('upgrade')}>Ver upgrade</button>
               </p>
             </div>
@@ -468,26 +468,26 @@ export default function MeuPlano() {
 
           {/* Packages */}
           <div>
-            <h3 className="font-semibold mb-3">Pacotes de Tokens</h3>
+            <h3 className="font-semibold mb-3">Pacotes de Atendimentos</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {TOKEN_PACKAGES.map((pkg) => {
-                const price = (pkg.tokens / 1000) * plan.tokenCostPer1k;
+              {ATENDIMENTO_PACKAGES.map((pkg) => {
+                const price = pkg.atendimentos * plan.atendimentoCost;
                 return (
-                  <div key={pkg.tokens} className="rounded-xl border border-border/50 bg-card/50 p-4 flex flex-col gap-2">
+                  <div key={pkg.atendimentos} className="rounded-xl border border-border/50 bg-card/50 p-4 flex flex-col gap-2">
                     <div className="flex items-center gap-1.5">
                       <Zap className="h-4 w-4 text-primary" />
-                      <span className="font-bold">{pkg.tokens >= 1000 ? `${pkg.tokens / 1000}k` : pkg.tokens}</span>
+                      <span className="font-bold">{fmt(pkg.atendimentos)}</span>
                     </div>
                     <p className="text-xs text-muted-foreground">{pkg.label}</p>
                     <p className="text-lg font-bold">{fmtR(price)}</p>
-                    <p className="text-xs text-muted-foreground">R$ {plan.tokenCostPer1k.toFixed(2).replace('.', ',')}/1k tokens</p>
+                    <p className="text-xs text-muted-foreground">R$ {plan.atendimentoCost.toFixed(2).replace('.', ',')} por atendimento</p>
                     <Button
                       size="sm"
                       className="w-full mt-1"
-                      onClick={() => handlePurchase(pkg.tokens)}
-                      disabled={buyingPkg === pkg.tokens}
+                      onClick={() => handlePurchase(pkg.atendimentos)}
+                      disabled={buyingPkg === pkg.atendimentos}
                     >
-                      {buyingPkg === pkg.tokens ? 'Processando...' : 'Comprar'}
+                      {buyingPkg === pkg.atendimentos ? 'Processando...' : 'Comprar'}
                     </Button>
                   </div>
                 );
@@ -498,50 +498,50 @@ export default function MeuPlano() {
           {/* Custom calculator */}
           <div className="rounded-xl border border-border/50 bg-card/50 p-5">
             <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" /> Calculadora de Tokens
+              <Sparkles className="h-4 w-4 text-primary" /> Calculadora de Atendimentos
             </h3>
             <div className="flex flex-col md:flex-row gap-4 items-start md:items-end">
               <div className="flex-1 space-y-2">
-                <label className="text-sm text-muted-foreground">Quantidade de tokens</label>
+                <label className="text-sm text-muted-foreground">Quantidade de atendimentos</label>
                 <input
                   type="number"
-                  min={1000}
-                  step={1000}
-                  value={customTokens}
-                  onChange={(e) => setCustomTokens(Math.max(1000, parseInt(e.target.value) || 1000))}
+                  min={10}
+                  step={10}
+                  value={customAtendimentos}
+                  onChange={(e) => setCustomAtendimentos(Math.max(10, parseInt(e.target.value) || 10))}
                   className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                 />
                 <input
                   type="range"
-                  min={1000}
-                  max={1000000}
-                  step={1000}
-                  value={customTokens}
-                  onChange={(e) => setCustomTokens(parseInt(e.target.value))}
+                  min={10}
+                  max={1000}
+                  step={10}
+                  value={customAtendimentos}
+                  onChange={(e) => setCustomAtendimentos(parseInt(e.target.value))}
                   className="w-full accent-primary"
                 />
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>1k</span><span>500k</span><span>1M</span>
+                  <span>10</span><span>500</span><span>1.000</span>
                 </div>
               </div>
               <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 min-w-[180px]">
                 <p className="text-xs text-muted-foreground">Total a pagar</p>
                 <p className="text-3xl font-bold text-primary mt-1">{fmtR(customPrice)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{fmt(customTokens)} tokens</p>
-                <p className="text-xs text-muted-foreground">R$ {plan.tokenCostPer1k.toFixed(2).replace('.', ',')}/1k</p>
-                <Button className="w-full mt-3" size="sm" onClick={() => handlePurchase(customTokens)} disabled={buyingPkg === customTokens}>
-                  {buyingPkg === customTokens ? 'Processando...' : 'Comprar Agora'}
+                <p className="text-xs text-muted-foreground mt-1">{fmt(customAtendimentos)} atendimentos</p>
+                <p className="text-xs text-muted-foreground">R$ {plan.atendimentoCost.toFixed(2).replace('.', ',')} por atendimento</p>
+                <Button className="w-full mt-3" size="sm" onClick={() => handlePurchase(customAtendimentos)} disabled={buyingPkg === customAtendimentos}>
+                  {buyingPkg === customAtendimentos ? 'Processando...' : 'Comprar Agora'}
                 </Button>
               </div>
             </div>
 
             {/* Savings tip */}
-            {subscription.plan_id !== 'enterprise' && customTokens >= 50000 && (
+            {subscription.plan_id !== 'enterprise' && customAtendimentos >= 100 && (
               <div className="mt-4 rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2 flex items-center gap-2">
                 <TrendingUp className="h-4 w-4 text-green-400 shrink-0" />
                 <p className="text-xs text-green-400">
-                  No Plano Pro, essa recarga custaria <strong>{fmtR((customTokens / 1000) * PLANS.pro.tokenCostPer1k)}</strong>{' '}
-                  — economia de <strong>{fmtR(customPrice - (customTokens / 1000) * PLANS.pro.tokenCostPer1k)}</strong>.
+                  No Plano Pro, essa recarga custaria <strong>{fmtR(customAtendimentos * PLANS.pro.atendimentoCost)}</strong>{' '}
+                  — economia de <strong>{fmtR(customPrice - customAtendimentos * PLANS.pro.atendimentoCost)}</strong>.
                 </p>
               </div>
             )}
