@@ -409,6 +409,20 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     plan.reason = "enforced_social_question";
   }
 
+  // GUARD ANTI-FOTO-NAO-PEDIDA: so envia imagens se o lead PEDIR explicitamente
+  // (isPhotoText: 'foto', 'painel', 'interior'...) ou ACEITAR uma oferta recente de
+  // fotos (acceptedPhotoOffer). Evita o agente mandar foto "do nada" quando o LLM
+  // marca photo_request so porque fotos ja foram pedidas antes na conversa (ex: o
+  // lead disse "Gostei dele" e levou fotos sem pedir).
+  if (plan.action === "photo_request" && !isPhotoText(input.message) && !acceptedPhotoOffer) {
+    plan.action = "reply_only";
+    plan.intent = "vehicle_reference";
+    plan.use_memory_vehicle = false;
+    plan.photo_target = null;
+    plan.reason = `blocked_unrequested_photo:${plan.reason || ""}`;
+    plan.response_guidance = "O lead NAO pediu fotos nem aceitou oferta de fotos. NAO envie imagens. Conduza a conversa/qualificacao conforme o System Prompt do Portal, uma pergunta por vez.";
+  }
+
   // ETAPA C: preserva a decisao de HANDOFF do cerebro (lead qualificado/agendou/
   // pediu humano) contra as regras de veiculo/estoque acima. Pedido explicito de
   // FOTO ainda vence (intencao clara de imagem).
