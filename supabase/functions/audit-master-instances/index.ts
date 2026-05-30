@@ -30,6 +30,47 @@ interface InstanceRow {
   status: string | null;
 }
 
+// Extração AGNÓSTICA ao nome do campo do número de WhatsApp conectado.
+// O uazapi devolve o número em instance.owner e/ou status.jid; varremos a
+// resposta inteira procurando um JID ("5541999999999@s.whatsapp.net", com ou
+// sem sufixo de device) e, como reforço, chaves conhecidas de telefone com
+// valor "limpo" de 10-15 dígitos. Assim não dependemos de um único caminho.
+const PHONE_KEY_HINTS = ['owner', 'jid', 'wid', 'wuid', 'me', 'number', 'phone', 'phonenumber', 'msisdn'];
+
+function extractWhatsappNumber(root: unknown): string {
+  let jidMatch = '';
+  let keyMatch = '';
+  const seen = new WeakSet<object>();
+
+  const walk = (value: unknown, keyHint = ''): void => {
+    if (jidMatch) return;
+    if (typeof value === 'string') {
+      const m = value.match(/(\d{10,15})(?::\d+)?@(?:s\.whatsapp\.net|c\.us)/);
+      if (m) { jidMatch = m[1]; return; }
+      if (!keyMatch && PHONE_KEY_HINTS.includes(keyHint.toLowerCase()) && !value.includes('/')) {
+        const d = value.replace(/\D/g, '');
+        if (d.length >= 10 && d.length <= 15) keyMatch = d;
+      }
+      return;
+    }
+    if (typeof value === 'number') {
+      if (!keyMatch && PHONE_KEY_HINTS.includes(keyHint.toLowerCase())) {
+        const d = String(value);
+        if (d.length >= 10 && d.length <= 15) keyMatch = d;
+      }
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    if (seen.has(value as object)) return;
+    seen.add(value as object);
+    if (Array.isArray(value)) { for (const v of value) walk(v, keyHint); return; }
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) walk(v, k);
+  };
+
+  walk(root);
+  return jidMatch || keyMatch || '';
+}
+
 function parseUazapiState(payload: any): { isConnected: boolean; realStatus: string } {
   // Resposta Uazapi V6 (GET /instance/status):
   // {
@@ -73,17 +114,22 @@ function parseUazapiState(payload: any): { isConnected: boolean; realStatus: str
 async function checkUazapiInstance(baseUrl: string, _instanceName: string, token: string) {
   const headers = { 'Content-Type': 'application/json', token, apikey: token };
 
+  // Junta o estado (conectado/desconectado) com o número extraído da MESMA resposta.
+  const parseAndExtract = (payload: any) => ({
+    ...parseUazapiState(payload),
+    connectedPhone: extractWhatsappNumber(payload),
+  });
+
   // Endpoint CORRETO da Uazapi V6: GET /instance/status
   // (sem path param — o token no header identifica a instância)
   // Resposta: { instance: { status, name, profileName, owner, ... },
-  //             status: { connected, loggedIn, ... } }
+  //             status: { connected, loggedIn, ..., jid } }
   try {
     const res = await fetch(`${baseUrl}/instance/status`, { method: 'GET', headers });
     if (res.ok) {
       const txt = await res.text();
       try {
-        const payload = JSON.parse(txt);
-        return parseUazapiState(payload);
+        return parseAndExtract(JSON.parse(txt));
       } catch {}
     }
   } catch {}
@@ -95,12 +141,11 @@ async function checkUazapiInstance(baseUrl: string, _instanceName: string, token
     });
     const txt = await res.text();
     try {
-      const payload = JSON.parse(txt);
-      return parseUazapiState(payload);
+      return parseAndExtract(JSON.parse(txt));
     } catch {}
   } catch {}
 
-  return { isConnected: false, realStatus: 'error' };
+  return { isConnected: false, realStatus: 'error', connectedPhone: '' };
 }
 
 Deno.serve(async (req) => {
@@ -182,6 +227,7 @@ Deno.serve(async (req) => {
       current_status: string;
       is_active: boolean;
       changed: boolean;
+      phone_number?: string | null;
     }> = [];
 
     for (const inst of (instances || []) as InstanceRow[]) {
@@ -212,11 +258,15 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const { isConnected, realStatus } = await checkUazapiInstance(baseUrl, inst.instance_name, apiKey);
+      const { isConnected, realStatus, connectedPhone } = await checkUazapiInstance(baseUrl, inst.instance_name, apiKey);
 
       const updates: Record<string, unknown> = {
         status: realStatus, updated_at: new Date().toISOString(),
       };
+      // Salva o número conectado quando encontrado (nunca apaga um já existente).
+      if (connectedPhone && connectedPhone.length >= 10) {
+        updates.phone_number = connectedPhone;
+      }
       if (isConnected) {
         updates.is_active = true;
         updates.health_score = 100;
@@ -232,6 +282,7 @@ Deno.serve(async (req) => {
         id: inst.id, friendly_name: inst.friendly_name,
         previous_status: inst.status, current_status: realStatus,
         is_active: isConnected, changed: inst.status !== realStatus,
+        phone_number: connectedPhone || null,
       });
     }
 
