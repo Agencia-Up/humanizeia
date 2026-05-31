@@ -1010,6 +1010,7 @@ interface TeamMember {
   is_active: boolean;              // ativo no AGENTE de IA (distribuição automática)
   active_in_system?: boolean;      // ativo no SISTEMA (visibilidade no CRM e módulos)
   last_lead_received_at: string | null;
+  total_leads_received?: number | null;  // contador acumulado — chave da fila round-robin
   agent_id: string | null;
   leadsCount?: number;
   qualifiedCount?: number;
@@ -1056,6 +1057,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [dateFilter, setDateFilter]       = useState<LeadDatePreset>('all');
   const [dateFrom,   setDateFrom]         = useState('');
   const [dateTo,     setDateTo]           = useState('');
+  // transferência manual pro próximo vendedor da fila (confirmação)
+  const [confirmQueueTransfer, setConfirmQueueTransfer] = useState<{ lead: CrmLead; seller: TeamMember } | null>(null);
+  const [queueTransferring, setQueueTransferring]       = useState(false);
   // Fase 6 Feature C: modo seleção pro disparo em massa (toggle + IDs marcados)
   const [selectionMode, setSelectionMode]   = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
@@ -2020,6 +2024,53 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setReassigning(null);
+    }
+  };
+
+  // ── Transferência manual pro PRÓXIMO vendedor da fila (round-robin) ──────────
+  // Mesma ordem do backend: total_leads_received ASC, depois last_lead_received_at
+  // ASC (quem nunca recebeu / recebeu há mais tempo vem primeiro). Só entram na
+  // fila vendedores ATIVOS, visíveis no sistema e com WhatsApp cadastrado.
+  const nextSellerInQueue = (): TeamMember | null => {
+    const eligible = teamMembers.filter(m =>
+      m.is_active && m.active_in_system !== false && !!m.whatsapp_number
+    );
+    if (eligible.length === 0) return null;
+    return [...eligible].sort((a, b) => {
+      const ta = a.total_leads_received ?? 0;
+      const tb = b.total_leads_received ?? 0;
+      if (ta !== tb) return ta - tb;
+      const la = a.last_lead_received_at ? new Date(a.last_lead_received_at).getTime() : 0;
+      const lb = b.last_lead_received_at ? new Date(b.last_lead_received_at).getTime() : 0;
+      return la - lb;
+    })[0];
+  };
+
+  // Abre a confirmação de transferência pro próximo da fila.
+  const startQueueTransfer = (lead: CrmLead) => {
+    const seller = nextSellerInQueue();
+    if (!seller) {
+      toast({
+        title: 'Nenhum vendedor disponível',
+        description: 'Não há vendedor ativo com WhatsApp na fila para receber este lead.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setConfirmQueueTransfer({ lead, seller });
+  };
+
+  // Confirma e executa. Reusa reassignLead, que já: envia o briefing pro
+  // vendedor no WhatsApp, manda o relatório pro gerente, registra em
+  // ai_lead_transfers e atualiza o painel em tempo real.
+  const confirmQueueTransferNow = async () => {
+    if (!confirmQueueTransfer) return;
+    setQueueTransferring(true);
+    try {
+      await reassignLead(confirmQueueTransfer.lead.id, confirmQueueTransfer.seller.id);
+      setConfirmQueueTransfer(null);
+    } finally {
+      setQueueTransferring(false);
     }
   };
 
@@ -4171,23 +4222,52 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               {leads.length === 0 ? 'Nenhum lead encontrado.' : 'Nenhum lead corresponde aos filtros.'}
             </div>
           )}
-          {filteredLeads.map(lead => (
-            <button
+          {filteredLeads.map(lead => {
+            // "Sem vendedor" de verdade = sem membro, sem transferência pendente
+            // e que NÃO está no meio de uma transferência (status 'transferido').
+            const unassigned = sellerStatusForLead(lead).status === 'none' && lead.status !== 'transferido';
+            return (
+            <div
               key={lead.id}
+              role="button"
+              tabIndex={0}
               onClick={() => loadLeadDetail(lead)}
-              className="w-full text-left bg-card border border-border/50 rounded-xl px-4 py-3 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all group"
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); loadLeadDetail(lead); } }}
+              className={`w-full text-left border rounded-xl px-4 py-3 transition-all group cursor-pointer ${
+                unassigned
+                  ? 'bg-amber-500/5 border-amber-500/40 hover:border-amber-500/60'
+                  : 'bg-card border-border/50 hover:border-blue-500/40 hover:bg-blue-500/5'
+              }`}
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
-                    <Users className="h-4 w-4 text-blue-400" />
+                  <div className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${
+                    unassigned ? 'bg-amber-500/10 border-amber-500/30' : 'bg-blue-500/10 border-blue-500/20'
+                  }`}>
+                    {unassigned
+                      ? <AlertTriangle className="h-4 w-4 text-amber-400" />
+                      : <Users className="h-4 w-4 text-blue-400" />}
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{lead.lead_name || lead.remote_jid}</p>
-                    <p className="text-[11px] text-muted-foreground">{sellerLabelForLead(lead)} · {fmtDate(lead.created_at)}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {unassigned
+                        ? <span className="text-amber-400 font-medium">Sem vendedor</span>
+                        : sellerLabelForLead(lead)} · {fmtDate(lead.created_at)}
+                    </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                  {unassigned && !isSeller && (
+                    <Button
+                      size="sm"
+                      onClick={e => { e.stopPropagation(); startQueueTransfer(lead); }}
+                      className="h-7 px-2.5 text-[11px] gap-1.5 bg-amber-500/90 hover:bg-amber-500 text-white"
+                      title="Transferir este lead pro próximo vendedor da fila"
+                    >
+                      <Send className="h-3 w-3" /> Transferir
+                    </Button>
+                  )}
                   {lead.seller_notes_count > 0 && (
                     <span className="flex items-center gap-1 text-[10px] text-yellow-400"><StickyNote className="h-3 w-3" />{lead.seller_notes_count}</span>
                   )}
@@ -4198,10 +4278,46 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                   <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
                 </div>
               </div>
-            </button>
-          ))}
+            </div>
+            );
+          })}
         </div>
       )}
+
+      {/* Confirmação de transferência manual pro próximo da fila */}
+      <Dialog open={!!confirmQueueTransfer} onOpenChange={o => { if (!o && !queueTransferring) setConfirmQueueTransfer(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Send className="h-4 w-4 text-amber-400" /> Transferir lead pro próximo vendedor?
+            </DialogTitle>
+            <DialogDescription>
+              O lead vai pro próximo da fila e recebe o briefing no WhatsApp na hora. O gerente também é avisado.
+            </DialogDescription>
+          </DialogHeader>
+          {confirmQueueTransfer && (
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-sm space-y-1.5">
+              <p><span className="text-muted-foreground">Lead:</span> <span className="font-medium">{confirmQueueTransfer.lead.lead_name || confirmQueueTransfer.lead.remote_jid}</span></p>
+              <p className="flex items-center gap-2">
+                <span className="text-muted-foreground">Vai para:</span>
+                <span className="font-medium text-emerald-400">{confirmQueueTransfer.seller.name}</span>
+              </p>
+              {confirmQueueTransfer.seller.whatsapp_number && (
+                <p className="text-[11px] text-muted-foreground">WhatsApp do vendedor: {confirmQueueTransfer.seller.whatsapp_number}</p>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={() => setConfirmQueueTransfer(null)} disabled={queueTransferring}>
+              Cancelar
+            </Button>
+            <Button onClick={confirmQueueTransferNow} disabled={queueTransferring} className="bg-amber-500 hover:bg-amber-600 text-white gap-1.5">
+              {queueTransferring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              Confirmar transferência
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Feedbacks List (gerente) ─────────────────────────────────── */}
       {view === 'feedbacks' && (
