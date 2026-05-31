@@ -2,6 +2,7 @@
 // Helpers centralizados pra evitar drift entre call sites diferentes.
 import { sellerPhoneKey as _sellerPhoneKey, uniqueSellersByPhone as _uniqueSellersByPhone } from "../_shared/transfer/phoneKey.ts";
 import { buildEnrichedBriefing as _buildEnrichedBriefing } from "../_shared/transfer/buildBriefing.ts";
+import { logTransferFailure, resolveTransferFailures } from "../_shared/pedro-v2/logTransferFailure.ts";
 
 // Re-exports com nomes originais pra não quebrar call sites existentes.
 // Quando todo o arquivo migrar pra usar `_sellerPhoneKey` direto, esses
@@ -825,6 +826,15 @@ async function maybeHandleSellerAck(
     status: 'em_atendimento',
     last_interaction_at: now,
   }).eq('id', pendingTransfer.lead_id);
+
+  // Lead ganhou dono firme (vendedor confirmou "Ok") — resolve qualquer falha
+  // de transferencia ABERTA deste lead no painel de diagnostico. best-effort:
+  // nunca lanca, nunca derruba a confirmacao.
+  await resolveTransferFailures({
+    user_id: agent.user_id,
+    lead_id: pendingTransfer.lead_id,
+    resolved_by: 'seller-ack',
+  });
 
   // Identifica o lead confirmado para deixar claro ao vendedor qual foi.
   let confirmedLeadLabel = '';
@@ -2626,6 +2636,14 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         } else {
           console.log(`[Transfer] ✅ lead ${pendingTransfer.lead_id} status → em_atendimento`);
         }
+
+        // Lead ganhou dono firme — resolve falhas de transferencia ABERTAS
+        // deste lead no painel de diagnostico. best-effort: nunca lanca.
+        await resolveTransferFailures({
+          user_id: agent.user_id,
+          lead_id: pendingTransfer.lead_id,
+          resolved_by: 'seller-ack',
+        });
       }
 
       // Envia mensagem de confirmação para o vendedor via WhatsApp
@@ -3638,6 +3656,21 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
             if (!chosenSeller) {
               transferResult = { success: false, error: 'no_active_seller_available' };
+              // Diagnostico (best-effort, nunca derruba o fluxo): Pedro qualificou
+              // e chamou a tool, mas nao ha vendedor ativo na fila.
+              await logTransferFailure({
+                user_id: agent.user_id,
+                reason_code: 'sem_vendedor_disponivel',
+                mode: 'pedro',
+                lead_id: leadRow.id,
+                agent_id: agent.id,
+                lead_name: pushName || null,
+                remote_jid: remoteJid,
+                lead_status_crm: crmStage || null,
+                attempted_transfer: true,
+                source: 'uazapi-webhook',
+                reason_detail: 'Pedro qualificou e chamou transferir_para_vendedor, mas nao ha nenhum vendedor ativo na fila.',
+              });
             } else {
               // 4. Inserir transfer record
               const timeoutAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
@@ -4110,6 +4143,21 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
                   // CRM do Marcos e manual/isolado; transferencia do Pedro nao cria lead em crm_leads.
                 } else {
                   console.warn(`[Transfer] ⚠️ Nenhum vendedor ativo. agent_id=${agent.id} user_id=${agent.user_id}`);
+                  // Diagnostico (best-effort): Pedro classificou para transferir, mas
+                  // o round-robin nao encontrou nenhum vendedor ativo.
+                  await logTransferFailure({
+                    user_id: agent.user_id,
+                    reason_code: 'sem_vendedor_disponivel',
+                    mode: 'pedro',
+                    lead_id: leadRow?.id || null,
+                    agent_id: agent.id,
+                    lead_name: pushName || null,
+                    remote_jid: remoteJid,
+                    lead_status_crm: nextCrmStatus || null,
+                    attempted_transfer: true,
+                    source: 'uazapi-webhook',
+                    reason_detail: 'Lead classificado para transferencia (atualizar_etapa_crm), mas o round-robin nao encontrou vendedor ativo.',
+                  });
                 }
               }
             } // ── fecha if (!skipTransfer) ──────────────────────────────────

@@ -1,3 +1,5 @@
+import { logTransferFailure, resolveTransferFailures } from '../_shared/pedro-v2/logTransferFailure.ts';
+
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
   const restBase = `${url}/rest/v1`;
@@ -480,6 +482,20 @@ Deno.serve(async (req) => {
 
         if (!nextSeller) {
           console.warn(`[Timeout] Nenhum outro vendedor ativo para repassar o lead ${lead.id}`);
+          // Diagnostico: lead expirou e nao ha outro vendedor para escalar.
+          await logTransferFailure({
+            user_id: transfer.user_id,
+            reason_code: 'sem_vendedor_disponivel',
+            mode: 'pedro',
+            lead_id: lead.id,
+            agent_id: lead.agent_id,
+            member_id: expiredSeller.id,
+            lead_name: lead.lead_name,
+            remote_jid: lead.remote_jid,
+            attempted_transfer: true,
+            source: 'transfer-timeout-checker',
+            reason_detail: `Lead expirou com ${expiredSeller.name || 'o vendedor anterior'} e nao ha outro vendedor ativo na fila para escalar.`,
+          });
           continue;
         }
 
@@ -501,6 +517,13 @@ Deno.serve(async (req) => {
         await supabase.from('ai_crm_leads')
           .update({ assigned_to_id: nextSeller.id })
           .eq('id', lead.id);
+
+        // Diagnostico: lead ganhou um novo vendedor -> resolve falhas abertas.
+        await resolveTransferFailures({
+          user_id: transfer.user_id,
+          lead_id: lead.id,
+          resolved_by: 'timeout-escalation',
+        });
 
         // 6. Envia mensagem para o próximo vendedor
         if (waInstance && nextSeller.whatsapp_number) {
@@ -527,6 +550,16 @@ Deno.serve(async (req) => {
         processed++;
       } catch (innerErr) {
         console.error(`[Timeout] Erro ao processar transfer ${transfer.id}:`, innerErr);
+        // Diagnostico: erro tecnico ao escalar o lead.
+        await logTransferFailure({
+          user_id: transfer.user_id,
+          reason_code: 'erro_tecnico',
+          mode: 'pedro',
+          lead_id: transfer.lead_id,
+          attempted_transfer: true,
+          source: 'transfer-timeout-checker',
+          reason_detail: `Erro ao processar timeout do transfer ${transfer.id}: ${(innerErr as any)?.message || innerErr}`,
+        });
       }
     }
 

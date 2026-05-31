@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildConversationBriefing, buildMarcosBriefing, buildManagerReport } from "../_shared/transfer/buildBriefing.ts";
+import { resolveTransferFailures } from "../_shared/pedro-v2/logTransferFailure.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -767,6 +768,15 @@ _Gerado automaticamente pelo Pedro SDR_`;
       is_confirmed: false,
       transfer_status: "pending",
       confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    });
+
+    // 8.1 Operador transferiu manualmente — resolve falhas de transferencia
+    //     ABERTAS deste lead no painel de diagnostico. best-effort: nunca
+    //     lanca, nunca bloqueia a resposta de sucesso ao operador.
+    await resolveTransferFailures({
+      user_id: ownerUserId,
+      lead_id: lead.id,
+      resolved_by: `manual-transfer:${member.name || member.id}`,
     });
 
     // 9. Update member stats

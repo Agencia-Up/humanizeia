@@ -1,4 +1,5 @@
 import { phonesMatch } from "./phone.ts";
+import { resolveTransferFailures } from "./logTransferFailure.ts";
 
 export async function findPreviousSellerForLead(
   supabase: any,
@@ -125,6 +126,15 @@ export async function confirmSellerAck(
       last_interaction_at: now,
     })
     .eq("id", pendingTransfer.lead_id);
+
+  // Lead finalmente tem dono firme (vendedor confirmou "Ok") — resolve
+  // qualquer falha de transferencia ABERTA deste lead no painel de
+  // diagnostico. best-effort: nunca lanca, nunca derruba a confirmacao.
+  await resolveTransferFailures({
+    user_id: input.user_id,
+    lead_id: pendingTransfer.lead_id,
+    resolved_by: "seller-ack",
+  });
 
   await supabase
     .from("ai_team_members")

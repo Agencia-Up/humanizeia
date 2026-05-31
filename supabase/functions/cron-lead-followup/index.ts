@@ -1,3 +1,5 @@
+import { logTransferFailure } from '../_shared/pedro-v2/logTransferFailure.ts';
+
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
   const restBase = `${url}/rest/v1`;
@@ -498,6 +500,20 @@ Deno.serve(async (req) => {
 
           if (availableSellers.length === 0) {
             console.log(`[Cron] Nenhum outro vendedor disponivel para o agente ${agentId}. Lead ${lead.id} permanece com vendedor atual.`);
+            // Diagnostico: rodizio sem outro vendedor para assumir.
+            await logTransferFailure({
+              user_id: lead.user_id,
+              reason_code: 'sem_vendedor_disponivel',
+              mode: 'pedro',
+              lead_id: lead.id,
+              agent_id: agentId,
+              member_id: currentSellerId,
+              lead_name: lead.lead_name,
+              remote_jid: lead.remote_jid,
+              attempted_transfer: true,
+              source: 'cron-lead-followup',
+              reason_detail: 'Transferencia expirou (vendedor nao respondeu em 10min) e nao ha outro vendedor ativo para o rodizio.',
+            });
             // Repassar de volta para o mesmo (sem outros disponiveis)
             await supabase.from('ai_lead_transfers')
               .update({ transfer_status: 'pending' })
@@ -773,6 +789,22 @@ Deno.serve(async (req) => {
 
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }
+        } else {
+          // Diagnostico: lead ficou inativo (10min) e pronto para repasse, mas
+          // NAO havia nenhum vendedor ativo. Status virou 'transferido' sem dono.
+          await logTransferFailure({
+            user_id: lead.user_id,
+            reason_code: 'sem_vendedor_disponivel',
+            mode: 'pedro',
+            lead_id: lead.id,
+            agent_id: agentId,
+            lead_name: lead.lead_name,
+            remote_jid: lead.remote_jid,
+            lead_status: 'transferido',
+            attempted_transfer: true,
+            source: 'cron-lead-followup',
+            reason_detail: 'Lead inativo (10min) pronto para repasse, mas nenhum vendedor ativo disponivel na fila.',
+          });
         }
         // Mensagem de despedida para o cliente
         const byeMsg = "Estarei te transferindo para um dos nossos especialistas em vendas!";

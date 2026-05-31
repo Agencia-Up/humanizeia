@@ -27,6 +27,7 @@
 // ============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { logTransferFailure, type TransferFailureReason } from '../_shared/pedro-v2/logTransferFailure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,7 +52,10 @@ const PROTECTED_STATUSES = new Set([
 
 interface Lead {
   id: string;
+  status: string | null;
   status_crm: string | null;
+  assigned_to_id: string | null;
+  remote_jid: string | null;
   client_name: string | null;
   vehicle_interest: string | null;
   payment_method: string | null;
@@ -106,6 +110,28 @@ function classify(lead: Lead, isInactiveTransfer: boolean): string {
   return lead.status_crm || 'novo';
 }
 
+// Detecta chamada de SISTEMA (cron): o bearer e um JWT com role=service_role.
+// auto-classify-leads roda com verify_jwt=true (default — nao esta no
+// config.toml), entao a PLATAFORMA ja validou a assinatura do JWT antes do
+// nosso codigo rodar. Confiar no claim 'role' decodificado e seguro: um token
+// forjado com role=service_role seria barrado pela plataforma (assinatura
+// invalida) antes de chegar aqui. So comparar com SUPABASE_SERVICE_ROLE_KEY
+// nao bastava — a chave que a cron pega do vault e um JWT service_role VALIDO,
+// porem string diferente da env injetada (geradas em momentos distintos).
+function isServiceRoleJwt(token: string): boolean {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+    let p = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = p.length % 4;
+    if (pad) p += '='.repeat(4 - pad);
+    const payload = JSON.parse(atob(p));
+    return payload?.role === 'service_role';
+  } catch {
+    return false;
+  }
+}
+
 async function resolveMasterId(supabaseService: any, authUserId: string): Promise<string> {
   const { data } = await supabaseService
     .from('ai_team_members')
@@ -136,21 +162,43 @@ Deno.serve(async (req) => {
       });
     }
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user } } = await supabaseAnon.auth.getUser(token);
-    if (!user) {
-      return new Response(JSON.stringify({ error: 'Token inválido' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
 
     const body = await req.json().catch(() => ({}));
-    const masterId = body?.master_user_id || await resolveMasterId(supabaseService, user.id);
     const dryRun = body?.dry_run === true;
+
+    // Dois tipos de chamador:
+    //  1) SISTEMA (cron 'auto-classify-leads-hourly'): manda um JWT service_role
+    //     como bearer. Nao existe usuario logado, entao master_user_id no body e
+    //     OBRIGATORIO (a cron sempre envia). Sem este ramo, getUser() recusa a
+    //     service role e devolve 401 'Token invalido' — era exatamente o motivo
+    //     do cron horario NUNCA classificar nem logar (todas as rodadas 401).
+    //  2) USUARIO (botao "Reclassificar IA"): manda o JWT do master/vendedor.
+    //     Resolvemos o master pelo time (resolveMasterId) ou pelo body.
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const isSystemCaller = token === serviceRoleKey || isServiceRoleJwt(token);
+    let masterId: string;
+
+    if (isSystemCaller) {
+      if (!body?.master_user_id) {
+        return new Response(JSON.stringify({ error: 'master_user_id obrigatório para chamada de sistema' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      masterId = body.master_user_id;
+    } else {
+      const { data: { user } } = await supabaseAnon.auth.getUser(token);
+      if (!user) {
+        return new Response(JSON.stringify({ error: 'Token inválido' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      masterId = body?.master_user_id || await resolveMasterId(supabaseService, user.id);
+    }
 
     // 1. Carrega leads da conta
     const { data: leads, error } = await supabaseService
       .from('ai_crm_leads')
-      .select('id, status_crm, client_name, vehicle_interest, payment_method, budget, client_city, visit_scheduled, last_user_reply_at, last_interaction_at, created_at, summary')
+      .select('id, status, status_crm, assigned_to_id, remote_jid, client_name, vehicle_interest, payment_method, budget, client_city, visit_scheduled, last_user_reply_at, last_interaction_at, created_at, summary')
       .eq('user_id', masterId);
     if (error) throw new Error(error.message);
 
@@ -167,6 +215,13 @@ Deno.serve(async (req) => {
 
     const changes: Array<{ id: string; from: string; to: string }> = [];
     const updates: Record<string, { newStatus: string; ids: string[] }> = {};
+    // Diagnostico: leads que, ao serem (re)classificados, ficam "nao prontos
+    // para transferir" e SEM vendedor. Alimenta o painel de Diagnostico.
+    const failuresToLog: Array<{ lead: Lead; reason: TransferFailureReason }> = [];
+    const DIAG_REASON: Record<string, TransferFailureReason> = {
+      inativo: 'lead_inativo',
+      pouco_qualificado: 'lead_nao_qualificado',
+    };
 
     for (const lead of (leads || []) as Lead[]) {
       const isInactiveTransfer = inactiveLeadIds.has(lead.id);
@@ -175,6 +230,19 @@ Deno.serve(async (req) => {
         changes.push({ id: lead.id, from: lead.status_crm || '(null)', to: newStatus });
         if (!updates[newStatus]) updates[newStatus] = { newStatus, ids: [] };
         updates[newStatus].ids.push(lead.id);
+      }
+
+      // Diagnostico: registra o motivo de TODO lead que esta ATUALMENTE
+      // inativo/pouco_qualificado E sem vendedor E nao transferido — mesmo que
+      // o status NAO tenha mudado nesta rodada. O backlog ja classificado pela
+      // cron horaria nao muda de status, mas precisa aparecer no painel com o
+      // motivo preenchido. Sem isto, so leads que TRANSICIONAM agora apareciam
+      // (e o backlog ficava com a coluna "Motivo" em branco). A RPC
+      // pedro_log_transfer_failure deduplica por (user, lead, motivo): em
+      // re-execucoes apenas incrementa attempt_count, nunca duplica linha.
+      const reason = DIAG_REASON[newStatus];
+      if (reason && !lead.assigned_to_id && lead.status !== 'transferido') {
+        failuresToLog.push({ lead, reason });
       }
     }
 
@@ -187,6 +255,29 @@ Deno.serve(async (req) => {
           .update({ status_crm: newStatus })
           .in('id', ids);
         if (updErr) throw new Error(`Erro ao atualizar ${newStatus}: ${updErr.message}`);
+      }
+
+      // Diagnostico (best-effort, nunca derruba a classificacao): registra o
+      // motivo de cada lead que ficou sem transferencia. Em paralelo; o helper
+      // ja engole qualquer erro internamente.
+      if (failuresToLog.length > 0) {
+        await Promise.all(failuresToLog.map(({ lead, reason }) =>
+          logTransferFailure({
+            user_id: masterId,
+            reason_code: reason,
+            mode: 'pedro',
+            lead_id: lead.id,
+            lead_name: lead.client_name,
+            remote_jid: lead.remote_jid,
+            lead_status: lead.status,
+            lead_status_crm: reason === 'lead_inativo' ? 'inativo' : 'pouco_qualificado',
+            attempted_transfer: false,
+            source: 'auto-classify-leads',
+            reason_detail: reason === 'lead_inativo'
+              ? 'Lead transferido por inatividade (sem resposta) — nao engajou.'
+              : 'Lead nao completou os dados essenciais para qualificar.',
+          })
+        ));
       }
     }
 
