@@ -591,15 +591,20 @@ function PerformanceTab({ userId }: { userId: string | undefined }) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Potencial de compra do lead — quanto mais "quente", maior a chance de fechar venda.
-// Mantemos os valores internos low/normal/high/urgent para compatibilidade com o banco;
-// só os labels mudaram para refletir potencial em vez de prioridade.
+// Qualificação do lead pelo vendedor (no feedback ao gerente). 3 níveis.
+// Mantemos os valores internos low/normal/high para compatibilidade com o banco;
+// 'urgent' é legado (antigo "Pronto pra comprar") e hoje conta como Qualificado.
 const PRIORITY_CONFIG = {
-  low:    { label: '❄️ Frio',                color: 'text-slate-400',  bg: 'bg-slate-500/10',  desc: 'Pouco interesse — apenas olhando' },
-  normal: { label: '🌡️ Morno',                color: 'text-blue-400',   bg: 'bg-blue-500/10',   desc: 'Tem interesse, pode comprar' },
-  high:   { label: '🔥 Quente',              color: 'text-orange-400', bg: 'bg-orange-500/10', desc: 'Alto interesse, perto de fechar' },
-  urgent: { label: '🚀 Pronto pra comprar',  color: 'text-red-400',    bg: 'bg-red-500/10',    desc: 'Vai comprar agora — atende já' },
+  low:    { label: '🔴 Inativo',           color: 'text-red-400',     bg: 'bg-red-500/10',     desc: 'Não responde',         tip: 'Lead que não responde' },
+  normal: { label: '🟡 Pouco qualificado', color: 'text-amber-400',   bg: 'bg-amber-500/10',   desc: 'Parou de responder',   tip: 'Lead que parou de responder' },
+  high:   { label: '🟢 Qualificado',       color: 'text-emerald-400', bg: 'bg-emerald-500/10', desc: 'Demonstrou interesse', tip: 'Lead que demonstrou real interesse' },
 } as const;
+
+// Config de exibição para qualquer valor salvo (inclui o legado 'urgent' → Qualificado).
+function priorityCfg(p: string | null | undefined): typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG] {
+  if (p === 'urgent') return PRIORITY_CONFIG.high;
+  return PRIORITY_CONFIG[p as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.normal;
+}
 
 // ─── Feedback Estruturado: Opções ────────────────────────────────────────────
 
@@ -3291,24 +3296,24 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               />
             </div>
 
-            {/* Potencial de compra + Enviar */}
+            {/* Qualificação + Enviar */}
             <div className="space-y-1.5 pt-1">
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-medium text-muted-foreground">
-                  🎯 Potencial de compra do lead
+                  🎯 Qualificação do lead
                 </span>
                 <span className="text-[10px] text-muted-foreground/70 italic">
-                  (quão perto está de fechar a venda)
+                  (passe o mouse em cada opção pra ver o que significa)
                 </span>
               </div>
               <div className="flex items-center gap-3">
                 <Select value={fbPriority} onValueChange={v => setFbPriority(v as any)}>
-                  <SelectTrigger className="h-9 text-xs w-56" title="Indique o quão próximo este lead está de comprar">
+                  <SelectTrigger className="h-9 text-xs w-56" title="Como o lead se comportou no atendimento">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {(Object.entries(PRIORITY_CONFIG) as [string, typeof PRIORITY_CONFIG[keyof typeof PRIORITY_CONFIG]][]).map(([k, v]) => (
-                      <SelectItem key={k} value={k} className="text-xs">
+                      <SelectItem key={k} value={k} className="text-xs" title={v.tip}>
                         <div className="flex flex-col gap-0.5">
                           <span className={v.color}>{v.label}</span>
                           <span className="text-[10px] text-muted-foreground/70">{v.desc}</span>
@@ -3347,7 +3352,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             ) : (
               <div className="space-y-3">
                 {leadFeedbacks.map(fb => {
-                  const pCfg = PRIORITY_CONFIG[fb.priority as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.normal;
+                  const pCfg = priorityCfg(fb.priority);
                   return (
                     <div key={fb.id} className="border border-border/50 rounded-lg px-3 py-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -4128,7 +4133,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             </div>
           )}
           {feedbacks.map(fb => {
-            const pCfg = PRIORITY_CONFIG[fb.priority as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.normal;
+            const pCfg = priorityCfg(fb.priority);
             return (
               <div
                 key={fb.id}

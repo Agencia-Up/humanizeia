@@ -43,18 +43,20 @@ const PERIODS: { id: Period; label: string }[] = [
   { id: 'all', label: 'Tudo' },
 ];
 
-// Cores fixas por prioridade (alinhadas com PRIORITY_CONFIG do PedroSDR)
+// Cores fixas por qualificação (alinhadas com PRIORITY_CONFIG do PedroSDR)
+// low = Inativo (vermelho), normal = Pouco qualificado (âmbar), high = Qualificado (verde)
+// 'urgent' é legado (antigo "Pronto pra comprar") → conta como Qualificado.
 const PRIORITY_COLORS: Record<string, string> = {
-  low: '#94a3b8',     // slate-400
-  normal: '#60a5fa',  // blue-400
-  high: '#fb923c',    // orange-400
-  urgent: '#f87171',  // red-400
+  low: '#f87171',     // red-400  → Inativo
+  normal: '#fbbf24',  // amber-400 → Pouco qualificado
+  high: '#34d399',    // emerald-400 → Qualificado
+  urgent: '#34d399',  // emerald-400 → Qualificado (legado)
 };
 const PRIORITY_LABELS: Record<string, string> = {
-  low: '❄️ Frio',
-  normal: '🌡️ Morno',
-  high: '🔥 Quente',
-  urgent: '🚀 Pronto pra comprar',
+  low: '🔴 Inativo',
+  normal: '🟡 Pouco qualificado',
+  high: '🟢 Qualificado',
+  urgent: '🟢 Qualificado',
 };
 
 // Categorização inteligente do motivo — extrai categoria a partir do texto
@@ -123,10 +125,12 @@ export function FeedbackAnalytics({ feedbacks }: FeedbackAnalyticsProps) {
       .sort((a, b) => b.count - a.count)
       .slice(0, 8);
 
-    // Distribuição por prioridade
+    // Distribuição por qualificação (legado 'urgent' é normalizado p/ 'high' = Qualificado,
+    // pra não criar uma fatia "Qualificado" duplicada no gráfico)
     const priorityCount = new Map<string, number>();
     for (const f of filtered) {
-      priorityCount.set(f.priority, (priorityCount.get(f.priority) || 0) + 1);
+      const pk = f.priority === 'urgent' ? 'high' : f.priority;
+      priorityCount.set(pk, (priorityCount.get(pk) || 0) + 1);
     }
     const priorityData = Array.from(priorityCount.entries())
       .map(([key, count]) => ({
@@ -248,7 +252,7 @@ export function FeedbackAnalytics({ feedbacks }: FeedbackAnalyticsProps) {
                 )}
               </ChartCard>
 
-              <ChartCard title="Distribuição por Potencial" subtitle="Como o vendedor classificou o lead">
+              <ChartCard title="Distribuição por Qualificação" subtitle="Como o vendedor classificou o lead">
                 {metrics.priorityData.length === 0 ? (
                   <EmptyChart text="Sem dados de prioridade" />
                 ) : (
