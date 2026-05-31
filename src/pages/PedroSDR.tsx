@@ -1291,7 +1291,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .select('id, lead_id, crm_lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
           .eq('user_id', isSeller ? userId : effectiveUserId)
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(2000), // antes era 50 (travava o painel em "50 no período"); 2000 cobre o volume real e o filtro de período é feito no cliente
         // Follow-up: vendedor usa apenas a instância DELE; master usa apenas
         // as próprias dele (seller_member_id IS NULL). Master NÃO usa
         // instâncias de vendedores mesmo enxergando-as em outras telas.
