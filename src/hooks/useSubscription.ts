@@ -43,9 +43,9 @@ export const PLANS = {
 // Pacotes de recarga avulsa (quando os atendimentos do plano acabam).
 // Preço fixo por pacote — pacote maior tem preço por atendimento menor.
 export const ATENDIMENTO_PACKAGES = [
-  { atendimentos: 150, price: 479.90, label: '150 atendimentos' },
-  { atendimentos: 300, price: 869.90, label: '300 atendimentos' },
-  { atendimentos: 500, price: 1209.90, label: '500 atendimentos' },
+  { atendimentos: 150, price: 388.50, label: '150 atendimentos' },
+  { atendimentos: 300, price: 687.00, label: '300 atendimentos' },
+  { atendimentos: 500, price: 900.00, label: '500 atendimentos' },
 ];
 
 export interface Subscription {
