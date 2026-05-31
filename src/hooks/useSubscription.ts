@@ -45,7 +45,7 @@ export const PLANS = {
 export const ATENDIMENTO_PACKAGES = [
   { atendimentos: 150, price: 388.50, label: '150 atendimentos' },
   { atendimentos: 300, price: 687.00, label: '300 atendimentos' },
-  { atendimentos: 500, price: 900.00, label: '500 atendimentos' },
+  { atendimentos: 500, price: 745.00, label: '500 atendimentos' },
 ];
 
 export interface Subscription {
