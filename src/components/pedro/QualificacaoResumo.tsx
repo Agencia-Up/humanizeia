@@ -15,7 +15,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Award, Activity, CircleSlash, Users, Filter, Loader2 } from 'lucide-react';
+import { Award, Activity, CircleSlash, Users, Filter, Loader2, Download } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
 type Period = 'today' | '7d' | '30d' | '90d' | 'all';
@@ -36,6 +36,12 @@ function periodCutoff(period: Period): number {
     case '90d': return now - 90 * 24 * 60 * 60 * 1000;
     case 'all': return 0;
   }
+}
+
+// CSV: escapa valor (aspas, ;, quebra de linha) pro formato Excel/Sheets
+function cell(v: string | number): string {
+  const s = String(v ?? '');
+  return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 interface RawLead { status_crm: string | null; created_at: string; }
@@ -87,6 +93,35 @@ export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
     return { total: f.length, q, p, i, o, classif, pct, wq, wp, wi };
   }, [leads, period]);
 
+  // ─── Exportar CSV (pra mandar pro gestor no Excel/Sheets) ───────────────────
+  function exportCsv() {
+    const sep = ';'; // Excel pt-BR usa ; como separador de coluna
+    const periodLabel = PERIODS.find(x => x.id === period)?.label || '';
+    const pctOf = (n: number) => (m.classif > 0 ? `${Math.round((n / m.classif) * 100)}%` : '—');
+    const lines: string[] = [];
+    lines.push(cell('Resumo de Qualificação dos Leads pela IA'));
+    lines.push(cell(`Período: ${periodLabel}`));
+    lines.push(cell(`Gerado em: ${new Date().toLocaleString('pt-BR')}`));
+    lines.push('');
+    lines.push(['Nível', 'Leads', '% sobre classificados'].map(cell).join(sep));
+    lines.push(['Qualificados', m.q, pctOf(m.q)].map(cell).join(sep));
+    lines.push(['Pouco qualificados', m.p, pctOf(m.p)].map(cell).join(sep));
+    lines.push(['Inativos', m.i, pctOf(m.i)].map(cell).join(sep));
+    lines.push(['Em andamento (novo/negociação)', m.o, '—'].map(cell).join(sep));
+    lines.push(['TOTAL', m.total, ''].map(cell).join(sep));
+
+    const csv = '﻿' + lines.join('\r\n'); // BOM p/ Excel ler acentos certo
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `qualificacao-leads-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <Card className="border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-blue-500/5">
       <CardHeader className="pb-3">
@@ -100,21 +135,33 @@ export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
               Todos os leads classificados automaticamente pela IA no período
             </CardDescription>
           </div>
-          <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">
-            <Filter className="h-3 w-3 text-muted-foreground ml-1" />
-            {PERIODS.map(p => (
+          <div className="flex items-center gap-2 flex-wrap">
+            {m.total > 0 && (
               <button
-                key={p.id}
-                onClick={() => setPeriod(p.id)}
-                className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${
-                  period === p.id
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
+                onClick={exportCsv}
+                title="Baixar planilha (CSV) pra enviar ao gestor"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/25 transition-colors"
               >
-                {p.label}
+                <Download className="h-3 w-3" />
+                Exportar CSV
               </button>
-            ))}
+            )}
+            <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">
+              <Filter className="h-3 w-3 text-muted-foreground ml-1" />
+              {PERIODS.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setPeriod(p.id)}
+                  className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${
+                    period === p.id
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </CardHeader>

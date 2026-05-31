@@ -25,7 +25,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { TrendingUp, Users, Target, Filter, Loader2, Info, Award } from 'lucide-react';
+import { TrendingUp, Users, Target, Filter, Loader2, Info, Award, Download } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
@@ -115,6 +115,12 @@ function periodCutoff(period: Period): number {
     case '90d': return now - 90 * 24 * 60 * 60 * 1000;
     case 'all': return 0;
   }
+}
+
+// CSV: escapa valor (aspas, ;, quebra de linha) pro formato Excel/Sheets
+function cell(v: string | number): string {
+  const s = String(v ?? '');
+  return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 interface GroupRow {
@@ -258,6 +264,47 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
     };
   }, [leads, utmByPhone, period]);
 
+  // ─── Exportar CSV (pra mandar pro gestor de tráfego no Excel/Sheets) ────────
+  function exportCsv() {
+    const sep = ';'; // Excel pt-BR usa ; como separador de coluna
+    const periodLabel = PERIODS.find(p => p.id === period)?.label || '';
+    const lines: string[] = [];
+    lines.push(cell('Relatório de Tráfego — Qualificação por Campanha'));
+    lines.push(cell(`Período: ${periodLabel}`));
+    lines.push(cell(`Gerado em: ${new Date().toLocaleString('pt-BR')}`));
+    lines.push('');
+    lines.push(
+      ['Campanha / Origem', 'Tipo', 'Fonte', 'Leads', 'Qualificados',
+       'Pouco qualificados', 'Inativos', 'Em andamento', '% Qualificação']
+        .map(cell).join(sep),
+    );
+    for (const r of data.rows) {
+      const classif = r.qualificado + r.pouco_qualificado + r.inativo;
+      const pct = classif > 0 ? `${Math.round((r.qualificado / classif) * 100)}%` : '—';
+      lines.push(
+        [r.label, r.isUtm ? 'UTM' : 'Origem', r.sub, r.total, r.qualificado,
+         r.pouco_qualificado, r.inativo, r.outros, pct].map(cell).join(sep),
+      );
+    }
+    const totClassif = data.totQ + data.totP + data.totI;
+    const totPct = totClassif > 0 ? `${Math.round((data.totQ / totClassif) * 100)}%` : '—';
+    lines.push(
+      ['TOTAL', '', '', data.totalLeads, data.totQ, data.totP, data.totI, data.totO, totPct]
+        .map(cell).join(sep),
+    );
+
+    const csv = '﻿' + lines.join('\r\n'); // BOM p/ Excel ler acentos certo
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `relatorio-trafego-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-muted-foreground text-sm">
@@ -279,22 +326,34 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
               Cada campanha/origem cruzada com a qualificação da IA. Mostra quem traz lead que <strong>fecha</strong>, não só volume.
             </CardDescription>
           </div>
-          {/* Filtro de período */}
-          <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">
-            <Filter className="h-3 w-3 text-muted-foreground ml-1" />
-            {PERIODS.map(p => (
+          {/* Ações: exportar CSV + filtro de período */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {data.totalLeads > 0 && (
               <button
-                key={p.id}
-                onClick={() => setPeriod(p.id)}
-                className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${
-                  period === p.id
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
+                onClick={exportCsv}
+                title="Baixar planilha (CSV) pra enviar ao gestor de tráfego pago"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-orange-500/15 text-orange-300 hover:bg-orange-500/25 border border-orange-500/25 transition-colors"
               >
-                {p.label}
+                <Download className="h-3 w-3" />
+                Exportar CSV
               </button>
-            ))}
+            )}
+            <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">
+              <Filter className="h-3 w-3 text-muted-foreground ml-1" />
+              {PERIODS.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setPeriod(p.id)}
+                  className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${
+                    period === p.id
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </CardHeader>
