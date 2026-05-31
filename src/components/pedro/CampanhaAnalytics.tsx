@@ -25,8 +25,9 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { TrendingUp, Users, Target, Filter, Loader2, Info, Award, Download } from 'lucide-react';
+import { TrendingUp, Users, Target, Filter, Loader2, Info, Award, Download, FileText } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { downloadReportPdf } from './reportPdf';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 interface RawLead {
@@ -305,6 +306,42 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
     URL.revokeObjectURL(url);
   }
 
+  // ─── Exportar PDF (relatório formatado pronto pra enviar ao gestor) ──────────
+  async function exportPdf() {
+    const periodLabel = PERIODS.find(p => p.id === period)?.label || '';
+    const rows = data.rows.map(r => {
+      const classif = r.qualificado + r.pouco_qualificado + r.inativo;
+      const pct = classif > 0 ? `${Math.round((r.qualificado / classif) * 100)}%` : '—';
+      return [r.label, r.isUtm ? 'UTM' : 'Origem', r.sub, r.total, r.qualificado, r.pouco_qualificado, r.inativo, r.outros, pct];
+    });
+    const totClassif = data.totQ + data.totP + data.totI;
+    const totPct = totClassif > 0 ? `${Math.round((data.totQ / totClassif) * 100)}%` : '—';
+    await downloadReportPdf({
+      title: 'Relatório de Tráfego — Qualidade por Campanha',
+      subtitle: `Período: ${periodLabel}`,
+      filename: `relatorio-trafego-${period}-${new Date().toISOString().slice(0, 10)}`,
+      accentRgb: [234, 88, 12], // orange-600
+      orientation: 'landscape',
+      columns: [
+        { header: 'Campanha / Origem' },
+        { header: 'Tipo' },
+        { header: 'Fonte' },
+        { header: 'Leads', align: 'right' },
+        { header: 'Qualificados', align: 'right' },
+        { header: 'Pouco qualif.', align: 'right' },
+        { header: 'Inativos', align: 'right' },
+        { header: 'Em andamento', align: 'right' },
+        { header: '% Qualif.', align: 'right' },
+      ],
+      rows,
+      totalRow: ['TOTAL', '', '', data.totalLeads, data.totQ, data.totP, data.totI, data.totO, totPct],
+      note:
+        `${data.comUtm} de ${data.totalLeads} leads no período vieram com UTM rastreável (anúncios Click-to-WhatsApp); ` +
+        `os demais são agrupados pela origem cadastrada. A qualificação (Qualificado / Pouco qualificado / Inativo) ` +
+        `é feita automaticamente pela IA. Leads "em andamento" (novo / negociação) não entram no % de qualificação.`,
+    });
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-muted-foreground text-sm">
@@ -336,6 +373,16 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
               >
                 <Download className="h-3 w-3" />
                 Exportar CSV
+              </button>
+            )}
+            {data.totalLeads > 0 && (
+              <button
+                onClick={exportPdf}
+                title="Baixar PDF formatado pra enviar ao gestor de tráfego pago"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-red-500/15 text-red-300 hover:bg-red-500/25 border border-red-500/25 transition-colors"
+              >
+                <FileText className="h-3 w-3" />
+                Exportar PDF
               </button>
             )}
             <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">

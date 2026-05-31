@@ -15,8 +15,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Award, Activity, CircleSlash, Users, Filter, Loader2, Download } from 'lucide-react';
+import { Award, Activity, CircleSlash, Users, Filter, Loader2, Download, FileText } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { downloadReportPdf } from './reportPdf';
 
 type Period = 'today' | '7d' | '30d' | '90d' | 'all';
 const PERIODS: { id: Period; label: string }[] = [
@@ -122,6 +123,33 @@ export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
     URL.revokeObjectURL(url);
   }
 
+  // ─── Exportar PDF (relatório formatado pronto pra enviar ao gestor) ──────────
+  async function exportPdf() {
+    const periodLabel = PERIODS.find(x => x.id === period)?.label || '';
+    const pctOf = (n: number) => (m.classif > 0 ? `${Math.round((n / m.classif) * 100)}%` : '—');
+    await downloadReportPdf({
+      title: 'Resumo de Qualificação dos Leads pela IA',
+      subtitle: `Período: ${periodLabel}`,
+      filename: `qualificacao-leads-${period}-${new Date().toISOString().slice(0, 10)}`,
+      accentRgb: [5, 150, 105], // emerald-600
+      columns: [
+        { header: 'Nível' },
+        { header: 'Leads', align: 'right' },
+        { header: '% sobre classificados', align: 'right' },
+      ],
+      rows: [
+        ['Qualificados', m.q, pctOf(m.q)],
+        ['Pouco qualificados', m.p, pctOf(m.p)],
+        ['Inativos', m.i, pctOf(m.i)],
+        ['Em andamento (novo/negociação)', m.o, '—'],
+      ],
+      totalRow: ['TOTAL', m.total, ''],
+      note:
+        'A qualificação (Qualificado / Pouco qualificado / Inativo) é feita automaticamente pela IA. ' +
+        'Leads "em andamento" (novo / negociação) não entram no cálculo de % sobre classificados.',
+    });
+  }
+
   return (
     <Card className="border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-blue-500/5">
       <CardHeader className="pb-3">
@@ -144,6 +172,16 @@ export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
               >
                 <Download className="h-3 w-3" />
                 Exportar CSV
+              </button>
+            )}
+            {m.total > 0 && (
+              <button
+                onClick={exportPdf}
+                title="Baixar PDF formatado pra enviar ao gestor"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-red-500/15 text-red-300 hover:bg-red-500/25 border border-red-500/25 transition-colors"
+              >
+                <FileText className="h-3 w-3" />
+                Exportar PDF
               </button>
             )}
             <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">
