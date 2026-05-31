@@ -46,6 +46,7 @@ import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
+import { QualificacaoResumo } from '@/components/pedro/QualificacaoResumo';
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { usePendingTransfers, formatPendingAge } from '@/hooks/usePendingTransfers';
@@ -4112,6 +4113,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       {/* ── Feedbacks List (gerente) ─────────────────────────────────── */}
       {view === 'feedbacks' && (
         <div className="space-y-3">
+          {/* Resumo da qualificação de TODOS os leads pela IA (apenas master) */}
+          {!isSeller && (
+            <QualificacaoResumo masterUserId={effectiveUserIdState || userId || ''} />
+          )}
           {/* Dashboard analítico (apenas master + se houver feedbacks) */}
           {!isSeller && feedbacks.length > 0 && (
             <FeedbackAnalytics feedbacks={feedbacks as any} />
