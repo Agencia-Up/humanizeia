@@ -45,6 +45,7 @@ import { ConsignadoVehicleForm } from '@/components/marcos/ConsignadoVehicleForm
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
+import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { usePendingTransfers, formatPendingAge } from '@/hooks/usePendingTransfers';
@@ -995,7 +996,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
   const [cancellingFollowupId, setCancellingFollowupId] = useState<string | null>(null);
   const [transfers, setTransfers] = useState<LeadTransfer[]>([]);
-  const [view, setView] = useState<'pipeline' | 'leads' | 'feedbacks' | 'sellers'>('pipeline');
+  const [view, setView] = useState<'pipeline' | 'leads' | 'feedbacks' | 'trafego' | 'sellers'>('pipeline');
 
   // filter states
   const [filterStatus, setFilterStatus]   = useState<string>('all');
@@ -3541,7 +3542,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               { id: 'leads',     label: 'Lista',      icon: Users,          badge: 0 },
               { id: 'feedbacks', label: 'Feedbacks',  icon: BellRing,       badge: unreadFeedbacks.length },
             ] : []),
-            ...(!isSeller && !isMarcosCrm ? [{ id: 'sellers', label: 'Vendedores', icon: Users, badge: 0 }] : []),
+            ...(!isSeller && !isMarcosCrm ? [
+              { id: 'trafego', label: 'Tráfego',    icon: TrendingUp, badge: 0 },
+              { id: 'sellers', label: 'Vendedores', icon: Users,      badge: 0 },
+            ] : []),
           ].map(v => (
             <button
               key={v.id}
@@ -4156,6 +4160,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             );
           })}
         </div>
+      )}
+
+      {/* ── Tráfego / Campanhas (gerente apenas) ─────────────────────── */}
+      {view === 'trafego' && !isSeller && (
+        <CampanhaAnalytics masterUserId={effectiveUserIdState || userId || ''} />
       )}
 
       {/* ── Sellers (gerente apenas) ────────────────────────────────── */}
