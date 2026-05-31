@@ -606,6 +606,50 @@ function priorityCfg(p: string | null | undefined): typeof PRIORITY_CONFIG[keyof
   return PRIORITY_CONFIG[p as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.normal;
 }
 
+// ─── Filtro de data dos leads (Hoje / Ontem / Semana / Mês / Personalizado) ───
+// Usado nos DOIS CRMs (Pedro e Marcos), pra vendedor ou master ver quais leads
+// chegaram em cada período. Retorna [inicioMs, fimMs] inclusivo, ou null = sem filtro.
+type LeadDatePreset = 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'custom';
+
+const LEAD_DATE_PRESETS: { value: LeadDatePreset; label: string }[] = [
+  { value: 'all',       label: 'Todo período' },
+  { value: 'today',     label: 'Hoje' },
+  { value: 'yesterday', label: 'Ontem' },
+  { value: 'week',      label: 'Esta semana' },
+  { value: 'month',     label: 'Este mês' },
+  { value: 'custom',    label: 'Personalizado' },
+];
+
+function leadDateRange(preset: LeadDatePreset, customFrom: string, customTo: string): [number, number] | null {
+  const now = new Date();
+  const today = new Date(now); today.setHours(0, 0, 0, 0);
+  switch (preset) {
+    case 'today':
+      return [today.getTime(), now.getTime()];
+    case 'yesterday': {
+      const y = new Date(today); y.setDate(y.getDate() - 1);
+      return [y.getTime(), today.getTime() - 1];
+    }
+    case 'week': {
+      const w = new Date(today); w.setDate(w.getDate() - ((w.getDay() + 6) % 7));
+      return [w.getTime(), now.getTime()];
+    }
+    case 'month': {
+      const m = new Date(today.getFullYear(), today.getMonth(), 1);
+      return [m.getTime(), now.getTime()];
+    }
+    case 'custom': {
+      if (!customFrom && !customTo) return null;
+      const from = customFrom ? new Date(customFrom + 'T00:00:00').getTime() : 0;
+      const to   = customTo   ? new Date(customTo   + 'T23:59:59').getTime() : now.getTime();
+      return [from, to];
+    }
+    case 'all':
+    default:
+      return null;
+  }
+}
+
 // ─── Feedback Estruturado: Opções ────────────────────────────────────────────
 
 const FEEDBACK_CITIES = [
@@ -1008,6 +1052,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [filterStatus, setFilterStatus]   = useState<string>('all');
   const [filterSeller, setFilterSeller]   = useState<string>('all');
   const [searchTerm,   setSearchTerm]     = useState('');
+  // filtro de data dos leads (barra superior — Pedro e Marcos)
+  const [dateFilter, setDateFilter]       = useState<LeadDatePreset>('all');
+  const [dateFrom,   setDateFrom]         = useState('');
+  const [dateTo,     setDateTo]           = useState('');
   // Fase 6 Feature C: modo seleção pro disparo em massa (toggle + IDs marcados)
   const [selectionMode, setSelectionMode]   = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
@@ -3379,11 +3427,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
   // Métricas
   // Filtro universal
+  const leadDateBounds = leadDateRange(dateFilter, dateFrom, dateTo);
   const filteredLeads = leads.filter(l => {
     if (isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
     if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
     if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
     if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
+    if (leadDateBounds) {
+      if (!l.created_at) return false;
+      const ts = new Date(l.created_at).getTime();
+      if (ts < leadDateBounds[0] || ts > leadDateBounds[1]) return false;
+    }
     if (searchTerm) {
       const t = searchTerm.toLowerCase();
       if (!(l.lead_name || '').toLowerCase().includes(t) && !(l.remote_jid || '').toLowerCase().includes(t)) return false;
@@ -3575,6 +3629,43 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             placeholder="🔍 Buscar..."
             className="h-7 text-xs w-40"
           />
+          {/* Filtro de data — vendedor E master, pipeline e lista de leads */}
+          {(view === 'pipeline' || view === 'leads') && (
+            <>
+              <Select value={dateFilter} onValueChange={v => setDateFilter(v as LeadDatePreset)}>
+                <SelectTrigger className="h-7 text-xs w-36" title="Filtra os leads por quando chegaram">
+                  <span className="flex items-center gap-1.5">
+                    <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
+                    <SelectValue placeholder="Período" />
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  {LEAD_DATE_PRESETS.map(p => (
+                    <SelectItem key={p.value} value={p.value} className="text-xs">{p.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {dateFilter === 'custom' && (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={e => setDateFrom(e.target.value)}
+                    className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    title="Data inicial"
+                  />
+                  <span className="text-xs text-muted-foreground">até</span>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={e => setDateTo(e.target.value)}
+                    className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    title="Data final"
+                  />
+                </div>
+              )}
+            </>
+          )}
           {!isSeller && teamMembers.length > 0 && (view === 'pipeline' || view === 'leads') && (
             <Select value={filterSeller} onValueChange={setFilterSeller}>
               <SelectTrigger className="h-7 text-xs w-36">
