@@ -62,17 +62,24 @@ const PIPELINE_COLUMNS = [
   { key: 'perdido', label: 'Perdido', color: 'bg-gray-500', borderColor: 'border-gray-500/40', bgCard: 'bg-gray-500/5', textColor: 'text-gray-400', icon: X },
 ] as const;
 
-const TEMPERATURE_CONFIG: Record<string, { label: string; color: string; icon: typeof Flame; bgColor: string }> = {
-  quente: { label: 'Quente', color: 'text-red-400', icon: Flame, bgColor: 'bg-red-500/15 border-red-500/30' },
-  morno: { label: 'Morno', color: 'text-amber-400', icon: Thermometer, bgColor: 'bg-amber-500/15 border-amber-500/30' },
-  frio: { label: 'Frio', color: 'text-blue-300', icon: Snowflake, bgColor: 'bg-blue-500/15 border-blue-500/30' },
+// Qualificação do lead no CRM. 3 níveis. Mantemos os valores internos
+// quente/morno/frio para compatibilidade com o banco; só os labels/cores mudaram:
+//   frio   = Inativo           (não responde)
+//   morno  = Pouco qualificado (parou de responder)
+//   quente = Qualificado       (demonstrou real interesse)
+const TEMPERATURE_CONFIG: Record<string, { label: string; color: string; icon: typeof Flame; bgColor: string; tip: string }> = {
+  quente: { label: 'Qualificado', color: 'text-emerald-400', icon: CheckCircle, bgColor: 'bg-emerald-500/15 border-emerald-500/30', tip: 'Lead que demonstrou real interesse' },
+  morno: { label: 'Pouco qualificado', color: 'text-amber-400', icon: Thermometer, bgColor: 'bg-amber-500/15 border-amber-500/30', tip: 'Lead que parou de responder' },
+  frio: { label: 'Inativo', color: 'text-red-400', icon: Snowflake, bgColor: 'bg-red-500/15 border-red-500/30', tip: 'Lead que não responde' },
 };
 
 const STATUS_OPTIONS = PIPELINE_COLUMNS.map(c => ({ value: c.key, label: c.label }));
+// Ordem pior → melhor (Inativo, Pouco qualificado, Qualificado). desc = dica curta sempre
+// visível; tip = popup ao passar o mouse.
 const TEMP_OPTIONS = [
-  { value: 'quente', label: 'Quente' },
-  { value: 'morno', label: 'Morno' },
-  { value: 'frio', label: 'Frio' },
+  { value: 'frio', label: '🔴 Inativo', desc: 'Não responde', tip: 'Lead que não responde' },
+  { value: 'morno', label: '🟡 Pouco qualificado', desc: 'Parou de responder', tip: 'Lead que parou de responder' },
+  { value: 'quente', label: '🟢 Qualificado', desc: 'Demonstrou interesse', tip: 'Lead que demonstrou real interesse' },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -463,12 +470,17 @@ export default function LeadManagement() {
               <Select value={filterTemp} onValueChange={setFilterTemp}>
                 <SelectTrigger className="w-[150px] bg-background/60 border-border/50">
                   <Thermometer className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
-                  <SelectValue placeholder="Temperatura" />
+                  <SelectValue placeholder="Qualificação" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todas Temp.</SelectItem>
+                  <SelectItem value="all">Todas</SelectItem>
                   {TEMP_OPTIONS.map(t => (
-                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    <SelectItem key={t.value} value={t.value} title={t.tip}>
+                      <span className="flex flex-col">
+                        <span>{t.label}</span>
+                        <span className="text-[10px] text-muted-foreground">{t.desc}</span>
+                      </span>
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -608,12 +620,17 @@ export default function LeadManagement() {
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label>Temperatura</Label>
+                <Label>Qualificação</Label>
                 <Select value={newLead.temperature} onValueChange={v => setNewLead({ ...newLead, temperature: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {TEMP_OPTIONS.map(t => (
-                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                      <SelectItem key={t.value} value={t.value} title={t.tip}>
+                      <span className="flex flex-col">
+                        <span>{t.label}</span>
+                        <span className="text-[10px] text-muted-foreground">{t.desc}</span>
+                      </span>
+                    </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -728,12 +745,17 @@ export default function LeadManagement() {
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">Temperatura</Label>
+                    <Label className="text-xs text-muted-foreground">Qualificação</Label>
                     <Select value={editTemp} onValueChange={setEditTemp}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {TEMP_OPTIONS.map(t => (
-                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                          <SelectItem key={t.value} value={t.value} title={t.tip}>
+                      <span className="flex flex-col">
+                        <span>{t.label}</span>
+                        <span className="text-[10px] text-muted-foreground">{t.desc}</span>
+                      </span>
+                    </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -892,7 +914,7 @@ function LeadCard({ lead, onClick, onWhatsApp, onMoveNext }: {
               {formatPhone(lead.contact_phone)}
             </p>
           </div>
-          <Badge variant="outline" className={`text-[10px] px-1.5 py-0.5 gap-1 flex-shrink-0 ${tempConfig.bgColor}`}>
+          <Badge variant="outline" title={tempConfig.tip} className={`text-[10px] px-1.5 py-0.5 gap-1 flex-shrink-0 ${tempConfig.bgColor}`}>
             <TempIcon className={`h-3 w-3 ${tempConfig.color}`} />
             {tempConfig.label}
           </Badge>
