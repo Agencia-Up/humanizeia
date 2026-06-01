@@ -3575,6 +3575,25 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const isLeadSemVendedor = (l: CrmLead): boolean =>
     sellerStatusForLead(l).status === 'none' && l.status !== 'transferido';
   const semVendedorTotal = leads.filter(isLeadSemVendedor).length;
+
+  // ── "Aguardando o vendedor" (o que o CRM mostra) ───────────────────────────
+  // O painel acima (isLeadSemVendedor) EXCLUI de proposito os leads transferido/
+  // pendentes — por isso "nao batia" com o CRM. Aqui surfacemos exatamente o que
+  // o gerente ve como "Aguardando" pra reconciliar as duas telas:
+  //   • orfaos: status='transferido' sem vendedor de verdade e sem transfer pendente
+  //             (a transferencia expirou e ninguem reprocessou) -> PRESO
+  //   • pendentes: transfer 'pending' aguardando o vendedor responder "Ok"
+  const transferidoOrfaoLeads = leads.filter(
+    l => l.status === 'transferido' && sellerStatusForLead(l).status === 'none'
+  );
+  const aguardandoPendingLeads = leads.filter(
+    l => sellerStatusForLead(l).status === 'pending'
+  );
+  const aguardandoPendingVencidos = aguardandoPendingLeads.filter(l => {
+    const p = pendingTransfers.get(l.id);
+    return !!p?.confirmation_timeout_at && new Date(p.confirmation_timeout_at).getTime() < Date.now();
+  }).length;
+  const aguardandoTotal = transferidoOrfaoLeads.length + aguardandoPendingLeads.length;
   const failureByLeadId = new Map<string, TransferFailure>();
   for (const f of transferFailures) {
     if (f.lead_id && !failureByLeadId.has(f.lead_id)) failureByLeadId.set(f.lead_id, f);
@@ -4511,6 +4530,42 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               <span className="font-semibold text-amber-400">{diagLeads.length}</span> lead(s) sem vendedor no período
             </span>
           </div>
+
+          {/* ── "Aguardando o vendedor" — reconcilia com o CRM ──────────────────
+              O bloco de motivos abaixo conta SO leads que nunca foram transferidos.
+              Os leads que o gerente ve no CRM como "Aguardando" (transferido preso
+              ou aguardando o "Ok" do vendedor) apareciam ZERO aqui. Este card
+              traz esse grupo de volta pra a informacao bater. */}
+          {aguardandoTotal > 0 && (
+            <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-amber-400" />
+                  <span className="text-sm font-semibold text-foreground">
+                    Aguardando o vendedor: <span className="text-amber-400">{aguardandoTotal}</span>
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {transferidoOrfaoLeads.length > 0 && (
+                    <span className="text-[10px] px-2 py-1 rounded-full border border-red-500/40 text-red-300">
+                      Presos (transferido sem vendedor): <span className="font-bold">{transferidoOrfaoLeads.length}</span>
+                    </span>
+                  )}
+                  {aguardandoPendingLeads.length > 0 && (
+                    <span className="text-[10px] px-2 py-1 rounded-full border border-amber-500/40 text-amber-300">
+                      Aguardando confirmar: <span className="font-bold">{aguardandoPendingLeads.length}</span>
+                      {aguardandoPendingVencidos > 0 && <> · <span className="font-bold">{aguardandoPendingVencidos}</span> vencido(s)</>}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
+                Estes leads aparecem como <span className="text-amber-300">"Aguardando"</span> no CRM e
+                {' '}<span className="text-foreground">não</span> entram na contagem de motivos abaixo (que é só de leads nunca transferidos).
+                Os <span className="text-red-300">"presos"</span> tiveram a transferência expirada e precisam de repasse para outro vendedor.
+              </p>
+            </div>
+          )}
 
           {/* Filtros: período · motivo · agente · classificação */}
           <div className="flex items-center gap-1.5 flex-wrap">
