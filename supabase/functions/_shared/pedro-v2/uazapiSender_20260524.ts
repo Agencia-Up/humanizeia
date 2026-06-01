@@ -103,17 +103,30 @@ async function sendPedroTextOnce(instance: PedroWaInstance, input: { to: string;
     { label: "message-sendText", url: `${baseUrl}/message/sendText/${instance.instance_name || ""}`, body: { number: destination, text: input.text } },
   ];
 
+  // Retry com backoff curto: o Uazapi as vezes responde "404 host not mapped"
+  // ou erro de rede por uma queda transitoria da sessao (volta em segundos).
+  // Sem retry, a mensagem some em silencio (o lead ve "digitando" e nada chega).
+  // So re-tenta quando o envio NAO foi confirmado (res.ok=false), entao nao
+  // gera mensagem duplicada. O caminho de sucesso fica identico ao anterior.
+  const MAX_ROUNDS = 2; // ate 3 rodadas no total (1 inicial + 2 retries)
   let lastError = "";
-  for (const attempt of attempts) {
-    const res = await fetch(attempt.url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", token, apikey: token },
-      body: JSON.stringify(attempt.body),
-    });
-    if (res.ok) return { ok: true, provider: "uazapi", attempt: attempt.label, status: res.status };
-    lastError = `${attempt.label}: HTTP ${res.status} ${await res.text().catch(() => "")}`;
+  for (let round = 0; round <= MAX_ROUNDS; round++) {
+    for (const attempt of attempts) {
+      try {
+        const res = await fetch(attempt.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", token, apikey: token },
+          body: JSON.stringify(attempt.body),
+        });
+        if (res.ok) return { ok: true, provider: "uazapi", attempt: attempt.label, status: res.status, round };
+        lastError = `${attempt.label}: HTTP ${res.status} ${await res.text().catch(() => "")}`;
+      } catch (err) {
+        lastError = `${attempt.label}: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    if (round < MAX_ROUNDS) await sleep(1200 + round * 800);
   }
-  return { ok: false, provider: "uazapi", error: lastError || "Falha ao enviar texto" };
+  return { ok: false, provider: "uazapi", error: lastError || "Falha ao enviar texto", rounds: MAX_ROUNDS + 1 };
 }
 
 export async function sendPedroText(
