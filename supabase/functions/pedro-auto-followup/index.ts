@@ -4,7 +4,7 @@
  * Regras confirmadas pelo master (Wander, 01/06/2026):
  *  1. Dispara SO na coluna "Lead Inativo" (status_crm='inativo'), automatico.
  *  2. Pelo NUMERO DA IA do master (instancia do agente do lead).
- *  3. Mensagem GERADA pela IA OpenAI (mesmo provider do agente Pedro, gpt-4o),
+ *  3. Mensagem GERADA pela IA OpenAI (mesmo provider do agente Pedro, gpt-4o-mini),
  *     personalizada por lead — ou template base literal quando
  *     gerar_variacoes_ia=false.
  *  4. Quantidade/dia = max_disparos_dia (config do painel).
@@ -38,9 +38,9 @@ const cors = {
 
 const HARD_MIN_GAP_MINUTES = 3; // PISO ABSOLUTO — ninguem reduz isso.
 
-// Modelo OpenAI — MESMO provider do agente Pedro (gpt-4o por padrao).
+// Modelo OpenAI — MESMO provider do agente Pedro (gpt-4o-mini por padrao).
 // Pode ser sobrescrito pela secret OPENAI_MODEL, se o master quiser.
-const OPENAI_MODEL_DEFAULT = "gpt-4o";
+const OPENAI_MODEL_DEFAULT = "gpt-4o-mini";
 
 // ── Helpers de fuso (Brasilia = UTC-3) ──────────────────────────────────────
 function toBrasilia(d: Date): Date {
@@ -103,7 +103,7 @@ async function sendUazapiTextMessage(
   return false;
 }
 
-// ── Geracao da mensagem de reativacao com IA OpenAI (gpt-4o) ────────────────
+// ── Geracao da mensagem de reativacao com IA OpenAI (gpt-4o-mini) ────────────────
 function applyTemplateVars(tpl: string, leadName: string, carro: string): string {
   return (tpl || "")
     .replace(/\{nome\}/gi, leadName || "")
