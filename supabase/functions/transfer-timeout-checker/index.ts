@@ -374,7 +374,7 @@ Deno.serve(async (req) => {
         // Fetch lead data separately (PostgREST doesn't support nested joins via query string easily)
         const { data: lead } = await supabase
           .from('ai_crm_leads')
-          .select('id,remote_jid,lead_name,summary,agent_id')
+          .select('id,remote_jid,lead_name,summary,agent_id,status')
           .eq('id', transfer.lead_id)
           .maybeSingle();
 
@@ -386,6 +386,28 @@ Deno.serve(async (req) => {
           .maybeSingle();
 
         if (!lead || !expiredSeller) {
+          await supabase.from('ai_lead_transfers')
+            .update({ transfer_status: 'expired' })
+            .eq('id', transfer.id);
+          continue;
+        }
+
+        // ── GUARD: lead JA reivindicado por um vendedor que confirmou (deu OK)? ──
+        // Se o lead esta 'em_atendimento' OU ja existe um transfer 'confirmed' pra
+        // ele, NAO repassa para o proximo — apenas marca ESTE transfer (duplicata /
+        // sobra de outro fluxo) como expirado. Antes faltava esse check: um transfer
+        // irmao expirado roubava um lead ja aceito ("vendedor deu OK e mesmo assim
+        // passou pro proximo"). Vale para v1 e v2 (uma vez aceito, o lead e do vendedor).
+        const { data: confirmedForLead } = await supabase
+          .from('ai_lead_transfers')
+          .select('id')
+          .eq('lead_id', transfer.lead_id)
+          .eq('transfer_status', 'confirmed')
+          .limit(1);
+        const alreadyClaimed = lead.status === 'em_atendimento' ||
+          (Array.isArray(confirmedForLead) && confirmedForLead.length > 0);
+        if (alreadyClaimed) {
+          console.log(`[Timeout] Lead ${transfer.lead_id} JA reivindicado (status=${lead.status}/confirmed) — NAO repassa. Transfer ${transfer.id} -> expired.`);
           await supabase.from('ai_lead_transfers')
             .update({ transfer_status: 'expired' })
             .eq('id', transfer.id);

@@ -922,6 +922,21 @@ export async function processPedroV2Turn(
       commit: !dryRun,
     });
     log("info", "pedro_v2_seller_message", { seller_id: identity.seller?.id, ack });
+    // Paridade com o v1: avisa o vendedor que o "OK" foi registrado (sem isso ele
+    // acha que nao funcionou). So no OK que de fato confirmou um lead.
+    if (!dryRun && ack.confirmed && isPedroV2SendingEnabled()) {
+      try {
+        const sellerInstance = input.wa_instance || await resolvePedroInstance(supabase, {
+          user_id: input.agent.user_id,
+          agent_id: input.agent.id,
+          instance_id: input.wa_instance?.id,
+        });
+        await sendPedroText(sellerInstance, {
+          to: remoteJidToPhone(remoteJid),
+          text: "✅ *Atendimento confirmado!*\n\nO lead foi atribuído a você no CRM. Pode seguir com a venda! 🚀",
+        });
+      } catch (_e) { /* silencioso — a confirmacao ja esta gravada no banco */ }
+    }
     if (!dryRun) {
       await recordPedroV2TurnLog(supabase, {
         user_id: input.agent.user_id,

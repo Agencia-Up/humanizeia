@@ -131,6 +131,16 @@ export async function confirmSellerAck(
     .update({ last_lead_received_at: now })
     .eq("id", pendingTransfer.to_member_id || matches[0].id);
 
+  // Expira transfers IRMAOS ainda pendentes do MESMO lead (duplicatas, outros
+  // fluxos ou escalacoes em voo), para o timeout-checker NAO repassar o lead
+  // que ESTE vendedor acabou de aceitar para o proximo da fila.
+  await supabase
+    .from("ai_lead_transfers")
+    .update({ transfer_status: "expired" })
+    .eq("lead_id", pendingTransfer.lead_id)
+    .eq("transfer_status", "pending")
+    .neq("id", pendingTransfer.id);
+
   return { ok: true, seller: matches[0], transfer: pendingTransfer, confirmed: true };
 }
 
