@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { managerPhones } from "../_shared/transfer/managers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -158,16 +159,16 @@ Deno.serve(async (req) => {
       .limit(1);
     const instance = instances?.[0] || null;
 
-    // 3b. Busca gerente_phone dos agentes presentes nos leads (cache por agent_id)
+    // 3b. Busca gerentes (ate 2) dos agentes presentes nos leads (cache por agent_id)
     const uniqueAgentIds = [...new Set((unassigned || []).map((l: any) => l.agent_id).filter(Boolean))];
-    const agentGerenteMap = new Map<string, string | null>();
+    const agentGerenteMap = new Map<string, string[]>();
     if (uniqueAgentIds.length > 0) {
       const { data: agentsData } = await supabase
         .from("wa_ai_agents")
-        .select("id, gerente_phone, name")
+        .select("id, gerente_phone, gerente_phone_2, name")
         .in("id", uniqueAgentIds);
       for (const ag of agentsData || []) {
-        agentGerenteMap.set(ag.id, ag.gerente_phone || null);
+        agentGerenteMap.set(ag.id, managerPhones(ag));
       }
     }
 
@@ -229,9 +230,9 @@ Deno.serve(async (req) => {
           await sendWAMessage(instance, seller.whatsapp_number, msg);
         }
 
-        // 4e. Notifica Gerente via WhatsApp
-        const gerentePhone = lead.agent_id ? agentGerenteMap.get(lead.agent_id) : null;
-        if (instance && gerentePhone) {
+        // 4e. Notifica Gerente(s) via WhatsApp (ate 2)
+        const gerentes = lead.agent_id ? (agentGerenteMap.get(lead.agent_id) || []) : [];
+        if (instance && gerentes.length > 0) {
           const transferredAt = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
           const gerenteMsg =
             `📊 *RELATÓRIO DE LEAD — REDISTRIBUIÇÃO*\n\n` +
@@ -244,8 +245,10 @@ Deno.serve(async (req) => {
             `📲 *WhatsApp vendedor:* ${seller.whatsapp_number}\n` +
             `\n━━━━━━━━━━━━━━━━━━━━\n` +
             `_Gerado automaticamente pelo Pedro SDR (redistribuição em massa)_`;
-          await sendWAMessage(instance, gerentePhone, gerenteMsg);
-          console.log(`[BulkTransfer] Gerente notificado sobre lead ${lead.lead_name}`);
+          for (const gerentePhone of gerentes) {
+            await sendWAMessage(instance, gerentePhone, gerenteMsg);
+          }
+          console.log(`[BulkTransfer] ${gerentes.length} gerente(s) notificado(s) sobre lead ${lead.lead_name}`);
         }
 
         results.push({ lead_id: lead.id, lead_name: lead.lead_name, seller: seller.name, ok: true });

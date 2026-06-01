@@ -4,6 +4,7 @@ import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryF
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
 import { resolveAutomationRules } from "../automation/rules.ts";
+import { managerPhones } from "../transfer/managers.ts";
 import { remoteJidToPhone } from "./phone.ts";
 import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
@@ -1406,6 +1407,16 @@ export async function processPedroV2Turn(
           : `*NOVO LEAD QUALIFICADO (Pedro v2)*`;
         const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n*Contato:* +${leadPhone}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
         await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
+
+        // Relatorio automatico ao(s) gerente(s) — ate 2 (mesma regra do portal).
+        const _gerentes = managerPhones(input.agent);
+        if (_gerentes.length > 0) {
+          const _hora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+          for (const gp of _gerentes) {
+            try { await sendPedroText(handoffInstance, { to: gp, text: _mgrMsg }); } catch (_e) { /* nao bloqueante */ }
+          }
+        }
       }
     } catch (e) {
       console.warn("[PedroV2] Falha ao executar handoff (Etapa C):", e);
