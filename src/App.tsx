@@ -16,6 +16,41 @@ import { AgentChatProvider } from "@/contexts/AgentChatContext";
 // and resets automatically when the user navigates to a different route.
 const MAX_AUTO_RETRIES = 2;
 
+// Detecta falha de carregamento de CHUNK dinamico (import() lazy). Acontece quando
+// um novo deploy muda o hash do bundle e o usuario ainda esta com a aba antiga
+// aberta: ao navegar para uma rota lazy, o arquivo .js antigo nao existe mais.
+function isChunkLoadError(err?: unknown): boolean {
+  const msg = String((err as any)?.message || err || '');
+  const name = String((err as any)?.name || '');
+  return name === 'ChunkLoadError' ||
+    /failed to (fetch|load) dynamically imported module/i.test(msg) ||
+    /error loading dynamically imported module/i.test(msg) ||
+    /importing a module script failed/i.test(msg) ||
+    /dynamically imported module/i.test(msg);
+}
+
+// Recarrega a pagina UMA vez para buscar index.html + chunks novos. Guarda em
+// sessionStorage pra evitar loop de reload caso o problema nao seja chunk velho.
+function reloadForStaleChunk(): boolean {
+  try {
+    const KEY = '__chunk_reload_ts';
+    const last = Number(sessionStorage.getItem(KEY) || '0');
+    if (Date.now() - last > 12000) {
+      sessionStorage.setItem(KEY, String(Date.now()));
+      window.location.reload();
+      return true;
+    }
+  } catch { /* sessionStorage indisponivel */ }
+  return false;
+}
+
+// Vite dispara este evento quando o preload de um modulo dinamico falha.
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (e: any) => {
+    if (reloadForStaleChunk()) e?.preventDefault?.();
+  });
+}
+
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode; resetKey?: string },
   { hasError: boolean; autoRetries: number; renderKey: number; lastError?: Error }
@@ -34,6 +69,12 @@ class ErrorBoundary extends React.Component<
   componentDidCatch(err: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] Page render error:', err);
     console.error('[ErrorBoundary] Component stack:', info.componentStack);
+
+    // Chunk velho apos novo deploy: o import dinamico falha porque o hash do
+    // bundle mudou. Retentar NAO resolve (o arquivo nao existe mais) — recarrega
+    // a pagina 1x pra buscar o index.html + chunks novos (evita o "Algo deu
+    // errado" que so saia com CTRL+F5).
+    if (isChunkLoadError(err) && reloadForStaleChunk()) return;
 
     // Tenta retentar automaticamente erros transientes (race conditions
     // típicas em primeiras renderizações: lazy load + hooks + queries).
