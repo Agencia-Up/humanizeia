@@ -23,6 +23,11 @@ const DEFAULT_DAILY_LIMIT_MATURE_INSTANCE = 200; // Mature numbers (>14 days): m
 const WARMUP_RAMP_DAYS = 14; // Days to reach full capacity
 const COLD_CONTACT_MIN_DELAY_SECONDS = 45; // Minimum delay for cold contacts (no prior interaction)
 const COLD_CONTACT_MAX_DELAY_SECONDS = 120; // Maximum delay for cold contacts
+// TRAVA ANTI-BAN (Marcos): minimo 5min (300s) entre disparos da MESMA campanha.
+// O MAXIMO o vendedor define na campanha; o MINIMO e travado aqui no codigo e
+// nao pode ser burlado (mesmo que a campanha tenha min menor). Robusto contra
+// acumulo de itens vencidos via cooldown por campanha.
+const MARCOS_MIN_DELAY_FLOOR_SECONDS = 300;
 const NUMBER_VALIDATION_TIMEOUT_MS = 5_000;
 
 // BUG-NOVO-05: o Map de failures era em escopo de MÓDULO. Deno Deploy cria
@@ -383,6 +388,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ===== TRAVA ANTI-BAN: ultimo envio por campanha (cooldown >= 5min) =====
+    // Snapshot do ultimo sent_at de cada campanha ativa; atualizado em memoria a
+    // cada envio nesta rodada (BATCH_SIZE pode trazer varios itens da mesma campanha).
+    const campaignLastSent = new Map<string, number>();
+    for (const cid of activeCampaignIds) {
+      const { data: lastRow } = await supabase
+        .from("wa_queue")
+        .select("sent_at")
+        .eq("campaign_id", cid)
+        .eq("status", "sent")
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastRow?.sent_at) campaignLastSent.set(cid, new Date(lastRow.sent_at).getTime());
+    }
+
     let processed = 0, succeeded = 0, failed = 0;
     const skipReasons: Array<{ item_id: string; reason: string; details?: unknown }> = [];
 
@@ -392,6 +413,24 @@ Deno.serve(async (req) => {
     for (const item of activeItems) {
       let selectedInstance: Instance | null = null;
       try {
+        // ===== TRAVA ANTI-BAN: cooldown de >= 5min por campanha =====
+        // Se esta campanha enviou ha menos de 300s, adia este item (mesmo que
+        // varios itens estejam "vencidos", so 1 sai por janela de 5min).
+        if (item.campaign_id) {
+          const lastTs = campaignLastSent.get(item.campaign_id);
+          if (lastTs) {
+            const sinceMs = Date.now() - lastTs;
+            const floorMs = MARCOS_MIN_DELAY_FLOOR_SECONDS * 1000;
+            if (sinceMs < floorMs) {
+              await supabase
+                .from("wa_queue")
+                .update({ status: "pending", scheduled_for: new Date(Date.now() + (floorMs - sinceMs)).toISOString() })
+                .eq("id", item.id);
+              processed++; continue;
+            }
+          }
+        }
+
         // ===== RE-CHECK campaign status before EVERY single message =====
         if (item.campaign_id) {
           const { data: liveStatus } = await supabase
@@ -702,6 +741,8 @@ Deno.serve(async (req) => {
         }
 
         succeeded++;
+        // TRAVA: marca o envio desta campanha (cooldown de 5min nos proximos itens desta rodada).
+        if (item.campaign_id) campaignLastSent.set(item.campaign_id, Date.now());
 
         // ===== SCHEDULE NEXT ITEM WITH HUMANIZED DELAY =====
         // Instead of sleeping (which can timeout the edge function),
@@ -711,8 +752,9 @@ Deno.serve(async (req) => {
         
         // ===== ANTI-BAN: Use MUCH longer delays for cold contacts =====
         const isCurrentContactCold = !item.contact_metadata?.last_message_at;
-        const configuredMinD = delayRules.min || campaign?.min_delay_seconds || 20;
-        const configuredMaxD = delayRules.max || campaign?.max_delay_seconds || 60;
+        // TRAVA: piso de 300s (o vendedor define o maximo; o minimo nunca cai abaixo de 5min).
+        const configuredMinD = Math.max(MARCOS_MIN_DELAY_FLOOR_SECONDS, delayRules.min || campaign?.min_delay_seconds || 20);
+        const configuredMaxD = Math.max(configuredMinD, delayRules.max || campaign?.max_delay_seconds || 60);
         
         const minD = isCurrentContactCold
           ? Math.max(configuredMinD, COLD_CONTACT_MIN_DELAY_SECONDS)
