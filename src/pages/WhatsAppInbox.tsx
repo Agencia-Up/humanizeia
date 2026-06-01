@@ -15,7 +15,7 @@ import {
   Search, Send, Loader2, CheckCheck, Check,
   Sparkles, ArrowLeft, MessageCircle, Bot, Phone,
   Wifi, WifiOff, ChevronDown, MoreVertical, Smile,
-  Paperclip, Tag, UserCheck
+  Paperclip, Tag, UserCheck, Mic, FileText, Download, Trash2
 } from 'lucide-react';
 import { TagBadge } from '@/components/whatsapp/TagBadge';
 import { TagSelector } from '@/components/whatsapp/TagSelector';
@@ -135,9 +135,18 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const [sendInstanceId, setSendInstanceId]   = useState<string>('');
   const [isMobileChat, setIsMobileChat]       = useState(false);
   const [sellerLeadPhones, setSellerLeadPhones] = useState<Set<string> | null>(null);
+  const [uploadingMedia, setUploadingMedia]   = useState(false);
+  const [recording, setRecording]             = useState(false);
+  const [recordSeconds, setRecordSeconds]     = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef     = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef  = useRef<Blob[]>([]);
+  const recordStreamRef  = useRef<MediaStream | null>(null);
+  const recordTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordCancelRef  = useRef<(() => void) | null>(null);
 
   /* ── Fetch phones dos leads atribuídos ao vendedor ────────────── */
   useEffect(() => {
@@ -316,6 +325,12 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   useEffect(() => { fetchContactTags(); }, [fetchContactTags, conversations.length]);
   useEffect(() => { fetchTeamMembers(); }, [fetchTeamMembers]);
 
+  // Limpa gravação de áudio em andamento se o componente desmontar
+  useEffect(() => () => {
+    if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    recordStreamRef.current?.getTracks().forEach(t => t.stop());
+  }, []);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -350,7 +365,18 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         if (convKey) {
           const [selPhone, selInst] = convKey.split('::');
           if (msg.phone === selPhone && (selInst === 'null' || selInst === msg.instance_id)) {
-            setMessages(prev => [...prev, msg]);
+            setMessages(prev => {
+              // Já temos a linha real do banco? Não duplica.
+              if (prev.some(m => m.id === msg.id)) return prev;
+              // Reconcilia: remove a mensagem otimista (id "temp-") equivalente
+              const reconciled = prev.filter(m => !(
+                m.id.startsWith('temp-') &&
+                m.direction === msg.direction &&
+                (m.content || '') === (msg.content || '') &&
+                (m.media_url || '') === (msg.media_url || '')
+              ));
+              return [...reconciled, msg];
+            });
             supabase.from('wa_inbox').update({ is_read: true } as any).eq('id', msg.id).then(() => {});
           }
         }
@@ -387,7 +413,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
     // Optimistic
     const opt: InboxMessage = {
-      id: crypto.randomUUID(),
+      id: `temp-${crypto.randomUUID()}`,
       user_id: user.id,
       instance_id: instId,
       phone,
@@ -420,6 +446,126 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     } finally {
       setSending(false);
     }
+  };
+
+  /* ── Envio de mídia (áudio, imagem, arquivo) ───────────────────── */
+  // O backend (wa-send-reply) já aceita media_url + media_type e salva no
+  // histórico. Aqui só subimos o arquivo num bucket público e mandamos a URL.
+  const mediaTypeFromMime = (mime: string): 'image' | 'audio' | 'video' | 'document' => {
+    if (mime.startsWith('image/')) return 'image';
+    if (mime.startsWith('audio/')) return 'audio';
+    if (mime.startsWith('video/')) return 'video';
+    return 'document';
+  };
+
+  const sendMediaMessage = async (blob: Blob, filename: string, caption = '') => {
+    if (!selectedConvKey || !user) return;
+    const [phone] = selectedConvKey.split('::');
+    const instId = sendInstanceId || instances[0]?.id;
+    if (!instId) {
+      toast({ title: 'Selecione uma instância conectada', variant: 'destructive' });
+      return;
+    }
+    const mime = blob.type || 'application/octet-stream';
+    const mediaType = mediaTypeFromMime(mime);
+    const tempId = `temp-${crypto.randomUUID()}`;
+    setUploadingMedia(true);
+    try {
+      // 1) Upload pro bucket público "creatives" (UazAPI busca a URL pra enviar)
+      const ext = filename.includes('.') ? filename.split('.').pop() : (mime.split('/')[1] || 'bin');
+      const path = `${user.id}/wa-inbox/${Date.now()}-${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('creatives')
+        .upload(path, blob, { contentType: mime, upsert: true });
+      if (upErr) throw upErr;
+      const { data: { publicUrl } } = supabase.storage.from('creatives').getPublicUrl(path);
+
+      // 2) Mensagem otimista (aparece na hora; o realtime reconcilia depois)
+      const opt: InboxMessage = {
+        id: tempId, user_id: user.id, instance_id: instId, phone,
+        contact_name: null, direction: 'outgoing', message_type: mediaType,
+        content: caption || null, media_url: publicUrl, ai_category: null,
+        ai_sentiment: null, is_read: true, created_at: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, opt]);
+
+      // 3) Envia de fato
+      const { error } = await supabase.functions.invoke('wa-send-reply', {
+        body: { instance_id: instId, phone, media_url: publicUrl, media_type: mediaType, content: caption },
+      });
+      if (error) {
+        let message = error.message || 'Falha ao enviar mídia';
+        const context = (error as any).context;
+        if (context && typeof context.json === 'function') {
+          try { const body = await context.json(); message = body?.error || message; } catch {}
+        }
+        throw new Error(message);
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao enviar mídia', description: err.message, variant: 'destructive' });
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
+  const handleFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (e.target) e.target.value = ''; // permite re-selecionar o mesmo arquivo
+    if (!file) return;
+    if (file.size > 16 * 1024 * 1024) {
+      toast({ title: 'Arquivo muito grande', description: 'O limite por arquivo é 16 MB.', variant: 'destructive' });
+      return;
+    }
+    await sendMediaMessage(file, file.name);
+  };
+
+  /* ── Gravação de áudio (nota de voz, igual WhatsApp) ───────────── */
+  const startRecording = async () => {
+    if (recording) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      toast({ title: 'Gravação não suportada', description: 'Seu navegador não permite gravar áudio. Use o anexo para enviar um arquivo de áudio.', variant: 'destructive' });
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordStreamRef.current = stream;
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus' : '');
+      const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      recordChunksRef.current = [];
+      const cancelled = { current: false };
+      recordCancelRef.current = () => { cancelled.current = true; };
+      rec.ondataavailable = (ev) => { if (ev.data.size > 0) recordChunksRef.current.push(ev.data); };
+      rec.onstop = async () => {
+        recordStreamRef.current?.getTracks().forEach(t => t.stop());
+        recordStreamRef.current = null;
+        if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+        setRecording(false);
+        setRecordSeconds(0);
+        if (cancelled.current) return;
+        const blob = new Blob(recordChunksRef.current, { type: rec.mimeType || 'audio/webm' });
+        if (blob.size > 0) await sendMediaMessage(blob, `audio-${Date.now()}.webm`);
+      };
+      mediaRecorderRef.current = rec;
+      rec.start();
+      setRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    } catch (err: any) {
+      toast({ title: 'Não foi possível acessar o microfone', description: err?.message || 'Permita o uso do microfone no navegador.', variant: 'destructive' });
+    }
+  };
+
+  const stopRecording = () => {
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== 'inactive') rec.stop(); // dispara onstop → envia
+  };
+
+  const cancelRecording = () => {
+    recordCancelRef.current?.();
+    stopRecording();
   };
 
   const handleTransfer = async (memberId: string) => {
@@ -831,14 +977,30 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                     ? 'bg-primary text-primary-foreground rounded-br-sm'
                                     : 'bg-background text-foreground rounded-bl-sm border border-border/30'
                                 }`}>
-                                  {msg.content && (
-                                    <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                                  {msg.media_url && (
+                                    <div className="mb-1">
+                                      {msg.message_type === 'image' ? (
+                                        <a href={msg.media_url} target="_blank" rel="noopener noreferrer">
+                                          <img src={msg.media_url} alt="imagem" loading="lazy" className="rounded-lg max-w-[240px] max-h-[280px] object-cover" />
+                                        </a>
+                                      ) : (msg.message_type === 'audio' || msg.message_type === 'ptt' || msg.message_type === 'voice') ? (
+                                        <audio controls src={msg.media_url} className="h-9 max-w-[240px]" />
+                                      ) : msg.message_type === 'video' ? (
+                                        <video controls src={msg.media_url} className="rounded-lg max-w-[240px] max-h-[280px]" />
+                                      ) : (
+                                        <a
+                                          href={msg.media_url} target="_blank" rel="noopener noreferrer"
+                                          className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${isOut ? 'bg-primary-foreground/10' : 'bg-muted/60'}`}
+                                        >
+                                          <FileText className="h-4 w-4 shrink-0" />
+                                          <span className="truncate max-w-[180px]">{msg.content || 'Arquivo'}</span>
+                                          <Download className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                                        </a>
+                                      )}
+                                    </div>
                                   )}
-                                  {msg.media_url && !msg.content && (
-                                    <p className="text-sm opacity-70 flex items-center gap-1">
-                                      <Paperclip className="h-3.5 w-3.5" />
-                                      {msg.message_type}
-                                    </p>
+                                  {msg.content && msg.message_type !== 'document' && (
+                                    <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
                                   )}
 
                                   {/* Rodapé da mensagem: hora + status */}
@@ -921,37 +1083,90 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                     </div>
                   )}
 
-                  {/* Campo de texto */}
-                  <div className="flex items-end gap-2 p-3">
-                    <div className="flex-1 bg-muted/30 rounded-2xl border border-border/40 px-4 py-2.5 focus-within:border-primary/50 focus-within:bg-background transition-all">
-                      <Textarea
-                        ref={textareaRef}
-                        placeholder="Digite uma mensagem..."
-                        value={replyText}
-                        onChange={e => {
-                          setReplyText(e.target.value);
-                          if (textareaRef.current) {
-                            textareaRef.current.style.height = 'auto';
-                            textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 128)}px`;
-                          }
-                        }}
-                        onKeyDown={handleKeyDown}
-                        disabled={sending || instances.length === 0}
-                        rows={1}
-                        className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
-                      />
+                  {/* Input escondido pra anexar arquivo/imagem/áudio */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,audio/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"
+                    className="hidden"
+                    onChange={handleFilePick}
+                  />
+
+                  {recording ? (
+                    /* Barra de gravação de áudio */
+                    <div className="flex items-center gap-3 p-3">
+                      <button
+                        onClick={cancelRecording}
+                        className="h-10 w-10 rounded-full bg-muted text-muted-foreground flex items-center justify-center shrink-0 hover:bg-muted/70 transition-colors"
+                        title="Cancelar gravação"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      <div className="flex-1 flex items-center gap-2 text-sm font-medium text-red-500">
+                        <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
+                        Gravando… {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, '0')}
+                      </div>
+                      <button
+                        onClick={stopRecording}
+                        disabled={uploadingMedia}
+                        className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                        title="Enviar áudio"
+                      >
+                        {uploadingMedia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      </button>
                     </div>
-                    <button
-                      onClick={handleSend}
-                      disabled={sending || !replyText.trim() || instances.length === 0}
-                      className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                    >
-                      {sending
-                        ? <Loader2 className="h-4 w-4 animate-spin" />
-                        : <Send className="h-4 w-4" />
-                      }
-                    </button>
-                  </div>
+                  ) : (
+                    /* Campo de texto + anexo + áudio/enviar */
+                    <div className="flex items-end gap-2 p-3">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadingMedia || instances.length === 0}
+                        className="h-10 w-10 rounded-full text-muted-foreground flex items-center justify-center shrink-0 hover:bg-muted/60 hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Anexar arquivo"
+                      >
+                        {uploadingMedia ? <Loader2 className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
+                      </button>
+
+                      <div className="flex-1 bg-muted/30 rounded-2xl border border-border/40 px-4 py-2.5 focus-within:border-primary/50 focus-within:bg-background transition-all">
+                        <Textarea
+                          ref={textareaRef}
+                          placeholder="Digite uma mensagem..."
+                          value={replyText}
+                          onChange={e => {
+                            setReplyText(e.target.value);
+                            if (textareaRef.current) {
+                              textareaRef.current.style.height = 'auto';
+                              textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 128)}px`;
+                            }
+                          }}
+                          onKeyDown={handleKeyDown}
+                          disabled={sending || instances.length === 0}
+                          rows={1}
+                          className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
+                        />
+                      </div>
+
+                      {replyText.trim() ? (
+                        <button
+                          onClick={handleSend}
+                          disabled={sending || instances.length === 0}
+                          className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                          title="Enviar"
+                        >
+                          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={startRecording}
+                          disabled={uploadingMedia || instances.length === 0}
+                          className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                          title="Gravar áudio"
+                        >
+                          <Mic className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </>
             )}
