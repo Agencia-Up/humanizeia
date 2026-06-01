@@ -12,7 +12,7 @@ import {
 import {
   Bot, Send, Loader2, Search, ArrowLeft, Pause, Play,
   MessageCircle, User, Phone, Clock, CheckCheck, Wifi,
-  Paperclip, Mic, FileText, Download, Trash2,
+  Paperclip, Mic, FileText, Download, Trash2, X, Square,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { format, isToday, isYesterday } from 'date-fns';
@@ -121,7 +121,15 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
   // Midia (anexos + audio)
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [recordPaused, setRecordPaused] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  const [pendingAttachment, setPendingAttachment] = useState<{
+    blob: Blob;
+    filename: string;
+    mediaType: 'image' | 'audio' | 'video' | 'document';
+    previewUrl: string;
+    mime: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordChunksRef = useRef<Blob[]>([]);
@@ -249,6 +257,17 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     };
   }, []);
 
+  /* ── Revoga a previa do anexo ao trocar/remover ────────────────── */
+  useEffect(() => {
+    if (!pendingAttachment) return;
+    return () => { URL.revokeObjectURL(pendingAttachment.previewUrl); };
+  }, [pendingAttachment]);
+
+  /* ── Limpa anexo pendente ao trocar de lead ────────────────────── */
+  useEffect(() => {
+    setPendingAttachment(null);
+  }, [selectedLeadId]);
+
   /* ── Pause / Resume AI ──────────────────────────────────────────── */
   const handleTogglePause = async (lead: Lead) => {
     setTogglingPause(true);
@@ -345,20 +364,20 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
   };
 
   /* ── Enviar anexo (imagem, audio, video, documento) ──────────────── */
-  const sendMediaMessage = async (blob: Blob, filename: string, caption = '') => {
-    if (!selectedLead) return;
+  const sendMediaMessage = async (blob: Blob, filename: string, caption = ''): Promise<boolean> => {
+    if (!selectedLead) return false;
     if (!selectedLead.ai_paused) {
       toast({
         title: 'Pause a IA primeiro',
         description: 'Assim o agente nao responde junto com voce nesta conversa.',
         variant: 'destructive',
       });
-      return;
+      return false;
     }
     const instId = resolveInstanceId();
     if (!instId) {
       toast({ title: 'Sem instancia vinculada a este lead', variant: 'destructive' });
-      return;
+      return false;
     }
 
     const mime = blob.type || 'application/octet-stream';
@@ -398,11 +417,35 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
       });
       if (error) throw error;
       await fetchMessages(true);
+      return true;
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== optId));
       toast({ title: 'Erro ao enviar anexo', description: err.message, variant: 'destructive' });
+      return false;
     } finally {
       setUploadingMedia(false);
+    }
+  };
+
+  /* ── Previa do anexo antes de enviar ─────────────────────────────── */
+  const stageAttachment = (blob: Blob, filename: string) => {
+    const mime = blob.type || 'application/octet-stream';
+    const mediaType = mediaTypeFromMime(mime);
+    const previewUrl = URL.createObjectURL(blob);
+    setPendingAttachment({ blob, filename, mediaType, previewUrl, mime });
+  };
+
+  const removePendingAttachment = () => {
+    setPendingAttachment(null);
+  };
+
+  const handleSendPending = async () => {
+    if (!pendingAttachment || uploadingMedia) return;
+    const caption = replyText.trim();
+    const ok = await sendMediaMessage(pendingAttachment.blob, pendingAttachment.filename, caption);
+    if (ok) {
+      setPendingAttachment(null);
+      setReplyText('');
     }
   };
 
@@ -414,7 +457,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
       toast({ title: 'Arquivo muito grande', description: 'O limite e 16 MB.', variant: 'destructive' });
       return;
     }
-    sendMediaMessage(file, file.name);
+    stageAttachment(file, file.name);
   };
 
   /* ── Gravacao de audio ────────────────────────────────────────────── */
@@ -449,6 +492,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
         }
         if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
         setRecording(false);
+        setRecordPaused(false);
         setRecordSeconds(0);
         if (recordCancelRef.current) {
           recordChunksRef.current = [];
@@ -458,11 +502,13 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
         const blob = new Blob(recordChunksRef.current, { type });
         recordChunksRef.current = [];
         const ext = type.includes('ogg') ? 'ogg' : 'webm';
-        sendMediaMessage(blob, `audio-${Date.now()}.${ext}`);
+        // Mostra previa para ouvir/excluir antes de enviar (igual WhatsApp)
+        stageAttachment(blob, `audio-${Date.now()}.${ext}`);
       };
 
       rec.start();
       setRecording(true);
+      setRecordPaused(false);
       setRecordSeconds(0);
       recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
     } catch (err: any) {
@@ -474,6 +520,24 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     recordCancelRef.current = false;
     const rec = mediaRecorderRef.current;
     if (rec && rec.state !== 'inactive') rec.stop();
+  };
+
+  const pauseRecording = () => {
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state === 'recording') {
+      rec.pause();
+      setRecordPaused(true);
+      if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+    }
+  };
+
+  const resumeRecording = () => {
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state === 'paused') {
+      rec.resume();
+      setRecordPaused(false);
+      recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    }
   };
 
   const cancelRecording = () => {
@@ -488,6 +552,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
       }
       if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
       setRecording(false);
+      setRecordPaused(false);
       setRecordSeconds(0);
     }
   };
@@ -804,7 +869,68 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
                   className="hidden"
                   onChange={handleFilePick}
                 />
-                {recording ? (
+                {pendingAttachment ? (
+                  <div className="space-y-2">
+                    {/* Previa do anexo (ouvir / ver / excluir antes de enviar) */}
+                    <div className="flex items-start gap-2 rounded-xl border border-border/50 bg-background p-2.5">
+                      <div className="flex-1 min-w-0">
+                        {pendingAttachment.mediaType === 'image' && (
+                          <img src={pendingAttachment.previewUrl} alt="" className="max-h-44 rounded-lg object-contain" />
+                        )}
+                        {pendingAttachment.mediaType === 'audio' && (
+                          <audio controls src={pendingAttachment.previewUrl} className="w-full" />
+                        )}
+                        {pendingAttachment.mediaType === 'video' && (
+                          <video controls src={pendingAttachment.previewUrl} className="max-h-44 rounded-lg" />
+                        )}
+                        {pendingAttachment.mediaType === 'document' && (
+                          <div className="flex items-center gap-2 py-1">
+                            <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
+                            <span className="text-xs truncate">{pendingAttachment.filename}</span>
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 rounded-lg text-red-400 hover:bg-red-500/10 shrink-0"
+                        onClick={removePendingAttachment}
+                        disabled={uploadingMedia}
+                        title="Remover anexo"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    {/* Legenda + enviar */}
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1 rounded-xl border border-border/50 bg-background px-3 py-2">
+                        <Textarea
+                          value={replyText}
+                          onChange={e => setReplyText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendPending(); }
+                          }}
+                          placeholder={pendingAttachment.mediaType === 'audio'
+                            ? 'Audio pronto — toque para ouvir e envie.'
+                            : 'Escreva uma mensagem junto (opcional)...'
+                          }
+                          rows={1}
+                          disabled={uploadingMedia || pendingAttachment.mediaType === 'audio'}
+                          className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
+                        onClick={handleSendPending}
+                        disabled={uploadingMedia}
+                        title="Enviar"
+                      >
+                        {uploadingMedia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                ) : recording ? (
                   <div className="flex items-center gap-2">
                     <Button
                       size="sm"
@@ -816,19 +942,40 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
                       <Trash2 className="h-4 w-4" />
                     </Button>
                     <div className="flex-1 flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-3 py-2.5">
-                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                      <span className="text-sm text-red-300 font-medium">Gravando...</span>
+                      <span className={`w-2 h-2 rounded-full bg-red-500 ${recordPaused ? '' : 'animate-pulse'}`} />
+                      <span className="text-sm text-red-300 font-medium">{recordPaused ? 'Pausado' : 'Gravando...'}</span>
                       <span className="text-xs text-muted-foreground ml-auto tabular-nums">
                         {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, '0')}
                       </span>
                     </div>
+                    {recordPaused ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-9 w-9 p-0 rounded-xl text-emerald-400 hover:bg-emerald-500/10 shrink-0"
+                        onClick={resumeRecording}
+                        title="Continuar gravacao"
+                      >
+                        <Play className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-9 w-9 p-0 rounded-xl text-amber-400 hover:bg-amber-500/10 shrink-0"
+                        onClick={pauseRecording}
+                        title="Pausar gravacao"
+                      >
+                        <Pause className="h-4 w-4" />
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
                       onClick={stopRecording}
-                      title="Enviar audio"
+                      title="Concluir gravacao"
                     >
-                      <Send className="h-4 w-4" />
+                      <Square className="h-4 w-4" />
                     </Button>
                   </div>
                 ) : (
