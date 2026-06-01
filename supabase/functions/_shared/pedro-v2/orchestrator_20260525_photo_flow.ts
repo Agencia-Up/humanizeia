@@ -800,6 +800,37 @@ async function savePhotoReference(supabase: any, input: {
   return nextState;
 }
 
+// ── DEBOUNCE / agrupamento de mensagens em rajada (ponto 3) ───────────────────
+const PEDRO_V2_DEBOUNCE_MS = 7000;
+
+function sleepMs(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Junta as mensagens do lead ainda NAO respondidas (desde a ultima resposta do
+// agente) em um unico texto, para o cerebro tratar varias bolhas como UM turno.
+async function gatherUnansweredUserText(supabase: any, agentId: string, remoteJid: string): Promise<string> {
+  try {
+    const { data } = await supabase
+      .from("wa_chat_history")
+      .select("role, content, created_at")
+      .eq("agent_id", agentId)
+      .eq("remote_jid", remoteJid)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    const rows = Array.isArray(data) ? data.slice().reverse() : [];
+    let lastAssistantIdx = -1;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (String(rows[i]?.role || "") === "assistant") { lastAssistantIdx = i; break; }
+    }
+    const pending = rows.slice(lastAssistantIdx + 1).filter((r: any) => String(r?.role || "") === "user");
+    const parts = pending.map((r: any) => String(r?.content || "").trim()).filter(Boolean);
+    return parts.join("\n").trim();
+  } catch (_e) {
+    return "";
+  }
+}
+
 export async function processPedroV2Turn(
   supabase: any,
   input: PedroV2TurnInput & { agent: any; wa_instance: any },
@@ -880,24 +911,57 @@ export async function processPedroV2Turn(
   });
 
   const mediaContext = await resolvePedroMediaContext(input.payload, input.wa_instance);
-  const text = mediaContext.kind === "audio" && mediaContext.text
+  let text = mediaContext.kind === "audio" && mediaContext.text
     ? mediaContext.text
     : rawText;
 
-  // Salvar mensagem do usuário no histórico para transferências e CRM funcionarem com o Pedro v2
+  // Salvar mensagem do usuário no histórico (transferências/CRM/debounce). Captura o id.
+  let myUserMsgId: string | null = null;
   if (!dryRun && lead?.id && text) {
     try {
-      await supabase.from("wa_chat_history").insert({
+      const { data: insertedUserMsg } = await supabase.from("wa_chat_history").insert({
         user_id: input.agent.user_id,
         agent_id: input.agent.id,
         instance_id: input.wa_instance?.instance_name,
         remote_jid: remoteJid,
         role: "user",
         content: text,
-      });
+      }).select("id").maybeSingle();
+      myUserMsgId = insertedUserMsg?.id || null;
     } catch (err) {
       console.warn("[PedroV2] Failed to save user message to chat history:", err);
     }
+  }
+
+  // === DEBOUNCE / AGRUPAMENTO (ponto 3): trata mensagens em rajada como UM turno ===
+  // Espera ~7s; se chegou mensagem mais nova do lead, ESTA invocacao fica silenciosa
+  // (a da mensagem mais nova responde). A ultima junta todas as nao-respondidas.
+  // So em conversa real (nao dry_run) e v2 (este orquestrador). Mensagem unica = mesmo
+  // comportamento + a espera.
+  if (!dryRun && lead?.id && text && myUserMsgId) {
+    await sleepMs(PEDRO_V2_DEBOUNCE_MS);
+    const { data: latestUserMsg } = await supabase
+      .from("wa_chat_history")
+      .select("id")
+      .eq("agent_id", input.agent.id)
+      .eq("remote_jid", remoteJid)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestUserMsg?.id && latestUserMsg.id !== myUserMsgId) {
+      // Chegou mensagem mais nova -> a invocacao dela responde o bloco completo.
+      return {
+        ok: true,
+        dry_run: dryRun,
+        correlation_id: correlationId,
+        identity,
+        lead_id: lead?.id || null,
+        next_action: "debounced_superseded",
+      };
+    }
+    const batched = await gatherUnansweredUserText(supabase, input.agent.id, remoteJid);
+    if (batched) text = batched;
   }
 
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
