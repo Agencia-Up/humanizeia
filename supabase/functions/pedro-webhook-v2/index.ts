@@ -8,7 +8,7 @@ import {
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 
-const PEDRO_V2_BUILD = "2026-06-01-send-retry-v14";
+const PEDRO_V2_BUILD = "2026-06-01-photo-from-stock-v15";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||
