@@ -2775,6 +2775,74 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
   }
 
+  // ── PONTO C: resposta a uma REATIVACAO automatica (Follow-up IA) ───────────
+  // Quando o lead responde a um "cutucao" de reativacao, este bloco:
+  //   1. Marca a fila como respondida -> o motor PARA de cutucar este lead.
+  //   2. Tira o lead da coluna "inativo" -> a IA requalifica NESTA conversa
+  //      (o fluxo normal do Pedro abaixo ja conversa, capta dados e, na
+  //      transferencia, mantem o vendedor DONO por ser lead recorrente).
+  //   3. Avisa o vendedor DONO que o lead foi RECUPERADO (so se houver dono).
+  // Gate global PEDRO_FF_AUTO_REACTIVATION (off por padrao). Flag OFF =
+  // comportamento do webhook IDENTICO ao atual (nada deste bloco roda).
+  if ((Deno.env.get('PEDRO_FF_AUTO_REACTIVATION') ?? '').toLowerCase() === 'on') {
+    try {
+      const { data: leadForReact } = await supabase
+        .from('ai_crm_leads')
+        .select('id, status_crm, assigned_to_id, lead_name')
+        .eq('agent_id', agent.id)
+        .eq('remote_jid', remoteJid)
+        .maybeSingle();
+      if (leadForReact?.id) {
+        const { data: react } = await supabase
+          .from('pedro_followup_reactivation')
+          .select('id, status')
+          .eq('lead_id', leadForReact.id)
+          .maybeSingle();
+        if (react?.id && react.status === 'sent') {
+          // 1. Fila respondida -> motor nao cutuca mais este lead.
+          await supabase.from('pedro_followup_reactivation')
+            .update({ status: 'responded', responded_at: new Date().toISOString() })
+            .eq('id', react.id);
+          // 2. Sai da coluna "inativo" pra IA requalificar agora.
+          if (leadForReact.status_crm === 'inativo') {
+            await supabase.from('ai_crm_leads')
+              .update({ status_crm: 'interessado' })
+              .eq('id', leadForReact.id);
+          }
+          console.log(`[PontoC] Lead ${leadForReact.id} respondeu a reativacao -> requalificando.`);
+          // 3. Avisa o vendedor DONO: lead recuperado.
+          if (leadForReact.assigned_to_id) {
+            const { data: owner } = await supabase
+              .from('ai_team_members')
+              .select('id, name, whatsapp_number')
+              .eq('id', leadForReact.assigned_to_id)
+              .maybeSingle();
+            if (owner?.whatsapp_number) {
+              const recBaseUrl = (waInstance.api_url || '').replace(/\/$/, '');
+              const recInstKey = waInstance.api_key_encrypted || '';
+              let ownerNum = owner.whatsapp_number.replace(/\D/g, '');
+              if (ownerNum.length === 10 || ownerNum.length === 11) ownerNum = `55${ownerNum}`;
+              const clientPhone = remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
+              const recMsg =
+                `♻️ *LEAD RECUPERADO!*\n\n` +
+                `O cliente *${pushName || leadForReact.lead_name || 'Desconhecido'}* respondeu a reativacao automatica e voltou a conversar.\n` +
+                `📱 *Contato:* +${clientPhone}\n\n` +
+                `O lead continua com voce. A IA esta requalificando agora e te passa o resumo ao concluir.\n` +
+                `👉 https://wa.me/${clientPhone}`;
+              await fetch(`${recBaseUrl}/send/text`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'token': recInstKey },
+                body: JSON.stringify({ number: ownerNum, text: recMsg }),
+              }).catch((e) => console.error('[PontoC] erro ao avisar dono:', e));
+            }
+          }
+        }
+      }
+    } catch (reactErr) {
+      console.error('[PontoC] erro (nao bloqueia):', reactErr);
+    }
+  }
+
   const handoffMsg = "Excelente! Já informei o meu time de especialistas comerciais e eles vão dar continuidade no seu atendimento. Eles vão te chamar aqui mesmo neste número agora mesmo! Muito obrigado.";
 
   // Tools
