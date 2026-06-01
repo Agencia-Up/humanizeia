@@ -1,4 +1,5 @@
 import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
+import { managerPhones } from "../_shared/transfer/managers.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -428,7 +429,7 @@ async function handleV2Followup(supabase: any, ctx: {
 
   // Regras configuraveis por agente (NULL = legado 5/8/12, transfere, 10min, janela fixa).
   const { data: agentRulesRow } = await supabase
-    .from("wa_ai_agents").select("automation_rules").eq("id", agentId).maybeSingle();
+    .from("wa_ai_agents").select("automation_rules, gerente_phone, gerente_phone_2").eq("id", agentId).maybeSingle();
   const rules = resolveAutomationRules(agentRulesRow?.automation_rules);
   if (!rules.followup.enabled) return;              // gerente desligou o follow-up
   if (elapsedMin < rules.followup.t1_min) return;   // ainda nao chegou no 1o tempo
@@ -528,6 +529,15 @@ async function handleV2Followup(supabase: any, ctx: {
         const cleanSellerNum = String(seller.whatsapp_number).replace(/\D/g, "");
         const notif = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
         await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notif);
+      }
+      // Relatorio automatico ao(s) gerente(s) — ate 2.
+      const _gerentes = managerPhones(agentRulesRow);
+      if (_gerentes.length > 0) {
+        const _hora = now.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+        const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${leadName || "Desconhecido"}\n📱 *Telefone:* +${phoneNumber}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${seller.name}\n📲 *WhatsApp vendedor:* ${seller.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+        for (const gp of _gerentes) {
+          try { await sendUazapiTextMessage(baseUrl, instKey, instanceName, gp, `${gp}@s.whatsapp.net`, _mgrMsg); } catch (_e) { /* nao bloqueante */ }
+        }
       }
     }
     } // fim do if (doTransfer)

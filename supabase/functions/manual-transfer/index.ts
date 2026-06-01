@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildConversationBriefing, buildMarcosBriefing, buildManagerReport } from "../_shared/transfer/buildBriefing.ts";
+import { managerPhones } from "../_shared/transfer/managers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -652,7 +653,7 @@ Deno.serve(async (req) => {
     // 3. Fetch agent config (for gerente_phone + instance_ids)
     const { data: agentConfig } = await supabase
       .from("wa_ai_agents")
-      .select("gerente_phone, name, instance_ids, instance_id")
+      .select("gerente_phone, gerente_phone_2, name, instance_ids, instance_id")
       .eq("id", lead.agent_id)
       .maybeSingle();
 
@@ -717,9 +718,9 @@ ${notes ? `\n💬 *Observação:* ${notes}\n\n━━━━━━━━━━━�
 
     await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
 
-    // 6. Send WhatsApp REPORT to MANAGER (gerente)
-    const gerentePhone = agentConfig?.gerente_phone;
-    if (gerentePhone) {
+    // 6. Send WhatsApp REPORT to MANAGER(s) (gerentes — ate 2)
+    const gerentes = managerPhones(agentConfig);
+    if (gerentes.length > 0) {
       const gerenteMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*
 
 🕐 *Horário:* ${transferredAt}
@@ -738,10 +739,12 @@ ${notes ? `\n💬 *Observação:* ${notes}` : ""}
 ━━━━━━━━━━━━━━━━━━━━
 _Gerado automaticamente pelo Pedro SDR_`;
 
-      try {
-        await sendWAMessage(instance, gerentePhone, gerenteMsg);
-      } catch (err) {
-        console.warn("[manual-transfer] Falha ao enviar relatorio ao gerente (nao bloqueante):", err);
+      for (const gerentePhone of gerentes) {
+        try {
+          await sendWAMessage(instance, gerentePhone, gerenteMsg);
+        } catch (err) {
+          console.warn("[manual-transfer] Falha ao enviar relatorio ao gerente (nao bloqueante):", err);
+        }
       }
     }
 

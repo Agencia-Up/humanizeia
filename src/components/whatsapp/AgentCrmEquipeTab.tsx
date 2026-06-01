@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Users, UserPlus, Phone, Loader2, Trash2, PhoneForwarded, Pencil, Check, X, Crown, Save, Mail, Send, RefreshCw } from 'lucide-react';
+import { Users, UserPlus, Phone, Loader2, Trash2, PhoneForwarded, Pencil, Check, X, Crown, Save, Mail, Send, RefreshCw, Plus } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 
 interface AgentCrmEquipeTabProps {
@@ -27,8 +27,10 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
   const [invitingMemberId, setInvitingMemberId] = useState<string | null>(null);
   const [inviteEmailInputs, setInviteEmailInputs] = useState<Record<string, string>>({});
 
-  // Gerente (manager) phone state
+  // Gerente (manager) phone state — ate 2 gerentes recebem os relatorios
   const [gerentePhone, setGerentePhone] = useState('');
+  const [gerentePhone2, setGerentePhone2] = useState('');
+  const [showGerente2, setShowGerente2] = useState(false);
   const [savingGerente, setSavingGerente] = useState(false);
 
   // Estado de edição inline
@@ -47,12 +49,14 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
     try {
       const [{ data: teamData, error: teamErr }, { data: agentData }] = await Promise.all([
         (supabase as any).from('ai_team_members').select('*').eq('agent_id', agentId).order('created_at', { ascending: true }),
-        (supabase as any).from('wa_ai_agents').select('gerente_phone').eq('id', agentId).single(),
+        (supabase as any).from('wa_ai_agents').select('gerente_phone, gerente_phone_2').eq('id', agentId).single(),
       ]);
 
       if (teamErr) throw teamErr;
       setTeamMembers(teamData || []);
       setGerentePhone(agentData?.gerente_phone || '');
+      setGerentePhone2(agentData?.gerente_phone_2 || '');
+      setShowGerente2(!!(agentData?.gerente_phone_2));
 
     } catch (err: any) {
       console.error('Erro ao carregar Equipe:', err);
@@ -132,13 +136,15 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
     setSavingGerente(true);
     try {
       const cleanPhone = gerentePhone.replace(/\D/g, '');
+      const cleanPhone2 = (showGerente2 ? gerentePhone2 : '').replace(/\D/g, '');
       const { error } = await (supabase as any)
         .from('wa_ai_agents')
-        .update({ gerente_phone: cleanPhone || null })
+        .update({ gerente_phone: cleanPhone || null, gerente_phone_2: cleanPhone2 || null })
         .eq('id', agentId);
       if (error) throw error;
       setGerentePhone(cleanPhone);
-      toast({ title: '✅ Número do Gerente salvo!', description: 'Ele receberá relatório a cada transferência de lead.' });
+      setGerentePhone2(cleanPhone2);
+      toast({ title: '✅ Gerente(s) salvo(s)!', description: 'Recebem relatório a cada transferência de lead.' });
     } catch (err: any) {
       toast({ title: 'Erro ao salvar gerente', description: err.message, variant: 'destructive' });
     } finally {
@@ -226,27 +232,63 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
           <h4 className="text-sm font-semibold text-amber-300">WhatsApp do Gerente</h4>
         </div>
         <p className="text-xs text-muted-foreground">
-          A cada lead transferido para um vendedor, o gerente receberá um relatório automático via WhatsApp com nome do lead, vendedor designado e hora da transferência.
+          A cada lead transferido para um vendedor, o(s) gerente(s) receberão um relatório automático via WhatsApp com nome do lead, vendedor designado e hora da transferência. Até 2 gerentes.
         </p>
-        <div className="flex gap-2">
-          <Input
-            placeholder="Ex: 5511999990000 (com DDI)"
-            value={gerentePhone}
-            onChange={e => setGerentePhone(e.target.value)}
-            className="h-8 text-xs font-mono flex-1"
-          />
+        <div className="space-y-2">
+          {/* 1º gerente */}
+          <div className="flex gap-2 items-center">
+            <Input
+              placeholder="1º gerente — Ex: 5511999990000 (com DDI)"
+              value={gerentePhone}
+              onChange={e => setGerentePhone(e.target.value)}
+              className="h-8 text-xs font-mono flex-1"
+            />
+            {!showGerente2 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 px-2 shrink-0 border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+                onClick={() => setShowGerente2(true)}
+                title="Adicionar 2º gerente"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+          {/* 2º gerente (opcional) */}
+          {showGerente2 && (
+            <div className="flex gap-2 items-center">
+              <Input
+                placeholder="2º gerente (opcional) — Ex: 5511988880000"
+                value={gerentePhone2}
+                onChange={e => setGerentePhone2(e.target.value)}
+                className="h-8 text-xs font-mono flex-1"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 px-2 shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10"
+                onClick={() => { setShowGerente2(false); setGerentePhone2(''); }}
+                title="Remover 2º gerente"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
           <Button
             size="sm"
-            className="h-8 px-4 shrink-0 bg-amber-600 hover:bg-amber-700 text-white"
+            className="h-8 px-4 w-full bg-amber-600 hover:bg-amber-700 text-white"
             onClick={handleSaveGerente}
             disabled={savingGerente}
           >
             {savingGerente ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
-            Salvar
+            Salvar gerente(s)
           </Button>
         </div>
-        {gerentePhone && (
-          <p className="text-[10px] text-amber-400/70">✅ Gerente configurado: {gerentePhone}</p>
+        {(gerentePhone || (showGerente2 && gerentePhone2)) && (
+          <p className="text-[10px] text-amber-400/70">
+            ✅ Gerente(s): {[gerentePhone, showGerente2 ? gerentePhone2 : ''].filter(Boolean).join('  ·  ')}
+          </p>
         )}
       </div>
 
