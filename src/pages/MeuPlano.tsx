@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -13,6 +13,8 @@ import {
 } from 'recharts';
 import { useSubscription, PLANS, ATENDIMENTO_PACKAGES, type PlanId } from '@/hooks/useSubscription';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 
 /* ── helpers ────────────────────────────────────────────────────────── */
 function fmt(n: number) { return n.toLocaleString('pt-BR'); }
@@ -107,17 +109,26 @@ export default function MeuPlano() {
     tokensAvailable, tokensTotal, usagePercent,
     planInfo, purchaseTokens, upgradePlan,
   } = useSubscription();
+  const { user } = useAuth();
+  const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
 
   const [tab, setTab] = useState<'overview' | 'upgrade' | 'recharge'>('overview');
   const [buyingPkg, setBuyingPkg] = useState<number | null>(null);
   const [upgradingPlan, setUpgradingPlan] = useState<PlanId | null>(null);
 
-  if (loading) {
+  if (loading || sellerLoading) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <RefreshCcw className="h-5 w-5 animate-spin mr-2" /> Carregando plano...
       </div>
     );
+  }
+
+  // Vendedor (conta vinculada) nao tem plano proprio: a IA e o credito vivem na
+  // conta master. Se cair aqui por URL direta (a opcao do menu ja fica oculta),
+  // manda de volta pro dashboard.
+  if (isSeller) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   // Erro ou subscription ausente: mostra mensagem com ação (em vez de tela em branco)

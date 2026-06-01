@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, X } from 'lucide-react';
 import { useSubscription } from '@/hooks/useSubscription';
+import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 
 function readDismissed(): string | null {
   try {
@@ -23,9 +25,13 @@ function readDismissed(): string | null {
 export function TokenAlertBanner() {
   const navigate = useNavigate();
   const { subscription, tokensAvailable, tokensTotal, loading } = useSubscription();
+  const { user } = useAuth();
+  const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
   // Lê a dispensa já na inicialização pra não "piscar" a faixa antes de esconder.
   const [dismissedKind, setDismissedKind] = useState<string | null>(readDismissed);
 
+  // Aviso de plano e so da conta master (ver TokenWidget). Vendedor nunca ve.
+  if (sellerLoading || isSeller) return null;
   if (loading || !subscription || tokensTotal <= 0) return null;
 
   const depleted = tokensAvailable <= 0;
