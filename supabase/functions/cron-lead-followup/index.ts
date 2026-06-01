@@ -376,7 +376,7 @@ async function generateFollowupText(opts: {
 }): Promise<string> {
   const fallbacks: Record<string, string> = {
     reengage: "E ai, conseguiu dar uma olhada? Posso te ajudar com mais alguma coisa? 😊",
-    check_help: "Ainda por ai? Se quiser ver outras opcoes ou tirar qualquer duvida, e so me falar!",
+    check_help: "Ainda esta por ai? Posso te ajudar com mais alguma coisa? 😊",
     farewell: "Vou pedir para um dos nossos consultores de vendas continuar com voce por aqui, ta? Obrigado pelo papo, ja ja alguem te chama! 😊",
   };
   const apiKey = Deno.env.get("OPENAI_API_KEY");
@@ -386,7 +386,7 @@ async function generateFollowupText(opts: {
     .join("\n");
   const goal: Record<string, string> = {
     reengage: "O cliente parou de responder ha ~5 min. Escreva UMA mensagem curta e natural retomando o ULTIMO assunto da conversa (o veiculo/fotos/valores que estavam vendo), convidando a continuar. Sem pressionar.",
-    check_help: "O cliente segue sem responder (~8 min). Escreva UMA mensagem curta perguntando se ainda precisa de ajuda ou quer ver outra coisa. Tom leve e humano, SEM repetir a mensagem anterior.",
+    check_help: "SEGUNDA tentativa (~8 min sem resposta). A 1a mensagem JA retomou o veiculo/assunto — NAO repita isso. Aqui escreva algo bem CURTO so checando presenca, no estilo 'Ainda esta por ai?' ou 'Ainda posso te ajudar?'. NAO mencione veiculo, fotos, valores nem 'outras opcoes'. Apenas 1 frase curta.",
     farewell: "O cliente nao respondeu (~12 min). Escreva UMA mensagem curta e amigavel avisando que um consultor de vendas vai dar continuidade por aqui e agradecendo o contato.",
   };
   try {
