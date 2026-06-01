@@ -527,6 +527,15 @@ function detectPhotoTarget(message: string): PhotoTarget {
   return "overview";
 }
 
+// Detecta pedido EXPLICITO de fotos/imagens (mesma regra do planner.isPhotoText).
+// Rede de seguranca do envio de fotos: se o lead pediu fotos e ha veiculos para
+// mostrar, enviamos as imagens de verdade mesmo que o planner tenha roteado para
+// stock_search (evita o agente PROMETER fotos e mandar so texto).
+function messageAsksForPhotos(message: string): boolean {
+  const normalized = normalizePhotoText(message);
+  return /\b(foto|fotos|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|porta-malas|traseira|frente|lateral|video|videos)\b/.test(normalized);
+}
+
 function uniqueIndexes(indexes: number[], total: number, max = 5) {
   const selected: number[] = [];
   for (const rawIndex of indexes) {
@@ -1078,8 +1087,23 @@ export async function processPedroV2Turn(
     };
   }
 
-  let reply = brainPlan.action === "photo_request"
-    ? buildVehiclePhotoReply(nextMemory, text)
+  // FOTO GARANTIDA (rede de seguranca): se o lead pediu fotos EXPLICITAMENTE e
+  // temos veiculos para mostrar — da memoria (ja apresentados) OU de uma busca
+  // ESPECIFICA recem-feita NESTE turno — enviamos as imagens de verdade. Sem isso,
+  // quando o planner rebaixa "fotos do <modelo>" para stock_search (modelo visto
+  // como "novo topico" ou veiculos ainda nao salvos na memoria), o agente PROMETE
+  // fotos e manda so texto (bug: "vou separar as fotos do Renegade" e nada chega).
+  const leadAskedPhotosExplicitly = messageAsksForPhotos(text);
+  const memoryPhotoVehicles = Array.isArray(nextMemory?.veiculos_apresentados) ? nextMemory.veiculos_apresentados : [];
+  const freshSpecificStock = (!isGenericQuery && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0)
+    ? stockResult.items
+    : [];
+  const photoVehiclesPool = memoryPhotoVehicles.length > 0 ? memoryPhotoVehicles : freshSpecificStock;
+  const shouldSendVehiclePhotos = brainPlan.action === "photo_request"
+    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0);
+
+  let reply = shouldSendVehiclePhotos
+    ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: photoVehiclesPool }, text)
     : await generatePedroBrainReply({
         agent: input.agent,
         agent_system_prompt: input.agent?.system_prompt || input.agent?.prompt || null,
@@ -1102,6 +1126,13 @@ export async function processPedroV2Turn(
       .filter(Boolean);
 
     if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback"].includes(reply.source)) {
+      vehiclesToSave = stockResult.items;
+    }
+
+    // Se as FOTOS sairam de uma busca fresca (lead pediu "fotos do X" antes de os
+    // veiculos estarem salvos na memoria), guarda os encontrados para o proximo
+    // "mais fotos"/referencia funcionar pela memoria.
+    if (vehiclesToSave.length === 0 && reply.source === "vehicle_photos_reply") {
       vehiclesToSave = stockResult.items;
     }
 
