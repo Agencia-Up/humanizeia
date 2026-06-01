@@ -1,3 +1,5 @@
+import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
+
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
   const restBase = `${url}/rest/v1`;
@@ -423,7 +425,13 @@ async function handleV2Followup(supabase: any, ctx: {
 }) {
   const { lead, agentData, baseUrl, instKey, instanceName, remoteJid, phoneNumber, agentId, now } = ctx;
   const elapsedMin = (now.getTime() - new Date(lead.last_agent_reply_at).getTime()) / 60000;
-  if (elapsedMin < 5) return;
+
+  // Regras configuraveis por agente (NULL = legado 5/8/12, transfere, 10min, janela fixa).
+  const { data: agentRulesRow } = await supabase
+    .from("wa_ai_agents").select("automation_rules").eq("id", agentId).maybeSingle();
+  const rules = resolveAutomationRules(agentRulesRow?.automation_rules);
+  if (!rules.followup.enabled) return;              // gerente desligou o follow-up
+  if (elapsedMin < rules.followup.t1_min) return;   // ainda nao chegou no 1o tempo
 
   const { data: stateRow } = await supabase
     .from("pedro_conversation_state").select("state")
@@ -457,8 +465,13 @@ async function handleV2Followup(supabase: any, ctx: {
     });
   };
 
-  // ─── 12 MIN: despedida amigavel + transferencia (reusa o fluxo atual) ───
-  if (elapsedMin >= 12) {
+  // ─── T3 (default 12min): despedida amigavel + transferencia (se configurado) ───
+  // So transfere se o gerente deixou o 3o follow-up transferir (t3_transfers) E a
+  // transferencia estiver ativa. Senao: manda SO a despedida e para (lead fica
+  // sem vendedor). `stage < 3` evita reenviar a despedida a cada ciclo do cron.
+  if (elapsedMin >= rules.followup.t3_min && stage < 3) {
+    const doTransfer = rules.followup.t3_transfers && rules.transfer.enabled;
+    if (doTransfer) {
     const { data: updatedRows } = await supabase.from("ai_crm_leads")
       .update({ status: "transferido", assigned_to_id: null, followup_5min_sent: true, last_interaction_at: now.toISOString() })
       .in("status", ["novo", "interessado"]).eq("id", lead.id).select("id");
@@ -506,17 +519,18 @@ async function handleV2Followup(supabase: any, ctx: {
       await supabase.from("ai_crm_leads").update({ summary }).eq("id", lead.id);
       await supabase.from("ai_lead_transfers").insert({
         user_id: lead.user_id, lead_id: lead.id, to_member_id: seller.id,
-        transfer_reason: "Inatividade do cliente (12 minutos)", notes: summary,
+        transfer_reason: `Inatividade do cliente (${rules.followup.t3_min} minutos)`, notes: summary,
         transfer_status: "pending", is_confirmed: false,
-        confirmation_timeout_at: new Date(now.getTime() + 15 * 60000).toISOString(),
+        confirmation_timeout_at: new Date(now.getTime() + rules.transfer.seller_response_min * 60000).toISOString(),
       });
       await supabase.from("ai_team_members").update({ last_lead_received_at: now.toISOString() }).eq("id", seller.id);
       if (seller.whatsapp_number) {
         const cleanSellerNum = String(seller.whatsapp_number).replace(/\D/g, "");
-        const notif = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta 12min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        const notif = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
         await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notif);
       }
     }
+    } // fim do if (doTransfer)
     const bye = await generateFollowupText({ kind: "farewell", agentName, companyName, persona, leadName, recentTurns });
     await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, bye);
     await logChat(bye);
@@ -524,8 +538,8 @@ async function handleV2Followup(supabase: any, ctx: {
     return;
   }
 
-  // ─── 8 MIN: segunda mensagem contextual ───
-  if (elapsedMin >= 8 && stage < 2) {
+  // ─── T2 (default 8min): segunda mensagem contextual ───
+  if (elapsedMin >= rules.followup.t2_min && stage < 2) {
     const txt = await generateFollowupText({ kind: "check_help", agentName, companyName, persona, leadName, recentTurns });
     if (await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, txt)) {
       await logChat(txt); await saveStage(2);
@@ -533,8 +547,8 @@ async function handleV2Followup(supabase: any, ctx: {
     return;
   }
 
-  // ─── 5 MIN: primeira mensagem contextual ───
-  if (elapsedMin >= 5 && stage < 1) {
+  // ─── T1 (default 5min): primeira mensagem contextual ───
+  if (elapsedMin >= rules.followup.t1_min && stage < 1) {
     const txt = await generateFollowupText({ kind: "reengage", agentName, companyName, persona, leadName, recentTurns });
     if (await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, txt)) {
       await logChat(txt); await saveStage(1);
@@ -557,6 +571,7 @@ Deno.serve(async (req) => {
     const now = new Date();
     const fiveMinsAgo = new Date(now.getTime() - 5 * 60000).toISOString();
     const tenMinsAgo = new Date(now.getTime() - 10 * 60000).toISOString();
+    const oneMinAgo = new Date(now.getTime() - 60000).toISOString();
 
     console.log(`[Cron] Iniciando varredura. Agora: ${now.toISOString()} | 5m ago: ${fiveMinsAgo} | 10m ago: ${tenMinsAgo}`);
 
@@ -573,10 +588,10 @@ Deno.serve(async (req) => {
       // Buscar transferencias pendentes onde o vendedor NAO confirmou em 10 minutos
       const { data: pendingTransfers } = await supabase
         .from('ai_lead_transfers')
-        .select('*, lead:ai_crm_leads(*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids))')
+        .select('*, lead:ai_crm_leads(*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids, automation_rules))')
         .eq('is_confirmed', false)
         .eq('transfer_status', 'pending')
-        .lte('created_at', tenMinsAgo); // A notificacao foi criada ha mais de 10 minutos
+        .lte('created_at', oneMinAgo); // candidatos (>=1min); o tempo real por agente e checado no loop (seller_response_min)
 
       if (pendingTransfers && pendingTransfers.length > 0) {
         console.log(`[Cron] Encontradas ${pendingTransfers.length} transferencias pendentes ha mais de 10 min.`);
@@ -589,9 +604,21 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // ── Regra de horario: so repassa se o transfer foi CRIADO dentro de
-          //    10:11-19:29 Brasilia. Leads da noite ficam com o vendedor. ─────
-          if (!transferCriadoNoHorario(transfer.created_at)) {
+          // ── Regras configuraveis por agente (NULL = legado: 10min, janela fixa) ──
+          const aRules = resolveAutomationRules(lead?.wa_ai_agents?.automation_rules);
+          // Transferencia desligada pelo gerente -> sem escalacao automatica
+          // (o lead fica com o vendedor atual; o "Ok" dele ainda confirma).
+          if (!aRules.transfer.enabled) continue;
+          // Tempo de resposta do vendedor (por agente). Ainda nao deu o tempo -> espera.
+          const elapsedMinT = (now.getTime() - new Date(transfer.created_at).getTime()) / 60000;
+          if (elapsedMinT < aRules.transfer.seller_response_min) continue;
+          // ── Janela de repasse ──
+          // Configurada (por agente): so repassa se AGORA estiver dentro dela
+          // (narrowa dentro do horario operacional global ja checado acima).
+          // Sem config: regra legada — lead CRIADO fora da janela fica com o vendedor.
+          if (aRules.transfer.window) {
+            if (isWithinConfiguredWindow(aRules.transfer.window, now) === false) continue;
+          } else if (!transferCriadoNoHorario(transfer.created_at)) {
             console.log(`[Cron] Transfer ${transfer.id} criado fora do horario de repasse (${transfer.created_at}). Auto-confirmando - lead fica com vendedor atual.`);
             await supabase.from('ai_lead_transfers')
               .update({ transfer_status: 'confirmed', is_confirmed: true })
