@@ -1061,11 +1061,11 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           background: '#070B14',
           color: '#E2E8F0',
           padding: 'clamp(14px, 1.2vw, 22px)',
-          display: 'grid',
-          gridTemplateRows: isSeller ? 'auto auto minmax(0, 1fr)' : 'auto auto auto minmax(0, 1fr)',
+          display: 'flex',
+          flexDirection: 'column',
           gap: 12,
         }}>
-          <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
+          <header style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
                 <div style={{ width: 34, height: 34, borderRadius: 10, background: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: '#fff' }}>L</div>
@@ -1102,7 +1102,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             </div>
           </header>
 
-          <section style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
+          <section style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
             {[
               { icon: <Users className="h-5 w-5" />, label: dateFilter === 'all' ? 'Leads no pipeline' : `Leads - ${dateLabel}`, value: filteredLeads.length, main: C.blue, light: C.blueL, bg: C.blueBg },
               { icon: <Flame className="h-5 w-5" />, label: 'Qualificados', value: totalQualified, main: C.green, light: C.greenL, bg: C.greenBg },
@@ -1122,6 +1122,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
           {!isSeller && (
             <section style={{
+              flexShrink: 0,
               display: 'grid',
               gridTemplateColumns: isPortrait ? '1fr' : 'minmax(210px, .72fr) minmax(0, 1.18fr) minmax(0, 1.45fr)',
               gap: 10,
@@ -1184,12 +1185,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             </section>
           )}
 
-          <main style={{ minHeight: 0, display: 'grid' }}>
+          <main style={{ flexShrink: 0, minHeight: 0, display: 'grid' }}>
             <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))', gap: 10, minHeight: 0, alignItems: 'stretch' }}>
               {LIVE_COLUMNS.map(col => {
                 const colLeads = leadsByColumn[col.id] || [];
                 return (
-                  <div key={col.id} style={{ minHeight: 'clamp(320px, 46vh, 680px)', borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', overflow: 'hidden' }}>
+                  <div key={col.id} style={{ height: 'clamp(360px, 62vh, 760px)', borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 10px 8px', background: col.bg, borderBottom: `1px solid ${col.main}` }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
