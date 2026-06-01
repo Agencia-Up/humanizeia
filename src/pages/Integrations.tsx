@@ -2,8 +2,42 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { ConnectionsTab } from '@/components/settings/ConnectionsTab';
 import { IntegrationsTab } from '@/components/settings/IntegrationsTab';
 import { LeadCaptureTab } from '@/components/settings/LeadCaptureTab';
+import { useIntegrationAccess } from '@/components/settings/integrationAccess';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plug, Wrench, Terminal } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Plug, Wrench, Terminal, Crown } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+
+function BasicoPlanBanner() {
+  const { isBasico } = useIntegrationAccess();
+  const navigate = useNavigate();
+  if (!isBasico) return null;
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-500">
+          <Crown className="h-5 w-5" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-foreground">Você está no Plano Básico</p>
+          <p className="text-xs text-muted-foreground">
+            Seu plano inclui <strong className="text-foreground">BNDV (estoque)</strong> e{' '}
+            <strong className="text-foreground">Webhook</strong>. Faça upgrade para o Plano Pro e
+            desbloqueie todas as conexões e integrações.
+          </p>
+        </div>
+      </div>
+      <Button
+        size="sm"
+        className="gradient-primary text-primary-foreground shrink-0"
+        onClick={() => navigate('/meu-plano')}
+      >
+        <Crown className="mr-2 h-4 w-4" />
+        Fazer upgrade
+      </Button>
+    </div>
+  );
+}
 
 export default function Integrations() {
   return (
@@ -15,6 +49,8 @@ export default function Integrations() {
             Conecte suas plataformas de anúncios e ferramentas externas
           </p>
         </div>
+
+        <BasicoPlanBanner />
 
         <Tabs defaultValue="connections" className="space-y-6">
           <TabsList className="bg-muted/50">

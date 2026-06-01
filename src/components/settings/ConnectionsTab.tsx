@@ -16,6 +16,12 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import {
+  useIntegrationAccess,
+  PlanProBadge,
+  ProLockOverlay,
+  UpgradeProDialog,
+} from './integrationAccess';
 
 /* ------------------------------------------------------------------ */
 /*  Platform definitions                                                */
@@ -299,9 +305,11 @@ const COMING_SOON_PLATFORMS = [
 export function ConnectionsTab() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { isLocked } = useIntegrationAccess();
   const meta = useMetaConnection();
   const google = useGoogleAdsConnection();
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
+  const [upgradeFor, setUpgradeFor] = useState<string | null>(null);
   const [tiktokLoading, setTiktokLoading] = useState(false);
   const [linkedinLoading, setLinkedinLoading] = useState(false);
   const [igLoading, setIgLoading] = useState(false);
@@ -589,6 +597,7 @@ export function ConnectionsTab() {
   };
 
   const activePlatform = PLATFORMS.find(p => p.id === selectedPlatform);
+  const upgradePlatform = PLATFORMS.find(p => p.id === upgradeFor) || null;
 
   return (
     <div className="space-y-6">
@@ -606,6 +615,36 @@ export function ConnectionsTab() {
           const status = platform.status === 'coming_soon' ? 'disconnected' : getConnectionStatus(platform.id);
           const accountName = getAccountName(platform.id);
           const isComingSoon = platform.status === 'coming_soon';
+          const locked = !isComingSoon && isLocked(platform.id);
+
+          // Plano Basico: conexoes de anuncios ficam bloqueadas (somente Pro+).
+          if (locked) {
+            return (
+              <Card
+                key={platform.id}
+                className="relative border-border/50 bg-card/50 backdrop-blur-sm transition-all hover:shadow-md"
+              >
+                <div className="absolute right-3 top-3 z-30">
+                  <PlanProBadge />
+                </div>
+                <CardContent className="p-5 flex flex-col h-full">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${platform.iconBg}`}>
+                      {platform.icon}
+                    </div>
+                  </div>
+                  <h3 className="font-semibold text-foreground">{platform.name}</h3>
+                  <p className="text-xs text-muted-foreground mt-1 flex-1">{platform.description}</p>
+                  <div className="flex gap-2 mt-4">
+                    <Button size="sm" variant="secondary" className="w-full text-xs" disabled>
+                      Conectar
+                    </Button>
+                  </div>
+                </CardContent>
+                <ProLockOverlay onUpgrade={() => setUpgradeFor(platform.id)} />
+              </Card>
+            );
+          }
 
           return (
             <Card
@@ -798,6 +837,12 @@ export function ConnectionsTab() {
           </DialogContent>
         )}
       </Dialog>
+
+      <UpgradeProDialog
+        open={!!upgradeFor}
+        onOpenChange={(o) => !o && setUpgradeFor(null)}
+        integrationName={upgradePlatform?.name}
+      />
     </div>
   );
 }

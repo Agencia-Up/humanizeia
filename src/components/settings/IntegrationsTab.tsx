@@ -4,10 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle, XCircle, Loader2, LogOut, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, LogOut, ExternalLink, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import {
+  useIntegrationAccess,
+  PlanProBadge,
+  ProLockOverlay,
+  UpgradeProDialog,
+} from './integrationAccess';
 
 interface IntegrationConfig {
   id: string;
@@ -18,6 +24,9 @@ interface IntegrationConfig {
   helpUrl?: string;
   helpText?: string;
   helpSteps?: string[];
+  // Quando true: integracao ainda sem backend (so a casca). Renderiza como
+  // "Em breve" desabilitada para nao expor um botao quebrado.
+  comingSoon?: boolean;
 }
 
 const INTEGRATIONS: IntegrationConfig[] = [
@@ -104,6 +113,7 @@ const INTEGRATIONS: IntegrationConfig[] = [
     ],
     helpUrl: 'https://console.apify.com/account/integrations',
     helpText: 'Encontre em: console.apify.com → Account → Integrations → API tokens. Usado por Daniel (análise de concorrentes) e Davi (dados sociais).',
+    comingSoon: true,
   },
   {
     id: 'resend',
@@ -116,6 +126,7 @@ const INTEGRATIONS: IntegrationConfig[] = [
     ],
     helpUrl: 'https://resend.com/api-keys',
     helpText: 'Crie em: resend.com → API Keys → Create API Key. Domínio precisa ser verificado.',
+    comingSoon: true,
   },
 ];
 
@@ -129,12 +140,14 @@ interface SavedIntegration {
 export function IntegrationsTab() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { isLocked } = useIntegrationAccess();
   const [savedIntegrations, setSavedIntegrations] = useState<SavedIntegration[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Record<string, Record<string, string>>>({});
   const [testing, setTesting] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
+  const [upgradeFor, setUpgradeFor] = useState<string | null>(null);
 
   const fetchIntegrations = useCallback(async () => {
     if (!user) return;
@@ -270,12 +283,65 @@ export function IntegrationsTab() {
     );
   }
 
+  const upgradeIntegration = INTEGRATIONS.find((i) => i.id === upgradeFor) || null;
+
   return (
     <div className="space-y-4">
       {INTEGRATIONS.map((integration) => {
         const status = getStatus(integration.id);
         const isExpanded = expandedId === integration.id;
         const fields = formData[integration.id] || {};
+        const comingSoon = integration.comingSoon === true;
+        const locked = !comingSoon && isLocked(integration.id);
+
+        // Integracao sem backend ainda (so a casca) -> "Em breve" desabilitada.
+        if (comingSoon) {
+          return (
+            <Card key={integration.id} className="overflow-hidden border-border/50 bg-card/40 opacity-70">
+              <CardContent className="p-0">
+                <div className="flex items-center justify-between p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="text-2xl grayscale">{integration.icon}</div>
+                    <div>
+                      <p className="font-medium">{integration.name}</p>
+                      <p className="text-xs text-muted-foreground">{integration.description}</p>
+                    </div>
+                  </div>
+                  <Badge className="border-amber-500/30 bg-amber-500/20 text-amber-500">
+                    <Clock className="mr-1 h-3 w-3" />
+                    Em breve
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        }
+
+        // Bloqueada pelo plano Basico -> card visivel + cadeado + CTA upgrade.
+        if (locked) {
+          return (
+            <Card key={integration.id} className="relative overflow-hidden border-border/50 bg-card/50 backdrop-blur-sm">
+              <div className="absolute right-3 top-3 z-30">
+                <PlanProBadge />
+              </div>
+              <CardContent className="p-0">
+                <div className="flex items-center justify-between p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="text-2xl">{integration.icon}</div>
+                    <div>
+                      <p className="font-medium">{integration.name}</p>
+                      <p className="text-xs text-muted-foreground">{integration.description}</p>
+                    </div>
+                  </div>
+                  <Button size="sm" variant="secondary" disabled>
+                    Conectar
+                  </Button>
+                </div>
+              </CardContent>
+              <ProLockOverlay onUpgrade={() => setUpgradeFor(integration.id)} />
+            </Card>
+          );
+        }
 
         return (
           <Card key={integration.id} className="overflow-hidden border-border/50 bg-card/50 backdrop-blur-sm">
@@ -377,6 +443,12 @@ export function IntegrationsTab() {
           </Card>
         );
       })}
+
+      <UpgradeProDialog
+        open={!!upgradeFor}
+        onOpenChange={(o) => !o && setUpgradeFor(null)}
+        integrationName={upgradeIntegration?.name}
+      />
     </div>
   );
 }
