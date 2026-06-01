@@ -1,0 +1,469 @@
+/**
+ * pedro-auto-followup  —  MOTOR DE REATIVACAO AUTOMATICA (Follow-up IA)
+ * ---------------------------------------------------------------------------
+ * Regras confirmadas pelo master (Wander, 01/06/2026):
+ *  1. Dispara SO na coluna "Lead Inativo" (status_crm='inativo'), automatico.
+ *  2. Pelo NUMERO DA IA do master (instancia do agente do lead).
+ *  3. Mensagem GERADA pelo Claude (personalizada por lead) — ou template base
+ *     literal quando gerar_variacoes_ia=false.
+ *  4. Quantidade/dia = max_disparos_dia (config do painel).
+ *  5. FILA em rodizio (RPC get_next_reactivation_lead): so repete num lead
+ *     depois que todos da fila receberam a 1a msg.
+ *  6. Intervalo min/max configuravel + PISO HARD de 3 min (ninguem reduz).
+ *  7. So dentro do horario/dias configurados (fuso Brasilia, UTC-3).
+ *  8. Pausa global: is_active=false -> nao dispara nada.
+ *  9. Filtro por data: periodo_dias (NULL=todos).
+ *  10. Quando o lead RESPONDE: tratado no webhook (fase C) — aqui so o disparo.
+ *
+ * SEGURANCA / TESTE:
+ *  - body.dry_run=true   -> faz tudo MENOS enviar/gravar. Retorna o que FARIA
+ *                           (inclusive a mensagem gerada pelo Claude). Ignora
+ *                           horario/dias/intervalo/cap pra permitir preview.
+ *  - body.only_user_id   -> restringe a 1 master (teste).
+ *  - body.only_lead_id   -> dispara num lead especifico (teste real controlado),
+ *                           pulando a fila. Ainda respeita is_active.
+ *  - body.max_per_master -> nº de envios por master por execucao (default 1).
+ *
+ * Sem config (followup_ia_config) ou is_active=false => nao faz nada.
+ */
+
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const HARD_MIN_GAP_MINUTES = 3; // PISO ABSOLUTO — ninguem reduz isso.
+
+const CLAUDE_MODEL_CANDIDATES = [
+  "claude-3-5-sonnet-20241022",
+  "claude-3-5-haiku-20241022",
+];
+
+// ── Helpers de fuso (Brasilia = UTC-3) ──────────────────────────────────────
+function toBrasilia(d: Date): Date {
+  return new Date(d.getTime() - 3 * 60 * 60 * 1000);
+}
+function brasiliaMinOfDay(d: Date): number {
+  const b = toBrasilia(d);
+  return b.getUTCHours() * 60 + b.getUTCMinutes();
+}
+function brasiliaWeekday(d: Date): number {
+  return toBrasilia(d).getUTCDay(); // 0=dom ... 6=sab
+}
+// Inicio do dia (00:00 Brasilia) expresso em UTC — pra contar "disparos hoje".
+function startOfBrasiliaDayUtc(now: Date): Date {
+  const b = toBrasilia(now);
+  const y = b.getUTCFullYear(), m = b.getUTCMonth(), day = b.getUTCDate();
+  // 00:00 Brasilia == 03:00 UTC do mesmo dia.
+  return new Date(Date.UTC(y, m, day, 3, 0, 0));
+}
+function parseHHMMtoMin(t: string | null | undefined): number {
+  if (!t) return 0;
+  const [hh, mm] = String(t).split(":");
+  return (Number(hh) || 0) * 60 + (Number(mm) || 0);
+}
+// Jitter ESTAVEL entre ticks: deriva do timestamp do ultimo envio (seed), pra
+// nao "sortear" um intervalo novo a cada tick do cron (senao fura o ritmo).
+function stableGapMinutes(lastSentMs: number, minM: number, maxM: number, jitter: boolean): number {
+  const floorMin = Math.max(HARD_MIN_GAP_MINUTES, minM);
+  const floorMax = Math.max(floorMin, maxM);
+  if (!jitter || floorMax <= floorMin) return floorMin;
+  const seed = Math.abs(Math.floor(lastSentMs)) % 1000;
+  const frac = seed / 1000; // 0..0.999
+  return floorMin + (floorMax - floorMin) * frac;
+}
+
+// ── Envio via UazAPI (mesmo padrao do pedro-trigger-followup) ───────────────
+async function sendUazapiTextMessage(
+  baseUrl: string, instKey: string, instanceName: string,
+  phoneNumber: string, remoteJid: string, text: string,
+): Promise<boolean> {
+  const attempts = [
+    { url: `${baseUrl}/send/text`, body: { number: phoneNumber, text } },
+    { url: `${baseUrl}/send/text`, body: { remoteJid, text } },
+    { url: `${baseUrl}/message/sendText/${instanceName}`, body: { number: phoneNumber, text } },
+  ];
+  for (const a of attempts) {
+    try {
+      const res = await fetch(a.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "token": instKey, "apikey": instKey },
+        body: JSON.stringify(a.body),
+      });
+      if (res.ok) return true;
+      const e = await res.text().catch(() => "");
+      console.error(`[auto-followup] UazAPI send error (${a.url}): ${res.status} - ${e}`);
+    } catch (err) {
+      console.error(`[auto-followup] UazAPI send exception (${a.url}):`, err);
+    }
+  }
+  return false;
+}
+
+// ── Geracao da mensagem de reativacao com Claude ────────────────────────────
+function applyTemplateVars(tpl: string, leadName: string, carro: string): string {
+  return (tpl || "")
+    .replace(/\{nome\}/gi, leadName || "")
+    .replace(/\{carro\}/gi, carro || "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+async function generateReactivationMessage(opts: {
+  apiKey: string;
+  leadName: string;
+  mensagemBase: string;
+  transcript: string;
+  agentName: string;
+}): Promise<string | null> {
+  const { apiKey, leadName, mensagemBase, transcript, agentName } = opts;
+  if (!apiKey) return null;
+
+  const systemPrompt =
+`Voce e ${agentName || "o assistente de vendas"} de uma concessionaria de carros, falando por WhatsApp.
+Sua tarefa: escrever UMA mensagem curta e natural pra REATIVAR um lead que ficou parado (esfriou).
+Regras da mensagem:
+- Portugues do Brasil, tom humano, simpatico e direto (WhatsApp, nao e e-mail).
+- 1 a 2 frases. Curta. Sem enrolacao, sem markdown, sem emojis em excesso (no maximo 1).
+- Personalize com o nome do lead e, se aparecer no historico, o carro de interesse.
+- NAO invente informacoes que nao estao no historico.
+- Termine com uma pergunta leve que convide a responder.
+- Use a "mensagem de referencia" do master so como GUIA de intencao/tom, nao copie literal.`;
+
+  const userMsg =
+`Nome do lead: ${leadName || "(desconhecido)"}
+Mensagem de referencia do master (guia de tom/intencao): "${mensagemBase || "Oi, tudo bem? Ainda tem interesse?"}"
+
+Historico recente da conversa (mais antigo no topo):
+${transcript || "(sem historico registrado)"}
+
+Escreva agora SOMENTE a mensagem de reativacao (sem aspas, sem prefixo).`;
+
+  for (const model of CLAUDE_MODEL_CANDIDATES) {
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 300,
+          temperature: 0.7,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userMsg }],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        if (res.status === 404 || err.includes("model")) continue;
+        console.error(`[auto-followup] Claude erro ${res.status}: ${err}`);
+        return null;
+      }
+      const data = await res.json();
+      const text = data?.content?.[0]?.text || "";
+      return String(text).trim() || null;
+    } catch (err) {
+      console.error(`[auto-followup] Claude excecao (${model}):`, err);
+      continue;
+    }
+  }
+  return null;
+}
+
+// ── Resolve a instancia da IA do master (a partir do agente do lead) ─────────
+async function resolveAgentInstance(supabase: any, agentId: string | null, cache: Record<string, any>) {
+  if (!agentId) return null;
+  const { data: agent } = await supabase
+    .from("wa_ai_agents")
+    .select("instance_id, instance_ids")
+    .eq("id", agentId)
+    .maybeSingle();
+  if (!agent) return null;
+  const instId = agent.instance_id
+    || (Array.isArray(agent.instance_ids) && agent.instance_ids.length > 0 ? agent.instance_ids[0] : null);
+  if (!instId) return null;
+  if (cache[instId]) return cache[instId];
+  const { data: inst } = await supabase
+    .from("wa_instances")
+    .select("id, api_url, api_key_encrypted, instance_name, status")
+    .eq("id", instId)
+    .maybeSingle();
+  if (inst) cache[instId] = inst;
+  return inst;
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+  );
+  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
+
+  // ── Parse opcoes (todas opcionais) ────────────────────────────────────────
+  let body: any = {};
+  try { body = await req.json(); } catch { body = {}; }
+  const dryRun: boolean = body?.dry_run === true;
+  const onlyUserId: string | null = body?.only_user_id || null;
+  const onlyLeadId: string | null = body?.only_lead_id || null;
+  const maxPerMaster: number = Math.max(1, Number(body?.max_per_master) || 1);
+
+  // ── KILL-SWITCH GLOBAL ────────────────────────────────────────────────────
+  // O caminho AUTOMATICO (cron, body vazio) SO dispara quando
+  // PEDRO_FF_AUTO_REACTIVATION = 'on'. Enquanto a flag estiver desligada, o
+  // deploy em producao NAO muda nada: o cron chama, isto aqui responde
+  // "disabled" e nao envia/grava nada. Testes manuais controlados continuam
+  // liberados (dry_run = preview sem enviar; only_lead_id = envio unico de
+  // validacao), pra dar pro master testar sem ligar o motor pra todo mundo.
+  const reactEnabled = (Deno.env.get("PEDRO_FF_AUTO_REACTIVATION") ?? "").toLowerCase() === "on";
+  if (!reactEnabled && !dryRun && !onlyLeadId) {
+    return new Response(
+      JSON.stringify({ ok: true, disabled: true, reason: "PEDRO_FF_AUTO_REACTIVATION off", total_sent: 0 }),
+      { headers: { ...cors, "Content-Type": "application/json" } },
+    );
+  }
+
+  const now = new Date();
+  const startOfDay = startOfBrasiliaDayUtc(now);
+  const instanceCache: Record<string, any> = {};
+  const report: any[] = [];
+  let totalSent = 0;
+
+  try {
+    // 1. Masters com follow-up IA ATIVO (is_active=true). Sem config => nada.
+    let q = supabase
+      .from("followup_ia_config")
+      .select("user_id, is_active, max_disparos_dia, intervalo_min_minutes, intervalo_max_minutes, periodo_dias, horario_inicio, horario_fim, dias_semana, mensagem_base, gerar_variacoes_ia, simular_humano")
+      .eq("is_active", true);
+    if (onlyUserId) q = q.eq("user_id", onlyUserId);
+    const { data: configs, error: cfgErr } = await q;
+    if (cfgErr) throw cfgErr;
+
+    for (const cfg of configs || []) {
+      const r: any = { user_id: cfg.user_id, gates: {}, actions: [] };
+
+      // 2. Horario/dias (fuso Brasilia). Em dry_run, so reporta (nao bloqueia).
+      const weekday = brasiliaWeekday(now);
+      const minOfDay = brasiliaMinOfDay(now);
+      const startMin = parseHHMMtoMin(cfg.horario_inicio);
+      const endMin = parseHHMMtoMin(cfg.horario_fim);
+      const dias: number[] = Array.isArray(cfg.dias_semana) ? cfg.dias_semana : [1, 2, 3, 4, 5];
+      const withinDay = dias.includes(weekday);
+      const withinHour = minOfDay >= startMin && minOfDay <= endMin;
+      r.gates.within_schedule = withinDay && withinHour;
+      if (!dryRun && !(withinDay && withinHour)) {
+        r.skipped = "fora_do_horario";
+        report.push(r);
+        continue;
+      }
+
+      // 3. Teto diario (max_disparos_dia). Conta envios de HOJE (Brasilia).
+      const { count: sentToday } = await supabase
+        .from("pedro_followup_reactivation")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", cfg.user_id)
+        .gte("last_sent_at", startOfDay.toISOString());
+      const cap = Math.max(1, Number(cfg.max_disparos_dia) || 10);
+      r.gates.sent_today = sentToday ?? 0;
+      r.gates.cap = cap;
+      if (!dryRun && (sentToday ?? 0) >= cap) {
+        r.skipped = "teto_diario_atingido";
+        report.push(r);
+        continue;
+      }
+
+      // 4. Intervalo desde o ultimo envio (com piso 3min + jitter estavel).
+      const { data: lastRow } = await supabase
+        .from("pedro_followup_reactivation")
+        .select("last_sent_at")
+        .eq("user_id", cfg.user_id)
+        .not("last_sent_at", "is", null)
+        .order("last_sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const minM = Math.max(HARD_MIN_GAP_MINUTES, Number(cfg.intervalo_min_minutes) || HARD_MIN_GAP_MINUTES);
+      const maxM = Math.max(minM, Number(cfg.intervalo_max_minutes) || minM);
+      let intervalOk = true;
+      if (lastRow?.last_sent_at) {
+        const lastMs = new Date(lastRow.last_sent_at).getTime();
+        const gapMin = stableGapMinutes(lastMs, minM, maxM, cfg.simular_humano !== false);
+        const elapsedMin = (now.getTime() - lastMs) / 60000;
+        intervalOk = elapsedMin >= gapMin;
+        r.gates.interval_needed_min = Math.round(gapMin * 10) / 10;
+        r.gates.interval_elapsed_min = Math.round(elapsedMin * 10) / 10;
+      }
+      r.gates.interval_ok = intervalOk;
+      if (!dryRun && !intervalOk) {
+        r.skipped = "aguardando_intervalo";
+        report.push(r);
+        continue;
+      }
+
+      // 5. Quantos enviar nesta execucao (respeita cap restante).
+      const remaining = dryRun ? maxPerMaster : Math.min(maxPerMaster, cap - (sentToday ?? 0));
+
+      for (let i = 0; i < remaining; i++) {
+        // 5a. Proximo lead: fila em rodizio (RPC) OU lead especifico (teste).
+        let lead: any = null;
+        if (onlyLeadId) {
+          const { data: l } = await supabase
+            .from("ai_crm_leads")
+            .select("id, remote_jid, lead_name, agent_id, assigned_to_id, status_crm, user_id")
+            .eq("id", onlyLeadId)
+            .eq("user_id", cfg.user_id)
+            .maybeSingle();
+          if (l && l.status_crm === "inativo") {
+            const { data: rr } = await supabase
+              .from("pedro_followup_reactivation")
+              .select("id, status, send_count")
+              .eq("lead_id", l.id)
+              .maybeSingle();
+            lead = {
+              lead_id: l.id, remote_jid: l.remote_jid, lead_name: l.lead_name,
+              agent_id: l.agent_id, assigned_to_id: l.assigned_to_id,
+              react_id: rr?.id || null, send_count: rr?.send_count || 0,
+            };
+          }
+        } else {
+          const { data: rows } = await supabase.rpc("get_next_reactivation_lead", {
+            p_user_id: cfg.user_id,
+            p_periodo_dias: cfg.periodo_dias ?? null,
+            p_limit: 1,
+          });
+          lead = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+        }
+
+        if (!lead) { r.actions.push({ note: "fila_vazia" }); break; }
+
+        // 5b. Resolve a instancia da IA do master (numero de atendimento).
+        const inst = await resolveAgentInstance(supabase, lead.agent_id, instanceCache);
+        if (!inst?.api_url) {
+          r.actions.push({ lead_id: lead.lead_id, error: "sem_instancia" });
+          // Em modo real, evita travar a fila no mesmo lead: marca um toque
+          // pra mandar pro fim da fila (last_sent_at) sem enviar.
+          if (!dryRun) {
+            await supabase.from("pedro_followup_reactivation")
+              .upsert({
+                user_id: cfg.user_id, lead_id: lead.lead_id,
+                status: "pending", last_sent_at: now.toISOString(),
+                last_message: "[sem instancia — adiado]",
+              }, { onConflict: "lead_id" });
+          }
+          continue;
+        }
+
+        // 5c. Monta contexto e gera a mensagem.
+        let transcript = "";
+        let carro = "";
+        try {
+          const { data: hist } = await supabase
+            .from("wa_chat_history")
+            .select("role, content, created_at")
+            .eq("agent_id", lead.agent_id)
+            .eq("remote_jid", lead.remote_jid)
+            .order("created_at", { ascending: false })
+            .limit(16);
+          if (Array.isArray(hist) && hist.length > 0) {
+            transcript = hist.reverse().map((m: any) =>
+              `${m.role === "user" ? "Cliente" : "IA"}: ${String(m.content || "").substring(0, 300)}`
+            ).join("\n");
+          }
+        } catch { /* segue sem historico */ }
+
+        let message: string | null = null;
+        const wantsIA = cfg.gerar_variacoes_ia !== false;
+        if (wantsIA) {
+          message = await generateReactivationMessage({
+            apiKey: anthropicKey,
+            leadName: lead.lead_name || "",
+            mensagemBase: cfg.mensagem_base || "",
+            transcript,
+            agentName: "o assistente",
+          });
+        }
+        // Fallback (IA off ou falhou): template base com variaveis.
+        if (!message) {
+          message = applyTemplateVars(cfg.mensagem_base || "Oi {nome}, tudo bem? Ainda tem interesse?", lead.lead_name || "", carro);
+        }
+
+        // 5d. DRY-RUN: nao envia, nao grava. So mostra o que faria.
+        if (dryRun) {
+          r.actions.push({
+            lead_id: lead.lead_id,
+            lead_name: lead.lead_name,
+            instance: inst.instance_name,
+            instance_status: inst.status,
+            generated_message: message,
+            would_send: r.gates.within_schedule && (r.gates.interval_ok !== false),
+          });
+          continue;
+        }
+
+        // 5e. ENVIO REAL.
+        const baseUrl = String(inst.api_url).replace(/\/+$/, "");
+        const instKey = inst.api_key_encrypted || "";
+        const instName = inst.instance_name || "";
+        const remoteJid = lead.remote_jid;
+        const phoneNumber = String(remoteJid).split("@")[0];
+
+        const sent = await sendUazapiTextMessage(baseUrl, instKey, instName, phoneNumber, remoteJid, message);
+
+        if (!sent) {
+          r.actions.push({ lead_id: lead.lead_id, error: "envio_falhou" });
+          // Marca toque pra rodar a fila (nao trava no mesmo lead).
+          await supabase.from("pedro_followup_reactivation")
+            .upsert({
+              user_id: cfg.user_id, lead_id: lead.lead_id,
+              status: "pending", last_sent_at: now.toISOString(),
+              last_message: "[envio falhou]",
+            }, { onConflict: "lead_id" });
+          continue;
+        }
+
+        // 5f. Sucesso: grava estado (status='sent' => aguardando resposta),
+        //     incrementa contagem, persiste no historico de chat.
+        await supabase.from("pedro_followup_reactivation")
+          .upsert({
+            user_id: cfg.user_id,
+            lead_id: lead.lead_id,
+            status: "sent",
+            send_count: (Number(lead.send_count) || 0) + 1,
+            last_sent_at: now.toISOString(),
+            last_message: message,
+          }, { onConflict: "lead_id" });
+
+        await supabase.from("wa_chat_history").insert({
+          user_id: cfg.user_id,
+          agent_id: lead.agent_id,
+          instance_id: instName,
+          remote_jid: remoteJid,
+          role: "assistant",
+          content: `[Follow-up IA] ${message}`,
+        });
+
+        totalSent++;
+        r.actions.push({ lead_id: lead.lead_id, lead_name: lead.lead_name, sent: true, instance: instName });
+      }
+
+      report.push(r);
+    }
+
+    return new Response(
+      JSON.stringify({ ok: true, dry_run: dryRun, total_sent: totalSent, masters: report }),
+      { headers: { ...cors, "Content-Type": "application/json" } },
+    );
+  } catch (err: any) {
+    console.error("[pedro-auto-followup] Erro geral:", err);
+    return new Response(
+      JSON.stringify({ error: err?.message ?? "Erro interno" }),
+      { status: 500, headers: { ...cors, "Content-Type": "application/json" } },
+    );
+  }
+});

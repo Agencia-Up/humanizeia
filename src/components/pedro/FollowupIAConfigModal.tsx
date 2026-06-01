@@ -28,7 +28,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Loader2, Clock, MessageSquare, Send, Zap, Info, AlertTriangle } from 'lucide-react';
+import { Loader2, Clock, MessageSquare, Send, Zap, Info, AlertTriangle, Pause, Play, ShieldCheck } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -46,10 +46,18 @@ export interface FollowupIAConfig {
   intervalo_min_minutes: number;
   intervalo_max_minutes: number;
   simular_humano: boolean;
+  // Filtro por data de entrada no CRM: so reativa leads criados nos ultimos N
+  // dias. null = todos os inativos (sem filtro de data).
+  periodo_dias: number | null;
 }
 
 const DEFAULT_CONFIG: FollowupIAConfig = {
-  is_active: false,
+  // ATIVO por padrao (regra Wander 01/06/2026): is_active=false e o PAUSE
+  // global do follow-up. Se o default fosse false, qualquer master que so
+  // clicasse "Salvar Configuracao" (sem Iniciar/Ativar) gravaria is_active=false
+  // e PAUSARIA o proprio follow-up sem querer (inclusive funis manuais). O
+  // pause de verdade so acontece quando o master clica explicitamente "Pausar".
+  is_active: true,
   horario_inicio: '08:00',
   horario_fim: '19:00',
   dias_semana: [1, 2, 3, 4, 5],
@@ -60,7 +68,27 @@ const DEFAULT_CONFIG: FollowupIAConfig = {
   intervalo_min_minutes: 15,
   intervalo_max_minutes: 45,
   simular_humano: true,
+  periodo_dias: null, // padrao: todos os inativos (sem filtro de data)
 };
+
+// Modos do filtro por data (UI). 'todos' = sem filtro (periodo_dias=null).
+type DateMode = 'todos' | '7' | '30' | '90' | 'custom';
+
+function periodoToMode(p: number | null | undefined): { mode: DateMode; custom: number } {
+  if (p == null) return { mode: 'todos', custom: 60 };
+  if (p === 7) return { mode: '7', custom: 60 };
+  if (p === 30) return { mode: '30', custom: 60 };
+  if (p === 90) return { mode: '90', custom: 60 };
+  return { mode: 'custom', custom: p };
+}
+
+const DATE_PRESETS: Array<{ key: DateMode; label: string }> = [
+  { key: '7', label: 'Últimos 7 dias' },
+  { key: '30', label: 'Últimos 30 dias' },
+  { key: '90', label: 'Últimos 90 dias' },
+  { key: 'custom', label: 'Personalizado' },
+  { key: 'todos', label: 'Todos' },
+];
 
 const DIAS_LABELS: Array<{ id: number; short: string; long: string }> = [
   { id: 1, short: 'Seg', long: 'Segunda' },
@@ -96,8 +124,12 @@ export function FollowupIAConfigModal({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [togglingPause, setTogglingPause] = useState(false);
   const [config, setConfig] = useState<FollowupIAConfig>(DEFAULT_CONFIG);
   const [activeTab, setActiveTab] = useState<'horario' | 'mensagens' | 'disparo'>('horario');
+  // UI do filtro por data (deriva de config.periodo_dias).
+  const [dateMode, setDateMode] = useState<DateMode>('todos');
+  const [customDays, setCustomDays] = useState<number>(60);
 
   // ── Carrega config quando o modal abre ──────────────────────────────────
   useEffect(() => {
@@ -122,6 +154,10 @@ export function FollowupIAConfigModal({
           // Converte time do Postgres ('HH:MM:SS') pro <input type="time"> ('HH:MM')
           const toHHMM = (t: string | null | undefined) =>
             t ? t.slice(0, 5) : '08:00';
+          const periodo = data.periodo_dias == null ? null : Number(data.periodo_dias);
+          const dm = periodoToMode(periodo);
+          setDateMode(dm.mode);
+          setCustomDays(dm.custom);
           setConfig({
             is_active: !!data.is_active,
             horario_inicio: toHHMM(data.horario_inicio),
@@ -133,8 +169,11 @@ export function FollowupIAConfigModal({
             intervalo_min_minutes: Number(data.intervalo_min_minutes) || 15,
             intervalo_max_minutes: Number(data.intervalo_max_minutes) || 45,
             simular_humano: !!data.simular_humano,
+            periodo_dias: periodo,
           });
         } else {
+          setDateMode('todos');
+          setCustomDays(60);
           setConfig(DEFAULT_CONFIG);
         }
       } finally {
@@ -171,6 +210,7 @@ export function FollowupIAConfigModal({
       intervalo_min_minutes: merged.intervalo_min_minutes,
       intervalo_max_minutes: merged.intervalo_max_minutes,
       simular_humano: merged.simular_humano,
+      periodo_dias: merged.periodo_dias,
     };
     const { error } = await (supabase as any)
       .from('followup_ia_config')
@@ -220,6 +260,40 @@ export function FollowupIAConfigModal({
     }
   };
 
+  // Pausa / ativa o follow-up. Persiste is_active na hora e reflete no estado.
+  // Quando PAUSADO (is_active=false), a edge function pedro-trigger-followup
+  // nao dispara follow-up pra nenhum lead deste master ("nao dispara pra
+  // ninguem"). Quando ATIVO, volta a disparar respeitando as regras.
+  const handleTogglePause = async () => {
+    const next = !config.is_active;
+    setTogglingPause(true);
+    try {
+      const saved = await persist({ is_active: next });
+      if (saved) {
+        setConfig(saved);
+        toast({
+          title: next ? '✅ Follow-up ATIVADO' : '⏸️ Follow-up PAUSADO',
+          description: next
+            ? 'O Pedro voltou a disparar follow-up na coluna de inativos.'
+            : 'Nenhum follow-up vai disparar até você ativar de novo.',
+        });
+      }
+    } finally {
+      setTogglingPause(false);
+    }
+  };
+
+  // Aplica o filtro por data (presets ou personalizado) -> config.periodo_dias.
+  // 'todos' = null (sem filtro). 'custom' usa o numero digitado (>=1).
+  const applyDateMode = (mode: DateMode, custom?: number) => {
+    setDateMode(mode);
+    let p: number | null;
+    if (mode === 'todos') p = null;
+    else if (mode === 'custom') p = Math.max(1, Math.floor(custom ?? customDays) || 1);
+    else p = Number(mode);
+    setConfig(c => ({ ...c, periodo_dias: p }));
+  };
+
   const toggleDia = (id: number, checked: boolean) => {
     setConfig(prev => ({
       ...prev,
@@ -247,6 +321,62 @@ export function FollowupIAConfigModal({
             Configurações otimizadas para evitar bloqueios no WhatsApp não-oficial.
           </DialogDescription>
         </DialogHeader>
+
+        {/* ── Banner de STATUS: Ativo / Pausado + botão de pausar ───────────── */}
+        {!loading && (
+          <div
+            className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${
+              config.is_active
+                ? 'border-emerald-500/40 bg-emerald-500/10'
+                : 'border-zinc-500/40 bg-zinc-500/10'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <span
+                className={`relative flex h-2.5 w-2.5 ${config.is_active ? '' : 'opacity-60'}`}
+              >
+                {config.is_active && (
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                )}
+                <span
+                  className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
+                    config.is_active ? 'bg-emerald-400' : 'bg-zinc-400'
+                  }`}
+                />
+              </span>
+              <div>
+                <p className={`text-sm font-bold ${config.is_active ? 'text-emerald-300' : 'text-zinc-300'}`}>
+                  {config.is_active ? 'Follow-up ATIVO' : 'Follow-up PAUSADO'}
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {config.is_active
+                    ? 'Disparando na coluna de inativos.'
+                    : 'Não dispara para ninguém até ativar.'}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant={config.is_active ? 'outline' : 'default'}
+              onClick={handleTogglePause}
+              disabled={togglingPause || saving || starting}
+              className={
+                config.is_active
+                  ? 'h-8 gap-1.5 border-amber-500/40 text-amber-300 hover:bg-amber-500/10'
+                  : 'h-8 gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white'
+              }
+            >
+              {togglingPause ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : config.is_active ? (
+                <Pause className="h-3.5 w-3.5" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+              {config.is_active ? 'Pausar follow-up' : 'Ativar follow-up'}
+            </Button>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
@@ -363,6 +493,48 @@ export function FollowupIAConfigModal({
 
             {/* ── Aba 3: Disparo em Massa ───────────────────────────── */}
             <TabsContent value="disparo" className="space-y-4 pt-4">
+              {/* Filtro por data de entrada no CRM */}
+              <div className="space-y-2">
+                <Label className="text-xs">Filtrar leads por data de entrada no CRM</Label>
+                <div className="flex flex-wrap gap-2">
+                  {DATE_PRESETS.map(opt => {
+                    const selected = dateMode === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => applyDateMode(opt.key)}
+                        className={`rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                          selected
+                            ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-200'
+                            : 'border-border/50 bg-card/30 text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {dateMode === 'custom' && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <Input
+                      type="number" min={1} className="w-24"
+                      value={customDays}
+                      onChange={e => {
+                        const v = Math.max(1, Math.floor(Number(e.target.value) || 1));
+                        setCustomDays(v);
+                        applyDateMode('custom', v);
+                      }}
+                    />
+                    <span className="text-xs text-muted-foreground">dias atrás</span>
+                  </div>
+                )}
+                <p className="text-[10px] text-muted-foreground">
+                  Só reativa leads que entraram no CRM nesse período.{' '}
+                  <strong>Todos</strong> = sem filtro de data (todos os leads inativos).
+                </p>
+              </div>
+
               <div className="space-y-1.5">
                 <Label htmlFor="max-dia" className="text-xs">Quantidade de disparos por dia</Label>
                 <Input
@@ -375,11 +547,11 @@ export function FollowupIAConfigModal({
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label htmlFor="int-min" className="text-xs">Intervalo mínimo (min)</Label>
+                  <Label htmlFor="int-min" className="text-xs">Intervalo entre mensagens — mínimo (min)</Label>
                   <Input
-                    id="int-min" type="number" min={10}
+                    id="int-min" type="number" min={3}
                     value={config.intervalo_min_minutes}
-                    onChange={e => setConfig(c => ({ ...c, intervalo_min_minutes: Math.max(10, Number(e.target.value) || 10) }))}
+                    onChange={e => setConfig(c => ({ ...c, intervalo_min_minutes: Math.max(3, Number(e.target.value) || 3) }))}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -390,6 +562,15 @@ export function FollowupIAConfigModal({
                     onChange={e => setConfig(c => ({ ...c, intervalo_max_minutes: Number(e.target.value) || 45 }))}
                   />
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3 flex items-start gap-2">
+                <ShieldCheck className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-cyan-100">
+                  <strong>Trava de segurança:</strong> o intervalo entre uma mensagem e outra para o mesmo lead
+                  nunca fica abaixo de <strong>3 minutos</strong>. Você pode aumentar à vontade, mas
+                  não dá pra colocar menos que isso — nem pelo painel, nem por fora. É uma regra fixa pra proteger o número contra bloqueio.
+                </p>
               </div>
 
               <div className="flex items-start justify-between gap-3 rounded-lg border border-border/50 p-3">
@@ -409,7 +590,7 @@ export function FollowupIAConfigModal({
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
                 <p className="text-[11px] text-amber-200">
-                  Configurações otimizadas para evitar bloqueios no WhatsApp não-oficial. Valores muito agressivos (intervalo &lt; 10min, &gt; 30/dia) aumentam o risco de banimento.
+                  Configurações otimizadas para evitar bloqueios no WhatsApp não-oficial. Quanto maior o intervalo e menor a quantidade/dia, menor o risco de banimento. O piso de 3 min entre mensagens é fixo e não pode ser reduzido.
                 </p>
               </div>
             </TabsContent>
