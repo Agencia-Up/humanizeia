@@ -1115,6 +1115,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   // Fase 6 Feature C: modo seleção pro disparo em massa (toggle + IDs marcados)
   const [selectionMode, setSelectionMode]   = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
+  // Resgate de leads órfãos (transferido preso, sem vendedor, sem pending) — botão no Diagnóstico
+  const [rescueOpen, setRescueOpen]       = useState(false);
+  const [rescueLoading, setRescueLoading] = useState(false);   // dry-run (prévia) em andamento
+  const [rescueRunning, setRescueRunning] = useState(false);   // execução real em andamento
+  const [rescuePreview, setRescuePreview] = useState<any | null>(null);  // resultado do dry-run
 
   // form states
   const [newNote, setNewNote]             = useState('');
@@ -2147,6 +2152,67 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       setConfirmQueueTransfer(null);
     } finally {
       setQueueTransferring(false);
+    }
+  };
+
+  // ── Resgate de leads órfãos (transferido preso, sem vendedor, sem pending) ──
+  // 1) Prévia (dry-run, read-only): mostra quais leads iriam pra quais vendedores.
+  // 2) Confirmar → roda de verdade (envia WhatsApp + cria a transferência pendente).
+  // Escopado ao dono do painel (ownerId); a edge function valida a permissão.
+  const ownerIdForRescue = effectiveUserIdState || userId || null;
+
+  const handleRescuePreview = async () => {
+    if (!ownerIdForRescue) return;
+    setRescueLoading(true);
+    setRescuePreview(null);
+    setRescueOpen(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('rescue-orphan-transfers', {
+        body: { dry_run: true, user_id: ownerIdForRescue },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      setRescuePreview(data);
+    } catch (err: any) {
+      setRescueOpen(false);
+      toast({ title: 'Erro ao pré-visualizar', description: err.message, variant: 'destructive' });
+    } finally {
+      setRescueLoading(false);
+    }
+  };
+
+  const handleRescueConfirm = async () => {
+    if (!ownerIdForRescue) return;
+    setRescueRunning(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('rescue-orphan-transfers', {
+        body: { dry_run: false, user_id: ownerIdForRescue },
+      });
+      if (error) throw error;
+      const d = data as any;
+      if (d?.error) throw new Error(d.error);
+      if (d?.fora_do_horario) {
+        toast({ title: 'Fora do horário de repasse', description: d.message || 'O envio só roda dentro do horário comercial.' });
+      } else {
+        const n = d?.reencaminhados ?? 0;
+        const extra = [
+          d?.pulados_com_pending ? `${d.pulados_com_pending} já aguardando confirmação` : '',
+          d?.sem_vendedor ? `${d.sem_vendedor} sem vendedor ativo` : '',
+          d?.sem_instancia ? `${d.sem_instancia} sem WhatsApp conectado` : '',
+          d?.falha_envio ? `${d.falha_envio} falha no envio` : '',
+        ].filter(Boolean).join(' · ');
+        toast({
+          title: n > 0 ? `✅ ${n} lead(s) reencaminhado(s)` : 'Nenhum lead reencaminhado',
+          description: extra || undefined,
+        });
+      }
+      setRescueOpen(false);
+      setRescuePreview(null);
+      await fetchData(true);
+    } catch (err: any) {
+      toast({ title: 'Erro ao resgatar', description: err.message, variant: 'destructive' });
+    } finally {
+      setRescueRunning(false);
     }
   };
 
@@ -4463,6 +4529,99 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         </DialogContent>
       </Dialog>
 
+      {/* ── Resgatar leads presos (órfãos) — prévia (dry-run) + confirmação ── */}
+      <Dialog open={rescueOpen} onOpenChange={o => { if (!o && !rescueRunning) { setRescueOpen(false); setRescuePreview(null); } }}>
+        <DialogContent className="sm:max-w-lg max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="h-4 w-4 text-red-400" /> Resgatar leads presos
+            </DialogTitle>
+            <DialogDescription>
+              Estes leads foram transferidos mas ficaram sem vendedor (a transferência expirou). Vou reencaminhar
+              cada um pro próximo vendedor da fila e avisar no WhatsApp. Confira a prévia antes de confirmar.
+            </DialogDescription>
+          </DialogHeader>
+
+          {rescueLoading && (
+            <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando prévia…
+            </div>
+          )}
+
+          {!rescueLoading && rescuePreview && (() => {
+            const det = (rescuePreview.detalhe || []) as any[];
+            const reencaminhar = det.filter(d => d.acao === 'reencaminharia');
+            const semVendedor = det.filter(d => d.acao === 'sem_vendedor');
+            return (
+              <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                <div className="flex items-center gap-2 flex-wrap text-xs">
+                  <span className="px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">
+                    {reencaminhar.length} vão ser reencaminhados
+                  </span>
+                  {semVendedor.length > 0 && (
+                    <span className="px-2 py-1 rounded-full bg-red-500/10 border border-red-500/30 text-red-300">
+                      {semVendedor.length} sem vendedor ativo
+                    </span>
+                  )}
+                  {rescuePreview.pulados_com_pending > 0 && (
+                    <span className="px-2 py-1 rounded-full bg-muted/40 border border-border/60 text-muted-foreground">
+                      {rescuePreview.pulados_com_pending} já aguardando
+                    </span>
+                  )}
+                </div>
+
+                {reencaminhar.length > 0 && (
+                  <div className="rounded-lg border border-border/60 bg-muted/20 divide-y divide-border/40">
+                    {reencaminhar.map((d, i) => (
+                      <div key={i} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                        <span className="font-medium truncate">{d.lead_name || 'Sem nome'}</span>
+                        <span className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
+                          <ArrowRightLeft className="h-3 w-3" />
+                          <span className="text-emerald-400 font-medium">{d.vendedor}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {semVendedor.length > 0 && (
+                  <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-2.5">
+                    <p className="text-[11px] text-red-300 mb-1.5 font-medium">Sem vendedor ativo (não dá pra reencaminhar):</p>
+                    <div className="space-y-1">
+                      {semVendedor.map((d, i) => (
+                        <p key={i} className="text-xs text-muted-foreground truncate">• {d.lead_name || 'Sem nome'}</p>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1.5">Ative um vendedor em Pedro &gt; Vendedores pra resgatar esses.</p>
+                  </div>
+                )}
+
+                {!rescuePreview.dentro_do_horario && (
+                  <p className="text-[11px] text-amber-300 bg-amber-500/5 border border-amber-500/20 rounded-lg p-2">
+                    ⏰ Agora está fora do horário de repasse ({rescuePreview.janela}). A prévia funciona, mas o envio
+                    de verdade só roda dentro do horário comercial.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={() => { setRescueOpen(false); setRescuePreview(null); }} disabled={rescueRunning}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleRescueConfirm}
+              disabled={rescueRunning || rescueLoading || !rescuePreview || (rescuePreview?.reencaminhados ?? 0) === 0 || !rescuePreview?.dentro_do_horario}
+              className="bg-red-500 hover:bg-red-600 text-white gap-1.5"
+            >
+              {rescueRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              Confirmar e resgatar {rescuePreview ? (rescuePreview.reencaminhados ?? 0) : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Feedbacks List (gerente) ─────────────────────────────────── */}
       {view === 'feedbacks' && (
         <div className="space-y-3">
@@ -4567,6 +4726,22 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 {' '}<span className="text-foreground">não</span> entram na contagem de motivos abaixo (que é só de leads nunca transferidos).
                 Os <span className="text-red-300">"presos"</span> tiveram a transferência expirada e precisam de repasse para outro vendedor.
               </p>
+              {transferidoOrfaoLeads.length > 0 && (
+                <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+                  <Button
+                    size="sm"
+                    onClick={handleRescuePreview}
+                    disabled={rescueLoading || rescueRunning}
+                    className="bg-red-500/90 hover:bg-red-600 text-white gap-1.5 h-8"
+                  >
+                    {rescueLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
+                    Resgatar {transferidoOrfaoLeads.length} lead(s) preso(s)
+                  </Button>
+                  <span className="text-[10px] text-muted-foreground">
+                    Mostra uma prévia antes de enviar. Reencaminha pro próximo vendedor da fila.
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
