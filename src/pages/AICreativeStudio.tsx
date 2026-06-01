@@ -294,13 +294,15 @@ export default function AICreativeStudio() {
         variations
       });
 
-      // Get image provider from settings
-      let imageProvider = 'lovable';
+      // Get image provider from settings.
+      // Lovable e Gemini foram removidos como provedores; só OpenAI DALL-E 3
+      // (chave configurada no backend) é suportado. Configs antigas viram openai.
+      let imageProvider = 'openai';
       try {
         const savedSettings = localStorage.getItem('logosia-ai-settings');
         if (savedSettings) {
           const parsed = JSON.parse(savedSettings);
-          imageProvider = parsed.imageProvider || 'lovable';
+          if (parsed.imageProvider === 'openai') imageProvider = 'openai';
         }
       } catch (e) {
         console.error('Error reading AI settings:', e);

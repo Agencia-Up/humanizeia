@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { CheckCircle, XCircle, Loader2, MessageCircle, ExternalLink, Plug } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, MessageCircle, Plug } from 'lucide-react';
 import { useWhatsAppConfig } from '@/hooks/useWhatsAppConfig';
 import { EvolutionConnectDialog } from '@/components/evolution/EvolutionConnectDialog';
 
@@ -52,9 +52,9 @@ export function WhatsAppSettingsTab() {
                 <MessageCircle className="h-6 w-6 text-green-500" />
               </div>
               <div>
-                <CardTitle className="text-lg">WhatsApp via Evolution API</CardTitle>
+                <CardTitle className="text-lg">WhatsApp Business</CardTitle>
                 <CardDescription>
-                  Envie relatórios de performance direto no WhatsApp
+                  Conecte seu WhatsApp e envie relatórios de performance
                 </CardDescription>
               </div>
             </div>
@@ -169,17 +169,11 @@ export function WhatsAppSettingsTab() {
         <CardContent className="space-y-3 text-sm text-muted-foreground">
           <ol className="list-decimal list-inside space-y-2">
             <li>Clique em <strong>"Conectar via QR Code"</strong></li>
-            <li>Informe a <strong>URL</strong> e <strong>API Key</strong> da sua Evolution API</li>
-            <li>Teste a conexão e crie uma instância</li>
-            <li>Escaneie o <strong>QR Code</strong> no WhatsApp do celular</li>
+            <li>Escolha <strong>"WhatsApp (QR Code)"</strong> e dê um nome para a conexão</li>
+            <li>Clique em <strong>"Gerar QR Code"</strong></li>
+            <li>No celular, abra o WhatsApp → <strong>Aparelhos conectados</strong> e escaneie o QR Code</li>
             <li>Pronto! A conexão será detectada automaticamente</li>
           </ol>
-          <Button variant="link" className="p-0 h-auto" asChild>
-            <a href="https://doc.evolution-api.com" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
-              Ver documentação da Evolution API
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          </Button>
         </CardContent>
       </Card>
 
