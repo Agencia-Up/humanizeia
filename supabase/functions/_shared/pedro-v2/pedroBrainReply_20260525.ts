@@ -113,6 +113,34 @@ function normalizeHistoryRole(role: any): "lead" | "agent" | null {
   return null;
 }
 
+// Remove o primeiro nome do lead usado como VOCATIVO (", Douglas!", "Douglas, ...",
+// " Douglas?") para o agente nao repetir o nome a cada mensagem (soa robotico).
+function stripLeadNameVocatives(text: string, firstName?: string | null): string {
+  const name = String(firstName || "").trim();
+  if (!text || name.length < 2) return text;
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let out = text;
+  out = out.replace(new RegExp(`,\\s*${esc}(?=[\\s!?.,;:]|$)`, "gi"), "");      // ", Douglas!" -> "!"
+  out = out.replace(new RegExp(`(^|[.!?]\\s+)${esc}\\s*,\\s*`, "gi"), "$1");      // "Douglas, ..." inicio -> "..."
+  out = out.replace(new RegExp(`\\s+${esc}(?=\\s*[!?.])`, "gi"), "");             // " Douglas!" -> "!"
+  out = out.replace(/[ \t]{2,}/g, " ").replace(/\s+([!?.,;:])/g, "$1").trim();
+  // Recapitaliza o inicio de frase apos remover o nome vocativo ("Douglas, vamos" -> "Vamos").
+  out = out.replace(/(^|[.!?]\s+)([a-zàáâãéêíóôõúç])/g, (_m, p, c) => p + c.toUpperCase());
+  return out || text;
+}
+
+// Verdadeiro se o agente JA usou o primeiro nome do lead nas ultimas ~3 mensagens
+// (para nao repetir o nome em sequencia).
+function agentUsedNameRecently(recentHistory: any[] | undefined, firstName?: string | null): boolean {
+  const name = String(firstName || "").trim();
+  if (name.length < 2 || !Array.isArray(recentHistory)) return false;
+  const re = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  return recentHistory
+    .filter((t) => normalizeHistoryRole(t?.role || t?.direction) === "agent")
+    .slice(-3)
+    .some((t) => re.test(String(t?.text || t?.content || "")));
+}
+
 function buildChatHistory(turns: any[] | undefined, currentMessage: string) {
   const normalizedCurrent = normalizeText(currentMessage);
   const history = (Array.isArray(turns) ? turns : [])
@@ -560,9 +588,15 @@ export async function generatePedroBrainReply(input: {
       ad_vehicle_consultation: adVehicleConsultation,
     });
     if (!text) return fallback;
+    // Anti-repeticao de nome: se o agente ja usou o primeiro nome do lead nas ultimas
+    // mensagens, remove o vocativo desta resposta (o nome nao aparece em sequencia).
+    const _firstName = leadFirstName(input.memory);
+    const finalText = agentUsedNameRecently(input.recent_history, _firstName)
+      ? stripLeadNameVocatives(text, _firstName)
+      : text;
     return {
       ok: true,
-      text,
+      text: finalText || text,
       source: adVehicleConsultation ? "brain_ad_vehicle_reply" : (facts.length > 0 ? "brain_stock_reply" : "brain_reply"),
       presented_vehicle_indices,
       qualificacao_coletada,
