@@ -4,8 +4,9 @@
  * Regras confirmadas pelo master (Wander, 01/06/2026):
  *  1. Dispara SO na coluna "Lead Inativo" (status_crm='inativo'), automatico.
  *  2. Pelo NUMERO DA IA do master (instancia do agente do lead).
- *  3. Mensagem GERADA pelo Claude (personalizada por lead) — ou template base
- *     literal quando gerar_variacoes_ia=false.
+ *  3. Mensagem GERADA pela IA OpenAI (mesmo provider do agente Pedro, gpt-4o),
+ *     personalizada por lead — ou template base literal quando
+ *     gerar_variacoes_ia=false.
  *  4. Quantidade/dia = max_disparos_dia (config do painel).
  *  5. FILA em rodizio (RPC get_next_reactivation_lead): so repete num lead
  *     depois que todos da fila receberam a 1a msg.
@@ -17,7 +18,7 @@
  *
  * SEGURANCA / TESTE:
  *  - body.dry_run=true   -> faz tudo MENOS enviar/gravar. Retorna o que FARIA
- *                           (inclusive a mensagem gerada pelo Claude). Ignora
+ *                           (inclusive a mensagem gerada pela IA OpenAI). Ignora
  *                           horario/dias/intervalo/cap pra permitir preview.
  *  - body.only_user_id   -> restringe a 1 master (teste).
  *  - body.only_lead_id   -> dispara num lead especifico (teste real controlado),
@@ -37,10 +38,9 @@ const cors = {
 
 const HARD_MIN_GAP_MINUTES = 3; // PISO ABSOLUTO — ninguem reduz isso.
 
-const CLAUDE_MODEL_CANDIDATES = [
-  "claude-3-5-sonnet-20241022",
-  "claude-3-5-haiku-20241022",
-];
+// Modelo OpenAI — MESMO provider do agente Pedro (gpt-4o por padrao).
+// Pode ser sobrescrito pela secret OPENAI_MODEL, se o master quiser.
+const OPENAI_MODEL_DEFAULT = "gpt-4o";
 
 // ── Helpers de fuso (Brasilia = UTC-3) ──────────────────────────────────────
 function toBrasilia(d: Date): Date {
@@ -103,7 +103,7 @@ async function sendUazapiTextMessage(
   return false;
 }
 
-// ── Geracao da mensagem de reativacao com Claude ────────────────────────────
+// ── Geracao da mensagem de reativacao com IA OpenAI (gpt-4o) ────────────────
 function applyTemplateVars(tpl: string, leadName: string, carro: string): string {
   return (tpl || "")
     .replace(/\{nome\}/gi, leadName || "")
@@ -142,38 +142,37 @@ ${transcript || "(sem historico registrado)"}
 
 Escreva agora SOMENTE a mensagem de reativacao (sem aspas, sem prefixo).`;
 
-  for (const model of CLAUDE_MODEL_CANDIDATES) {
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 300,
-          temperature: 0.7,
-          system: systemPrompt,
-          messages: [{ role: "user", content: userMsg }],
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.text();
-        if (res.status === 404 || err.includes("model")) continue;
-        console.error(`[auto-followup] Claude erro ${res.status}: ${err}`);
-        return null;
-      }
-      const data = await res.json();
-      const text = data?.content?.[0]?.text || "";
-      return String(text).trim() || null;
-    } catch (err) {
-      console.error(`[auto-followup] Claude excecao (${model}):`, err);
-      continue;
+  // Mesma API do agente Pedro: OpenAI chat/completions.
+  const model = Deno.env.get("OPENAI_MODEL") || OPENAI_MODEL_DEFAULT;
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 300,
+        temperature: 0.7,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMsg },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`[auto-followup] OpenAI erro ${res.status}: ${err}`);
+      return null;
     }
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content || "";
+    return String(text).trim() || null;
+  } catch (err) {
+    console.error("[auto-followup] OpenAI excecao:", err);
+    return null;
   }
-  return null;
 }
 
 // ── Resolve a instancia da IA do master (a partir do agente do lead) ─────────
@@ -205,7 +204,7 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
   );
-  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
+  const openaiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
 
   // ── Parse opcoes (todas opcionais) ────────────────────────────────────────
   let body: any = {};
@@ -381,7 +380,7 @@ serve(async (req) => {
         const wantsIA = cfg.gerar_variacoes_ia !== false;
         if (wantsIA) {
           message = await generateReactivationMessage({
-            apiKey: anthropicKey,
+            apiKey: openaiKey,
             leadName: lead.lead_name || "",
             mensagemBase: cfg.mensagem_base || "",
             transcript,
