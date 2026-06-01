@@ -953,7 +953,11 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const handleOpenTvMode = useCallback(async () => {
     setTvMode(true);
     try {
-      await (containerRef.current || document.documentElement).requestFullscreen?.();
+      // Fullscreen the whole document (not an inner div): a position:fixed
+      // overlay nested inside a non-root fullscreen element gets clipped and
+      // refuses to scroll in Chrome. Fullscreening documentElement keeps the
+      // overlay anchored to the real viewport so it scrolls like a normal page.
+      await document.documentElement.requestFullscreen?.();
     } catch {
       // Browsers may deny fullscreen; the fixed TV layer still opens.
     }
