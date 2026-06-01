@@ -480,6 +480,31 @@ function pickVehicleByMessageAttributes(message: string, vehicles: any[]) {
   return null;
 }
 
+// Casa o veiculo pelo NOME (marca/modelo) citado na mensagem (ex: "fotos do
+// renegade" -> o Jeep Renegade do pool). Sem isso, "fotos do <modelo>" caia no
+// default index 0 e mandava as fotos do PRIMEIRO carro da lista (carro errado).
+function pickVehicleByModelName(message: string, vehicles: any[]) {
+  const normalized = normalizePhotoText(message);
+  if (!normalized) return null;
+  const ranked = vehicles
+    .map((vehicle, index) => {
+      const tokens = Array.from(new Set(
+        normalizePhotoText([vehicle?.marca, vehicle?.modelo].filter(Boolean).join(" "))
+          .split(/\s+/)
+          .filter((token) => token.length >= 3),
+      ));
+      let score = 0;
+      for (const token of tokens) {
+        if (new RegExp(`\\b${token}\\b`).test(normalized)) score += token.length >= 4 ? 4 : 2;
+      }
+      return { vehicle, index, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score);
+  if (ranked.length === 0) return null;
+  return { index: ranked[0].index, reason: "model_name_match", key: vehicleKey(ranked[0].vehicle) };
+}
+
 function pickReferencedVehicle(message: string, memory: any, vehicles: any[]) {
   const explicitIndex = explicitVehicleOrdinal(message);
   if (explicitIndex !== null) {
@@ -490,6 +515,13 @@ function pickReferencedVehicle(message: string, memory: any, vehicles: any[]) {
   const attributeMatch = pickVehicleByMessageAttributes(message, vehicles);
   if (attributeMatch) {
     return { ...attributeMatch, explicit: true };
+  }
+
+  // Nome do modelo/marca citado vence a continuidade/memoria (mensagem atual
+  // sempre ganha do contexto antigo). So cai na memoria se nada for citado.
+  const modelMatch = pickVehicleByModelName(message, vehicles);
+  if (modelMatch) {
+    return { ...modelMatch, explicit: true };
   }
 
   const lastKey = memory?.ultima_foto?.veiculo_key || memory?.referencia?.ultimo_veiculo_key || null;
