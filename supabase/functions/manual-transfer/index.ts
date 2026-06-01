@@ -54,6 +54,31 @@ async function sendWAMessage(instance: any, phone: string, text: string) {
   throw new Error(`Falha ao enviar WhatsApp para ${dest}`);
 }
 
+/** Resolve o nome de quem disparou a transferencia manual.
+ *  Ordem: profiles.full_name (master/gerente) -> ai_team_members.name
+ *  (vendedor com login proprio) -> email -> "Operador". */
+async function resolveOperatorName(supabase: any, userId: string, email?: string | null): Promise<string> {
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", userId)
+    .maybeSingle();
+  if (prof?.full_name && String(prof.full_name).trim()) return String(prof.full_name).trim();
+
+  const { data: member } = await supabase
+    .from("ai_team_members")
+    .select("name")
+    .eq("auth_user_id", userId)
+    .order("is_active", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (member?.name && String(member.name).trim()) return String(member.name).trim();
+
+  if (email && String(email).trim()) return String(email).trim();
+  return "Operador";
+}
+
 async function resolveEffectiveUserId(supabase: any, userId: string) {
   const { data: profileData } = await supabase
     .from("profiles")
@@ -203,9 +228,10 @@ async function handleMarcosTransfer(
     crmLeadId: string;
     memberId: string;
     notes?: string;
+    operatorName?: string;
   },
 ): Promise<Response> {
-  const { crmLeadId, memberId, notes } = body;
+  const { crmLeadId, memberId, notes, operatorName } = body;
 
   // 1. Buscar lead Marcos
   const { data: lead, error: leadErr } = await supabase
@@ -321,7 +347,7 @@ async function handleMarcosTransfer(
   const sellerMsg = `🚨 *TRANSFERÊNCIA DE LEAD MARCOS*
 
 ${briefing}
-${notes ? `\n💬 *Observação do master:* ${notes}\n` : ""}
+${operatorName ? `\n🖱️ *Transferido por:* ${operatorName}\n` : ""}${notes ? `\n💬 *Observação do master:* ${notes}\n` : ""}
 ⚡ O cliente está aguardando seu contato!`;
 
   await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
@@ -344,6 +370,7 @@ ${notes ? `\n💬 *Observação do master:* ${notes}\n` : ""}
       sellerPhone: member.whatsapp_number,
       origin: "manual",
       source: "marcos",
+      transferredBy: operatorName || null,
     });
     try {
       await sendWAMessage(instance, gerentePhone, managerReport);
@@ -425,6 +452,10 @@ Deno.serve(async (req) => {
     }
     const userId = userData.user.id;
 
+    // Quem clicou no botao de transferencia manual (operador/gerente/vendedor).
+    // Vai nas mensagens do vendedor e do gerente, e fica gravado em ai_lead_transfers.
+    const operatorName = await resolveOperatorName(supabase, userId, userData.user.email);
+
     // Resolve o dono real dos dados. Alguns vendedores existem como login separado
     // em ai_team_members, mesmo quando o profile antigo nao esta completo.
     const effectiveUserId = await resolveEffectiveUserId(supabase, userId);
@@ -435,7 +466,7 @@ Deno.serve(async (req) => {
     // Quando o frontend Marcos chama esta edge function, passa crmLeadId em
     // vez de leadId. Mesma função, fluxo separado pra não bagunçar Pedro.
     if (crmLeadId && memberId) {
-      return await handleMarcosTransfer(supabase, { crmLeadId, memberId, notes });
+      return await handleMarcosTransfer(supabase, { crmLeadId, memberId, notes, operatorName });
     }
 
     if (!leadId || !memberId) {
@@ -704,6 +735,7 @@ Deno.serve(async (req) => {
 🤖 *Agente IA:* ${agentName}
 🕐 *Horário:* ${transferredAt}
 📊 *Status:* ${lead.status || "qualificado"}
+🖱️ *Transferido por:* ${operatorName}
 
 ━━━━━━━━━━━━━━━━━━━━
 📝 *Feedback da conversa:*
@@ -733,6 +765,7 @@ ${lead.summary ? `\n📝 *Resumo:* ${lead.summary.substring(0, 300)}` : ""}
 
 🎯 *Enviado para:* ${member.name}
 📲 *WhatsApp vendedor:* ${member.whatsapp_number}
+🖱️ *Transferido por:* ${operatorName} _(transferência manual)_
 ${notes ? `\n💬 *Observação:* ${notes}` : ""}
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -757,7 +790,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
     }).eq("id", lead.id);
 
     // 8. Record transfer (dedup já validado lá em cima antes do envio)
-    await supabase.from("ai_lead_transfers").insert({
+    const transferRow: Record<string, any> = {
       user_id: ownerUserId,
       lead_id: lead.id,
       from_member_id: lead.assigned_to_id,
@@ -767,7 +800,16 @@ _Gerado automaticamente pelo Pedro SDR_`;
       is_confirmed: false,
       transfer_status: "pending",
       confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    });
+      triggered_by_user_id: userId,
+      triggered_by_name: operatorName,
+    };
+    const { error: transferInsErr } = await supabase.from("ai_lead_transfers").insert(transferRow);
+    if (transferInsErr && /triggered_by/i.test(transferInsErr.message || "")) {
+      // Colunas triggered_by_* ainda nao aplicadas neste ambiente — grava sem elas.
+      delete transferRow.triggered_by_user_id;
+      delete transferRow.triggered_by_name;
+      await supabase.from("ai_lead_transfers").insert(transferRow);
+    }
 
     // 9. Update member stats
     await supabase.from("ai_team_members").update({

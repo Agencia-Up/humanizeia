@@ -246,6 +246,7 @@ export interface ManagerReportInput {
   sellerPhone?: string | null;
   origin?: string | null; // 'manual', 'automatica', 'bulk', 'timeout-escalonado', etc.
   source?: 'pedro' | 'marcos';
+  transferredBy?: string | null; // nome do operador que disparou a transferencia manual
 }
 
 /**
@@ -272,6 +273,7 @@ export function buildManagerReport(input: ManagerReportInput): string {
   lines.push('');
   lines.push(`🧑‍💼 *Vendedor atribuído:* ${input.sellerName || 'N/D'}`);
   if (input.sellerPhone) lines.push(`📞 *WhatsApp do vendedor:* ${input.sellerPhone}`);
+  if (input.transferredBy) lines.push(`🖱️ *Transferido por:* ${input.transferredBy} _(manual)_`);
   if (input.source === 'marcos') {
     lines.push('');
     lines.push(`_Origem: CRM Marcos (manual)_`);
