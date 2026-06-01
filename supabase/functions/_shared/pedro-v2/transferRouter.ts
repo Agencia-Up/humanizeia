@@ -160,6 +160,7 @@ export async function executePedroV2Handoff(
     lead_name?: string | null;
     reason?: string | null;
     qualificacao?: Record<string, any> | null;
+    seller_response_min?: number | null;
   },
 ): Promise<{ ok: boolean; seller: any; briefing: string; reason: string }> {
   // 1) Precisa ter vendedor disponivel ANTES de mexer no status (senao o lead
@@ -241,7 +242,7 @@ export async function executePedroV2Handoff(
     notes: briefing,
     transfer_status: "pending",
     is_confirmed: false,
-    confirmation_timeout_at: new Date(Date.now() + 15 * 60000).toISOString(),
+    confirmation_timeout_at: new Date(Date.now() + (Number(input.seller_response_min) > 0 ? Number(input.seller_response_min) : 10) * 60000).toISOString(),
   });
   await supabase.from("ai_crm_leads").update({ summary: briefing }).eq("id", input.lead_id);
   await supabase.from("ai_team_members").update({ last_lead_received_at: nowIso }).eq("id", choice.seller.id);

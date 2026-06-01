@@ -1,3 +1,5 @@
+import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
+
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
   const restBase = `${url}/rest/v1`;
@@ -416,22 +418,33 @@ Deno.serve(async (req) => {
 
         // Fetch agent info for instance_ids
         let instanceIds: string[] = [];
+        let agentRulesRaw: any = null;
         if (lead.agent_id) {
           const { data: agent } = await supabase
             .from('wa_ai_agents')
-            .select('id,name,instance_ids')
+            .select('id,name,instance_ids,automation_rules')
             .eq('id', lead.agent_id)
             .maybeSingle();
           if (agent?.instance_ids) {
             instanceIds = agent.instance_ids;
           }
+          agentRulesRaw = agent?.automation_rules ?? null;
+        }
+        const aRules = resolveAutomationRules(agentRulesRaw);
+        // Transferencia desligada pelo gerente -> nao escala (marca expirado e segue).
+        if (!aRules.transfer.enabled) {
+          await supabase.from('ai_lead_transfers').update({ transfer_status: 'expired' }).eq('id', transfer.id);
+          continue;
         }
 
         // ── Regra de horário: só repassa se o transfer foi CRIADO dentro da
         //    janela operacional. Leads que chegaram durante a noite ficam com
         //    o vendedor — não são repassados retroativamente. ──────
         const transferCreatedAt = new Date(transfer.created_at || now);
-        if (!isWithinRepassWindow(transferCreatedAt)) {
+        if (aRules.transfer.window) {
+          // Janela configurada por agente: so repassa se AGORA estiver dentro dela.
+          if (isWithinConfiguredWindow(aRules.transfer.window, new Date()) === false) continue;
+        } else if (!isWithinRepassWindow(transferCreatedAt)) {
           console.log(`[Timeout] Transfer ${transfer.id} criado fora do horário de repasse (${transferCreatedAt.toISOString()}). Auto-confirmando — lead fica com vendedor atual.`);
           await supabase.from('ai_lead_transfers')
             .update({ transfer_status: 'confirmed', is_confirmed: true })

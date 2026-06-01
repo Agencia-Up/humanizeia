@@ -206,6 +206,19 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [sdrGoal, setSdrGoal] = useState('');
   const [qualificationStr, setQualificationStr] = useState('');
 
+  // ── Regras de automacao (Pedro v2): follow-up + transferencia ──
+  // NULL no banco = comportamento legado (5/8/12, transfere, 10min, janela fixa).
+  const [ruFollowupEnabled, setRuFollowupEnabled] = useState(true);
+  const [ruT1, setRuT1] = useState(5);
+  const [ruT2, setRuT2] = useState(8);
+  const [ruT3, setRuT3] = useState(12);
+  const [ruT3Transfers, setRuT3Transfers] = useState(true);
+  const [ruTransferEnabled, setRuTransferEnabled] = useState(true);
+  const [ruSellerRespMin, setRuSellerRespMin] = useState(10);
+  const [ruWindowCustom, setRuWindowCustom] = useState(false);
+  const [ruWindowStart, setRuWindowStart] = useState('10:11');
+  const [ruWindowEnd, setRuWindowEnd] = useState('19:29');
+
   // QR Code states
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
@@ -577,6 +590,20 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setN8nWebhookUrl(agent.n8n_webhook_url || '');
       setSdrGoal(agent.sdr_goal || '');
       setQualificationStr((agent.qualification_questions || []).join('\n'));
+      // Regras de automacao (default = comportamento legado se nao houver nada salvo)
+      const ar: any = (agent as any).automation_rules || {};
+      const arF: any = ar.followup || {}; const arT: any = ar.transfer || {};
+      setRuFollowupEnabled(arF.enabled !== false);
+      setRuT1(Number(arF.t1_min) > 0 ? Number(arF.t1_min) : 5);
+      setRuT2(Number(arF.t2_min) > 0 ? Number(arF.t2_min) : 8);
+      setRuT3(Number(arF.t3_min) > 0 ? Number(arF.t3_min) : 12);
+      setRuT3Transfers(arF.t3_transfers !== false);
+      setRuTransferEnabled(arT.enabled !== false);
+      setRuSellerRespMin(Number(arT.seller_response_min) > 0 ? Number(arT.seller_response_min) : 10);
+      const arW: any = arT.window;
+      setRuWindowCustom(!!arW);
+      setRuWindowStart(arW?.start || '10:11');
+      setRuWindowEnd(arW?.end || '19:29');
     } else {
       setName('Agente IA');
       setAgentType('generic');
@@ -598,6 +625,9 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setN8nWebhookUrl('');
       setSdrGoal('');
       setQualificationStr('');
+      setRuFollowupEnabled(true); setRuT1(5); setRuT2(8); setRuT3(12); setRuT3Transfers(true);
+      setRuTransferEnabled(true); setRuSellerRespMin(10);
+      setRuWindowCustom(false); setRuWindowStart('10:11'); setRuWindowEnd('19:29');
       setQrCode(null);
       setIsInstanceConnected(false);
       stopPolling();
@@ -638,6 +668,19 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     n8n_webhook_url: n8nWebhookUrl,
     sdr_goal: sdrGoal,
     qualification_questions: qualificationStr.split('\n').map(q => q.trim()).filter(Boolean),
+    automation_rules: (() => {
+      const t1 = Math.max(1, Math.round(Number(ruT1)) || 5);
+      const t2 = Math.max(t1 + 1, Math.round(Number(ruT2)) || 8);
+      const t3 = Math.max(t2 + 1, Math.round(Number(ruT3)) || 12);
+      return {
+        followup: { enabled: ruFollowupEnabled, t1_min: t1, t2_min: t2, t3_min: t3, t3_transfers: ruT3Transfers },
+        transfer: {
+          enabled: ruTransferEnabled,
+          seller_response_min: Math.max(1, Math.round(Number(ruSellerRespMin)) || 10),
+          window: ruWindowCustom ? { enabled: true, start: ruWindowStart, end: ruWindowEnd } : null,
+        },
+      };
+    })(),
     updated_at: new Date().toISOString(),
   });
 
@@ -762,6 +805,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   { v: 'settings',     label: 'Modelo',      Icon: Settings2,   activeCls: 'bg-primary/10 text-primary border-primary/20' },
                   { v: 'knowledge',    label: 'Base',        Icon: BookOpen,    activeCls: 'bg-purple-500/10 text-purple-500 border-purple-500/20' },
                   { v: 'equipe',       label: 'Vendedores',  Icon: UserCheck,   activeCls: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
+                  { v: 'rules',        label: 'Regras',      Icon: Clock,       activeCls: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
                   { v: 'integrations', label: 'n8n',         Icon: Webhook,     activeCls: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
                 ].map(({ v, label, Icon, activeCls }) => {
                   const isActive = activeTab === v;
@@ -788,6 +832,64 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
             {/* ── Tab: Vendedores (Repasse) ── */}
             {activeTab === 'equipe' && <div className="space-y-6 mt-0">
                <AgentCrmEquipeTab agentId={agent?.id || null} userId={effectiveUserId || ''} />
+            </div>}
+
+            {/* ── Tab: Regras (follow-up + transferencia) ── */}
+            {activeTab === 'rules' && <div className="space-y-6 mt-0">
+              <p className="text-xs text-muted-foreground">
+                Controle os follow-ups automáticos e o repasse de leads para os vendedores. Vale para este agente.
+              </p>
+
+              {/* Follow-up */}
+              <div className="rounded-lg border p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold flex items-center gap-2"><Clock className="h-4 w-4" /> Follow-up automático</h3>
+                    <p className="text-xs text-muted-foreground">Mensagens quando o cliente para de responder.</p>
+                  </div>
+                  <Switch checked={ruFollowupEnabled} onCheckedChange={setRuFollowupEnabled} />
+                </div>
+                {ruFollowupEnabled && <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div><Label className="text-xs">1º (min)</Label><Input type="number" min={1} value={ruT1} onChange={e => setRuT1(Number(e.target.value))} /></div>
+                    <div><Label className="text-xs">2º (min)</Label><Input type="number" min={1} value={ruT2} onChange={e => setRuT2(Number(e.target.value))} /></div>
+                    <div><Label className="text-xs">3º (min)</Label><Input type="number" min={1} value={ruT3} onChange={e => setRuT3(Number(e.target.value))} /></div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">Contados desde a última resposta do agente. Devem ser crescentes (1º &lt; 2º &lt; 3º) — ajusto automaticamente se não forem.</p>
+                  <div className="flex items-center justify-between pt-1">
+                    <Label className="text-sm">No 3º follow-up, transferir para um vendedor</Label>
+                    <Switch checked={ruT3Transfers} onCheckedChange={setRuT3Transfers} disabled={!ruTransferEnabled} />
+                  </div>
+                  {!ruTransferEnabled && <p className="text-[11px] text-amber-500">Transferência desativada abaixo — o 3º follow-up só manda a despedida, sem transferir.</p>}
+                  {ruT3Transfers && ruTransferEnabled && <p className="text-[11px] text-muted-foreground">No 3º tempo o agente se despede e transfere o lead. Se desligar, ele só se despede.</p>}
+                </div>}
+              </div>
+
+              {/* Transferência */}
+              <div className="rounded-lg border p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold flex items-center gap-2"><UserCheck className="h-4 w-4" /> Transferência para vendedor</h3>
+                    <p className="text-xs text-muted-foreground">Repasse automático e rodízio na fila.</p>
+                  </div>
+                  <Switch checked={ruTransferEnabled} onCheckedChange={setRuTransferEnabled} />
+                </div>
+                {ruTransferEnabled ? <div className="space-y-3">
+                  <div>
+                    <Label className="text-xs">Tempo de resposta do vendedor (min)</Label>
+                    <Input type="number" min={1} value={ruSellerRespMin} onChange={e => setRuSellerRespMin(Number(e.target.value))} />
+                    <p className="text-[11px] text-muted-foreground mt-1">Tempo que cada vendedor da fila tem para responder "Ok" antes do lead passar para o próximo.</p>
+                  </div>
+                  <div className="flex items-center justify-between pt-1">
+                    <Label className="text-sm">Horário de repasse personalizado</Label>
+                    <Switch checked={ruWindowCustom} onCheckedChange={setRuWindowCustom} />
+                  </div>
+                  {ruWindowCustom ? <div className="grid grid-cols-2 gap-3">
+                    <div><Label className="text-xs">Início</Label><Input type="time" value={ruWindowStart} onChange={e => setRuWindowStart(e.target.value)} /></div>
+                    <div><Label className="text-xs">Fim</Label><Input type="time" value={ruWindowEnd} onChange={e => setRuWindowEnd(e.target.value)} /></div>
+                  </div> : <p className="text-[11px] text-muted-foreground">Usando o horário padrão do sistema. Ative para definir um horário próprio (dentro do horário comercial).</p>}
+                </div> : <p className="text-[11px] text-muted-foreground">Com a transferência desligada, o agente atende sozinho: não repassa por qualificação, nem por inatividade, nem faz rodízio. A transferência manual no portal continua disponível.</p>}
+              </div>
             </div>}
 
             {/* ── Tab: General ── */}

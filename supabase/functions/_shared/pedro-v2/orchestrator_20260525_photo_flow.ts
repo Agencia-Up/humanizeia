@@ -3,6 +3,7 @@ import { identifyPedroContact } from "./contactIdentity.ts";
 import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
+import { resolveAutomationRules } from "../automation/rules.ts";
 import { remoteJidToPhone } from "./phone.ts";
 import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
@@ -1378,7 +1379,10 @@ export async function processPedroV2Turn(
   // vendedor para follow-up futuro, SEM anunciar ao lead (a msg do cerebro ja e uma
   // despedida gentil, sem dizer que vai transferir). NUNCA encerramos sem encaminhar.
   const silentTransfer = reply?.transferir_silencioso === true && _hasNome && !brainReadyToTransfer && !contextualIntent.needs_handoff;
-  if (!dryRun && lead?.id && (contextualIntent.needs_handoff || brainReadyToTransfer || silentTransfer) && identity.kind !== "seller") {
+  // Transferencia automatica (qualificacao/silenciosa) respeita a regra do agente:
+  // se o gerente desligou a transferencia, o agente NAO repassa (atende sozinho).
+  const _automationRules = resolveAutomationRules(input.agent?.automation_rules);
+  if (!dryRun && lead?.id && _automationRules.transfer.enabled && (contextualIntent.needs_handoff || brainReadyToTransfer || silentTransfer) && identity.kind !== "seller") {
     try {
       handoffResult = await executePedroV2Handoff(supabase, {
         user_id: input.agent.user_id,
@@ -1388,6 +1392,7 @@ export async function processPedroV2Turn(
         lead_name: _q.nome || lead.lead_name || pushName || null,
         reason: contextualIntent.needs_handoff ? `handoff:${brainPlan?.intent || contextualIntent.intent || "humano"}` : (silentTransfer ? "handoff:desqualificado_silencioso_followup" : "handoff:qualificado_pronto"),
         qualificacao: _q,
+        seller_response_min: _automationRules.transfer.seller_response_min,
       });
       if (handoffResult?.ok && handoffResult.seller?.whatsapp_number && isPedroV2SendingEnabled()) {
         const handoffInstance = input.wa_instance || await resolvePedroInstance(supabase, {
