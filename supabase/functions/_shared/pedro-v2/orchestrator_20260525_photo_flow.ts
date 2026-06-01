@@ -844,7 +844,12 @@ async function savePhotoReference(supabase: any, input: {
 }
 
 // ── DEBOUNCE / agrupamento de mensagens em rajada (ponto 3) ───────────────────
-const PEDRO_V2_DEBOUNCE_MS = 7000;
+// Janela de agrupamento (debounce). Subiu de 7s -> 10s para batelar melhor as
+// RAJADAS de leads de anuncio (CTWA): a mensagem do anuncio (Meta) costuma chegar
+// "solta", alguns segundos depois do texto do lead; com 7s ela escapava e disparava
+// um 2o turno (agente respondia 2x / se reapresentava / pedia o modelo que o anuncio
+// ja trazia). 10s unifica o bloco -> 1 turno com o veiculo do anuncio resolvido.
+const PEDRO_V2_DEBOUNCE_MS = 10000;
 
 function sleepMs(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
