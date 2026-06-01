@@ -90,6 +90,7 @@
   - Aviso de dynamic import em `dynamicFields`.
 - Existem arquivos sensiveis RASTREADOS no Git (`.env`, `secrets.txt`) e um doc local com credenciais (`pedro_v2_architecture_and_credentials.md`); nao copiar valores para documentacao. Ver item de SEGREDOS VAZADOS em "Alta prioridade".
 - Ha diretorios temporarios/untracked (`.tmp-edge-mockup/`, `docs/mockups/`) que nao devem ser incluidos em commits sem decisao explicita.
+- UAZAPI — queda transitoria da sessao ("host not mapped"): em 2026-06-01 um "Bom dia" ficou em "digitando" sem responder. Log real (`pedro_v2_turn_logs`) mostrou cerebro OK (`reply_source: brain_reply`) e falha SO no envio (`send_result.error: message-sendText: HTTP 404 host not mapped`). O `GET /instance/status` da instancia voltou `connected:true` minutos depois -> foi um blip do Uazapi (instancia nao mapeada a uma sessao ativa naquele instante; "online" do WhatsApp nao garante a ponte). MITIGADO (build `2026-06-01-send-retry-v14`): `sendPedroTextOnce` agora re-tenta os 3 endpoints em ate 3 rodadas com backoff (1.2s/2.0s) e `try/catch` por tentativa; so re-tenta com `res.ok=false` (nao duplica). NAO resolve a raiz (reconexao da instancia e do lado do provedor) — se as quedas forem frequentes, investigar a estabilidade da instancia no painel Uazapi. Observabilidade futura: alertar quando `send_result.ok=false` persistir apos os retries.
 - Historico recente teve problemas de:
   - login/Supabase timeout;
   - Uazapi/cota/pagamento;
