@@ -3761,63 +3761,46 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       toast({ title: 'Nenhum lead selecionado', variant: 'destructive' });
       return;
     }
-    if (isMarcosCrm) {
-      // Marcos: salva payload RICO (id, name, phone, origem) pra tela de disparo
-      // criar lista automaticamente — bug 28/05/2026: antes so passava phones
-      // e usuario tinha que copiar/colar manualmente. Agora vira "Lista
-      // importada do CRM do Marcos" na tela de broadcast.
-      const contacts = selected
-        .map(l => {
-          const phone = (l.remote_jid || '').replace(/@.*/, '').replace(/\D/g, '');
-          if (!phone) return null;
-          const origemSlug = (l.source || '').toString();
-          const origemLabel = MARCOS_ORIGEM_OPTIONS.find(o => o.value === origemSlug)?.label || origemSlug || 'manual';
-          return {
-            id: l.id,
-            name: l.lead_name || phone,
-            phone,
-            origem: origemLabel,
-          };
-        })
-        .filter(Boolean) as Array<{ id: string; name: string; phone: string; origem: string }>;
-      if (contacts.length === 0) {
-        toast({ title: 'Nenhum telefone valido nos leads selecionados', variant: 'destructive' });
-        return;
-      }
-      try {
-        sessionStorage.setItem('marcos_campaign_contacts', JSON.stringify({
-          contacts,
-          label: `CRM Marcos — ${contacts.length} lead(s) selecionado(s)`,
-          source: 'marcos_selecionados',
-          created_at: new Date().toISOString(),
-        }));
-        sessionStorage.removeItem('pedro_campaign_phones'); // evita banner Pedro aparecer junto
-      } catch {
-        // sessionStorage pode falhar em modo privacy — ignora, segue redirect
-      }
-      toast({
-        title: `📢 ${contacts.length} contato(s) pre-carregado(s) do Marcos`,
-        description: 'Indo pro disparo em massa...',
-      });
-      setTimeout(() => { window.location.href = '/whatsapp/broadcast'; }, 600);
+    // Unificado 01/06/2026: Pedro E Marcos mandam o MESMO payload RICO
+    // (id, name, phone, origem) pra tela de disparo CRIAR/SALVAR a lista.
+    // Antes o Pedro so passava telefones (banner copy/paste) e nao deixava
+    // criar lista — agora segue o mesmo caminho do Marcos.
+    const agent: 'pedro' | 'marcos' = isMarcosCrm ? 'marcos' : 'pedro';
+    const agentName = isMarcosCrm ? 'Marcos' : 'Pedro';
+    const contacts = selected
+      .map(l => {
+        const phone = (l.remote_jid || '').replace(/@.*/, '').replace(/\D/g, '');
+        if (!phone) return null;
+        // Origem: Marcos usa crm_leads.source; Pedro usa crm_leads.origem.
+        const origemLabel = isMarcosCrm
+          ? (MARCOS_ORIGEM_OPTIONS.find(o => o.value === (l.source || '').toString())?.label || (l.source || '').toString() || 'manual')
+          : (leadOrigemLabel((l as any).origem) || 'manual');
+        return {
+          id: l.id,
+          name: l.lead_name || phone,
+          phone,
+          origem: origemLabel,
+        };
+      })
+      .filter(Boolean) as Array<{ id: string; name: string; phone: string; origem: string }>;
+    if (contacts.length === 0) {
+      toast({ title: 'Nenhum telefone valido nos leads selecionados', variant: 'destructive' });
       return;
     }
-    // Pedro: comportamento legado mantido (so phones via banner copy/paste)
-    const phones = selected
-      .map(l => l.remote_jid?.replace(/@.*/, '').replace(/\D/g, ''))
-      .filter(Boolean) as string[];
     try {
-      sessionStorage.setItem('pedro_campaign_phones', JSON.stringify({
-        phones,
-        label: `CRM Pedro — ${selected.length} lead(s) selecionado(s)`,
-        source: 'pedro_selecionados',
+      sessionStorage.setItem('marcos_campaign_contacts', JSON.stringify({
+        contacts,
+        agent,
+        label: `CRM ${agentName} — ${contacts.length} lead(s) selecionado(s)`,
+        source: `${agent}_selecionados`,
         created_at: new Date().toISOString(),
       }));
+      sessionStorage.removeItem('pedro_campaign_phones'); // limpa banner legado
     } catch {
       // sessionStorage pode falhar em modo privacy — ignora, segue redirect
     }
     toast({
-      title: `📢 ${selected.length} contato(s) pré-carregado(s)`,
+      title: `📢 ${contacts.length} contato(s) pre-carregado(s) do ${agentName}`,
       description: 'Indo pro disparo em massa...',
     });
     setTimeout(() => { window.location.href = '/whatsapp/broadcast'; }, 600);
@@ -3960,11 +3943,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                   <button onClick={exitSelectionMode} className="text-orange-400 hover:text-orange-300 ml-1" title="Sair"><X className="h-3 w-3" /></button>
                 </div>
               )}
-              {/* Botao Disparar: master sempre pode; seller pode quando esta
-                  no Marcos CRM (caso de uso: vendedor seleciona leads dele
-                  pra campanha). No Pedro CRM, seller continua sem o botao
-                  (campanhas Pedro sao gerenciadas pelo master). */}
-              {selectionMode && selectedLeadIds.size > 0 && (!isSeller || isMarcosCrm) && (
+              {/* Botao Disparar: master E seller podem em AMBOS os CRMs
+                  (Pedro e Marcos). Atualizado 01/06/2026 — antes o seller
+                  nao tinha o botao no Pedro; agora segue o mesmo caminho do
+                  Marcos (seleciona leads -> cria/salva lista -> dispara). */}
+              {selectionMode && selectedLeadIds.size > 0 && (
                 <Button
                   size="sm"
                   onClick={handleDispararCampanha}

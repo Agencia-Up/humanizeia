@@ -99,7 +99,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   // Bug 28/05/2026: lista RICA vinda do CRM Marcos com name+phone+origem +
   // checkbox individual pra remover antes de criar a campanha.
   type MarcosContact = { id: string; name: string; phone: string; origem: string };
-  const [prefilledMarcos, setPrefilledMarcos] = useState<{ contacts: MarcosContact[]; label: string } | null>(null);
+  const [prefilledMarcos, setPrefilledMarcos] = useState<{ contacts: MarcosContact[]; label: string; agent: 'pedro' | 'marcos' } | null>(null);
   // IDs dos contatos Marcos que o usuario removeu manualmente da lista importada
   const [marcosRemoved, setMarcosRemoved] = useState<Set<string>>(new Set());
   const [creatingMarcosList, setCreatingMarcosList] = useState(false);
@@ -112,7 +112,8 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       if (rawMarcos) {
         const data = JSON.parse(rawMarcos);
         if (Array.isArray(data?.contacts) && data.contacts.length > 0) {
-          setPrefilledMarcos({ contacts: data.contacts, label: data.label || 'Lista do CRM Marcos' });
+          const agent: 'pedro' | 'marcos' = data.agent === 'pedro' ? 'pedro' : 'marcos';
+          setPrefilledMarcos({ contacts: data.contacts, label: data.label || `Lista do CRM ${agent === 'pedro' ? 'Pedro' : 'Marcos'}`, agent });
         }
         sessionStorage.removeItem('marcos_campaign_contacts');
         return; // se veio do Marcos, ignora banner Pedro pra nao confundir
@@ -145,7 +146,9 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // Spec 28/05/2026: usa nome digitado pelo vendedor se preencheu;
       // senao gera default "Marcos CRM dd/mm/yyyy hh:mm" pra ter sempre algo.
       const customName = marcosListNameInput.trim();
-      const listName = customName || `Marcos CRM ${ts.toLocaleDateString('pt-BR')} ${ts.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+      const agentLabel = prefilledMarcos.agent === 'pedro' ? 'Pedro' : 'Marcos';
+      const agentSource = prefilledMarcos.agent === 'pedro' ? 'pedro_crm' : 'marcos_crm';
+      const listName = customName || `${agentLabel} CRM ${ts.toLocaleDateString('pt-BR')} ${ts.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
       // Fix 28/05/2026: seller_member_id eh OBRIGATORIO no INSERT quando seller
       // cria a lista, senao ela fica "invisivel" pra ele depois (fetchData
       // filtra listsQuery.eq('seller_member_id', seller!.id) quando seller logado).
@@ -177,7 +180,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
           name: listName,
           contact_count: dedupedContacts.length,
           seller_member_id: sellerMemberId,
-          source: 'marcos_crm',
+          source: agentSource,
         })
         .select('id')
         .single();
@@ -188,7 +191,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         list_id: listRow.id,
         phone: c.phone,
         name: c.name,
-        source: 'marcos_crm',
+        source: agentSource,
         is_valid: true,
         metadata: { origem: c.origem, lead_id: c.id },
       }));
@@ -719,7 +722,7 @@ Não numere as variações. Não inclua explicações adicionais.`
             <div className="flex items-start justify-between gap-3 mb-3">
               <div>
                 <p className="text-sm font-semibold text-emerald-300 flex items-center gap-2">
-                  📋 Lista importada do CRM do Marcos
+                  📋 Lista importada do CRM do {prefilledMarcos.agent === 'pedro' ? 'Pedro' : 'Marcos'}
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {prefilledMarcos.contacts.length - marcosRemoved.size} contato(s) selecionado(s)
@@ -746,7 +749,7 @@ Não numere as variações. Não inclua explicações adicionais.`
               <Input
                 value={marcosListNameInput}
                 onChange={e => setMarcosListNameInput(e.target.value)}
-                placeholder={`Ex: Indicações Maio, Consignados Taubaté... (vazio = "Marcos CRM ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}")`}
+                placeholder={`Ex: Indicações Maio, Consignados Taubaté... (vazio = "${prefilledMarcos.agent === 'pedro' ? 'Pedro' : 'Marcos'} CRM ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}")`}
                 maxLength={80}
                 disabled={creatingMarcosList}
                 className="h-9 text-xs bg-background/60 border-emerald-500/30 focus-visible:border-emerald-400"
