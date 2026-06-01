@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useSubscription } from '@/hooks/useSubscription';
+import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 
 function fmt(n: number) {
   if (n >= 1000) return `${(n / 1000).toFixed(0)}k`;
@@ -13,7 +15,13 @@ function fmt(n: number) {
 export function TokenWidget() {
   const navigate = useNavigate();
   const { subscription, tokensAvailable, tokensTotal, usagePercent, planInfo, loading } = useSubscription();
+  const { user } = useAuth();
+  const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
 
+  // O plano (ex.: 150 atendimentos) e da CONTA MASTER que contratou. Vendedores
+  // vinculados nao compram credito nem rodam a IA (ela so existe na master),
+  // entao o widget de uso nunca aparece pra eles.
+  if (sellerLoading || isSeller) return null;
   if (loading || !subscription) return null;
 
   const remaining = 100 - usagePercent;
@@ -101,7 +109,11 @@ export function TokenWidget() {
 export function TokenWidgetCompact() {
   const navigate = useNavigate();
   const { tokensAvailable, usagePercent, planInfo, loading } = useSubscription();
+  const { user } = useAuth();
+  const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
 
+  // So a conta master ve o plano/uso (ver comentario em TokenWidget).
+  if (sellerLoading || isSeller) return null;
   if (loading) return null;
 
   const remaining = 100 - usagePercent;
