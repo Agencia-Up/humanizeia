@@ -650,6 +650,31 @@ function leadDateRange(preset: LeadDatePreset, customFrom: string, customTo: str
   }
 }
 
+// ─── Diagnóstico: motivos de NÃO-transferência ───────────────────────────────
+// As 8 categorias pelas quais um lead pode NÃO ter sido transferido pro vendedor.
+// Os códigos batem 1:1 com o CHECK da tabela pedro_transfer_failures.
+type TransferFailureReason =
+  | 'lead_nao_qualificado' | 'lead_inativo' | 'sem_vendedor_disponivel'
+  | 'erro_tecnico' | 'funil_timeout' | 'regra_nao_atingida'
+  | 'agente_nao_executou' | 'outros';
+
+const TRANSFER_FAILURE_REASONS: {
+  value: TransferFailureReason; label: string; short: string;
+  color: string; bg: string; hex: string;
+}[] = [
+  { value: 'lead_nao_qualificado',    label: 'Lead não qualificado',       short: 'Não qualificado', color: 'text-amber-400',   bg: 'bg-amber-500/10',   hex: '#fbbf24' },
+  { value: 'lead_inativo',            label: 'Lead inativo',               short: 'Inativo',         color: 'text-red-400',     bg: 'bg-red-500/10',     hex: '#f87171' },
+  { value: 'sem_vendedor_disponivel', label: 'Nenhum vendedor disponível', short: 'Sem vendedor',    color: 'text-orange-400',  bg: 'bg-orange-500/10',  hex: '#fb923c' },
+  { value: 'erro_tecnico',            label: 'Erro técnico',               short: 'Erro técnico',    color: 'text-rose-400',    bg: 'bg-rose-500/10',    hex: '#fb7185' },
+  { value: 'funil_timeout',           label: 'Funil expirou (timeout)',    short: 'Funil timeout',   color: 'text-purple-400',  bg: 'bg-purple-500/10',  hex: '#c084fc' },
+  { value: 'regra_nao_atingida',      label: 'Regra não atingida',         short: 'Regra',           color: 'text-sky-400',     bg: 'bg-sky-500/10',     hex: '#38bdf8' },
+  { value: 'agente_nao_executou',     label: 'Agente IA não executou',     short: 'IA não rodou',    color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/10', hex: '#e879f9' },
+  { value: 'outros',                  label: 'Outros',                     short: 'Outros',          color: 'text-slate-400',   bg: 'bg-slate-500/10',   hex: '#94a3b8' },
+];
+
+const reasonCfg = (code?: string | null) =>
+  TRANSFER_FAILURE_REASONS.find(r => r.value === code) ?? null;
+
 // ─── Feedback Estruturado: Opções ────────────────────────────────────────────
 
 const FEEDBACK_CITIES = [
@@ -991,6 +1016,28 @@ interface LeadTransfer {
   to_member?: { name: string } | null;
 }
 
+// Registro de POR QUE um lead não foi transferido (tabela pedro_transfer_failures).
+// Alimenta o painel de Diagnóstico. Fica vazio até a instrumentação das edge
+// functions (Impl 2-b); o painel funciona mesmo assim derivando "sem vendedor".
+interface TransferFailure {
+  id: string;
+  lead_id: string | null;
+  agent_id: string | null;
+  member_id: string | null;
+  lead_name: string | null;
+  remote_jid: string | null;
+  reason_code: string;
+  reason_detail: string | null;
+  lead_status: string | null;
+  lead_status_crm: string | null;
+  attempted_transfer: boolean;
+  source: string | null;
+  attempt_count: number;
+  last_attempt_at: string;
+  resolved_at: string | null;
+  created_at: string;
+}
+
 interface FollowupSchedule {
   id: string;
   lead_id: string;
@@ -1047,7 +1094,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
   const [cancellingFollowupId, setCancellingFollowupId] = useState<string | null>(null);
   const [transfers, setTransfers] = useState<LeadTransfer[]>([]);
-  const [view, setView] = useState<'pipeline' | 'leads' | 'feedbacks' | 'trafego' | 'sellers'>('pipeline');
+  const [view, setView] = useState<'pipeline' | 'leads' | 'feedbacks' | 'trafego' | 'sellers' | 'diagnostico'>('pipeline');
 
   // filter states
   const [filterStatus, setFilterStatus]   = useState<string>('all');
@@ -1060,6 +1107,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   // transferência manual pro próximo vendedor da fila (confirmação)
   const [confirmQueueTransfer, setConfirmQueueTransfer] = useState<{ lead: CrmLead; seller: TeamMember } | null>(null);
   const [queueTransferring, setQueueTransferring]       = useState(false);
+  // painel de Diagnóstico (leads sem transferência) — só master no CRM do Pedro
+  const [transferFailures, setTransferFailures] = useState<TransferFailure[]>([]);
+  const [diagReason, setDiagReason] = useState<string>('all');   // filtro por motivo
+  const [diagAgent,  setDiagAgent]  = useState<string>('all');   // filtro por agente
+  const [diagClass,  setDiagClass]  = useState<string>('all');   // filtro por classificação
   // Fase 6 Feature C: modo seleção pro disparo em massa (toggle + IDs marcados)
   const [selectionMode, setSelectionMode]   = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
@@ -1147,6 +1199,30 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       cancelled = true;
     };
   }, [userId, mode]);
+
+  // Diagnóstico: carrega os registros de falha de transferência (master + Pedro).
+  // Tabela owner-only (RLS user_id = auth.uid()). Recarrega ao abrir a aba e
+  // sempre que o conjunto de leads muda (ex.: após uma transferência manual,
+  // o lead resolvido some da lista). Sem realtime por ora — a tabela só recebe
+  // dados quando a instrumentação das edge functions (Impl 2-b) estiver ativa.
+  useEffect(() => {
+    if (!userId || isSeller || isMarcosCrm) { setTransferFailures([]); return; }
+    const ownerId = effectiveUserIdState || userId;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await (supabase as any)
+        .from('pedro_transfer_failures')
+        .select('id, lead_id, agent_id, member_id, lead_name, remote_jid, reason_code, reason_detail, lead_status, lead_status_crm, attempted_transfer, source, attempt_count, last_attempt_at, resolved_at, created_at')
+        .eq('user_id', ownerId)
+        .is('resolved_at', null)
+        .order('created_at', { ascending: false })
+        .limit(2000);
+      if (cancelled) return;
+      if (error) { console.warn('[Diagnóstico] erro ao buscar falhas de transferência', error); setTransferFailures([]); return; }
+      setTransferFailures(Array.isArray(data) ? data : []);
+    })();
+    return () => { cancelled = true; };
+  }, [userId, isSeller, isMarcosCrm, effectiveUserIdState, view, leads.length]);
 
   const fetchData = async (silent = false) => {
     if (!userId) return;
@@ -3496,6 +3572,51 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     return true;
   });
 
+  // ── Diagnóstico: leads SEM vendedor (sem transferência) ───────────────────────
+  // Espinha do painel: derivada dos leads já carregados (funciona desde já).
+  // Enriquecida com o motivo vindo de pedro_transfer_failures quando existir.
+  const isLeadSemVendedor = (l: CrmLead): boolean =>
+    sellerStatusForLead(l).status === 'none' && l.status !== 'transferido';
+  const semVendedorTotal = leads.filter(isLeadSemVendedor).length;
+  const failureByLeadId = new Map<string, TransferFailure>();
+  for (const f of transferFailures) {
+    if (f.lead_id && !failureByLeadId.has(f.lead_id)) failureByLeadId.set(f.lead_id, f);
+  }
+  const diagAgents = Array.from(
+    new Map(leads.filter(l => l.agent && (l as any).agent_id).map(l => [(l as any).agent_id as string, l.agent!.name])).entries()
+  );
+  const diagLeads = leads.filter(l => {
+    if (!isLeadSemVendedor(l)) return false;
+    if (leadDateBounds) {
+      if (!l.created_at) return false;
+      const ts = new Date(l.created_at).getTime();
+      if (ts < leadDateBounds[0] || ts > leadDateBounds[1]) return false;
+    }
+    if (searchTerm) {
+      const t = searchTerm.toLowerCase();
+      if (!(l.lead_name || '').toLowerCase().includes(t) && !(l.remote_jid || '').toLowerCase().includes(t)) return false;
+    }
+    if (diagClass !== 'all' && (l.status_crm || 'novo') !== diagClass) return false;
+    if (diagAgent !== 'all' && (l as any).agent_id !== diagAgent) return false;
+    return true;
+  });
+  const diagReasonOf = (l: CrmLead): string | null => failureByLeadId.get(l.id)?.reason_code ?? null;
+  const diagChartData = [
+    ...TRANSFER_FAILURE_REASONS.map(r => ({
+      name: r.short, fill: r.hex,
+      count: diagLeads.filter(l => diagReasonOf(l) === r.value).length,
+    })).filter(d => d.count > 0),
+    ...(() => {
+      const n = diagLeads.filter(l => !diagReasonOf(l)).length;
+      return n > 0 ? [{ name: 'Não registrado', fill: '#64748b', count: n }] : [];
+    })(),
+  ];
+  const diagLeadsFiltered = diagReason === 'all'
+    ? diagLeads
+    : diagReason === 'nao_registrado'
+      ? diagLeads.filter(l => !diagReasonOf(l))
+      : diagLeads.filter(l => diagReasonOf(l) === diagReason);
+
   // ── TAREFA 2 (29/05/2026): cards do topo refletem o vendedor selecionado ──────
   // Aplica-se SOMENTE ao painel do Marcos (isMarcosCrm). No Pedro o comportamento
   // fica intacto (cards sempre = total geral do banco). Regra:
@@ -3654,6 +3775,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               { id: 'feedbacks', label: 'Feedbacks',  icon: BellRing,       badge: unreadFeedbacks.length },
             ] : []),
             ...(!isSeller && !isMarcosCrm ? [
+              { id: 'diagnostico', label: 'Diagnóstico', icon: AlertTriangle, badge: semVendedorTotal },
               { id: 'trafego', label: 'Tráfego',    icon: TrendingUp, badge: 0 },
               { id: 'sellers', label: 'Vendedores', icon: Users,      badge: 0 },
             ] : []),
@@ -4376,6 +4498,177 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Diagnóstico: Leads sem Transferência (gerente apenas) ────── */}
+      {view === 'diagnostico' && !isSeller && (
+        <div className="space-y-3">
+          {/* Cabeçalho + resumo */}
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-400" />
+              <h3 className="text-sm font-semibold text-foreground">Leads sem Transferência — Diagnóstico</h3>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              <span className="font-semibold text-amber-400">{diagLeads.length}</span> lead(s) sem vendedor no período
+            </span>
+          </div>
+
+          {/* Filtros: período · motivo · agente · classificação */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Select value={dateFilter} onValueChange={v => setDateFilter(v as LeadDatePreset)}>
+              <SelectTrigger className="h-7 text-xs w-36" title="Filtra por quando o lead chegou">
+                <span className="flex items-center gap-1.5">
+                  <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
+                  <SelectValue placeholder="Período" />
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                {LEAD_DATE_PRESETS.map(p => (
+                  <SelectItem key={p.value} value={p.value} className="text-xs">{p.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {dateFilter === 'custom' && (
+              <div className="flex items-center gap-1">
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                  className="h-7 text-xs rounded-md border border-input bg-background px-2" title="Data inicial" />
+                <span className="text-xs text-muted-foreground">até</span>
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                  className="h-7 text-xs rounded-md border border-input bg-background px-2" title="Data final" />
+              </div>
+            )}
+            <Select value={diagReason} onValueChange={setDiagReason}>
+              <SelectTrigger className="h-7 text-xs w-44"><SelectValue placeholder="Motivo" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-xs">Todos os motivos</SelectItem>
+                {TRANSFER_FAILURE_REASONS.map(r => (
+                  <SelectItem key={r.value} value={r.value} className="text-xs">{r.label}</SelectItem>
+                ))}
+                <SelectItem value="nao_registrado" className="text-xs text-muted-foreground">Não registrado</SelectItem>
+              </SelectContent>
+            </Select>
+            {diagAgents.length > 1 && (
+              <Select value={diagAgent} onValueChange={setDiagAgent}>
+                <SelectTrigger className="h-7 text-xs w-36"><SelectValue placeholder="Agente" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" className="text-xs">Todos os agentes</SelectItem>
+                  {diagAgents.map(([id, name]) => (
+                    <SelectItem key={id} value={id} className="text-xs">{name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Select value={diagClass} onValueChange={setDiagClass}>
+              <SelectTrigger className="h-7 text-xs w-40"><SelectValue placeholder="Classificação" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-xs">Todas classificações</SelectItem>
+                {STATUS_CRM_OPTIONS.map(opt => (
+                  <SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Contadores de volume por motivo (chips) */}
+          {diagChartData.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] px-2 py-1 rounded-full border border-border/50 text-foreground">
+                Total: <span className="font-bold">{diagLeads.length}</span>
+              </span>
+              {diagChartData.map(d => (
+                <span key={d.name} className="text-[10px] px-2 py-1 rounded-full border border-border/40 text-muted-foreground">
+                  {d.name}: <span className="font-bold" style={{ color: d.fill }}>{d.count}</span>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Gráfico de distribuição por motivo */}
+          {diagChartData.length > 0 && (
+            <div className="bg-card border border-border/50 rounded-xl p-3">
+              <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1.5">
+                <BarChart3 className="h-3.5 w-3.5" /> Distribuição por motivo
+              </p>
+              <ResponsiveContainer width="100%" height={Math.max(110, diagChartData.length * 40)}>
+                <BarChart data={diagChartData} layout="vertical" margin={{ top: 4, right: 24, bottom: 4, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
+                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
+                  <Tooltip
+                    cursor={{ fill: 'hsl(var(--muted))', opacity: 0.3 }}
+                    contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }}
+                    formatter={(v: any) => [`${v} lead(s)`, 'Total']}
+                  />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                    {diagChartData.map((d, i) => <Cell key={i} fill={d.fill} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Lista de leads sem transferência */}
+          {diagLeadsFiltered.length === 0 ? (
+            <div className="text-center py-16 text-muted-foreground text-sm">
+              <CheckCircle2 className="h-8 w-8 mx-auto mb-3 opacity-40 text-emerald-400" />
+              {diagLeads.length === 0
+                ? 'Nenhum lead parado sem vendedor no período. 🎉'
+                : 'Nenhum lead corresponde aos filtros.'}
+            </div>
+          ) : (
+            diagLeadsFiltered.map(lead => {
+              const f = failureByLeadId.get(lead.id);
+              const rc = reasonCfg(f?.reason_code);
+              return (
+                <div
+                  key={lead.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => loadLeadDetail(lead)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); loadLeadDetail(lead); } }}
+                  className="border rounded-xl px-4 py-3 bg-amber-500/5 border-amber-500/40 hover:border-amber-500/60 cursor-pointer transition-all group"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-lg border bg-amber-500/10 border-amber-500/30 flex items-center justify-center shrink-0">
+                        <AlertTriangle className="h-4 w-4 text-amber-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{lead.lead_name || lead.remote_jid}</p>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {lead.remote_jid} · {fmtDate(lead.created_at)}{lead.agent?.name ? ` · ${lead.agent.name}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                      {rc ? (
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${rc.bg} ${rc.color}`} title={f?.reason_detail || rc.label}>
+                          {rc.short}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-400"
+                          title="Motivo ainda não registrado — será preenchido quando o monitoramento de falhas estiver ativo">
+                          Não registrado
+                        </span>
+                      )}
+                      <Badge variant="outline" className="text-[10px] h-5 capitalize">{lead.status_crm || 'novo'}</Badge>
+                      <Button
+                        size="sm"
+                        onClick={e => { e.stopPropagation(); startQueueTransfer(lead); }}
+                        className="h-7 px-2.5 text-[11px] gap-1.5 bg-amber-500/90 hover:bg-amber-500 text-white"
+                        title="Transferir este lead pro próximo vendedor da fila"
+                      >
+                        <Send className="h-3 w-3" /> Transferir
+                      </Button>
+                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
 
