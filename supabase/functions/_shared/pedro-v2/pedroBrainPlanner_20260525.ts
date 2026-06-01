@@ -464,7 +464,13 @@ export async function planPedroTurn(input: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: sanitizeModel(input.agent?.model),
+        // OTIMIZACAO DE CUSTO: o planner e uma DECISAO ESTRUTURADA (action/intent/
+        // search_query em JSON, temp 0.1), nao a resposta ao cliente — entao roda em
+        // gpt-4o-mini (~16x mais barato que gpt-4o). A qualidade da CONVERSA fica
+        // intacta (o reply continua em gpt-4o). Rede de seguranca: o resolvedor
+        // heuristico de veiculo + normalizePlan corrigem/validam a saida do planner.
+        // (O reply usa sanitizeModel(agent.model); o planner NAO.)
+        model: "gpt-4o-mini",
         temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
