@@ -410,6 +410,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const [customEnd, setCustomEnd] = useState<string>('');
   const [exportingMarcos, setExportingMarcos] = useState(false);
   const [tvMode, setTvMode] = useState(false);
+  const [branding, setBranding] = useState<{ logo_url: string | null; company_name: string | null }>({ logo_url: null, company_name: null });
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Controla quais leads já foram enviados ao Marcos CRM nesta sessão (evita duplicatas)
@@ -430,14 +431,19 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         leadsQ = leadsQ.in('assigned_to_id', sellerMemberIds);
       }
 
-      const [leadsRes, transfersRes, membersRes, agentsRes] = await Promise.all([
+      const [leadsRes, transfersRes, membersRes, agentsRes, brandingRes] = await Promise.all([
         leadsQ,
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
           .eq('user_id', effectiveUserId).order('created_at', { ascending: false }).limit(500),
         (supabase as any).from('ai_team_members').select('*').eq('user_id', effectiveUserId)
           .order('is_active', { ascending: false }).order('last_lead_received_at', { ascending: true, nullsFirst: true }),
         (supabase as any).from('wa_ai_agents').select('id, name, is_active').eq('user_id', effectiveUserId),
+        // Branding (logo + nome) sempre do MASTER — o vendedor logado tambem ve a marca do master dele.
+        (supabase as any).from('profiles').select('dashboard_tv_logo_url, dashboard_tv_company_name').eq('id', effectiveUserId).maybeSingle(),
       ]);
+
+      const bp = (brandingRes as any)?.data || {};
+      setBranding({ logo_url: bp.dashboard_tv_logo_url || null, company_name: bp.dashboard_tv_company_name || null });
 
       if ((leadsRes as any)?.error) console.error('[CrmAoVivo] ERRO ao buscar leads:', (leadsRes as any).error);
       const rawLeads = leadsRes.data || [];
@@ -1072,8 +1078,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           <header style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 10, background: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: '#fff' }}>L</div>
-                <span style={{ fontSize: 13, fontWeight: 850, letterSpacing: '0.16em', textTransform: 'uppercase', color: C.cyanL }}>LogosIA</span>
+                {branding.logo_url ? (
+                  <img src={branding.logo_url} alt="logo" style={{ height: 34, width: 'auto', maxWidth: 180, objectFit: 'contain', borderRadius: 8 }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <div style={{ width: 34, height: 34, borderRadius: 10, background: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: '#fff' }}>{(branding.company_name || 'L').charAt(0).toUpperCase()}</div>
+                )}
+                <span style={{ fontSize: 13, fontWeight: 850, letterSpacing: '0.16em', textTransform: 'uppercase', color: C.cyanL }}>{branding.company_name || 'LogosIA'}</span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 999, background: C.greenBg, border: `1px solid ${C.green}`, color: C.greenL, padding: '5px 10px', fontSize: 11, fontWeight: 850 }}>
                   <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.green, animation: 'blink .9s step-end infinite' }} />
                   Tempo real
@@ -1232,8 +1242,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         <div style={{ background: '#0F1629', borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 16, borderRight: '1px solid rgba(255,255,255,0.12)' }}>
-              <div style={{ width: 32, height: 32, borderRadius: 8, background: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 16, color: '#fff' }}>L</div>
-              <span style={{ fontWeight: 800, fontSize: 15, color: '#fff', letterSpacing: '-0.3px' }}>LogosIA</span>
+              {branding.logo_url ? (
+                <img src={branding.logo_url} alt="logo" style={{ height: 32, width: 'auto', maxWidth: 180, objectFit: 'contain', borderRadius: 6 }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+              ) : (
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 16, color: '#fff' }}>{(branding.company_name || 'L').charAt(0).toUpperCase()}</div>
+              )}
+              <span style={{ fontWeight: 800, fontSize: 15, color: '#fff', letterSpacing: '-0.3px' }}>{branding.company_name || 'LogosIA'}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 6, background: C.cyanBg, border: `1px solid ${C.cyan}`, color: C.cyanL, fontSize: 12, fontWeight: 700 }}>
               <MonitorPlay style={{ width: 13, height: 13 }} />

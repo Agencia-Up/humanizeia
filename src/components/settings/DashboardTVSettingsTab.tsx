@@ -72,6 +72,8 @@ export function DashboardTVSettingsTab() {
   const [uploadingSellerId, setUploadingSellerId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadTargetSellerId, setUploadTargetSellerId] = useState<string | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   // Load inicial
   useEffect(() => {
@@ -151,6 +153,39 @@ export function DashboardTVSettingsTab() {
       toast({ title: 'Erro ao salvar', description: err?.message || 'Erro desconhecido', variant: 'destructive' });
     } finally {
       setSavingBranding(false);
+    }
+  };
+
+  // Upload da LOGO da empresa (aparece no Dashboard TV e no CRM ao Vivo).
+  // Sobe pro bucket 'avatars' em {master.id}/branding/logo.{ext} (1o folder = auth.uid
+  // -> passa a policy de escrita) e persiste na hora em profiles.dashboard_tv_logo_url.
+  const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (logoInputRef.current) logoInputRef.current.value = '';
+    if (!file || !user?.id) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast({ title: 'Arquivo muito grande', description: 'Maximo 2MB.', variant: 'destructive' });
+      return;
+    }
+    setUploadingLogo(true);
+    try {
+      const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+      const path = `${user.id}/branding/logo.${ext}`;
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+      const publicUrl = urlData.publicUrl + '?t=' + Date.now(); // bust cache
+      const { error: updErr } = await (supabase as any)
+        .from('profiles')
+        .update({ dashboard_tv_logo_url: publicUrl })
+        .eq('id', user.id);
+      if (updErr) throw updErr;
+      setBranding(b => ({ ...b, logo_url: publicUrl }));
+      toast({ title: '✅ Logo enviada', description: 'Ja aparece no Dashboard TV e no CRM ao Vivo.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao subir logo', description: err?.message || 'Erro desconhecido', variant: 'destructive' });
+    } finally {
+      setUploadingLogo(false);
     }
   };
 
@@ -292,15 +327,47 @@ export function DashboardTVSettingsTab() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <Label className="text-xs">Logo (URL da imagem)</Label>
+              <Label className="text-xs">Logo da empresa</Label>
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                className="hidden"
+                onChange={handleLogoFileChange}
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => logoInputRef.current?.click()}
+                  disabled={uploadingLogo}
+                  className="h-9 text-xs gap-1.5"
+                >
+                  {uploadingLogo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  {branding.logo_url ? 'Trocar imagem' : 'Enviar imagem'}
+                </Button>
+                {branding.logo_url && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setBranding({ ...branding, logo_url: '' })}
+                    className="h-9 w-9 p-0 text-red-400 hover:text-red-300"
+                    title="Remover logo (clique em Salvar branding para confirmar)"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
               <Input
                 type="url"
-                placeholder="https://meusite.com/logo.png"
+                placeholder="ou cole uma URL: https://meusite.com/logo.png"
                 value={branding.logo_url}
                 onChange={e => setBranding({ ...branding, logo_url: e.target.value })}
                 className="h-9 text-sm"
               />
-              <p className="text-[10px] text-muted-foreground">PNG transparente recomendado. Sem URL, mostra um quadrado com a 1ª letra do nome.</p>
+              <p className="text-[10px] text-muted-foreground">Envie um arquivo (PNG/JPG/WEBP/SVG, máx 2MB) ou cole uma URL. PNG transparente fica melhor. Aparece no <strong>Dashboard TV</strong> e no <strong>CRM ao Vivo (painel ao vivo)</strong>.</p>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Nome da empresa</Label>
