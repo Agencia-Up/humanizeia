@@ -96,6 +96,12 @@ function includesNormalized(value: string | null | undefined, allowed: string[])
 }
 
 async function resolveWebhookFunction(supabase: any, userId: string | null | undefined) {
+  // Migracao total v1->v2: o flag global liga o v2 para TODOS os usuarios
+  // (consistente com sync-evolution-webhook). Reversivel via PEDRO_V2_ENABLED=false.
+  if (["true", "1", "yes", "on", "enabled"].includes(String(Deno.env.get('PEDRO_V2_ENABLED') || '').toLowerCase().trim())) {
+    return 'pedro-webhook-v2';
+  }
+
   if (!userId) return 'uazapi-webhook';
 
   if (includesNormalized(userId, listEnv('PEDRO_V2_ALLOWED_USER_IDS'))) {
