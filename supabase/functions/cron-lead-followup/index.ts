@@ -398,7 +398,7 @@ async function generateFollowupText(opts: {
             `Voce e ${opts.agentName}, consultor de vendas da ${opts.companyName || "loja"} no WhatsApp.`,
             opts.persona ? `Personalidade/estilo (siga o tom):\n${opts.persona.slice(0, 1200)}` : "",
             "Escreva SOMENTE a mensagem para o cliente (sem aspas, sem rotulos). Curta (1-2 frases), humana, em PT-BR.",
-            opts.leadName ? `Nome do cliente: ${opts.leadName} (use se soar natural).` : "",
+            opts.leadName ? `Nome do cliente (apenas para contexto): ${opts.leadName}. NAO comece a mensagem com o nome e NAO repita o nome — soa robotico. Prefira nao usar o nome.` : "",
             goal[opts.kind],
           ].filter(Boolean).join("\n") },
           { role: "user", content: `Conversa recente:\n${history || "(sem historico)"}\n\nEscreva a mensagem.` },
