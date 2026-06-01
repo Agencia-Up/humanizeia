@@ -1051,11 +1051,13 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       `}</style>
 
       {tvMode && (
-        <div style={{
+        <div className="tv-scroll tv-scroll-y" style={{
           position: 'fixed',
           inset: 0,
           zIndex: 9999,
-          overflow: 'hidden',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          WebkitOverflowScrolling: 'touch',
           background: '#070B14',
           color: '#E2E8F0',
           padding: 'clamp(14px, 1.2vw, 22px)',
@@ -1182,12 +1184,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             </section>
           )}
 
-          <main style={{ minHeight: 0, height: '100%', maxHeight: '100%', overflow: 'hidden', display: 'grid' }}>
-            <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))', gap: 10, minHeight: 0, height: '100%', maxHeight: '100%', overflow: 'hidden', alignItems: 'stretch' }}>
+          <main style={{ minHeight: 0, display: 'grid' }}>
+            <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))', gap: 10, minHeight: 0, alignItems: 'stretch' }}>
               {LIVE_COLUMNS.map(col => {
                 const colLeads = leadsByColumn[col.id] || [];
                 return (
-                  <div key={col.id} style={{ minHeight: 0, height: '100%', maxHeight: '100%', borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', overflow: 'hidden' }}>
+                  <div key={col.id} style={{ minHeight: 'clamp(320px, 46vh, 680px)', borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 10px 8px', background: col.bg, borderBottom: `1px solid ${col.main}` }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
