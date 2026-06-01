@@ -12,18 +12,25 @@ function sanitizeAgentName(name?: string | null) {
 }
 
 function checkAgentHasPresented(recentHistory?: any[], recentTurns?: any[]) {
-  const history = recentHistory || recentTurns || [];
-  if (!Array.isArray(history)) return false;
-  for (const turn of history) {
+  const merged = [
+    ...(Array.isArray(recentHistory) ? recentHistory : []),
+    ...(Array.isArray(recentTurns) ? recentTurns : []),
+  ];
+  let agentTurns = 0;
+  for (const turn of merged) {
     const role = normalizeHistoryRole(turn?.role || turn?.direction);
-    if (role === "agent") {
-      const text = String(turn?.text || turn?.content || turn?.message || "").toLowerCase();
-      if (/\b(sou o|sou a|meu nome|aqui da|aqui de|sou consultor|sou consultora)\b/i.test(text)) {
-        return true;
-      }
+    if (role !== "agent") continue;
+    agentTurns++;
+    const text = String(turn?.text || turn?.content || turn?.message || "").toLowerCase();
+    if (/\b(sou o|sou a|meu nome|aqui da|aqui de|sou consultor|sou consultora)\b/i.test(text)) {
+      return true;
     }
   }
-  return false;
+  // Fallback ROBUSTO: se ja houve QUALQUER resposta do agente, a apresentacao
+  // (saudacao + nome) ja aconteceu no 1o contato -> NAO reapresentar. Evita o
+  // re-cumprimento ("Boa noite, Sou o Carvalho...") em toda mensagem quando a
+  // frase exata de apresentacao nao casa no historico.
+  return agentTurns >= 1;
 }
 
 function money(value?: number | null) {
@@ -480,7 +487,9 @@ export async function generatePedroBrainReply(input: {
                 "- Se o plano atual for 'photo_request', a tool de fotos ja selecionou e enviara as imagens. Escreva apenas um fechamento humano amigavel, sem prometer novas fotos.",
                 "- Nunca invente veiculos ou dados (ano, preco, km) que nao estejam descritos em stock.facts.",
                 "- Se o lead trocou de veiculo ou mudou de assunto, responda sobre o novo assunto. A mensagem atual sempre vence a memoria antiga.",
-                `- Se voce ja se apresentou no historico recente da conversa (status: ${hasPresented ? "já apresentado" : "não apresentado ainda"}), nao repita a apresentacao. Se for a primeira mensagem, apresente-se como ${agentName}, consultor da ${input.agent?.company_name || "Icom Motors"}.`,
+                hasPresented
+                  ? `- SAUDACAO/APRESENTACAO (status: JA APRESENTADO — REGRA FORTE): voce JA cumprimentou e se apresentou nesta conversa. E PROIBIDO recomecar com saudacao de horario ('Bom dia'/'Boa tarde'/'Boa noite'/'Ola') E PROIBIDO repetir a apresentacao ('Sou o ${agentName}, consultor aqui da ${input.agent?.company_name || "Icom Motors"}'). Va DIRETO ao ponto da resposta. Reapresentar/recumprimentar irrita o cliente.`
+                  : `- SAUDACAO/APRESENTACAO (primeira mensagem): cumprimente e apresente-se UMA unica vez como ${agentName}, consultor da ${input.agent?.company_name || "Icom Motors"}.`,
                 "- NOME DO LEAD (REGRA FORTE): use o primeiro nome do lead com MUITA moderacao — raramente, e quase nunca no inicio da frase. NAO comece mensagens com o nome ('Otima escolha, Douglas!' / 'Entendi, Douglas!' / 'Sem problemas, Douglas!'). NUNCA use o nome em mensagens seguidas. Repetir o nome a cada resposta soa robotico e incomoda. NA DUVIDA, NAO use o nome — fale de forma natural sem ele. (Isso vale mesmo que o System Prompt do Portal mande tratar pelo nome: tratar pelo nome != repetir o nome toda hora.)",
                 "- Nunca cite termos tecnicos, JSON, ferramentas, tools, banco de dados ou processos internos.",
                 "- Retorne apenas JSON valido com as chaves 'text', 'source', 'presented_vehicle_indices', 'qualificacao_coletada', 'pronto_para_transferir' e 'transferir_silencioso'.",

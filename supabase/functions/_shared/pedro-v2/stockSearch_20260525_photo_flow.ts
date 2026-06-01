@@ -76,6 +76,15 @@ const WEAK_WORDS = new Set([
   "essa", "este", "esta", "sobre", "quero", "queria", "saber", "mais", "de",
   "da", "do", "dos", "das", "um", "uma", "com", "sem", "para", "por", "ate",
   "automatico", "manual", "flex", "gasolina", "diesel", "aut", "mec",
+  // CRITERIOS DE PRECO/SEGMENTO (nao sao modelo): "mais economico/barato/popular"
+  // = carro mais EM CONTA. Tratados como criterio -> a busca cai no caminho amplo
+  // e ordena por PRECO CRESCENTE (mais baratos primeiro). "popular" tambem vira
+  // hatch no inferVehicleSubcategory (que le a query crua). Sem isso, viravam
+  // termo de modelo (score negativo) e a busca retornava 0 ("nao temos").
+  "economico", "economica", "economicos", "economicas", "economico(a)",
+  "barato", "barata", "baratos", "baratas", "baratinho", "baratinha",
+  "popular", "populares", "basico", "basica", "simples", "conta", "em",
+  "barateza", "acessivel", "acessivel", "custo", "beneficio",
 ]);
 
 function getQueryTokens(searchText: string) {

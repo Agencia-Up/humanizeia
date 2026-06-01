@@ -1137,6 +1137,18 @@ export async function processPedroV2Turn(
     if (isUrl || isWeak || tokens.length === 0) {
       isGenericQuery = true;
     }
+
+    // CRITERIO DE PRECO/SEGMENTO ("mais economico/barato/popular/em conta/basico")
+    // NAO e busca generica — e pedido dos carros MAIS EM CONTA. Forca a busca
+    // ampla (o stockSearch ja ordena por PRECO CRESCENTE -> mais baratos primeiro)
+    // em vez de devolver "pergunte qual modelo". Antes, "carro mais economico"
+    // virava query "carro" -> generico -> 0 resultados -> "nao temos".
+    const _budgetText = `${text || ""} ${enrichedText || ""}`.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const budgetIntent = /\b(economic|barat|popular|basic|baratinh|acessiv|custo)/.test(_budgetText) || /\bem\s+conta\b/.test(_budgetText);
+    if (budgetIntent) {
+      isGenericQuery = false;
+      (stockFilters as any).budget_cheapest = true;
+    }
   }
 
   if (stockFilters && !isGenericQuery) {
