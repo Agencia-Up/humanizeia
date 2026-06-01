@@ -890,6 +890,22 @@ export async function processPedroV2Turn(
     return { ok: false, dry_run: dryRun, correlation_id: correlationId, error: "remote_jid_missing" };
   }
 
+  // IGNORA grupos / broadcast / status / canais — IGUAL ao Pedro v1
+  // (uazapi-webhook ja barrava @g.us e @broadcast). O agente so conversa em
+  // chat PRIVADO de lead. Sem este guard, ao migrar pro v2 o agente passou a
+  // responder DENTRO de grupos (jid @g.us), tratando o grupo como lead e
+  // falando com vendedores como se fossem clientes. Bail ANTES de qualquer
+  // identidade/debounce/escrita/envio.
+  if (/@g\.us|@broadcast|@newsletter|status@broadcast/i.test(remoteJid)) {
+    log("info", "pedro_v2_ignored_non_private_chat", { remote_jid: remoteJid });
+    return {
+      ok: true,
+      dry_run: dryRun,
+      correlation_id: correlationId,
+      next_action: "ignored_group_or_broadcast",
+    };
+  }
+
   log("info", "pedro_v2_turn_start", { remote_jid: remoteJid, dry_run: dryRun });
 
   const identity = await identifyPedroContact(supabase, {
