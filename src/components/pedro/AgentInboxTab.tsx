@@ -12,6 +12,7 @@ import {
 import {
   Bot, Send, Loader2, Search, ArrowLeft, Pause, Play,
   MessageCircle, User, Phone, Clock, CheckCheck, Wifi,
+  Paperclip, Mic, FileText, Download, Trash2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { format, isToday, isYesterday } from 'date-fns';
@@ -84,6 +85,13 @@ function displayPhone(value: string | null | undefined) {
   return cleanPhone(value) || value || '';
 }
 
+function mediaTypeFromMime(mime: string): 'image' | 'audio' | 'video' | 'document' {
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+  return 'document';
+}
+
 /* ── Componente Principal ──────────────────────────────────────────── */
 export function AgentInboxTab({ userId }: AgentInboxTabProps) {
   const { toast } = useToast();
@@ -109,6 +117,17 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
 
   // Pause/Resume
   const [togglingPause, setTogglingPause] = useState(false);
+
+  // Midia (anexos + audio)
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+  const recordStreamRef = useRef<MediaStream | null>(null);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordCancelRef = useRef(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -222,6 +241,14 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     };
   }, [selectedLeadId, fetchMessages]);
 
+  /* ── Limpeza da gravacao ao desmontar ──────────────────────────── */
+  useEffect(() => {
+    return () => {
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+      if (recordStreamRef.current) recordStreamRef.current.getTracks().forEach(t => t.stop());
+    };
+  }, []);
+
   /* ── Pause / Resume AI ──────────────────────────────────────────── */
   const handleTogglePause = async (lead: Lead) => {
     setTogglingPause(true);
@@ -254,6 +281,17 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     }
   };
 
+  /* ── Resolver instancia vinculada ao lead ────────────────────────── */
+  const resolveInstanceId = (): string | null => {
+    if (!selectedLead) return null;
+    const agentForLead = agents.find(a => a.id === selectedLead.agent_id);
+    return selectedLead.instance_id
+      || [...messages].reverse().find(m => m.instance_id)?.instance_id
+      || agentForLead?.instance_id
+      || agentForLead?.instance_ids?.[0]
+      || null;
+  };
+
   /* ── Enviar resposta manual ──────────────────────────────────────── */
   const handleSend = async () => {
     if (!replyText.trim() || !selectedLead || sending) return;
@@ -267,13 +305,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     }
     setSending(true);
 
-    // Find instance for this lead
-    const agentForLead = agents.find(a => a.id === selectedLead.agent_id);
-    const instId = selectedLead.instance_id
-      || [...messages].reverse().find(m => m.instance_id)?.instance_id
-      || agentForLead?.instance_id
-      || agentForLead?.instance_ids?.[0]
-      || null;
+    const instId = resolveInstanceId();
     if (!instId) {
       toast({ title: 'Sem instancia vinculada a este lead', variant: 'destructive' });
       setSending(false);
@@ -309,6 +341,154 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
       toast({ title: 'Erro ao enviar', description: err.message, variant: 'destructive' });
     } finally {
       setSending(false);
+    }
+  };
+
+  /* ── Enviar anexo (imagem, audio, video, documento) ──────────────── */
+  const sendMediaMessage = async (blob: Blob, filename: string, caption = '') => {
+    if (!selectedLead) return;
+    if (!selectedLead.ai_paused) {
+      toast({
+        title: 'Pause a IA primeiro',
+        description: 'Assim o agente nao responde junto com voce nesta conversa.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const instId = resolveInstanceId();
+    if (!instId) {
+      toast({ title: 'Sem instancia vinculada a este lead', variant: 'destructive' });
+      return;
+    }
+
+    const mime = blob.type || 'application/octet-stream';
+    const mediaType = mediaTypeFromMime(mime);
+    const phone = cleanPhone(selectedLead.remote_jid);
+    const ext = (filename.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]+/g, '') || 'bin';
+    const optId = `opt-${Date.now()}`;
+
+    setUploadingMedia(true);
+    try {
+      const path = `${userId}/inbox/${Date.now()}-${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('creatives')
+        .upload(path, blob, { contentType: mime, upsert: true });
+      if (upErr) throw upErr;
+
+      const { data: pub } = supabase.storage.from('creatives').getPublicUrl(path);
+      const mediaUrl = pub.publicUrl;
+
+      // Optimistic message
+      const opt: Message = {
+        id: optId,
+        phone,
+        instance_id: instId,
+        direction: 'outgoing',
+        content: caption || '',
+        message_type: mediaType,
+        media_url: mediaUrl,
+        created_at: new Date().toISOString(),
+        contact_name: null,
+      };
+      setMessages(prev => [...prev, opt]);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+
+      const { error } = await supabase.functions.invoke('wa-send-reply', {
+        body: { instance_id: instId, phone, media_url: mediaUrl, media_type: mediaType, content: caption || '' },
+      });
+      if (error) throw error;
+      await fetchMessages(true);
+    } catch (err: any) {
+      setMessages(prev => prev.filter(m => m.id !== optId));
+      toast({ title: 'Erro ao enviar anexo', description: err.message, variant: 'destructive' });
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
+  const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 16 * 1024 * 1024) {
+      toast({ title: 'Arquivo muito grande', description: 'O limite e 16 MB.', variant: 'destructive' });
+      return;
+    }
+    sendMediaMessage(file, file.name);
+  };
+
+  /* ── Gravacao de audio ────────────────────────────────────────────── */
+  const startRecording = async () => {
+    if (!selectedLead?.ai_paused) {
+      toast({
+        title: 'Pause a IA primeiro',
+        description: 'Assim o agente nao responde junto com voce nesta conversa.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordStreamRef.current = stream;
+      recordChunksRef.current = [];
+      recordCancelRef.current = false;
+
+      let mimeType = '';
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
+      else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) mimeType = 'audio/ogg;codecs=opus';
+      const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = rec;
+
+      rec.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) recordChunksRef.current.push(ev.data);
+      };
+      rec.onstop = () => {
+        if (recordStreamRef.current) {
+          recordStreamRef.current.getTracks().forEach(t => t.stop());
+          recordStreamRef.current = null;
+        }
+        if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+        setRecording(false);
+        setRecordSeconds(0);
+        if (recordCancelRef.current) {
+          recordChunksRef.current = [];
+          return;
+        }
+        const type = rec.mimeType || 'audio/webm';
+        const blob = new Blob(recordChunksRef.current, { type });
+        recordChunksRef.current = [];
+        const ext = type.includes('ogg') ? 'ogg' : 'webm';
+        sendMediaMessage(blob, `audio-${Date.now()}.${ext}`);
+      };
+
+      rec.start();
+      setRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    } catch (err: any) {
+      toast({ title: 'Nao consegui acessar o microfone', description: 'Verifique a permissao do navegador.', variant: 'destructive' });
+    }
+  };
+
+  const stopRecording = () => {
+    recordCancelRef.current = false;
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== 'inactive') rec.stop();
+  };
+
+  const cancelRecording = () => {
+    recordCancelRef.current = true;
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== 'inactive') {
+      rec.stop();
+    } else {
+      if (recordStreamRef.current) {
+        recordStreamRef.current.getTracks().forEach(t => t.stop());
+        recordStreamRef.current = null;
+      }
+      if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+      setRecording(false);
+      setRecordSeconds(0);
     }
   };
 
@@ -575,12 +755,31 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
                               : 'bg-muted/60 text-foreground rounded-bl-md'
                           }`}>
                             {msg.media_url && msg.message_type === 'image' && (
-                              <img src={msg.media_url} alt="" className="max-w-full rounded-lg mb-1.5 max-h-48 object-cover" />
+                              <a href={msg.media_url} target="_blank" rel="noopener noreferrer">
+                                <img src={msg.media_url} alt="" className="max-w-full rounded-lg mb-1.5 max-h-48 object-cover" />
+                              </a>
                             )}
-                            {msg.media_url && msg.message_type === 'audio' && (
+                            {msg.media_url && (msg.message_type === 'audio' || msg.message_type === 'ptt' || msg.message_type === 'voice') && (
                               <audio controls src={msg.media_url} className="max-w-full mb-1.5" />
                             )}
-                            {msg.content && <p className="whitespace-pre-wrap break-words">{msg.content}</p>}
+                            {msg.media_url && msg.message_type === 'video' && (
+                              <video controls src={msg.media_url} className="max-w-full rounded-lg mb-1.5 max-h-48" />
+                            )}
+                            {msg.media_url && (msg.message_type === 'document' || msg.message_type === 'file') && (
+                              <a
+                                href={msg.media_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 rounded-lg bg-background/60 px-2.5 py-2 mb-1.5 hover:bg-background/80 transition-colors"
+                              >
+                                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <span className="text-xs truncate flex-1">{msg.content || 'Arquivo'}</span>
+                                <Download className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              </a>
+                            )}
+                            {msg.content && msg.message_type !== 'document' && msg.message_type !== 'file' && (
+                              <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                            )}
                             <p className={`text-[9px] mt-1 flex items-center gap-1 ${
                               isOutgoing ? 'text-primary/50 justify-end' : 'text-muted-foreground/50'
                             }`}>
@@ -598,34 +797,92 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
 
               {/* Reply input */}
               <div className="px-4 py-3 border-t border-border/50 bg-muted/20">
-                <div className="flex items-end gap-2">
-                  <div className="flex-1 rounded-xl border border-border/50 bg-background px-3 py-2">
-                    <Textarea
-                      value={replyText}
-                      onChange={e => setReplyText(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      placeholder={selectedLead.ai_paused
-                        ? 'Digite sua resposta manual...'
-                        : 'Pause a IA para responder manualmente...'
-                      }
-                      disabled={!selectedLead.ai_paused}
-                      rows={1}
-                      className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
-                    />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,audio/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"
+                  className="hidden"
+                  onChange={handleFilePick}
+                />
+                {recording ? (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-9 w-9 p-0 rounded-xl text-red-400 hover:bg-red-500/10 shrink-0"
+                      onClick={cancelRecording}
+                      title="Cancelar gravacao"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                    <div className="flex-1 flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-3 py-2.5">
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                      <span className="text-sm text-red-300 font-medium">Gravando...</span>
+                      <span className="text-xs text-muted-foreground ml-auto tabular-nums">
+                        {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, '0')}
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
+                      onClick={stopRecording}
+                      title="Enviar audio"
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
-                    onClick={handleSend}
-                    disabled={!selectedLead.ai_paused || !replyText.trim() || sending}
-                  >
-                    {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  </Button>
-                </div>
+                ) : (
+                  <div className="flex items-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-9 w-9 p-0 rounded-xl text-muted-foreground hover:text-foreground shrink-0"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={!selectedLead.ai_paused || uploadingMedia}
+                      title="Anexar arquivo"
+                    >
+                      {uploadingMedia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                    </Button>
+                    <div className="flex-1 rounded-xl border border-border/50 bg-background px-3 py-2">
+                      <Textarea
+                        value={replyText}
+                        onChange={e => setReplyText(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        placeholder={selectedLead.ai_paused
+                          ? 'Digite sua resposta manual...'
+                          : 'Pause a IA para responder manualmente...'
+                        }
+                        disabled={!selectedLead.ai_paused}
+                        rows={1}
+                        className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
+                      />
+                    </div>
+                    {replyText.trim() ? (
+                      <Button
+                        size="sm"
+                        className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
+                        onClick={handleSend}
+                        disabled={!selectedLead.ai_paused || sending}
+                      >
+                        {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
+                        onClick={startRecording}
+                        disabled={!selectedLead.ai_paused || uploadingMedia}
+                        title="Gravar audio"
+                      >
+                        <Mic className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                )}
                 {!selectedLead.ai_paused && (
                   <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
                     <Bot className="h-3 w-3 text-violet-400" />
-                    IA ativa — suas mensagens serao enviadas, mas o agente tambem pode responder automaticamente.
+                    IA ativa — pause a IA para responder, anexar arquivo ou gravar audio.
                     <button
                       onClick={() => handleTogglePause(selectedLead)}
                       className="text-amber-400 hover:underline font-medium"
