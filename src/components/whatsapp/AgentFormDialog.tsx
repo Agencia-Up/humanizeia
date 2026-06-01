@@ -17,7 +17,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, Webhook, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
 import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
 import FunilDoAgenteTab from '@/components/pedro/FunilDoAgenteTab';
@@ -806,7 +806,6 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   { v: 'knowledge',    label: 'Base',        Icon: BookOpen,    activeCls: 'bg-purple-500/10 text-purple-500 border-purple-500/20' },
                   { v: 'equipe',       label: 'Vendedores',  Icon: UserCheck,   activeCls: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
                   { v: 'rules',        label: 'Regras',      Icon: Clock,       activeCls: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
-                  { v: 'integrations', label: 'n8n',         Icon: Webhook,     activeCls: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
                 ].map(({ v, label, Icon, activeCls }) => {
                   const isActive = activeTab === v;
                   return (
@@ -1205,43 +1204,6 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
               </div>
             </div>}
 
-            {/* ── Tab: n8n Integration ── */}
-            {activeTab === 'integrations' && <div className="space-y-5 mt-0">
-              <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-4">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Webhook className="h-4 w-4 text-primary" />
-                  Integração n8n
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Cole a URL do webhook do seu workflow n8n. Ao salvar o agente, todas as configurações são enviadas automaticamente para o n8n.
-                </p>
-
-                <div className="space-y-2">
-                  <Label>URL do Webhook n8n</Label>
-                  <Input
-                    value={n8nWebhookUrl}
-                    onChange={e => setN8nWebhookUrl(e.target.value)}
-                    placeholder="https://seu-n8n.app/webhook/..."
-                    type="url"
-                  />
-                </div>
-
-                {n8nWebhookUrl.trim() && (
-                  <div className="text-xs text-muted-foreground bg-background rounded p-3 space-y-1">
-                    <p className="font-medium text-foreground">📤 Dados enviados ao n8n ao salvar:</p>
-                    <ul className="list-disc list-inside space-y-0.5">
-                      <li>Nome do agente, tipo, status</li>
-                      <li>Nome da empresa, serviços, endereço</li>
-                      <li>WhatsApp do contato humano</li>
-                      <li>System prompt completo</li>
-                      <li>Modelo, temperatura, max tokens</li>
-                      <li>Horário comercial</li>
-                      <li>IDs e nomes das instâncias</li>
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </div>}
             {/* ── Tab: Knowledge Base ── */}
             {activeTab === 'knowledge' && <div className="space-y-4 mt-0">
               <KnowledgeBaseManager
