@@ -1,6 +1,6 @@
 import { makeTurnLogger, newTraceId } from "../observability/structuredLog.ts";
 import { identifyPedroContact } from "./contactIdentity.ts";
-import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
+import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, persistPedroV2ContactUtm, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
 import { logTransferFailure } from "./logTransferFailure.ts";
@@ -1049,6 +1049,16 @@ export async function processPedroV2Turn(
 
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
   const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(input.payload, text), mediaContext);
+  // Trafego pago: grava utm_* em wa_contacts p/ o painel CampanhaAnalytics
+  // (paridade com o v1). So roda em turno real e quando ha contexto de anuncio.
+  if (!dryRun && adContext?.has_ad_context) {
+    await persistPedroV2ContactUtm(supabase, {
+      user_id: input.agent.user_id,
+      phone: remoteJidToPhone(remoteJid),
+      name: pushName,
+      adContext,
+    });
+  }
   const enrichedText = buildMessageWithAdContext(text, adContext);
   const adMemory = adContextToMemory(adContext);
   const adNeedsVehicleConfirmation = adContext.has_ad_context && !adContext.vehicle_query;

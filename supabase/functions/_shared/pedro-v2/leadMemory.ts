@@ -89,6 +89,85 @@ export async function ensurePedroV2Lead(
   return lead;
 }
 
+// Persiste atribuicao de trafego pago (utm_*) em wa_contacts a partir do
+// contexto de anuncio detectado no turno. O Pedro v1 (wa-inbox-webhook) gravava
+// utm_source/utm_campaign/fbclid em wa_contacts; o v2 nunca tocou nessa tabela,
+// entao o painel "Trafego Pago" (CampanhaAnalytics) ficava vazio com o v2 no ar.
+// Aqui replicamos a gravacao: quando a mensagem trouxe contexto de anuncio do
+// Meta/CTWA, criamos/atualizamos a linha do contato com as colunas que o painel
+// le. Idempotente por (user_id, phone). NUNCA lanca — so loga (nao pode quebrar
+// o atendimento). So escreve quando ha sinal real de anuncio pago (rede social
+// conhecida ou fbclid), evitando poluir o painel com imagens "tipo anuncio".
+export async function persistPedroV2ContactUtm(
+  supabase: any,
+  input: {
+    user_id: string;
+    phone: string; // digitos
+    name?: string | null;
+    adContext: any; // PedroV2AdContext
+  },
+): Promise<void> {
+  try {
+    const ad = input.adContext;
+    if (!ad || ad.has_ad_context !== true) return;
+    const phone = String(input.phone || "").replace(/\D/g, "");
+    if (!input.user_id || !phone) return;
+
+    // Deriva utm a partir da URL do anuncio (quando houver) + da fonte detectada.
+    const url = typeof ad.url === "string" ? ad.url : "";
+    let params: URLSearchParams | null = null;
+    try {
+      if (url) params = new URL(url).searchParams;
+    } catch {
+      /* url malformada — ignora */
+    }
+    const fromUrl = (k: string) => (params?.get(k) || "").trim() || null;
+
+    const src = String(ad.source || "").toLowerCase();
+    const isSocialAd = src.includes("facebook") || src.includes("fb.me") ||
+      src.includes("instagram") || src.includes("meta");
+    const fbclid = fromUrl("fbclid");
+    const utm_source = fromUrl("utm_source") || (isSocialAd ? "meta_ads" : null);
+
+    // Sem fonte de anuncio confiavel? nao grava (mantem o painel limpo).
+    if (!utm_source && !fbclid) return;
+
+    const utm_campaign = fromUrl("utm_campaign") || (ad.title || null);
+    const utm_medium = fromUrl("utm_medium");
+    const utm_content = fromUrl("utm_content");
+
+    const patch: Record<string, any> = {};
+    if (utm_source) patch.utm_source = utm_source;
+    if (utm_campaign) patch.utm_campaign = utm_campaign;
+    if (utm_medium) patch.utm_medium = utm_medium;
+    if (utm_content) patch.utm_content = utm_content;
+    if (fbclid) patch.fbclid = fbclid;
+
+    const { data: existing } = await supabase
+      .from("wa_contacts")
+      .select("id")
+      .eq("user_id", input.user_id)
+      .eq("phone", phone)
+      .limit(1)
+      .maybeSingle();
+
+    if (existing?.id) {
+      await supabase.from("wa_contacts").update(patch).eq("id", existing.id);
+    } else {
+      await supabase.from("wa_contacts").insert({
+        user_id: input.user_id,
+        phone,
+        name: input.name || null,
+        source: "meta_ads",
+        last_message_at: new Date().toISOString(),
+        ...patch,
+      });
+    }
+  } catch (e) {
+    console.warn("[persistPedroV2ContactUtm] falhou (ignorado):", e);
+  }
+}
+
 export async function findPedroV2Lead(
   supabase: any,
   input: { agent_id: string; remote_jid: string },
