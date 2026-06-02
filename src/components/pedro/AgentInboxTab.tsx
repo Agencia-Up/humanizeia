@@ -53,7 +53,13 @@ interface Message {
 }
 
 interface AgentInboxTabProps {
+  // Dono dos dados (master). Para vendedor, e o user_id do master, nao o auth
+  // id do vendedor — senao os filtros .eq('user_id', ...) voltam vazios, pois
+  // agentes/leads/inbox ficam todos gravados sob o id do master.
   userId: string;
+  // Quando vendedor, escopa os leads aos atribuidos a ele (assigned_to_id).
+  isSeller?: boolean;
+  sellerMemberIds?: string[];
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -93,7 +99,7 @@ function mediaTypeFromMime(mime: string): 'image' | 'audio' | 'video' | 'documen
 }
 
 /* ── Componente Principal ──────────────────────────────────────────── */
-export function AgentInboxTab({ userId }: AgentInboxTabProps) {
+export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }: AgentInboxTabProps) {
   const { toast } = useToast();
 
   // Agents
@@ -164,17 +170,24 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
   const fetchLeads = useCallback(async () => {
     if (!selectedAgentId) return;
     setLoadingLeads(true);
-    const { data } = await (supabase as any)
+    let query = (supabase as any)
       .from('ai_crm_leads')
       // message_count NÃO está no SELECT porque a coluna não existe em ai_crm_leads.
       // O valor é calculado dinamicamente abaixo via wa_chat_history (useEffect).
       .select('id, remote_jid, lead_name, status, ai_paused, instance_id, agent_id, last_interaction_at, summary')
       .eq('agent_id', selectedAgentId)
-      .eq('user_id', userId)
-      .order('last_interaction_at', { ascending: false });
+      .eq('user_id', userId);
+    // Vendedor só vê os leads atribuídos a ele (paridade com o CRM). Se ainda não
+    // tem nenhum lead atribuído, mostra vazio (não cai pro inbox inteiro do master).
+    if (isSeller) {
+      query = sellerMemberIds.length > 0
+        ? query.in('assigned_to_id', sellerMemberIds)
+        : query.eq('assigned_to_id', '00000000-0000-0000-0000-000000000000');
+    }
+    const { data } = await query.order('last_interaction_at', { ascending: false });
     setLeads(data || []);
     setLoadingLeads(false);
-  }, [selectedAgentId, userId]);
+  }, [selectedAgentId, userId, isSeller, sellerMemberIds]);
 
   useEffect(() => {
     fetchLeads();
@@ -204,7 +217,27 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
       .range(0, 999);
 
     const rows = data || [];
-    setMessages(rows);
+    // Preserva mensagens otimistas (id "opt-") que ainda nao apareceram no banco.
+    // Sem isso o polling de 7s (e o refetch pos-envio) substitui a lista pelas
+    // linhas do banco e apaga o balao recem-enviado ate o registro real chegar,
+    // causando piscada. Mantem a otimista ate existir uma linha real equivalente
+    // (mesma direcao, conteudo/midia, dentro de ~90s) ou ela expirar (>2min).
+    setMessages(prev => {
+      const optimistic = prev.filter(m => typeof m.id === 'string' && m.id.startsWith('opt-'));
+      if (optimistic.length === 0) return rows;
+      const matched = (o: Message, r: Message) => {
+        if (r.direction !== o.direction) return false;
+        const dt = Math.abs(new Date(r.created_at).getTime() - new Date(o.created_at).getTime());
+        if (dt > 90000) return false;
+        if (o.media_url || o.message_type !== 'text') return r.message_type === o.message_type;
+        return (r.content || '') === (o.content || '');
+      };
+      const stillPending = optimistic.filter(o =>
+        Date.now() - new Date(o.created_at).getTime() < 120000 &&
+        !rows.some(r => matched(o, r))
+      );
+      return stillPending.length > 0 ? [...rows, ...stillPending] : rows;
+    });
     if (rows.length > 0) {
       const latestInstanceId = [...rows].reverse().find((m: Message) => m.instance_id)?.instance_id || null;
       setSelectedLead(prev => {
@@ -357,6 +390,8 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
       if (error) throw error;
       await fetchMessages(true);
     } catch (err: any) {
+      // Remove o balao otimista pra nao deixar "fantasma" de msg que falhou.
+      setMessages(prev => prev.filter(m => m.id !== opt.id));
       toast({ title: 'Erro ao enviar', description: err.message, variant: 'destructive' });
     } finally {
       setSending(false);
@@ -756,7 +791,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
                     {displayPhone(selectedLead.remote_jid)}
                     <span className="mx-1">|</span>
                     <MessageCircle className="h-2.5 w-2.5" />
-                    {selectedLead.message_count} msgs
+                    {selectedLead.message_count ?? 0} msgs
                   </p>
                 </div>
 

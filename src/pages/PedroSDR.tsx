@@ -3840,9 +3840,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             // aqui. Nada de dado removido; apenas os botoes de navegacao sao filtrados.
             ...(!isMarcosCrm ? [
               { id: 'leads',     label: 'Lista',      icon: Users,          badge: 0 },
-              { id: 'feedbacks', label: 'Feedbacks',  icon: BellRing,       badge: unreadFeedbacks.length },
             ] : []),
+            // Feedbacks e ferramenta do dono (gerente): so master ve. Vendedor
+            // nao acompanha o painel de feedbacks (decisao do produto).
             ...(!isSeller && !isMarcosCrm ? [
+              { id: 'feedbacks', label: 'Feedbacks',  icon: BellRing,       badge: unreadFeedbacks.length },
               { id: 'diagnostico', label: 'Diagnóstico', icon: AlertTriangle, badge: semVendedorTotal },
               { id: 'trafego', label: 'Tráfego',    icon: TrendingUp, badge: 0 },
               { id: 'sellers', label: 'Vendedores', icon: Users,      badge: 0 },
@@ -4605,8 +4607,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         </DialogContent>
       </Dialog>
 
-      {/* ── Feedbacks List (gerente) ─────────────────────────────────── */}
-      {view === 'feedbacks' && (
+      {/* ── Feedbacks List (gerente) — so master (vendedor nao ve) ──────── */}
+      {view === 'feedbacks' && !isSeller && (
         <div className="space-y-3">
           {/* Resumo da qualificação de TODOS os leads pela IA (apenas master) */}
           {!isSeller && (
@@ -5104,7 +5106,10 @@ const ALL_SELLER_TABS = [
 
 export default function PedroSDR() {
   const { user } = useAuth();
-  const { isSeller, seller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, seller, masterUserId, memberIds, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  // Dono dos dados: master usa o proprio id; vendedor usa o id do master (os
+  // agentes/leads/inbox ficam gravados sob o master, nao sob o auth do vendedor).
+  const inboxOwnerId = masterUserId || user?.id;
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
 
@@ -5206,7 +5211,13 @@ export default function PedroSDR() {
 
             {/* Inbox IA — conversas do agente com pause/resume */}
             <TabsContent value="inbox-ia" className="mt-0 h-full">
-              {user?.id && <AgentInboxTab userId={user.id} />}
+              {inboxOwnerId && (
+                <AgentInboxTab
+                  userId={inboxOwnerId}
+                  isSeller={isSeller}
+                  sellerMemberIds={memberIds}
+                />
+              )}
             </TabsContent>
 
             {/* Vendedores */}

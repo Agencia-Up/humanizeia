@@ -97,6 +97,9 @@ export interface SellerProfileResult {
   isSeller: boolean;
   seller: SellerInfo | null;
   masterUserId: string | null;
+  // Todos os ids de ai_team_members do vendedor (ele pode pertencer a varios
+  // agentes). Usado p/ escopar leads atribuidos a ele (ex: Inbox IA, CRM).
+  memberIds: string[];
   visibleFeatures: VisibleFeatures;
   loading: boolean;
 }
@@ -106,13 +109,14 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
     isSeller: false,
     seller: null,
     masterUserId: null,
+    memberIds: [],
     visibleFeatures: DEFAULT_SELLER_FEATURES,
     loading: true,
   });
 
   useEffect(() => {
     if (!authUserId) {
-      setResult({ isSeller: false, seller: null, masterUserId: null, visibleFeatures: DEFAULT_SELLER_FEATURES, loading: false });
+      setResult({ isSeller: false, seller: null, masterUserId: null, memberIds: [], visibleFeatures: DEFAULT_SELLER_FEATURES, loading: false });
       return;
     }
 
@@ -131,7 +135,7 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
       const isSeller = profile?.role === 'seller';
 
       if (!isSeller) {
-        setResult({ isSeller: false, seller: null, masterUserId: null, visibleFeatures: DEFAULT_SELLER_FEATURES, loading: false });
+        setResult({ isSeller: false, seller: null, masterUserId: null, memberIds: [], visibleFeatures: DEFAULT_SELLER_FEATURES, loading: false });
         return;
       }
 
@@ -165,6 +169,7 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
         isSeller: true,
         seller,
         masterUserId: seller?.user_id || (profile as any)?.manager_id || null,
+        memberIds: allRecords.map((r) => r.id).filter(Boolean),
         visibleFeatures: features,
         loading: false,
       });
