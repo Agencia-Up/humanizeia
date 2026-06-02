@@ -128,11 +128,15 @@ Deno.serve(async (req) => {
 
     const { user_id, instance_id, instance_name, seller_member_id } = await req.json();
 
+    // Seller-auth aligned with the frontend (useSellerProfile): NO is_active filter
+    // (see verify-instance-status for the full rationale). A seller whose member row
+    // is is_active=false still sees the connect/QR button, so gating on is_active=true
+    // here returned 404 and blocked them from ever connecting. Security unchanged: the
+    // instance must still carry one of THIS caller's member ids (isAuthorizedInstance).
     const { data: sellerRows } = await supabase
       .from('ai_team_members')
       .select('id, user_id')
-      .eq('auth_user_id', user.id)
-      .eq('is_active', true);
+      .eq('auth_user_id', user.id);
 
     const sellerMemberIds = new Set((sellerRows || []).map((row: any) => row.id));
     const allowedMasterIds = new Set<string>([

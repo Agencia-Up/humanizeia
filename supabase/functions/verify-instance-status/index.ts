@@ -79,11 +79,19 @@ Deno.serve(async (req) => {
     const { instance_id } = await req.json();
 
     // Get instance from DB — instâncias são PER-USER, vendedor verifica as DELE
+    // Seller-auth aligned with the frontend (useSellerProfile): match the caller's
+    // member rows by auth_user_id WITHOUT an is_active filter. The panel/buttons are
+    // shown whenever profiles.role==='seller' and that hook looks up the member row
+    // with NO is_active filter, so gating the backend on is_active=true caused a
+    // mismatch: a seller whose member row is is_active=false saw the "Verificar"/
+    // "Conectar" buttons but every call here returned 404 -> the generic
+    // "Edge Function returned a non-2xx status code". Security is unchanged: the row
+    // must still belong to this caller (auth_user_id) and the instance must still
+    // carry that member id (seller_member_id) in the authorizedAsSeller check below.
     const { data: sellerRows } = await supabase
       .from('ai_team_members')
       .select('id, user_id')
-      .eq('auth_user_id', user.id)
-      .eq('is_active', true);
+      .eq('auth_user_id', user.id);
     const sellerMemberIds = new Set((sellerRows || []).map((row: any) => row.id));
 
     const { data: instance, error: dbError } = await supabase
