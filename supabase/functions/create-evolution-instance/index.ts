@@ -216,7 +216,7 @@ const corsHeaders = {
 
 // Limite de instâncias por plano (pool compartilhado: master + vendedores)
 const INSTANCE_LIMITS_BY_PLAN: Record<string, number> = {
-  basico: 5,
+  basico: 10,
   pro: 10,
   enterprise: 15,
 };

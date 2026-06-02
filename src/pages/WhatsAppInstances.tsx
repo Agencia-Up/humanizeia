@@ -107,7 +107,7 @@ function formatWaNumber(raw: string | null | undefined): string {
 }
 
 const INSTANCE_LIMITS: Record<string, number> = {
-  basico: 5,
+  basico: 10,
   pro: 10,
   enterprise: 15,
 };
@@ -123,7 +123,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   // vendedor vê só instâncias com seller_member_id = seu seller.id
   const effectiveOwnerId = isSeller && seller?.user_id ? seller.user_id : user?.id;
   const userPlan = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
-  const maxInstances = isSeller ? 1 : (INSTANCE_LIMITS[userPlan] ?? 5);
+  const maxInstances = isSeller ? 1 : (INSTANCE_LIMITS[userPlan] ?? 10);
   const [instances, setInstances] = useState<WaInstance[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMemberLite[]>([]);
   const [assigningId, setAssigningId] = useState<string | null>(null);
