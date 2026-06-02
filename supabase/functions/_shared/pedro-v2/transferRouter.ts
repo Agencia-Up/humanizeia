@@ -1,5 +1,6 @@
 import { phonesMatch } from "./phone.ts";
 import { resolveTransferFailures } from "./logTransferFailure.ts";
+import { resolveLeadInterestVehicle } from "../transfer/interestVehicle.ts";
 
 export async function findPreviousSellerForLead(
   supabase: any,
@@ -163,11 +164,21 @@ async function buildHandoffBriefing(
   input: {
     agent_id: string;
     remote_jid: string;
+    lead_id?: string | null;
     lead_name?: string | null;
     qualificacao?: Record<string, any> | null;
+    veiculo_interesse?: string | null;
   },
 ): Promise<string> {
   let briefing = "Lead avancou na negociacao com o Pedro v2 (qualificado / agendou visita / quer fechar). Retome o atendimento.";
+  // Veiculo de interesse CONHECIDO (do anuncio do Facebook ou dos carros ja
+  // apresentados). E obrigatorio aparecer no briefing: um lead de anuncio quase
+  // nunca digita o modelo (so "tenho interesse"), entao sem isso o briefing saia
+  // "VEICULO DE INTERESSE: Nao especificado" mesmo o anuncio dizendo o carro.
+  // Se o chamador nao passou, busca no estado da conversa (memoria do Pedro v2).
+  const veiculo = String(
+    input.veiculo_interesse || (await resolveLeadInterestVehicle(supabase, input.lead_id, input.agent_id)) || "",
+  ).trim();
   try {
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
     const { data: chat } = await supabase
@@ -188,8 +199,8 @@ async function buildHandoffBriefing(
           model: "gpt-4o-mini",
           temperature: 0.3,
           messages: [
-            { role: "system", content: `Voce e um analista de vendas automotivo. Gere um briefing objetivo para o vendedor humano assumir um lead QUALIFICADO (avancou na negociacao, agendou visita ou quer fechar).\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL E SINAIS DE COMPRA:*\n*PROXIMO PASSO SUGERIDO:*\n\nSeja direto. Nao invente informacoes.` },
-            { role: "user", content: `Conversa:\n${transcript}\n\nGere o briefing.` },
+            { role: "system", content: `Voce e um analista de vendas automotivo. Gere um briefing objetivo para o vendedor humano assumir um lead QUALIFICADO (avancou na negociacao, agendou visita ou quer fechar).\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL E SINAIS DE COMPRA:*\n*PROXIMO PASSO SUGERIDO:*\n\nSeja direto. Nao invente informacoes. Se o "Veiculo de interesse conhecido" for informado abaixo, use-o EXATAMENTE na secao VEICULO DE INTERESSE (e o carro do anuncio/conversa).` },
+            { role: "user", content: `Conversa:\n${transcript}\n\nVeiculo de interesse conhecido: ${veiculo || "nao informado"}\n\nGere o briefing.` },
           ],
         }),
       });
@@ -198,18 +209,20 @@ async function buildHandoffBriefing(
   } catch (_e) { /* silencioso */ }
 
   const q = input.qualificacao && typeof input.qualificacao === "object" ? input.qualificacao : null;
-  if (q) {
+  {
     const linhas: string[] = [];
-    if (q.nome) linhas.push(`Nome: ${q.nome}`);
-    if (q.interesse) linhas.push(`Interesse: ${q.interesse}`);
-    if (q.dia_agendamento) linhas.push(`Agendamento desejado: ${q.dia_agendamento}`);
-    if (q.carro_troca) linhas.push(`Veiculo de troca: ${q.carro_troca}`);
-    else if (q.tem_troca === true) linhas.push("Tem carro na troca: sim");
-    else if (q.tem_troca === false) linhas.push("Tem carro na troca: nao");
-    if (q.valor_entrada) linhas.push(`Valor de entrada: ${q.valor_entrada}`);
-    if (q.forma_pagamento) linhas.push(`Forma de pagamento: ${q.forma_pagamento}`);
-    if (q.sabe_localizacao === true) linhas.push("Conhece a loja: sim");
-    else if (q.sabe_localizacao === false) linhas.push("Conhece a loja: nao");
+    // Garante o veiculo nas primeiras linhas, mesmo que a IA tenha escrito "nao especificado".
+    if (veiculo) linhas.push(`Veiculo de interesse: ${veiculo}`);
+    if (q?.nome) linhas.push(`Nome: ${q.nome}`);
+    if (q?.interesse && String(q.interesse).trim().toLowerCase() !== veiculo.toLowerCase()) linhas.push(`Interesse: ${q.interesse}`);
+    if (q?.dia_agendamento) linhas.push(`Agendamento desejado: ${q.dia_agendamento}`);
+    if (q?.carro_troca) linhas.push(`Veiculo de troca: ${q.carro_troca}`);
+    else if (q?.tem_troca === true) linhas.push("Tem carro na troca: sim");
+    else if (q?.tem_troca === false) linhas.push("Tem carro na troca: nao");
+    if (q?.valor_entrada) linhas.push(`Valor de entrada: ${q.valor_entrada}`);
+    if (q?.forma_pagamento) linhas.push(`Forma de pagamento: ${q.forma_pagamento}`);
+    if (q?.sabe_localizacao === true) linhas.push("Conhece a loja: sim");
+    else if (q?.sabe_localizacao === false) linhas.push("Conhece a loja: nao");
     if (linhas.length > 0) briefing = `${briefing}\n\n*DADOS COLETADOS PELO AGENTE:*\n${linhas.join("\n")}`;
   }
   return briefing;
@@ -244,6 +257,7 @@ export async function executePedroV2Handoff(
     reason?: string | null;
     qualificacao?: Record<string, any> | null;
     seller_response_min?: number | null;
+    veiculo_interesse?: string | null;
   },
 ): Promise<{ ok: boolean; seller: any; briefing: string; reason: string }> {
   const nowIso = new Date().toISOString();
@@ -285,8 +299,10 @@ export async function executePedroV2Handoff(
       const briefing = await buildHandoffBriefing(supabase, {
         agent_id: input.agent_id,
         remote_jid: input.remote_jid,
+        lead_id: input.lead_id,
         lead_name: input.lead_name,
         qualificacao: input.qualificacao,
+        veiculo_interesse: input.veiculo_interesse,
       });
       // Registra o aviso como transferencia CONFIRMADA (o lead JA e deste vendedor)
       // — serve de historico e de marco de throttle para a proxima mensagem.
@@ -373,8 +389,10 @@ export async function executePedroV2Handoff(
   const briefing = await buildHandoffBriefing(supabase, {
     agent_id: input.agent_id,
     remote_jid: input.remote_jid,
+    lead_id: input.lead_id,
     lead_name: input.lead_name,
     qualificacao: input.qualificacao,
+    veiculo_interesse: input.veiculo_interesse,
   });
   if (inserted?.id) await supabase.from("ai_lead_transfers").update({ notes: briefing }).eq("id", inserted.id);
   await supabase.from("ai_crm_leads").update({ summary: briefing }).eq("id", input.lead_id);

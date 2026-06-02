@@ -1,6 +1,7 @@
 import { logTransferFailure } from '../_shared/pedro-v2/logTransferFailure.ts';
 import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
 import { managerPhones } from "../_shared/transfer/managers.ts";
+import { resolveLeadInterestVehicle } from "../_shared/transfer/interestVehicle.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -498,7 +499,13 @@ async function handleV2Followup(supabase: any, ctx: {
       const prevSeller = availableSellers.find((m: any) => m.id === prev?.assigned_to_id);
       if (prevSeller) seller = prevSeller;
 
-      let summary = lead.summary || "O cliente demonstrou interesse e parou de responder durante a conversa.";
+      // Veiculo de interesse do lead (do anuncio/memoria do Pedro v2). Sem isso, o
+      // briefing por IA so via o transcript e saia "VEICULO DE INTERESSE: Nao
+      // especificado" para lead de anuncio (que so manda "tenho interesse").
+      const veiculoInteresse = await resolveLeadInterestVehicle(supabase, lead.id, agentId);
+      let summary = lead.summary || (veiculoInteresse
+        ? `Veiculo de interesse: ${veiculoInteresse}. O cliente demonstrou interesse e parou de responder durante a conversa.`
+        : "O cliente demonstrou interesse e parou de responder durante a conversa.");
       try {
         const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
         const { data: fullChat } = await supabase.from("wa_chat_history")
@@ -510,8 +517,8 @@ async function handleV2Followup(supabase: any, ctx: {
           const sres = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openaiApiKey}` },
             body: JSON.stringify({ model: "gpt-4o-mini", temperature: 0.3, messages: [
-              { role: "system", content: `Voce e um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL DO CLIENTE:*\n*DICA PARA RETOMADA:*\n\nSeja direto. Nao invente informacoes.` },
-              { role: "user", content: `Conversa:\n${transcript}\n\nGere o briefing.` },
+              { role: "system", content: `Voce e um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL DO CLIENTE:*\n*DICA PARA RETOMADA:*\n\nSeja direto. Nao invente informacoes. Se o "Veiculo de interesse conhecido" for informado abaixo, use-o EXATAMENTE na secao VEICULO DE INTERESSE (e o carro do anuncio/conversa).` },
+              { role: "user", content: `Conversa:\n${transcript}\n\nVeiculo de interesse conhecido: ${veiculoInteresse || "nao informado"}\n\nGere o briefing.` },
             ] }),
           });
           if (sres.ok) { const sd = await sres.json(); const gt = sd.choices?.[0]?.message?.content; if (gt) summary = gt; }
@@ -535,7 +542,7 @@ async function handleV2Followup(supabase: any, ctx: {
       const _gerentes = managerPhones(agentRulesRow);
       if (_gerentes.length > 0) {
         const _hora = now.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-        const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${leadName || "Desconhecido"}\n📱 *Telefone:* +${phoneNumber}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${seller.name}\n📲 *WhatsApp vendedor:* ${seller.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+        const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${leadName || "Desconhecido"}\n📱 *Telefone:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${veiculoInteresse}` : ""}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${seller.name}\n📲 *WhatsApp vendedor:* ${seller.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
         for (const gp of _gerentes) {
           try { await sendUazapiTextMessage(baseUrl, instKey, instanceName, gp, `${gp}@s.whatsapp.net`, _mgrMsg); } catch (_e) { /* nao bloqueante */ }
         }
@@ -818,7 +825,10 @@ Deno.serve(async (req) => {
             const phoneNumber = lead.remote_jid.split('@')[0];
 
             // Gerar resumo para o proximo vendedor
-            let aiGeneratedSummary = lead.summary || 'Lead qualificado aguardando atendimento.';
+            const veiculoInteresseRep = await resolveLeadInterestVehicle(supabase, lead.id, agentId);
+            let aiGeneratedSummary = lead.summary || (veiculoInteresseRep
+              ? `Veiculo de interesse: ${veiculoInteresseRep}. Lead qualificado aguardando atendimento.`
+              : 'Lead qualificado aguardando atendimento.');
             try {
               const { data: fullChat } = await supabase
                 .from('wa_chat_history')
@@ -841,8 +851,8 @@ Deno.serve(async (req) => {
                     model: 'gpt-4o-mini',
                     temperature: 0.3,
                     messages: [
-                      { role: 'system', content: `Gere um briefing curto e objetivo para um vendedor de carros que esta recebendo um lead repassado. Inclua: veiculo de interesse, perfil do cliente e dica de abordagem. Maximo 5 linhas.` },
-                      { role: 'user', content: `Conversa:\n${chatTranscript}\n\nGere o briefing.` }
+                      { role: 'system', content: `Gere um briefing curto e objetivo para um vendedor de carros que esta recebendo um lead repassado. Inclua: veiculo de interesse, perfil do cliente e dica de abordagem. Maximo 5 linhas. Se o "Veiculo de interesse conhecido" for informado, use-o como veiculo de interesse.` },
+                      { role: 'user', content: `Conversa:\n${chatTranscript}\n\nVeiculo de interesse conhecido: ${veiculoInteresseRep || 'nao informado'}\n\nGere o briefing.` }
                     ]
                   })
                 });
@@ -999,7 +1009,10 @@ Deno.serve(async (req) => {
             .order('created_at', { ascending: false })
             .limit(20);
 
-          let aiGeneratedSummary = lead.summary || 'O cliente demonstrou interesse e parou de responder durante a conversa.';
+          const veiculoInteresseSec = await resolveLeadInterestVehicle(supabase, lead.id, agentId);
+          let aiGeneratedSummary = lead.summary || (veiculoInteresseSec
+            ? `Veiculo de interesse: ${veiculoInteresseSec}. O cliente demonstrou interesse e parou de responder durante a conversa.`
+            : 'O cliente demonstrou interesse e parou de responder durante a conversa.');
           try {
             const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
             if (openaiApiKey && fullChat && fullChat.length > 0) {
@@ -1014,8 +1027,8 @@ Deno.serve(async (req) => {
                   model: 'gpt-4o-mini',
                   temperature: 0.3,
                   messages: [
-                    { role: 'system', content: `Voce e um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL DO CLIENTE:*\n*DICA PARA RETOMADA:*\n\nSeja direto. Nao invente informacoes.` },
-                    { role: 'user', content: `Conversa:\n${chatTranscript}\n\nGere o briefing.` }
+                    { role: 'system', content: `Voce e um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL DO CLIENTE:*\n*DICA PARA RETOMADA:*\n\nSeja direto. Nao invente informacoes. Se o "Veiculo de interesse conhecido" for informado abaixo, use-o EXATAMENTE na secao VEICULO DE INTERESSE.` },
+                    { role: 'user', content: `Conversa:\n${chatTranscript}\n\nVeiculo de interesse conhecido: ${veiculoInteresseSec || 'nao informado'}\n\nGere o briefing.` }
                   ]
                 })
               });

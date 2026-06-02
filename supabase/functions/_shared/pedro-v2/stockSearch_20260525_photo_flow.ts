@@ -226,11 +226,12 @@ function buildIndexedText(vehicle: BndvVehicle) {
 
 function inferRequestedVehicleType(filters: Record<string, any>): "carro" | "moto" | "qualquer" {
   const explicit = normalizeText(filters?.tipo_veiculo || filters?.tipo || filters?.categoria);
+  // NAO usa o blob cru do anuncio (ad_context/contexto_anuncio): o texto do Facebook
+  // traz marca/modelo/versao de OUTROS carros do anuncio e virava ruido que filtrava
+  // o estoque errado. O sinal do veiculo ja vem estruturado em tipo_veiculo/query/modelo.
   const searchText = normalizeText([
     explicit,
     filters?.query,
-    filters?.ad_context,
-    filters?.contexto_anuncio,
     filters?.modelo,
   ].filter(Boolean).join(" "));
 
@@ -245,12 +246,21 @@ function inferRequestedVehicleType(filters: Record<string, any>): "carro" | "mot
 
 function inferVehicleSubcategory(filters: Record<string, any>): "hatch" | "sedan" | "suv" | "pickup" | "qualquer" {
   const explicit = normalizeText(filters?.tipo_veiculo || filters?.tipo || filters?.categoria || filters?.subcategoria || filters?.body_type);
+  // PRECEDENCIA do sinal estruturado: se o tipo do veiculo ja diz a subcategoria,
+  // usa ele direto, antes de olhar texto livre. (Sem isso, o blob do anuncio com
+  // "Sedan" ganhava do tipo_veiculo "hatch" e zerava a busca -> "nao temos".)
+  if (/\b(suv|utilitario|utilitarios)\b/.test(explicit)) return "suv";
+  if (/\b(sedan|sedans|seda|sedas|tres volumes|3 volumes)\b/.test(explicit)) return "sedan";
+  if (/\b(hatch|hatches|hatchback|hatchbacks)\b/.test(explicit)) return "hatch";
+  if (/\b(pickup|pickups|picape|picapes|caminhonete|caminhonetes|camionete|camionetes)\b/.test(explicit)) return "pickup";
+  // BUG CRITICO corrigido: NAO usar o blob cru do anuncio (ad_context/contexto_anuncio).
+  // O texto do Facebook costuma citar "Polo Sedan 1.6 2013 ... Polo Sedan 1.0 2018" e a
+  // palavra "Sedan" fazia o agente exigir sedan e DESCARTAR os Polos hatch que existem no
+  // estoque -> 0 resultados -> "nao temos" (sendo que tinha o carro). Usa so o texto limpo.
   const searchText = normalizeText([
-    explicit,
     filters?.query,
-    filters?.ad_context,
-    filters?.contexto_anuncio,
     filters?.modelo,
+    filters?.modelo_desejado,
   ].filter(Boolean).join(" "));
 
   if (/\b(suv|utilitario|utilitarios)\b/.test(searchText)) {

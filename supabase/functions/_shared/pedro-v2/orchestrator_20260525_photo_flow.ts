@@ -5,6 +5,7 @@ import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
 import { resolveAutomationRules } from "../automation/rules.ts";
 import { managerPhones } from "../transfer/managers.ts";
+import { pickInterestVehicleFromState } from "../transfer/interestVehicle.ts";
 import { remoteJidToPhone } from "./phone.ts";
 import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
@@ -1414,6 +1415,15 @@ export async function processPedroV2Turn(
   // Transferencia automatica (qualificacao/silenciosa) respeita a regra do agente:
   // se o gerente desligou a transferencia, o agente NAO repassa (atende sozinho).
   const _automationRules = resolveAutomationRules(input.agent?.automation_rules);
+  // Veiculo de interesse para o relatorio de transferencia: prioriza o que ja
+  // esta na memoria (modelo do lead / veiculo do anuncio / apresentados) e cai
+  // para o veiculo do anuncio deste turno. Garante que o vendedor SEMPRE saiba
+  // qual carro o lead veio buscar (em especial leads de anuncio que so dizem
+  // "tenho interesse").
+  const _veiculoInteresse = pickInterestVehicleFromState(effectiveMemory)
+    || (adContext?.vehicle_query ? String(adContext.vehicle_query).trim() : null)
+    || (vehicleResolution?.query ? String(vehicleResolution.query).trim() : null)
+    || null;
   if (!dryRun && lead?.id && _automationRules.transfer.enabled && (contextualIntent.needs_handoff || brainReadyToTransfer || silentTransfer) && identity.kind !== "seller") {
     try {
       handoffResult = await executePedroV2Handoff(supabase, {
@@ -1425,6 +1435,7 @@ export async function processPedroV2Turn(
         reason: contextualIntent.needs_handoff ? `handoff:${brainPlan?.intent || contextualIntent.intent || "humano"}` : (silentTransfer ? "handoff:desqualificado_silencioso_followup" : "handoff:qualificado_pronto"),
         qualificacao: _q,
         seller_response_min: _automationRules.transfer.seller_response_min,
+        veiculo_interesse: _veiculoInteresse,
       });
       if (handoffResult?.ok && handoffResult.seller?.whatsapp_number && isPedroV2SendingEnabled()) {
         const handoffInstance = input.wa_instance || await resolvePedroInstance(supabase, {
@@ -1453,7 +1464,7 @@ export async function processPedroV2Turn(
         const _gerentes = managerPhones(input.agent);
         if (!isRenotify && _gerentes.length > 0) {
           const _hora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${_veiculoInteresse}` : ""}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
           for (const gp of _gerentes) {
             try { await sendPedroText(handoffInstance, { to: gp, text: _mgrMsg }); } catch (_e) { /* nao bloqueante */ }
           }
