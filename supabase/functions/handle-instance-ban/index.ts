@@ -12,9 +12,24 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+    // Esta funcao e INTERNA: so o process-whatsapp-queue a chama, sempre com a
+    // service role key no header. Sem essa trava, qualquer um com a anon key
+    // publica poderia disparar o failover (reescrever a instancia dos contatos
+    // e enfileirar mensagens) de OUTRA conta passando o user_id no body.
+    const authHeader = req.headers.get("Authorization") || "";
+    const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (!bearer || bearer !== serviceKey) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      serviceKey
     );
 
     const { instance_id, user_id } = await req.json();
