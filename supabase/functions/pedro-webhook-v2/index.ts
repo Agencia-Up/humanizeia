@@ -45,12 +45,92 @@ function isOutgoingMessage(payload: any): boolean {
   return message?.fromMe === true || message?.key?.fromMe === true || payload?.fromMe === true;
 }
 
+// ── Connection/status event helpers ──────────────────────────────────────────
+// UaZapi (and the legacy Evolution format) report connection state via a
+// dedicated event, NOT a chat message. The v1 webhook (uazapi-webhook) handled
+// this; v2 never did. Mirror v1 so a brand-new instance gets flipped to
+// connected once the seller scans the QR.
+function getEventType(payload: any): string {
+  return String(
+    payload?.EventType ||
+    payload?.eventType ||
+    payload?.event ||
+    payload?.type ||
+    "",
+  ).toLowerCase();
+}
+
+function isConnectionEvent(payload: any): boolean {
+  const eventType = getEventType(payload);
+  if (!eventType) return false;
+  return (
+    eventType === "connection" ||
+    eventType === "status" ||
+    eventType.includes("connect") // covers "connection.update" / "connection_update"
+  );
+}
+
+function extractConnectionState(payload: any): string {
+  const data =
+    payload?.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+      ? payload.data
+      : {};
+  return String(
+    payload?.state ||
+    payload?.status ||
+    data?.state ||
+    data?.status ||
+    "",
+  ).toLowerCase();
+}
+
+function extractConnectionInstanceName(payload: any): string | null {
+  const candidates = [
+    payload?.instance,
+    payload?.instanceName,
+    payload?.instance_name,
+    payload?.InstanceId,
+    payload?.instanceId,
+    payload?.data?.instance,
+    payload?.data?.instanceName,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
   const supabase = createServiceClient();
   const payload = await parseJson(req);
+
+  // ── Connection/status events ──────────────────────────────────────────────
+  // Must be handled BEFORE the message path: a brand-new instance is created
+  // with is_active=false, so the message lookup (which requires is_active=true)
+  // would 404 and the instance would never be marked connected. Here we look up
+  // by instance_name WITHOUT the is_active filter and flip it on open/connected.
+  if (isConnectionEvent(payload)) {
+    const connInstanceName = extractConnectionInstanceName(payload);
+    const state = extractConnectionState(payload);
+    if (connInstanceName && (state === "open" || state === "connected")) {
+      const { error: connError } = await supabase
+        .from("wa_instances")
+        .update({ is_active: true, status: "connected", updated_at: new Date().toISOString() })
+        .eq("instance_name", connInstanceName);
+      console.log(
+        `[pedro-webhook-v2] connection event instance=${connInstanceName} state=${state} -> ${connError ? "ERROR " + connError.message : "marked connected"}`,
+      );
+    } else {
+      console.log(
+        `[pedro-webhook-v2] connection event instance=${connInstanceName ?? "?"} state=${state || "?"} -> no-op`,
+      );
+    }
+    return jsonResponse({ ok: true, event: "connection", state: state || null });
+  }
+
   if (isOutgoingMessage(payload)) {
     return jsonResponse({ ok: true, ignored: "from_me" });
   }
