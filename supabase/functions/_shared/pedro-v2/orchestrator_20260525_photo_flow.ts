@@ -3,6 +3,7 @@ import { identifyPedroContact } from "./contactIdentity.ts";
 import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
+import { logTransferFailure } from "./logTransferFailure.ts";
 import { resolveAutomationRules } from "../automation/rules.ts";
 import { managerPhones } from "../transfer/managers.ts";
 import { remoteJidToPhone } from "./phone.ts";
@@ -1418,6 +1419,23 @@ export async function processPedroV2Turn(
         qualificacao: _q,
         seller_response_min: _automationRules.transfer.seller_response_min,
       });
+      // Sem vendedor disponivel -> registra no painel "Leads sem Transferencia".
+      // (already_handled = lead JA estava transferido; nao e falha, nao loga.)
+      if (!handoffResult?.ok && handoffResult?.reason === "no_active_seller") {
+        await logTransferFailure({
+          user_id: input.agent.user_id,
+          reason_code: "sem_vendedor_disponivel",
+          mode: "pedro",
+          lead_id: lead.id,
+          agent_id: input.agent.id,
+          lead_name: _q.nome || lead.lead_name || pushName || null,
+          remote_jid: remoteJid,
+          lead_status: lead.status ?? null,
+          lead_status_crm: (lead as any).status_crm ?? null,
+          attempted_transfer: false,
+          source: "pedro-v2-orchestrator",
+        });
+      }
       if (handoffResult?.ok && handoffResult.seller?.whatsapp_number && isPedroV2SendingEnabled()) {
         const handoffInstance = input.wa_instance || await resolvePedroInstance(supabase, {
           user_id: input.agent.user_id,
@@ -1429,7 +1447,28 @@ export async function processPedroV2Turn(
           ? `*LEAD PARA FOLLOW-UP (nao avancou agora) - Pedro v2*\nCliente nao se desqualificou de vez; vale retomar depois.`
           : `*NOVO LEAD QUALIFICADO (Pedro v2)*`;
         const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n*Contato:* +${leadPhone}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
-        await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
+        const sellerSend = await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
+        // O lead JA esta "transferido" no banco. Se a notificacao ao vendedor
+        // falhou (numero invalido, instancia fora), NINGUEM foi avisado: registra
+        // erro_tecnico para o painel/cron de resgate pegarem o orfao.
+        if (sellerSend && sellerSend.ok === false) {
+          log("warn", "pedro_v2_seller_notify_failed", { lead_id: lead.id, seller_id: handoffResult.seller?.id || null, error: (sellerSend as any).error || null });
+          await logTransferFailure({
+            user_id: input.agent.user_id,
+            reason_code: "erro_tecnico",
+            mode: "pedro",
+            lead_id: lead.id,
+            agent_id: input.agent.id,
+            member_id: handoffResult.seller?.id || null,
+            lead_name: lead.lead_name || pushName || null,
+            remote_jid: remoteJid,
+            reason_detail: `Falha ao notificar vendedor: ${(sellerSend as any).error || "erro desconhecido"}`.slice(0, 300),
+            lead_status: "transferido",
+            lead_status_crm: (lead as any).status_crm ?? null,
+            attempted_transfer: true,
+            source: "pedro-v2-orchestrator",
+          });
+        }
 
         // Relatorio automatico ao(s) gerente(s) — ate 2 (mesma regra do portal).
         const _gerentes = managerPhones(input.agent);
@@ -1443,6 +1482,21 @@ export async function processPedroV2Turn(
       }
     } catch (e) {
       console.warn("[PedroV2] Falha ao executar handoff (Etapa C):", e);
+      // Excecao inesperada no meio da transferencia -> diagnostico (best-effort).
+      try {
+        await logTransferFailure({
+          user_id: input.agent.user_id,
+          reason_code: "erro_tecnico",
+          mode: "pedro",
+          lead_id: lead.id,
+          agent_id: input.agent.id,
+          lead_name: lead.lead_name || pushName || null,
+          remote_jid: remoteJid,
+          reason_detail: `Excecao no handoff: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300),
+          attempted_transfer: true,
+          source: "pedro-v2-orchestrator",
+        });
+      } catch (_logErr) { /* nunca derruba o atendimento */ }
     }
   }
 
