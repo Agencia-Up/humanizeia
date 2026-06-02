@@ -1425,15 +1425,25 @@ export async function processPedroV2Turn(
           instance_id: input.wa_instance?.id,
         });
         const leadPhone = remoteJidToPhone(remoteJid);
-        const sellerHeader = silentTransfer
+        // Lead que RETORNOU para o vendedor que ja o atendia: o vendedor JA e dono,
+        // entao nao pedimos "Responda Ok para assumir" (so avisamos do retorno).
+        const isRenotify = handoffResult.reason === "returning_lead_renotify";
+        const sellerHeader = isRenotify
+          ? `*LEAD RETORNOU (Pedro v2)*\nUm cliente que ja era seu voltou a conversar e demonstrou interesse. Retome o atendimento.`
+          : silentTransfer
           ? `*LEAD PARA FOLLOW-UP (nao avancou agora) - Pedro v2*\nCliente nao se desqualificou de vez; vale retomar depois.`
           : `*NOVO LEAD QUALIFICADO (Pedro v2)*`;
-        const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n*Contato:* +${leadPhone}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        const sellerFooter = isRenotify
+          ? `*Atender:* https://wa.me/${leadPhone}`
+          : `*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n*Contato:* +${leadPhone}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
         await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
 
         // Relatorio automatico ao(s) gerente(s) — ate 2 (mesma regra do portal).
+        // Nao dispara em re-aviso de lead que retornou (evita relatorio repetido
+        // do mesmo lead a cada vez que ele volta a falar).
         const _gerentes = managerPhones(input.agent);
-        if (_gerentes.length > 0) {
+        if (!isRenotify && _gerentes.length > 0) {
           const _hora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
           const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
           for (const gp of _gerentes) {
