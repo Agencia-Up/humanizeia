@@ -165,8 +165,8 @@ export default function MeuPlano() {
     setBuyingPkg(null);
     if (res.success) {
       toast({
-        title: 'Recarga solicitada!',
-        description: `${fmt(amount)} atendimentos — ${fmtR(price)}. Integração com gateway em breve.`,
+        title: 'Pedido de recarga registrado!',
+        description: `${fmt(amount)} atendimentos — ${fmtR(price)}. Nosso suporte vai falar com você para concluir a liberação.`,
       });
     }
   };
@@ -453,7 +453,7 @@ export default function MeuPlano() {
           <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex items-start gap-2">
             <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
             <p className="text-sm text-muted-foreground">
-              Acabaram os atendimentos do seu plano? Recarregue com um dos pacotes abaixo. Os atendimentos extras entram na hora e valem até a próxima renovação.
+              Acabaram os atendimentos do seu plano? Solicite uma recarga em um dos pacotes abaixo. Os atendimentos não utilizados se acumulam para os próximos meses.
             </p>
           </div>
 
@@ -485,7 +485,7 @@ export default function MeuPlano() {
           <div className="rounded-lg border border-border/40 bg-muted/20 px-4 py-3 flex items-center gap-2">
             <CreditCard className="h-4 w-4 text-muted-foreground" />
             <p className="text-xs text-muted-foreground">
-              Pagamento seguro via <strong>Stripe</strong> — cartão de crédito, boleto bancário ou Pix. Os créditos são adicionados imediatamente após confirmação do pagamento.
+              No momento a recarga é liberada manualmente pelo nosso <strong>suporte</strong> (gateway de pagamento automático em breve). Assim que a recarga for confirmada, os atendimentos entram no seu saldo.
             </p>
           </div>
         </div>
