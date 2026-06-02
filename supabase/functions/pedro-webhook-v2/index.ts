@@ -156,6 +156,18 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, error: "active_instance_not_found" }, 404);
   }
 
+  // ── HARD RULE: a seller's number is NEVER answered by the AI ────────────────
+  // Only the master's configured number (the instance linked inside the AI agent)
+  // may run Pedro. Seller instances always carry seller_member_id: they connect
+  // and show "connected" for the seller's own manual use, but must NEVER be
+  // hijacked by the AI. Without this guard the agent lookup below falls back to
+  // the master's Pedro agent (agentLooksLikePedro / activeAgents[0]) and answers
+  // on the seller's line. The v1 webhook (uazapi-webhook) avoids this by REQUIRING
+  // .contains('instance_ids', [instance.id]); v2 lost that guard.
+  if (waInstance.seller_member_id) {
+    return jsonResponse({ ok: true, ignored: "seller_instance_no_ai", instance: instanceName });
+  }
+
   const gate = await isPedroV2EnabledForUser(supabase, waInstance.user_id);
   if (!gate.enabled) {
     return jsonResponse({
