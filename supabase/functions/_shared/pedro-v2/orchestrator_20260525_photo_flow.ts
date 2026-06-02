@@ -15,7 +15,7 @@ import { isPedroV2SendingEnabled } from "./server.ts";
 import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } from "./adContext_20260525.ts";
 import { mediaContextToAdLikeContext, resolvePedroMediaContext, sanitizePedroMediaContext } from "./mediaContext_20260524.ts";
 import { resolvePedroVehicleTurn } from "./vehicleResolver_20260525_brain.ts";
-import { buildTokenAlertText, consumeUserTokens, normalizeAlertPhone } from "./tokenMeter.ts";
+import { billPedroLead, buildTokenAlertText, normalizeAlertPhone } from "./tokenMeter.ts";
 
 async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
   try {
@@ -1496,27 +1496,29 @@ export async function processPedroV2Turn(
     });
   }
 
-  // Token metering: desconta o que os cérebros gastaram neste turno e avisa o
-  // dono no WhatsApp (gerente_phone) quando o saldo cruza ≤10% ou ≤0. Nunca
-  // bloqueia o atendimento — roda depois da resposta e nunca lança erro.
+  // Cobranca por ATENDIMENTO: 1 lead/conversa por ciclo (idempotente no banco
+  // via bill_pedro_lead). Os tokens crus do turno (usageSink.tokens) vao so como
+  // medicao interna de margem. Avisa o dono no WhatsApp (gerente_phone) quando o
+  // saldo de atendimentos cruza <=10% ou <=0. Nunca bloqueia o atendimento —
+  // roda depois da resposta e nunca lanca erro.
   if (!dryRun) {
-    const consume = await consumeUserTokens(supabase, {
+    const bill = await billPedroLead(supabase, {
       userId: input.agent.user_id,
-      tokens: usageSink.tokens,
+      leadKey: remoteJid,
+      rawTokens: usageSink.tokens,
       agent: "pedro",
-      description: "Pedro SDR v2 — resposta no WhatsApp",
     });
-    if (consume.just_depleted || consume.just_low) {
+    if (bill.just_depleted || bill.just_low) {
       const alertPhone = normalizeAlertPhone(input.agent.gerente_phone);
       if (alertPhone && input.wa_instance) {
         try {
           await sendPedroText(input.wa_instance, {
             to: alertPhone,
-            text: buildTokenAlertText(consume.just_depleted ? "depleted" : "low"),
+            text: buildTokenAlertText(bill.just_depleted ? "depleted" : "low"),
           }, { humanize: false });
           log("info", "pedro_v2_token_alert_sent", {
-            kind: consume.just_depleted ? "depleted" : "low",
-            balance_after: consume.balance_after,
+            kind: bill.just_depleted ? "depleted" : "low",
+            balance_after: bill.balance_after,
           });
         } catch (alertErr) {
           console.warn("[tokens] v2 alert send failed", alertErr);

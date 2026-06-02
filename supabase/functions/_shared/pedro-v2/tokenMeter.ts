@@ -72,6 +72,55 @@ export async function consumeUserTokens(
   }
 }
 
+// Resultado de bill_pedro_lead — mesmo formato de alerta de consumeUserTokens.
+export interface BillLeadResult {
+  ok: boolean;
+  billed: boolean;        // true = cobrou 1 atendimento agora (1a vez do lead no ciclo)
+  balance_after?: number;
+  total?: number;
+  just_depleted?: boolean;
+  just_low?: boolean;
+}
+
+// Cobra 1 ATENDIMENTO por lead/ciclo via RPC bill_pedro_lead (modelo do plano),
+// guardando os tokens crus so como medicao interna de margem. Idempotente por
+// lead+ciclo (a trava vive no banco, em pedro_billed_leads). NUNCA bloqueia o
+// atendimento — so mede e devolve as flags de aviso quando cobra de fato.
+export async function billPedroLead(
+  supabase: any,
+  args: { userId: string; leadKey: string; rawTokens: number; agent?: string },
+): Promise<BillLeadResult> {
+  const leadKey = String(args.leadKey || "").replace(/\D/g, "");
+  if (!args.userId || !leadKey) return { ok: false, billed: false };
+  try {
+    const { data, error } = await supabase.rpc("bill_pedro_lead", {
+      p_user_id: args.userId,
+      p_lead_key: leadKey,
+      p_raw_tokens: Math.max(0, Math.round(args.rawTokens || 0)),
+      p_agent: args.agent || "pedro",
+    });
+    if (error) {
+      console.error("[tokens] bill_pedro_lead erro:", error.message);
+      return { ok: false, billed: false };
+    }
+    if (!data || data.ok !== true) {
+      if (data?.error) console.warn("[tokens] bill ignorado:", data.error);
+      return { ok: false, billed: false };
+    }
+    return {
+      ok: true,
+      billed: data.billed === true,
+      balance_after: data.balance_after,
+      total: data.total,
+      just_depleted: data.just_depleted === true,
+      just_low: data.just_low === true,
+    };
+  } catch (e) {
+    console.error("[tokens] billPedroLead exceção:", e);
+    return { ok: false, billed: false };
+  }
+}
+
 // Texto do aviso enviado ao dono no WhatsApp.
 export function buildTokenAlertText(kind: "depleted" | "low"): string {
   return kind === "depleted"
