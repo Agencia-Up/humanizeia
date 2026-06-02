@@ -1,6 +1,6 @@
 import { digitsOnly } from "./phone.ts";
 
-import { splitMessageForHumanization } from "../humanization/messageSplit.ts";
+import { splitMessageForHumanizationLLM } from "../humanization/llmMessageSplit.ts";
 import { sendTypingPresence } from "../humanization/typingSimulator.ts";
 
 type PedroWaInstance = {
@@ -31,9 +31,12 @@ function sleep(ms: number) {
 
 function calculatePedroV2DelayMs(text: string) {
   const len = String(text || "").length;
-  const bySize = Math.min(7000, len * 28);
-  const jitter = Math.floor(Math.random() * 3500);
-  return Math.max(8500, Math.min(18000, 7500 + bySize + jitter));
+  // Delay proporcional ao tamanho: partes curtas (rajada conversacional)
+  // saem rapido e naturais; textos longos (lista de estoque) levam um pouco
+  // mais, mas com teto menor que antes pra nao parecer travado.
+  const bySize = Math.min(5000, len * 30);
+  const jitter = Math.floor(Math.random() * 1800);
+  return Math.max(2500, Math.min(9000, 2000 + bySize + jitter));
 }
 
 export async function resolvePedroInstance(supabase: any, input: {
@@ -100,17 +103,30 @@ async function sendPedroTextOnce(instance: PedroWaInstance, input: { to: string;
     { label: "message-sendText", url: `${baseUrl}/message/sendText/${instance.instance_name || ""}`, body: { number: destination, text: input.text } },
   ];
 
+  // Retry com backoff curto: o Uazapi as vezes responde "404 host not mapped"
+  // ou erro de rede por uma queda transitoria da sessao (volta em segundos).
+  // Sem retry, a mensagem some em silencio (o lead ve "digitando" e nada chega).
+  // So re-tenta quando o envio NAO foi confirmado (res.ok=false), entao nao
+  // gera mensagem duplicada. O caminho de sucesso fica identico ao anterior.
+  const MAX_ROUNDS = 2; // ate 3 rodadas no total (1 inicial + 2 retries)
   let lastError = "";
-  for (const attempt of attempts) {
-    const res = await fetch(attempt.url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", token, apikey: token },
-      body: JSON.stringify(attempt.body),
-    });
-    if (res.ok) return { ok: true, provider: "uazapi", attempt: attempt.label, status: res.status };
-    lastError = `${attempt.label}: HTTP ${res.status} ${await res.text().catch(() => "")}`;
+  for (let round = 0; round <= MAX_ROUNDS; round++) {
+    for (const attempt of attempts) {
+      try {
+        const res = await fetch(attempt.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", token, apikey: token },
+          body: JSON.stringify(attempt.body),
+        });
+        if (res.ok) return { ok: true, provider: "uazapi", attempt: attempt.label, status: res.status, round };
+        lastError = `${attempt.label}: HTTP ${res.status} ${await res.text().catch(() => "")}`;
+      } catch (err) {
+        lastError = `${attempt.label}: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    if (round < MAX_ROUNDS) await sleep(1200 + round * 800);
   }
-  return { ok: false, provider: "uazapi", error: lastError || "Falha ao enviar texto" };
+  return { ok: false, provider: "uazapi", error: lastError || "Falha ao enviar texto", rounds: MAX_ROUNDS + 1 };
 }
 
 export async function sendPedroText(
@@ -136,7 +152,10 @@ export async function sendPedroText(
     return sendPedroTextOnce(instance, input);
   }
 
-  const parts = splitMessageForHumanization(input.text, { maxParts: 2, minLength: 260 });
+  // Conversa: LLM barata (gpt-4o-mini) escolhe cortes naturais ate 3 mensagens
+  // (>=130 chars), evitando separar modelo/ano. Cai no splitter heuristico em
+  // qualquer falha. NAO afeta a lista de estoque (vem por outro caminho, typingOnly).
+  const parts = await splitMessageForHumanizationLLM(input.text, { maxParts: 3, minLength: 130 });
   const attempts: any[] = [];
 
   for (let index = 0; index < parts.length; index++) {

@@ -2,7 +2,9 @@ import { makeTurnLogger, newTraceId } from "../observability/structuredLog.ts";
 import { identifyPedroContact } from "./contactIdentity.ts";
 import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
-import { confirmSellerAck } from "./transferRouter.ts";
+import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
+import { resolveAutomationRules } from "../automation/rules.ts";
+import { managerPhones } from "../transfer/managers.ts";
 import { remoteJidToPhone } from "./phone.ts";
 import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
@@ -481,6 +483,31 @@ function pickVehicleByMessageAttributes(message: string, vehicles: any[]) {
   return null;
 }
 
+// Casa o veiculo pelo NOME (marca/modelo) citado na mensagem (ex: "fotos do
+// renegade" -> o Jeep Renegade do pool). Sem isso, "fotos do <modelo>" caia no
+// default index 0 e mandava as fotos do PRIMEIRO carro da lista (carro errado).
+function pickVehicleByModelName(message: string, vehicles: any[]) {
+  const normalized = normalizePhotoText(message);
+  if (!normalized) return null;
+  const ranked = vehicles
+    .map((vehicle, index) => {
+      const tokens = Array.from(new Set(
+        normalizePhotoText([vehicle?.marca, vehicle?.modelo].filter(Boolean).join(" "))
+          .split(/\s+/)
+          .filter((token) => token.length >= 3),
+      ));
+      let score = 0;
+      for (const token of tokens) {
+        if (new RegExp(`\\b${token}\\b`).test(normalized)) score += token.length >= 4 ? 4 : 2;
+      }
+      return { vehicle, index, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score);
+  if (ranked.length === 0) return null;
+  return { index: ranked[0].index, reason: "model_name_match", key: vehicleKey(ranked[0].vehicle) };
+}
+
 function pickReferencedVehicle(message: string, memory: any, vehicles: any[]) {
   const explicitIndex = explicitVehicleOrdinal(message);
   if (explicitIndex !== null) {
@@ -491,6 +518,13 @@ function pickReferencedVehicle(message: string, memory: any, vehicles: any[]) {
   const attributeMatch = pickVehicleByMessageAttributes(message, vehicles);
   if (attributeMatch) {
     return { ...attributeMatch, explicit: true };
+  }
+
+  // Nome do modelo/marca citado vence a continuidade/memoria (mensagem atual
+  // sempre ganha do contexto antigo). So cai na memoria se nada for citado.
+  const modelMatch = pickVehicleByModelName(message, vehicles);
+  if (modelMatch) {
+    return { ...modelMatch, explicit: true };
   }
 
   const lastKey = memory?.ultima_foto?.veiculo_key || memory?.referencia?.ultimo_veiculo_key || null;
@@ -528,6 +562,15 @@ function detectPhotoTarget(message: string): PhotoTarget {
   return "overview";
 }
 
+// Detecta pedido EXPLICITO de fotos/imagens (mesma regra do planner.isPhotoText).
+// Rede de seguranca do envio de fotos: se o lead pediu fotos e ha veiculos para
+// mostrar, enviamos as imagens de verdade mesmo que o planner tenha roteado para
+// stock_search (evita o agente PROMETER fotos e mandar so texto).
+function messageAsksForPhotos(message: string): boolean {
+  const normalized = normalizePhotoText(message);
+  return /\b(foto|fotos|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|porta-malas|traseira|frente|lateral|video|videos)\b/.test(normalized);
+}
+
 function uniqueIndexes(indexes: number[], total: number, max = 5) {
   const selected: number[] = [];
   for (const rawIndex of indexes) {
@@ -551,7 +594,7 @@ function fillIndexes(indexes: number[], total: number, max = 5, fallbackStart = 
   return selected.slice(0, Math.min(max, total));
 }
 
-function selectVehiclePhotos(vehicle: any, message: string) {
+function selectVehiclePhotos(vehicle: any, message: string, alreadySent: number[] = []) {
   const photos = [
     ...(Array.isArray(vehicle?.fotos) ? vehicle.fotos : []),
     vehicle?.principal_image,
@@ -559,7 +602,11 @@ function selectVehiclePhotos(vehicle: any, message: string) {
 
   const total = photos.length;
   const target = detectPhotoTarget(message);
-  if (total <= 5) return { target, photos: photos.slice(0, 5) };
+  if (total === 0) return { target, photos: [] as string[], sent_indexes: [] as number[] };
+  if (total <= 5) {
+    const idx = Array.from({ length: total }, (_, i) => i);
+    return { target, photos: idx.map((i) => photos[i]), sent_indexes: idx };
+  }
 
   const middle = Math.max(4, Math.floor(total * 0.48));
   const late = Math.max(middle + 1, Math.floor(total * 0.66));
@@ -576,15 +623,32 @@ function selectVehiclePhotos(vehicle: any, message: string) {
     trunk: [Math.max(0, total - 2), Math.max(0, total - 3), 4, 5, late],
   };
 
+  // Ordem COMPLETA de exibicao: a estrategia do alvo primeiro, depois todas as
+  // demais fotos em ordem (garante que "mais fotos" caminhe por todo o acervo).
   const interiorish = target === "interior" || target === "dashboard" || target === "seats";
-  const indexes = fillIndexes(
-    strategies[target],
+  const ordered = uniqueIndexes(
+    [...strategies[target], ...Array.from({ length: total }, (_, i) => i)],
     total,
-    maxPhotos,
-    interiorish ? Math.min(total - 1, 5) : 0,
-    "forward",
+    total,
   );
-  return { target, photos: indexes.map((index) => photos[index]) };
+  // Remove as fotos JA enviadas para este veiculo -> "mais fotos" manda diferentes.
+  // Se o lead ja viu todas, recomeca o ciclo (nunca fica sem foto).
+  const sentSet = new Set((alreadySent || []).map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n)));
+  const remaining = ordered.filter((i) => !sentSet.has(i));
+  // Sempre tenta entregar maxPhotos (5 no overview "como antes"): prioriza as NAO
+  // enviadas e, se faltar, completa com o restante do acervo (ja vistas). Assim um
+  // lote de "mais fotos" nao sai com 3 quando ha como completar.
+  let indexes = remaining.slice(0, maxPhotos);
+  if (indexes.length < maxPhotos) {
+    for (const i of ordered) {
+      if (indexes.length >= maxPhotos) break;
+      if (!indexes.includes(i)) indexes.push(i);
+    }
+  }
+  if (indexes.length === 0) {
+    indexes = fillIndexes(strategies[target], total, maxPhotos, interiorish ? Math.min(total - 1, 5) : 0, "forward");
+  }
+  return { target, photos: indexes.map((index) => photos[index]), sent_indexes: indexes };
 }
 
 function pickPhrase(seed: string, phrases: string[]) {
@@ -652,7 +716,13 @@ function buildVehiclePhotoReply(memory: any, message: string) {
   const reference = pickReferencedVehicle(message, memory, vehicles);
   const index = reference.index;
   const vehicle = vehicles[index] || vehicles[0];
-  const selection = selectVehiclePhotos(vehicle, message);
+  // Fotos ja enviadas SO contam se for o MESMO veiculo da ultima vez (senao reseta).
+  const refKey = reference.key || vehicleKey(vehicle);
+  const sameVehicle = memory?.ultima_foto?.veiculo_key && memory.ultima_foto.veiculo_key === refKey;
+  const alreadySent = sameVehicle && Array.isArray(memory?.ultima_foto?.fotos_enviadas)
+    ? memory.ultima_foto.fotos_enviadas
+    : [];
+  const selection = selectVehiclePhotos(vehicle, message, alreadySent);
   const photos = selection.photos;
 
   if (photos.length === 0) {
@@ -674,6 +744,8 @@ function buildVehiclePhotoReply(memory: any, message: string) {
     selected_vehicle_label: cleanVehicleLabel(vehicle),
     selected_vehicle_reason: reference.reason,
     photo_target: selection.target,
+    sent_photo_indexes: selection.sent_indexes,
+    same_vehicle_as_last: Boolean(sameVehicle),
     media: photos.map((file: string, photoIndex: number) => ({
       file,
       type: "image",
@@ -729,6 +801,13 @@ async function savePhotoReference(supabase: any, input: {
   const selectedIndex = Number.isFinite(Number(input.reply.selected_index)) ? Number(input.reply.selected_index) : 0;
   const selectedKey = input.reply.selected_vehicle_key || vehicleKey(input.reply.vehicle);
   const selectedLabel = input.reply.selected_vehicle_label || cleanVehicleLabel(input.reply.vehicle);
+  // Acumula os indices de fotos ja enviadas deste veiculo (para "mais fotos"
+  // mandar diferentes). Reseta se for um veiculo diferente do ultimo.
+  const prevSent = (input.reply.same_vehicle_as_last && Array.isArray(input.current?.ultima_foto?.fotos_enviadas))
+    ? input.current.ultima_foto.fotos_enviadas
+    : [];
+  const newSent = Array.isArray(input.reply.sent_photo_indexes) ? input.reply.sent_photo_indexes : [];
+  const fotosEnviadas = Array.from(new Set([...prevSent, ...newSent].map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n))));
   const nextState = {
     ...(input.current || {}),
     ultima_foto: {
@@ -736,6 +815,7 @@ async function savePhotoReference(supabase: any, input: {
       veiculo_key: selectedKey,
       veiculo_label: selectedLabel,
       target: input.reply.photo_target || "overview",
+      fotos_enviadas: fotosEnviadas,
       updated_at: new Date().toISOString(),
     },
     referencia: {
@@ -764,6 +844,42 @@ async function savePhotoReference(supabase: any, input: {
   return nextState;
 }
 
+// ── DEBOUNCE / agrupamento de mensagens em rajada (ponto 3) ───────────────────
+// Janela de agrupamento (debounce). Subiu de 7s -> 10s para batelar melhor as
+// RAJADAS de leads de anuncio (CTWA): a mensagem do anuncio (Meta) costuma chegar
+// "solta", alguns segundos depois do texto do lead; com 7s ela escapava e disparava
+// um 2o turno (agente respondia 2x / se reapresentava / pedia o modelo que o anuncio
+// ja trazia). 10s unifica o bloco -> 1 turno com o veiculo do anuncio resolvido.
+const PEDRO_V2_DEBOUNCE_MS = 10000;
+
+function sleepMs(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Junta as mensagens do lead ainda NAO respondidas (desde a ultima resposta do
+// agente) em um unico texto, para o cerebro tratar varias bolhas como UM turno.
+async function gatherUnansweredUserText(supabase: any, agentId: string, remoteJid: string): Promise<string> {
+  try {
+    const { data } = await supabase
+      .from("wa_chat_history")
+      .select("role, content, created_at")
+      .eq("agent_id", agentId)
+      .eq("remote_jid", remoteJid)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    const rows = Array.isArray(data) ? data.slice().reverse() : [];
+    let lastAssistantIdx = -1;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (String(rows[i]?.role || "") === "assistant") { lastAssistantIdx = i; break; }
+    }
+    const pending = rows.slice(lastAssistantIdx + 1).filter((r: any) => String(r?.role || "") === "user");
+    const parts = pending.map((r: any) => String(r?.content || "").trim()).filter(Boolean);
+    return parts.join("\n").trim();
+  } catch (_e) {
+    return "";
+  }
+}
+
 export async function processPedroV2Turn(
   supabase: any,
   input: PedroV2TurnInput & { agent: any; wa_instance: any },
@@ -784,6 +900,22 @@ export async function processPedroV2Turn(
     return { ok: false, dry_run: dryRun, correlation_id: correlationId, error: "remote_jid_missing" };
   }
 
+  // IGNORA grupos / broadcast / status / canais — IGUAL ao Pedro v1
+  // (uazapi-webhook ja barrava @g.us e @broadcast). O agente so conversa em
+  // chat PRIVADO de lead. Sem este guard, ao migrar pro v2 o agente passou a
+  // responder DENTRO de grupos (jid @g.us), tratando o grupo como lead e
+  // falando com vendedores como se fossem clientes. Bail ANTES de qualquer
+  // identidade/debounce/escrita/envio.
+  if (/@g\.us|@broadcast|@newsletter|status@broadcast/i.test(remoteJid)) {
+    log("info", "pedro_v2_ignored_non_private_chat", { remote_jid: remoteJid });
+    return {
+      ok: true,
+      dry_run: dryRun,
+      correlation_id: correlationId,
+      next_action: "ignored_group_or_broadcast",
+    };
+  }
+
   log("info", "pedro_v2_turn_start", { remote_jid: remoteJid, dry_run: dryRun });
 
   const identity = await identifyPedroContact(supabase, {
@@ -800,6 +932,21 @@ export async function processPedroV2Turn(
       commit: !dryRun,
     });
     log("info", "pedro_v2_seller_message", { seller_id: identity.seller?.id, ack });
+    // Paridade com o v1: avisa o vendedor que o "OK" foi registrado (sem isso ele
+    // acha que nao funcionou). So no OK que de fato confirmou um lead.
+    if (!dryRun && ack.confirmed && isPedroV2SendingEnabled()) {
+      try {
+        const sellerInstance = input.wa_instance || await resolvePedroInstance(supabase, {
+          user_id: input.agent.user_id,
+          agent_id: input.agent.id,
+          instance_id: input.wa_instance?.id,
+        });
+        await sendPedroText(sellerInstance, {
+          to: remoteJidToPhone(remoteJid),
+          text: "✅ *Atendimento confirmado!*\n\nO lead foi atribuído a você no CRM. Pode seguir com a venda! 🚀",
+        });
+      } catch (_e) { /* silencioso — a confirmacao ja esta gravada no banco */ }
+    }
     if (!dryRun) {
       await recordPedroV2TurnLog(supabase, {
         user_id: input.agent.user_id,
@@ -846,24 +993,57 @@ export async function processPedroV2Turn(
   });
 
   const mediaContext = await resolvePedroMediaContext(input.payload, input.wa_instance);
-  const text = mediaContext.kind === "audio" && mediaContext.text
+  let text = mediaContext.kind === "audio" && mediaContext.text
     ? mediaContext.text
     : rawText;
 
-  // Salvar mensagem do usuário no histórico para transferências e CRM funcionarem com o Pedro v2
+  // Salvar mensagem do usuário no histórico (transferências/CRM/debounce). Captura o id.
+  let myUserMsgId: string | null = null;
   if (!dryRun && lead?.id && text) {
     try {
-      await supabase.from("wa_chat_history").insert({
+      const { data: insertedUserMsg } = await supabase.from("wa_chat_history").insert({
         user_id: input.agent.user_id,
         agent_id: input.agent.id,
         instance_id: input.wa_instance?.instance_name,
         remote_jid: remoteJid,
         role: "user",
         content: text,
-      });
+      }).select("id").maybeSingle();
+      myUserMsgId = insertedUserMsg?.id || null;
     } catch (err) {
       console.warn("[PedroV2] Failed to save user message to chat history:", err);
     }
+  }
+
+  // === DEBOUNCE / AGRUPAMENTO (ponto 3): trata mensagens em rajada como UM turno ===
+  // Espera ~7s; se chegou mensagem mais nova do lead, ESTA invocacao fica silenciosa
+  // (a da mensagem mais nova responde). A ultima junta todas as nao-respondidas.
+  // So em conversa real (nao dry_run) e v2 (este orquestrador). Mensagem unica = mesmo
+  // comportamento + a espera.
+  if (!dryRun && lead?.id && text && myUserMsgId) {
+    await sleepMs(PEDRO_V2_DEBOUNCE_MS);
+    const { data: latestUserMsg } = await supabase
+      .from("wa_chat_history")
+      .select("id")
+      .eq("agent_id", input.agent.id)
+      .eq("remote_jid", remoteJid)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestUserMsg?.id && latestUserMsg.id !== myUserMsgId) {
+      // Chegou mensagem mais nova -> a invocacao dela responde o bloco completo.
+      return {
+        ok: true,
+        dry_run: dryRun,
+        correlation_id: correlationId,
+        identity,
+        lead_id: lead?.id || null,
+        next_action: "debounced_superseded",
+      };
+    }
+    const batched = await gatherUnansweredUserText(supabase, input.agent.id, remoteJid);
+    if (batched) text = batched;
   }
 
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
@@ -961,6 +1141,18 @@ export async function processPedroV2Turn(
     if (isUrl || isWeak || tokens.length === 0) {
       isGenericQuery = true;
     }
+
+    // CRITERIO DE PRECO/SEGMENTO ("mais economico/barato/popular/em conta/basico")
+    // NAO e busca generica — e pedido dos carros MAIS EM CONTA. Forca a busca
+    // ampla (o stockSearch ja ordena por PRECO CRESCENTE -> mais baratos primeiro)
+    // em vez de devolver "pergunte qual modelo". Antes, "carro mais economico"
+    // virava query "carro" -> generico -> 0 resultados -> "nao temos".
+    const _budgetText = `${text || ""} ${enrichedText || ""}`.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const budgetIntent = /\b(economic|barat|popular|basic|baratinh|acessiv|custo)/.test(_budgetText) || /\bem\s+conta\b/.test(_budgetText);
+    if (budgetIntent) {
+      isGenericQuery = false;
+      (stockFilters as any).budget_cheapest = true;
+    }
   }
 
   if (stockFilters && !isGenericQuery) {
@@ -981,8 +1173,23 @@ export async function processPedroV2Turn(
     };
   }
 
-  let reply = brainPlan.action === "photo_request"
-    ? buildVehiclePhotoReply(nextMemory, text)
+  // FOTO GARANTIDA (rede de seguranca): se o lead pediu fotos EXPLICITAMENTE e
+  // temos veiculos para mostrar — da memoria (ja apresentados) OU de uma busca
+  // ESPECIFICA recem-feita NESTE turno — enviamos as imagens de verdade. Sem isso,
+  // quando o planner rebaixa "fotos do <modelo>" para stock_search (modelo visto
+  // como "novo topico" ou veiculos ainda nao salvos na memoria), o agente PROMETE
+  // fotos e manda so texto (bug: "vou separar as fotos do Renegade" e nada chega).
+  const leadAskedPhotosExplicitly = messageAsksForPhotos(text);
+  const memoryPhotoVehicles = Array.isArray(nextMemory?.veiculos_apresentados) ? nextMemory.veiculos_apresentados : [];
+  const freshSpecificStock = (!isGenericQuery && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0)
+    ? stockResult.items
+    : [];
+  const photoVehiclesPool = memoryPhotoVehicles.length > 0 ? memoryPhotoVehicles : freshSpecificStock;
+  const shouldSendVehiclePhotos = brainPlan.action === "photo_request"
+    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0);
+
+  let reply = shouldSendVehiclePhotos
+    ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: photoVehiclesPool }, text)
     : await generatePedroBrainReply({
         agent: input.agent,
         agent_system_prompt: input.agent?.system_prompt || input.agent?.prompt || null,
@@ -1006,6 +1213,13 @@ export async function processPedroV2Turn(
       .filter(Boolean);
 
     if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback"].includes(reply.source)) {
+      vehiclesToSave = stockResult.items;
+    }
+
+    // Se as FOTOS sairam de uma busca fresca (lead pediu "fotos do X" antes de os
+    // veiculos estarem salvos na memoria), guarda os encontrados para o proximo
+    // "mais fotos"/referencia funcionar pela memoria.
+    if (vehiclesToSave.length === 0 && reply.source === "vehicle_photos_reply") {
       vehiclesToSave = stockResult.items;
     }
 
@@ -1169,6 +1383,69 @@ export async function processPedroV2Turn(
     }
   }
 
+  // ETAPA C: lead qualificado / agendou / pediu humano -> transfere para vendedor.
+  // Marca status='transferido' (sem mexer no status_crm); com isso o follow-up de
+  // inatividade para sozinho (o cron so processa novo/interessado). Gated a v2.
+  let handoffResult: any = null;
+  // Transfere quando: (1) o planner mandou handoff (lead pediu humano explicitamente), OU
+  // (2) o cerebro, seguindo o system prompt, marcou pronto_para_transferir COM nome +
+  // algum contexto real (interesse, dia de agendamento, troca/entrada/pagamento). Quem
+  // controla o TIMING (qualificar antes) e o cerebro seguindo o System Prompt; este guard
+  // so evita transferir um turno vazio/sem contexto.
+  const _q = (reply?.qualificacao_coletada && typeof reply.qualificacao_coletada === "object") ? reply.qualificacao_coletada : {};
+  const _hasNome = Boolean(_q.nome || lead?.lead_name);
+  const _hasContext = Boolean(_q.interesse) || Boolean(_q.dia_agendamento)
+    || _q.tem_troca === true || _q.tem_troca === false || Boolean(_q.valor_entrada) || Boolean(_q.forma_pagamento)
+    || Boolean(effectiveMemory?.interesse?.modelo_desejado)
+    || (Array.isArray(effectiveMemory?.veiculos_apresentados) && effectiveMemory.veiculos_apresentados.length > 0);
+  const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
+  // Transferencia SILENCIOSA: lead desqualificado (recusou EXPLICITAMENTE) -> vai para o
+  // vendedor para follow-up futuro, SEM anunciar ao lead (a msg do cerebro ja e uma
+  // despedida gentil, sem dizer que vai transferir). NUNCA encerramos sem encaminhar.
+  const silentTransfer = reply?.transferir_silencioso === true && _hasNome && !brainReadyToTransfer && !contextualIntent.needs_handoff;
+  // Transferencia automatica (qualificacao/silenciosa) respeita a regra do agente:
+  // se o gerente desligou a transferencia, o agente NAO repassa (atende sozinho).
+  const _automationRules = resolveAutomationRules(input.agent?.automation_rules);
+  if (!dryRun && lead?.id && _automationRules.transfer.enabled && (contextualIntent.needs_handoff || brainReadyToTransfer || silentTransfer) && identity.kind !== "seller") {
+    try {
+      handoffResult = await executePedroV2Handoff(supabase, {
+        user_id: input.agent.user_id,
+        agent_id: input.agent.id,
+        lead_id: lead.id,
+        remote_jid: remoteJid,
+        lead_name: _q.nome || lead.lead_name || pushName || null,
+        reason: contextualIntent.needs_handoff ? `handoff:${brainPlan?.intent || contextualIntent.intent || "humano"}` : (silentTransfer ? "handoff:desqualificado_silencioso_followup" : "handoff:qualificado_pronto"),
+        qualificacao: _q,
+        seller_response_min: _automationRules.transfer.seller_response_min,
+      });
+      if (handoffResult?.ok && handoffResult.seller?.whatsapp_number && isPedroV2SendingEnabled()) {
+        const handoffInstance = input.wa_instance || await resolvePedroInstance(supabase, {
+          user_id: input.agent.user_id,
+          agent_id: input.agent.id,
+          instance_id: input.wa_instance?.id,
+        });
+        const leadPhone = remoteJidToPhone(remoteJid);
+        const sellerHeader = silentTransfer
+          ? `*LEAD PARA FOLLOW-UP (nao avancou agora) - Pedro v2*\nCliente nao se desqualificou de vez; vale retomar depois.`
+          : `*NOVO LEAD QUALIFICADO (Pedro v2)*`;
+        const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n*Contato:* +${leadPhone}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
+
+        // Relatorio automatico ao(s) gerente(s) — ate 2 (mesma regra do portal).
+        const _gerentes = managerPhones(input.agent);
+        if (_gerentes.length > 0) {
+          const _hora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+          for (const gp of _gerentes) {
+            try { await sendPedroText(handoffInstance, { to: gp, text: _mgrMsg }); } catch (_e) { /* nao bloqueante */ }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[PedroV2] Falha ao executar handoff (Etapa C):", e);
+    }
+  }
+
   if (!dryRun && lead?.id && reply.ok) {
     memoryAfterReply = await saveRecentConversationTurn(supabase, {
       lead_id: lead.id,
@@ -1214,6 +1491,7 @@ export async function processPedroV2Turn(
         selected_vehicle_reason: reply.selected_vehicle_reason || null,
         photo_target: reply.photo_target || null,
         send_result: sendResult,
+        handoff: handoffResult ? { ok: handoffResult.ok, reason: handoffResult.reason, seller: handoffResult.seller?.name || null } : null,
       },
     });
   }

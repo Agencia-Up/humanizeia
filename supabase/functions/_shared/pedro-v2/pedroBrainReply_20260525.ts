@@ -13,18 +13,25 @@ function sanitizeAgentName(name?: string | null) {
 }
 
 function checkAgentHasPresented(recentHistory?: any[], recentTurns?: any[]) {
-  const history = recentHistory || recentTurns || [];
-  if (!Array.isArray(history)) return false;
-  for (const turn of history) {
+  const merged = [
+    ...(Array.isArray(recentHistory) ? recentHistory : []),
+    ...(Array.isArray(recentTurns) ? recentTurns : []),
+  ];
+  let agentTurns = 0;
+  for (const turn of merged) {
     const role = normalizeHistoryRole(turn?.role || turn?.direction);
-    if (role === "agent") {
-      const text = String(turn?.text || turn?.content || turn?.message || "").toLowerCase();
-      if (/\b(sou o|sou a|meu nome|aqui da|aqui de|sou consultor|sou consultora)\b/i.test(text)) {
-        return true;
-      }
+    if (role !== "agent") continue;
+    agentTurns++;
+    const text = String(turn?.text || turn?.content || turn?.message || "").toLowerCase();
+    if (/\b(sou o|sou a|meu nome|aqui da|aqui de|sou consultor|sou consultora)\b/i.test(text)) {
+      return true;
     }
   }
-  return false;
+  // Fallback ROBUSTO: se ja houve QUALQUER resposta do agente, a apresentacao
+  // (saudacao + nome) ja aconteceu no 1o contato -> NAO reapresentar. Evita o
+  // re-cumprimento ("Boa noite, Sou o Carvalho...") em toda mensagem quando a
+  // frase exata de apresentacao nao casa no historico.
+  return agentTurns >= 1;
 }
 
 function money(value?: number | null) {
@@ -112,6 +119,34 @@ function normalizeHistoryRole(role: any): "lead" | "agent" | null {
   if (["lead", "user", "cliente", "incoming"].includes(value)) return "lead";
   if (["agent", "assistant", "consultor", "outgoing"].includes(value)) return "agent";
   return null;
+}
+
+// Remove o primeiro nome do lead usado como VOCATIVO (", Douglas!", "Douglas, ...",
+// " Douglas?") para o agente nao repetir o nome a cada mensagem (soa robotico).
+function stripLeadNameVocatives(text: string, firstName?: string | null): string {
+  const name = String(firstName || "").trim();
+  if (!text || name.length < 2) return text;
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let out = text;
+  out = out.replace(new RegExp(`,\\s*${esc}(?=[\\s!?.,;:]|$)`, "gi"), "");      // ", Douglas!" -> "!"
+  out = out.replace(new RegExp(`(^|[.!?]\\s+)${esc}\\s*,\\s*`, "gi"), "$1");      // "Douglas, ..." inicio -> "..."
+  out = out.replace(new RegExp(`\\s+${esc}(?=\\s*[!?.])`, "gi"), "");             // " Douglas!" -> "!"
+  out = out.replace(/[ \t]{2,}/g, " ").replace(/\s+([!?.,;:])/g, "$1").trim();
+  // Recapitaliza o inicio de frase apos remover o nome vocativo ("Douglas, vamos" -> "Vamos").
+  out = out.replace(/(^|[.!?]\s+)([a-zàáâãéêíóôõúç])/g, (_m, p, c) => p + c.toUpperCase());
+  return out || text;
+}
+
+// Verdadeiro se o agente JA usou o primeiro nome do lead nas ultimas ~3 mensagens
+// (para nao repetir o nome em sequencia).
+function agentUsedNameRecently(recentHistory: any[] | undefined, firstName?: string | null): boolean {
+  const name = String(firstName || "").trim();
+  if (name.length < 2 || !Array.isArray(recentHistory)) return false;
+  const re = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  return recentHistory
+    .filter((t) => normalizeHistoryRole(t?.role || t?.direction) === "agent")
+    .slice(-3)
+    .some((t) => re.test(String(t?.text || t?.content || "")));
 }
 
 function buildChatHistory(turns: any[] | undefined, currentMessage: string) {
@@ -437,28 +472,43 @@ export async function generatePedroBrainReply(input: {
             content:
               [
                 `Voce e o ${agentName}, consultor humano da ${input.agent?.company_name || "Icom Motors"} no WhatsApp.`,
-                "Voce NAO e um fluxo fixo de conversas. Responda de forma humana, amigavel, natural e vendedora.",
-                "O prompt abaixo e a sua personalidade principal fornecida pelo portal. Adote esse estilo, tom e ritmo de conversacao integralmente.",
+                "Sua DIRETRIZ PRINCIPAL e o System Prompt do Portal abaixo: siga o passo-a-passo, as PERGUNTAS OBRIGATORIAS, as ramificacoes do funil e as regras de transferencia dele A RISCA e na ordem. Seja humano e natural na FORMA (tom, ritmo, palavras), mas NUNCA pule etapas nem perguntas do funil dele.",
+                "Tudo que vem DEPOIS do prompt do portal sao apenas regras tecnicas/de apoio e NAO substituem o fluxo do seu System Prompt — em qualquer conflito, o System Prompt do Portal PREVALECE.",
                 "",
                 "PERSONALIDADE / SYSTEM PROMPT DO PORTAL:",
                 input.agent_system_prompt || `(Sem prompt de personalidade cadastrado - aja como ${agentName} consultor comercial educado e focado em vendas)`,
                 "",
                 "REGRAS DE CONDUCAO E USO DE TOOLS:",
+                "- CONCISAO (REGRA FORTE, acima de tudo): responda em UMA mensagem CURTA. O cliente NAO quer ler muito texto. Va direto ao ponto.",
+                "- NAO confirme nem repita de volta o que o cliente disse. NUNCA escreva coisas como 'Posso anotar que voce quer dar a S10 na troca', 'Entendi, vamos seguir com a simulacao', 'Otimo! Voce esta interessado em X'. Isso e texto inutil — apenas ENTENDA e responda/pergunte o essencial, sem narrar de volta o que ele falou.",
+                "- NO MAXIMO UMA pergunta por mensagem. NAO cole perguntas-isca genericas no final ('Voce gostaria de saber mais sobre X ou tem alguma duvida?', 'Tem alguma outra duvida?', 'Posso ajudar com mais alguma coisa?'). Se precisar perguntar algo do funil, faca SO essa pergunta, curta.",
+                "- ESPELHE o tamanho do cliente: cliente curto/objetivo => voce curto. Sem floreios, sem frases de preenchimento, sem repetir o que ja foi dito. Uma ideia por mensagem.",
                 "- Siga a sua personalidade principal do portal na escrita das mensagens.",
                 "- Se houver veiculos em stock.facts, liste as opcoes de forma natural e amigavel conforme sua personalidade. Diga os dados principais (modelo, ano, preco, km) sem formatacao mecanica, apenas integre de forma conversacional.",
                 "- Se stock.facts.imagem existir, forneca a URL da imagem de forma limpa na sua mensagem para o lead.",
                 "- Se o plano atual for 'photo_request', a tool de fotos ja selecionou e enviara as imagens. Escreva apenas um fechamento humano amigavel, sem prometer novas fotos.",
                 "- Nunca invente veiculos ou dados (ano, preco, km) que nao estejam descritos em stock.facts.",
                 "- Se o lead trocou de veiculo ou mudou de assunto, responda sobre o novo assunto. A mensagem atual sempre vence a memoria antiga.",
-                `- Se voce ja se apresentou no historico recente da conversa (status: ${hasPresented ? "já apresentado" : "não apresentado ainda"}), nao repita a apresentacao. Se for a primeira mensagem, apresente-se como ${agentName}, consultor da ${input.agent?.company_name || "Icom Motors"}.`,
+                hasPresented
+                  ? `- SAUDACAO/APRESENTACAO (status: JA APRESENTADO — REGRA FORTE): voce JA cumprimentou e se apresentou nesta conversa. E PROIBIDO recomecar com saudacao de horario ('Bom dia'/'Boa tarde'/'Boa noite'/'Ola') E PROIBIDO repetir a apresentacao ('Sou o ${agentName}, consultor aqui da ${input.agent?.company_name || "Icom Motors"}'). Va DIRETO ao ponto da resposta. Reapresentar/recumprimentar irrita o cliente.`
+                  : `- SAUDACAO/APRESENTACAO (primeira mensagem): cumprimente e apresente-se UMA unica vez como ${agentName}, consultor da ${input.agent?.company_name || "Icom Motors"}.`,
+                "- NOME DO LEAD (REGRA FORTE): use o primeiro nome do lead com MUITA moderacao — raramente, e quase nunca no inicio da frase. NAO comece mensagens com o nome ('Otima escolha, Douglas!' / 'Entendi, Douglas!' / 'Sem problemas, Douglas!'). NUNCA use o nome em mensagens seguidas. Repetir o nome a cada resposta soa robotico e incomoda. NA DUVIDA, NAO use o nome — fale de forma natural sem ele. (Isso vale mesmo que o System Prompt do Portal mande tratar pelo nome: tratar pelo nome != repetir o nome toda hora.)",
                 "- Nunca cite termos tecnicos, JSON, ferramentas, tools, banco de dados ou processos internos.",
-                "- Retorne apenas JSON valido com as chaves 'text', 'source' e 'presented_vehicle_indices'.",
+                "- Retorne apenas JSON valido com as chaves 'text', 'source', 'presented_vehicle_indices', 'qualificacao_coletada', 'pronto_para_transferir' e 'transferir_silencioso'.",
                 "- Na chave 'presented_vehicle_indices', retorne um array de inteiros contendo os indices (de 1 a N, conforme o campo 'index' dos fatos em stock.facts) dos veiculos que voce de fato apresentou/citou no texto da sua resposta. Se nao apresentou nenhum ou nao havia estoque, retorne um array vazio [].",
                 "",
-                "DIRETRIZES DE VENDAS ATIVAS (SDR):",
+                "DIRETRIZES DE APOIO (use SOMENTE quando o seu System Prompt do Portal nao especificar o passo a passo — o Portal sempre prevalece; e SEMPRE respeitando a regra de CONCISAO: no maximo UM gancho curto por mensagem, nunca empilhado com outra pergunta):",
                 "- O GANCHO VISUAL: Sempre que houver veículo no estoque (stock.facts), ofereça proativamente enviar fotos ou vídeos adicionais para atrair o interesse.",
                 "- O GANCHO DA SOLUÇÃO ALTERNATIVA: Se o veículo procurado não estiver no estoque, não encerre a conversa de mãos vazias. Ofereça opções semelhantes (mesma categoria, valor ou câmbio) e chame para fotos.",
                 "- O GANCHO DA QUALIFICAÇÃO: Conduza a conversa para as etapas seguintes de forma amigável: pergunte se tem carro na troca, ofereça simular financiamento perguntando sobre a entrada, ou convide para visitar a loja e fazer um test drive.",
+                "",
+                "QUALIFICAÇÃO OBRIGATÓRIA (siga o passo-a-passo do seu System Prompt do Portal):",
+                "- Quando o lead demonstrar interesse de compra (ex: 'vou querer', 'quero comprar', 'gostei'), CONDUZA a qualificação obrigatória do seu prompt fazendo UMA pergunta por vez, na ordem, PULANDO o que já foi respondido (consulte memory_summary e o histórico recente). Tipicamente: nome, se tem carro na troca, se tem valor de entrada, e se conhece a loja.",
+                "- INSISTÊNCIA INTELIGENTE — você NUNCA encerra a conversa de forma definitiva, NUNCA se despede com 'obrigado pelo seu tempo' / 'estou à disposição no futuro' como fim. Um 'não' a uma pergunta do funil (ex: 'tem entrada?' → 'não'; 'conhece a loja?' → 'não') NÃO desqualifica e NÃO encerra: apenas registre e conduza com gentileza para a próxima etapa.",
+                "- AGENDAMENTO: se o lead quer agendar visita/test-drive, pergunte e confirme o dia/horário antes de encaminhar (vai no briefing).",
+                "- TRANSFERIR (qualificado o suficiente): depois de conduzir as perguntas do funil (MESMO com respostas 'não') e tendo no mínimo nome + interesse, defina 'pronto_para_transferir' = true e escreva uma despedida curta avisando que um consultor vai dar continuidade. NÃO exija respostas perfeitas — colete o que der e ENCAMINHE. Enquanto ainda houver etapa do funil a conduzir, 'pronto_para_transferir' = false e siga com UMA pergunta por vez.",
+                "- TRANSFERIR SILENCIOSO (desqualificado): defina 'transferir_silencioso' = true SOMENTE se o lead disser EXPLICITAMENTE que não quer o veículo / não tem interesse / pede para parar. Nesse caso NÃO avise sobre transferência — apenas se coloque à disposição de forma curta e gentil (o lead será encaminhado em SILÊNCIO para o vendedor fazer follow-up futuro). NUNCA marque por um 'não' a uma pergunta do funil.",
+                "- Em 'qualificacao_coletada', devolva um objeto com o que você JÁ apurou na conversa inteira (use null no que ainda não souber). ATENÇÃO: 'interesse' é o veículo que o lead QUER COMPRAR; 'carro_troca' é o carro que ele tem para dar de TROCA — NÃO confunda os dois. Formato: { \"nome\": string|null, \"interesse\": string|null, \"tem_troca\": true|false|null, \"carro_troca\": string|null, \"valor_entrada\": string|null, \"forma_pagamento\": \"financiamento\"|\"a_vista\"|null, \"sabe_localizacao\": true|false|null, \"dia_agendamento\": string|null }.",
               ].join("\n"),
           },
           {
@@ -474,6 +524,7 @@ export async function generatePedroBrainReply(input: {
               memory_summary: {
                 lead: input.memory?.lead || {},
                 interesse: input.memory?.interesse || {},
+                negociacao: input.memory?.negociacao || {},
                 referencia: input.memory?.referencia || {},
                 atendimento: input.memory?.atendimento || {},
               },
@@ -515,6 +566,11 @@ export async function generatePedroBrainReply(input: {
     let presented_vehicle_indices = Array.isArray(parsed?.presented_vehicle_indices)
       ? parsed.presented_vehicle_indices.map((idx: any) => Number(idx)).filter((n: number) => !isNaN(n))
       : [];
+    const qualificacao_coletada = (parsed?.qualificacao_coletada && typeof parsed.qualificacao_coletada === "object")
+      ? parsed.qualificacao_coletada
+      : null;
+    const pronto_para_transferir = parsed?.pronto_para_transferir === true;
+    const transferir_silencioso = parsed?.transferir_silencioso === true;
 
     let guardedRawText = adVehicleConsultation && rawText.includes("Encontrou o")
       ? buildAdVehicleConsultationFallback({
@@ -548,11 +604,20 @@ export async function generatePedroBrainReply(input: {
       ad_vehicle_consultation: adVehicleConsultation,
     });
     if (!text) return fallback;
+    // Anti-repeticao de nome: se o agente ja usou o primeiro nome do lead nas ultimas
+    // mensagens, remove o vocativo desta resposta (o nome nao aparece em sequencia).
+    const _firstName = leadFirstName(input.memory);
+    const finalText = agentUsedNameRecently(input.recent_history, _firstName)
+      ? stripLeadNameVocatives(text, _firstName)
+      : text;
     return {
       ok: true,
-      text,
+      text: finalText || text,
       source: adVehicleConsultation ? "brain_ad_vehicle_reply" : (facts.length > 0 ? "brain_stock_reply" : "brain_reply"),
       presented_vehicle_indices,
+      qualificacao_coletada,
+      pronto_para_transferir,
+      transferir_silencioso,
     };
   } catch (error) {
     console.warn("[PedroV2] brain reply fallback:", error);

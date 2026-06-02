@@ -1,4 +1,5 @@
 import { logTransferFailure, resolveTransferFailures } from '../_shared/pedro-v2/logTransferFailure.ts';
+import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -376,7 +377,7 @@ Deno.serve(async (req) => {
         // Fetch lead data separately (PostgREST doesn't support nested joins via query string easily)
         const { data: lead } = await supabase
           .from('ai_crm_leads')
-          .select('id,remote_jid,lead_name,summary,agent_id')
+          .select('id,remote_jid,lead_name,summary,agent_id,status')
           .eq('id', transfer.lead_id)
           .maybeSingle();
 
@@ -394,24 +395,57 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── GUARD: lead JA reivindicado por um vendedor que confirmou (deu OK)? ──
+        // Se o lead esta 'em_atendimento' OU ja existe um transfer 'confirmed' pra
+        // ele, NAO repassa para o proximo — apenas marca ESTE transfer (duplicata /
+        // sobra de outro fluxo) como expirado. Antes faltava esse check: um transfer
+        // irmao expirado roubava um lead ja aceito ("vendedor deu OK e mesmo assim
+        // passou pro proximo"). Vale para v1 e v2 (uma vez aceito, o lead e do vendedor).
+        const { data: confirmedForLead } = await supabase
+          .from('ai_lead_transfers')
+          .select('id')
+          .eq('lead_id', transfer.lead_id)
+          .eq('transfer_status', 'confirmed')
+          .limit(1);
+        const alreadyClaimed = lead.status === 'em_atendimento' ||
+          (Array.isArray(confirmedForLead) && confirmedForLead.length > 0);
+        if (alreadyClaimed) {
+          console.log(`[Timeout] Lead ${transfer.lead_id} JA reivindicado (status=${lead.status}/confirmed) — NAO repassa. Transfer ${transfer.id} -> expired.`);
+          await supabase.from('ai_lead_transfers')
+            .update({ transfer_status: 'expired' })
+            .eq('id', transfer.id);
+          continue;
+        }
+
         // Fetch agent info for instance_ids
         let instanceIds: string[] = [];
+        let agentRulesRaw: any = null;
         if (lead.agent_id) {
           const { data: agent } = await supabase
             .from('wa_ai_agents')
-            .select('id,name,instance_ids')
+            .select('id,name,instance_ids,automation_rules')
             .eq('id', lead.agent_id)
             .maybeSingle();
           if (agent?.instance_ids) {
             instanceIds = agent.instance_ids;
           }
+          agentRulesRaw = agent?.automation_rules ?? null;
+        }
+        const aRules = resolveAutomationRules(agentRulesRaw);
+        // Transferencia desligada pelo gerente -> nao escala (marca expirado e segue).
+        if (!aRules.transfer.enabled) {
+          await supabase.from('ai_lead_transfers').update({ transfer_status: 'expired' }).eq('id', transfer.id);
+          continue;
         }
 
         // ── Regra de horário: só repassa se o transfer foi CRIADO dentro da
         //    janela operacional. Leads que chegaram durante a noite ficam com
         //    o vendedor — não são repassados retroativamente. ──────
         const transferCreatedAt = new Date(transfer.created_at || now);
-        if (!isWithinRepassWindow(transferCreatedAt)) {
+        if (aRules.transfer.window) {
+          // Janela configurada por agente: so repassa se AGORA estiver dentro dela.
+          if (isWithinConfiguredWindow(aRules.transfer.window, new Date()) === false) continue;
+        } else if (!isWithinRepassWindow(transferCreatedAt)) {
           console.log(`[Timeout] Transfer ${transfer.id} criado fora do horário de repasse (${transferCreatedAt.toISOString()}). Auto-confirmando — lead fica com vendedor atual.`);
           await supabase.from('ai_lead_transfers')
             .update({ transfer_status: 'confirmed', is_confirmed: true })

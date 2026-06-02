@@ -77,19 +77,21 @@ function hasRecentPhotoOffer(input: {
     ...(Array.isArray(input.recent_history) ? input.recent_history : []),
     ...(Array.isArray(input.memory?.recent_turns) ? input.memory.recent_turns : []),
   ];
-  const agentTurns = turns
-    .slice(-12)
-    .filter((turn) => {
-      const role = String(turn?.role || turn?.direction || "").toLowerCase();
-      return ["agent", "assistant", "consultor", "outgoing"].includes(role);
-    })
-    .slice(-5);
-
-  return agentTurns.some((turn) => {
-    const text = normalizeText(turn?.text || turn?.content || turn?.message || "");
-    return /\b(quer|posso|te mando|mandar|envio|ver)\b.*\b(foto|fotos|imagem|imagens)\b/.test(text) ||
-      /\b(foto|fotos|imagem|imagens)\b.*\b(dele|desse|deste|carro|veiculo|anuncio)\b/.test(text);
+  const agentTurns = turns.filter((turn) => {
+    const role = String(turn?.role || turn?.direction || "").toLowerCase();
+    return ["agent", "assistant", "consultor", "outgoing"].includes(role);
   });
+  // SO a ULTIMA mensagem do agente conta como "oferta de foto" — e a mensagem que o
+  // "sim/pode" do lead esta respondendo. Se o agente ja seguiu para a qualificacao
+  // (ex: "tem carro na troca?"), um "sim" responde a ISSO, nao a uma oferta de foto.
+  const lastAgent = agentTurns[agentTurns.length - 1];
+  if (!lastAgent) return false;
+  const text = normalizeText(lastAgent?.text || lastAgent?.content || lastAgent?.message || "");
+  if (!text) return false;
+  // Se a ultima msg do agente foi uma PERGUNTA DE QUALIFICACAO/agendamento, nao e oferta de foto.
+  if (/\b(troca|entrada|pagamento|financ|cpf|nascimento|nome|loja|visita|test ?drive|orcamento|parcela|valor)\b/.test(text)) return false;
+  // Conta como oferta de fotos SO se a ultima msg do agente OFERECEU/perguntou sobre enviar fotos.
+  return (/\b(quer|posso|gostaria|deseja|quer que eu|te mando|posso te mostrar)\b/.test(text) && /\b(foto|fotos|imagem|imagens|video|videos)\b/.test(text));
 }
 
 function detectPhotoTarget(message?: string | null) {
@@ -410,6 +412,33 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     plan.reason = "enforced_social_question";
   }
 
+  // GUARD ANTI-FOTO-NAO-PEDIDA: so envia imagens se o lead PEDIR explicitamente
+  // (isPhotoText: 'foto', 'painel', 'interior'...) ou ACEITAR uma oferta recente de
+  // fotos (acceptedPhotoOffer). Evita o agente mandar foto "do nada" quando o LLM
+  // marca photo_request so porque fotos ja foram pedidas antes na conversa (ex: o
+  // lead disse "Gostei dele" e levou fotos sem pedir).
+  if (plan.action === "photo_request" && !isPhotoText(input.message) && !acceptedPhotoOffer) {
+    plan.action = "reply_only";
+    plan.intent = "vehicle_reference";
+    plan.use_memory_vehicle = false;
+    plan.photo_target = null;
+    plan.reason = `blocked_unrequested_photo:${plan.reason || ""}`;
+    plan.response_guidance = "O lead NAO pediu fotos nem aceitou oferta de fotos. NAO envie imagens. Conduza a conversa/qualificacao conforme o System Prompt do Portal, uma pergunta por vez.";
+  }
+
+  // ETAPA C: preserva a decisao de HANDOFF do cerebro (lead qualificado/agendou/
+  // pediu humano) contra as regras de veiculo/estoque acima. Pedido explicito de
+  // FOTO ainda vence (intencao clara de imagem).
+  if (raw?.action === "handoff" && plan.action !== "photo_request") {
+    plan.action = "handoff";
+    plan.intent = "human_request";
+    plan.use_memory_vehicle = false;
+    if (typeof raw?.response_guidance !== "string" || !raw.response_guidance.trim()) {
+      plan.response_guidance = "Lead qualificado, agendou visita ou pediu um humano. Despeca-se de forma curta e amigavel avisando que um consultor de vendas vai entrar em contato em breve, e agradeca. Nao acione estoque nem prometa mais nada.";
+    }
+    plan.reason = `enforced_handoff:${raw?.reason || plan.reason || "qualificado"}`;
+  }
+
   return plan;
 }
 
@@ -437,7 +466,13 @@ export async function planPedroTurn(input: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: sanitizeModel(input.agent?.model),
+        // OTIMIZACAO DE CUSTO: o planner e uma DECISAO ESTRUTURADA (action/intent/
+        // search_query em JSON, temp 0.1), nao a resposta ao cliente — entao roda em
+        // gpt-4o-mini (~16x mais barato que gpt-4o). A qualidade da CONVERSA fica
+        // intacta (o reply continua em gpt-4o). Rede de seguranca: o resolvedor
+        // heuristico de veiculo + normalizePlan corrigem/validam a saida do planner.
+        // (O reply usa sanitizeModel(agent.model); o planner NAO.)
+        model: "gpt-4o-mini",
         temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
@@ -459,7 +494,15 @@ export async function planPedroTurn(input: {
                 "- Se o lead pedir fotos de um veículo já apresentado ou em contexto seguro, defina 'action' como 'photo_request'.",
                 "- Se o lead respondeu afirmativamente (sim/pode/manda) após uma oferta recente de fotos, defina 'action' como 'photo_request' com 'use_memory_vehicle' true.",
                 "- Se for apenas uma saudação comum, use 'reply_only'.",
-                "- Nunca invente que enviou fotos sem a ação 'photo_request'."
+                "- Nunca invente que enviou fotos sem a ação 'photo_request'.",
+                "",
+                "REGRA DE TRANSFERÊNCIA (HANDOFF) — defina 'action' como 'handoff' SOMENTE quando o lead pediu EXPLICITAMENTE falar com um humano/vendedor/consultor (ex: 'quero falar com um vendedor', 'me passa pra um atendente').",
+                "  ATENÇÃO — NÃO é handoff aqui (use 'reply_only' e deixe o agente conduzir a QUALIFICAÇÃO do System Prompt, uma pergunta por vez, ANTES de qualquer transferência):",
+                "  - querer comprar ('quero comprar', 'vou querer', 'fechar', 'gostei');",
+                "  - querer AGENDAR uma visita/test-drive ('quero agendar', 'posso ir aí?', 'marcar visita') — o agente deve coletar dia/horário + dados antes;",
+                "  - interesse vago, dúvida de preço, pedir foto ou só perguntar sobre um modelo.",
+                "  Nesses casos a decisão de transferir o lead JÁ QUALIFICADO é tomada na resposta (campo 'pronto_para_transferir' do brain), NÃO aqui.",
+                "  Em 'handoff', preencha 'response_guidance' orientando uma despedida curta avisando que um consultor de vendas vai entrar em contato e agradecendo — sem prometer mais nada e sem acionar estoque."
               ].join("\n"),
           },
           {

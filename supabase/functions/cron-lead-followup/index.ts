@@ -1,4 +1,6 @@
 import { logTransferFailure } from '../_shared/pedro-v2/logTransferFailure.ts';
+import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
+import { managerPhones } from "../_shared/transfer/managers.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -325,6 +327,248 @@ function transferCriadoNoHorario(createdAt: string): boolean {
   return min >= start && min <= end;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// ETAPA B (2026-05-29): follow-up contextual 5/8/12 do Pedro v2.
+// GATED pela mesma allowlist do webhook (PEDRO_V2_ENABLED / _ALLOWED_USER_IDS /
+// _ALLOWED_USER_EMAILS). Leads NAO-v2 (v1/Marcos/outras contas) seguem no fluxo
+// classico 5/10 mais abaixo, INTOCADO. Controle de etapa em
+// pedro_conversation_state.state.followup (sem migration).
+// ════════════════════════════════════════════════════════════════════════════
+function parseCsvEnv(name: string): string[] {
+  return String(Deno.env.get(name) || "")
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+const _v2UserCache = new Map<string, boolean>();
+async function isPedroV2User(supabaseUrl: string, serviceKey: string, userId?: string | null): Promise<boolean> {
+  if (!userId) return false;
+  if (_v2UserCache.has(userId)) return _v2UserCache.get(userId)!;
+  let enabled = false;
+  const globalFlag = String(Deno.env.get("PEDRO_V2_ENABLED") || "").toLowerCase();
+  if (globalFlag === "true" || globalFlag === "1") {
+    enabled = true;
+  } else if (parseCsvEnv("PEDRO_V2_ALLOWED_USER_IDS").includes(userId.toLowerCase())) {
+    enabled = true;
+  } else {
+    const allowedEmails = parseCsvEnv("PEDRO_V2_ALLOWED_USER_EMAILS");
+    if (allowedEmails.length > 0) {
+      try {
+        const res = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+          headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+        });
+        if (res.ok) {
+          const u = await res.json();
+          const email = String(u?.email || "").toLowerCase();
+          if (email && allowedEmails.includes(email)) enabled = true;
+        }
+      } catch (_e) { /* fail-closed: nao habilita se o lookup falhar */ }
+    }
+  }
+  _v2UserCache.set(userId, enabled);
+  return enabled;
+}
+
+// Gera a mensagem de follow-up de forma contextual (gpt-4o-mini). Fallback fixo
+// se nao houver chave/erro — nunca deixa de mandar algo natural.
+async function generateFollowupText(opts: {
+  kind: "reengage" | "check_help" | "farewell";
+  agentName: string; companyName: string; persona: string;
+  leadName?: string | null; recentTurns: any[];
+}): Promise<string> {
+  const fallbacks: Record<string, string> = {
+    reengage: "E ai, conseguiu dar uma olhada? Posso te ajudar com mais alguma coisa? 😊",
+    check_help: "Ainda esta por ai? Posso te ajudar com mais alguma coisa? 😊",
+    farewell: "Vou pedir para um dos nossos consultores de vendas continuar com voce por aqui, ta? Obrigado pelo papo, ja ja alguem te chama! 😊",
+  };
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) return fallbacks[opts.kind];
+  const history = (opts.recentTurns || []).slice(-8)
+    .map((t: any) => `${t.role === "agent" ? opts.agentName : (opts.leadName || "Cliente")}: ${String(t.text || "").slice(0, 300)}`)
+    .join("\n");
+  const goal: Record<string, string> = {
+    reengage: "O cliente parou de responder ha ~5 min. Escreva UMA mensagem curta e natural retomando o ULTIMO assunto da conversa (o veiculo/fotos/valores que estavam vendo), convidando a continuar. Sem pressionar.",
+    check_help: "SEGUNDA tentativa (~8 min sem resposta). A 1a mensagem JA retomou o veiculo/assunto — NAO repita isso. Aqui escreva algo bem CURTO so checando presenca, no estilo 'Ainda esta por ai?' ou 'Ainda posso te ajudar?'. NAO mencione veiculo, fotos, valores nem 'outras opcoes'. Apenas 1 frase curta.",
+    farewell: "O cliente nao respondeu (~12 min). Escreva UMA mensagem curta e amigavel avisando que um consultor de vendas vai dar continuidade por aqui e agradecendo o contato.",
+  };
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0.6,
+        messages: [
+          { role: "system", content: [
+            `Voce e ${opts.agentName}, consultor de vendas da ${opts.companyName || "loja"} no WhatsApp.`,
+            opts.persona ? `Personalidade/estilo (siga o tom):\n${opts.persona.slice(0, 1200)}` : "",
+            "Escreva SOMENTE a mensagem para o cliente (sem aspas, sem rotulos). Curta (1-2 frases), humana, em PT-BR.",
+            opts.leadName ? `Nome do cliente (apenas para contexto): ${opts.leadName}. NAO comece a mensagem com o nome e NAO repita o nome — soa robotico. Prefira nao usar o nome.` : "",
+            goal[opts.kind],
+          ].filter(Boolean).join("\n") },
+          { role: "user", content: `Conversa recente:\n${history || "(sem historico)"}\n\nEscreva a mensagem.` },
+        ],
+      }),
+    });
+    if (!res.ok) return fallbacks[opts.kind];
+    const data = await res.json();
+    const text = String(data?.choices?.[0]?.message?.content || "").trim().replace(/^["']+|["']+$/g, "").trim();
+    return text || fallbacks[opts.kind];
+  } catch (_e) {
+    return fallbacks[opts.kind];
+  }
+}
+
+// Fluxo de follow-up do Pedro v2: 5min -> 8min -> 12min(transfere). Etapa em
+// pedro_conversation_state.state.followup, com reset quando o lead volta a falar
+// (anchor = last_agent_reply_at da rodada).
+async function handleV2Followup(supabase: any, ctx: {
+  lead: any; agentData: any; baseUrl: string; instKey: string; instanceName: string;
+  remoteJid: string; phoneNumber: string; agentId: string; now: Date;
+}) {
+  const { lead, agentData, baseUrl, instKey, instanceName, remoteJid, phoneNumber, agentId, now } = ctx;
+  const elapsedMin = (now.getTime() - new Date(lead.last_agent_reply_at).getTime()) / 60000;
+
+  // Regras configuraveis por agente (NULL = legado 5/8/12, transfere, 10min, janela fixa).
+  const { data: agentRulesRow } = await supabase
+    .from("wa_ai_agents").select("automation_rules, gerente_phone, gerente_phone_2").eq("id", agentId).maybeSingle();
+  const rules = resolveAutomationRules(agentRulesRow?.automation_rules);
+  if (!rules.followup.enabled) return;              // gerente desligou o follow-up
+  if (elapsedMin < rules.followup.t1_min) return;   // ainda nao chegou no 1o tempo
+
+  const { data: stateRow } = await supabase
+    .from("pedro_conversation_state").select("state")
+    .eq("lead_id", lead.id).eq("agent_id", agentId).maybeSingle();
+  const state = (stateRow?.state && typeof stateRow.state === "object") ? stateRow.state : {};
+  const fu = (state.followup && typeof state.followup === "object") ? state.followup : {};
+  const sameCycle = fu.anchor === lead.last_agent_reply_at;
+  const stage = sameCycle ? Number(fu.stage || 0) : 0;
+  const recentTurns = Array.isArray(state.recent_turns) ? state.recent_turns : [];
+
+  const agentName = String(agentData?.name || "Consultor");
+  const companyName = String(agentData?.company_name || "");
+  const persona = String(agentData?.system_prompt || "");
+  const leadName = lead.lead_name || (state.lead && state.lead.nome) || null;
+
+  const saveStage = async (newStage: number) => {
+    const newState = { ...state, followup: { stage: newStage, anchor: lead.last_agent_reply_at, at: now.toISOString() } };
+    if (stateRow) {
+      await supabase.from("pedro_conversation_state").update({ state: newState })
+        .eq("lead_id", lead.id).eq("agent_id", agentId);
+    } else {
+      await supabase.from("pedro_conversation_state").insert({
+        lead_id: lead.id, agent_id: agentId, user_id: lead.user_id, state: newState,
+      });
+    }
+  };
+  const logChat = async (text: string) => {
+    await supabase.from("wa_chat_history").insert({
+      user_id: lead.user_id, agent_id: agentId, instance_id: instanceName,
+      remote_jid: remoteJid, role: "assistant", content: text,
+    });
+  };
+
+  // ─── T3 (default 12min): despedida amigavel + transferencia (se configurado) ───
+  // So transfere se o gerente deixou o 3o follow-up transferir (t3_transfers) E a
+  // transferencia estiver ativa. Senao: manda SO a despedida e para (lead fica
+  // sem vendedor). `stage < 3` evita reenviar a despedida a cada ciclo do cron.
+  if (elapsedMin >= rules.followup.t3_min && stage < 3) {
+    const doTransfer = rules.followup.t3_transfers && rules.transfer.enabled;
+    if (doTransfer) {
+    const { data: updatedRows } = await supabase.from("ai_crm_leads")
+      .update({ status: "transferido", assigned_to_id: null, followup_5min_sent: true, last_interaction_at: now.toISOString() })
+      .in("status", ["novo", "interessado"]).eq("id", lead.id).select("id");
+    if (!updatedRows || updatedRows.length === 0) return; // outro runner ja tratou
+
+    let { data: teamMembers } = await supabase.from("ai_team_members").select("*")
+      .eq("user_id", lead.user_id).eq("is_active", true).eq("agent_id", agentId)
+      .order("last_lead_received_at", { ascending: true, nullsFirst: true }).limit(50);
+    if (!teamMembers || teamMembers.length === 0) {
+      const { data: fb } = await supabase.from("ai_team_members").select("*")
+        .eq("user_id", lead.user_id).eq("is_active", true)
+        .order("last_lead_received_at", { ascending: true, nullsFirst: true }).limit(50);
+      teamMembers = fb;
+    }
+    const availableSellers = uniqueSellersByPhone(teamMembers || []);
+    if (availableSellers.length > 0) {
+      let seller = availableSellers[0];
+      const { data: prev } = await supabase.from("ai_crm_leads").select("assigned_to_id")
+        .eq("user_id", lead.user_id).eq("remote_jid", lead.remote_jid)
+        .not("assigned_to_id", "is", null)
+        .order("last_interaction_at", { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
+      const prevSeller = availableSellers.find((m: any) => m.id === prev?.assigned_to_id);
+      if (prevSeller) seller = prevSeller;
+
+      let summary = lead.summary || "O cliente demonstrou interesse e parou de responder durante a conversa.";
+      try {
+        const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
+        const { data: fullChat } = await supabase.from("wa_chat_history")
+          .select("role, content, created_at").eq("agent_id", agentId).eq("remote_jid", remoteJid)
+          .order("created_at", { ascending: false }).limit(20);
+        if (openaiApiKey && fullChat && fullChat.length > 0) {
+          const transcript = fullChat.reverse().map((m: any) =>
+            `${m.role === "user" ? `Cliente (${leadName || "Desconhecido"})` : "Agente IA"}: ${String(m.content || "").substring(0, 400)}`).join("\n");
+          const sres = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openaiApiKey}` },
+            body: JSON.stringify({ model: "gpt-4o-mini", temperature: 0.3, messages: [
+              { role: "system", content: `Voce e um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL DO CLIENTE:*\n*DICA PARA RETOMADA:*\n\nSeja direto. Nao invente informacoes.` },
+              { role: "user", content: `Conversa:\n${transcript}\n\nGere o briefing.` },
+            ] }),
+          });
+          if (sres.ok) { const sd = await sres.json(); const gt = sd.choices?.[0]?.message?.content; if (gt) summary = gt; }
+        }
+      } catch (_e) { /* silencioso */ }
+
+      await supabase.from("ai_crm_leads").update({ summary }).eq("id", lead.id);
+      await supabase.from("ai_lead_transfers").insert({
+        user_id: lead.user_id, lead_id: lead.id, to_member_id: seller.id,
+        transfer_reason: `Inatividade do cliente (${rules.followup.t3_min} minutos)`, notes: summary,
+        transfer_status: "pending", is_confirmed: false,
+        confirmation_timeout_at: new Date(now.getTime() + rules.transfer.seller_response_min * 60000).toISOString(),
+      });
+      await supabase.from("ai_team_members").update({ last_lead_received_at: now.toISOString() }).eq("id", seller.id);
+      if (seller.whatsapp_number) {
+        const cleanSellerNum = String(seller.whatsapp_number).replace(/\D/g, "");
+        const notif = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notif);
+      }
+      // Relatorio automatico ao(s) gerente(s) — ate 2.
+      const _gerentes = managerPhones(agentRulesRow);
+      if (_gerentes.length > 0) {
+        const _hora = now.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+        const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${leadName || "Desconhecido"}\n📱 *Telefone:* +${phoneNumber}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${seller.name}\n📲 *WhatsApp vendedor:* ${seller.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+        for (const gp of _gerentes) {
+          try { await sendUazapiTextMessage(baseUrl, instKey, instanceName, gp, `${gp}@s.whatsapp.net`, _mgrMsg); } catch (_e) { /* nao bloqueante */ }
+        }
+      }
+    }
+    } // fim do if (doTransfer)
+    const bye = await generateFollowupText({ kind: "farewell", agentName, companyName, persona, leadName, recentTurns });
+    await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, bye);
+    await logChat(bye);
+    await saveStage(3);
+    return;
+  }
+
+  // ─── T2 (default 8min): segunda mensagem contextual ───
+  if (elapsedMin >= rules.followup.t2_min && stage < 2) {
+    const txt = await generateFollowupText({ kind: "check_help", agentName, companyName, persona, leadName, recentTurns });
+    if (await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, txt)) {
+      await logChat(txt); await saveStage(2);
+    }
+    return;
+  }
+
+  // ─── T1 (default 5min): primeira mensagem contextual ───
+  if (elapsedMin >= rules.followup.t1_min && stage < 1) {
+    const txt = await generateFollowupText({ kind: "reengage", agentName, companyName, persona, leadName, recentTurns });
+    if (await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, txt)) {
+      await logChat(txt); await saveStage(1);
+      await supabase.from("ai_crm_leads").update({ followup_5min_sent: true }).eq("id", lead.id);
+    }
+    return;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -338,6 +582,7 @@ Deno.serve(async (req) => {
     const now = new Date();
     const fiveMinsAgo = new Date(now.getTime() - 5 * 60000).toISOString();
     const tenMinsAgo = new Date(now.getTime() - 10 * 60000).toISOString();
+    const oneMinAgo = new Date(now.getTime() - 60000).toISOString();
 
     console.log(`[Cron] Iniciando varredura. Agora: ${now.toISOString()} | 5m ago: ${fiveMinsAgo} | 10m ago: ${tenMinsAgo}`);
 
@@ -354,10 +599,10 @@ Deno.serve(async (req) => {
       // Buscar transferencias pendentes onde o vendedor NAO confirmou em 10 minutos
       const { data: pendingTransfers } = await supabase
         .from('ai_lead_transfers')
-        .select('*, lead:ai_crm_leads(*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids))')
+        .select('*, lead:ai_crm_leads(*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids, automation_rules))')
         .eq('is_confirmed', false)
         .eq('transfer_status', 'pending')
-        .lte('created_at', tenMinsAgo); // A notificacao foi criada ha mais de 10 minutos
+        .lte('created_at', oneMinAgo); // candidatos (>=1min); o tempo real por agente e checado no loop (seller_response_min)
 
       if (pendingTransfers && pendingTransfers.length > 0) {
         console.log(`[Cron] Encontradas ${pendingTransfers.length} transferencias pendentes ha mais de 10 min.`);
@@ -370,9 +615,21 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // ── Regra de horario: so repassa se o transfer foi CRIADO dentro de
-          //    10:11-19:29 Brasilia. Leads da noite ficam com o vendedor. ─────
-          if (!transferCriadoNoHorario(transfer.created_at)) {
+          // ── Regras configuraveis por agente (NULL = legado: 10min, janela fixa) ──
+          const aRules = resolveAutomationRules(lead?.wa_ai_agents?.automation_rules);
+          // Transferencia desligada pelo gerente -> sem escalacao automatica
+          // (o lead fica com o vendedor atual; o "Ok" dele ainda confirma).
+          if (!aRules.transfer.enabled) continue;
+          // Tempo de resposta do vendedor (por agente). Ainda nao deu o tempo -> espera.
+          const elapsedMinT = (now.getTime() - new Date(transfer.created_at).getTime()) / 60000;
+          if (elapsedMinT < aRules.transfer.seller_response_min) continue;
+          // ── Janela de repasse ──
+          // Configurada (por agente): so repassa se AGORA estiver dentro dela
+          // (narrowa dentro do horario operacional global ja checado acima).
+          // Sem config: regra legada — lead CRIADO fora da janela fica com o vendedor.
+          if (aRules.transfer.window) {
+            if (isWithinConfiguredWindow(aRules.transfer.window, now) === false) continue;
+          } else if (!transferCriadoNoHorario(transfer.created_at)) {
             console.log(`[Cron] Transfer ${transfer.id} criado fora do horario de repasse (${transfer.created_at}). Auto-confirmando - lead fica com vendedor atual.`);
             await supabase.from('ai_lead_transfers')
               .update({ transfer_status: 'confirmed', is_confirmed: true })
@@ -617,7 +874,7 @@ Deno.serve(async (req) => {
     // ════════════════════════════════════════════════════════════════
     const { data: leads, error } = await supabase
       .from('ai_crm_leads')
-      .select('*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids)')
+      .select('*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, company_name, system_prompt, instance_id, instance_ids)')
       .in('status', ['novo', 'interessado'])
       .is('assigned_to_id', null)
       .not('last_agent_reply_at', 'is', null)
@@ -653,6 +910,17 @@ Deno.serve(async (req) => {
       const remoteJid = lead.remote_jid;
       const phoneNumber = remoteJid.split('@')[0];
       const agentId = lead.agent_id;
+
+      // ETAPA B: leads do Pedro v2 (allowlist) usam o follow-up contextual 5/8/12.
+      // Os demais (v1/Marcos/outras contas) seguem no fluxo classico 5/10 abaixo, intocado.
+      if (await isPedroV2User(supabaseUrl, supabaseKey, lead.user_id)) {
+        try {
+          await handleV2Followup(supabase, { lead, agentData, baseUrl, instKey, instanceName, remoteJid, phoneNumber, agentId, now });
+        } catch (e) {
+          console.error(`[Cron][v2] Falha no follow-up v2 do lead ${phoneNumber}:`, e);
+        }
+        continue;
+      }
 
       const is10MinPassed = new Date(lead.last_agent_reply_at) <= new Date(tenMinsAgo);
 
@@ -835,6 +1103,7 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       success: true,
+      build: 'etapa-b-followup-5-8-12-v1',
       horario_operacional: operacional,
       processed_5_min: processed5Min,
       processed_10_min: processed10Min

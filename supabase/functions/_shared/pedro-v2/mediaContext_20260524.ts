@@ -139,10 +139,18 @@ function pickKind(payload: any): string | null {
   const text = normalizeText(JSON.stringify(collectKeys(payload)));
   const message = pickIncomingMessage(payload);
   const mime = asText(message?.mimetype || message?.mimeType || payload?.mimetype || payload?.mimeType);
-  if (mime?.startsWith("image/") || text.includes("imagemessage") || text.includes("jpegthumbnail")) return "image";
-  if (mime?.startsWith("audio/") || text.includes("audiomessage")) return "audio";
-  if (mime?.startsWith("video/") || text.includes("videomessage")) return "video";
-  if (mime || text.includes("documentmessage")) return "document";
+  // Uazapi V6 manda o tipo na PROPRIA mensagem: `messageType` (PascalCase, ex:
+  // "AudioMessage"/"ImageMessage"/"Conversation") e `mediaType` ("ptt"/"audio"/
+  // "image"/"video"). Usamos isso (igual ao Pedro v1) ALEM do mime, porque o blob do
+  // payload carrega o `jpegThumbnail` do anuncio (CTWA) em TODA mensagem, o que fazia
+  // audios virarem "image" -> iam pra visao em vez do Whisper.
+  const msgType = normalizeText(asText(message?.messageType || message?.type || payload?.messageType || payload?.data?.messageType));
+  const mediaType = normalizeText(asText(message?.mediaType || payload?.mediaType || payload?.data?.mediaType));
+  // AUDIO primeiro (inclui ptt/voice), antes de imagem.
+  if (mime?.startsWith("audio/") || msgType.includes("audio") || msgType === "ptt" || mediaType === "ptt" || mediaType === "audio" || text.includes("audiomessage") || text.includes("pttmessage")) return "audio";
+  if (mime?.startsWith("video/") || msgType.includes("video") || mediaType === "video" || text.includes("videomessage")) return "video";
+  if (mime?.startsWith("image/") || msgType.includes("image") || mediaType === "image" || text.includes("imagemessage")) return "image";
+  if (mime || msgType.includes("document") || mediaType === "document" || text.includes("documentmessage")) return "document";
   return null;
 }
 

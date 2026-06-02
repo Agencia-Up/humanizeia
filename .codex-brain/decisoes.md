@@ -59,6 +59,13 @@
 - Nunca registrar valores reais de tokens/API keys em arquivos do repo ou cerebro.
 - No cerebro, registrar apenas nomes de variaveis e locais esperados.
 
+## Pedro v2 — personalidade vs codigo
+
+- A PERSONALIDADE e o passo-a-passo de vendas vem do PORTAL (`wa_ai_agents.system_prompt`), por duas vias a escolha do cliente: aba "general" (prompt manual) OU aba "Funil do Agente" (gera e sobrescreve o `system_prompt`, com `system_prompt_backup`). O `pedroBrainReply` injeta esse texto como "PERSONALIDADE / SYSTEM PROMPT DO PORTAL".
+- Ficam NO CODIGO (nao no portal): (a) o "BLOCO 2 - comportamento obrigatorio fixo" (uma pergunta por msg, termina com pergunta de conducao, nao pressiona, nao fala preco antes de qualificar, nao tenta fechar, trata pelo nome, varia tom) — como rede de seguranca, porque o cliente pode esquecer de preencher e e critico na venda de veiculos; (b) o contrato tecnico (formato JSON, `presented_vehicle_indices`, anti-alucinacao, tratamento de `tool_result` de fotos); (c) as tools (estoque BNDV, fotos, transferencia) e o planner (roteamento de acao).
+- ENVIO: respostas conversacionais saem quebradas em ate 3 mensagens curtas (rajada humana); a LISTA de estoque sai em mensagem unica (caminho `typingOnly`, `preserveFormatting`). Nao misturar os dois caminhos.
+- Regra de ouro do usuario: mudancas no Pedro v2 sao "teste em producao" no WhatsApp dele (deploy gated por allowlist so pro usuario dele). Nunca quebrar inteligencia ja funcionando (imagem/audio/link/BNDV). Mudar pouco, isolado, e testar antes de considerar pronto.
+
 ## Identidade e versionamento (por maquina)
 
 - Modelo trunk-based: tanto `dev-aloan` quanto o socio Wander commitam e empurram para a `main`. A branch local `dev-wander` e compartilhada; a branch `dev-aloan` esta obsoleta e nao deve ser usada.

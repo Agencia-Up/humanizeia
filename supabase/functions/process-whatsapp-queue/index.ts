@@ -23,6 +23,38 @@ const DEFAULT_DAILY_LIMIT_MATURE_INSTANCE = 200; // Mature numbers (>14 days): m
 const WARMUP_RAMP_DAYS = 14; // Days to reach full capacity
 const COLD_CONTACT_MIN_DELAY_SECONDS = 45; // Minimum delay for cold contacts (no prior interaction)
 const COLD_CONTACT_MAX_DELAY_SECONDS = 120; // Maximum delay for cold contacts
+// TRAVA ANTI-BAN (Marcos): minimo 5min (300s) entre disparos da MESMA campanha.
+// O MAXIMO o vendedor define na campanha; o MINIMO e travado aqui no codigo e
+// nao pode ser burlado (mesmo que a campanha tenha min menor). Robusto contra
+// acumulo de itens vencidos via cooldown por campanha.
+const MARCOS_MIN_DELAY_FLOOR_SECONDS = 300;
+
+// AVISO (#3): cria notificacao no portal (sino) quando um disparo TRAVA por numero
+// desconectado. Dedupe: no maximo 1 aviso por campanha a cada 30min (nao spamma o
+// sino a cada ciclo de 1min do cron). Nao bloqueante.
+async function notifyCampaignStalled(supabase: any, opts: { user_id?: string | null; campaign_id?: string | null; campaign_name?: string | null; reason: string }) {
+  if (!opts.user_id || !opts.campaign_id) return;
+  try {
+    const since = new Date(Date.now() - 30 * 60_000).toISOString();
+    const { data: recent } = await supabase
+      .from("notifications")
+      .select("id")
+      .eq("reference_type", "campaign_stalled")
+      .eq("reference_id", opts.campaign_id)
+      .gte("created_at", since)
+      .limit(1);
+    if (recent && recent.length > 0) return;
+    await supabase.from("notifications").insert({
+      user_id: opts.user_id,
+      type: "warning",
+      title: "⚠️ Disparo pausado",
+      message: `A campanha "${opts.campaign_name || "disparo em massa"}" parou: ${opts.reason}. Reconecte o WhatsApp e ela retoma de onde parou.`,
+      reference_type: "campaign_stalled",
+      reference_id: opts.campaign_id,
+      action_url: "/marcos",
+    });
+  } catch (_e) { /* nao bloqueante */ }
+}
 const NUMBER_VALIDATION_TIMEOUT_MS = 5_000;
 
 // BUG-NOVO-05: o Map de failures era em escopo de MÓDULO. Deno Deploy cria
@@ -151,7 +183,6 @@ interface Campaign {
   regras_aquecimento: any;
   started_at: string | null;
   variation_level: string;
-  ai_model: string | null;
   sent_count: number;
   instance_id: string | null;
   include_optout_buttons: boolean;
@@ -287,7 +318,7 @@ Deno.serve(async (req) => {
     if (campaignIds.length > 0) {
       const { data: campaigns } = await supabase
         .from("wa_campaigns")
-        .select("id, prompt_base, message_template, media_url, media_type, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, ai_model, sent_count, instance_id, include_optout_buttons, seller_member_id")
+        .select("id, name, prompt_base, message_template, media_url, media_type, min_delay_seconds, max_delay_seconds, rotation_messages_per_instance, regras_rodizio, regras_delay, regras_aquecimento, started_at, variation_level, sent_count, instance_id, include_optout_buttons, seller_member_id")
         .in("id", campaignIds);
       if (campaigns) {
         for (const c of campaigns as unknown as Campaign[]) {
@@ -384,6 +415,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ===== TRAVA ANTI-BAN: ultimo envio por campanha (cooldown >= 5min) =====
+    // Snapshot do ultimo sent_at de cada campanha ativa; atualizado em memoria a
+    // cada envio nesta rodada (BATCH_SIZE pode trazer varios itens da mesma campanha).
+    const campaignLastSent = new Map<string, number>();
+    for (const cid of activeCampaignIds) {
+      const { data: lastRow } = await supabase
+        .from("wa_queue")
+        .select("sent_at")
+        .eq("campaign_id", cid)
+        .eq("status", "sent")
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastRow?.sent_at) campaignLastSent.set(cid, new Date(lastRow.sent_at).getTime());
+    }
+
     let processed = 0, succeeded = 0, failed = 0;
     const skipReasons: Array<{ item_id: string; reason: string; details?: unknown }> = [];
 
@@ -393,6 +440,24 @@ Deno.serve(async (req) => {
     for (const item of activeItems) {
       let selectedInstance: Instance | null = null;
       try {
+        // ===== TRAVA ANTI-BAN: cooldown de >= 5min por campanha =====
+        // Se esta campanha enviou ha menos de 300s, adia este item (mesmo que
+        // varios itens estejam "vencidos", so 1 sai por janela de 5min).
+        if (item.campaign_id) {
+          const lastTs = campaignLastSent.get(item.campaign_id);
+          if (lastTs) {
+            const sinceMs = Date.now() - lastTs;
+            const floorMs = MARCOS_MIN_DELAY_FLOOR_SECONDS * 1000;
+            if (sinceMs < floorMs) {
+              await supabase
+                .from("wa_queue")
+                .update({ status: "pending", scheduled_for: new Date(Date.now() + (floorMs - sinceMs)).toISOString() })
+                .eq("id", item.id);
+              processed++; continue;
+            }
+          }
+        }
+
         // ===== RE-CHECK campaign status before EVERY single message =====
         if (item.campaign_id) {
           const { data: liveStatus } = await supabase
@@ -454,10 +519,15 @@ Deno.serve(async (req) => {
             // (Mesmo motivo do bug anterior: defer infinito travava a fila inteira.)
             if (item.retry_count >= MAX_RETRIES) {
               await markFailed(supabase, item.id, "Vendedor sem instância WhatsApp conectada após várias tentativas. Conecte um número na conta do vendedor.");
+              await notifyCampaignStalled(supabase, { user_id: item.user_id, campaign_id: item.campaign_id, campaign_name: campaign?.name, reason: "o número do vendedor ficou desconectado" });
               skipReasons.push({ item_id: item.id, reason: "seller_no_instance_max_retries", details: { seller_member_id: campaign.seller_member_id, retry_count: item.retry_count } });
               failed++; processed++; continue;
             }
             console.warn(`[seller-isolation] Vendedor ${campaign.seller_member_id} sem instância conectada — adiando 5 min (tentativa ${item.retry_count + 1}/${MAX_RETRIES})`);
+            // AVISO #3: a partir da 2a tentativa (~5-10min travado), avisa o dono no portal.
+            if (item.retry_count >= 1) {
+              await notifyCampaignStalled(supabase, { user_id: item.user_id, campaign_id: item.campaign_id, campaign_name: campaign?.name, reason: "o número do vendedor está desconectado" });
+            }
             await supabase
               .from("wa_queue")
               .update({
@@ -508,7 +578,6 @@ Deno.serve(async (req) => {
         // --- Generate UNIQUE AI message for EACH contact ---
         let finalMessage = item.message;
         const variationLevel = campaign?.variation_level || "medium";
-        const aiModel = campaign?.ai_model || "gpt-4o";
 
         if (campaign?.prompt_base) {
           const fixedTemplate = normalizeFixedTemplate(campaign.message_template);
@@ -525,11 +594,9 @@ Deno.serve(async (req) => {
                 item.contact_metadata,
                 variationLevel,
                 fixedTemplate,
-                aiModel,
                 supabase,
                 item.user_id
               );
-              console.log(`[QUEUE-AI] OpenAI gerou msg (model=${aiModel}, level=${variationLevel}) para ${item.phone}`);
 
               const hash = await generateHash(finalMessage);
               if (!recentMessageHashes.has(hash)) {
@@ -540,7 +607,7 @@ Deno.serve(async (req) => {
                 genAttempts++;
               }
             } catch (aiErr) {
-              console.error(`[QUEUE-AI] FALHA OpenAI (model=${aiModel}), usando fallback template:`, aiErr);
+              console.error("AI generation failed, using template with variation:", aiErr);
               finalMessage = buildFallbackAIMessage(campaign.prompt_base, item.contact_name, item.contact_metadata, variationLevel, fixedTemplate || normalizeFixedTemplate(item.message));
               messageIsUnique = true;
             }
@@ -706,6 +773,8 @@ Deno.serve(async (req) => {
         }
 
         succeeded++;
+        // TRAVA: marca o envio desta campanha (cooldown de 5min nos proximos itens desta rodada).
+        if (item.campaign_id) campaignLastSent.set(item.campaign_id, Date.now());
 
         // ===== SCHEDULE NEXT ITEM WITH HUMANIZED DELAY =====
         // Instead of sleeping (which can timeout the edge function),
@@ -715,8 +784,9 @@ Deno.serve(async (req) => {
         
         // ===== ANTI-BAN: Use MUCH longer delays for cold contacts =====
         const isCurrentContactCold = !item.contact_metadata?.last_message_at;
-        const configuredMinD = delayRules.min || campaign?.min_delay_seconds || 20;
-        const configuredMaxD = delayRules.max || campaign?.max_delay_seconds || 60;
+        // TRAVA: piso de 300s (o vendedor define o maximo; o minimo nunca cai abaixo de 5min).
+        const configuredMinD = Math.max(MARCOS_MIN_DELAY_FLOOR_SECONDS, delayRules.min || campaign?.min_delay_seconds || 20);
+        const configuredMaxD = Math.max(configuredMinD, delayRules.max || campaign?.max_delay_seconds || 60);
         
         const minD = isCurrentContactCold
           ? Math.max(configuredMinD, COLD_CONTACT_MIN_DELAY_SECONDS)
@@ -1514,15 +1584,11 @@ async function generateAIMessage(
   _contactMetadata: any,
   variationLevel: string,
   messageTemplate: string | null,
-  aiModel: string,
   supabaseClient?: any,
   userId?: string
 ): Promise<string> {
-  // 28/05/2026: migrado do gateway morto da Lovable (LOVABLE_API_KEY inexistente
-  // em staging E prod) para OpenAI direto — mesma chave que a previa ja usa.
-  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
-  const model = aiModel === "gpt-4o-mini" ? "gpt-4o-mini" : "gpt-4o";
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
   let personalizationContext = "";
   if (contactName) personalizationContext += `\nNome do lead: ${contactName}`;
@@ -1621,14 +1687,14 @@ REGRAS OBRIGATÓRIAS:
     ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
     : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
 
-  const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model,
+      model: "google/gemini-2.5-flash",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -1640,7 +1706,7 @@ REGRAS OBRIGATÓRIAS:
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`OpenAI error: ${response.status} - ${errText}`);
+    throw new Error(`AI gateway error: ${response.status} - ${errText}`);
   }
 
   const data = await response.json();
