@@ -154,48 +154,19 @@ export async function confirmSellerAck(
   return { ok: true, seller: matches[0], transfer: pendingTransfer, confirmed: true };
 }
 
-// ETAPA C (2026-05-29): executa a transferencia de um lead QUALIFICADO/AGENDOU
-// a partir do orquestrador do Pedro v2. Reusa a mesma fila/round-robin/briefing
-// do fluxo de inatividade. Marca status='transferido' (NAO mexe em status_crm)
-// — isso tambem faz o follow-up de inatividade parar (o cron so pega novo/interessado).
-// Guard atomico evita transferencia em dobro. Retorna o vendedor + briefing para
-// o orquestrador notificar via WhatsApp.
-export async function executePedroV2Handoff(
+// Monta um briefing rico para o vendedor humano assumir/retomar o lead. Usa a
+// OpenAI quando ha chave + historico de conversa; senao cai para um texto base.
+// Anexa os DADOS ESTRUTURADOS coletados pelo agente. Best-effort: NUNCA lanca
+// (sempre devolve, no minimo, o texto base) para nao derrubar a transferencia.
+async function buildHandoffBriefing(
   supabase: any,
   input: {
-    user_id: string;
     agent_id: string;
-    lead_id: string;
     remote_jid: string;
     lead_name?: string | null;
-    reason?: string | null;
     qualificacao?: Record<string, any> | null;
-    seller_response_min?: number | null;
   },
-): Promise<{ ok: boolean; seller: any; briefing: string; reason: string }> {
-  // 1) Precisa ter vendedor disponivel ANTES de mexer no status (senao o lead
-  //    ficaria "transferido" sem destino e sem follow-up).
-  const choice = await chooseSellerForPedroTransfer(supabase, {
-    user_id: input.user_id,
-    agent_id: input.agent_id,
-    remote_jid: input.remote_jid,
-    lead_id: input.lead_id,
-  });
-  if (!choice?.seller) return { ok: false, seller: null, briefing: "", reason: "no_active_seller" };
-
-  // 2) Guard atomico: so transfere se o lead ainda estiver novo/interessado e sem
-  //    vendedor (evita transferir duas vezes em turnos concorrentes).
-  const nowIso = new Date().toISOString();
-  const { data: claimed } = await supabase
-    .from("ai_crm_leads")
-    .update({ status: "transferido", last_interaction_at: nowIso })
-    .eq("id", input.lead_id)
-    .is("assigned_to_id", null)
-    .in("status", ["novo", "interessado"])
-    .select("id");
-  if (!claimed || claimed.length === 0) return { ok: false, seller: null, briefing: "", reason: "already_handled" };
-
-  // 3) Briefing rico para o vendedor (mesmo padrao do fluxo de inatividade).
+): Promise<string> {
   let briefing = "Lead avancou na negociacao com o Pedro v2 (qualificado / agendou visita / quer fechar). Retome o atendimento.";
   try {
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
@@ -226,7 +197,6 @@ export async function executePedroV2Handoff(
     }
   } catch (_e) { /* silencioso */ }
 
-  // 3.1) Anexa os DADOS ESTRUTURADOS coletados pelo agente (vao no briefing do vendedor).
   const q = input.qualificacao && typeof input.qualificacao === "object" ? input.qualificacao : null;
   if (q) {
     const linhas: string[] = [];
@@ -242,18 +212,171 @@ export async function executePedroV2Handoff(
     else if (q.sabe_localizacao === false) linhas.push("Conhece a loja: nao");
     if (linhas.length > 0) briefing = `${briefing}\n\n*DADOS COLETADOS PELO AGENTE:*\n${linhas.join("\n")}`;
   }
+  return briefing;
+}
 
-  // 4) Cria a transferencia (mesma estrutura/fila do fluxo atual) e grava o resumo.
-  await supabase.from("ai_lead_transfers").insert({
+// ETAPA C (2026-05-29, revisado 2026-06-02): executa a transferencia de um lead
+// QUALIFICADO/AGENDOU a partir do orquestrador do Pedro v2.
+//
+// CORRECAO 2026-06-02 (transferencia parada apos a migracao v1->v2):
+//  (1) O guard antigo so transferia leads com status IN ('novo','interessado') e
+//      SEM dono. Apos a migracao, MUITOS leads ja chegavam ao v2 com outro status
+//      (em_atendimento/qualificado/etc., herdado do v1 ou do CRM) e NUNCA eram
+//      transferidos -> os leads que a IA atendia nao chegavam ao vendedor. O
+//      status nao deve mais BLOQUEAR a transferencia (o cerebro so pede transferir
+//      quando ha intencao real). Sintoma 1 resolvido.
+//  (2) LEAD QUE RETORNOU: se ja tem dono ATIVO, agora re-notifica ESSE vendedor
+//      (sem round-robin, sem fila nova), com throttle p/ nao spammar. Antes o
+//      guard retornava 'already_handled' em silencio e o vendedor que ja atendia
+//      nunca era avisado do retorno. Sintoma 2 resolvido.
+//
+// Anti-corrida preservado: claim atomico via .is("assigned_to_id", null) + dedup
+// por transferencia PENDENTE ainda valida (passo 2). Marca status='transferido'
+// (NAO mexe em status_crm) — isso tambem faz o follow-up de inatividade parar.
+export async function executePedroV2Handoff(
+  supabase: any,
+  input: {
+    user_id: string;
+    agent_id: string;
+    lead_id: string;
+    remote_jid: string;
+    lead_name?: string | null;
+    reason?: string | null;
+    qualificacao?: Record<string, any> | null;
+    seller_response_min?: number | null;
+  },
+): Promise<{ ok: boolean; seller: any; briefing: string; reason: string }> {
+  const nowIso = new Date().toISOString();
+  const responseMin = Number(input.seller_response_min) > 0 ? Number(input.seller_response_min) : 10;
+  // Throttle do re-aviso ao vendedor de um lead que voltou (evita spammar a cada
+  // mensagem). 45min e um bom proxy de "voltou depois de um tempo".
+  const RENOTIFY_THROTTLE_MS = 45 * 60000;
+
+  // 0) Estado atual do lead (status + dono).
+  const { data: leadRow } = await supabase
+    .from("ai_crm_leads")
+    .select("id, status, assigned_to_id")
+    .eq("id", input.lead_id)
+    .maybeSingle();
+
+  // 1) LEAD QUE RETORNOU: ja possui vendedor ATIVO -> re-notifica ESSE vendedor
+  //    (nao faz round-robin, nao cria fila nova). Sintoma 2.
+  if (leadRow?.assigned_to_id) {
+    const { data: owner } = await supabase
+      .from("ai_team_members")
+      .select("*")
+      .eq("id", leadRow.assigned_to_id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (owner) {
+      // Throttle: so re-notifica se a ultima transferencia/aviso deste lead foi
+      // ha mais de RENOTIFY_THROTTLE_MS (senao o vendedor ja foi avisado agorinha).
+      const { data: lastTransfer } = await supabase
+        .from("ai_lead_transfers")
+        .select("created_at")
+        .eq("lead_id", input.lead_id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const lastMs = lastTransfer?.created_at ? new Date(lastTransfer.created_at).getTime() : 0;
+      if (Date.now() - lastMs < RENOTIFY_THROTTLE_MS) {
+        return { ok: false, seller: null, briefing: "", reason: "renotify_throttled" };
+      }
+      const briefing = await buildHandoffBriefing(supabase, {
+        agent_id: input.agent_id,
+        remote_jid: input.remote_jid,
+        lead_name: input.lead_name,
+        qualificacao: input.qualificacao,
+      });
+      // Registra o aviso como transferencia CONFIRMADA (o lead JA e deste vendedor)
+      // — serve de historico e de marco de throttle para a proxima mensagem.
+      await supabase.from("ai_lead_transfers").insert({
+        user_id: input.user_id,
+        lead_id: input.lead_id,
+        to_member_id: owner.id,
+        transfer_reason: input.reason || "Lead retornou e voltou a demonstrar interesse (Pedro v2)",
+        notes: briefing,
+        transfer_status: "confirmed",
+        is_confirmed: true,
+        confirmed_at: nowIso,
+        confirmation_timeout_at: nowIso,
+      });
+      await supabase.from("ai_crm_leads").update({ summary: briefing, last_interaction_at: nowIso }).eq("id", input.lead_id);
+      await supabase.from("ai_team_members").update({ last_lead_received_at: nowIso }).eq("id", owner.id);
+      return { ok: true, seller: owner, briefing, reason: "returning_lead_renotify" };
+    }
+    // Dono inativo -> libera a atribuicao e segue para reatribuicao (round-robin).
+    await supabase.from("ai_crm_leads").update({ assigned_to_id: null }).eq("id", input.lead_id);
+  }
+
+  // 2) Ja existe transferencia PENDENTE ainda dentro do prazo? -> aguarda "Ok" do
+  //    vendedor (nao duplica o aviso). Cobre a corrida de turnos concorrentes e o
+  //    caso "ja avisado, esperando confirmacao". Uma pendente EXPIRADA NAO bloqueia
+  //    (o vendedor anterior nao assumiu -> re-encaminha).
+  const { data: activePending } = await supabase
+    .from("ai_lead_transfers")
+    .select("id, confirmation_timeout_at")
+    .eq("lead_id", input.lead_id)
+    .eq("transfer_status", "pending")
+    .eq("is_confirmed", false)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (activePending) {
+    const notExpired = !activePending.confirmation_timeout_at ||
+      new Date(activePending.confirmation_timeout_at).getTime() > Date.now();
+    if (notExpired) return { ok: false, seller: null, briefing: "", reason: "already_pending" };
+  }
+
+  // 3) Escolhe vendedor: vendedor anterior do lead, senao round-robin.
+  const choice = await chooseSellerForPedroTransfer(supabase, {
     user_id: input.user_id,
+    agent_id: input.agent_id,
+    remote_jid: input.remote_jid,
     lead_id: input.lead_id,
-    to_member_id: choice.seller.id,
-    transfer_reason: input.reason || "Lead qualificado/agendou (Pedro v2)",
-    notes: briefing,
-    transfer_status: "pending",
-    is_confirmed: false,
-    confirmation_timeout_at: new Date(Date.now() + (Number(input.seller_response_min) > 0 ? Number(input.seller_response_min) : 10) * 60000).toISOString(),
   });
+  if (!choice?.seller) return { ok: false, seller: null, briefing: "", reason: "no_active_seller" };
+
+  // 4) Claim atomico anti-corrida: encaminha so se o lead ainda NAO tem dono. O
+  //    STATUS NAO BLOQUEIA MAIS (qualquer status sem dono pode ser encaminhado).
+  //    Marca 'transferido' para o follow-up de inatividade parar.
+  const { data: claimed } = await supabase
+    .from("ai_crm_leads")
+    .update({ status: "transferido", last_interaction_at: nowIso })
+    .eq("id", input.lead_id)
+    .is("assigned_to_id", null)
+    .select("id");
+  if (!claimed || claimed.length === 0) {
+    // Lead ganhou dono entre os passos 1 e 4 (corrida com confirmacao) -> tratado.
+    return { ok: false, seller: null, briefing: "", reason: "already_handled" };
+  }
+
+  // 4b) Cria a transferencia pendente JA (antes do briefing) para FECHAR a janela
+  //     de corrida: um turno concorrente vera esta pendente no passo 2 e nao
+  //     duplicara o aviso. O briefing rico (lento) e gravado logo abaixo.
+  const { data: inserted } = await supabase
+    .from("ai_lead_transfers")
+    .insert({
+      user_id: input.user_id,
+      lead_id: input.lead_id,
+      to_member_id: choice.seller.id,
+      transfer_reason: input.reason || "Lead qualificado/agendou (Pedro v2)",
+      notes: "Preparando briefing...",
+      transfer_status: "pending",
+      is_confirmed: false,
+      confirmation_timeout_at: new Date(Date.now() + responseMin * 60000).toISOString(),
+    })
+    .select("id")
+    .maybeSingle();
+
+  // 5) Briefing rico + atualiza a transferencia e o resumo do lead.
+  const briefing = await buildHandoffBriefing(supabase, {
+    agent_id: input.agent_id,
+    remote_jid: input.remote_jid,
+    lead_name: input.lead_name,
+    qualificacao: input.qualificacao,
+  });
+  if (inserted?.id) await supabase.from("ai_lead_transfers").update({ notes: briefing }).eq("id", inserted.id);
   await supabase.from("ai_crm_leads").update({ summary: briefing }).eq("id", input.lead_id);
   await supabase.from("ai_team_members").update({ last_lead_received_at: nowIso }).eq("id", choice.seller.id);
 
