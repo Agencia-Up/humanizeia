@@ -59,7 +59,11 @@ function isSocialQuestion(message?: string | null) {
 
 function isPhotoText(message?: string | null) {
   const normalized = normalizeText(message);
-  return /\b(foto|fotos|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|porta malas|traseira|frente|lateral|video)\b/.test(normalized);
+  if (/\b(foto|fotos|fotinha|fotinhas|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|traseira|frente|lateral|video|videos|catalog|catalogo|catalogos|album|albuns|albun)\b/.test(normalized)) return true;
+  if (/\b(me mostra|me mostre|mostra (a|o|ele|ela|esse|essa|mais|umas|uma|foto|as))\b/.test(normalized) || /\bmostrar\b/.test(normalized)) return true;
+  if (/\b(quero ver|queria ver|gostaria de ver|posso ver|da pra ver|deixa eu ver|consigo ver|tem como ver)\b/.test(normalized)) return true;
+  if (/\bver (o carro|ele|ela|esse|essa|esse carro|mais|as foto|as fotos|as imagens|melhor)\b/.test(normalized)) return true;
+  return false;
 }
 
 function isAffirmativeText(message?: string | null) {

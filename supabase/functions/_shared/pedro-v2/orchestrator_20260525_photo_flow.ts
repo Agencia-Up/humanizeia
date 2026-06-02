@@ -567,7 +567,15 @@ function detectPhotoTarget(message: string): PhotoTarget {
 // stock_search (evita o agente PROMETER fotos e mandar so texto).
 function messageAsksForPhotos(message: string): boolean {
   const normalized = normalizePhotoText(message);
-  return /\b(foto|fotos|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|porta-malas|traseira|frente|lateral|video|videos)\b/.test(normalized);
+  // 1) termos visuais diretos (foto/imagem/detalhes do carro) + sinonimos de
+  //    "catalogo"/"album" que o lead usa para pedir as imagens.
+  if (/\b(foto|fotos|fotinha|fotinhas|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|porta-malas|traseira|frente|lateral|video|videos|catalog|catalogo|catalogos|album|albuns|albun)\b/.test(normalized)) return true;
+  // 2) pedidos por sinonimo: "me mostra", "mostra ele", "mostrar"
+  if (/\b(me mostra|me mostre|mostra (a|o|ele|ela|esse|essa|mais|umas|uma|foto|as))\b/.test(normalized) || /\bmostrar\b/.test(normalized)) return true;
+  // 3) "quero/queria/gostaria/posso ver" + "ver o carro / ver ele / ver esse"
+  if (/\b(quero ver|queria ver|gostaria de ver|posso ver|da pra ver|deixa eu ver|consigo ver|tem como ver)\b/.test(normalized)) return true;
+  if (/\bver (o carro|ele|ela|esse|essa|esse carro|essa|mais|as foto|as fotos|as imagens|melhor)\b/.test(normalized)) return true;
+  return false;
 }
 
 function uniqueIndexes(indexes: number[], total: number, max = 5) {
