@@ -53,7 +53,13 @@ interface Message {
 }
 
 interface AgentInboxTabProps {
+  // Dono dos dados (master). Para vendedor, e o user_id do master, nao o auth
+  // id do vendedor — senao os filtros .eq('user_id', ...) voltam vazios, pois
+  // agentes/leads/inbox ficam todos gravados sob o id do master.
   userId: string;
+  // Quando vendedor, escopa os leads aos atribuidos a ele (assigned_to_id).
+  isSeller?: boolean;
+  sellerMemberIds?: string[];
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -92,8 +98,13 @@ function mediaTypeFromMime(mime: string): 'image' | 'audio' | 'video' | 'documen
   return 'document';
 }
 
+/* Valor "coringa" do seletor: mostra os leads de TODOS os agentes (paridade com
+   o CRM, que filtra so por user_id). Sem isso, o inbox filtrava por agent_id e a
+   lista vinha vazia quando o lead estava sob outro agente (ou agent_id null). */
+const ALL_AGENTS = '__all__';
+
 /* ── Componente Principal ──────────────────────────────────────────── */
-export function AgentInboxTab({ userId }: AgentInboxTabProps) {
+export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }: AgentInboxTabProps) {
   const { toast } = useToast();
 
   // Agents
@@ -152,8 +163,10 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
         .order('name');
       const list = data || [];
       setAgents(list);
+      // Default "Todos os agentes": garante que a lista de conversas apareca
+      // mesmo quando os leads estao sob agentes variados (ou agent_id null).
       if (list.length > 0 && !selectedAgentId) {
-        setSelectedAgentId(list[0].id);
+        setSelectedAgentId(ALL_AGENTS);
       }
       setLoadingAgents(false);
     }
@@ -164,17 +177,28 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
   const fetchLeads = useCallback(async () => {
     if (!selectedAgentId) return;
     setLoadingLeads(true);
-    const { data } = await (supabase as any)
+    let query = (supabase as any)
       .from('ai_crm_leads')
       // message_count NÃO está no SELECT porque a coluna não existe em ai_crm_leads.
       // O valor é calculado dinamicamente abaixo via wa_chat_history (useEffect).
       .select('id, remote_jid, lead_name, status, ai_paused, instance_id, agent_id, last_interaction_at, summary')
-      .eq('agent_id', selectedAgentId)
-      .eq('user_id', userId)
-      .order('last_interaction_at', { ascending: false });
+      .eq('user_id', userId);
+    // Filtra por agente so quando um agente especifico esta selecionado. No modo
+    // "Todos os agentes" escopa apenas por user_id (igual ao CRM, que funciona).
+    if (selectedAgentId !== ALL_AGENTS) {
+      query = query.eq('agent_id', selectedAgentId);
+    }
+    // Vendedor só vê os leads atribuídos a ele (paridade com o CRM). Se ainda não
+    // tem nenhum lead atribuído, mostra vazio (não cai pro inbox inteiro do master).
+    if (isSeller) {
+      query = sellerMemberIds.length > 0
+        ? query.in('assigned_to_id', sellerMemberIds)
+        : query.eq('assigned_to_id', '00000000-0000-0000-0000-000000000000');
+    }
+    const { data } = await query.order('last_interaction_at', { ascending: false });
     setLeads(data || []);
     setLoadingLeads(false);
-  }, [selectedAgentId, userId]);
+  }, [selectedAgentId, userId, isSeller, sellerMemberIds]);
 
   useEffect(() => {
     fetchLeads();
@@ -189,22 +213,85 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
     if (!selectedLeadId || !selectedLeadPhone) return;
     if (!silent) setLoadingMessages(true);
     try {
-      let query = (supabase as any)
+      let inboxQuery = (supabase as any)
         .from('wa_inbox')
         .select('id, phone, instance_id, direction, content, message_type, media_url, created_at, contact_name')
         .eq('user_id', userId)
         .in('phone', phoneCandidates(selectedLeadPhone));
 
-    if (selectedLeadInstanceId) {
-      query = query.eq('instance_id', selectedLeadInstanceId);
-    }
+      if (selectedLeadInstanceId) {
+        inboxQuery = inboxQuery.eq('instance_id', selectedLeadInstanceId);
+      }
 
-    const { data } = await query
-      .order('created_at', { ascending: true })
-      .range(0, 999);
+      const { data: inboxData } = await inboxQuery
+        .order('created_at', { ascending: true })
+        .range(0, 999);
+      const inboxRows: Message[] = inboxData || [];
 
-    const rows = data || [];
-    setMessages(rows);
+      // Pedro v2 grava as mensagens (entrada role:"user" / saida role:"assistant")
+      // em wa_chat_history, NAO em wa_inbox. Sem isto a conversa do Pedro v2 abre
+      // vazia ("Nenhuma mensagem"). Buscamos as duas fontes e fundimos por horario.
+      // Defensivo: qualquer erro aqui (ex.: RLS) nao quebra a exibicao do wa_inbox.
+      let historyRows: Message[] = [];
+      try {
+        const { data: histData } = await (supabase as any)
+          .from('wa_chat_history')
+          .select('id, remote_jid, role, content, created_at')
+          .eq('user_id', userId)
+          .in('remote_jid', phoneCandidates(selectedLeadPhone))
+          .order('created_at', { ascending: true })
+          .range(0, 999);
+        historyRows = (histData || []).map((r: any): Message => ({
+          id: `wch-${r.id}`,
+          phone: cleanPhone(r.remote_jid),
+          // wa_chat_history guarda o NOME da instancia, nao o UUID -> nunca usar
+          // pra envio. Deixamos null pra nao poluir o resolveInstanceId().
+          instance_id: null,
+          direction: r.role === 'assistant' ? 'outgoing' : 'incoming',
+          content: r.content ?? '',
+          message_type: 'text',
+          media_url: null,
+          created_at: r.created_at,
+          contact_name: null,
+        }));
+      } catch {
+        // silencioso — mantem somente o wa_inbox
+      }
+
+      // Evita balao duplicado quando a mesma mensagem existe nas duas fontes
+      // (mesma direcao + mesmo texto dentro de ~2min). Prioriza o wa_inbox (tem midia).
+      const historyToAdd = historyRows.filter(h =>
+        !inboxRows.some(r =>
+          r.direction === h.direction &&
+          (r.content || '').trim() === (h.content || '').trim() &&
+          Math.abs(new Date(r.created_at).getTime() - new Date(h.created_at).getTime()) < 120000
+        )
+      );
+
+      const rows: Message[] = [...inboxRows, ...historyToAdd].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+    // Preserva mensagens otimistas (id "opt-") que ainda nao apareceram no banco.
+    // Sem isso o polling de 7s (e o refetch pos-envio) substitui a lista pelas
+    // linhas do banco e apaga o balao recem-enviado ate o registro real chegar,
+    // causando piscada. Mantem a otimista ate existir uma linha real equivalente
+    // (mesma direcao, conteudo/midia, dentro de ~90s) ou ela expirar (>2min).
+    setMessages(prev => {
+      const optimistic = prev.filter(m => typeof m.id === 'string' && m.id.startsWith('opt-'));
+      if (optimistic.length === 0) return rows;
+      const matched = (o: Message, r: Message) => {
+        if (r.direction !== o.direction) return false;
+        const dt = Math.abs(new Date(r.created_at).getTime() - new Date(o.created_at).getTime());
+        if (dt > 90000) return false;
+        if (o.media_url || o.message_type !== 'text') return r.message_type === o.message_type;
+        return (r.content || '') === (o.content || '');
+      };
+      const stillPending = optimistic.filter(o =>
+        Date.now() - new Date(o.created_at).getTime() < 120000 &&
+        !rows.some(r => matched(o, r))
+      );
+      return stillPending.length > 0 ? [...rows, ...stillPending] : rows;
+    });
     if (rows.length > 0) {
       const latestInstanceId = [...rows].reverse().find((m: Message) => m.instance_id)?.instance_id || null;
       setSelectedLead(prev => {
@@ -357,6 +444,8 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
       if (error) throw error;
       await fetchMessages(true);
     } catch (err: any) {
+      // Remove o balao otimista pra nao deixar "fantasma" de msg que falhou.
+      setMessages(prev => prev.filter(m => m.id !== opt.id));
       toast({ title: 'Erro ao enviar', description: err.message, variant: 'destructive' });
     } finally {
       setSending(false);
@@ -619,6 +708,12 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
               <SelectValue placeholder="Selecionar agente..." />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={ALL_AGENTS} className="text-xs">
+                <span className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
+                  Todos os agentes
+                </span>
+              </SelectItem>
               {agents.map(a => (
                 <SelectItem key={a.id} value={a.id} className="text-xs">
                   <span className="flex items-center gap-2">
@@ -756,7 +851,7 @@ export function AgentInboxTab({ userId }: AgentInboxTabProps) {
                     {displayPhone(selectedLead.remote_jid)}
                     <span className="mx-1">|</span>
                     <MessageCircle className="h-2.5 w-2.5" />
-                    {selectedLead.message_count} msgs
+                    {selectedLead.message_count ?? 0} msgs
                   </p>
                 </div>
 
