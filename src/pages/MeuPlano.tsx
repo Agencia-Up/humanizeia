@@ -16,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
+import RecargaDialog from '@/components/subscription/RecargaDialog';
 
 /* ── helpers ────────────────────────────────────────────────────────── */
 function fmt(n: number) { return n.toLocaleString('pt-BR'); }
@@ -113,14 +114,35 @@ export default function MeuPlano() {
   const {
     subscription, transactions, loading, error, refetch,
     tokensAvailable, tokensTotal, usagePercent,
-    planInfo, purchaseTokens, upgradePlan,
+    planInfo, upgradePlan,
   } = useSubscription();
   const { user } = useAuth();
   const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
 
   const [tab, setTab] = useState<'overview' | 'upgrade' | 'recharge'>('overview');
-  const [buyingPkg, setBuyingPkg] = useState<number | null>(null);
   const [upgradingPlan, setUpgradingPlan] = useState<PlanId | null>(null);
+
+  // Recarga: dialog de pagamento + cartao salvo (1-clique).
+  const [recargaPkg, setRecargaPkg] = useState<{ atendimentos: number; price: number } | null>(null);
+  const [savedCard, setSavedCard] = useState<{ last4: string | null; brand: string | null } | null>(null);
+  useEffect(() => {
+    if (!user) { setSavedCard(null); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await (supabase as any)
+          .from('profiles')
+          .select('asaas_card_last4, asaas_card_brand')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (!alive) return;
+        setSavedCard(data?.asaas_card_last4 ? { last4: data.asaas_card_last4, brand: data.asaas_card_brand } : null);
+      } catch {
+        if (alive) setSavedCard(null);
+      }
+    })();
+    return () => { alive = false; };
+  }, [user]);
 
   // Custo das conversas (IA) do PROPRIO cliente, ja com a margem aplicada no
   // servidor. A RPC e SECURITY DEFINER e so devolve o que e do auth.uid() —
@@ -201,16 +223,9 @@ export default function MeuPlano() {
     n: Number(d.n_conversas),
   }));
 
-  const handlePurchase = async (amount: number, price: number) => {
-    setBuyingPkg(amount);
-    const res = await purchaseTokens(amount);
-    setBuyingPkg(null);
-    if (res.success) {
-      toast({
-        title: 'Pedido de recarga registrado!',
-        description: `${fmt(amount)} atendimentos — ${fmtR(price)}. Nosso suporte vai falar com você para concluir a liberação.`,
-      });
-    }
+  // Abre o checkout de recarga (cartao salvo = 1 clique; senao cartao novo/PIX).
+  const handlePurchase = (amount: number, price: number) => {
+    setRecargaPkg({ atendimentos: amount, price });
   };
 
   const handleUpgrade = async (planId: PlanId) => {
@@ -558,9 +573,19 @@ export default function MeuPlano() {
           <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex items-start gap-2">
             <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
             <p className="text-sm text-muted-foreground">
-              Acabaram os atendimentos do seu plano? Solicite uma recarga em um dos pacotes abaixo. Os atendimentos não utilizados se acumulam para os próximos meses.
+              Acabaram os atendimentos do seu plano? Recarregue na hora em um dos pacotes abaixo. Os atendimentos não utilizados se acumulam para os próximos meses.
             </p>
           </div>
+
+          {/* Cartao salvo (1-clique) */}
+          {savedCard?.last4 && (
+            <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-4 py-3 flex items-center gap-2">
+              <CreditCard className="h-4 w-4 text-green-500 shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                Cartão salvo: <strong>{savedCard.brand ? `${savedCard.brand} ` : ''}final •••• {savedCard.last4}</strong>. Suas recargas são liberadas em 1 clique.
+              </p>
+            </div>
+          )}
 
           {/* Packages */}
           <div>
@@ -577,9 +602,8 @@ export default function MeuPlano() {
                     size="sm"
                     className="w-full mt-1"
                     onClick={() => handlePurchase(pkg.atendimentos, pkg.price)}
-                    disabled={buyingPkg === pkg.atendimentos}
                   >
-                    {buyingPkg === pkg.atendimentos ? 'Processando...' : 'Comprar'}
+                    {savedCard?.last4 ? 'Recarregar (1 clique)' : 'Recarregar'}
                   </Button>
                 </div>
               ))}
@@ -590,11 +614,20 @@ export default function MeuPlano() {
           <div className="rounded-lg border border-border/40 bg-muted/20 px-4 py-3 flex items-center gap-2">
             <CreditCard className="h-4 w-4 text-muted-foreground" />
             <p className="text-xs text-muted-foreground">
-              No momento a recarga é liberada manualmente pelo nosso <strong>suporte</strong> (gateway de pagamento automático em breve). Assim que a recarga for confirmada, os atendimentos entram no seu saldo.
+              Pagamento seguro via PIX ou cartão. Assim que a recarga for confirmada, os atendimentos entram no seu saldo automaticamente.
             </p>
           </div>
         </div>
       )}
+
+      {/* ── Dialog de pagamento da recarga (checkout no painel) ──────── */}
+      <RecargaDialog
+        open={!!recargaPkg}
+        onOpenChange={(o) => { if (!o) setRecargaPkg(null); }}
+        pkg={recargaPkg}
+        savedCard={savedCard}
+        onCredited={() => { refetch(); }}
+      />
     </div>
   );
 }

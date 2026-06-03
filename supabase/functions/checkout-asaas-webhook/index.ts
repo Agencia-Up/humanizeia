@@ -102,6 +102,42 @@ serve(async (req: Request) => {
 
     console.log(`[checkout-asaas-webhook] event=${eventName} payment=${payment?.id} sub=${subscription?.id}`);
 
+    // ── RECARGA DE ATENDIMENTOS (credito avulso) ───────────────────────
+    // externalReference = `recarga_<atendimentos>_<userId>`. Tratado AQUI pra
+    // que um UNICO webhook registrado no Asaas cubra assinatura + recarga.
+    // Credito idempotente (a RPC guarda por payment_id) — re-entrega nao duplica.
+    const recExtRef: string | undefined = payment?.externalReference;
+    if (recExtRef && recExtRef.startsWith('recarga_')) {
+      if (eventName === 'PAYMENT_RECEIVED' || eventName === 'PAYMENT_CONFIRMED') {
+        const parts = recExtRef.split('_');            // ['recarga','<atend>','<userId...>']
+        const atend = parseInt(parts[1], 10);
+        const recUserId = parts.slice(2).join('_');
+        if (!Number.isFinite(atend) || atend <= 0 || !recUserId) {
+          console.warn(`[checkout-asaas-webhook] recarga ref invalido: ${recExtRef}`);
+        } else {
+          const { data: credit, error: credErr } = await supabase.rpc('credit_atendimentos_recarga', {
+            p_user_id: recUserId,
+            p_atendimentos: atend,
+            p_payment_id: payment.id,
+            p_product_id: recExtRef,
+            p_price_paid: payment.value ?? null,
+            p_description: `Recarga avulsa — ${atend} atendimentos`,
+          });
+          if (credErr) {
+            console.error(`[checkout-asaas-webhook] erro ao creditar recarga: ${credErr.message}`);
+            throw credErr;
+          }
+          console.log(`[checkout-asaas-webhook] RECARGA creditada — user=${recUserId} +${atend} atend`, credit);
+        }
+      } else {
+        console.log(`[checkout-asaas-webhook] recarga: evento ${eventName} ignorado`);
+      }
+      return new Response(JSON.stringify({ received: true, recarga: true }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // ── Lookup do checkout_pending ─────────────────────────────────────
     let pending: any = null;
 

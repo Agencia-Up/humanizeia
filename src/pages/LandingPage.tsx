@@ -2126,21 +2126,28 @@ export default function LandingPage() {
 
           {/* Bottom bar */}
           <div className="pt-6" style={{ borderTop: '1px solid rgba(250, 248, 242, 0.10)' }}>
-            <div
-              className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
-              style={{ color: 'rgba(250, 248, 242, 0.55)' }}
-            >
-              <span>© {new Date().getFullYear()} LOGOS|IA. Todos os direitos reservados.</span>
-              <span>Feito no Brasil 🇧🇷</span>
-            </div>
+            <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:items-center sm:justify-between sm:text-left">
 
-            {/* Dados da empresa (CNPJ/cidade) — mesma fonte/seção, tom discreto */}
-            <p
-              className="mt-3 text-center sm:text-left text-[11px] leading-relaxed"
-              style={{ color: 'rgba(250, 248, 242, 0.40)' }}
-            >
-              Agencia Up Business LTDA&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP
-            </p>
+              {/* Identidade da empresa + CNPJ — visivel pra conformidade legal/Meta */}
+              <p className="text-xs leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>
+                <span className="font-semibold" style={{ color: 'var(--brand-cream)' }}>Agencia Up Business LTDA</span>
+                <span className="opacity-75">&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP</span>
+              </p>
+
+              {/* Copyright + links legais + selo — mesma secao/fonte */}
+              <div
+                className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs sm:justify-end"
+                style={{ color: 'rgba(250, 248, 242, 0.60)' }}
+              >
+                <span>© {new Date().getFullYear()} LOGOS|IA</span>
+                <span className="opacity-40">·</span>
+                <a href="/privacy-policy.html" className="opacity-85 hover:opacity-100 transition-opacity">Política de Privacidade</a>
+                <span className="opacity-40">·</span>
+                <a href="/terms-of-service.html" className="opacity-85 hover:opacity-100 transition-opacity">Termos de Uso</a>
+                <span className="opacity-40">·</span>
+                <span>Feito no Brasil 🇧🇷</span>
+              </div>
+            </div>
           </div>
 
         </div>

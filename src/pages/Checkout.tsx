@@ -28,7 +28,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { LogosIALogo } from '@/components/brand/LogosIALogo';
 import { supabase } from '@/integrations/supabase/client';
-import { useAppStore } from '@/store/appStore';
 import { toast } from 'sonner';
 import {
   ArrowLeft, ArrowRight, CheckCircle2, CreditCard, FileText,
@@ -114,7 +113,6 @@ function brl(v: number): string {
 export default function Checkout() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { isDarkMode } = useAppStore();
   // ?plano=pro|basico (links separados por plano). Compat: plano=mensal|anual → Pro.
   const planoRaw = searchParams.get('plano') || 'pro';
   const planType: PlanType = planoRaw === 'basico' ? 'basico' : 'pro';
@@ -311,7 +309,13 @@ export default function Checkout() {
   const docMasked = personType === 'pf' ? maskCPF(docNumber) : maskCNPJ(docNumber);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div
+      className="checkout-light min-h-screen text-foreground"
+      style={{
+        background:
+          'radial-gradient(1200px 600px at 50% -10%, rgba(212,160,23,0.06), transparent 60%), linear-gradient(180deg, #FBFCFE 0%, #EEF2F8 100%)',
+      }}
+    >
 
       {/* ── HEADER simplificado ───────────────────────────────────── */}
       <header
@@ -323,7 +327,7 @@ export default function Checkout() {
       >
         <div className="px-4 md:px-6 py-3.5 max-w-6xl mx-auto flex items-center justify-between gap-4">
           <Link to="/" className="flex items-center shrink-0 hover:opacity-80 transition-opacity">
-            <LogosIALogo size="sm" variant={isDarkMode ? 'dark' : 'light'} />
+            <LogosIALogo size="sm" variant="light" />
           </Link>
           <div
             className="flex items-center gap-1.5 text-xs md:text-sm font-medium"
