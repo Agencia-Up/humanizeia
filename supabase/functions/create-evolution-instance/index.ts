@@ -217,7 +217,7 @@ const corsHeaders = {
 // Limite de instâncias por plano (pool compartilhado: master + vendedores)
 const INSTANCE_LIMITS_BY_PLAN: Record<string, number> = {
   basico: 10,
-  pro: 10,
+  pro: 15,
   enterprise: 15,
 };
 const DEFAULT_PLAN_LIMIT = INSTANCE_LIMITS_BY_PLAN.basico;
@@ -315,11 +315,15 @@ Deno.serve(async (req) => {
         status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    // IMPORTANTE: autorizacao usa active_in_system (vendedor habilitado na
+    // plataforma), NAO is_active. is_active reflete estado da linha/instancia
+    // (cai pra false quando a instancia desconecta), entao filtrar por is_active
+    // bloqueava o vendedor de (re)conectar justamente quando ele mais precisa.
     const { data: callerSellerRows } = await supabase
       .from('ai_team_members')
       .select('id, user_id')
       .eq('auth_user_id', caller.id)
-      .eq('is_active', true);
+      .eq('active_in_system', true);
     const allowedMasterIds = new Set<string>([
       caller.id,
       ...((callerSellerRows || []).map((r: any) => r.user_id).filter(Boolean)),
