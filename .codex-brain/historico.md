@@ -351,3 +351,28 @@
 - #3 (hardening) handoff `_hasNome` aceita pushName (lead qualificado nao trava por nome).
 - #5 NAO corrigido: o reply ativo e `pedroBrainReply_20260525.ts`, nao o replyGenerator do
   relatorio; fallback so em queda da OpenAI e ja tem tom ok. Documentado.
+
+## 2026-06-03 — Pedro v2: MODO ASSISTENTE DO VENDEDOR (lead com dono) (v52)
+
+- Build `2026-06-03-owned-lead-assistant-mode-v52`. 2o relatorio Antigravity: 3 casos reais
+  de lead JA transferido tratado errado. Validados como reais; corrigidos na raiz.
+  - Caso 1/3: passada a trava 24h, agente requalificava do zero ("a vista ou financiar?").
+  - Caso 2: trava 24h (v48) avisava 1x e SILENCIAVA tudo (ate clique em anuncio novo).
+- Raiz comum: agente nao tinha o conceito de "lead com dono". Decisao do dono (perguntada):
+  dentro de 24h responder como ASSISTENTE (nao silenciar); fotos = rotear pro vendedor.
+- Implementacao:
+  - orchestrator: trocou o "post_transfer_hold_24h" (silencio) por deteccao de dono via
+    `assigned_to_id` (persistente, vale apos 24h) OU transferencia recente (<24h). Dono
+    INATIVO (is_active=false) NAO entra -> cai no fluxo normal p/ reatribuir.
+    `ownedLeadAssistantMode` + `assistantSellerName`. Re-notifica o vendedor (throttle 45min).
+    Rebaixa photo_request/handoff -> reply_only; `shouldSendVehiclePhotos &&
+    !ownedLeadAssistantMode`; gate do auto-handoff `&& !ownedLeadAssistantMode`.
+  - pedroBrainReply: novo input `assigned_seller_name`; persona "MODO ASSISTENTE" como
+    REGRA MAXIMA (prevalece sobre o funil): nao requalifica, responde duvida/info do carro,
+    cita o vendedor pelo nome e diz que vai avisa-lo; fotos roteadas pro vendedor;
+    pronto_para_transferir/transferir_silencioso travados em false.
+- Validado ao vivo nos 3 leads reais: ...1347 (Joao Santos) e ...1418 (Matheus) -> modo
+  assistente perfeito (responde + cita vendedor, sem requalificar); ...8151 (Bruno Henrique
+  INATIVO) -> cai no fluxo normal (correto). Lead novo -> fluxo normal completo.
+- OBS p/ o dono: o vendedor Bruno Henrique esta INATIVO no sistema (por isso o lead do
+  Francisco nao e roteado pra ele). Reativar o Bruno ou aceitar a reatribuicao.
