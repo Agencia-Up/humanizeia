@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -17,7 +17,6 @@ const emailSchema = z.string().email('Email inválido');
 const passwordSchema = z.string().min(6, 'Senha deve ter no mínimo 6 caracteres');
 
 export default function Auth() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { signIn, user } = useAuth();
   const { toast } = useToast();
@@ -310,12 +309,14 @@ export default function Auth() {
                     </p>
                   </div>
 
+                  {/* Manda pra secao de planos (#planos) na landing, onde o
+                      usuario escolhe entre Basico e Pro — cada card leva ao
+                      checkout do plano certo. Antes ia direto pro checkout do Pro. */}
                   <Button
-                    type="button"
+                    asChild
                     className="w-full gradient-primary text-primary-foreground"
-                    onClick={() => navigate('/checkout?plano=pro&ciclo=mensal')}
                   >
-                    Ver planos e assinar
+                    <a href="/#planos">Ver planos e assinar</a>
                   </Button>
 
                   <p className="text-xs text-muted-foreground">
