@@ -6,6 +6,7 @@ import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
 import { resolveAutomationRules } from "../automation/rules.ts";
 import { managerPhones } from "../transfer/managers.ts";
 import { pickInterestVehicleFromState } from "../transfer/interestVehicle.ts";
+import { leadTransferStatusLine, leadTransferStatusText, LeadTransferStatusKey } from "../transfer/leadStatus.ts";
 import { remoteJidToPhone } from "./phone.ts";
 import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
@@ -1447,6 +1448,15 @@ export async function processPedroV2Turn(
         // Lead que RETORNOU para o vendedor que ja o atendia: o vendedor JA e dono,
         // entao nao pedimos "Responda Ok para assumir" (so avisamos do retorno).
         const isRenotify = handoffResult.reason === "returning_lead_renotify";
+        // STATUS PADRONIZADO do lead (mesmo nos 2 caminhos). Derivado dos sinais
+        // que ja existem — nada inventado.
+        const _statusKey: LeadTransferStatusKey = isRenotify
+          ? "retornou"
+          : contextualIntent.needs_handoff
+          ? "pediu_atendente"
+          : silentTransfer
+          ? "followup"
+          : "qualificado";
         const sellerHeader = isRenotify
           ? `*LEAD RETORNOU (Pedro v2)*\nUm cliente que ja era seu voltou a conversar e demonstrou interesse. Retome o atendimento.`
           : silentTransfer
@@ -1455,7 +1465,7 @@ export async function processPedroV2Turn(
         const sellerFooter = isRenotify
           ? `*Atender:* https://wa.me/${leadPhone}`
           : `*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
-        const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n*Contato:* +${leadPhone}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
+        const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n${leadTransferStatusLine(_statusKey)}\n*Contato:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo:* ${_veiculoInteresse}` : ""}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
         await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
 
         // Relatorio automatico ao(s) gerente(s) — ate 2 (mesma regra do portal).
@@ -1464,7 +1474,7 @@ export async function processPedroV2Turn(
         const _gerentes = managerPhones(input.agent);
         if (!isRenotify && _gerentes.length > 0) {
           const _hora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${_veiculoInteresse}` : ""}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n🏷️ *Status:* ${leadTransferStatusText(_statusKey)}${_veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${_veiculoInteresse}` : ""}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
           for (const gp of _gerentes) {
             try { await sendPedroText(handoffInstance, { to: gp, text: _mgrMsg }); } catch (_e) { /* nao bloqueante */ }
           }

@@ -2,6 +2,7 @@ import { logTransferFailure } from '../_shared/pedro-v2/logTransferFailure.ts';
 import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
 import { managerPhones } from "../_shared/transfer/managers.ts";
 import { resolveLeadInterestVehicle } from "../_shared/transfer/interestVehicle.ts";
+import { leadTransferStatusLine, leadTransferStatusText } from "../_shared/transfer/leadStatus.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -535,14 +536,14 @@ async function handleV2Followup(supabase: any, ctx: {
       await supabase.from("ai_team_members").update({ last_lead_received_at: now.toISOString() }).eq("id", seller.id);
       if (seller.whatsapp_number) {
         const cleanSellerNum = String(seller.whatsapp_number).replace(/\D/g, "");
-        const notif = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        const notif = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n${leadTransferStatusLine("sem_resposta")}\n*Contato:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo:* ${veiculoInteresse}` : ""}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
         await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notif);
       }
       // Relatorio automatico ao(s) gerente(s) — ate 2.
       const _gerentes = managerPhones(agentRulesRow);
       if (_gerentes.length > 0) {
         const _hora = now.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-        const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${leadName || "Desconhecido"}\n📱 *Telefone:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${veiculoInteresse}` : ""}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${seller.name}\n📲 *WhatsApp vendedor:* ${seller.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+        const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${leadName || "Desconhecido"}\n📱 *Telefone:* +${phoneNumber}\n🏷️ *Status:* ${leadTransferStatusText("sem_resposta")}${veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${veiculoInteresse}` : ""}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${seller.name}\n📲 *WhatsApp vendedor:* ${seller.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
         for (const gp of _gerentes) {
           try { await sendUazapiTextMessage(baseUrl, instKey, instanceName, gp, `${gp}@s.whatsapp.net`, _mgrMsg); } catch (_e) { /* nao bloqueante */ }
         }
@@ -864,7 +865,7 @@ Deno.serve(async (req) => {
               }
             } catch (e) { /* silencioso */ }
 
-            const notificationMsg = `*LEAD REPASSADO (Vendedor anterior nao respondeu em 10min)*\n\n*Nome:* ${lead.lead_name || 'Desconhecido'}\n*Numero:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Assistente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+            const notificationMsg = `*LEAD REPASSADO (Vendedor anterior nao respondeu em 10min)*\n\n*Nome:* ${lead.lead_name || 'Desconhecido'}\n${leadTransferStatusLine("repassado")}\n*Numero:* +${phoneNumber}${veiculoInteresseRep ? `\n🚗 *Veículo:* ${veiculoInteresseRep}` : ""}\n*Agente IA:* ${agentData?.name || 'Assistente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
 
             await sendUazapiTextMessage(baseUrl, instKey, instance.instance_name, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
             console.log(`[Cron] Notificacao enviada para ${nextSeller.name}.`);
@@ -1066,7 +1067,7 @@ Deno.serve(async (req) => {
           if (seller.whatsapp_number) {
             const cleanSellerNum = seller.whatsapp_number.replace(/\D/g, '');
 
-            const notificationMsg = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta 10min)*\n\n*Cliente:* ${lead.lead_name || 'Desconhecido'}\n*Contato:* +${phoneNumber}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+            const notificationMsg = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta 10min)*\n\n*Cliente:* ${lead.lead_name || 'Desconhecido'}\n${leadTransferStatusLine("sem_resposta")}\n*Contato:* +${phoneNumber}${veiculoInteresseSec ? `\n🚗 *Veículo:* ${veiculoInteresseSec}` : ""}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
 
             await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
           }
